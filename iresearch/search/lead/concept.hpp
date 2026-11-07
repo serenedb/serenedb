@@ -23,6 +23,7 @@
 #include <concepts>
 
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
@@ -38,5 +39,23 @@ concept ScoredType = Type<T> && requires(T& t, uint32_t slot) {
   { t.FetchScoreArgs(slot) };
   { t.PrepareScore() } -> std::same_as<ScoreFunction>;
 };
+
+template<Type Node>
+IRS_FORCE_INLINE doc_id_t SeekBelow(Node& node, doc_id_t target, doc_id_t max) {
+  if constexpr (requires { node.Seek(target, max); }) {
+    return node.Seek(target, max);
+  } else {
+    return node.Seek(target);
+  }
+}
+
+template<Type Node>
+IRS_FORCE_INLINE doc_id_t NextBelow(Node& node, doc_id_t max) {
+  if constexpr (requires { node.Next(max); }) {
+    return node.Next(max);
+  } else {
+    return node.Next();
+  }
+}
 
 }  // namespace irs::lead

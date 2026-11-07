@@ -409,11 +409,8 @@ void ApplyTermGroups(const ByPhraseOptions& options,
     positions[i].term_group = static_cast<uint32_t>(i);
   }
   const auto find = [&](uint32_t x) {
-    while (positions[x].term_group != x) {
-      positions[x].term_group = positions[positions[x].term_group].term_group;
-      x = positions[x].term_group;
-    }
-    return x;
+    return detail::slop::FindGroup(
+      [&](uint32_t i) -> uint32_t& { return positions[i].term_group; }, x);
   };
 
   absl::flat_hash_map<bytes_view, uint32_t> first_owner;

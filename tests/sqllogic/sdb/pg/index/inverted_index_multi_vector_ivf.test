@@ -46,7 +46,7 @@ EXPLAIN SELECT pk FROM mv_ivf
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: mv_ivf                   │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Score: l2_distance(a, FLOAT[3]) │
 │ Top: 2                          │
 │ Projections: pk                 │
@@ -60,7 +60,7 @@ EXPLAIN SELECT pk FROM mv_ivf
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: mv_ivf                       │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: cosine_distance(b, FLOAT[4]) │
 │ Top: 2                              │
 │ Projections: pk                     │

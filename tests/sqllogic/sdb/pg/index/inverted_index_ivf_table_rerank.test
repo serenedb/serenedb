@@ -257,7 +257,7 @@ EXPLAIN SELECT pk FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: tr_flt_sq8  │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Vector Range ─╮ │
 │ │ Field: emb     │ │

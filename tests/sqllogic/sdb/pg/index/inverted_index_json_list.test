@@ -51,7 +51,7 @@ EXPLAIN SELECT pk FROM jl_idx WHERE js @@ ts_like('alpha');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─╮
 │ Index: jl_idx    │
-│ Lookup: table    │
+│ Lookup: search   │
 │ Index Filter:    │
 │ ╭─ Term ───────╮ │
 │ │ Field: js    │ │
@@ -124,7 +124,7 @@ EXPLAIN SELECT pk FROM jl_idx WHERE NOT (js @@ ts_like('alpha'));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
 │ Index: jl_idx                                                         │
-│ Lookup: table                                                         │
+│ Lookup: search                                                        │
 │ Index Filter:                                                         │
 │ ╭─ Not ───────────╮                                                   │
 │ ╰────────┬────────╯                                                   │
@@ -171,7 +171,7 @@ WHERE ((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: jl_idx                               │
-│ Lookup: table                               │
+│ Lookup: search                              │
 │ Index Filter:                               │
 │ ╭─ Granular Range ────────────────────────╮ │
 │ │ Field:                                  │ │
@@ -198,7 +198,7 @@ WHERE NOT (((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: jl_idx                                                                                                                                                                          │
-│ Lookup: table                                                                                                                                                                          │
+│ Lookup: search                                                                                                                                                                         │
 │ Index Filter:                                                                                                                                                                          │
 │ ╭─ Not ────────────────────────────────╮                                                                                                                                               │
 │ ╰───────────────────┬──────────────────╯                                                                                                                                               │
@@ -332,7 +332,7 @@ WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
 │ Index: jn_idx                                                                     │
-│ Lookup: table                                                                     │
+│ Lookup: search                                                                    │
 │ Index Filter:                                                                     │
 │ ╭─ Term ────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                                        │ │

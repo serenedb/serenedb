@@ -86,7 +86,7 @@ WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] <= 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: zl1_idx                         │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Vector Range ─╮                     │
 │ │ Field: emb     │                     │
@@ -114,7 +114,7 @@ WHERE emb <+> [1, 2, 3, 4]::FLOAT[4] > 9 ORDER BY emb <+> [1, 2, 3, 4]::FLOAT[4]
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: zl1_idx                         │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Score: l1_distance(emb, FLOAT[4])      │
 │ Top: 4                                 │
 │ Projections: pk,                       │

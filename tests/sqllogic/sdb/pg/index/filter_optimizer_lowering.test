@@ -22,7 +22,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ (ts_like('alpha'));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
@@ -38,7 +38,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ (ts_like('alp%'));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Starts With ───────╮ │
 │ │ Field: name(string) │ │
@@ -54,7 +54,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ (ts_like('a_pha'));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Automaton ─────────╮ │
 │ │ Field: name(string) │ │
@@ -70,7 +70,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_regexp('alpha');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
@@ -86,7 +86,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_regexp('al.ha');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Automaton ─────────╮ │
 │ │ Field: name(string) │ │
@@ -102,7 +102,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_levenshtein('alpha', 0);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
@@ -118,7 +118,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_levenshtein('lpha', 0, false,
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
@@ -134,7 +134,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_levenshtein('alpha', 1);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
@@ -151,7 +151,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE t @@ (ts_like('alpha') ## 'beta');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: fo_low_idx                       │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Phrase ────────────────────────────╮ │
 │ │ Field: t(string)                    │ │
@@ -168,7 +168,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE t @@ (ts_like('al%') ## 'beta');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_low_idx                      │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Phrase ───────────────────────────╮ │
 │ │ Field: t(string)                   │ │
@@ -185,7 +185,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE t @@ ts_ngram('alpha', 0.5);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_low_idx    │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
@@ -207,7 +207,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
@@ -232,7 +232,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('xyz'), t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: fo_low_idx                                │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -259,7 +259,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
@@ -284,7 +284,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('al'), ts
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: fo_low_idx                                │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -305,7 +305,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('be'), ts
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────╮
 │ Index: fo_low_idx                                                         │
-│ Lookup: table                                                             │
+│ Lookup: search                                                            │
 │ Index Filter:                                                             │
 │ ╭─ And ───────────────╮                                                   │
 │ ╰──────────┬──────────╯                                                   │
@@ -334,7 +334,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
@@ -358,7 +358,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alphab')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: fo_low_idx                                │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -385,7 +385,7 @@ EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('al'), ts
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
@@ -421,7 +421,7 @@ EXPLAIN SELECT id FROM fo_lev_mt_idx WHERE t @@ ts_all([ts_starts_with('al'), ts
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_lev_mt_idx                       │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ And ────────────╮                       │
 │ ╰─────────┬────────╯                       │
@@ -461,7 +461,7 @@ EXPLAIN SELECT id FROM fo_lev_mix_idx WHERE k @@ ts_all([ts_starts_with('al'), t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────╮
 │ Index: fo_lev_mix_idx                                            │
-│ Lookup: table                                                    │
+│ Lookup: search                                                   │
 │ Index Filter:                                                    │
 │ ╭─ And ────────────╮                                             │
 │ ╰─────────┬────────╯                                             │

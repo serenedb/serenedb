@@ -20,7 +20,7 @@ EXPLAIN SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: dd_idx               │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Or ─────────────────╮    │
 │ ╰───────────┬──────────╯    │

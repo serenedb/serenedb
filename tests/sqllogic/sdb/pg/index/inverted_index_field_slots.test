@@ -50,7 +50,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b IS NULL;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: slots_idx   │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Term ─────────╮ │
 │ │ Field: b(null) │ │
@@ -74,7 +74,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b = true;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: slots_idx   │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Term ─────────╮ │
 │ │ Field: b(bool) │ │
@@ -104,7 +104,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b <> true;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: slots_idx                       │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Not ──────────╮                     │
 │ ╰────────┬───────╯                     │
@@ -131,7 +131,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b > false;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: slots_idx   │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Term ─────────╮ │
 │ │ Field: b(bool) │ │
@@ -157,7 +157,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b IN (false, true);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: slots_idx                       │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ───────────╮                     │
 │ ╰────────┬───────╯                     │
@@ -191,7 +191,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE n BETWEEN 15 AND 55;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: slots_idx      │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
@@ -237,7 +237,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE NOT (s = 'apple');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: slots_idx                         │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Not ────────────╮                     │
 │ ╰─────────┬────────╯                     │
@@ -455,7 +455,7 @@ EXPLAIN SELECT id FROM slot_json_idx WHERE NOT ((content->'val')::double = 42);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: slot_json_idx                                                                                                        │
-│ Lookup: table                                                                                                               │
+│ Lookup: search                                                                                                              │
 │ Index Filter:                                                                                                               │
 │ ╭─ Not ────────────────────────────────╮                                                                                    │
 │ ╰───────────────────┬──────────────────╯                                                                                    │
@@ -488,7 +488,7 @@ EXPLAIN SELECT id FROM slot_json_idx WHERE (content->'val')::double IS NULL;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
 │ Index: slot_json_idx                                                              │
-│ Lookup: table                                                                     │
+│ Lookup: search                                                                    │
 │ Index Filter:                                                                     │
 │ ╭─ Or ──────────────────────────────╮                                             │
 │ ╰─────────────────┬─────────────────╯                                             │

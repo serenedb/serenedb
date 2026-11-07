@@ -23,7 +23,7 @@ WHERE (t @@ ts_phrase('alpha') AND t @@ ts_phrase('beta')) AND t @@ ts_phrase('g
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────╮
 │ Index: fo_bool_idx                   │
-│ Lookup: table                        │
+│ Lookup: search                       │
 │ Index Filter:                        │
 │ ╭─ And ────────────────────────────╮ │
 │ ╰─────────────────┬────────────────╯ │
@@ -42,7 +42,7 @@ WHERE (t @@ ts_phrase('alpha') AND t @@ ts_phrase('beta')) AND (t @@ ts_phrase('
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: fo_bool_idx                    │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ And ─────────────────────────────╮ │
 │ ╰─────────────────┬─────────────────╯ │
@@ -62,7 +62,7 @@ WHERE (t @@ ts_phrase('alpha') AND t @@ ts_phrase('beta'))::boost(2.0) AND t @@ 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: fo_bool_idx                           │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ And ────────────────────────────────────╮ │
 │ ╰─────────────────────┬────────────────────╯ │
@@ -81,7 +81,7 @@ WHERE (t @@ ts_phrase('alpha') OR t @@ ts_phrase('beta')) OR t @@ ts_phrase('gam
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────╮
 │ Index: fo_bool_idx                   │
-│ Lookup: table                        │
+│ Lookup: search                       │
 │ Index Filter:                        │
 │ ╭─ Or ─────────────────────────────╮ │
 │ ╰─────────────────┬────────────────╯ │
@@ -100,7 +100,7 @@ WHERE t @@ (ts_phrase('gamma') || ts_any(['alpha', 'beta'], 2));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: fo_bool_idx                                │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Or ─────────────╮                              │
 │ ╰─────────┬────────╯                              │
@@ -121,7 +121,7 @@ EXPLAIN SELECT id FROM fo_bool_idx WHERE s = 'alpha' OR s = 'gamma';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: fo_bool_idx           │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Or ─────────────────────╮ │
 │ ╰─────────────┬────────────╯ │
@@ -139,7 +139,7 @@ EXPLAIN SELECT id FROM fo_bool_idx WHERE t @@ ('alpha'::TSQUERY && 'beta'::TSQUE
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: fo_bool_idx          │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ And ───────────────────╮ │
 │ ╰────────────┬────────────╯ │
@@ -157,7 +157,7 @@ EXPLAIN SELECT id FROM fo_bool_idx WHERE s = 'alpha' AND t @@ ts_phrase('beta');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_bool_idx                         │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ And ────────────╮                       │
 │ ╰─────────┬────────╯                       │
@@ -177,7 +177,7 @@ WHERE t @@ ts_phrase('alpha') AND n @@ ts_between(2, 2, false, false);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: fo_bool_idx │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Empty ─╮        │
 │ ╰─────────╯        │
@@ -192,7 +192,7 @@ WHERE t @@ ts_phrase('alpha') OR n @@ ts_between(2, 2, false, false);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_bool_idx   │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
@@ -209,7 +209,7 @@ WHERE s = 'alpha' OR n @@ ts_between(2, 2, false, false) OR t @@ ts_phrase('beta
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_bool_idx                         │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Or ─────────────╮                       │
 │ ╰─────────┬────────╯                       │
@@ -229,7 +229,7 @@ WHERE n @@ ts_between(2, 2, false, false) OR n @@ ts_between(3, 3, false, false)
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: fo_bool_idx │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Empty ─╮        │
 │ ╰─────────╯        │
@@ -244,7 +244,7 @@ WHERE t @@ ts_phrase('alpha') AND n @@ ts_between(NULL, NULL, true, true);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_bool_idx   │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
@@ -261,7 +261,7 @@ WHERE t @@ ts_phrase('alpha') OR n @@ ts_between(NULL, NULL, true, true);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: fo_bool_idx │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ All ──╮         │
 │ ╰────────╯         │
@@ -275,7 +275,7 @@ EXPLAIN SELECT id FROM fo_bool_idx WHERE t @@ ts_all(['alpha', 'beta']);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: fo_bool_idx          │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ And ───────────────────╮ │
 │ ╰────────────┬────────────╯ │
@@ -293,7 +293,7 @@ EXPLAIN SELECT id FROM fo_bool_idx WHERE t @@ ts_any(['alpha', 'beta', 'gamma'],
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────╮
 │ Index: fo_bool_idx                   │
-│ Lookup: table                        │
+│ Lookup: search                       │
 │ Index Filter:                        │
 │ ╭─ Bool ───────────────────────────╮ │
 │ ╰─────────────────┬────────────────╯ │
@@ -328,7 +328,7 @@ EXPLAIN SELECT id FROM ts_table_idx WHERE ts BETWEEN TIMESTAMP '1989-12-12 00:00
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: ts_table_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Granular Range ─────────────────────╮ │
 │ │ Field: ts(numeric)                   │ │
@@ -346,7 +346,7 @@ EXPLAIN SELECT id, BM25(ts_table_idx.tableoid) FROM ts_table_idx WHERE ts BETWEE
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: ts_table_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Granular Range ─────────────────────╮ │
 │ │ Field: ts(numeric)                   │ │
@@ -374,7 +374,7 @@ QUERY PLAN
 ╰───────────────────────────────────────────┬───────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴───────────────────────────────────────────╮
 │ Index: ts_table_idx                                                                   │
-│ Lookup: table                                                                         │
+│ Lookup: search                                                                        │
 │ Index Filter:                                                                         │
 │ ╭─ And ───────────────────────────────────╮                                           │
 │ ╰────────────────────┬────────────────────╯                                           │

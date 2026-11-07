@@ -41,7 +41,7 @@ EXPLAIN SELECT pk FROM hnsw_r_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: hnsw_r_idx                 │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Row Filter:                       │
 │ (label = 'even') OR (grp = 3)     │
 │ Score: l2_distance(emb, FLOAT[8]) │
@@ -122,7 +122,7 @@ EXPLAIN SELECT pk FROM hnsw_r_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: hnsw_r_idx                 │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Row Filter:                       │
 │ (label = 'even') OR (pk < 10)     │
 │ Score: l2_distance(emb, FLOAT[8]) │
@@ -448,7 +448,7 @@ EXPLAIN SELECT pk FROM hnsw_r_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: hnsw_r_idx                     │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Row Filter: label IN ('even', 'none') │
 │ Score: l2_distance(emb, FLOAT[8])     │
 │ Top: 3                                │

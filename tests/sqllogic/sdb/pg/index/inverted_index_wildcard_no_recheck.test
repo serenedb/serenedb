@@ -150,7 +150,7 @@ EXPLAIN SELECT id FROM wc_nr_idx WHERE b @@ ts_like('%ai%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wc_nr_idx            │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Wildcard NGram ────────╮ │
 │ │ Field: b(string)        │ │
@@ -184,7 +184,7 @@ EXPLAIN SELECT id FROM wc_nr_bin_idx WHERE b @@ ts_like('%ai%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wc_nr_bin_idx        │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Wildcard NGram ────────╮ │
 │ │ Field: b(string)        │ │

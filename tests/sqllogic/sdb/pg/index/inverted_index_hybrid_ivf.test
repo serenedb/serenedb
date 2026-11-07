@@ -230,7 +230,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ────────────────────╮            │
 │ ╰────────────┬────────────╯            │
@@ -239,7 +239,7 @@ QUERY PLAN
 │ │ Values: 'gear', 'trail' │            │
 │ ╰─────────────────────────╯            │
 │ Score: idf()                           │
-│ Projections: pk (l), va (i),           │
+│ Projections: pk, va,                   │
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
@@ -258,7 +258,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ────────────────────╮            │
 │ ╰────────────┬────────────╯            │
@@ -295,7 +295,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ─────────────────────╮           │
 │ │ Merge: max               │           │
@@ -306,7 +306,7 @@ QUERY PLAN
 │ │ Values: 'gear', 'trail'  │           │
 │ ╰──────────────────────────╯           │
 │ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: pk (l), va (i),           │
+│ Projections: pk, va,                   │
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯

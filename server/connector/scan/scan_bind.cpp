@@ -380,6 +380,10 @@ duckdb::LogicalType ScanBindData::ColumnTypeById(ColumnId col_id) const {
                                       : duckdb::LogicalType::INVALID;
   }
   const auto* column = FindColumnById(*relation.table_entry, col_id);
+  if (!column && relation.inverted_config) {
+    column = FindColumnById(*relation.table_entry,
+                            relation.inverted_config->ColumnOf(col_id));
+  }
   return column ? column->Type() : duckdb::LogicalType::INVALID;
 }
 

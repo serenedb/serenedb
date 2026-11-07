@@ -58,13 +58,13 @@ EXPLAIN SELECT pk, tags FROM list_n_idx WHERE text_for_search @@ ts_phrase('seco
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
 │ Index: list_n_idx                  │
-│ Lookup: table                      │
+│ Lookup: search                     │
 │ Index Filter:                      │
 │ ╭─ Term ─────────────────────────╮ │
 │ │ Field: text_for_search(string) │ │
 │ │ Value: second                  │ │
 │ ╰────────────────────────────────╯ │
-│ Projections: pk (l), tags (i)      │
+│ Projections: pk, tags              │
 │ ~1 row                             │
 ╰────────────────────────────────────╯
 

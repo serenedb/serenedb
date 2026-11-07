@@ -201,6 +201,8 @@ class Transactions final {
   duckdb::transaction_t Advance(duckdb::transaction_t snapshot);
   void End(duckdb::transaction_t snapshot);
   duckdb::transaction_t OldestSnapshot() ABSL_LOCKS_EXCLUDED(_snapshots_mutex);
+  void ExpireSet(std::shared_ptr<const char>& alive)
+    ABSL_LOCKS_EXCLUDED(_collect_mutex);
 
  private:
   struct Garbage {

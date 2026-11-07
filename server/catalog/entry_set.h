@@ -149,6 +149,7 @@ class EntrySet {
       _owner{owner},
       _members{members},
       _entries{_less} {}
+  ~EntrySet();
 
   duckdb::idx_t Owner() const noexcept { return _owner; }
 
@@ -237,7 +238,7 @@ class EntrySet {
   OidIndex& _oids;
   const duckdb::idx_t _owner;
   const bool _members;
-  const std::shared_ptr<const char> _alive = std::make_shared<const char>();
+  std::shared_ptr<const char> _alive = std::make_shared<const char>();
   duckdb::unique_ptr<duckdb::DefaultGenerator> _defaults;
   absl::Mutex _mutex;
   duckdb::identifier_tree_t<duckdb::unique_ptr<duckdb::CatalogEntry>> _entries

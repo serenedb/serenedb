@@ -160,11 +160,11 @@ CREATE TABLE rubick_stat_gone_oid AS SELECT oid FROM pg_database WHERE datname =
 
 
 statement ok
-CREATE JOB rubick_stat_gone.main.rubick_stat_job AFTER 1 HOUR AS SELECT 1;
+CREATE JOB rubick_stat_gone.public.rubick_stat_job AFTER 1 HOUR AS SELECT 1;
 
 
 statement ok
-EXECUTE JOB rubick_stat_gone.main.rubick_stat_job;
+EXECUTE JOB rubick_stat_gone.public.rubick_stat_job;
 
 
 query

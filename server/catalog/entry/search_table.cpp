@@ -83,6 +83,7 @@
 #include "connector/full_scanner.h"
 #include "connector/primary_key.h"
 #include "connector/scan/scan_bind.h"
+#include "connector/search_sink_rows.h"
 #include "connector/search_table_backfill.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -596,6 +597,32 @@ void SearchTableEntry::RequireCurrentSchema() const {
                             "\" was altered by a concurrent transaction"),
                     ERR_HINT("Retry the transaction."));
   }
+}
+
+void SearchTableEntry::InternalAppend(
+  duckdb::ClientContext& context, duckdb::ColumnDataCollection& collection) {
+  connector::SearchSinkTable target{
+    .store = _storage,
+    .catalog = &catalog,
+    .table_id = oid,
+    .buffer_bytes =
+      duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size};
+  for (const auto& column : GetColumns().Physical()) {
+    target.column_ids.emplace_back(connector::TableColumnId(column));
+    target.types.push_back(column.Type());
+  }
+  auto& transaction = SessionOf(context, catalog);
+  transaction.SearchTxn().RegisterWriter(target.store, *this);
+  RequireCurrentSchema();
+  const auto constraints =
+    duckdb::Binder::CreateBinder(context)->BindConstraints(*this);
+  connector::SearchSinkRows rows{target.buffer_bytes};
+  for (auto& chunk : collection.Chunks()) {
+    duckdb::DataTable::VerifyRowConstraints(context, *this, constraints, chunk);
+    rows.Append(context, target, chunk);
+  }
+  rows.Flush();
+  rows.HandOver(context, target, transaction.SearchTxn());
 }
 
 namespace {

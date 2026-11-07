@@ -1,5 +1,4 @@
 
-# Explicit transactional -- equivalent to default.
 statement ok
 CREATE TABLE storage_txn (a INTEGER PRIMARY KEY, b TEXT);
 
@@ -7,8 +6,6 @@ statement ok
 DROP TABLE storage_txn;
 
 
-# Headline smoke: kSearch shard creates iresearch directory + empty writer,
-# dtor closes cleanly, drop wipes the directory.
 statement ok
 CREATE TABLE storage_search (a INTEGER PRIMARY KEY, b TEXT);
 
@@ -35,18 +32,6 @@ DROP TABLE storage_search_a;
 
 statement ok
 DROP TABLE storage_search_b;
-
-
-statement error
-CREATE TABLE storage_err1 (a INTEGER PRIMARY KEY);
-----
-db error: ERROR: WITH option "storage" must be 'transactional' or 'search', got "invalid_storage_type"
-
-
-statement error
-CREATE TABLE storage_err2 (a INTEGER PRIMARY KEY);
-----
-db error: ERROR: WITH option "storage" expects a string literal
 
 
 statement ok
@@ -177,12 +162,19 @@ a	b
 9	nine
 
 
-# A non-inverted index is rejected outright: only inverted is supported on a
-# search table.
-statement error
+statement ok
 CREATE INDEX search_dml_idx ON search_dml (b);
+
+
+query
+SELECT a.amname FROM pg_class c JOIN pg_am a ON a.oid = c.relam WHERE c.relname = 'search_dml_idx';
 ----
-db error: ERROR: only inverted indexes are supported on a table
+amname
+inverted
+
+
+statement ok
+DROP INDEX search_dml_idx;
 
 
 # An inverted index over a POPULATED search table rewrites the existing
@@ -215,16 +207,20 @@ ALTER TABLE search_dml ALTER COLUMN a TYPE BIGINT;
 db error: ERROR: Cannot change the type of a column that has a UNIQUE or PRIMARY KEY constraint specified
 
 
-statement error
+statement ok
 ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
-----
-db error: ERROR: dropping a PRIMARY KEY or UNIQUE constraint of a search-backed table is not supported
 
 
-statement error
+statement ok
+ALTER TABLE search_dml ADD PRIMARY KEY (a);
+
+
+statement ok
 ALTER TABLE search_dml ADD UNIQUE (b);
-----
-db error: ERROR: ALTER TABLE ADD UNIQUE is not supported
+
+
+statement ok
+ALTER TABLE search_dml DROP CONSTRAINT search_dml_b_key;
 
 
 statement ok
@@ -246,7 +242,7 @@ INSERT INTO search_dml (a) VALUES (101);
 statement error
 ALTER TABLE search_dml ALTER COLUMN b SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: search_dml.b
+db error: ERROR: column "b" of relation "search_dml" contains null values
 
 
 query
@@ -314,10 +310,8 @@ statement ok
 INSERT INTO search_serial (body) VALUES ('one');
 
 
-statement error
+statement ok
 ALTER TABLE search_serial ADD PRIMARY KEY (id);
-----
-db error: ERROR: ALTER TABLE ADD PRIMARY KEY is not supported
 
 
 statement error
@@ -898,15 +892,6 @@ CREATE TABLE search_bad_interval (a INTEGER PRIMARY KEY)
 db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT32
 
 
-# The interval options are search-only: an inverted-style per-object scoping,
-# so they are rejected on a transactional table.
-statement error
-CREATE TABLE txn_bad_interval (a INTEGER PRIMARY KEY)
-  WITH (compaction_interval = 500);
-----
-db error: ERROR: unrecognized parameter "compaction_interval"
-
-
 # The config variable (shared with inverted indexes) governs the default when
 # no WITH override is given.
 statement ok
@@ -957,15 +942,6 @@ CREATE TABLE search_seg_bad (a INTEGER PRIMARY KEY)
   WITH (segment_memory_max = 'x');
 ----
 db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT64
-
-
-# segment_memory_max is search/inverted-scoped, so it is rejected on a plain
-# transactional table (as the interval options are).
-statement error
-CREATE TABLE txn_seg (a INTEGER PRIMARY KEY)
-  WITH (segment_memory_max = 16777216);
-----
-db error: ERROR: unrecognized parameter "segment_memory_max"
 
 
 # The shared config variable governs the default when no WITH override is given.

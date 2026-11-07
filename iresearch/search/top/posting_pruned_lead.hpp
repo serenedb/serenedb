@@ -32,17 +32,16 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   using Base = PrunedLeafBase<InputType, false>;
 
   using Base::_base;
-  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
-  using Base::_fetcher;
   using Base::_freqs;
+  using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
-  using Base::_max_in_leaf;
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_score;
+  using Base::_walk;
   using Base::ReadLeaf;
 
  public:
@@ -68,7 +67,7 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
 
   doc_id_t BlockLast() {
     const auto last = Base::AdvanceBlock(_doc);
-    return _cursor.Armed() ? last : *(std::end(_docs) - 1);
+    return _walk.Armed() ? last : *(std::end(_docs) - 1);
   }
 
   doc_id_t SeekCompetitive(doc_id_t target, doc_id_t max, score_t threshold) {
@@ -84,9 +83,9 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   }
 
   doc_id_t SpanLast(uint32_t blocks) {
-    if (blocks > 1 && _cursor.Armed()) {
-      const auto& index = _cursor.Index();
-      return index.Last(std::min(index.Size(), _cursor.Block() + blocks) - 1);
+    if (blocks > 1 && _walk.Armed()) {
+      const auto& index = _walk.Index();
+      return index.Last(std::min(index.Size(), _walk.Block() + blocks) - 1);
     }
     return *(std::end(_docs) - 1);
   }
@@ -108,7 +107,7 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
-    if (_left_in_leaf != 0 && target <= _max_in_leaf) [[likely]] {
+    if (_left_in_leaf != 0 && target <= _last) [[likely]] {
       return _doc = Scan(target);
     }
     return SeekSlow(target);
@@ -137,7 +136,8 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
                                  len, least, kept_docs, kept_freqs);
       if (kept != 0) {
         _provider.freq.value = kept_freqs;
-        FetchAndScore(*_fetcher, _score, kept_docs, kept_scores, kept);
+        FetchAndScore(*_score.fetcher, _score.score, kept_docs, kept_scores,
+                      kept);
         _provider.freq.value = _freqs.data;
       }
       visit(kept_docs, kept, kept_scores, len);
@@ -147,9 +147,9 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   void ScoreFreqs(uint32_t* freqs, score_t* scores, uint32_t count) {
     _provider.freq.value = freqs;
     if (count == kScoreBlock) {
-      _score.ScoreBlock(scores);
+      _score.score.ScoreBlock(scores);
     } else {
-      _score.Score(scores, static_cast<scores_size_t>(count));
+      _score.score.Score(scores, static_cast<scores_size_t>(count));
     }
     _provider.freq.value = _freqs.data;
   }
@@ -161,11 +161,10 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     }
     _required = required;
     _least_freq = 1;
-    if (!_cursor.Armed() ||
-        Base::BoundScore({.freq = 1, .norm = 1}) > required) {
+    if (!_walk.Armed() || Base::BoundScore({.freq = 1, .norm = 1}) > required) {
       return _least_freq;
     }
-    auto most = _cursor.Index().Root().freq + 1;
+    auto most = _walk.Index().Root().freq + 1;
     while (_least_freq < most) {
       const auto mid = _least_freq + (most - _least_freq) / 2;
       if (Base::BoundScore({.freq = mid, .norm = mid}) > required) {
@@ -178,11 +177,11 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   }
 
   doc_id_t SkipTo(doc_id_t target) {
-    if (!_cursor.Armed() || (_left_in_leaf != 0 && target <= _max_in_leaf)) {
+    if (!_walk.Armed() || (_left_in_leaf != 0 && target <= _last)) {
       return Seek(target);
     }
     Base::AdvanceBlock(target);
-    if (!_needs_reposition || _cursor.LandingDoc() + 1 != target) {
+    if (!_needs_reposition || _walk.LandingDoc() + 1 != target) {
       return Seek(target);
     }
     return _left_in_list != 0 ? target : doc_limits::eof();
@@ -200,9 +199,9 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
 
   IRS_NO_INLINE doc_id_t SeekSlow(doc_id_t target) {
     if (!_needs_reposition && _left_in_list != 0 &&
-        target - _max_in_leaf <= _max_in_leaf - _base) {
-      ReadLeaf(_max_in_leaf);
-      if (target <= _max_in_leaf) [[likely]] {
+        target - _last <= _last - _base) {
+      ReadLeaf(_last);
+      if (target <= _last) [[likely]] {
         return _doc = Scan(target);
       }
     }

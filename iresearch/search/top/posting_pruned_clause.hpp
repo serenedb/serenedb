@@ -31,17 +31,17 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
   using Base = PrunedProbeBase<InputType>;
 
   using Base::_base;
-  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
   using Base::_freqs;
+  using Base::_last;
   using Base::_lazy;
   using Base::_leaf;
   using Base::_left_in_list;
-  using Base::_max_in_leaf;
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_recipe;
+  using Base::_walk;
   using Base::DecodeLazyFreqs;
   using Base::Matches;
   using Base::Members;
@@ -61,7 +61,7 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
     _lazy = nullptr;
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
       _doc = doc_limits::min() + meta.doc_delta;
-      _max_in_leaf = _doc;
+      _last = _doc;
     }
   }
 
@@ -92,7 +92,7 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
     }
     if (n > 2 &&
         uint64_t{last - docs[0]} * _leaf.Len() <
-          uint64_t{n - 2} * irs::detail::kProbeSteps * (_max_in_leaf - _base)) {
+          uint64_t{n - 2} * irs::detail::kProbeSteps * (_last - _base)) {
       return Merge(docs, n, freqs);
     }
     ScoreMask hits = 0;
@@ -130,7 +130,7 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
-    if (target <= _max_in_leaf) [[likely]] {
+    if (target <= _last) [[likely]] {
       return _doc = _leaf.Find(std::begin(_docs), _base, target);
     }
     return ProbeSlow(target);
@@ -157,14 +157,13 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
 
   IRS_NO_INLINE doc_id_t ProbeSlow(doc_id_t target) {
     if (!_needs_reposition) [[likely]] {
-      if (const auto span = _max_in_leaf - _base;
-          target - _max_in_leaf <= span || target <= _cursor.UpperBound())
-        [[likely]] {
+      if (const auto span = _last - _base;
+          target - _last <= span || target <= _walk.UpperBound()) [[likely]] {
         if (_left_in_list == 0) [[unlikely]] {
           return _doc = doc_limits::eof();
         }
-        ReadFill(_max_in_leaf);
-        if (target <= _max_in_leaf) [[likely]] {
+        ReadFill(_last);
+        if (target <= _last) [[likely]] {
           return _doc = _leaf.Find(std::begin(_docs), _base, target);
         }
       }
@@ -177,11 +176,11 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
       Base::Reposition();
       ReadFill(_doc);
     }
-    while (_max_in_leaf < target) {
+    while (_last < target) {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();
       }
-      ReadFill(_max_in_leaf);
+      ReadFill(_last);
     }
     return _doc = _leaf.Find(std::begin(_docs), _base, target);
   }

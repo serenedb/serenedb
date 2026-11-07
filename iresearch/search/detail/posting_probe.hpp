@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -75,14 +76,9 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
                  std::begin(_docs), target);
       }
       const auto* const end = std::cend(_docs);
-      for (const auto* it = end - _len; it != end; ++it) {
-        if (target <= *it) {
-          _len = static_cast<uint32_t>(end - it);
-          return _doc = *it;
-        }
-      }
-      _len = 0;
-      return _doc = doc_limits::eof();
+      const auto* const it = ScanNotBelow(end - _len, end, target);
+      _len = static_cast<uint32_t>(end - it);
+      return _doc = it != end ? *it : doc_limits::eof();
     }
 
     if (_kind == block_io::FillLeaf::Kind::Bitset) {

@@ -38,17 +38,16 @@ template<typename InputType, typename Excludes, typename Table>
 class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   using Base = PrunedLeafBase<InputType, true>;
 
-  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
-  using Base::_fetcher;
   using Base::_freqs;
+  using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
-  using Base::_max_in_leaf;
   using Base::_provider;
   using Base::_score;
   using Base::_threshold;
+  using Base::_walk;
   using Base::BoundScore;
   using Base::Emit;
   using Base::In;
@@ -80,8 +79,8 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       irs::detail::DensePosting(meta.docs_count, segment.docs_count())
         ? std::numeric_limits<score_t>::max()
         : BoundScore({.freq = 1, .norm = 1});
-    if (_cursor.Armed()) {
-      _most_freq = _cursor.Index().Root().freq;
+    if (_walk.Armed()) {
+      _most_freq = _walk.Index().Root().freq;
     }
   }
 
@@ -133,17 +132,17 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
         if (_left_in_list == 0) {
           break;
         }
-        auto last = _max_in_leaf;
+        auto last = _last;
         const auto target = std::max<doc_id_t>(last + 1, min);
         if (target >= max) {
           break;
         }
-        if (target > _cursor.UpperBound()) {
+        if (target > _walk.UpperBound()) {
           _left_in_list = SeekCursor(target);
           if (_left_in_list == 0) {
             break;
           }
-          const auto state = _cursor.Landing();
+          const auto state = _walk.Landing();
           In().Seek(state.doc_ptr);
           last = state.doc;
         }
@@ -156,7 +155,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
           ++first;
         } while (first != stop && *first < min);
       }
-      const bool straddles = _max_in_leaf >= max;
+      const bool straddles = _last >= max;
       if (straddles) [[unlikely]] {
         while (stop != first && stop[-1] >= max) {
           --stop;
@@ -191,7 +190,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       return;
     }
     _provider.freq.value = kept_freqs;
-    FetchAndScore(*_fetcher, _score, kept_docs, kept_scores, kept);
+    FetchAndScore(*_score.fetcher, _score.score, kept_docs, kept_scores, kept);
     _provider.freq.value = _freqs.data;
     visit(kept_docs, kept, kept_scores);
   }

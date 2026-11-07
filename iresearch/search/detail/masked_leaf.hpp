@@ -26,6 +26,7 @@
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -76,18 +77,8 @@ class MaskedLeaf {
   IRS_FORCE_INLINE doc_id_t Find(const doc_id_t* docs, doc_id_t base,
                                  doc_id_t target) noexcept {
     if (_packed) [[likely]] {
-      if (_len == kBlock) [[likely]] {
-        const auto* const it = BranchlessLowerBound<kBlock>(docs, target);
-        _index = static_cast<uint32_t>(it - docs);
-        return *it;
-      }
-      for (auto i = _at;; ++i) {
-        if (target <= docs[i]) {
-          _at = i;
-          _index = i;
-          return docs[i];
-        }
-      }
+      _at = _index = LowerBound(docs, _at, target);
+      return docs[_index];
     }
     return FindMasked(base, target);
   }
@@ -131,14 +122,8 @@ class MaskedLeaf {
 
   IRS_FORCE_INLINE uint32_t LowerBound(const doc_id_t* docs, uint32_t from,
                                        doc_id_t target) const noexcept {
-    if (_len == kBlock) [[likely]] {
-      return static_cast<uint32_t>(BranchlessLowerBound<kBlock>(docs, target) -
-                                   docs);
-    }
-    while (from != kBlock && docs[from] < target) {
-      ++from;
-    }
-    return from;
+    return static_cast<uint32_t>(
+      LeafLowerBound<kBlock>(docs, _len, docs + from, target) - docs);
   }
 
   IRS_NO_INLINE doc_id_t FindMasked(doc_id_t base, doc_id_t target) noexcept {

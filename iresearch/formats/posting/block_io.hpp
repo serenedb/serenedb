@@ -173,6 +173,18 @@ struct FillLeaf {
   bool IsBitset() const noexcept { return kind == Kind::Bitset; }
 };
 
+template<typename Input>
+IRS_FORCE_INLINE const UnalignedWord* StableBitset(const FillLeaf& leaf,
+                                                   doc_id_t* scratch) noexcept {
+  if constexpr (!Input::kVolatileAlways) {
+    if (leaf.IsBitset()) {
+      std::memcpy(scratch, leaf.bitset, size_t{leaf.words} * sizeof(uint64_t));
+      return reinterpret_cast<const UnalignedWord*>(scratch);
+    }
+  }
+  return leaf.bitset;
+}
+
 IRS_FORCE_INLINE inline uint32_t* MaterializeBitset(
   uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset, uint32_t words,
   uint32_t* IRS_RESTRICT out) {

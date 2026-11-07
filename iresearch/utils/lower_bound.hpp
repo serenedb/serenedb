@@ -108,6 +108,25 @@ IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
   }
 }
 
+template<typename T>
+IRS_FORCE_INLINE const T* ScanNotBelow(const T* begin, const T* end,
+                                       const T& value) noexcept {
+  while (begin != end && *begin < value) {
+    ++begin;
+  }
+  return begin;
+}
+
+template<size_t N, typename T>
+IRS_FORCE_INLINE const T* LeafLowerBound(const T* block, size_t len,
+                                         const T* from,
+                                         const T& value) noexcept {
+  if (len == N) [[likely]] {
+    return BranchlessLowerBound<N>(block, value);
+  }
+  return ScanNotBelow(from, block + N, value);
+}
+
 template<typename It, typename Pred>
 IRS_FORCE_INLINE It PartitionPoint(It begin, size_t len, Pred&& pred) {
   if (len == 0) {

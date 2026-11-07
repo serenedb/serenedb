@@ -22,15 +22,14 @@
 
 #include <utility>
 
-#include "iresearch/search/detail/two_phase.hpp"
+#include "iresearch/search/probe/two_phase.hpp"
 #include "iresearch/search/top/phrase_bound.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {
 
 template<typename Slots>
-class PhrasePrunedClause : public irs::detail::TwoPhaseBase<Slots, true> {
-  using Base = irs::detail::TwoPhaseBase<Slots, true>;
+class PhrasePrunedClause : public probe::TwoPhase<Slots, true, true> {
+  using Base = probe::TwoPhase<Slots, true, true>;
   using Base::_slots;
 
  public:
@@ -40,36 +39,14 @@ class PhrasePrunedClause : public irs::detail::TwoPhaseBase<Slots, true> {
     : Base{segment, field, args, std::forward<Args>(slots)...},
       _bound{segment, field, args} {}
 
-  doc_id_t Probe(doc_id_t target) {
-    if (target <= _matched) {
-      return _matched;
-    }
-    if (target < _least) {
-      return _least;
-    }
-    if (const auto probe = _slots.Probe(target); probe != target) {
-      return _least = probe;
-    }
-    ++_reads;
-    if (!_slots.Match(target)) {
-      return _least = target + 1;
-    }
-    return _matched = target;
-  }
-
   doc_id_t AdvanceBlock(doc_id_t target) {
     return _bound.AdvanceBlock(_slots, target);
   }
 
   score_t MaxScore(doc_id_t last) { return _bound.MaxScore(_slots, last); }
 
-  uint32_t TakeReads() noexcept { return std::exchange(_reads, 0); }
-
  private:
   PhraseBound _bound;
-  doc_id_t _matched = doc_limits::invalid();
-  doc_id_t _least = doc_limits::invalid();
-  uint32_t _reads = 0;
 };
 
 }  // namespace irs::top

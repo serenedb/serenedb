@@ -422,8 +422,7 @@ EXPLAIN SELECT id FROM sac_vec WHERE a = 10 OR c = 50
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: sac_vec                    │
-│ Lookup: search                    │
+│ Table: sac_vec                    │
 │ Row Filter: (a = 10) OR (c = 50)  │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │

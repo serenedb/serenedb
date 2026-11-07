@@ -45,9 +45,8 @@ QUERY PLAN
 │ __internal_icu_date_trunc_bucket('hour', ts)    │
 │ ~1,501 rows                                     │
 ╰────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ─────────────┴────────────────────────╮
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Table: tz_fall                                  │
-│ Type: Sequential Scan                           │
 │ Projections: ts                                 │
 │ ~1,501 rows                                     │
 ╰─────────────────────────────────────────────────╯
@@ -133,9 +132,8 @@ QUERY PLAN
 │ Projections: h           │
 │ ~1,501 rows              │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: tz_fall           │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~1,501 rows              │
 ╰──────────────────────────╯

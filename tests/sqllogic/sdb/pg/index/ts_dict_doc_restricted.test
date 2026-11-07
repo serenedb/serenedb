@@ -90,14 +90,15 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$body,             │
 │ sdb_inverted_index_term$body IS NOT NULL  │
-│ ~4 rows                                   │
+│ ~3 rows                                   │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
-│ ~4 rows                                   │
+│ ~3 rows                                   │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: dr_idx                             │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Starts With ───────────╮               │
 │ │ Field: category(string) │               │
@@ -106,7 +107,7 @@ QUERY PLAN
 │ TsDict: body                              │
 │ Projections:                              │
 │ sdb_inverted_index_term$body              │
-│ ~8 rows                                   │
+│ ~7 rows                                   │
 ╰───────────────────────────────────────────╯
 
 # Document-level negation: NOT over a tokenized-field or cross-field @@
@@ -212,6 +213,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: drf_idx                                       │
+│ Lookup: search                                       │
 │ Index Filter:                                        │
 │ ╭─ Term ───────────────╮                             │
 │ │ Field: scope(string) │                             │

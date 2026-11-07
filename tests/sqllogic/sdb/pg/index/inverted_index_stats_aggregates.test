@@ -63,6 +63,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: sag_idx                           │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~2 rows                                  │
@@ -85,7 +86,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: sag_idx            │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: body         │
 │ ~150 rows                 │
 ╰───────────────────────────╯
@@ -106,6 +107,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: sag_idx           │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -224,6 +226,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: sag_idx            │
+│ Lookup: search            │
 │ Projections: n            │
 │ ~148 rows                 │
 ╰───────────────────────────╯
@@ -299,8 +302,7 @@ QUERY PLAN
 │ ~1 row                    │
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
-│ Index: sag_st             │
-│ Lookup: search            │
+│ Table: sag_st             │
 │ Projections: cat          │
 │ ~100 rows                 │
 ╰───────────────────────────╯
@@ -380,8 +382,7 @@ QUERY PLAN
 │ ~1 row                    │
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
-│ Index: sag_st             │
-│ Lookup: search            │
+│ Table: sag_st             │
 │ Projections: n            │
 │ ~98 rows                  │
 ╰───────────────────────────╯
@@ -528,8 +529,7 @@ QUERY PLAN
 │ ~3 rows          │
 ╰─────────┬────────╯
 ╭─ IRESEARCH_SCAN ─╮
-│ Index: sag_nul   │
-│ Lookup: search   │
+│ Table: sag_nul   │
 │ Index Filter:    │
 │ ╭─ Empty ─╮      │
 │ ╰─────────╯      │

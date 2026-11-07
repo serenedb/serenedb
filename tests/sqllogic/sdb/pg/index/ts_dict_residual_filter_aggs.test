@@ -50,7 +50,7 @@ QUERY PLAN
 ╰────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: abase_idx                │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Projections: brand              │
 │ Column Filter: svc = 'frontend' │
 │ ~1 row                          │
@@ -109,7 +109,7 @@ QUERY PLAN
 ╰────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: abase_idx                │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Projections: brand              │
 │ Column Filter: svc = 'frontend' │
 │ ~1 row                          │
@@ -155,6 +155,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: abase_idx               │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -192,6 +193,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: abase_idx               │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │

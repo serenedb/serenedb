@@ -56,6 +56,7 @@ QUERY PLAN
 ╰─────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -90,6 +91,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: tp_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Automaton ──────────╮                 │
 │ │ Field: cat(string)   │                 │
@@ -137,6 +139,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: tp_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Automaton ──────────╮                 │
 │ │ Field: cat(string)   │                 │
@@ -232,6 +235,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: tp_idx                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Automaton ─────────╮        │
 │ │ Field: body(string) │        │
@@ -282,6 +286,7 @@ QUERY PLAN
 ╰─────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ Bool ──────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -371,6 +376,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: tp_idx                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Starts With ───────╮        │
 │ │ Field: body(string) │        │
@@ -417,6 +423,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: tp_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Automaton ───────────────╮            │
 │ │ Field: cat(string)        │            │
@@ -462,6 +469,7 @@ QUERY PLAN
 ╰─────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ Or ───────────────╮                           │
 │ ╰──────────┬─────────╯                           │

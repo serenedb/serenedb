@@ -31,6 +31,7 @@ EXPLAIN SELECT id, val, label FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: docs_idx             │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │

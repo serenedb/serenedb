@@ -37,6 +37,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: fl_words_idx              │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Levenshtein ────╮             │
 │ │ Field: w(string) │             │
@@ -105,6 +106,7 @@ QUERY PLAN
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: fl_words_idx                               │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Levenshtein ──────────╮                        │
 │ │ Field: w(string)       │                        │
@@ -151,6 +153,7 @@ QUERY PLAN
 ╰───────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮
 │ Index: fl_words_idx                   │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Levenshtein ────╮                  │
 │ │ Field: w(string) │                  │

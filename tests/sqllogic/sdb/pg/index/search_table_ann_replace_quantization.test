@@ -58,8 +58,7 @@ EXPLAIN SELECT id FROM rq_ivf ORDER BY emb <-> rq_vec(1234.5) LIMIT 10;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
-│ Index: rq_ivf                      │
-│ Lookup: search                     │
+│ Table: rq_ivf                      │
 │ Score: l2_distance(emb, FLOAT[16]) │
 │ Top: 10                            │
 │ Projections: id                    │
@@ -136,8 +135,7 @@ EXPLAIN SELECT id FROM rq_hnsw ORDER BY emb <-> rq_vec(1234.5) LIMIT 10;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
-│ Index: rq_hnsw                     │
-│ Lookup: search                     │
+│ Table: rq_hnsw                     │
 │ Score: l2_distance(emb, FLOAT[16]) │
 │ Top: 10                            │
 │ Projections: id                    │

@@ -72,6 +72,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -115,6 +116,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -161,6 +163,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -204,6 +207,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -247,6 +251,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -286,6 +291,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -329,6 +335,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -372,6 +379,7 @@ QUERY PLAN
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: rtab_idx                     │
+│ Lookup: search                      │
 │ TsDict: tier                        │
 │ Projections:                        │
 │ sdb_inverted_index_term$tier,       │
@@ -415,6 +423,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -462,8 +471,8 @@ QUERY PLAN
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: rtab_idx                            │
-│ Lookup: table                              │
-│ Projections: svc (i), sev (l)              │
+│ Lookup: search                             │
+│ Projections: svc, sev                      │
 │ Column Filter:                             │
 │ optional: (svc IN ('frontend', 'backend')) │
 │ ~8 rows                                    │
@@ -735,6 +744,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -778,6 +788,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -825,6 +836,7 @@ QUERY PLAN
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: rtab_idx                     │
+│ Lookup: search                      │
 │ TsDict: tier                        │
 │ Projections:                        │
 │ sdb_inverted_index_term$tier,       │

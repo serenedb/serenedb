@@ -622,15 +622,19 @@ void Table::CheckConflicts(Tick snapshot,
   }
 }
 
-void Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
+bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
   absl::MutexLock lock{&_state_mutex};
   Logged(commit.lsn);
   auto next = std::make_shared<TableState>(*State());
   auto& units = next->units;
+  bool emptied = false;
   const auto rewrite = [&](size_t i, auto&& change) {
     auto unit = std::make_shared<TableUnit>(*units[i]);
     change(*unit);
     CollectStamps(*unit, oldest);
+    const auto* deleted = LatestDeletes(*unit);
+    emptied =
+      emptied || (!unit->hot && deleted && deleted->Count() >= unit->docs);
     units[i] = std::move(unit);
   };
   if (commit.truncate) {
@@ -691,6 +695,7 @@ void Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
   }
   Sweep(units, oldest);
   Publish(std::move(next));
+  return emptied;
 }
 
 void Table::Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,

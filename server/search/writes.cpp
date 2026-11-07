@@ -41,6 +41,7 @@
 #include "connector/full_scanner.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/log_entry.h"
+#include "search/task.h"
 
 namespace sdb::search {
 namespace {
@@ -1267,14 +1268,16 @@ void Writes::Apply(Tick tick, Tick oldest, Lsn lsn) noexcept {
             w.hot->Keys().Add(row.field, row.key, row.doc);
           }
         }
-        table.Apply(tick, oldest,
-                    TableCommit{.hot = appended ? w.hot : nullptr,
-                                .hot_id = w.hot_id,
-                                .hot_end = w.hot_end,
-                                .segments = std::move(w.own_segments),
-                                .removals = std::move(w.changes.removals),
-                                .truncate = w.changes.truncate,
-                                .lsn = lsn});
+        if (table.Apply(tick, oldest,
+                        TableCommit{.hot = appended ? w.hot : nullptr,
+                                    .hot_id = w.hot_id,
+                                    .hot_end = w.hot_end,
+                                    .segments = std::move(w.own_segments),
+                                    .removals = std::move(w.changes.removals),
+                                    .truncate = w.changes.truncate,
+                                    .lsn = lsn})) {
+          QueueReleaseCleanup(w.store, tick);
+        }
         if (w.hot) {
           w.store->ReleaseHot(w.hot);
           w.hot.reset();

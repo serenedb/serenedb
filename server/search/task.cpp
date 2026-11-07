@@ -21,14 +21,17 @@
 
 #include "task.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -239,6 +242,22 @@ yaclib::Future<> Compact(std::shared_ptr<Target> target) {
   co_return {};
 }
 
+struct Released {
+  Tick tick = 0;
+  std::weak_ptr<Store> store;
+};
+
+struct ReleasedQueue {
+  absl::Mutex mutex;
+  std::deque<Released> pending ABSL_GUARDED_BY(mutex);
+  std::atomic<Tick> next{kAllApplied};
+};
+
+ReleasedQueue& GetReleased() {
+  static ReleasedQueue queue;
+  return queue;
+}
+
 }  // namespace
 
 void AddMaintenanceTarget(const std::shared_ptr<Store>& store) {
@@ -307,6 +326,47 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
               duckdb::ErrorData{ex}.RawMessage());
   }
   co_return {};
+}
+
+void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released) {
+  auto& queue = GetReleased();
+  absl::MutexLock lock{&queue.mutex};
+  SDB_ASSERT(queue.pending.empty() || queue.pending.back().tick <= released);
+  queue.pending.push_back({.tick = released, .store = store});
+  queue.next.store(queue.pending.front().tick, std::memory_order_release);
+}
+
+void CleanupReleased(Tick oldest) {
+  auto& queue = GetReleased();
+  if (oldest < queue.next.load(std::memory_order_acquire)) {
+    return;
+  }
+  std::vector<std::shared_ptr<Store>> due;
+  {
+    absl::MutexLock lock{&queue.mutex};
+    while (!queue.pending.empty() && queue.pending.front().tick <= oldest) {
+      if (auto store = queue.pending.front().store.lock();
+          store && !absl::c_linear_search(due, store)) {
+        due.push_back(std::move(store));
+      }
+      queue.pending.pop_front();
+    }
+    queue.next.store(
+      queue.pending.empty() ? kAllApplied : queue.pending.front().tick,
+      std::memory_order_release);
+  }
+  if (!BackgroundScheduler::gInstance) {
+    return;
+  }
+  for (auto& store : due) {
+    BackgroundScheduler::instance()
+      .Run([weak = std::weak_ptr<Store>{store}] {
+        if (const auto live = weak.lock()) {
+          DoCleanup(*live);
+        }
+      })
+      .Detach();
+  }
 }
 
 }  // namespace sdb::search

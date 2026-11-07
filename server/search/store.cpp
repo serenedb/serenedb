@@ -66,6 +66,7 @@
 #include "scheduler/background_scheduler.h"
 #include "search/log_entry.h"
 #include "search/scorer_options.h"
+#include "search/task.h"
 #include "storage_engine/search_engine.h"
 #include "utils/file_utils.h"
 
@@ -598,6 +599,7 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                       _table->Replace(visible, tick, oldest, lsn, ids,
                                       std::move(segments),
                                       std::move(merged.maps));
+                      QueueReleaseCleanup(shared_from_this(), tick);
                     });
     } catch (const std::exception& e) {
       co_return absl::InternalError(
@@ -786,6 +788,7 @@ Tick Store::ReplaceSegments(
                 [&](Tick tick, Tick oldest, Lsn lsn) {
                   _table->Replace(tick, tick, oldest, lsn, ids,
                                   std::move(segments), std::move(maps));
+                  QueueReleaseCleanup(shared_from_this(), tick);
                   published = tick;
                 });
   return published;

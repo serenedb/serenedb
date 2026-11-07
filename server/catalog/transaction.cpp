@@ -42,6 +42,7 @@
 #include "catalog/record.h"
 #include "pg/connection_context.h"
 #include "scheduler/background_scheduler.h"
+#include "search/task.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 
@@ -175,6 +176,7 @@ duckdb::transaction_t Transactions::Begin() {
 }
 
 duckdb::transaction_t Transactions::Advance(duckdb::transaction_t snapshot) {
+  duckdb::transaction_t oldest = 0;
   {
     absl::MutexLock lock{&_snapshots_mutex};
     const auto latest = LastCommit();
@@ -184,17 +186,22 @@ duckdb::transaction_t Transactions::Advance(duckdb::transaction_t snapshot) {
     ++_snapshots[latest];
     Release(snapshot);
     snapshot = latest;
+    oldest = Oldest();
   }
   Collect();
+  search::CleanupReleased(oldest);
   return snapshot;
 }
 
 void Transactions::End(duckdb::transaction_t snapshot) {
+  duckdb::transaction_t oldest = 0;
   {
     absl::MutexLock lock{&_snapshots_mutex};
     Release(snapshot);
+    oldest = Oldest();
   }
   Collect();
+  search::CleanupReleased(oldest);
 }
 
 duckdb::transaction_t Transactions::Oldest() const {

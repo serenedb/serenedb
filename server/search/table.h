@@ -239,7 +239,7 @@ class Table final {
     return _last_write.load(std::memory_order_acquire);
   }
 
-  void Apply(Tick tick, Tick oldest, TableCommit&& commit);
+  [[nodiscard]] bool Apply(Tick tick, Tick oldest, TableCommit&& commit);
   void Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
                std::span<const uint64_t> replaced,
                std::vector<OwnSegment>&& segments,

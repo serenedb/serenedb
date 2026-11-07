@@ -26,9 +26,9 @@ CREATE VIEW clickclack_v_cast AS SELECT CAST(s AS clickclack_flavor) AS f FROM c
 statement error
 DROP TYPE clickclack_flavor;
 ----
-db error: ERROR: Cannot drop entry "clickclack_flavor" because there are entries that depend on it.
-view "clickclack_v_cast" depends on type "clickclack_flavor".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type clickclack_flavor because other objects depend on it
+DETAIL: view clickclack_v_cast depends on type clickclack_flavor
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -57,9 +57,9 @@ CREATE FUNCTION babsky_fn_cast(x TEXT) AS CAST(x AS babsky_kind);
 statement error
 DROP TYPE babsky_kind;
 ----
-db error: ERROR: Cannot drop entry "babsky_kind" because there are entries that depend on it.
-macro function "babsky_fn_cast" depends on type "babsky_kind".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type babsky_kind because other objects depend on it
+DETAIL: function babsky_fn_cast(text) depends on type babsky_kind
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -84,9 +84,9 @@ CREATE FUNCTION kostya_fn_param(x kostya_param) AS x;
 statement error
 DROP TYPE kostya_param;
 ----
-db error: ERROR: Cannot drop entry "kostya_param" because there are entries that depend on it.
-macro function "kostya_fn_param" depends on type "kostya_param".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type kostya_param because other objects depend on it
+DETAIL: function kostya_fn_param(kostya_param) depends on type kostya_param
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -107,9 +107,9 @@ CREATE FUNCTION deadinside_fn_ret() RETURNS deadinside_ret AS 'r'::deadinside_re
 statement error
 DROP TYPE deadinside_ret;
 ----
-db error: ERROR: Cannot drop entry "deadinside_ret" because there are entries that depend on it.
-macro function "deadinside_fn_ret" depends on type "deadinside_ret".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type deadinside_ret because other objects depend on it
+DETAIL: function deadinside_fn_ret() depends on type deadinside_ret
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -138,9 +138,9 @@ CREATE TABLE iceberg_t_check (s TEXT, CHECK (CAST(s AS iceberg_check) IS NOT NUL
 statement error
 DROP TYPE iceberg_check;
 ----
-db error: ERROR: Cannot drop entry "iceberg_check" because there are entries that depend on it.
-table "iceberg_t_check" depends on type "iceberg_check".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type iceberg_check because other objects depend on it
+DETAIL: constraint iceberg_t_check_s_check on table iceberg_t_check depends on type iceberg_check
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -170,9 +170,9 @@ CREATE TABLE mop_t_def (x TEXT DEFAULT CAST('d' AS mop_def)::TEXT);
 statement error
 DROP TYPE mop_def;
 ----
-db error: ERROR: Cannot drop entry "mop_def" because there are entries that depend on it.
-table "mop_t_def" depends on type "mop_def".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type mop_def because other objects depend on it
+DETAIL: default value for column x of table mop_t_def depends on type mop_def
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -200,9 +200,9 @@ CREATE TABLE saga_t_arr (xs saga_box[]);
 statement error
 DROP TYPE saga_box;
 ----
-db error: ERROR: Cannot drop entry "saga_box" because there are entries that depend on it.
-table "saga_t_arr" depends on type "saga_box".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type saga_box because other objects depend on it
+DETAIL: column xs of table saga_t_arr depends on type saga_box
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -226,9 +226,9 @@ CREATE TABLE saga_t_struct (s STRUCT(a INT, b saga_box));
 statement error
 DROP TYPE saga_box;
 ----
-db error: ERROR: Cannot drop entry "saga_box" because there are entries that depend on it.
-table "saga_t_struct" depends on type "saga_box".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type saga_box because other objects depend on it
+DETAIL: column s of table saga_t_struct depends on type saga_box
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -262,9 +262,9 @@ CREATE FUNCTION manifest.useflav(s TEXT) AS CAST(s AS jira_ticket.flav);
 statement error
 DROP TYPE jira_ticket.flav;
 ----
-db error: ERROR: Cannot drop entry "flav" because there are entries that depend on it.
-macro function "useflav" depends on type "flav".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type jira_ticket.flav because other objects depend on it
+DETAIL: function manifest.useflav(text) depends on type jira_ticket.flav
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

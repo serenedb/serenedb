@@ -4,9 +4,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY wd_kw AS keyword() WITH (frequency)
 
 statement ok
@@ -15,11 +12,10 @@ CREATE TEXT SEARCH DICTIONARY wd_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE wdk(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, tag VARCHAR)
+CREATE TABLE wdk(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, tag VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX wdk_idx ON wdk USING inverted(cat wd_kw, tag wd_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO wdk VALUES
@@ -38,13 +34,7 @@ INSERT INTO wdk VALUES
   (13, 'quince', 'x')
 
 statement ok
-VACUUM (REFRESH_TABLE) wdk;
-
-statement ok
 DELETE FROM wdk WHERE id IN (2, 5, 6, 8, 11, 12, 13)
-
-statement ok
-VACUUM (REFRESH_TABLE) wdk;
 
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
@@ -75,6 +65,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Term ─────────────╮                   │
 │ │ Field: cat(string) │                   │
@@ -136,6 +127,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Or ───────────────────────────╮       │
 │ ╰────────────────┬───────────────╯       │
@@ -174,6 +166,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
@@ -217,6 +210,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Range ────────────╮                   │
 │ │ Field: cat(string) │                   │
@@ -272,6 +266,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~11 rows                                 │
@@ -279,9 +274,6 @@ QUERY PLAN
 
 statement ok
 DELETE FROM wdk WHERE id IN (3, 4)
-
-statement ok
-VACUUM (REFRESH_TABLE) wdk;
 
 query I
 SELECT count(*) AS n
@@ -336,6 +328,7 @@ QUERY PLAN
 ╰────────────────────────┬───────────────────────╯
 ╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
 │ Index: wdk_idx                                 │
+│ Lookup: search                                 │
 │ Index Filter:                                  │
 │ ╭─ Bool ─────────────╮                         │
 │ ╰──────────┬─────────╯                         │
@@ -376,6 +369,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: wdk_idx                                                                      │
+│ Lookup: search                                                                      │
 │ TsDict: cat                                                                         │
 │ Projections: sdb_inverted_index_term$cat                                            │
 │ ~11 rows                                                                            │
@@ -400,6 +394,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Range ──────────────╮                 │
 │ │ Field: cat(string)   │                 │
@@ -429,11 +424,10 @@ c	t
 
 
 statement ok
-CREATE TABLE wdt(id INTEGER PRIMARY KEY, body VARCHAR)
+CREATE TABLE wdt(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX wdt_idx ON wdt USING inverted(body wd_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO wdt VALUES
@@ -443,13 +437,7 @@ INSERT INTO wdt VALUES
   (4, 'axle date')
 
 statement ok
-VACUUM (REFRESH_TABLE) wdt;
-
-statement ok
 DELETE FROM wdt WHERE id IN (3, 4)
-
-statement ok
-VACUUM (REFRESH_TABLE) wdt;
 
 query TII
 SELECT unnest(ts_dict_agg(body)) AS term,
@@ -486,6 +474,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: wdt_idx                 │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Levenshtein ───────╮        │
 │ │ Field: body(string) │        │
@@ -589,6 +578,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: wdk_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ─────────────╮                    │
 │ │ Field: cat(string) │                    │

@@ -44,12 +44,10 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/transaction.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/search_sink_rows.h"
 #include "connector/search_sink_writer.hpp"
-#include "pg/connection_context.h"
-#include "query/transaction.h"
 #include "search/search_table_changes.h"
 #include "search/store.h"
 #include "server/utils/app_server.h"
@@ -59,7 +57,7 @@ namespace {
 
 struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
   SearchSinkTable table;
-  query::Transaction* sdb_txn = nullptr;
+  catalog::SessionTransaction* sdb_txn = nullptr;
 
   absl::Mutex mutex;
   duckdb::idx_t insert_count = 0;
@@ -85,9 +83,9 @@ struct SearchInsertLocalState final : duckdb::LocalSinkState {
 
 SereneDBSearchInsert::SereneDBSearchInsert(
   duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality, bool return_chunk,
-  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints)
+  duckdb::idx_t estimated_cardinality, bool return_chunk)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(&table),
@@ -106,7 +104,6 @@ SereneDBSearchInsert::SereneDBSearchInsert(
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchInsertGlobalState>();
-  auto& conn_ctx = GetSereneDBContext(context);
 
   auto table = _table;
   if (_ctas_info) {
@@ -120,21 +117,23 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   target.store = table->Storage();
   target.catalog = &table->catalog;
   target.table_id = table->oid;
+  auto& transaction = catalog::SessionOf(context, table->catalog);
   // Before any sink reads the shard's index config, so a rebuild can tell
   // that this transaction predates a config it publishes.
-  conn_ctx.SearchTxn().RegisterWriter(target.store, *table);
+  transaction.SearchTxn().RegisterWriter(target.store, *table);
   table->RequireCurrentSchema();
 
   const auto& columns = table->GetColumns();
-  target.column_ids.reserve(columns.LogicalColumnCount());
-  for (const auto& column : columns.Logical()) {
+  target.column_ids.reserve(columns.PhysicalColumnCount());
+  target.types.reserve(columns.PhysicalColumnCount());
+  for (const auto& column : columns.Physical()) {
     target.column_ids.emplace_back(TableColumnId(column));
+    target.types.push_back(column.Type());
   }
-  target.types = columns.GetColumnTypes();
   target.buffer_bytes =
     duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 
-  state->sdb_txn = &conn_ctx;
+  state->sdb_txn = &transaction;
   if (_return_chunk) {
     state->returned.emplace(context, GetTypes());
   }
@@ -166,9 +165,9 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  for (const auto& constraint : _constraints) {
-    duckdb::DataTable::VerifyRowConstraint(context.client, *_table, *constraint,
-                                           chunk);
+  if (_table) {
+    duckdb::DataTable::VerifyRowConstraints(context.client, *_table,
+                                            _constraints, chunk);
   }
   lstate.rows.Append(context.client, gstate.table, chunk);
 
@@ -202,12 +201,11 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
-  auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  gstate.sdb_txn->SearchTxn().FlushBufferTransaction(gstate.table.table_id);
-
   if (_ctas_info) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   }
+  auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
+  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store);
   return duckdb::SinkFinalizeType::READY;
 }
 

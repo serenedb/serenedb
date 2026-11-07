@@ -10,7 +10,7 @@ CREATE DATABASE st_rcrash;
 
 statement ok
 CREATE TABLE st_rcrash.public.docs (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok

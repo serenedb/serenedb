@@ -44,11 +44,17 @@ struct WriteChunk {
   duckdb::idx_t count;
 };
 
+struct StagedColumn {
+  field_id id;
+  duckdb::LogicalType type;
+  std::vector<WriteChunk> chunks;
+};
+
 class ColumnWriter final {
  public:
   ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
                bool skip_validity, uint32_t row_group_size,
-               duckdb::CompressionType forced, bool hyperloglog);
+               duckdb::CompressionType forced, bool hyperloglog, bool deferred);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -66,12 +72,15 @@ class ColumnWriter final {
     ++back.count;
     duckdb::FlatVector::SetSize(back.data, back.count);
     ++_staged_rows;
-    if (_staged_rows == _row_group_size) {
+    if (!_deferred && _staged_rows == _row_group_size) {
       SealRowGroup();
     }
   }
 
   void PadNullsTo(uint64_t target_row);
+
+  std::vector<WriteChunk> Snapshot(uint64_t rows) const;
+  size_t StagedBytes() const noexcept;
 
   void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
 
@@ -143,6 +152,7 @@ class ColumnWriter final {
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
   uint64_t _row_start = 0;
+  bool _deferred = false;
   bool _hll_auto = false;
   duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;

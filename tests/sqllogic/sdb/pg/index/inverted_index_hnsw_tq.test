@@ -33,9 +33,6 @@ INSERT INTO hnsw_tq SELECT i,
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_tq;
-
 query
 SELECT pk FROM hnsw_tq_idx
   ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -75,9 +72,6 @@ INSERT INTO hnsw_tq4 SELECT i,
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_tq4;
-
 query
 SELECT pk FROM hnsw_tq4_idx
   ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
@@ -108,9 +102,6 @@ INSERT INTO hnsw_tq_cos VALUES
   (3, [0, 0, 1, 0]::FLOAT[4]),
   (4, [0, 0, 0, 1]::FLOAT[4]);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_tq_cos;
-
 query
 SELECT count(*) FROM hnsw_tq_cos_idx;
 ----
@@ -122,9 +113,6 @@ count
 
 statement ok
 DELETE FROM hnsw_tq WHERE pk = 43;
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_tq;
 
 query
 SELECT pk FROM hnsw_tq_idx
@@ -153,9 +141,6 @@ INSERT INTO hnsw_tq15 SELECT i,
                  lambda x: CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_tq15;
 
 statement ok
 SET sdb_ann_rescore_width = 100
@@ -194,9 +179,6 @@ INSERT INTO hnsw_tq15_ip SELECT i,
                  lambda x: CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_tq15_ip;
 
 statement ok
 SET sdb_ann_rescore_width = 100

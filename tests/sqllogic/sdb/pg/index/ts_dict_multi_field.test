@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # Multiple ts_dict_agg aggregations over different fields in one query: each
 # field is enumerated independently and returns its own list (lists may differ
 # in length). Internally each field's terms occupy their own scan rows with the
@@ -30,10 +27,6 @@ statement ok
 INSERT INTO mf_docs VALUES
   (1, 'red',       'apple banana cherry', 'hot'),
   (2, 'red green', 'date',                'cold')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) mf_docs;
 
 
 # Two fields, different list lengths.
@@ -127,6 +120,7 @@ QUERY PLAN
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: mf_idx                              │
+│ Lookup: search                             │
 │ TsDict: title, body                        │
 │ Projections:                               │
 │ sdb_inverted_index_term$title,             │
@@ -173,6 +167,7 @@ QUERY PLAN
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: mf_idx                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ And ────────────────╮                          │
 │ ╰───────────┬──────────╯                          │

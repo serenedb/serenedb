@@ -74,9 +74,6 @@ statement ok
 FORCE CHECKPOINT sfi_copy;
 
 statement ok
-VACUUM (REFRESH_ALL);
-
-statement ok
 ANALYZE sfi_copy.public.sfi_big;
 
 system ok

@@ -9,7 +9,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE v(id BIGINT PRIMARY KEY, vec FLOAT[3])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX v_idx ON v USING inverted (vec ivf(metric='l2'));
@@ -22,9 +22,6 @@ statement ok
 INSERT INTO v VALUES
   (1, array_value(1::FLOAT, 2::FLOAT, 3::FLOAT)),
   (2, array_value(10::FLOAT, 10::FLOAT, 10::FLOAT));
-
-statement ok
-VACUUM (REFRESH_TABLE) v;
 
 # Crash AFTER the WAL commit: (3,[0,0,0]) is fsynced into the WAL but never
 # refresh-published; recovery must rebuild it into the IVF.

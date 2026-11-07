@@ -3,7 +3,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE bpc (id INT, v INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -15,15 +15,7 @@ INSERT INTO bpc SELECT i, i FROM range(0, 10) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bpc;
-
-
-statement ok
 INSERT INTO bpc SELECT i, i FROM range(10, 20) r(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bpc;
 
 
 statement ok
@@ -31,15 +23,7 @@ INSERT INTO bpc SELECT i, i FROM range(20, 30) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bpc;
-
-
-statement ok
 INSERT INTO bpc SELECT i, i FROM range(30, 40) r(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bpc;
 
 
 statement ok
@@ -83,11 +67,6 @@ SET sdb_faults = 'pause_search_backfill_floor_retry:release';
 
 
 wait
-
-
-connection default
-statement ok
-VACUUM (REFRESH_TABLE) bpc;
 
 
 connection default

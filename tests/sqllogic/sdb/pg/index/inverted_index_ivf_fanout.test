@@ -64,9 +64,6 @@ statement ok
 INSERT INTO fan SELECT i, CASE WHEN i >= 9000 THEN 1 ELSE 0 END,
   [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) fan;
-
 # ---- narrow descent: fanout 1 at nprobe 1 is a pure greedy walk, which this
 # exercises end to end. Only the two extremes are asserted exact: k-means on a
 # line yields contiguous clusters, so the nearest centroid at every level is the

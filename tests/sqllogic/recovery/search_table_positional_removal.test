@@ -4,25 +4,16 @@ statement ok
 RESET sdb_faults;
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE rt (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE rt (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO rt SELECT i, 'a' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rt;
-
-statement ok
 INSERT INTO rt SELECT i, 'b' || i FROM generate_series(10000, 19999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rt;
-
-statement ok
 INSERT INTO rt SELECT i, 'c' || i FROM generate_series(20000, 29999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) rt;
 
 statement ok
 SET sdb_faults = 'crash_after_commit';
@@ -36,10 +27,6 @@ SELECT count(*) AS n, sum(id) AS s FROM rt;
 ----
 n	s
 29690	445337635
-
-connection after_spread
-statement ok
-VACUUM (REFRESH_TABLE) rt;
 
 connection after_spread
 query
@@ -62,10 +49,6 @@ SELECT count(*) AS n, sum(id) AS s, count(*) FILTER (WHERE v = 'u') AS u FROM rt
 ----
 n	s	u
 29690	445337635	2284
-
-connection after_update
-statement ok
-VACUUM (REFRESH_TABLE) rt;
 
 connection after_update
 query
@@ -100,10 +83,6 @@ SELECT count(*) AS n, sum(id) AS s FROM rt;
 ----
 n	s
 28710	444153265
-
-connection after_mixed
-statement ok
-VACUUM (REFRESH_TABLE) rt;
 
 connection after_mixed
 statement ok
@@ -168,10 +147,6 @@ SELECT count(*) AS n, sum(id) AS s FROM rt;
 n	s
 28690	444113075
 
-connection after_many
-statement ok
-VACUUM (REFRESH_TABLE) rt;
-
 connection racer
 statement ok
 BEGIN;
@@ -207,10 +182,6 @@ n	s
 28366	439104023
 
 connection after_race
-statement ok
-VACUUM (REFRESH_TABLE) rt;
-
-connection after_race
 query
 SELECT count(*) AS n FROM rt WHERE id % 89 = 7;
 ----
@@ -220,10 +191,6 @@ n
 connection after_race
 statement ok
 INSERT INTO rt SELECT i, 'e' || i FROM generate_series(40000, 40999) g(i);
-
-connection after_race
-statement ok
-VACUUM (REFRESH_TABLE) rt;
 
 connection after_race
 statement ok
@@ -243,17 +210,9 @@ DELETE FROM rt WHERE id % 83 = 1 AND id < 40000;
 
 connection after_race
 statement ok
-VACUUM (REFRESH_TABLE) rt;
-
-connection after_race
-statement ok
 SET sdb_faults = 'pause_search_compact_before_publish:release';
 
 wait
-
-connection after_race
-statement ok
-VACUUM (REFRESH_TABLE) rt;
 
 connection after_race
 query
@@ -291,15 +250,11 @@ DROP TABLE rt;
 connection after_wide_update
 statement ok
 CREATE TABLE rb (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 connection after_wide_update
 statement ok
 INSERT INTO rb SELECT i, 't' || (i % 5) FROM generate_series(1, 5000) g(i);
-
-connection after_wide_update
-statement ok
-VACUUM (REFRESH_TABLE) rb;
 
 connection after_wide_update
 statement ok
@@ -326,17 +281,9 @@ UPDATE rb SET tag = 'moved' WHERE id % 5 = 2;
 
 connection after_wide_update
 statement ok
-VACUUM (REFRESH_TABLE) rb;
-
-connection after_wide_update
-statement ok
 SET sdb_faults = '-pause_search_backfill_before_swap';
 
 wait
-
-connection after_wide_update
-statement ok
-VACUUM (REFRESH_TABLE) rb;
 
 connection after_wide_update
 query

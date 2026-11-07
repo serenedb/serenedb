@@ -30,10 +30,6 @@ INSERT INTO fpdocs VALUES
   (4, 'dog pad pad pad', 44, 1)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) fpdocs
-
-
 # Unfiltered top-k sanity.
 query
 SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(fpdocs_idx.tableoid) DESC LIMIT 2;
@@ -123,10 +119,6 @@ INSERT INTO fpdocs VALUES
   (12, 'fox fox pad pad', NULL, 0)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) fpdocs
-
-
 query
 SELECT id FROM fpdocs_idx WHERE body @@ ts_phrase('fox') AND val IS NULL ORDER BY id;
 ----
@@ -203,10 +195,6 @@ INSERT INTO fpvecs VALUES
   (2, [1, 1, 1]::FLOAT[3], 22, 0),
   (3, [2, 2, 2]::FLOAT[3], 33, 1),
   (4, [3, 3, 3]::FLOAT[3], 44, 1)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) fpvecs
 
 
 query

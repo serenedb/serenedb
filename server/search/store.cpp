@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
@@ -33,19 +34,20 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
-#include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
-#include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -54,14 +56,18 @@
 #include <yaclib/coro/future.hpp>
 
 #include "catalog/catalog.h"
+#include "catalog/record.h"
+#include "catalog/transaction.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
+#include "connector/constraint_keys.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
-#include "search/replay.h"
+#include "scheduler/background_scheduler.h"
+#include "search/log_entry.h"
 #include "search/scorer_options.h"
 #include "storage_engine/search_engine.h"
+#include "utils/file_utils.h"
 
 namespace sdb::search {
 namespace {
@@ -81,7 +87,7 @@ catalog::CompressionByColumn DeclaredCompression(
 irs::containers::FlatHashSet<irs::field_id> TableColumns(
   const duckdb::ColumnList& columns) {
   irs::containers::FlatHashSet<irs::field_id> ids;
-  for (const auto& column : columns.Logical()) {
+  for (const auto& column : columns.Physical()) {
     ids.insert(connector::TableColumnId(column));
   }
   return ids;
@@ -89,10 +95,14 @@ irs::containers::FlatHashSet<irs::field_id> TableColumns(
 
 template<typename Config>
 std::vector<Config> WithConfig(std::vector<Config> configs, Config config) {
-  const auto it = absl::c_upper_bound(
+  const auto it = absl::c_lower_bound(
     configs, config.oid,
-    [](duckdb::idx_t oid, const Config& other) { return oid < other.oid; });
-  configs.insert(it, std::move(config));
+    [](const Config& other, duckdb::idx_t oid) { return other.oid < oid; });
+  if (it != configs.end() && it->oid == config.oid) {
+    *it = std::move(config);
+  } else {
+    configs.insert(it, std::move(config));
+  }
   return configs;
 }
 
@@ -103,14 +113,6 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
 }
 
 }  // namespace
-
-struct Store::ReplaySession {
-  ReplaySession(duckdb::AttachedDatabase& db, Store& store)
-    : replay{db, store} {}
-
-  Replay replay;
-  std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
-};
 
 Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
              bool in_memory, bool read_only, duckdb::idx_t db_id,
@@ -164,7 +166,7 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
 }
 
 Store::~Store() {
-  _replay.reset();
+  _table.reset();
   _writer.reset();
   _dir.reset();
   if (_dropped.load(std::memory_order_acquire)) {
@@ -197,11 +199,11 @@ irs::IndexReaderOptions Store::ReaderOptions() const {
 }
 
 void Store::Open() {
-  _delete_log_open = _is_new;
   auto opened = OpenStorageDirectory(*_directory, _id, _is_new, _in_memory,
                                      irs::ResourceManagementOptions{});
   _dir = std::move(opened.directory);
   _absent = opened.absent;
+  _on_disk = opened.on_disk;
   if (_read_only) {
     return;
   }
@@ -240,35 +242,207 @@ void Store::Open() {
                            std::move(writer_options), std::move(manifest));
   _writer = std::move(writer);
   SetFileManifest(std::move(stamp.manifest));
-
   if (IsSearchTable()) {
-    auto& db_manager =
-      duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-    const auto claim = [&](irs::field_id id) {
-      if (id <= connector::kMaxRealColumnIdValue) {
-        db_manager.ClaimOid(id);
-      }
-    };
-    for (const auto& segment : _writer->GetSnapshot()) {
-      for (const auto id : segment.field_ids()) {
-        claim(id);
-      }
-      if (const auto* columns = segment.GetColReader()) {
-        for (const auto& column : columns->Columns()) {
-          claim(column->Id());
-        }
-      }
-    }
+    _table = std::make_unique<Table>(*_dir, ReaderOptions());
   }
   PublishSnapshot();
 }
 
-void Store::OpenReader() {
-  auto [reader, stamp] = IndexDurability::OpenReader(*_dir, ReaderOptions());
-  SetFileManifest(stamp.manifest);
-  std::atomic_store(&_snapshot,
-                    std::make_shared<StoreSnapshot>(std::move(reader),
-                                                    std::move(stamp.manifest)));
+void Store::EnsureOpen() {
+  if (!Opened()) {
+    Open();
+  }
+}
+
+void Store::ClaimColumnOids(const irs::DirectoryReader& reader) const {
+  auto& db_manager =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
+  const auto claim = [&](irs::field_id id) {
+    if (id <= connector::kMaxRealColumnIdValue) {
+      db_manager.ClaimOid(id);
+    }
+  };
+  for (const auto& segment : reader) {
+    for (const auto id : segment.field_ids()) {
+      claim(id);
+    }
+    if (const auto* columns = segment.GetColReader()) {
+      for (const auto& column : columns->Columns()) {
+        claim(column->Id());
+      }
+    }
+  }
+}
+
+void Store::SyncSegments() const {
+  if (_on_disk) {
+    utils::file_utils::SyncDirectory(Path());
+  }
+}
+
+StoreSnapshotPtr Store::Snapshot() const {
+  if (_table) {
+    return std::make_shared<StoreSnapshot>(
+      _table->View(catalog::Transactions::Get().LastCommit(), {}), nullptr);
+  }
+  return std::atomic_load(&_snapshot);
+}
+
+irs::DirectoryReader Store::BuildSnapshot() {
+  SDB_ASSERT(_table);
+  CoolAll();
+  return _table->ColdView(kAllApplied);
+}
+
+void Store::CoolAll() {
+  if (_table) {
+    CoolRetired(kNoLsn);
+  }
+}
+
+std::vector<OwnSegment> Store::OpenFlushed(
+  std::span<const irs::IndexWriter::FlushedSegment> flushed) const {
+  std::vector<OwnSegment> segments;
+  segments.reserve(flushed.size());
+  for (const auto& entry : flushed) {
+    OwnSegment segment;
+    segment.segment.filename = entry.filename;
+    segment.segment.meta = entry.meta;
+    segment.reader = irs::SegmentReaderImpl::Open(*_dir, segment.segment.meta,
+                                                  ReaderOptions());
+    segments.push_back(std::move(segment));
+  }
+  return segments;
+}
+
+void Store::ReleaseHot(const std::shared_ptr<HotContext>& hot) {
+  bool full = false;
+  {
+    absl::MutexLock lock{&hot->Mutex()};
+    full = _segment_memory_max != 0 && hot->Memory() >= _segment_memory_max;
+  }
+  _table->ReleaseHot(hot, full);
+  if (full) {
+    ScheduleCooling();
+  }
+}
+
+void Store::ScheduleCooling() {
+  if (!BackgroundScheduler::gInstance ||
+      _cooling_scheduled.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  BackgroundScheduler::instance()
+    .Run([weak = weak_from_this()] {
+      const auto store = weak.lock();
+      if (!store) {
+        return;
+      }
+      store->_cooling_scheduled.store(false, std::memory_order_release);
+      store->Cool(false);
+    })
+    .Detach();
+}
+
+void Store::CommitStorage(std::string entry,
+                          absl::FunctionRef<void(Tick, Tick, Lsn)> apply) {
+  std::vector<uint8_t> record;
+  if (!_in_memory) {
+    duckdb::vector<std::string> entries;
+    entries.push_back(std::move(entry));
+    record = catalog::SearchRecord(_db_id, _id, entries);
+  }
+  catalog::Transactions::Get().CommitStorage(record, apply);
+}
+
+void Store::CoolOne(const std::shared_ptr<HotContext>& hot) {
+  irs::doc_id_t docs = 0;
+  for (const auto& unit : _table->State()->units) {
+    if (unit->hot == hot) {
+      docs = unit->docs;
+      break;
+    }
+  }
+  hot->Reader(*ReaderOptions().db, docs);
+  OwnSegment written;
+  uint64_t id = 0;
+  {
+    absl::MutexLock lock{&hot->Mutex()};
+    id = hot->Id();
+    const auto flushed = hot->Trx().FlushAndFsync();
+    SDB_ASSERT(flushed.size() <= 1);
+    if (!flushed.empty()) {
+      const auto& entry = flushed.front();
+      written.segment.filename = entry.filename;
+      written.segment.meta = entry.meta;
+      if (!entry.docs_mask.Empty()) {
+        written.segment.meta.docs_mask =
+          std::make_shared<const irs::DocumentMask>(
+            irs::DocumentMaskBuilder{entry.docs_mask}.Finish());
+        irs::index_utils::FlushIndexSegment(*_dir, written.segment, true);
+        const std::array<std::string_view, 1> files{written.segment.filename};
+        if (!_dir->sync(files)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_IO_ERROR),
+            ERR_MSG("failed to sync '", written.segment.filename, "'"));
+        }
+      }
+      written.reader = irs::SegmentReaderImpl::Open(*_dir, written.segment.meta,
+                                                    ReaderOptions());
+    }
+  }
+  SyncSegments();
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_cooling");
+  CommitStorage(
+    LogCooled({.id = id, .meta_file = written.segment.filename, .docs = docs}),
+    [&](Tick, Tick, Lsn lsn) { _table->Cooled(hot, std::move(written), lsn); });
+  absl::MutexLock lock{&hot->Mutex()};
+  hot->Trx().Abort();
+}
+
+void Store::Cool(bool all) {
+  if (!_table) {
+    return;
+  }
+  const auto taken = _table->TakeCoolable(all ? 0 : _segment_memory_max, all);
+  for (const auto& hot : taken) {
+    try {
+      CoolOne(hot);
+    } catch (const std::exception& e) {
+      SDB_FATAL(SEARCH, "search table ", _id,
+                ": could not write the rows it holds in memory: ",
+                duckdb::ErrorData{e}.RawMessage());
+    }
+  }
+  if (!taken.empty()) {
+    NudgeCompaction();
+  }
+}
+
+void Store::CoolRetired(Lsn before) {
+  _table->Retire(before);
+  for (;;) {
+    Cool(before == kNoLsn);
+    if (!_table->HasRetiredHot()) {
+      return;
+    }
+    _table->AwaitRetiredReleased();
+  }
+}
+
+void Store::Cover(Lsn target) {
+  EnsureOpen();
+  if (!_table || _in_memory || _table->NeededFrom() >= target) {
+    return;
+  }
+  CoolRetired(target);
+  catalog::Transactions::Get().CommitState(
+    [&] {
+      duckdb::vector<std::string> entries;
+      entries.push_back(LogState(_table->StateUnits()));
+      return catalog::SearchRecord(_db_id, _id, entries);
+    },
+    [&](Lsn lsn) { _table->StateLogged(lsn); });
 }
 
 void Store::PublishSnapshot() {
@@ -326,40 +500,15 @@ void Store::ReindexReleaser::operator()(Store* store) const noexcept {
   }
 }
 
-ResultWithTime Store::RefreshUnsafe(bool wait,
-                                    const irs::ProgressReportCallback& progress,
-                                    RefreshResult& code) {
-  SDB_ASSERT(_writer);
-  const auto begin = std::chrono::steady_clock::now();
-  const auto enabled = [&] {
-    return _tasks_settings.refresh_interval_msec.load() != 0;
-  };
-  const RefreshGate scheduled{_settings_mutex, enabled};
-  auto result = _durability.Refresh(
-    *_writer, wait, progress, code, [&] { PublishSnapshot(); },
-    [&] { PublishSnapshot(); }, wait ? nullptr : &scheduled);
-  const auto time_ms = MillisSince(begin);
+void Store::Commit(const irs::ProgressReportCallback& progress) {
+  SDB_ASSERT(_writer && !_table);
   SDB_IF_FAILURE("Search::FailOnCommit") {
-    result = absl::InternalError("debug failure point");
-  }
-  SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
-  _maintenance.RecordCommit(result, code, time_ms);
-  return {std::move(result), time_ms};
-}
-
-absl::Status Store::Refresh(const irs::ProgressReportCallback& progress) {
-  RefreshResult code = RefreshResult::Undefined;
-  return RefreshUnsafe(/*wait=*/true, progress, code).res;
-}
-
-void Store::Publish() {
-  RefreshResult code = RefreshResult::Undefined;
-  const auto result = RefreshUnsafe(/*wait=*/true, nullptr, code);
-  if (!result.res.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("search store ", _id,
-                            ": publish failed: ", result.res.message()));
+                    ERR_MSG("debug failure point"));
   }
+  _durability.Commit(*_writer, progress);
+  PublishSnapshot();
+  SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
 }
 
 ResultWithTime Store::CleanupUnsafe() {
@@ -368,6 +517,9 @@ ResultWithTime Store::CleanupUnsafe() {
     return {absl::OkStatus(), 0};
   }
   const auto begin = std::chrono::steady_clock::now();
+  if (_table) {
+    _table->Collect(catalog::Transactions::Get().OldestSnapshot());
+  }
   auto result = _durability.Cleanup(*_dir);
   const auto time_ms = MillisSince(begin);
   _maintenance.RecordCleanup(result, time_ms);
@@ -407,6 +559,46 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
   -> yaclib::Future<absl::Status> {
   empty_compaction = false;
   SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
+  if (_table) {
+    if (!IsCurrentConfig(field_options)) {
+      empty_compaction = true;
+      co_return absl::OkStatus();
+    }
+    try {
+      const auto visible = catalog::Transactions::Get().LastCommit();
+      auto merged = co_await _writer->MergeAsync(
+        policy, _table->SettledView(visible), field_options, progress, env);
+      if (!merged.reader) {
+        empty_compaction = true;
+        co_return absl::OkStatus();
+      }
+      std::vector<uint64_t> ids;
+      ids.reserve(merged.claim.candidates.size());
+      for (const auto* candidate : merged.claim.candidates) {
+        ids.push_back(
+          irs::utils::downCast<irs::SegmentReader>(*candidate).GetImpl()->Id());
+      }
+      const std::array<ReplacedSegment, 1> named{
+        ReplacedSegment{.id = merged.reader->Id(),
+                        .meta_file = merged.segment.filename,
+                        .docs = merged.reader->Meta().docs_count}};
+      SyncSegments();
+      std::vector<OwnSegment> segments;
+      segments.push_back(OwnSegment{.segment = std::move(merged.segment),
+                                    .reader = std::move(merged.reader)});
+      CommitStorage(LogReplace(ids, named, merged.maps),
+                    [&](Tick tick, Tick oldest, Lsn lsn) {
+                      _table->Replace(visible, tick, oldest, lsn, ids,
+                                      std::move(segments),
+                                      std::move(merged.maps));
+                    });
+    } catch (const std::exception& e) {
+      co_return absl::InternalError(
+        absl::StrCat("compaction of search table ", _id,
+                     " failed: ", duckdb::ErrorData{e}.RawMessage()));
+    }
+    co_return absl::OkStatus();
+  }
   const irs::CompactionPolicy current_config_policy =
     [&](irs::Compaction& candidates, const irs::IndexReader& index,
         const irs::CompactingSegments& compacting_segments) {
@@ -425,6 +617,9 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
       empty_compaction = true;
     } else if (res.error != irs::CompactionError::Busy) {
       empty_compaction = res.size == 0;
+    }
+    if (!empty_compaction) {
+      Commit();
     }
   } catch (const std::exception& e) {
     co_return absl::InternalError(
@@ -450,20 +645,14 @@ std::shared_ptr<const irs::IndexFieldOptions> Store::CompactionOptions() {
     if (attached->oid != _db_id) {
       continue;
     }
-    const auto entry = attached->GetCatalog()
-                         .Cast<catalog::SereneDBCatalog>()
-                         .FindIn<catalog::InvertedIndexEntry>(nullptr, _id);
+    const catalog::CommittedView view;
+    const auto entry =
+      attached->GetCatalog()
+        .Cast<catalog::SereneDBCatalog>()
+        .FindIn<catalog::InvertedIndexEntry>(view.Transaction(db), _id);
     return entry ? entry->Config() : nullptr;
   }
   return nullptr;
-}
-
-absl::Status Store::VacuumRefresh() {
-  RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
-  return CleanupUnsafe().res;
 }
 
 absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
@@ -472,16 +661,15 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
     return !context.IsInterrupted();
   };
   const auto target = std::max<uint32_t>(1, target_segments);
-  RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
+  CoolAll();
   const ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env = slot.AnnEnv();
   for (size_t pass = 0; pass < 8; ++pass) {
     std::vector<std::vector<std::string>> buckets;
     {
-      const auto snapshot = _writer->GetSnapshot();
+      const auto snapshot =
+        _table ? _table->SettledView(catalog::Transactions::Get().LastCommit())
+               : _writer->GetSnapshot();
       if (snapshot.size() <= target) {
         break;
       }
@@ -522,9 +710,6 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
       return status;
     }
     SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
-    if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-      return res;
-    }
     if (!merged) {
       break;
     }
@@ -533,38 +718,54 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
 }
 
 StoreStats Store::GetStats() const {
-  auto stats = StoreStats::FromReader(GetDirectoryReader());
-  stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
+  StoreStats stats;
+  if (_table) {
+    const auto tick = catalog::Transactions::Get().LastCommit();
+    stats = StoreStats::FromReader(_table->ColdView(tick));
+    stats.numFiles += _table->DataFiles(tick);
+    stats.numBufferedDocs = _table->BufferedDocs(tick);
+  } else {
+    stats = StoreStats::FromReader(GetDirectoryReader());
+    stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
+  }
   _maintenance.Fill(stats);
   return stats;
 }
 
-void Store::Clear(const irs::SourcePosition& position) {
-  _durability.Clear(*_writer, position);
-  PublishSnapshot();
-}
-
-void Store::ReplaceSegments(
+Tick Store::ReplaceSegments(
   std::span<const irs::SubReader* const> replaced,
   std::vector<irs::IndexWriter::Replacement> replacements) {
-  _durability.ReplaceSegments(*_writer, replaced, std::move(replacements));
-  PublishSnapshot();
-}
-
-void Store::PrepareCheckpoint(uint64_t iteration) {
-  _durability.PrepareCheckpoint(*_writer, iteration);
-}
-
-void Store::FinishCheckpoint() {
-  if (_durability.FinishCheckpoint(*_writer)) {
-    PublishSnapshot();
+  SDB_ASSERT(_table);
+  std::vector<uint64_t> ids;
+  ids.reserve(replaced.size());
+  for (const auto* sub : replaced) {
+    ids.push_back(
+      irs::utils::downCast<irs::SegmentReader>(*sub).GetImpl()->Id());
   }
-}
-
-void Store::FinishCheckpointIfIdle() {
-  if (_durability.FinishCheckpointIfIdle(*_writer)) {
-    PublishSnapshot();
+  std::vector<OwnSegment> segments;
+  std::vector<ReplacedSegment> named;
+  std::vector<irs::DocMap> maps;
+  for (auto& replacement : replacements) {
+    auto opened = _table->OpenSegment(std::string{replacement.meta_file});
+    const auto target = opened.reader->Id();
+    for (auto& map : replacement.absorbed) {
+      map.target = target;
+      maps.push_back(std::move(map));
+    }
+    named.push_back({.id = target,
+                     .meta_file = opened.segment.filename,
+                     .docs = opened.reader->Meta().docs_count});
+    segments.push_back(std::move(opened));
   }
+  SyncSegments();
+  Tick published = 0;
+  CommitStorage(LogReplace(ids, named, maps),
+                [&](Tick tick, Tick oldest, Lsn lsn) {
+                  _table->Replace(tick, tick, oldest, lsn, ids,
+                                  std::move(segments), std::move(maps));
+                  published = tick;
+                });
+  return published;
 }
 
 template<typename Remove>
@@ -594,41 +795,10 @@ void Store::CommitRemoveAll() {
   CommitRemovalWith([](auto& trx) { trx.RemoveAll(); });
 }
 
-std::vector<int64_t> Store::AppendDeleteLog(std::vector<int64_t> rows) {
-  absl::MutexLock lock{&_delete_log_mutex};
-  if (!_delete_log_open.load(std::memory_order_relaxed)) {
-    return rows;
-  }
-  const auto end = _delete_log_rowid_end.load(std::memory_order_relaxed);
-  std::vector<int64_t> logged;
-  std::vector<int64_t> native;
-  for (const auto row : rows) {
-    (row >= end ? native : logged).push_back(row);
-  }
-  if (!logged.empty()) {
-    _delete_log.emplace_back(std::move(logged));
-  }
-  return native;
-}
-
-std::vector<irs::KeyRemoval> Store::TakeDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  _delete_log_open.store(false, std::memory_order_release);
-  return std::exchange(_delete_log, {});
-}
-
 void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  _writers.Drain(context);
-}
-
-void Store::WatchTruncates() {
-  absl::MutexLock lock{&_truncate_mutex};
-  _build_truncate = {};
-}
-
-void Store::RecordTruncateForBuild(const irs::SourcePosition& position) {
-  absl::MutexLock lock{&_truncate_mutex};
-  _build_truncate = std::max(_build_truncate, position);
+  const auto* writes =
+    ConnectionContext::Get(context).Transaction().SearchWrites();
+  _writers.Drain(context, writes ? writes->Registration(_id) : nullptr);
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> Store::Config() const {
@@ -651,12 +821,16 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
   std::optional<duckdb::idx_t> skip) const {
   std::vector<catalog::InvertedIndexKey> keys;
   catalog::InvertedIndexFields fields;
+  auto constraint_keys = _constraint_keys;
   const auto add = [&](const IndexConfig& index) {
     for (const auto& [id, field] : index.config->fields) {
       fields.emplace(id, field);
     }
     keys.insert(keys.end(), index.config->keys.begin(),
                 index.config->keys.end());
+    constraint_keys.insert(constraint_keys.end(),
+                           index.config->constraint_keys.begin(),
+                           index.config->constraint_keys.end());
   };
   for (const auto& index : configs) {
     if (index.oid != skip) {
@@ -664,6 +838,10 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
     }
   }
   absl::c_for_each(retired, add);
+  for (const auto& key : constraint_keys) {
+    fields.emplace(key.field,
+                   catalog::InvertedIndexField{{.indexed_term_dict = true}});
+  }
   auto merged = std::make_shared<catalog::InvertedIndexConfig>(
     std::move(keys), std::move(fields));
   merged->pk = catalog::PkColumnKind::None;
@@ -671,6 +849,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
   merged->row_group_size = _row_group_size;
   merged->declared_compression = _compression;
   merged->table_columns = *_table_columns;
+  merged->constraint_keys = std::move(constraint_keys);
   return merged;
 }
 
@@ -695,14 +874,6 @@ void Store::RebuildConfig(Configs&& configs,
   _layout.compaction_stale = false;
 }
 
-irs::SegmentReader Store::OpenSegment(std::string_view meta_file) const {
-  SDB_ASSERT(_dir);
-  irs::SegmentMeta meta;
-  irs::segment_meta::Read(*_dir, meta, meta_file);
-  return irs::SegmentReader{
-    irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions())};
-}
-
 void Store::MergeIndexConfig(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
@@ -714,22 +885,28 @@ void Store::MergeIndexConfig(
 
 void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name,
                         TableChange change) {
-  auto* connection = connector::GetSereneDBContextPtr(context);
-  if (!connection) {
-    SDB_ASSERT(change == TableChange::Layout);
-    return;
-  }
-  if (change == TableChange::Schema &&
-      connection->SearchTxn().HasWritesFor(GetId())) {
+  if (Dropped()) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG("ALTER TABLE on a search-backed table cannot run in a "
-              "transaction that has already written to \"",
-              name, "\""));
+      ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+      ERR_MSG("could not serialize access due to concurrent update of \"", name,
+              "\""));
   }
-  connection->ClaimSearchLayout(
-    shared_from_this(),
-    duckdb::MetaTransaction::Get(context).global_transaction_id, name, change);
+  ConnectionContext::Get(context).Transaction().ClaimSearchLayout(
+    shared_from_this(), name, change);
+}
+
+void Store::ClaimExclusive(duckdb::ClientContext& context,
+                           std::string_view name, Exclusive kind) {
+  auto& session = ConnectionContext::Get(context).Transaction();
+  session.ClaimSearchLayout(shared_from_this(), name, TableChange::Layout);
+  session.SearchTxn().ClaimExclusive(shared_from_this(), kind);
+  absl::MutexLock lock{&_layout_mutex};
+  _layout.exclusive = kind;
+}
+
+Store::Exclusive Store::ExclusiveClaim() const {
+  absl::MutexLock lock{&_layout_mutex};
+  return _layout.owner == kNoLayoutOwner ? Exclusive::None : _layout.exclusive;
 }
 
 bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
@@ -752,6 +929,7 @@ bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
         .epoch = _schema_epoch.load(),
         .table_columns = *_table_columns,
         .compression = _compression,
+        .constraint_keys = _constraint_keys,
       };
     }
     _schema_epoch.fetch_add(1);
@@ -764,11 +942,13 @@ void Store::ReleaseLayout(duckdb::transaction_t owner,
   absl::MutexLock lock{&_layout_mutex};
   SDB_ASSERT(_layout.owner == owner);
   _layout.owner = kNoLayoutOwner;
+  _layout.exclusive = Exclusive::None;
   auto undo = std::exchange(_layout.schema_undo, std::nullopt);
   if (undo && !committed) {
     _schema_epoch.store(undo->epoch);
     _table_columns = std::move(undo->table_columns);
     _compression = std::move(undo->compression);
+    _constraint_keys = std::move(undo->constraint_keys);
     RebuildConfig(_layout.configs, _layout.building_index);
   }
 }
@@ -787,13 +967,39 @@ void Store::SetTableColumns(const duckdb::ColumnList& columns) {
   RebuildConfig(_layout.configs, _layout.building_index);
 }
 
-void Store::SyncPublished() {
-  if (!_durability.SyncPublished()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-      ERR_MSG("search store ", _id,
-              " cannot persist its rows, so its table cannot be altered"));
+void Store::SetConstraintKeys(std::vector<catalog::ConstraintKey> keys) {
+  absl::MutexLock lock{&_layout_mutex};
+  const auto same = [](const catalog::ConstraintKey& lhs,
+                       const catalog::ConstraintKey& rhs) {
+    return lhs.field == rhs.field && lhs.columns == rhs.columns &&
+           lhs.types == rhs.types;
+  };
+  if (absl::c_equal(keys, _constraint_keys, same)) {
+    return;
   }
+  _constraint_keys = std::move(keys);
+  RebuildConfig(_layout.configs, _layout.building_index);
+}
+
+void Store::AddReferencing(std::weak_ptr<const Referencing> referencing) {
+  absl::MutexLock lock{&_referencing_mutex};
+  std::erase_if(_referencing,
+                [](const auto& entry) { return entry.expired(); });
+  _referencing.push_back(std::move(referencing));
+}
+
+std::vector<std::shared_ptr<const Referencing>> Store::ReferencingKeys() const {
+  std::vector<std::shared_ptr<const Referencing>> live;
+  absl::MutexLock lock{&_referencing_mutex};
+  std::erase_if(_referencing, [&](const auto& entry) {
+    auto referencing = entry.lock();
+    if (!referencing) {
+      return true;
+    }
+    live.push_back(std::move(referencing));
+    return false;
+  });
+  return live;
 }
 
 Store::BuildClaim Store::BeginIndexBuild(
@@ -849,6 +1055,13 @@ bool Store::BuildInFlight() const {
   return static_cast<bool>(_layout.building_index);
 }
 
+bool Store::HasIndexes() const {
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return absl::c_any_of(_layout.configs, [&](const IndexConfig& index) {
+    return index.oid != _id;
+  });
+}
+
 void Store::RemoveIndexConfig(duckdb::idx_t index_oid) {
   absl::MutexLock lock{&_layout_mutex};
   const auto it = absl::c_find_if(
@@ -880,90 +1093,115 @@ void Store::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
   }
 }
 
-bool Store::Replays(duckdb::AttachedDatabase& db) const {
-  if (!_writer) {
-    return false;
-  }
-  auto& manager = duckdb::DuckTransactionManager::Get(db);
-  const irs::SourcePosition position{manager.GetReplayGeneration(),
-                                     manager.GetReplayCommitOffset()};
-  SDB_ENSURE(position.offset != 0, "store ", _id,
-             ": a write outside a commit and a replay");
-  return !(position < _durability.Position());
-}
-
-Store::ReplaySession* Store::BeginReplay(duckdb::AttachedDatabase& db) {
-  if (!Replays(db)) {
-    return nullptr;
-  }
-  if (!_replay) {
-    _replay = std::make_unique<ReplaySession>(db, *this);
-  }
-  return _replay.get();
-}
-
-void Store::ReplayInsert(duckdb::ClientContext& context,
-                         duckdb::Catalog& catalog,
-                         std::span<const connector::ColumnId> column_ids,
-                         duckdb::DataChunk& chunk) {
-  auto* session = BeginReplay(catalog.GetAttached());
-  if (!session) {
+void Store::ReplayHotRows(duckdb::Catalog& catalog,
+                          std::vector<connector::ColumnId> column_ids,
+                          uint64_t segment, irs::doc_id_t first,
+                          duckdb::unique_ptr<duckdb::DataChunk> chunk,
+                          Lsn lsn) {
+  EnsureOpen();
+  if (!_table) {
     return;
   }
-  if (!session->sink) {
-    session->sink = connector::MakeSearchTableInsertSink(
-      session->replay.Slot(), *this, catalog, context);
-  }
-  connector::WriteChunkToSearchSink(*session->sink, chunk, column_ids, _id,
-                                    context);
+  _table->ReplayRows(segment, first, static_cast<irs::doc_id_t>(chunk->size()),
+                     lsn);
+  _replayed_rows[segment].push_back({.first = first,
+                                     .chunk = std::move(chunk),
+                                     .column_ids = std::move(column_ids),
+                                     .catalog = &catalog});
 }
 
-void Store::ReplayDeleteRowPositions(
-  duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
-  std::span<const duckdb::WALFrozenRowPositionGroup> groups) {
-  if (auto* session = BeginReplay(db)) {
-    session->replay.RemovePositions(std::move(entry), groups);
-  }
-}
-
-void Store::ReplayRowPositionMaps(
-  duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
-  uint64_t source, std::span<const duckdb::WALFrozenRowPositionMap> maps) {
-  if (auto* session = BeginReplay(db)) {
-    session->replay.MapPositions(std::move(entry), source, maps);
+void Store::ReplayAddSegment(const ReplacedSegment& segment, Lsn lsn) {
+  EnsureOpen();
+  if (_table) {
+    _table->ReplayAddSegment(segment, lsn);
   }
 }
 
-void Store::ReplayTruncate(duckdb::AttachedDatabase& db) {
-  if (auto* session = BeginReplay(db)) {
-    session->replay.Truncate();
+void Store::ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn) {
+  EnsureOpen();
+  if (_table) {
+    _table->ReplayRemoval(removal, lsn);
   }
 }
 
-void Store::ReplayAdoptSegments(duckdb::AttachedDatabase& db,
-                                std::vector<std::string> segments) {
-  if (auto* session = BeginReplay(db)) {
-    session->replay.Adopt(segments);
+void Store::ReplayCooled(const ReplacedSegment& segment, Lsn lsn) {
+  EnsureOpen();
+  if (_table) {
+    _replayed_rows.erase(segment.id);
+    _table->ReplayCooled(segment, lsn);
   }
 }
 
-bool Store::FinishReplay() {
-  if (!_replay) {
-    return false;
+void Store::ReplayTruncate(Lsn lsn) {
+  EnsureOpen();
+  if (_table) {
+    _table->ReplayTruncate(lsn);
   }
-  _replay->sink.reset();
-  _replay->replay.Finish();
-  _replay.reset();
-  return true;
 }
 
-void ThrowIfRefreshFailed(const absl::Status& status,
-                          std::string_view index_name) {
-  if (!status.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to refresh index '", index_name,
-                            "': ", status.message()));
+void Store::ReplayReplace(std::span<const uint64_t> replaced,
+                          std::span<const ReplacedSegment> segments,
+                          std::span<const irs::DocMap> maps, Lsn lsn) {
+  EnsureOpen();
+  if (_table) {
+    _table->ReplayReplace(replaced, segments, maps, lsn);
   }
+}
+
+void Store::ReplayState(std::span<const StateUnit> units, Lsn lsn) {
+  EnsureOpen();
+  if (_table) {
+    _table->ReplayState(units, lsn);
+  }
+}
+
+void Store::InvertReplayed(duckdb::ClientContext& context) {
+  const auto rows = std::exchange(_replayed_rows, {});
+  if (!_table) {
+    return;
+  }
+  for (const auto& [segment, chunks] : rows) {
+    if (!_table->ReplayPending(segment)) {
+      continue;
+    }
+    for (const auto& replayed : chunks) {
+      _table->ReplayHotRows(
+        *_writer, segment, replayed.first,
+        [&](irs::IndexWriter::Transaction& trx, HotKeys& keys) {
+          const auto sink = connector::MakeSearchTableInsertSink(
+            trx, *this, *replayed.catalog, context);
+          connector::WriteChunkToSearchSink(*sink, *replayed.chunk,
+                                            replayed.column_ids, _id, context);
+          const auto& constraints = sink->ConstraintKeys();
+          auto& chunk = *replayed.chunk;
+          duckdb::Vector encoded{duckdb::LogicalType::BLOB, chunk.size()};
+          for (const auto& constraint : constraints) {
+            connector::EncodeConstraintKeys(chunk, replayed.column_ids,
+                                            constraint, encoded);
+            auto values = encoded.Values<duckdb::string_t>();
+            for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
+              const auto entry = values[row];
+              if (entry.IsValid()) {
+                const auto& value = entry.GetValue();
+                keys.Add(constraint.field, {value.GetData(), value.GetSize()},
+                         static_cast<irs::doc_id_t>(irs::doc_limits::min() +
+                                                    replayed.first + row));
+              }
+            }
+          }
+        });
+    }
+  }
+}
+
+void Store::FinishReplay() {
+  EnsureOpen();
+  if (!_table) {
+    return;
+  }
+  _writer->ReserveSegmentId(_table->ReplayTop());
+  _table->FinishReplay();
+  ClaimColumnOids(_table->View(catalog::Transactions::Get().LastCommit(), {}));
 }
 
 }  // namespace sdb::search

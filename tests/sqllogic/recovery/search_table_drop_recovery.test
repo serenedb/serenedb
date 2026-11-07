@@ -2,16 +2,13 @@ control substitution on
 
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE s_drop (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE s_drop (a INTEGER, b TEXT);
 
 statement ok
 RESET sdb_faults;
 
 statement count 3
 INSERT INTO s_drop VALUES (1, 'one'), (2, 'two'), (3, 'three');
-
-statement ok
-VACUUM (REFRESH_TABLE) s_drop;
 
 query
 SELECT a, b FROM s_drop ORDER BY a;
@@ -24,13 +21,10 @@ a	b
 
 # Survivor search table -- must be untouched by the crashed drop + recovery.
 statement ok
-CREATE TABLE s_witness (a INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE s_witness (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 INSERT INTO s_witness VALUES (7, 'keep');
-
-statement ok
-VACUUM (REFRESH_TABLE) s_witness;
 
 
 statement ok
@@ -74,15 +68,11 @@ a	b
 # The dropped name is free again -- a fresh search table reuses it cleanly.
 connection after_crash
 statement ok
-CREATE TABLE s_drop (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE s_drop (a INTEGER, b TEXT);
 
 connection after_crash
 statement ok
 INSERT INTO s_drop VALUES (9, 'nine');
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) s_drop;
 
 connection after_crash
 query

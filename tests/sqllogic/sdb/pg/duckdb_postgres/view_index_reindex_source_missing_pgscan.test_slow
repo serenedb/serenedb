@@ -45,9 +45,6 @@ DETACH vsmp_${__DATABASE__};
 statement error Table with name "vsmp_.*articles" does not exist
 REINDEX INDEX vsmp_idx;
 
-statement ok
-VACUUM (REFRESH_INDEX) vsmp_idx;
-
 query
 SELECT count(*) AS n FROM vsmp_idx WHERE body @@ ts_phrase('pudge');
 ----
@@ -75,9 +72,6 @@ CALL postgres_execute('vsmp_${__DATABASE__}', 'DELETE FROM vsmp_docs.articles');
 
 statement ok
 REINDEX INDEX vsmp_idx;
-
-statement ok
-VACUUM (REFRESH_INDEX) vsmp_idx;
 
 query
 SELECT count(*) AS n FROM vsmp_idx WHERE body @@ ts_phrase('pudge');

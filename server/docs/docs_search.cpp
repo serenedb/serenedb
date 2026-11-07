@@ -21,6 +21,7 @@
 #include "docs/docs_search.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/no_destructor.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -34,15 +35,19 @@
 #include <array>
 #include <ctime>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/object_cache.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
+#include <iresearch/formats/segment_meta_writer.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
@@ -71,12 +76,10 @@
 
 #include "connector/functions/markdown_render.h"
 #include "docs/docs_index_data.h"
-#include "search/index_durability.h"
 
 namespace sdb::docs {
 namespace {
 
-constexpr std::string_view kIndexKey = "sdb_docs_index";
 constexpr std::string_view kEllipsis = "\xE2\x80\xA6";
 constexpr std::string_view kSpaces = " \t\n\v\f\r";
 
@@ -273,10 +276,7 @@ class SpanDirectory final : public irs::Directory {
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{files, kResourceManager},
-      _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
-                search::IndexStamp::Read(payload);
-              }} {}
+    : _dir{files, kResourceManager}, _reader{Open(_dir, files, Options(db))} {}
 
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }
 
@@ -289,21 +289,39 @@ class EmbeddedIndex {
     return options;
   }
 
+  static irs::DirectoryReader Open(const irs::Directory& dir,
+                                   std::span<const IndexFile> files,
+                                   const irs::IndexReaderOptions& options) {
+    irs::DirectoryMeta meta;
+    std::vector<irs::SegmentReader> readers;
+    for (const auto& file : files) {
+      if (!absl::EndsWith(file.name,
+                          absl::StrCat(".", irs::segment_meta::kExt))) {
+        continue;
+      }
+      irs::IndexSegment segment;
+      segment.filename = file.name;
+      irs::segment_meta::Read(dir, segment.meta, file.name);
+      readers.emplace_back(
+        irs::SegmentReaderImpl::Open(dir, segment.meta, options));
+      meta.index_meta.segments.push_back(std::move(segment));
+    }
+    return irs::DirectoryReader{
+      std::make_shared<const irs::DirectoryReaderImpl>(
+        dir, options, std::move(meta), std::move(readers))};
+  }
+
   SpanDirectory _dir;
   irs::DirectoryReader _reader;
 };
 
-class DocsIndex final : public duckdb::ObjectCacheEntry {
+class DocsIndex final {
  public:
   explicit DocsIndex(duckdb::DatabaseInstance& db)
     : _layout{ReadLayout(GetDocsIndex())},
       _object_layout{ReadObjectLayout(GetObjectsIndex())},
       _docs{db, GetDocsIndex()},
       _objects{db, GetObjectsIndex()} {}
-
-  static std::string ObjectType() { return std::string{kIndexKey}; }
-  std::string GetObjectType() final { return ObjectType(); }
-  duckdb::optional_idx GetEstimatedCacheMemory() const final { return {}; }
 
   const irs::DirectoryReader& Reader() const noexcept { return _docs.Reader(); }
   const Layout& Fields() const noexcept { return _layout; }
@@ -323,17 +341,18 @@ irs::analysis::Tokenizer::ptr DocsTokenizer() {
   return irs::analysis::TextTokenizer::Make({});
 }
 
-duckdb::shared_ptr<DocsIndex> AcquireIndex(duckdb::DatabaseInstance& db) {
+const DocsIndex* AcquireIndex(duckdb::DatabaseInstance& db) {
   if (GetDocsIndex().empty()) {
     return nullptr;
   }
-  return db.GetObjectCache().GetOrCreate<DocsIndex>(kIndexKey, db);
+  static const absl::NoDestructor<DocsIndex> kIndex{db};
+  return kIndex.get();
 }
 
 template<typename Body>
 auto WithIndex(duckdb::DatabaseInstance& db, Body&& body)
   -> decltype(body(std::declval<const DocsIndex&>())) {
-  const auto index = AcquireIndex(db);
+  const auto* index = AcquireIndex(db);
   if (!index) {
     return {};
   }

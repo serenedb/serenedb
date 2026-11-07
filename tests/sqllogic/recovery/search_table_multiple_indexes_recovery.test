@@ -25,7 +25,7 @@ INSERT INTO mr_ref SELECT i, 'fox number ' || i, mr_vec(i) FROM range(1500) t(i)
 
 statement ok
 CREATE TABLE mr (id INTEGER PRIMARY KEY, body TEXT, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX mr_kw ON mr USING inverted (body);
@@ -44,9 +44,6 @@ CREATE INDEX mr_cos ON mr USING inverted (id, emb ivf (metric = 'cosine'));
 
 statement ok
 INSERT INTO mr SELECT * FROM mr_ref WHERE id < 1000;
-
-statement ok
-VACUUM (REFRESH_TABLE) mr;
 
 statement ok
 SET sdb_faults = 'crash_after_commit';

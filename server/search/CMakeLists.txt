@@ -1,17 +1,18 @@
 target_sources(
     sereneserver
     PRIVATE
-        feeder.cpp
+        hot_keys.cpp
         index_durability.cpp
-        replay.cpp
+        log_entry.cpp
         row_position_wal.cpp
         store.cpp
         store_stats.cpp
         search_analyzer_impl.cpp
         scorer_options.cpp
+        table.cpp
+        table_keys.cpp
         task.cpp
         wal_recovery.cpp
-        wal_tail_keys.cpp
         writer_generations.cpp
         writes.cpp
 )

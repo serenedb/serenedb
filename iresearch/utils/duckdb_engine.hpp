@@ -33,7 +33,6 @@ class DuckDBEngine {
   static void NoopMutator(duckdb::DBConfig&) noexcept {}
 
   static void Configure(duckdb::DBConfig& config);
-  static void ConfigureExtensions(duckdb::DatabaseInstance& db);
 
   void Initialize(DBConfigMutator mutator = &NoopMutator);
 
@@ -51,7 +50,9 @@ class DuckDBEngine {
 
  private:
   DuckDBEngine() = default;
-  std::unique_ptr<duckdb::DuckDB> _db;
+  void ConfigureExtensions();
+
+  duckdb::shared_ptr<duckdb::DuckDB> _db;
 };
 
 }  // namespace irs

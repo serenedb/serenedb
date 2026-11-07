@@ -1,14 +1,5 @@
 control substitution on
 
-# WAL-based inverted index recovery
-#
-# Scenario: data is written to RocksDB after the search index last committed;
-# the search commit task is blocked with `Search::FailOnCommit` so the
-# iresearch payload tick stays behind the rocksdb tick. The server is then
-# crashed. On restart, InitPostRecovery should notice
-# _recovery_tick < engine.recoveryTick() and call RunWalRecovery to replay
-# the delta from the WAL straight into iresearch.
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY wal_dict AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
@@ -23,19 +14,11 @@ INSERT INTO wal_rec_t VALUES (1, 'alpha bravo charlie');
 statement ok
 CREATE INDEX wal_rec_idx ON wal_rec_t USING inverted(a, b wal_dict);
 
-# Seed row must be searchable before we break anything
-statement ok
-VACUUM (REFRESH_TABLE) wal_rec_t;
-
 query
 SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('alpha bravo');
 ----
 a	b
 1	alpha bravo charlie
-
-# Freeze the search commit path: rocksdb will keep advancing, iresearch won't
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # These rows land in the WAL but won't ever reach iresearch in this process
 statement ok
@@ -52,7 +35,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_rec_t;
+SELECT 1;
 
 # Pre-crash row survives
 connection wal_after

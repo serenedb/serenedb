@@ -7,7 +7,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE stt (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -24,10 +24,6 @@ INSERT INTO stt VALUES (3, 'c');
 
 statement ok
 INSERT INTO stt VALUES (4, 'd');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) stt;
 
 
 statement ok
@@ -61,11 +57,6 @@ SELECT 1;
 connection after_crash_2
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
-
-
-connection after_crash_2
-statement ok
-VACUUM (REFRESH_TABLE) stt;
 
 
 connection after_crash_2

@@ -20,14 +20,18 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <span>
 
 namespace sdb::search {
 
 void RecoverSearchStorages(
+  duckdb::ClientContext& context,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);
 void StartSearchStorageTasks();
+void CoverLog(uint64_t target);
 
 }  // namespace sdb::search

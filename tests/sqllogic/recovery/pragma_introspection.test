@@ -10,7 +10,7 @@ statement ok
 INSERT INTO pin_txn SELECT i, md5(i::VARCHAR), i * 2 FROM generate_series(0, 4999) t(i);
 
 statement ok
-CREATE TABLE pin_search (i INTEGER PRIMARY KEY, s VARCHAR, tags VARCHAR[], info STRUCT(a INTEGER, b VARCHAR), maybe INTEGER) WITH (storage = 'search');
+CREATE TABLE pin_search (i INTEGER PRIMARY KEY, s VARCHAR, tags VARCHAR[], info STRUCT(a INTEGER, b VARCHAR), maybe INTEGER);
 
 statement ok
 INSERT INTO pin_search SELECT i, 'v' || i, ['x', 'y'], {'a': i, 'b': 'w' || i}, CASE WHEN i % 2 = 0 THEN i ELSE NULL END FROM generate_series(0, 1999) t(i);
@@ -101,10 +101,6 @@ s
 
 # --- pragma_storage_info: search table (iresearch .col metadata) -----------
 
-# Flush the staged rows into iresearch segments deterministically.
-statement ok
-VACUUM (REFRESH_TABLE) pin_search;
-
 # A search table stores no row identity of its own: its rowid is the row's
 # position, and the PRIMARY KEY pin_search declares is only an index there.
 
@@ -133,13 +129,10 @@ count
 # A search table without a declared PK stores no row identity: its rowid is the
 # row's position, so only its own columns are listed.
 statement ok
-CREATE TABLE pin_nopk (s VARCHAR) WITH (storage = 'search');
+CREATE TABLE pin_nopk (s VARCHAR);
 
 statement ok
 INSERT INTO pin_nopk VALUES ('a'), ('b');
-
-statement ok
-VACUUM (REFRESH_TABLE) pin_nopk;
 
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count FROM pragma_storage_info('pin_nopk') ORDER BY column_path;
@@ -154,9 +147,6 @@ row_group_id	column_name	column_id	column_path	segment_type	count
 # the encoded primary key that carries row identity. The encoded key is
 # reported under the PK column it encodes; its stored type is the encoding's
 # BIGINT, not the column's INTEGER.
-statement ok
-VACUUM (REFRESH_TABLE) pin_txn;
-
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inc') ORDER BY column_path;
 ----

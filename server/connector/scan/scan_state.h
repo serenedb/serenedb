@@ -361,6 +361,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   irs::ColFilterStateCache filter_states;
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   irs::ColFilterClassification seg_cls;
+  irs::ColFilterClassification column_form_cls;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
   uint32_t batch_next = 0;
   uint32_t batch_end = 0;
@@ -471,6 +472,8 @@ void ClassifySegmentColFilters(
   std::span<const ScanGlobalState::ColFilter> filters,
   irs::ColFilterStateCache& states, irs::ColFilterClassification& out,
   bool prepare_leaves);
+
+bool UsesColumnForms(const ScanGlobalState& g, const irs::SubReader& seg);
 
 irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
                                       const irs::SubReader& seg,

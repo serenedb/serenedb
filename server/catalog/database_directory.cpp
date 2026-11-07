@@ -134,10 +134,6 @@ DatabaseDirectory::~DatabaseDirectory() {
   }
 }
 
-std::string DatabaseDirectory::DataFile() const {
-  return (_path / kDataFile).string();
-}
-
 std::filesystem::path DatabaseDirectory::StoragePath(duckdb::idx_t oid) const {
   return _path / absl::StrCat(oid);
 }

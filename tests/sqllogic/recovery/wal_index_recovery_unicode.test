@@ -20,12 +20,6 @@ statement ok
 CREATE INDEX uni_idx ON uni_t USING inverted(id, body uni_dict);
 
 statement ok
-VACUUM (REFRESH_TABLE) uni_t;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
-statement ok
 INSERT INTO uni_t VALUES
   (3, '你好世界'),
   (4, 'こんにちは世界'),
@@ -45,7 +39,7 @@ SELECT 1;
 
 connection uni_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) uni_t;
+SELECT 1;
 
 connection uni_after
 query

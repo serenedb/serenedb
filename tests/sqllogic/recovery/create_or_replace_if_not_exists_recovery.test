@@ -180,7 +180,7 @@ connection w2
 statement error
 CREATE OR REPLACE VIEW coinr_v_ww AS SELECT 3 AS k;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coinr_v_ww"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_v_ww"
 
 
 connection w2
@@ -258,9 +258,9 @@ CREATE VIEW coinr_t_dep_v AS SELECT a FROM coinr_t_dep;
 statement error
 CREATE OR REPLACE TABLE coinr_t_dep (z INT);
 ----
-db error: ERROR: Cannot drop entry "coinr_t_dep" because there are entries that depend on it.
-view "coinr_t_dep_v" depends on table "coinr_t_dep".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coinr_t_dep because other objects depend on it
+DETAIL: view coinr_t_dep_v depends on table coinr_t_dep
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -374,7 +374,7 @@ connection w2
 statement error
 CREATE TABLE IF NOT EXISTS coinr_t_race (b TEXT);
 ----
-db error: ERROR: Catalog write-write conflict on create with "coinr_t_race"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_t_race"
 
 
 connection w1
@@ -410,7 +410,7 @@ connection w2
 statement error
 INSERT INTO coinr_t_ww VALUES (2);
 ----
-db error: ERROR: Failed to commit: Attempting to modify table "coinr_t_ww" but another transaction has no changes this table
+db error: ERROR: Attempting to write to table coinr_t_ww but another transaction is dropping it
 
 
 connection w1
@@ -555,7 +555,7 @@ connection w2
 statement error
 CREATE OR REPLACE MACRO coinr_m_ww(x) AS x + 3;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coinr_m_ww"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_m_ww"
 
 
 connection w2
@@ -685,9 +685,9 @@ INSERT INTO coinr_s_user (v) VALUES ('first');
 statement error
 CREATE OR REPLACE SEQUENCE coinr_s_used START 100;
 ----
-db error: ERROR: Cannot drop entry "coinr_s_used" because there are entries that depend on it.
-table "coinr_s_user" depends on sequence "coinr_s_used".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence coinr_s_used because other objects depend on it
+DETAIL: default value for column id of table coinr_s_user depends on sequence coinr_s_used
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # ----------------------------------------------------------------------
@@ -751,9 +751,9 @@ INSERT INTO coinr_ty_user VALUES ('on');
 statement error
 CREATE OR REPLACE TYPE coinr_ty_used AS ENUM ('other');
 ----
-db error: ERROR: Cannot drop entry "coinr_ty_used" because there are entries that depend on it.
-table "coinr_ty_user" depends on type "coinr_ty_used".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type coinr_ty_used because other objects depend on it
+DETAIL: column s of table coinr_ty_user depends on type coinr_ty_used
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # ----------------------------------------------------------------------
@@ -948,7 +948,7 @@ hello,world
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TABLE coinr_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st (id INT, body TEXT);
 
 
 statement ok
@@ -956,15 +956,11 @@ INSERT INTO coinr_st VALUES (1, 'old one'), (2, 'old two');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
-
-
-statement ok
 BEGIN;
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st (id INT, body TEXT, extra INT);
 
 
 statement ok
@@ -973,10 +969,6 @@ INSERT INTO coinr_st VALUES (10, 'new ten', 100), (11, 'new eleven', 110);
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
 
 
 query
@@ -992,7 +984,7 @@ INSERT INTO coinr_st VALUES (12, 'new twelve', 120);
 
 
 statement ok
-CREATE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 statement ok
@@ -1000,15 +992,11 @@ INSERT INTO coinr_st_rb VALUES (1, 'kept one'), (2, 'kept two');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_rb;
-
-
-statement ok
 BEGIN;
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 statement ok
@@ -1020,7 +1008,7 @@ ROLLBACK;
 
 
 statement ok
-CREATE TABLE coinr_st_ine (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_ine (id INT, body TEXT);
 
 
 statement ok
@@ -1028,11 +1016,7 @@ INSERT INTO coinr_st_ine VALUES (1, 'kept');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_ine;
-
-
-statement ok
-CREATE TABLE IF NOT EXISTS coinr_st_ine (x INT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_st_ine (x INT);
 
 
 # A plain table replaced by a search table, and the other way round.
@@ -1045,7 +1029,7 @@ INSERT INTO coinr_st_to_search VALUES (1, 'plain');
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st_to_search (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_to_search (id INT, body TEXT);
 
 
 statement ok
@@ -1053,19 +1037,11 @@ INSERT INTO coinr_st_to_search VALUES (2, 'searchable');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_to_search;
-
-
-statement ok
-CREATE TABLE coinr_st_to_plain (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_to_plain (id INT, body TEXT);
 
 
 statement ok
 INSERT INTO coinr_st_to_plain VALUES (1, 'searchable');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st_to_plain;
 
 
 statement ok
@@ -1150,7 +1126,7 @@ CREATE INDEX IF NOT EXISTS coinr_fr_idx ON coinr_fr_trt (a);
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS coinr_fr_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_fr_st (id INT, body TEXT);
 
 
 statement ok
@@ -1472,7 +1448,8 @@ INSERT INTO coinr_pk (id) VALUES (1);
 statement error
 INSERT INTO coinr_pk (id) VALUES (1);
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "coinr_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 # The old table's indexes go with it, which frees their names.
@@ -1504,7 +1481,7 @@ query
 SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
 ----
 index_name	is_unique	sql
-coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr(b);
+coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr USING inverted (b);
 
 
 # The serial column of a replaced table draws from a new sequence of its own,
@@ -1797,15 +1774,11 @@ CREATE TRIGGER coinr_trg_open AFTER DELETE ON coinr_trt_open FOR EACH ROW
 
 
 statement ok
-CREATE TABLE coinr_st_open (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_open (id INT, body TEXT);
 
 
 statement ok
 INSERT INTO coinr_st_open VALUES (1, 'committed');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st_open;
 
 
 connection w_open
@@ -1859,7 +1832,7 @@ CREATE OR REPLACE TRIGGER coinr_trg_open AFTER DELETE ON coinr_trt_open FOR EACH
 
 connection w_open
 statement ok
-CREATE OR REPLACE TABLE coinr_st_open (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_open (id INT, body TEXT);
 
 
 connection w_open
@@ -2031,9 +2004,9 @@ connection after_replay
 statement error
 DROP VIEW coinr_v_inner;
 ----
-db error: ERROR: Cannot drop entry "coinr_v_inner" because there are entries that depend on it.
-view "coinr_v_outer" depends on view "coinr_v_inner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view coinr_v_inner because other objects depend on it
+DETAIL: view coinr_v_outer depends on view coinr_v_inner
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_replay
@@ -2314,11 +2287,6 @@ hello,world
 
 # The replaced search table holds its own documents and none of the old ones.
 connection after_replay
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
-
-
-connection after_replay
 query
 SELECT id, body, extra FROM coinr_st ORDER BY id;
 ----
@@ -2407,11 +2375,6 @@ a	b
 
 
 connection after_replay
-statement ok
-VACUUM (REFRESH_TABLE) coinr_fr_st;
-
-
-connection after_replay
 query
 SELECT id, body FROM coinr_fr_st;
 ----
@@ -2491,9 +2454,9 @@ connection after_replay
 statement error
 DROP TABLE coinr_dep_b;
 ----
-db error: ERROR: Cannot drop entry "coinr_dep_b" because there are entries that depend on it.
-view "coinr_dep_v" depends on table "coinr_dep_b".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coinr_dep_b because other objects depend on it
+DETAIL: view coinr_dep_v depends on table coinr_dep_b
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_replay
@@ -2505,7 +2468,8 @@ connection after_replay
 statement error
 INSERT INTO coinr_pk (id) VALUES (1);
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "coinr_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_replay
@@ -2535,7 +2499,7 @@ query
 SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
 ----
 index_name	is_unique	sql
-coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr(b);
+coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr USING inverted (b);
 
 
 connection after_replay
@@ -2738,7 +2702,7 @@ CREATE OR REPLACE FUNCTION coinr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 9'
 
 connection after_replay
 statement ok
-CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 connection after_replay
@@ -2813,13 +2777,6 @@ pf
 15
 
 
-# The replaced search table kept its committed documents, and the lost
-# replace's document is nowhere.
-connection after_before_commit
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st_rb;
-
-
 connection after_before_commit
 query
 SELECT id, body FROM coinr_st_rb ORDER BY id;
@@ -2854,17 +2811,12 @@ DELETE FROM coinr_audit;
 
 connection after_before_commit
 statement ok
-CREATE TABLE coinr_ac_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_ac_st (id INT, body TEXT);
 
 
 connection after_before_commit
 statement ok
 INSERT INTO coinr_ac_st VALUES (1, 'old');
-
-
-connection after_before_commit
-statement ok
-VACUUM (REFRESH_TABLE) coinr_ac_st;
 
 
 connection after_before_commit
@@ -2884,7 +2836,7 @@ CREATE OR REPLACE MACRO coinr_ac_new(x) AS x * 11;
 
 connection after_before_commit
 statement ok
-CREATE OR REPLACE TABLE coinr_ac_st (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_ac_st (id INT, body TEXT, extra INT);
 
 
 connection after_before_commit
@@ -2999,11 +2951,6 @@ pf	new_m
 
 # A search table replaced without documents comes back as the new, empty
 # definition; the old table's documents went with it.
-connection after_after_commit
-statement ok
-VACUUM (REFRESH_TABLE) coinr_ac_st;
-
-
 connection after_after_commit
 query
 SELECT (SELECT count(*) FROM coinr_ac_st) AS docs,
@@ -3182,7 +3129,7 @@ CREATE TRIGGER IF NOT EXISTS coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH RO
 
 connection after_after_commit
 statement ok
-CREATE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_after_commit
@@ -3192,12 +3139,7 @@ INSERT INTO coinr_c_st VALUES (1, 'old one');
 
 connection after_after_commit
 statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
-
-
-connection after_after_commit
-statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_after_commit
@@ -3207,12 +3149,7 @@ INSERT INTO coinr_c_st VALUES (20, 'checkpoint twenty'), (21, 'checkpoint twenty
 
 connection after_after_commit
 statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
-
-
-connection after_after_commit
-statement ok
-CREATE TABLE IF NOT EXISTS coinr_c_st (x INT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_c_st (x INT);
 
 
 connection after_after_commit
@@ -3321,7 +3258,7 @@ CREATE OR REPLACE TRIGGER coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
 
 connection ckpt_open
 statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection ckpt_open
@@ -3337,13 +3274,9 @@ s	m
 60	11
 
 
-# A plain CHECKPOINT does not run over the open replaces, so it cannot write
-# them either.
 connection after_after_commit
-statement error
+statement ok
 CHECKPOINT;
-----
-db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
 
 
 skipif pg-wire-extended
@@ -3487,9 +3420,9 @@ connection after_checkpoint
 statement error
 DROP VIEW coinr_v_inner;
 ----
-db error: ERROR: Cannot drop entry "coinr_v_inner" because there are entries that depend on it.
-view "coinr_v_outer" depends on view "coinr_v_inner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view coinr_v_inner because other objects depend on it
+DETAIL: view coinr_v_outer depends on view coinr_v_inner
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_checkpoint
@@ -3706,17 +3639,12 @@ COMMIT;
 
 connection after_checkpoint
 statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_checkpoint
 statement ok
 INSERT INTO coinr_c_st VALUES (30, 'tail thirty');
-
-
-connection after_checkpoint
-statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
 
 
 connection after_checkpoint
@@ -3806,11 +3734,6 @@ c_v3	2
 connection after_tail
 statement ok
 DELETE FROM coinr_audit;
-
-
-connection after_tail
-statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
 
 
 connection after_tail

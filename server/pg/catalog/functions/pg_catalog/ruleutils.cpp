@@ -55,7 +55,6 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/common.h"
-#include "connector/inverted_store_index.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
@@ -92,7 +91,7 @@ std::string RelationName(const Session& session,
                          const duckdb::CatalogEntry& relation, bool qualified) {
   if (relation.ParentCatalog().IsTemporaryCatalog()) {
     const auto& name = relation.name.GetIdentifierName();
-    return qualified ? QualifiedOutName(kTemporarySchema, name)
+    return qualified ? QualifiedOutName(irs::StaticStrings::kPgTempSchema, name)
                      : QuoteIdentifier(name);
   }
   const auto [schema, name] = NameOf(*session.transaction, relation);
@@ -336,7 +335,7 @@ IndexShape ShapeOf(const Session& session,
                        ? index.catalog.GetCatalogTransaction(*session.context)
                        : *session.transaction)
         .get(),
-    .method = connector::IsInvertedIndex(index)
+    .method = catalog::IsInvertedIndex(index)
                 ? std::string_view{catalog::kInvertedIndexTypeName}
                 : std::string_view{"secondary"},
     .options = Options(index.options),
@@ -355,7 +354,8 @@ IndexShape ShapeOf(const Session& session,
     IndexElement element;
     element.attribute = IndexAttribute(*index.parsed_expressions[i]);
     element.definition = element.attribute;
-    if (!opclass.empty() && (!included || has_options)) {
+    if (!opclass.empty() && opclass != catalog::kPlainKind &&
+        (!included || has_options)) {
       absl::StrAppend(&element.definition, " ", OpclassName(opclass));
     }
     if (has_options) {

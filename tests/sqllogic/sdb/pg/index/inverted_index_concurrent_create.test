@@ -114,10 +114,6 @@ a	b	c	x	va	vb
 1	1	1	1	1	1
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ic
-
-
 query
 SELECT (SELECT count(*) FROM ic_a WHERE body = 'wolf') AS a,
        (SELECT count(*) FROM ic_b WHERE body = 'wolf') AS b,

@@ -2,16 +2,13 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE ld (id BIGINT, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 RESET sdb_faults;
 
 statement ok
 INSERT INTO ld SELECT i, 'v' || i FROM range(0, 5000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) ld;
 
 statement ok
 SET sdb_faults = 'crash_after_commit';

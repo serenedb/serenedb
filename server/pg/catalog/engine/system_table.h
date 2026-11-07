@@ -39,8 +39,6 @@
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -74,6 +72,8 @@
 #include <vector>
 
 #include "auth/role_closure.h"
+#include "catalog/base_catalog.h"
+#include "catalog/dependency.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"
@@ -583,7 +583,7 @@ class SystemScan {
   SystemScan& operator=(const SystemScan&) = delete;
 
   duckdb::ClientContext& Context() const noexcept { return _context; }
-  duckdb::DuckCatalog& Database() const noexcept { return _database; }
+  catalog::BaseCatalog& Database() const noexcept { return _database; }
   const duckdb::CatalogTransaction& Transaction() const noexcept {
     return _transaction;
   }
@@ -648,7 +648,7 @@ class SystemScan {
   }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> FindById(duckdb::idx_t oid) const {
-    return _database.GetOidIndex().GetVisible(oid, Transaction().view);
+    return _database.LookupOid(Transaction(), oid);
   }
 
   template<const auto& Shape>
@@ -720,7 +720,7 @@ class SystemScan {
   template<typename F>
   void ScanSubjects(duckdb::CatalogEntry& entry, F&& visit) const {
     if (!_walked) {
-      Dependencies().ScanEdges(Transaction(), entry, true, visit);
+      catalog::ScanSubjects(Transaction(), entry, visit);
       return;
     }
     for (const auto& [subject, flags] : WalkedSubjects(entry)) {
@@ -744,12 +744,8 @@ class SystemScan {
     return ((_needed >> column) & 1) != 0;
   }
 
-  duckdb::DependencyManager& Dependencies() const {
-    return *_database.GetDependencyManager();
-  }
-
   SystemSet SetOf(catalog::CatalogSnapshots& snapshots,
-                  duckdb::CatalogSet& set) const;
+                  catalog::EntrySet& set) const;
 
   std::span<const catalog::CatalogEdge> WalkedSubjects(
     duckdb::CatalogEntry& entry) const;
@@ -995,7 +991,7 @@ class SystemScan {
   std::string_view NamePrefix(std::span<const SystemIndex> indexes) const;
   duckdb::optional_ptr<duckdb::CatalogEntry> FindOwner(
     duckdb::idx_t oid) const {
-    return _database.GetOidIndex().GetVisibleOwner(oid, Transaction().view);
+    return _database.LookupOwner(Transaction(), oid);
   }
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
     std::string_view name, SystemSchemas system) const;
@@ -1006,7 +1002,7 @@ class SystemScan {
                   absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
 
   duckdb::ClientContext& _context;
-  duckdb::DuckCatalog& _database;
+  catalog::BaseCatalog& _database;
   duckdb::CatalogTransaction _transaction;
   const SystemTable& _table;
   std::shared_ptr<const auth::RoleGraph> _roles;

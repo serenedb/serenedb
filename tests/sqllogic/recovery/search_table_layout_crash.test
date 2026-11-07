@@ -38,25 +38,16 @@ CREATE MACRO lx_stale_segments(rel) AS (
 
 statement ok
 CREATE TABLE lxs (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1, 1000) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) lxs;
-
-statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1001, 2000) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) lxs;
-
-statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(2001, 3000) s(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) lxs;
 
 statement ok
 CREATE INDEX lxs_x ON lxs USING inverted (body);
@@ -180,25 +171,25 @@ SET sdb_faults = 'crash_before_catalog_commit';
 
 connection after_commit_crash
 statement error connection closed
-ALTER TABLE lxs SET (refresh_interval = 4321);
+ALTER TABLE lxs SET (compaction_interval = 4321);
 
 connection after_alter_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'lxs';
+SELECT reloptions[1] AS compaction FROM pg_class WHERE relname = 'lxs';
 ----
-refresh
-refresh_interval=0
+compaction
+compaction_interval=0
 
 connection after_alter_crash
 statement ok
-ALTER TABLE lxs SET (refresh_interval = 1234);
+ALTER TABLE lxs SET (compaction_interval = 1234);
 
 connection after_alter_crash
 query
-SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'lxs';
+SELECT reloptions[1] AS compaction FROM pg_class WHERE relname = 'lxs';
 ----
-refresh
-refresh_interval=1234
+compaction
+compaction_interval=1234
 
 # ----------------------------------------------------------------------
 # 4. A replace whose commit fails.
@@ -225,10 +216,6 @@ SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE i
 ----
 def
 CREATE INDEX lxs_x ON public.lxs USING inverted (body, id)
-
-connection after_alter_crash
-statement ok
-VACUUM (REFRESH_TABLE) lxs;
 
 connection after_alter_crash
 query
@@ -258,10 +245,6 @@ ROLLBACK;
 connection after_alter_crash
 statement ok
 RESET search_backfill_group_bytes;
-
-connection after_alter_crash
-statement ok
-VACUUM (REFRESH_TABLE) lxs;
 
 connection after_alter_crash
 query

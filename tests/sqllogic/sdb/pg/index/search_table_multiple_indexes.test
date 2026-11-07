@@ -29,19 +29,13 @@ SET sdb_ann_rescore_width = 100;
 
 statement ok
 CREATE TABLE mi (id INTEGER PRIMARY KEY, body TEXT, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO mi SELECT * FROM mi_ref WHERE id < 800;
 
 statement ok
-VACUUM (REFRESH_TABLE) mi;
-
-statement ok
 INSERT INTO mi SELECT * FROM mi_ref WHERE id >= 800 AND id < 1500;
-
-statement ok
-VACUUM (REFRESH_TABLE) mi;
 
 statement ok
 CREATE INDEX mi_kw ON mi USING inverted (body);
@@ -116,9 +110,6 @@ hits
 
 statement ok
 INSERT INTO mi SELECT * FROM mi_ref WHERE id >= 1500;
-
-statement ok
-VACUUM (REFRESH_TABLE) mi;
 
 query
 SELECT (SELECT count(*) FROM mi_kw WHERE body = 'fox number 1777') AS kw,

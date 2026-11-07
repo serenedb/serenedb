@@ -14,7 +14,7 @@ CREATE TEXT SEARCH DICTIONARY norm_en AS
 
 statement ok
 CREATE TABLE nb(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX nb_idx ON nb USING inverted (body norm_en);
@@ -25,9 +25,6 @@ RESET sdb_faults;
 # --- Fixture: a published baseline, durable on disk. ---
 statement ok
 INSERT INTO nb VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) nb;
 
 # Crash AFTER the WAL commit: (3,'fox runs fast') is fsynced into the WAL but
 # never refresh-published; recovery must re-index it through the norm-featured

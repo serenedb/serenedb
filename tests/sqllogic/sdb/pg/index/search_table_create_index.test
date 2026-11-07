@@ -17,24 +17,21 @@
 
 statement ok
 CREATE TABLE t (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 # CREATE INDEX on an empty search table succeeds (metadata-only, no backfill).
 statement ok
 CREATE INDEX t_tag_idx ON t USING inverted (tag);
 
-# A non-inverted index type is rejected.
-statement error
+statement ok
 CREATE INDEX t_bad_idx ON t (tag);
-----
-db error: ERROR: only inverted indexes are supported on a search-backed table
-
 
 # The index is a real catalog object.
 query
 SELECT indexname FROM pg_indexes WHERE tablename = 't' ORDER BY indexname;
 ----
 indexname
+t_bad_idx
 t_pkey
 t_tag_idx
 
@@ -43,9 +40,6 @@ INSERT INTO t VALUES
   (1, 'red', 'the quick brown fox'),
   (2, 'blue', 'lazy dog jumps'),
   (3, 'red', 'fox runs fast');
-
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 # CREATE INDEX on a now-non-empty search table: the rows published before the
 # index are rebuilt into it. Note this leaves `t` with three indexed columns
@@ -76,13 +70,8 @@ id
 1
 3
 
-# A build has to wait out the write transactions that predate the index config
-# it publishes, so it cannot run in a transaction that is itself one of them --
-# that transaction only ends after the statement waiting on it does. Refused up
-# front rather than left to deadlock. Uses a fresh empty table, so the refusal
-# is about the transaction and not the row count.
 statement ok
-CREATE TABLE selfwrite (id BIGINT, tag TEXT) WITH (storage = 'search');
+CREATE TABLE selfwrite (id BIGINT, tag TEXT);
 
 statement ok
 BEGIN;
@@ -90,17 +79,18 @@ BEGIN;
 statement ok
 INSERT INTO selfwrite VALUES (1, 'red');
 
-statement error
+statement ok
 CREATE INDEX selfwrite_idx ON selfwrite USING inverted (tag);
-----
-db error: ERROR: CREATE INDEX on a search-backed table cannot run in a transaction that has already written to "selfwrite"
 
+query
+SELECT id FROM selfwrite_idx WHERE tag = 'red';
+----
+id
+1
 
 statement ok
 ROLLBACK;
 
-# Not a blanket ban on transactions: one that has not written to the table is
-# fine.
 statement ok
 BEGIN;
 
@@ -132,17 +122,16 @@ query
 EXPLAIN SELECT id FROM t WHERE tag = 'red';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: t         │
-│ Lookup: search   │
-│ Index Filter:    │
-│ ╭─ Term ─────╮   │
-│ │ Field: tag │   │
-│ │ Value: red │   │
-│ ╰────────────╯   │
-│ Projections: id  │
-│ ~1 row           │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: t               │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: tag(string) │ │
+│ │ Value: red         │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
 
 # A direct index scan pushes the predicate down through the index's own term
 # field.
@@ -184,6 +173,7 @@ query
 SELECT indexname FROM pg_indexes WHERE tablename = 't' ORDER BY indexname;
 ----
 indexname
+t_bad_idx
 t_body_idx
 t_pkey
 
@@ -198,7 +188,7 @@ CREATE TEXT SEARCH DICTIONARY doc_en AS
 
 statement ok
 CREATE TABLE doc (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX doc_body_idx ON doc USING inverted (body doc_en);
@@ -208,9 +198,6 @@ INSERT INTO doc VALUES
   (1, 'the quick brown fox'),
   (2, 'lazy dog jumps'),
   (3, 'fox runs fast');
-
-statement ok
-VACUUM (REFRESH_TABLE) doc;
 
 # A bare @@ on the table itself reaches the same term filter the index scan
 # uses: a search table's scan is already an index scan.

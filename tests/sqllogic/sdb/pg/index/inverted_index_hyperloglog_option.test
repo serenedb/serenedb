@@ -25,9 +25,6 @@ CREATE INDEX dc_t_idx ON dc_t USING inverted(pk)
            s included (hyperloglog = true),
            plain);
 
-statement ok
-VACUUM (REFRESH_TABLE) dc_t
-
 # --- 1. NDV exposed for opted-in columns (true NDV: v=100, s=7) ----------
 query
 SELECT (stats(v)).approx_unique::BIGINT BETWEEN 80 AND 120 AS ok
@@ -64,9 +61,6 @@ statement ok
 INSERT INTO dc_t
 SELECT i, i % 1000, 'tag-' || (i % 50)::VARCHAR, i
 FROM range(10000, 30000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) dc_t
 
 query
 SELECT (stats(v)).approx_unique::BIGINT BETWEEN 700 AND 1300 AS ok
@@ -115,19 +109,10 @@ statement ok
 INSERT INTO dc_compact VALUES (1, 1), (2, 2), (3, 3)
 
 statement ok
-VACUUM (REFRESH_TABLE) dc_compact
-
-statement ok
 INSERT INTO dc_compact VALUES (4, 3), (5, 4), (6, 5)
 
 statement ok
-VACUUM (REFRESH_TABLE) dc_compact
-
-statement ok
 INSERT INTO dc_compact VALUES (7, 5), (8, 6), (9, 7)
-
-statement ok
-VACUUM (REFRESH_TABLE) dc_compact
 
 query
 SELECT (stats(v)).approx_unique::BIGINT AS ndv FROM dc_compact_idx LIMIT 1;

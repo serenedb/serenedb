@@ -60,29 +60,23 @@ void SearchSinkRows::Flush() {
   if (!_trx) {
     return;
   }
-  // On the worker, in parallel with the others, rather than deferring the tail
-  // to the single-threaded refresh commit; the fsync is what lets the WAL
-  // reference these by name instead of copying the rows.
-  for (const auto& segment : _trx->FlushAndFsync()) {
-    _segments.push_back(segment.filename);
-  }
+  // On the worker, in parallel with the others; the fsync is what lets the
+  // log reference these by name instead of copying the rows.
+  _flushed = _trx->FlushAndFsync();
 }
 
 void SearchSinkRows::HandOver(duckdb::ClientContext& context,
                               const SearchSinkTable& table,
                               search::Writes& writes) {
   if (_trx) {
-    writes.AddParallelSearchTransaction(table.store, std::move(_trx));
-    writes.AddSegments(table.store, std::move(_segments));
+    writes.AddOwnSegments(table.store, std::move(_trx), _flushed);
+    _flushed = {};
   }
   if (!_rows) {
     return;
   }
-  writes.AddInlineRows(table.store, table.column_ids, *table.catalog,
-                       std::move(_rows));
-  if (writes.BufferedBytes(table.store->GetId()) > table.buffer_bytes) {
-    writes.FlushBuffer(table.store, context);
-  }
+  writes.AddInlineRows(context, table.store, table.column_ids, *table.catalog,
+                       std::move(_rows), table.buffer_bytes);
 }
 
 }  // namespace sdb::connector

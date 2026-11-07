@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # min/max/count(DISTINCT) over keyword inverted-index columns crossed with
 # WHERE acceptors, deletion masks and NULLs. min-only requests stop after the
 # first live term per segment and max-only requests seek to the greatest term
@@ -18,11 +15,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY mmx_kw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TABLE mmx1(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, nul VARCHAR)
+CREATE TABLE mmx1(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, nul VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX mmx1_idx ON mmx1 USING inverted(cat mmx_kw, nul mmx_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO mmx1 VALUES
@@ -30,9 +26,6 @@ INSERT INTO mmx1 VALUES
   (5, 'bd', NULL), (6, 'bm', NULL), (7, 'bt', NULL), (8, 'bz', NULL),
   (9, 'cc', NULL), (10, 'cc', NULL), (11, 'yy', NULL), (12, 'zx', NULL),
   (13, 'zz', NULL)
-
-statement ok
-VACUUM (REFRESH_TABLE) mmx1;
 
 # Clean segment: min-only stop and max-only seek shortcuts.
 query T
@@ -93,6 +86,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mmx1_idx                          │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
@@ -143,9 +137,6 @@ zz	{aa,ab,ac,ba,bd,bm,bt,bz,cc,yy,zx,zz}
 # boundary terms of the b-range. The segment stays dirty (masks only).
 statement ok
 DELETE FROM mmx1 WHERE cat IN ('aa', 'ab', 'ac', 'ba', 'bz', 'yy', 'zx', 'zz')
-
-statement ok
-VACUUM (REFRESH_TABLE) mmx1;
 
 # min probes across the four consecutive dead prefix terms to the first live
 # one; dirty max enumerates fully past the dead tail to the last live term.
@@ -239,17 +230,13 @@ cc	{bd,bm,bt,cc}
 # terms, forcing full enumeration so min/max see the filtered set: 'a' and 'z'
 # sit at the shortcut positions but fail the filter.
 statement ok
-CREATE TABLE mmx2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+CREATE TABLE mmx2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX mmx2_idx ON mmx2 USING inverted(cat mmx_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO mmx2 VALUES (1, 'a'), (2, 'bb'), (3, 'cc'), (4, 'z')
-
-statement ok
-VACUUM (REFRESH_TABLE) mmx2;
 
 query T
 SELECT min(cat) AS mn FROM mmx2_idx WHERE length(cat) = 2
@@ -286,6 +273,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mmx2_idx                          │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~4 rows                                  │
@@ -319,9 +307,6 @@ idx_cnt	tbl_cnt
 statement ok
 INSERT INTO mmx2 VALUES (5, 'aa'), (6, 'zz'), (7, 'dd')
 
-statement ok
-VACUUM (REFRESH_TABLE) mmx2;
-
 query II
 SELECT (SELECT count(DISTINCT cat) FROM mmx2_idx) AS idx_cnt,
        (SELECT count(DISTINCT cat) FROM mmx2) AS tbl_cnt
@@ -334,9 +319,6 @@ idx_cnt	tbl_cnt
 # 'z' at max. The implicit forms fall back to the document scan and must agree.
 statement ok
 DELETE FROM mmx2 WHERE id IN (5, 6)
-
-statement ok
-VACUUM (REFRESH_TABLE) mmx2;
 
 query T
 SELECT min(cat) AS mn FROM mmx2_idx WHERE length(cat) = 2
@@ -392,17 +374,13 @@ idx_cnt	tbl_cnt
 # dirty middle segment behind its dead 'aa', the global max 'zz' in a clean
 # segment served by the max-only seek.
 statement ok
-CREATE TABLE mmx3(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+CREATE TABLE mmx3(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX mmx3_idx ON mmx3 USING inverted(cat mmx_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO mmx3 VALUES (1, 'mm'), (2, 'pp')
-
-statement ok
-VACUUM (REFRESH_TABLE) mmx3;
 
 query II
 SELECT (SELECT count(DISTINCT cat) FROM mmx3_idx) AS idx_cnt,
@@ -414,9 +392,6 @@ idx_cnt	tbl_cnt
 statement ok
 INSERT INTO mmx3 VALUES (3, 'aa'), (4, 'bb'), (5, 'rr')
 
-statement ok
-VACUUM (REFRESH_TABLE) mmx3;
-
 query II
 SELECT (SELECT count(DISTINCT cat) FROM mmx3_idx) AS idx_cnt,
        (SELECT count(DISTINCT cat) FROM mmx3) AS tbl_cnt
@@ -427,9 +402,6 @@ idx_cnt	tbl_cnt
 statement ok
 DELETE FROM mmx3 WHERE id IN (3, 5)
 
-statement ok
-VACUUM (REFRESH_TABLE) mmx3;
-
 query II
 SELECT (SELECT count(DISTINCT cat) FROM mmx3_idx) AS idx_cnt,
        (SELECT count(DISTINCT cat) FROM mmx3) AS tbl_cnt
@@ -439,9 +411,6 @@ idx_cnt	tbl_cnt
 
 statement ok
 INSERT INTO mmx3 VALUES (6, 'cc'), (7, 'zz')
-
-statement ok
-VACUUM (REFRESH_TABLE) mmx3;
 
 query T
 SELECT min(cat) AS mn FROM mmx3_idx
@@ -483,17 +452,13 @@ idx_cnt	tbl_cnt
 # min == max: a single-term field answers the combined min+max from the two
 # seeks, which land on the same term.
 statement ok
-CREATE TABLE mmx4(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+CREATE TABLE mmx4(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX mmx4_idx ON mmx4 USING inverted(cat mmx_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO mmx4 VALUES (1, 'only'), (2, 'only')
-
-statement ok
-VACUUM (REFRESH_TABLE) mmx4;
 
 query TT
 SELECT min(cat) AS mn, max(cat) AS mx FROM mmx4_idx

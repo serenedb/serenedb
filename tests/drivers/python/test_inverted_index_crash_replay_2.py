@@ -38,7 +38,7 @@ def test_a_crash_during_an_online_index_build_replays_to_equal_indexes(
     with make_server(tmp_path) as server:
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
-            indexes = create_schema(conn, "refresh_interval = 20, compaction_interval = 20")
+            indexes = create_schema(conn, "compaction_interval = 20")
             seed_rows(conn, indexes, 300_000)
         workload = Workload(server, seed=seed, writers=4, big_updates=seed % 2 == 0)
         threads = workload.threads()
@@ -49,7 +49,7 @@ def test_a_crash_during_an_online_index_build_replays_to_equal_indexes(
             try:
                 with psycopg.connect(server.dsn(), autocommit=True) as builder:
                     create_index(builder, T_PART,
-                                 "refresh_interval = 0, compaction_interval = 0")
+                                 "compaction_interval = 0")
             except psycopg.Error:
                 pass
 

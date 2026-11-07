@@ -25,7 +25,7 @@ def test_deletes_of_unpublished_rows_land_with_them(tmp_path: Path) -> None:
     with make_server(tmp_path) as server:
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
-            create_schema(conn, "refresh_interval = 0, compaction_interval = 0")
+            create_schema(conn, "compaction_interval = 0")
             conn.execute("INSERT INTO t SELECT i, 'w1 w2' FROM range(100) r(i)")
             conn.execute("INSERT INTO t SELECT 100 + i, 'w3' FROM range(100) r(i)")
             assert conn.execute(
@@ -46,7 +46,7 @@ def test_unpublished_deletes_survive_a_checkpoint_and_a_crash(
     with make_server(tmp_path) as server:
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
-            create_schema(conn, "refresh_interval = 0, compaction_interval = 0")
+            create_schema(conn, "compaction_interval = 0")
             conn.execute("INSERT INTO t SELECT i, 'w1' FROM range(3000) r(i)")
             conn.execute("DELETE FROM t WHERE id % 3 = 0")
             conn.execute("UPDATE t SET body = 'w2' WHERE id % 3 = 1")
@@ -65,9 +65,9 @@ def test_unpublished_deletes_survive_a_checkpoint_and_a_crash(
 @pytest.mark.parametrize(
     ("options", "crash"),
     [
-        ("refresh_interval = 0, compaction_interval = 0", False),
-        ("refresh_interval = 5, compaction_interval = 5, segment_docs_max = 64", False),
-        ("refresh_interval = 5, compaction_interval = 5, segment_docs_max = 64", True),
+        ("compaction_interval = 0", False),
+        ("compaction_interval = 5, segment_docs_max = 64", False),
+        ("compaction_interval = 5, segment_docs_max = 64", True),
     ],
 )
 def test_an_update_is_never_half_visible(
@@ -81,7 +81,6 @@ def test_an_update_is_never_half_visible(
             conn.execute(
                 "INSERT INTO t SELECT i, 'w' || (i %% 40) FROM range(%s) r(i)", (rows,)
             )
-            conn.execute("VACUUM (REFRESH_TABLE) t")
             assert live_docs(conn) == rows
         stop = threading.Event()
         errors: list[BaseException] = []
@@ -113,9 +112,7 @@ def test_an_update_is_never_half_visible(
                 with psycopg.connect(server.dsn(), autocommit=True) as c:
                     while not stop.is_set():
                         op = rng.random()
-                        if op < 0.6:
-                            c.execute("VACUUM (REFRESH_TABLE) t")
-                        elif op < 0.8:
+                        if op < 0.8:
                             checkpoint(c)
                         else:
                             c.execute("VACUUM (COMPACT_TABLE) t")

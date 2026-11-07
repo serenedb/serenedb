@@ -24,18 +24,11 @@ INSERT INTO wal_upd_t VALUES
 statement ok
 CREATE INDEX wal_upd_idx ON wal_upd_t USING inverted(a, b upd_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) wal_upd_t;
-
 query
 SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('old cat');
 ----
 a
 1
-
-# Block iresearch commit, then mutate the rows
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 UPDATE wal_upd_t SET b = 'new tiger' WHERE a = 1;
@@ -55,7 +48,7 @@ SELECT 1;
 
 connection upd_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_upd_t;
+SELECT 1;
 
 # Old values for updated rows must be gone
 connection upd_after

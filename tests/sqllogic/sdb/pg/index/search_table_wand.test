@@ -11,7 +11,7 @@ CREATE TEXT SEARCH DICTIONARY bm AS
 
 statement ok
 CREATE TABLE w (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0,
+  WITH (compaction_interval=0,
         optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
@@ -22,9 +22,6 @@ INSERT INTO w VALUES
   (1, 'the quick brown fox'),
   (2, 'fox runs fast'),
   (3, 'the lazy dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) w;
 
 # Top-2 by BM25: the shorter matching doc (row 2) outranks the longer (row 1).
 query

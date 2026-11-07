@@ -45,7 +45,6 @@
 #include <vector>
 
 #include "connector/common.h"
-#include "connector/duckdb_client_state.h"
 #include "otel/mapper.h"
 #include "otel/protobuf.h"
 #include "otel/protojson.h"
@@ -908,7 +907,7 @@ struct SourceState final : duckdb::GlobalTableFunctionState {
     const auto* request =
       data.request != nullptr
         ? static_cast<Request*>(data.request)
-        : GetSereneDBContext(context).GetSideChannel<Request>();
+        : ConnectionContext::Get(context).GetSideChannel<Request>();
     if (request == nullptr) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

@@ -7,7 +7,7 @@ CREATE DATABASE dlc_db;
 
 statement ok
 CREATE TABLE dlc_db.public.st(id BIGINT PRIMARY KEY, v INTEGER)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -32,14 +32,6 @@ INSERT INTO dlc_db.public.st VALUES (1, 10), (2, 20);
 
 statement ok
 INSERT INTO dlc_db.public.tt VALUES (1, 10), (2, 20);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dlc_db.public.st;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dlc_db.public.tt;
 
 
 statement ok
@@ -137,7 +129,7 @@ SET sdb_faults = 'crash_before_catalog_commit';
 connection after_table_drop
 statement error connection closed
 CREATE TABLE dlc_db.public.lost(id BIGINT PRIMARY KEY, v INTEGER)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 connection after_lost_create
@@ -211,17 +203,12 @@ CREATE DATABASE dlc_db2;
 connection dropper
 statement ok
 CREATE TABLE dlc_db2.public.st(id BIGINT PRIMARY KEY, v INTEGER)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 connection dropper
 statement ok
 INSERT INTO dlc_db2.public.st VALUES (1, 10);
-
-
-connection dropper
-statement ok
-VACUUM (REFRESH_TABLE) dlc_db2.public.st;
 
 
 connection dropper

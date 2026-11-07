@@ -1,12 +1,11 @@
 control substitution on
 
 statement ok
-CREATE TABLE rows_record (id BIGINT, msg TEXT);
+CREATE TABLE rows_record (id BIGINT, msg TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX rows_record_idx ON rows_record USING inverted (id, msg)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX rows_record_idx ON rows_record USING inverted (id, msg);
 
 
 statement ok
@@ -23,10 +22,6 @@ SET sdb_faults = '-IndexWriter::Transaction::Commit';
 
 statement ok
 DELETE FROM rows_record WHERE id < 400;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) rows_record;
 
 
 query
@@ -56,11 +51,6 @@ SELECT count(*) AS n FROM rows_record;
 ----
 n
 600
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) rows_record;
 
 
 connection after_crash

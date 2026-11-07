@@ -121,10 +121,8 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         with psycopg.connect(host="127.0.0.1", port=server.port,
                              user="postgres", dbname="postgres",
                              autocommit=True) as conn:
-            conn.execute("CREATE TABLE tusk (id INT, body TEXT) "
-                         "WITH (storage = 'search', refresh_interval = 0)")
-            conn.execute("CREATE TABLE idle (id INT) "
-                         "WITH (storage = 'search', refresh_interval = 0)")
+            conn.execute("CREATE TABLE tusk (id INT, body TEXT) ")
+            conn.execute("CREATE TABLE idle (id INT) ")
             conn.execute("INSERT INTO tusk SELECT i, 'ice ' || i "
                          "FROM range(100) t(i)")
     finally:

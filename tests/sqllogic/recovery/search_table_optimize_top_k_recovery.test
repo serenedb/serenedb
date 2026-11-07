@@ -7,7 +7,7 @@ CREATE TEXT SEARCH DICTIONARY rk_en AS
 
 statement ok
 CREATE TABLE rk (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0,
+  WITH (compaction_interval = 0,
         optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
@@ -20,9 +20,6 @@ statement ok
 INSERT INTO rk VALUES (1, 'fox'), (2, 'fox fox'), (3, 'dog');
 
 statement ok
-VACUUM (REFRESH_TABLE) rk;
-
-statement ok
 SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
@@ -33,7 +30,7 @@ FROM generate_series(4, 20000) AS s(i);
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) rk;
+SELECT 1;
 
 connection after_crash
 query

@@ -26,9 +26,8 @@
 #include <algorithm>
 #include <atomic>
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
-#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -68,11 +67,9 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/index_expression.hpp"
 #include "connector/inverted_index_bind.h"
-#include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_backfill.h"
@@ -82,6 +79,7 @@
 #include "pg/types/logical.h"
 #include "query/config_variable_names.h"
 #include "search/store.h"
+#include "search/table_keys.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::connector {
@@ -106,17 +104,13 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   duckdb::idx_t table_id;
   std::vector<InsertColumnMeta> columns;
 
-  connector::PkColumnKind pk_column = connector::PkColumnKind::None;
+  catalog::PkColumnKind pk_column = catalog::PkColumnKind::None;
   PkShape pk_shape = PkShape::Single;
   duckdb::idx_t pk_base_col_idx = 0;
   duckdb::LogicalType generated_pk_type;
   std::shared_ptr<const search::FileManifest> file_manifest;
 
   std::atomic<duckdb::idx_t> backfill_count_atomic{0};
-  // Rows at or above this rowid committed after the index was published and
-  // reach it through the live commit-time feed; Sink truncates them out of
-  // the backfill. INT64_MAX (no filtering) when the source has no rowids.
-  int64_t backfill_rowid_end = std::numeric_limits<int64_t>::max();
 
   std::shared_ptr<search::Store> index_storage;
   catalog::IndexTokenizers tokenizers;
@@ -128,6 +122,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
 
   std::optional<SearchBackfillTarget> search_backfill;
   search::Store::BuildClaim build_claim;
+  std::optional<search::KeySpec> unique_key;
 
   pg::ProgressMetrics* progress = nullptr;
 };
@@ -138,7 +133,6 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   // Per-chunk scratch, kept at high-water mark: Sink runs once per 2048 rows,
   // so anything rebuilt on the stack there is an allocation per chunk.
   std::vector<FeedColumn> columns;
-  duckdb::SelectionVector backfill_sel{STANDARD_VECTOR_SIZE};
   std::unique_ptr<duckdb::Vector> pk_scratch;
 };
 
@@ -148,7 +142,7 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
   duckdb::PhysicalPlan& plan, duckdb::CatalogEntry& relation,
   duckdb::idx_t database_id, duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
-  duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality)
+  duckdb::SchemaCatalogEntry& schema_entry, duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
@@ -165,19 +159,15 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->database_id = _database_id;
   state->index_name = _info->GetIndexName().GetIdentifierName();
 
-  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
-        kSereneDBClientStateKey)) {
-    auto& metrics = sdb_state->Progress();
-    metrics.SetCommand(pg::ProgressCommand::CreateIndex);
-    metrics.SetPhase(pg::progress_phase::CreateIndex::Initializing);
-    pg::ProgressMetrics::Set(metrics.relid,
-                             static_cast<int64_t>(_relation.oid));
-    if (estimated_cardinality > 0) {
-      pg::ProgressMetrics::Set(metrics.tuples_total,
-                               static_cast<int64_t>(estimated_cardinality));
-    }
-    state->progress = &metrics;
+  auto& metrics = ConnectionContext::Get(context).Progress();
+  metrics.SetCommand(pg::ProgressCommand::CreateIndex);
+  metrics.SetPhase(pg::progress_phase::CreateIndex::Initializing);
+  pg::ProgressMetrics::Set(metrics.relid, static_cast<int64_t>(_relation.oid));
+  if (estimated_cardinality > 0) {
+    pg::ProgressMetrics::Set(metrics.tuples_total,
+                             static_cast<int64_t>(estimated_cardinality));
   }
+  state->progress = &metrics;
 
   auto resolve_column = [&](std::string_view col_name) {
     for (const auto& name : _info->names) {
@@ -227,7 +217,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       ? PkShape::Struct
       : PkShape::Single;
   if (_relation.type == duckdb::CatalogType::TABLE_ENTRY &&
-      _relation.Cast<duckdb::TableCatalogEntry>().GetLogStorage() &&
+      catalog::IsSearchTable(_relation) &&
       !IndexNameTaken(context, *_info, _relation)) {
     auto& search_table = _relation.Cast<catalog::SearchTableEntry>();
     search_table.Storage()->ClaimLayout(context,
@@ -259,8 +249,41 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     auto entry = _schema_entry.CreateIndex(transaction, *_info, _relation);
     if (entry) {
       auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
-      index_entry.SetConfig(BindInvertedIndexConfig(
-        context, index_entry, _relation, _bound_expressions, pk_type));
+      auto config = BindInvertedIndexConfig(context, index_entry, _relation,
+                                            _bound_expressions, pk_type);
+      if (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE &&
+          catalog::IsSearchTable(_relation)) {
+        auto& table = _relation.Cast<catalog::SearchTableEntry>();
+        std::vector<duckdb::Identifier> columns;
+        for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
+          if (_info->column_opclasses[i] == "included") {
+            continue;
+          }
+          const auto& expr = *_info->parsed_expressions[i];
+          if (expr.GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                            ERR_MSG("unique indexes on expressions are not "
+                                    "supported"));
+          }
+          const auto& name =
+            expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+          if (table.GetColumn(name).Category() ==
+              duckdb::TableColumnType::GENERATED_VIRTUAL) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+              ERR_MSG(
+                "indexes on virtual generated columns are not supported"));
+          }
+          columns.push_back(name);
+        }
+        state->unique_key = search::UniqueIndexKey(
+          table, static_cast<irs::field_id>(index_entry.oid), state->index_name,
+          columns);
+        auto unique = std::make_shared<catalog::InvertedIndexConfig>(*config);
+        unique->constraint_keys.push_back(state->unique_key->key);
+        config = std::move(unique);
+      }
+      index_entry.SetConfig(std::move(config));
       if (const auto& store = index_entry.SearchStore()) {
         state->build_claim =
           store->BeginIndexBuild(index_entry.oid, index_entry.Config());
@@ -279,16 +302,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         backfill.group_bytes = SearchBackfillGroupBytes(context);
         state->search_backfill = std::move(backfill);
       } else {
-        const auto published = PublishInvertedIndex(
-          context, index_entry, _relation, _bound_expressions);
-        published.storage->SetFileManifest(extras ? extras->manifest : nullptr);
-        published.storage->StartTasks();
+        const auto options = catalog::ResolveSettings(index_entry.options);
+        auto storage = std::make_shared<search::Store>(
+          index_entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(),
+          index_entry.catalog.InMemory(), false, index_entry.catalog.GetOid(),
+          index_entry.oid, options, index_entry.Config()->top_k_scorer,
+          /*is_new=*/true);
+        storage->ApplyOptions(options);
+        index_entry.AdoptStorage(storage);
+        storage->SetFileManifest(extras ? extras->manifest : nullptr);
+        storage->StartTasks();
         index_entry.CreateReindexJob(transaction, reindex_interval);
-        if (IsDuckDBTable()) {
-          published.storage->SetDeleteLogRowidEnd(published.rowid_horizon);
-          state->backfill_rowid_end =
-            static_cast<int64_t>(published.rowid_horizon);
-        }
       }
     }
     created = entry ? &entry->Cast<duckdb::IndexCatalogEntry>() : nullptr;
@@ -406,27 +430,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   auto* lstate = &input.local_state.Cast<CreateIndexLocalState>();
   auto* writer = lstate->writer.get();
 
-  if (gstate.backfill_rowid_end != std::numeric_limits<int64_t>::max()) {
-    auto& rowid_vec = chunk.data[gstate.pk_base_col_idx];
-    auto rowids = rowid_vec.Values<int64_t>();
-    auto& sel = lstate->backfill_sel;
-    duckdb::idx_t keep = 0;
-    for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-      if (rowids[i].GetValueUnsafe() < gstate.backfill_rowid_end) {
-        sel.set_index(keep++, i);
-      }
-    }
-    if (keep == 0) {
-      return duckdb::SinkResultType::NEED_MORE_INPUT;
-    }
-    if (keep != num_rows) {
-      chunk.Slice(sel, keep);
-      num_rows = keep;
-    }
-  }
-
   const duckdb::Vector* pk = nullptr;
-  if (gstate.pk_column == connector::PkColumnKind::Has) {
+  if (gstate.pk_column == catalog::PkColumnKind::Has) {
     switch (gstate.pk_shape) {
       case PkShape::Single:
         SDB_ASSERT(gstate.pk_base_col_idx < chunk.ColumnCount());
@@ -517,6 +522,11 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   if (gstate.search_backfill) {
     SDB_ASSERT(gstate.search_backfill->shard->BuildInFlight());
     RunSearchTableBackfill(context, *gstate.search_backfill, gstate.progress);
+    const auto& table = _relation.Cast<catalog::SearchTableEntry>();
+    if (gstate.unique_key) {
+      search::VerifyUniqueKey(table.RowsWithOwn(context), *gstate.unique_key);
+    }
+    table.AdoptAsWritten(context);
     gstate.build_claim.Finish();
     if (gstate.progress) {
       gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
@@ -531,28 +541,14 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   auto& inverted_storage = *gstate.index_storage;
-  auto deleted = inverted_storage.TakeDeleteLog();
-  SDB_PARK_ONCE_ON_FAILURE("create_index_delete_log_taken");
-  if (!deleted.empty()) {
-    inverted_storage.CommitRemoval(std::move(deleted));
-  }
-  SDB_IF_FAILURE("refresh_before_manifest_publish") {
-    search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
+  SDB_IF_FAILURE("commit_before_manifest_publish") {
+    inverted_storage.Commit();
   }
   if (gstate.file_manifest) {
     inverted_storage.SetFileManifest(gstate.file_manifest);
   }
-  search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
-  if (IsDuckDBTable() && inverted_storage.IsOutOfSync()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to commit index '", gstate.index_name,
-                            "': the refresh did not commit the build"));
-  }
+  inverted_storage.Commit();
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
-  if (IsDuckDBTable() && !IsReindexPass()) {
-    GetSereneDBContext(context).AddCreatedIndex(
-      _relation.ParentCatalog().GetAttached().oid, gstate.index_storage);
-  }
 
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
@@ -580,8 +576,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   auto& op = input.op;
   auto& table_catalog = op.table.ParentCatalog();
   catalog::ThrowIfReadOnly(table_catalog, "CREATE INDEX");
-  if (table_catalog.GetCatalogType() !=
-      catalog::SereneDBCatalog::kStorageType) {
+  if (!catalog::IsSereneDB(table_catalog)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("cannot CREATE INDEX on ",
@@ -592,8 +587,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
                 .GetIdentifierName(),
               ")"));
   }
-  auto& schema_entry =
-    op.table.ParentSchema(input.context).Cast<duckdb::DuckSchemaEntry>();
+  auto& schema_entry = op.table.ParentSchema(input.context);
   auto database_id = table_catalog.Cast<catalog::SereneDBCatalog>().GetOid();
 
   const auto column_ids = KeyColumnIds(op.table, op.info->column_ids);

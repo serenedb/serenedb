@@ -24,9 +24,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "catalog/catalog.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/index_source_external_lookup.h"
 #include "connector/index_source_native.h"
 #include "connector/scan/scan_bind.h"

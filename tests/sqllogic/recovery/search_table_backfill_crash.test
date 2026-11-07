@@ -21,7 +21,7 @@ RESET sdb_faults;
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE bfx (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 # Three separate published segments: one INSERT + refresh each. With a 1-byte
@@ -31,19 +31,10 @@ statement ok
 INSERT INTO bfx VALUES (1, 'alpha');
 
 statement ok
-VACUUM (REFRESH_TABLE) bfx;
-
-statement ok
 INSERT INTO bfx VALUES (2, 'beta');
 
 statement ok
-VACUUM (REFRESH_TABLE) bfx;
-
-statement ok
 INSERT INTO bfx VALUES (3, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) bfx;
 
 
 query
@@ -137,11 +128,6 @@ INSERT INTO bfx VALUES (4, 'delta');
 
 
 connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) bfx;
-
-
-connection after_crash
 query
 SELECT id FROM bfx_idx WHERE tag @@ 'delta';
 ----
@@ -173,7 +159,7 @@ DROP TABLE bfx;
 connection after_crash
 statement ok
 CREATE TABLE bfy (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 connection after_crash
@@ -182,15 +168,7 @@ INSERT INTO bfy VALUES (1, 'alpha');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) bfy;
-
-connection after_crash
-statement ok
 INSERT INTO bfy VALUES (2, 'beta');
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) bfy;
 
 connection after_crash
 statement ok
@@ -198,15 +176,7 @@ INSERT INTO bfy VALUES (3, 'gamma');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) bfy;
-
-connection after_crash
-statement ok
 INSERT INTO bfy VALUES (4, 'delta');
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) bfy;
 
 
 # One segment per group again, so the crash lands with one swapped and three
@@ -292,11 +262,6 @@ count
 connection after_crash_2
 statement ok
 INSERT INTO bfy VALUES (5, 'epsilon');
-
-
-connection after_crash_2
-statement ok
-VACUUM (REFRESH_TABLE) bfy;
 
 
 connection after_crash_2

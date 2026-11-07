@@ -62,6 +62,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 
 ## Server code
 
+- SereneDB is a fast, good analytical database first and PostgreSQL-compatible second. PostgreSQL is the default direction where nothing else decides: our own errors and the semantics PostgreSQL defines (how a foreign key meets a trigger) follow it. It is never a spec to copy, nor an argument against a feature it lacks. We differ on purpose where its choice is worse, where following it would slow down paths unrelated to the PostgreSQL-only behavior, where the code lives in a dependency, or where matching it costs more than it gives; and we keep designs it doesn't share, such as optimistic MVCC.
 - SQL the server issues itself is built with DuckDB's C++ API, not as text. Client SQL is the parser's job: never match or rewrite it as text; patch the parser or transformer.
 - Internal work uses the `ClientContext` already in play, passed as the first parameter; never a new `duckdb::Connection`.
 - A new cap or limit is a `SET` variable read through the `Get*Setting` functions of `query/config.h`, named `sdb_<name>` when SereneDB-only.

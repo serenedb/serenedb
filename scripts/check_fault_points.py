@@ -30,8 +30,8 @@ RECOVERY_DIR = "tests/sqllogic/recovery"
 SOURCE_DIRS = ("server", "iresearch")
 DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
-DUCKDB_FAULTS = frozenset({"alter_log_without_dependencies", "slow_expression_bind"})
-DUCKDB_PARK_FAULTS = frozenset({"pause_checkpoint", "pause_wal_sync"})
+DUCKDB_FAULTS = frozenset({"slow_expression_bind"})
+DUCKDB_PARK_FAULTS = frozenset()
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")
@@ -97,9 +97,6 @@ KNOWN_UNTESTED_SOURCE_FAULTS = {
     # Search compaction task fault points; no recovery test drives compaction yet.
     "SearchCompactionTask::compactUnsafe",
     "SearchCompactionTask::lockInvertedIndexStorage",
-    # Search refresh task fault points; cleanup/lock paths untested.
-    "SearchRefreshTask::cleanupUnsafe",
-    "SearchRefreshTask::lockInvertedIndexStorage",
     # Truncate failure injection; no test drives a failed search truncate yet.
     "SereneSearchTruncateFailure",
     # Crash before the drop-task wipes the sequence counter; recovery test pending.

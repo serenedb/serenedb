@@ -28,7 +28,7 @@ A view-backed index stores a **frozen snapshot of the postings** taken at `CREAT
 
 </DocCallout>
 
-All examples below use this setup — a base table and a view over it:
+All examples below use this setup — a Parquet file and a view over it:
 
 <SqlLogicTest id="sql/indexes/inverted/views/setup" />
 
@@ -38,20 +38,19 @@ How the index derives a stable per-row identity depends on the view body:
 
 | View body | Row identity | Can be overridden |
 |---|---|---|
-| `SELECT … FROM base_table` | The hidden row id | — |
 | `SELECT … FROM read_parquet('file')` | The reader's `file_row_number` | — |
 | `read_csv` / `read_json` single file | The byte offset within the file | — |
 | Reader over a **glob** (`'…/*.parquet'`) | `(file_index, position)` pair | — |
 | Attached DuckDB / Iceberg table | The source row id / `(file_index, row)` | — |
 | Attached **PostgreSQL** table | The remote `ctid` | `WITH (key_columns = '…')` |
 | Attached **ClickHouse** table | The engine's primary-key columns | `WITH (key_columns = '…')` |
-| Generic body (inline `VALUES`, `UNION ALL`, joins) | None; see [Generic views](#generic-views) | — |
+| Generic body (a SereneDB table, inline `VALUES`, `UNION ALL`, joins) | None; see [Generic views](#generic-views) | — |
 
 Row identity is always derived automatically — there is no `pk` index option. The only sources that accept an explicit key are [attached external databases](./external-data.md#external-databases), via `key_columns`.
 
 ## Fast-path sources
 
-A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: SereneDB base tables, `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
+A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
 
 The view body may shape the source and still qualify as fast-path:
 
@@ -61,7 +60,7 @@ The view body may shape the source and still qualify as fast-path:
 
 An indexed **expression** over source columns (`upper(body)`, `(json ->> 'b')`) goes in the index definition, over a plain view.
 
-A body with **no fast-path leaf** — inline `VALUES`, a `UNION ALL`, a join — is a *generic* view: it indexes normally but supports only the non-materializing queries below.
+A body with **no fast-path leaf** — a SereneDB table, inline `VALUES`, a `UNION ALL`, a join — is a *generic* view: it indexes normally but supports only the non-materializing queries below. Over a SereneDB table, create the index on the table itself, or [`INCLUDE`](#include-columns) the columns you return to get a searchable snapshot of the view.
 
 ### Keeping a view on the fast path
 
@@ -72,6 +71,7 @@ Besides losing [materialization](#materializing-real-columns), a generic view's 
 | An expression in the select list: `SELECT id, upper(body) AS body FROM …` | A plain view, with the expression in the index: `USING inverted((upper(body)) en)` |
 | A qualified column: `SELECT t.id, t.body FROM … AS t` | Bare column names: `SELECT id, body FROM …` |
 | A join, a subquery, `UNION ALL` or inline `VALUES` | One table or one reader call per view |
+| A SereneDB table | An index on the table itself, or [`INCLUDE`](#include-columns) the columns you return |
 | `GROUP BY`, `HAVING`, `DISTINCT`, `QUALIFY`, `SAMPLE` or a `WITH` clause | A plain view; aggregate or deduplicate in the query |
 | A reader over a list of files: `read_parquet(['a.parquet', 'b.parquet'])` | One glob: `read_parquet('data/*.parquet')` |
 | Compressed JSON: a `.gz` / `.zst` path, or `compression = 'gzip'` / `'zstd'` | Uncompressed files, or [`INCLUDE`](#include-columns) the columns you return |

@@ -20,12 +20,12 @@
 
 #include "catalog/entry/system_table.h"
 
-#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/default/default_generator.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
+#include <duckdb/main/extension_callback_manager.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
@@ -141,38 +141,6 @@ class SystemEntryGenerator final : public duckdb::DefaultGenerator {
   duckdb::CatalogType _set;
 };
 
-class SystemSchemaGenerator final : public duckdb::DefaultGenerator {
- public:
-  using DefaultGenerator::DefaultGenerator;
-
-  duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
-    duckdb::CatalogTransaction, const duckdb::Identifier& name) final {
-    if (!duckdb::DefaultSchemaGenerator::IsDefaultSchema(name)) {
-      return nullptr;
-    }
-    duckdb::CreateSchemaInfo info;
-    info.SetQualifiedName(duckdb::QualifiedName({name}, duckdb::Identifier()));
-    info.internal = true;
-    info.oid = name == duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema}
-                 ? pg::kPgCatalogSchema
-                 : pg::kPgInformationSchema;
-    info.permissions = pg::SchemaPermissions();
-    auto schema = duckdb::make_uniq<duckdb::DuckSchemaEntry>(catalog, info);
-    for (const auto set :
-         {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::MACRO_ENTRY,
-          duckdb::CatalogType::TABLE_MACRO_ENTRY}) {
-      schema->GetCatalogSet(set).SetDefaultGenerator(
-        duckdb::make_uniq<SystemEntryGenerator>(catalog, *schema, set));
-    }
-    return schema;
-  }
-
-  duckdb::vector<duckdb::Identifier> GetDefaultEntries() final {
-    return {duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema},
-            duckdb::Identifier{irs::StaticStrings::kInformationSchema}};
-  }
-};
-
 }  // namespace
 
 SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
@@ -247,8 +215,55 @@ void SystemViewEntry::UpdateBinding(
 }
 
 void MountSystemSchemas(SereneDBCatalog& catalog) {
-  catalog.GetSchemaCatalogSet().SetDefaultGenerator(
-    duckdb::make_uniq<SystemSchemaGenerator>(catalog));
+  auto data =
+    duckdb::CatalogTransaction::GetSystemTransaction(catalog.GetDatabase());
+  auto& builtins = duckdb::Catalog::GetSystemCatalog(catalog.GetDatabase())
+                     .Cast<BaseCatalog>()
+                     .Set(duckdb::CatalogType::SCHEMA_ENTRY);
+  const auto builtin = [&](std::string_view name) -> Schema& {
+    return builtins.GetCommitted(duckdb::Identifier{std::string{name}})
+      ->Cast<Schema>();
+  };
+  for (const auto& [name, oid] :
+       {std::pair{irs::StaticStrings::kPgCatalogSchema, pg::kPgCatalogSchema},
+        std::pair{irs::StaticStrings::kInformationSchema,
+                  pg::kPgInformationSchema}}) {
+    duckdb::CreateSchemaInfo info;
+    info.SetQualifiedName(duckdb::QualifiedName(
+      {duckdb::Identifier{std::string{name}}}, duckdb::Identifier()));
+    info.internal = true;
+    info.oid = oid;
+    info.permissions = pg::SchemaPermissions();
+    auto& schema = catalog.CreateSchema(data, info)->Cast<Schema>();
+    for (const auto set :
+         {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::MACRO_ENTRY,
+          duckdb::CatalogType::TABLE_MACRO_ENTRY}) {
+      schema.Set(set).SetDefaults(
+        duckdb::make_uniq<SystemEntryGenerator>(catalog, schema, set));
+    }
+    if (catalog.GetAttached().IsTemporary()) {
+      continue;
+    }
+    schema.Inherit(builtin(name), false);
+    if (name == irs::StaticStrings::kInformationSchema) {
+      schema.Inherit(builtin(irs::StaticStrings::kPgCatalogSchema), true);
+    }
+  }
+  if (catalog.GetAttached().IsTemporary()) {
+    return;
+  }
+  for (const auto& name :
+       duckdb::ExtensionCallbackManager::Get(catalog.GetDatabase())
+         .GetExtensionSchemas()) {
+    auto& source = builtin(name);
+    duckdb::CreateSchemaInfo info;
+    info.SetQualifiedName(
+      duckdb::QualifiedName({duckdb::Identifier{name}}, duckdb::Identifier()));
+    info.internal = true;
+    info.oid = source.oid;
+    info.permissions = pg::SchemaPermissions();
+    catalog.CreateSchema(data, info)->Cast<Schema>().Inherit(source, false);
+  }
 }
 
 }  // namespace sdb::catalog

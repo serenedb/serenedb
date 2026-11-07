@@ -27,7 +27,7 @@ CREATE TEXT SEARCH DICTIONARY bf_en AS
 
 statement ok
 CREATE TABLE bf (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bf VALUES
@@ -35,9 +35,6 @@ INSERT INTO bf VALUES
   (2, 'blue',  'lazy dog jumps'),
   (3, 'red',   'fox runs fast'),
   (4, 'green', 'nothing here');
-
-statement ok
-VACUUM (REFRESH_TABLE) bf;
 
 # Rows published before the index existed.
 query
@@ -65,9 +62,6 @@ id
 statement ok
 INSERT INTO bf VALUES (5, 'red', 'late arrival');
 
-statement ok
-VACUUM (REFRESH_TABLE) bf;
-
 query
 SELECT id FROM bf_tag_idx WHERE tag @@ 'red' ORDER BY id;
 ----
@@ -91,16 +85,13 @@ id	tag	body
 
 statement ok
 CREATE TABLE bf_first (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX bf_first_tag_idx ON bf_first USING inverted (tag);
 
 statement ok
 INSERT INTO bf_first SELECT id, tag, body FROM bf;
-
-statement ok
-VACUUM (REFRESH_TABLE) bf_first;
 
 query
 SELECT id FROM bf_first_tag_idx WHERE tag @@ 'red' ORDER BY id;
@@ -127,9 +118,6 @@ DELETE FROM bf WHERE id = 3;
 
 statement ok
 UPDATE bf SET tag = 'red' WHERE id = 2;
-
-statement ok
-VACUUM (REFRESH_TABLE) bf;
 
 query
 SELECT id FROM bf_tag_idx WHERE tag @@ 'red' ORDER BY id;
@@ -158,13 +146,10 @@ id	tag	body
 
 statement ok
 CREATE TABLE bf_two (id BIGINT PRIMARY KEY, txt TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bf_two VALUES (1, 'hello world'), (2, 'quick brown fox');
-
-statement ok
-VACUUM (REFRESH_TABLE) bf_two;
 
 statement ok
 CREATE INDEX bf_two_kw ON bf_two USING inverted (txt);
@@ -203,9 +188,6 @@ id
 statement ok
 DELETE FROM bf_two WHERE id = 1;
 
-statement ok
-VACUUM (REFRESH_TABLE) bf_two;
-
 query
 SELECT id FROM bf_two_an WHERE txt @@ 'hello' ORDER BY id;
 ----
@@ -229,7 +211,7 @@ id
 
 statement ok
 CREATE TABLE bf_groups (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 # One published segment per row: compaction is off, so these stay separate and
 # the build has several groups to walk.
@@ -237,25 +219,13 @@ statement ok
 INSERT INTO bf_groups VALUES (1, 'v1');
 
 statement ok
-VACUUM (REFRESH_TABLE) bf_groups;
-
-statement ok
 INSERT INTO bf_groups VALUES (2, 'v2');
-
-statement ok
-VACUUM (REFRESH_TABLE) bf_groups;
 
 statement ok
 INSERT INTO bf_groups VALUES (3, 'v3');
 
 statement ok
-VACUUM (REFRESH_TABLE) bf_groups;
-
-statement ok
 INSERT INTO bf_groups VALUES (4, 'v4');
-
-statement ok
-VACUUM (REFRESH_TABLE) bf_groups;
 
 statement ok
 SET search_backfill_group_bytes = 1;
@@ -293,25 +263,16 @@ id	tag
 # swap. Same final index as the 1-byte run above, from the opposite extreme.
 statement ok
 CREATE TABLE bf_onegroup (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bf_onegroup VALUES (1, 'v1');
 
 statement ok
-VACUUM (REFRESH_TABLE) bf_onegroup;
-
-statement ok
 INSERT INTO bf_onegroup VALUES (2, 'v2');
 
 statement ok
-VACUUM (REFRESH_TABLE) bf_onegroup;
-
-statement ok
 INSERT INTO bf_onegroup VALUES (3, 'v3');
-
-statement ok
-VACUUM (REFRESH_TABLE) bf_onegroup;
 
 statement ok
 SET search_backfill_group_bytes = 0;
@@ -339,19 +300,13 @@ id	tag
 
 statement ok
 CREATE TABLE bf_masked (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bf_masked SELECT i, 't' || (i % 3) FROM generate_series(1, 10000) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) bf_masked;
-
-statement ok
 DELETE FROM bf_masked WHERE id % 2 = 0 OR id BETWEEN 2001 AND 7000;
-
-statement ok
-VACUUM (REFRESH_TABLE) bf_masked;
 
 statement ok
 CREATE INDEX bf_masked_idx ON bf_masked USING inverted (tag);
@@ -406,26 +361,17 @@ DROP TABLE bf_masked;
 
 statement ok
 CREATE TABLE bf_split (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+  WITH (compaction_interval = 0,
         segment_memory_max = 2097152);
 
 statement ok
 INSERT INTO bf_split SELECT i, 'w' || (i % 50) || ' x' || i FROM generate_series(0, 99999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) bf_split;
-
-statement ok
 INSERT INTO bf_split SELECT i, 'w' || (i % 50) || ' y' || i FROM generate_series(100000, 199999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) bf_split;
-
-statement ok
 DELETE FROM bf_split WHERE id % 7 = 0;
-
-statement ok
-VACUUM (REFRESH_TABLE) bf_split;
 
 statement ok
 SET search_backfill_group_bytes = 0;
@@ -456,9 +402,6 @@ n
 
 statement ok
 DELETE FROM bf_split WHERE id % 11 = 0;
-
-statement ok
-VACUUM (REFRESH_TABLE) bf_split;
 
 query
 SELECT count(*) AS n, sum(id) AS s FROM bf_split;

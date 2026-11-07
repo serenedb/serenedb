@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # Deleted documents are per-segment masks until compaction rewrites the
 # segment. The term-dict scan drops terms with no live documents and
 # ts_dict_count() counts live documents only; ts_dict_freq() stays a raw
@@ -22,11 +19,10 @@ CREATE TEXT SEARCH DICTIONARY del_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE dd(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+CREATE TABLE dd(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX dd_idx ON dd USING inverted(cat del_kw, body del_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO dd VALUES
@@ -34,9 +30,6 @@ INSERT INTO dd VALUES
   (2, 'green', 'apple cherry'),
   (3, 'red',   'banana'),
   (4, 'blue',  'apple date')
-
-statement ok
-VACUUM (REFRESH_TABLE) dd;
 
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
@@ -82,6 +75,7 @@ QUERY PLAN
 ╰──────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────┴──────────────────────────╮
 │ Index: dd_idx                                       │
+│ Lookup: search                                      │
 │ TsDict: cat                                         │
 │ Projections:                                        │
 │ sdb_inverted_index_term$cat,                        │
@@ -115,6 +109,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: dd_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~3 rows                                  │
@@ -125,9 +120,6 @@ QUERY PLAN
 # compacted). Counts are live-exact; freq keeps the raw index value.
 statement ok
 DELETE FROM dd WHERE id = 4
-
-statement ok
-VACUUM (REFRESH_TABLE) dd;
 
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
@@ -171,9 +163,6 @@ n
 statement ok
 DELETE FROM dd WHERE id = 3
 
-statement ok
-VACUUM (REFRESH_TABLE) dd;
-
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
 FROM dd_idx ORDER BY term
@@ -185,9 +174,6 @@ red	1
 # A fresh clean segment sums with the dirty one per term.
 statement ok
 INSERT INTO dd VALUES (5, 'red', 'banana')
-
-statement ok
-VACUUM (REFRESH_TABLE) dd;
 
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
@@ -210,9 +196,6 @@ cherry	1
 statement ok
 UPDATE dd SET cat = 'teal' WHERE id = 2
 
-statement ok
-VACUUM (REFRESH_TABLE) dd;
-
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
 FROM dd_idx ORDER BY term
@@ -229,23 +212,16 @@ cats
 
 # A fully-deleted table exposes no terms.
 statement ok
-CREATE TABLE dd2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+CREATE TABLE dd2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX dd2_idx ON dd2 USING inverted(cat del_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO dd2 VALUES (1, 'a'), (2, 'b'), (3, 'c')
 
 statement ok
-VACUUM (REFRESH_TABLE) dd2;
-
-statement ok
 DELETE FROM dd2
-
-statement ok
-VACUUM (REFRESH_TABLE) dd2;
 
 query I
 SELECT count(*) AS n FROM dd2_idx

@@ -18,7 +18,7 @@ CREATE FUNCTION stcf_fs.stcf_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE A
 
 statement ok
 CREATE TABLE public.stcf_defaults (id INT PRIMARY KEY, a INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -31,17 +31,17 @@ SET search_path = stcf_fs, public;
 
 statement ok
 CREATE TABLE public.stcf_retyped (id INT PRIMARY KEY, a INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE TABLE public.stcf_checked (id INT PRIMARY KEY, a INT CHECK (stcf_pos(a)), b INT, c INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE TABLE public.stcf_shared (id INT PRIMARY KEY, a INT, b INT, CHECK (stcf_pos(a) AND b > 0))
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -78,7 +78,7 @@ ALTER TABLE public.stcf_defaults ADD COLUMN d BIGINT DEFAULT stcf_conv(7);
 
 statement ok
 CREATE TABLE public.stcf_generated (id INT PRIMARY KEY, a INT, s BIGINT GENERATED ALWAYS AS (stcf_conv(a)) STORED)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -105,7 +105,7 @@ CREATE FUNCTION stcf_app_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'S
 connection app database=stcf_app
 statement ok
 CREATE TABLE stcf_t (id INT PRIMARY KEY, a INT CHECK (stcf_app_pos(a)), b INT, c INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 connection app database=stcf_app
@@ -133,12 +133,7 @@ SELECT 1;
 
 connection restarted
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) stcf_retyped;
-
-
-connection restarted
-statement ok
-VACUUM (REFRESH_TABLE) stcf_checked;
+SELECT 1;
 
 
 connection restarted
@@ -171,11 +166,6 @@ INSERT INTO stcf_shared VALUES (2, -1);
 
 
 connection restarted
-statement ok
-VACUUM (REFRESH_TABLE) stcf_shared;
-
-
-connection restarted
 query
 SELECT id, a FROM stcf_shared ORDER BY id;
 ----
@@ -187,11 +177,6 @@ id	a
 connection restarted
 statement ok
 INSERT INTO stcf_defaults (id, a) VALUES (2, 2);
-
-
-connection restarted
-statement ok
-VACUUM (REFRESH_TABLE) stcf_defaults;
 
 
 connection restarted
@@ -209,22 +194,12 @@ INSERT INTO stcf_generated (id, a) VALUES (2, 2);
 
 
 connection restarted
-statement ok
-VACUUM (REFRESH_TABLE) stcf_generated;
-
-
-connection restarted
 query
 SELECT id, s FROM stcf_generated ORDER BY id;
 ----
 id	s
 1	10
 2	20
-
-
-connection restarted_app database=stcf_app
-statement ok
-VACUUM (REFRESH_TABLE) stcf_t;
 
 
 connection restarted_app database=stcf_app

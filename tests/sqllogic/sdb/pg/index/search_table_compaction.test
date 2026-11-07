@@ -1,24 +1,25 @@
 statement ok
-CREATE TABLE sc_on (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search')
+CREATE TABLE sc_on (id INT PRIMARY KEY, body TEXT)
+WITH (segment_memory_max = 1)
 
 
 statement ok
 CREATE TABLE sc_off (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (compaction_interval = 0, segment_memory_max = 1)
 
 
 query
 SELECT reloptions FROM pg_class WHERE relname = 'sc_on';
 ----
 reloptions
-{refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+{segment_memory_max=1}
 
 
 query
 SELECT reloptions FROM pg_class WHERE relname = 'sc_off';
 ----
 reloptions
-{refresh_interval=1000,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+{compaction_interval=0,segment_memory_max=1}
 
 
 statement ok
@@ -26,15 +27,7 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_on
-
-
-statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_off
 
 
 statement ok
@@ -42,15 +35,7 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_on
-
-
-statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_off
 
 
 statement ok
@@ -58,15 +43,7 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_on
-
-
-statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_off
 
 
 statement ok
@@ -74,15 +51,7 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_on
-
-
-statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_off
 
 
 statement ok
@@ -90,15 +59,7 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_on
-
-
-statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_off
 
 
 statement ok
@@ -106,15 +67,7 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(501, 600) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_on
-
-
-statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(501, 600) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_off
 
 
 query ok retry 480 backoff 250ms
@@ -139,7 +92,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'sc_off';
 ----
 reloptions
-{refresh_interval=1000,compaction_interval=100,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+{compaction_interval=100,segment_memory_max=1}
 
 
 query ok retry 480 backoff 250ms
@@ -158,23 +111,11 @@ INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(601, 700) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_off
-
-
-statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(701, 800) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_off
-
-
-statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(801, 900) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_off
 
 
 statement ok
@@ -204,7 +145,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'sc_off';
 ----
 reloptions
-{refresh_interval=1000,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+{compaction_interval=0,segment_memory_max=1}
 
 
 statement ok
@@ -215,7 +156,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'sc_off';
 ----
 reloptions
-{refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+{segment_memory_max=1}
 
 
 statement error
@@ -246,7 +187,7 @@ count	sum
 
 statement ok
 CREATE TABLE sc_tgt (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (compaction_interval = 0, segment_memory_max = 1)
 
 
 statement ok
@@ -254,15 +195,7 @@ INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_tgt
-
-
-statement ok
 INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_tgt
 
 
 statement ok
@@ -270,15 +203,7 @@ INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_tgt
-
-
-statement ok
 INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_tgt
 
 
 statement ok
@@ -286,15 +211,7 @@ INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_tgt
-
-
-statement ok
 INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(501, 600) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_tgt
 
 
 statement ok
@@ -302,15 +219,7 @@ INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(601, 700) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_tgt
-
-
-statement ok
 INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(701, 800) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_tgt
 
 
 query
@@ -375,7 +284,7 @@ count	sum
 # A CREATE INDEX that fails leaves the table compacting as before.
 statement ok
 CREATE TABLE sc_abort (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (compaction_interval = 0, segment_memory_max = 1)
 
 
 statement ok
@@ -383,15 +292,7 @@ INSERT INTO sc_abort SELECT i, 'fox' FROM generate_series(1, 100) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_abort
-
-
-statement ok
 INSERT INTO sc_abort SELECT i, 'fox' FROM generate_series(101, 200) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_abort
 
 
 statement error
@@ -415,7 +316,7 @@ segments
 # segments a compaction merged after the drop.
 statement ok
 CREATE TABLE sc_snap (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (compaction_interval = 0, segment_memory_max = 1)
 
 
 statement ok
@@ -431,15 +332,7 @@ INSERT INTO sc_snap SELECT i, 'fox' FROM generate_series(1, 100) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_snap
-
-
-statement ok
 INSERT INTO sc_snap SELECT i, 'fox' FROM generate_series(101, 200) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_snap
 
 
 connection reader

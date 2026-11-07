@@ -103,13 +103,10 @@ DETACH sfa_session;
 
 statement ok
 CREATE TABLE postgres.public.sfa_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO postgres.public.sfa_notes SELECT i, 'note' FROM range(1, 4) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) postgres.public.sfa_notes;
 
 statement ok
 INSERT INTO postgres.public.sfa_notes SELECT i, 'note' FROM range(4, 6) t(i);
@@ -137,9 +134,6 @@ n
 
 statement ok
 DROP SERVER sfa_search;
-
-statement ok
-VACUUM (REFRESH_TABLE) postgres.public.sfa_notes;
 
 statement ok
 CHECKPOINT postgres;

@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE ljs (id INTEGER, k INTEGER, url VARCHAR, payload VARCHAR)
-WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO ljs
@@ -10,17 +10,11 @@ SELECT i, i % 3000,
 FROM range(0, 3000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ljs;
-
-statement ok
 INSERT INTO ljs
 SELECT i, i % 3000,
        CASE WHEN i % 3000 % 7 = 0 THEN 'https://google.com/' ELSE 'https://example.com/' END || i,
        'payload-' || i || '-long-enough-to-not-inline'
 FROM range(3000, 6000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) ljs;
 
 statement ok
 INSERT INTO ljs
@@ -30,13 +24,7 @@ SELECT i, i % 3000,
 FROM range(6000, 9000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ljs;
-
-statement ok
 DELETE FROM ljs WHERE id < 3000 AND id % 14 = 0;
-
-statement ok
-VACUUM (REFRESH_TABLE) ljs;
 
 query
 SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM ljs;
@@ -55,12 +43,11 @@ QUERY PLAN
                    ├────────────────────────────────╮
 ╭─ TOP_N ──────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
 │ Top: 6                             │  │ Index: ljs           │
-│ Order By: k ASC, id ASC            │  │ Lookup: search       │
-│ ~6 rows                            │  │ Projections: payload │
-╰──────────────────┬─────────────────╯  │ ~6 rows              │
-╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╰──────────────────────╯
-│ Index: ljs                         │
-│ Lookup: search                     │
+│ Order By: k ASC, id ASC            │  │ Projections: payload │
+│ ~6 rows                            │  │ ~6 rows              │
+╰──────────────────┬─────────────────╯  ╰──────────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Table: ljs                         │
 │ Projections: id, k, rowid          │
 │ Column Filter:                     │
 │ contains(url, 'google'),           │
@@ -139,11 +126,10 @@ CREATE TEXT SEARCH DICTIONARY ljd_words AS
     WITH (frequency, position, norm, offset);
 
 statement ok
-CREATE TABLE ljd (id INTEGER PRIMARY KEY, k INTEGER, body VARCHAR, payload VARCHAR, note VARCHAR);
+CREATE TABLE ljd (id INTEGER PRIMARY KEY, k INTEGER, body VARCHAR, payload VARCHAR, note VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX ljd_idx ON ljd USING inverted (id, k, body ljd_words) INCLUDE (k, payload)
-WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX ljd_idx ON ljd USING inverted (id, k, body ljd_words) INCLUDE (k, payload);
 
 statement ok
 INSERT INTO ljd
@@ -154,18 +140,12 @@ SELECT i, i % 3000,
 FROM range(0, 3000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ljd;
-
-statement ok
 INSERT INTO ljd
 SELECT i, i % 3000,
        CASE WHEN i % 3000 % 7 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i,
        'payload-' || i || '-long-enough-to-not-inline',
        'note-' || i
 FROM range(3000, 6000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) ljd;
 
 statement ok
 INSERT INTO ljd
@@ -176,26 +156,19 @@ SELECT i, i % 3000,
 FROM range(6000, 9000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ljd;
-
-statement ok
 DELETE FROM ljd WHERE id < 3000 AND id % 14 = 0;
 
-statement ok
-VACUUM (REFRESH_TABLE) ljd;
-
 query
-SELECT count(DISTINCT iresearch_pk >> 32) AS segments, count(*) AS n FROM ljd_idx;
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM ljd;
 ----
 segments	n
 3	8785
 
-statement error
-SELECT rowid FROM ljd_idx LIMIT 1;
+query
+SELECT (SELECT rowid FROM ljd_idx WHERE id = 7) = (SELECT rowid FROM ljd WHERE id = 7) AS same;
 ----
-db error: ERROR: cannot open relation "ljd_idx"
-DETAIL: This operation is not supported for indexes.
-
+same
+t
 
 statement error
 UPDATE ljd_idx SET note = 'x' WHERE id = 7;
@@ -219,20 +192,15 @@ QUERY PLAN
 │ Key: rowid                        │
 │ ~6 rows                           │
 ╰─────────────────┬─────────────────╯
-                  ├─────────────────────────────────────────────╮
-╭─ LOOKUP_JOIN ───┴─────────────────╮                 ╭─ INDEX_SOURCE ────╮
-│ Key: iresearch_pk                 │                 │ Lookup: table     │
-│ ~6 rows                           │                 │ Projections: note │
-╰─────────────────┬─────────────────╯                 │ ~6 rows           │
-                  ├────────────────────────────────╮  ╰───────────────────╯
-╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
-│ Top: 6                            │  │ Index: ljd_idx       │
-│ Order By: k ASC, id ASC           │  │ Projections: payload │
-│ ~6 rows                           │  │ ~6 rows              │
-╰─────────────────┬─────────────────╯  ╰──────────────────────╯
-╭─ IRESEARCH_SCAN ┴─────────────────╮
-│ Index: ljd_idx                    │
-│ Lookup: table                     │
+                  ├────────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ──────╮
+│ Top: 6                            │  │ Index: ljd_idx        │
+│ Order By: k ASC, id ASC           │  │ Lookup: search        │
+│ ~6 rows                           │  │ Projections: payload, │
+╰─────────────────┬─────────────────╯  │              note     │
+╭─ IRESEARCH_SCAN ┴─────────────────╮  │ ~6 rows               │
+│ Index: ljd_idx                    │  ╰───────────────────────╯
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Term ──────────────╮           │
 │ │ Field: body(string) │           │
@@ -240,8 +208,7 @@ QUERY PLAN
 │ ╰─────────────────────╯           │
 │ Column Filter:                    │
 │ optional: Dynamic Filter (k <= ?) │
-│ Projections: id (l), k (i),       │
-│              iresearch_pk, pk     │
+│ Projections: id, k, rowid         │
 │ ~1,757 rows                       │
 ╰───────────────────────────────────╯
 
@@ -284,7 +251,7 @@ statement ok
 VACUUM (COMPACT_TABLE) ljd;
 
 query
-SELECT count(DISTINCT iresearch_pk >> 32) AS segments, count(*) AS n FROM ljd_idx;
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM ljd;
 ----
 segments	n
 1	8785

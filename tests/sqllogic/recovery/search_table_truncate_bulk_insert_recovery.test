@@ -11,15 +11,11 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE repro_st (id BIGINT, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (compaction_interval = 0, segment_memory_max = 2097152);
 
 
 statement ok
 INSERT INTO repro_st VALUES (-1, 'seed');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) repro_st;
 
 
 statement ok

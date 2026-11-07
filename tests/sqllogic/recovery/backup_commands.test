@@ -6,7 +6,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bcmd_docs (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -14,12 +14,8 @@ INSERT INTO bcmd_docs SELECT i, 'first' FROM range(0, 100) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_docs;
-
-
-statement ok
 CREATE TABLE bcmd_merge (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -27,15 +23,7 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(0, 100) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_merge;
-
-
-statement ok
 INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(100, 200) r(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bcmd_merge;
 
 
 statement ok
@@ -43,15 +31,7 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(200, 300) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_merge;
-
-
-statement ok
 INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(300, 400) r(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bcmd_merge;
 
 
 query
@@ -62,7 +42,7 @@ segments
 
 
 statement ok
-CREATE TABLE bcmd_gone (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE bcmd_gone (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -129,11 +109,6 @@ HINT: Retry after pg_backup_stop().
 connection default
 statement ok
 INSERT INTO bcmd_docs SELECT i, 'during' FROM range(100, 200) r(i);
-
-
-connection default
-statement ok
-VACUUM (REFRESH_TABLE) bcmd_docs;
 
 
 connection default

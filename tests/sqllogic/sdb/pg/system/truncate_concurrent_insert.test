@@ -24,7 +24,7 @@ connection s2
 statement error
 TRUNCATE tci
 ----
-db error: ERROR: Attempting to truncate table "tci" but another transaction has added rows to this table
+db error: ERROR: Attempting to truncate table tci but another transaction is writing to this table
 
 
 connection s1
@@ -122,7 +122,7 @@ connection s2
 statement error
 TRUNCATE tci RESTART IDENTITY
 ----
-db error: ERROR: Attempting to truncate table "tci" but another transaction has added rows to this table
+db error: ERROR: Attempting to truncate table tci but another transaction is writing to this table
 
 
 connection s1
@@ -157,11 +157,11 @@ DROP TABLE tcp
 
 
 statement ok
-CREATE TABLE tcs (id BIGINT PRIMARY KEY, v TEXT) WITH (storage = 'search')
+CREATE TABLE tcs (id BIGINT PRIMARY KEY, v TEXT)
 
 
 statement ok
-CREATE TABLE tcn (a INT, v TEXT) WITH (storage = 'search')
+CREATE TABLE tcn (a INT, v TEXT)
 
 
 statement ok
@@ -193,10 +193,6 @@ COMMIT
 connection s2
 statement ok
 TRUNCATE tcs
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tcs
 
 
 query
@@ -235,10 +231,6 @@ COMMIT
 connection s2
 statement ok
 INSERT INTO tcs VALUES (4, 'd')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tcs
 
 
 query
@@ -299,10 +291,6 @@ TRUNCATE tcn
 connection s2
 statement ok
 INSERT INTO tcn VALUES (2, 'after')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tcn
 
 
 query

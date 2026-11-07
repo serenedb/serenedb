@@ -30,8 +30,12 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression_binder/where_binder.hpp>
+#include <duckdb/planner/operator/logical_filter.hpp>
+#include <duckdb/planner/operator/logical_get.hpp>
 
-#include "connector/inverted_store_index.h"
+#include "catalog/entry/inverted_index.h"
+#include "connector/scan/scan_bind.h"
 
 namespace sdb::connector {
 namespace {
@@ -43,7 +47,7 @@ duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(
   auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
     context, duckdb::Binder::BindTableName(retriever, input.name),
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!index || !IsInvertedIndex(*index)) {
+  if (!index || !catalog::IsInvertedIndex(*index)) {
     return nullptr;
   }
   duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> path;
@@ -66,10 +70,44 @@ duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(
   return std::move(ref);
 }
 
+void FilterPartialIndexScan(duckdb::ClientContext& context,
+                            duckdb::unique_ptr<duckdb::LogicalOperator>& op) {
+  auto& get = op->Cast<duckdb::LogicalGet>();
+  if (get.function.GetName() != "iresearch_scan") {
+    return;
+  }
+  const auto& bind = get.bind_data->Cast<ScanBindData>();
+  if (bind.relation.kind != ScanEntryKind::SearchTableIndex ||
+      !bind.relation.inverted_index->where_clause) {
+    return;
+  }
+  const auto& index = *bind.relation.inverted_index;
+  auto binder = duckdb::Binder::CreateBinder(context);
+  binder->bind_context.AddTableFunction(get.table_index, index.name, get.names,
+                                        get.returned_types,
+                                        get.GetMutableColumnIds(), nullptr, {});
+  duckdb::WhereBinder where_binder(*binder, context);
+  auto predicate = index.where_clause->Copy();
+  auto filter =
+    duckdb::make_uniq<duckdb::LogicalFilter>(where_binder.Bind(predicate));
+  filter->AddChild(std::move(op));
+  op = std::move(filter);
+}
+
 }  // namespace
 
 void RegisterIResearchReplacementScan(duckdb::DBConfig& config) {
   config.replacement_scans.emplace_back(IResearchReplacementScan);
+}
+
+void FilterPartialIndexScans(duckdb::ClientContext& context,
+                             duckdb::LogicalOperator& plan) {
+  for (auto& child : plan.children) {
+    FilterPartialIndexScans(context, *child);
+    if (child->type == duckdb::LogicalOperatorType::LOGICAL_GET) {
+      FilterPartialIndexScan(context, child);
+    }
+  }
 }
 
 }  // namespace sdb::connector

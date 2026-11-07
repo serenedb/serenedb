@@ -63,12 +63,10 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
 #include "connector/index_expression.hpp"
-#include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
 #include "connector/scan/deferred_check.h"
@@ -1512,15 +1510,26 @@ bool ClaimSearchConjuncts(
                               ? connector::WideRanges::DeclineWide
                               : connector::WideRanges::Build;
   std::vector<std::shared_ptr<const duckdb::Expression>> claimed_exprs;
-  const bool keeps_columns = scan.KeepsColumnForms();
-  const auto stored_column = [&](const duckdb::Expression& conjunct)
-    -> const duckdb::BoundColumnRefExpression* {
-    const auto* ref = SoleColumn(conjunct);
-    if (!ref) {
-      return nullptr;
+  const bool keeps_columns =
+    scan.KeepsColumnForms() || scan.ReadsInMemorySegments();
+  const auto stored_row = [&](const duckdb::Expression& conjunct)
+    -> std::optional<connector::RowFilter> {
+    auto form = RowFormOf(conjunct);
+    if (!form) {
+      return std::nullopt;
     }
-    const auto info = getter(*ref);
-    return info && info->column_stored ? ref : nullptr;
+    connector::RowFilter row;
+    for (const auto* ref : form->columns) {
+      const auto info = getter(*ref);
+      if (!info || !info->column_stored) {
+        return std::nullopt;
+      }
+      row.columns.push_back(column_id(*ref));
+      row.types.push_back(ref->GetReturnType());
+    }
+    row.filter =
+      std::make_shared<duckdb::ExpressionFilter>(std::move(form->expr));
+    return row;
   };
   struct IndexOnly {
     duckdb::unique_ptr<duckdb::Expression> conjunct;
@@ -1537,12 +1546,8 @@ bool ClaimSearchConjuncts(
       any_claimed = true;
       if (!filters[i]->HasParameter()) {
         claimed_exprs.push_back(filters[i]->Copy());
-        const auto* ref = keeps_columns ? stored_column(*filters[i]) : nullptr;
-        if (ref) {
-          duals.push_back({.columns = {column_id(*ref)},
-                           .types = {ref->GetReturnType()},
-                           .filter = std::make_shared<duckdb::ExpressionFilter>(
-                             ColumnFormOf(filters[i]->Copy()))});
+        if (auto row = keeps_columns ? stored_row(*filters[i]) : std::nullopt) {
+          duals.push_back(std::move(*row));
         } else if (keeps_columns) {
           index_only.push_back({filters[i]->Copy(), mode});
         }
@@ -2079,23 +2084,38 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
   return expr;
 }
 
-const duckdb::BoundColumnRefExpression* SoleColumn(
-  const duckdb::Expression& conjunct) {
+std::optional<RowForm> RowFormOf(const duckdb::Expression& conjunct) {
   if (conjunct.IsVolatile() || conjunct.CanThrow() || conjunct.HasParameter() ||
       conjunct.HasSubquery() || CallsSearchStub(conjunct)) {
-    return nullptr;
+    return std::nullopt;
   }
-  const duckdb::BoundColumnRefExpression* sole = nullptr;
-  bool one = true;
+  RowForm form;
+  const auto index_of = [&](const duckdb::ColumnBinding& binding) {
+    return static_cast<duckdb::idx_t>(
+      absl::c_find_if(form.columns,
+                      [&](const duckdb::BoundColumnRefExpression* seen) {
+                        return seen->Binding() == binding;
+                      }) -
+      form.columns.begin());
+  };
   duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
     conjunct, [&](const duckdb::BoundColumnRefExpression& ref) {
-      if (!sole) {
-        sole = &ref;
-      } else if (sole->Binding() != ref.Binding()) {
-        one = false;
+      if (index_of(ref.Binding()) == form.columns.size()) {
+        form.columns.push_back(&ref);
       }
     });
-  return one ? sole : nullptr;
+  if (form.columns.empty()) {
+    return std::nullopt;
+  }
+  form.expr = conjunct.Copy();
+  duckdb::ExpressionIterator::VisitExpressionMutable<
+    duckdb::BoundColumnRefExpression>(
+    form.expr, [&](duckdb::BoundColumnRefExpression& ref,
+                   duckdb::unique_ptr<duckdb::Expression>& child) {
+      child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        ref.GetAlias(), ref.GetReturnType(), index_of(ref.Binding()));
+    });
+  return form;
 }
 
 duckdb::unique_ptr<duckdb::Expression> ColumnFormOf(

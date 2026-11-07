@@ -28,10 +28,6 @@ statement ok
 INSERT INTO docs VALUES (1, 'alpha');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 query
 SELECT count(*) FROM docs_idx WHERE body @@ ts_phrase('alpha');
 ----
@@ -43,10 +39,6 @@ statement ok
 INSERT INTO docs VALUES (2, 'beta');
 
 
-statement ok
-VACUUM (REFRESH_INDEX) docs_idx;
-
-
 query
 SELECT count(*) FROM docs_idx WHERE body @@ ts_phrase('beta');
 ----
@@ -56,10 +48,6 @@ count
 
 statement ok
 INSERT INTO docs VALUES (3, 'gamma');
-
-
-statement ok
-VACUUM (REFRESH_SCHEMA) public;
 
 
 query
@@ -90,13 +78,9 @@ USE ${__DATABASE__};
 
 
 statement error
-VACUUM (REFRESH_TABLE) docs;
+VACUUM (COMPACT_TABLE) docs;
 ----
 db error: ERROR: relation "docs" does not exist
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vacuum_use_db.public.docs;
 
 
 statement ok

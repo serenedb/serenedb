@@ -36,7 +36,6 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/es.h"
 #include "network/http/common.h"
 #include "network/http/es/common.h"
@@ -62,8 +61,6 @@ yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
   co_return std::move(result);
 }
 
-// ?refresh, ?refresh=true and ?refresh=wait_for all refresh synchronously
-// (CommitWait IS the wait); only an explicit false is a no-op.
 bool WantsRefresh(const HttpRequest& request) {
   for (const auto& [key, value] : request.query) {
     if (key == "refresh") {
@@ -190,7 +187,7 @@ class BulkHandler final : public HttpHandler {
     std::vector<std::vector<connector::EsBulkItem>> items;
     const connector::EsBulkInput input{
       .body = body, .capacity = padded.size(), .items = &items};
-    auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
+    auto& connection = ConnectionContext::Get(*ctx.Connection().context);
     connection.SetSideChannel(&input);
     const absl::Cleanup clear = [&] {
       connection.SetSideChannel<const connector::EsBulkInput>(nullptr);

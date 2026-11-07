@@ -142,22 +142,7 @@ SELECT 1;
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) iciv_new;
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) iciv_old;
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) iciv_two;
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) iciv_art;
+SELECT 1;
 
 
 connection after_crash
@@ -204,17 +189,13 @@ connection after_crash
 statement error
 INSERT INTO iciv_art VALUES (9, 'one');
 ----
-db error: ERROR: Duplicate key "body: one" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "iciv_art_body"
+DETAIL: Key (body)=(one) already exists.
 
 
 connection after_crash
 statement ok
 INSERT INTO iciv_new VALUES (4, 'red');
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) iciv_new;
 
 
 connection after_crash

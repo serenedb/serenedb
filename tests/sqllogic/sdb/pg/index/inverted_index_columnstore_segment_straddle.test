@@ -18,7 +18,7 @@
 hash-threshold 100
 
 statement ok
-CREATE TABLE t (pk INTEGER PRIMARY KEY, v BIGINT, txt VARCHAR);
+CREATE TABLE t (pk INTEGER PRIMARY KEY, v BIGINT, txt VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO t SELECT i, i, 'doc' || i::text FROM generate_series(1, 3000) i;
@@ -30,16 +30,10 @@ CREATE TEXT SEARCH DICTIONARY straddle_dict AS
 
 statement ok
 CREATE INDEX t_idx ON t USING inverted(txt straddle_dict)
-  INCLUDE (pk, v included (compression = 'uncompressed'))
-  WITH (compaction_interval = 0);
+  INCLUDE (pk, v included (compression = 'uncompressed'));
 
 statement ok
 INSERT INTO t SELECT i, i, 'doc' || i::text FROM generate_series(3001, 6000) i;
-
-# Make the second batch a separate, unmerged segment (compaction is disabled,
-# so REFRESH publishes it without consolidating it into the first segment).
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 # Full-segment scan: materializes `v` across the first segment's 2048->3000 tail
 # and into the second segment.

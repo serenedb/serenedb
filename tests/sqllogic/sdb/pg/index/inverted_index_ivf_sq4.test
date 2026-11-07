@@ -31,9 +31,6 @@ INSERT INTO sq4_l2 VALUES
   (5, [10, 10, 10]::FLOAT[3], 'xyz'),
   (6, [20, 0, 0]::FLOAT[3], 'x2')
 
-statement ok
-VACUUM (REFRESH_TABLE) sq4_l2
-
 query
 SELECT pk, label FROM sq4_l2_idx
   ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
@@ -69,9 +66,6 @@ INSERT INTO sq4_mc VALUES
   (5, [0, 0, 100]::FLOAT[3]),
   (6, [0, 0, 101]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) sq4_mc
-
 query
 SELECT pk FROM sq4_mc_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
 ----
@@ -105,16 +99,10 @@ INSERT INTO sq4_dml VALUES
   (4, [20, 0, 0]::FLOAT[3])
 
 statement ok
-VACUUM (REFRESH_TABLE) sq4_dml
-
-statement ok
 DELETE FROM sq4_dml WHERE pk = 1
 
 statement ok
 UPDATE sq4_dml SET emb = [0, 0, 100]::FLOAT[3] WHERE pk = 4
-
-statement ok
-VACUUM (REFRESH_TABLE) sq4_dml
 
 query
 SELECT pk FROM sq4_dml_idx ORDER BY emb <-> [0, 0, 99]::FLOAT[3] LIMIT 1;
@@ -146,9 +134,6 @@ INSERT INTO sq4_ip VALUES
   (3, [2, 0, 0]::FLOAT[3]),
   (4, [3, 0, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) sq4_ip
-
 query
 SELECT pk FROM sq4_ip_idx ORDER BY emb <#> [1, 0, 0]::FLOAT[3] LIMIT 3;
 ----
@@ -174,9 +159,6 @@ INSERT INTO sq4_hyb VALUES
   (2, [0, 10, 0]::FLOAT[3], 2),
   (3, [0, 0, 10]::FLOAT[3], 1),
   (4, [20, 0, 0]::FLOAT[3], 2)
-
-statement ok
-VACUUM (REFRESH_TABLE) sq4_hyb
 
 query
 SELECT pk FROM sq4_hyb_idx
@@ -227,9 +209,6 @@ INSERT INTO sq4_cos VALUES
   (2, [1, 1, 0]::FLOAT[3]),
   (3, [0, 5, 0]::FLOAT[3]),
   (4, [0, 0, 3]::FLOAT[3])
-
-statement ok
-VACUUM (REFRESH_TABLE) sq4_cos
 
 query
 SELECT pk FROM sq4_cos_idx ORDER BY emb <=> [2, 0, 0]::FLOAT[3] LIMIT 2;

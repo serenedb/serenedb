@@ -60,9 +60,9 @@ CREATE VIEW cxd_v AS SELECT a FROM cxd_db.public.t
 statement error
 DROP TABLE cxd_db.public.t
 ----
-db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
-view "cxd_v" depends on table "t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table t because other objects depend on it
+DETAIL: view cxd_v depends on table t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement error

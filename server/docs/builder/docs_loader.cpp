@@ -52,7 +52,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
 #include "pg/catalog/oids.h"
@@ -88,7 +87,7 @@ CREATE TABLE sdb_docs_build.docs (
   title TEXT NOT NULL,
   breadcrumb TEXT NOT NULL,
   content TEXT NOT NULL USING COMPRESSION zstd
-) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+) WITH (compaction_interval = 0);
 
 CREATE INDEX docs_fts ON sdb_docs_build.docs USING inverted (
   title sdb_docs_build.tokenizer,
@@ -107,7 +106,7 @@ CREATE TABLE sdb_docs_build.objects (
   category TEXT,
   breadcrumb TEXT,
   names TEXT[]
-) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+) WITH (compaction_interval = 0);
 
 CREATE INDEX objects_names ON sdb_docs_build.objects USING inverted (
   names, kind);
@@ -246,16 +245,14 @@ class Loader {
  public:
   Loader(std::string_view database, duckdb::idx_t database_id,
          std::span<const Doc> docs)
-    : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, irs::StaticStrings::kDefaultUser, std::string_view{},
-        pg::kRootUser, database, database_id, nullptr, 0, nullptr)},
-      _progress{
-        connector::SereneDBClientState::Register(*_conn->context, _ctx, false)
-          .progress_source},
-      _docs{docs} {
-    connector::SetDefaultSearchPath(*_conn->context, database);
-  }
+    : _conn{MakeConnection(irs::DuckDBEngine::Instance().instance(),
+                           {.user = irs::StaticStrings::kDefaultUser,
+                            .role = pg::kRootUser,
+                            .database = database,
+                            .database_id = database_id})},
+      _ctx{&ConnectionContext::Get(*_conn->context)},
+      _progress{_ctx->ProgressSource()},
+      _docs{docs} {}
 
   ~Loader() {
     _ctx->ConsumeNotices([](auto& notice) {
@@ -265,14 +262,12 @@ class Loader {
 
   std::vector<IndexBlob> Build() {
     if (!Run(Sql(kBuildSql)) || !Insert() ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kTable)) ||
         !Run(absl::StrCat(
           "INSERT INTO ", kObjectsTable,
           " SELECT *, list_filter(list_prepend(lower(name), "
           "list_transform(string_split(coalesce(aliases, ''), ','), "
           "lambda part: lower(trim(part)))), lambda term: term <> '') FROM (",
-          Sql(kObjectsSql), ")")) ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kObjectsTable))) {
+          Sql(kObjectsSql), ")"))) {
       return {};
     }
     auto image = ExportImage(*_conn->context, _ctx->GetDatabase(), "docs");
@@ -348,7 +343,7 @@ class Loader {
   }
 
   duckdb::unique_ptr<duckdb::Connection> _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
+  ConnectionContext* _ctx;
   pg::ProgressRegistration _progress;
   std::span<const Doc> _docs;
 };
@@ -423,14 +418,20 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
                 table_name, " is not a search table in the catalog");
       return;
     }
-    const auto store = table->Storage()->Path();
-    for (const auto& file : std::filesystem::directory_iterator{store}) {
-      if (file.is_regular_file()) {
-        image.push_back(
-          {.name =
-             absl::StrCat(table_name, "/", file.path().filename().string()),
-           .bytes = utils::file_utils::Slurp(file.path().string())});
+    auto& store = *table->Storage();
+    store.CoolAll();
+    const auto path = store.Path();
+    const auto add = [&](std::string_view file) {
+      image.push_back(
+        {.name = absl::StrCat(table_name, "/", file),
+         .bytes = utils::file_utils::Slurp((path / file).string())});
+    };
+    for (const auto& unit : store.GetTable().State()->units) {
+      if (unit->replaced_at != 0) {
+        continue;
       }
+      absl::c_for_each(unit->segment.meta.files, add);
+      add(unit->segment.filename);
     }
     image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
                      .bytes = DescribeLayout(*table)});

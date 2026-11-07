@@ -62,10 +62,9 @@ constexpr SystemIndex kIndexes[] = {
 std::optional<std::vector<std::string>> Reloptions(
   const catalog::SearchTableEntry& table) {
   std::vector<std::string> result;
-  for (const auto name : catalog::kSearchTableOptions) {
-    if (const auto value = table.Option(name); !value.IsNull()) {
-      result.emplace_back(absl::StrCat(name, "=", value.ToString()));
-    }
+  for (const auto& option : table.ExplicitOptions()) {
+    result.emplace_back(
+      absl::StrCat(option.name, "=", option.value.ToString()));
   }
   return NonEmpty(std::move(result));
 }
@@ -179,8 +178,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
     Col<"relkind">([](const auto&) { return 'r'; }), kRelationState,
-    Col<"relam">(
-      [](const auto& row) { return row.search ? kPgAmIResearch : kPgAmHeap; }),
+    Col<"relam">([](const auto&) { return kPgAmHeap; }),
     Col<"relnatts">([](const auto& row) {
       return row.table.GetColumns().LogicalColumnCount();
     }),
@@ -313,8 +311,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       Emit<kSystem>(table.Cast<catalog::SystemTableEntry>(), shown);
       return;
     }
-    Emit<kOrdinary>(
-      {table, dynamic_cast<const catalog::SearchTableEntry*>(&table)}, shown);
+    const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
+    Emit<kOrdinary>({table, search}, shown);
     if (Allows<"relkind">('i')) {
       if (Reads<"relowner">()) {
         _owners.emplace(table.oid, table.permissions.owner);

@@ -26,9 +26,6 @@ statement ok
 CREATE INDEX ko_idx ON ko_t
   USING inverted(id, a ko_dict, b ko_dict, c ko_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) ko_t;
-
 # Pre-crash: every token searchable.
 query
 SELECT id FROM ko_idx WHERE a @@ ts_phrase('apple');
@@ -48,9 +45,6 @@ SELECT id FROM ko_idx WHERE c @@ ts_phrase('grape');
 id
 1
 
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 # Update ONLY column b on row 1. a and c not touched.
 statement ok
 UPDATE ko_t SET b = 'beta blueberry' WHERE id = 1;
@@ -69,7 +63,7 @@ SELECT 1;
 
 connection ko_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) ko_t;
+SELECT 1;
 
 # Updated columns: new tokens findable, old gone.
 

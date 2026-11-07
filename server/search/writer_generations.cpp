@@ -51,18 +51,24 @@ auto WriterGenerations::ClaimTruncate() noexcept -> Truncate {
   return Truncate{this};
 }
 
-void WriterGenerations::Drain(duckdb::ClientContext& context) {
+void WriterGenerations::Drain(duckdb::ClientContext& context,
+                              const Writer* own) {
+  SDB_ASSERT(!own || !*own || own->get() == this);
+  const auto others = [&](unsigned slot) {
+    const bool mine = own && *own && own->get_deleter().slot == slot;
+    return Writers(_state.load(), slot) - (mine ? 1 : 0);
+  };
   absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
   const auto prior = static_cast<unsigned>(_state.load() & kGeneration);
-  context.Await([&] { return Writers(_state.load(), prior ^ 1U) == 0; });
+  context.Await([&] { return others(prior ^ 1U) == 0; });
   _state.fetch_xor(kGeneration);
-  context.Await([&] { return Writers(_state.load(), prior) == 0; });
+  context.Await([&] { return others(prior) == 0; });
 }
 
 void WriterGenerations::Leave(unsigned slot) noexcept {
   const auto previous = _state.fetch_sub(One(slot));
   SDB_ASSERT(Writers(previous, slot) > 0);
-  if (slot != (previous & kGeneration) && Writers(previous, slot) == 1) {
+  if (slot != (previous & kGeneration) && Writers(previous, slot) <= 2) {
     duckdb::ClientContext::Notify();
   }
 }

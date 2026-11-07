@@ -40,10 +40,6 @@ INSERT INTO pr_a SELECT g, 'row ' || g || ' alpha' FROM generate_series(1, 5000)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pr_a;
-
-
-statement ok
 INSERT INTO pr_a SELECT g, 'row ' || g || ' bravo' FROM generate_series(5001, 10000) g;
 
 
@@ -160,11 +156,6 @@ sum
 connection after_crash
 statement ok
 INSERT INTO pr_c SELECT g, 'row ' || g || ' foxtrot', g FROM generate_series(6001, 6100) g;
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) pr_c;
 
 
 connection after_crash

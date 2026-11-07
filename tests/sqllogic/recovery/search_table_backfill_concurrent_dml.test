@@ -32,15 +32,11 @@ RESET sdb_faults;
 # itself.
 statement ok
 CREATE TABLE bfc (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
 INSERT INTO bfc VALUES (1, 'keep1'), (2, 'gone'), (3, 'keep3');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bfc;
 
 
 statement ok
@@ -105,10 +101,6 @@ SET sdb_faults = '-pause_search_commit_after_irs';
 wait
 
 
-statement ok
-VACUUM (REFRESH_TABLE) bfc;
-
-
 # The row must not have come back, in the table or through the index.
 query
 SELECT count(*) FROM bfc WHERE id = 2;
@@ -154,15 +146,11 @@ DROP TABLE bfc;
 # runs on a table with a declared PRIMARY KEY.
 statement ok
 CREATE TABLE bfd (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
 INSERT INTO bfd VALUES (1, 'keep1'), (2, 'gone'), (3, 'rolled'), (4, 'before');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bfd;
 
 
 statement ok
@@ -207,21 +195,11 @@ statement ok
 ROLLBACK;
 
 
-# Consume the removals while the build is still parked, so they are applied
-# rather than pending when the swap lands -- the case the log covers.
-statement ok
-VACUUM (REFRESH_TABLE) bfd;
-
-
 statement ok
 SET sdb_faults = '-pause_search_backfill_before_swap';
 
 
 wait
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bfd;
 
 
 query
@@ -303,15 +281,11 @@ CREATE TEXT SEARCH DICTIONARY bfe_dict AS
 
 statement ok
 CREATE TABLE bfe (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
 INSERT INTO bfe VALUES (1, 'alpha beta'), (2, 'gamma delta');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bfe;
 
 
 statement ok
@@ -343,10 +317,6 @@ SET sdb_faults = '-pause_search_backfill_before_swap';
 
 
 wait
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bfe;
 
 
 query

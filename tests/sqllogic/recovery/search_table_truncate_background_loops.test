@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tbl (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 5, compaction_interval = 10);
+  WITH (compaction_interval = 10);
 
 statement ok
 INSERT INTO tbl SELECT i, 'a' || i FROM range(1, 1001) t(i);
@@ -20,13 +20,7 @@ statement ok
 INSERT INTO tbl SELECT i, 'c' || i FROM range(2001, 3001) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) tbl;
-
-statement ok
 DELETE FROM tbl WHERE id < 2500;
-
-statement ok
-VACUUM (REFRESH_TABLE) tbl;
 
 query
 SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM tbl;
@@ -53,19 +47,10 @@ statement ok
 INSERT INTO tbl SELECT i, 'f' || i FROM range(3201, 4201) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) tbl;
-
-statement ok
 DELETE FROM tbl WHERE id % 3 = 0;
 
 statement ok
-VACUUM (REFRESH_TABLE) tbl;
-
-statement ok
 UPDATE tbl SET body = 'u' WHERE id < 3200;
-
-statement ok
-VACUUM (REFRESH_TABLE) tbl;
 
 query
 SELECT count(*) AS n, count(DISTINCT id) AS d, min(id) AS lo, max(id) AS hi, count(*) FILTER (WHERE body = 'u') AS u FROM tbl;
@@ -87,9 +72,6 @@ INSERT INTO tbl SELECT 6000 + i, 'h' || i FROM range(10) t(i);
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) tbl;
 
 query
 SELECT count(*) AS n, sum(id) AS s FROM tbl;

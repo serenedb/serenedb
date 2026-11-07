@@ -96,7 +96,6 @@ statement ok
 CREATE INDEX sup_time_idx ON sup_time USING inverted(id, t, tz);
 
 
-
 # --- Indexed expressions returning HUGEINT / DECIMAL are rejected too
 
 statement ok
@@ -114,7 +113,6 @@ CREATE INDEX unsup_jsondoc_dec ON unsup_jsondoc USING inverted(id, ((content->'v
 db error: ERROR: Column 'CAST(("content" -> 'v') AS DECIMAL(20, 4))' has unsupported type DECIMAL(20,4) and can not be indexed
 
 
-
 # --- Filter-side: BIGINT-indexed column, HUGEINT/DECIMAL bound in the predicate
 #
 # Indexed column accepted; bound supplied as HUGEINT or DECIMAL must either
@@ -129,9 +127,6 @@ CREATE INDEX filter_bigint_idx ON filter_bigint USING inverted(id, n);
 
 statement ok
 INSERT INTO filter_bigint VALUES (1, 100), (2, 200), (3, 300);
-
-statement ok
-VACUUM (REFRESH_TABLE) filter_bigint;
 
 # Sanity: same predicate with native BIGINT bound finds the row.
 query

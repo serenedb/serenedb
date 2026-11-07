@@ -3,7 +3,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE cif_t (id BIGINT, value TEXT);
+CREATE TABLE cif_t (id BIGINT, value TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -11,14 +11,17 @@ INSERT INTO cif_t VALUES (1, 'first'), (2, 'second');
 
 
 statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
 SET sdb_faults = 'IndexWriter::Flush';
 
 
 statement error
-CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value);
 ----
-db error: ERROR: failed to flush index 'cif_idx': intentional debug error
+db error: ERROR: intentional debug error
 
 
 statement ok
@@ -37,16 +40,11 @@ INSERT INTO cif_t VALUES (3, 'third');
 
 
 statement ok
-CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value);
 
 
 statement ok
 INSERT INTO cif_t VALUES (4, 'fourth');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cif_t;
 
 
 query

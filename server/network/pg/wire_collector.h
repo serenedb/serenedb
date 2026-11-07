@@ -42,7 +42,7 @@ class PreparedStatementData;
 namespace sdb::network::pg {
 
 // Per-execution contract between the session and the wire collector: the
-// session arms a pointer to this in the SereneDBClientState before PendingQuery
+// session arms a pointer to this in the ConnectionContext before PendingQuery
 // (the get_result_collector hook reads it while the executor is initialized,
 // synchronously inside PendingQuery) and disarms right after.
 //
@@ -208,7 +208,7 @@ class WireSinkContext {
 };
 
 // get_result_collector hook: returns the wire collector when a WireSinkContext
-// is armed in the SereneDBClientState and the statement returns rows; falls
+// is armed in the ConnectionContext and the statement returns rows; falls
 // back to DuckDB's stock collector choice otherwise.
 duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
   duckdb::ClientContext& context, duckdb::PreparedStatementData& data);

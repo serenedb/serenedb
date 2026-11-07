@@ -24,17 +24,11 @@ CREATE INDEX idx ON t USING inverted(body en) INCLUDE (id, val);
 statement ok
 INSERT INTO t VALUES (1, 'fox', 11);
 
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
 # Three-row chunk with conflict in the FIRST position. The cs vector
 # arrives as [chunk[0]=conflict, chunk[1]=survivor, chunk[2]=survivor]
 # but the segment only allocates doc ids for chunk[1] and chunk[2].
 statement count 2
 INSERT INTO t VALUES (1, 'conflict', 99), (2, 'fox bird', 22), (3, 'fox cat', 33) ON CONFLICT DO NOTHING;
-
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 # Read INCLUDE values back through cs. Each surviving doc's (id, val)
 # must be self-consistent and match the source row.
@@ -51,14 +45,8 @@ id	val
 statement ok
 INSERT INTO t VALUES (4, 'fox eagle', 44);
 
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
 statement count 2
 INSERT INTO t VALUES (5, 'fox bee', 55), (1, 'conflict', 999), (6, 'fox jay', 66) ON CONFLICT DO NOTHING;
-
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 query
 SELECT id, val FROM idx WHERE body @@ ts_phrase('fox') ORDER BY id;

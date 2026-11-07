@@ -71,9 +71,8 @@ db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t5" with 
 statement error
 DROP FUNCTION vedernikoff_iceberg_within_bounds(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_within_bounds" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_iceberg_within_bounds(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -143,9 +142,10 @@ INSERT INTO vedernikoff_solid_payments (amount) VALUES (500);
 statement error
 DROP SEQUENCE vedernikoff_solid_payday_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_payday_seq" because there are entries that depend on it.
-table "vedernikoff_solid_payments" depends on sequence "vedernikoff_solid_payday_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence vedernikoff_solid_payday_seq because other objects depend on it
+DETAIL: default value for column id of table vedernikoff_solid_payments depends on sequence vedernikoff_solid_payday_seq
+constraint cap on table vedernikoff_solid_payments depends on sequence vedernikoff_solid_payday_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -200,9 +200,9 @@ db error: ERROR: CHECK constraint failed on table "vedernikoff_mop_data" with ex
 statement error
 DROP FUNCTION vedernikoff_mop_is_positive(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_is_positive" because there are entries that depend on it.
-table "vedernikoff_mop_data" depends on macro function "vedernikoff_mop_is_positive".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function vedernikoff_mop_is_positive(integer) because other objects depend on it
+DETAIL: constraint ck on table vedernikoff_mop_data depends on function vedernikoff_mop_is_positive(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -251,9 +251,8 @@ INSERT INTO vedernikoff_ml_data VALUES (42);
 statement error
 DROP FUNCTION vedernikoff_ml_inner(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_ml_inner" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_ml_inner(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -311,9 +310,11 @@ db error: ERROR: CHECK constraint failed on table "vedernikoff_clickclack_metric
 statement error
 DROP FUNCTION vedernikoff_clickclack_threshold();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_threshold" because there are entries that depend on it.
-table "vedernikoff_clickclack_metrics" depends on macro function "vedernikoff_clickclack_threshold".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function vedernikoff_clickclack_threshold() because other objects depend on it
+DETAIL: constraint cap_qps on table vedernikoff_clickclack_metrics depends on function vedernikoff_clickclack_threshold()
+constraint cap_lat on table vedernikoff_clickclack_metrics depends on function vedernikoff_clickclack_threshold()
+constraint cap_err on table vedernikoff_clickclack_metrics depends on function vedernikoff_clickclack_threshold()
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

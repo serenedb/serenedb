@@ -41,10 +41,6 @@ INSERT INTO nv_t VALUES
                 '{"a": 20, "inner": {"x": 9, "y": 11}}'::json::variant)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) nv_t
-
-
 # --- controls: whole-value access round-trips ---------------------------
 
 query

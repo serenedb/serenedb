@@ -20,9 +20,6 @@ INSERT INTO mt_words VALUES
     (6, 'cab'), (7, 'can'), (8, 'cap'), (9, 'car'), (10, 'cot'),
     (11, 'cut'), (12, 'cats'), (13, 'act');
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_words;
-
 query
 SHOW sdb_levenshtein_max_terms;
 ----
@@ -111,9 +108,6 @@ CREATE INDEX mt_docs_idx ON mt_docs USING inverted(a, cat, body mt_english);
 statement ok
 INSERT INTO mt_docs VALUES (1, 'phone', 'cat'), (2, 'phony', 'bat'), (3, 'phonetic', 'rat');
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_docs;
-
 # The plan carries both values: the enumerated column uncapped, the document
 # filter at the session cap.
 query
@@ -127,6 +121,7 @@ QUERY PLAN
 ╰────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Index: mt_docs_idx                              │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ And ───────────────╮                         │
 │ ╰──────────┬──────────╯                         │
@@ -210,9 +205,6 @@ CREATE INDEX mt_or_idx ON mt_or USING inverted(a, cat, body mt_english);
 statement ok
 INSERT INTO mt_or VALUES (1, 'phone', 'cat'), (2, 'phony', 'bat'), (3, 'phonetic', 'rat');
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_or;
-
 query
 SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_or_idx
 WHERE cat @@ ts_levenshtein('phon', 2) OR body @@ ts_levenshtein('cat', 1)
@@ -260,14 +252,14 @@ CREATE INDEX mt_segs_idx ON mt_segs USING inverted(a, b mt_english);
 statement ok
 INSERT INTO mt_segs VALUES (1,'cat'), (2,'bat'), (3,'rat'), (4,'hat'), (5,'mat'), (6,'oat');
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_segs;
+query
+SELECT count(*) FROM mt_segs_idx;
+----
+count
+6
 
 statement ok
 INSERT INTO mt_segs VALUES (7,'cab'), (8,'cad'), (9,'can'), (10,'cap'), (11,'car'), (12,'caw');
-
-statement ok
-VACUUM (REFRESH_TABLE) mt_segs;
 
 statement ok
 SET sdb_levenshtein_max_terms = 3;
@@ -280,9 +272,6 @@ count
 
 statement ok
 VACUUM (COMPACT_TABLE) mt_segs;
-
-statement ok
-VACUUM (REFRESH_TABLE) mt_segs;
 
 query
 SELECT count(*) FROM mt_segs_idx WHERE b @@ ts_levenshtein('cat', 1);
@@ -321,9 +310,6 @@ statement ok
 INSERT INTO mt_phrases VALUES
     (1, 'cat zzz'), (2, 'bat zzz'), (3, 'rat zzz'), (4, 'hat zzz'),
     (5, 'mat zzz'), (6, 'cab zzz'), (7, 'can zzz'), (8, 'cap zzz');
-
-statement ok
-VACUUM (REFRESH_TABLE) mt_phrases;
 
 query
 SELECT count(*) FROM mt_phrases_idx WHERE b @@ (ts_levenshtein('cat', 1) ## 'zzz');

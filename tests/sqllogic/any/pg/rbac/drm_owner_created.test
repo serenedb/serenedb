@@ -80,7 +80,7 @@ onlyif serenedb
 statement error
 DROP ROLE doc_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "doc_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Move ownership away (this also re-owns the table's generated PK sequence) and
@@ -136,7 +136,7 @@ onlyif serenedb
 statement error
 DROP ROLE doc_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "doc_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -191,7 +191,7 @@ onlyif serenedb
 statement error
 DROP ROLE doc_kostya;
 ----
-db error: ERROR: Cannot drop entry "doc_kostya" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "doc_kostya" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -255,7 +255,7 @@ onlyif serenedb
 statement error
 DROP ROLE doc_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "doc_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -299,7 +299,7 @@ onlyif serenedb
 statement error
 DROP ROLE doc_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "doc_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "doc_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok

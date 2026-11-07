@@ -10,15 +10,11 @@ control substitution on
 
 
 statement ok
-CREATE TABLE dsr_keep (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_keep (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
 INSERT INTO dsr_keep VALUES (1, 'kept');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dsr_keep;
 
 
 statement ok
@@ -49,15 +45,11 @@ CREATE MACRO dsr_database_leftover(object) AS (
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TABLE dsr_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
 INSERT INTO dsr_s VALUES (1, 'alpha'), (2, 'beta');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dsr_s;
 
 
 statement ok
@@ -148,11 +140,6 @@ CREATE INDEX dsr_t_idx ON dsr_t USING inverted (body);
 
 connection after_table
 statement ok
-VACUUM (REFRESH_TABLE) dsr_t;
-
-
-connection after_table
-statement ok
 INSERT INTO dsr_oids SELECT index_name, index_oid FROM duckdb_indexes()
 WHERE database_name = current_database() AND index_name = 'dsr_t_idx';
 
@@ -228,17 +215,12 @@ CREATE DATABASE dsr_db;
 
 connection after_index
 statement ok
-CREATE TABLE dsr_db.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_db.public.s (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_index
 statement ok
 INSERT INTO dsr_db.public.s VALUES (1, 'alpha');
-
-
-connection after_index
-statement ok
-VACUUM (REFRESH_TABLE) dsr_db.public.s;
 
 
 connection after_index
@@ -311,17 +293,12 @@ id	body
 
 connection after_database
 statement ok
-CREATE TABLE dsr_r (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_r (id INT, body TEXT);
 
 
 connection after_database
 statement ok
 INSERT INTO dsr_r VALUES (1, 'old');
-
-
-connection after_database
-statement ok
-VACUUM (REFRESH_TABLE) dsr_r;
 
 
 connection after_database
@@ -342,7 +319,7 @@ BEGIN;
 
 connection after_database
 statement ok
-CREATE OR REPLACE TABLE dsr_r (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE dsr_r (id INT, body TEXT, extra INT);
 
 
 connection after_database
@@ -410,7 +387,7 @@ id	body
 
 connection after_replace
 statement ok
-CREATE TABLE dsr_si (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_si (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_replace
@@ -421,11 +398,6 @@ INSERT INTO dsr_si VALUES (1, 'alpha');
 connection after_replace
 statement ok
 CREATE INDEX dsr_si_idx ON dsr_si USING inverted (body);
-
-
-connection after_replace
-statement ok
-VACUUM (REFRESH_TABLE) dsr_si;
 
 
 connection after_replace
@@ -502,11 +474,6 @@ INSERT INTO dsr_t2 VALUES (1, 'alpha'), (2, 'beta');
 connection after_search_index
 statement ok
 CREATE INDEX dsr_ri ON dsr_t2 USING inverted (body);
-
-
-connection after_search_index
-statement ok
-VACUUM (REFRESH_TABLE) dsr_t2;
 
 
 connection after_search_index
@@ -745,7 +712,7 @@ CREATE INDEX t_inv ON dsr_all.public.t USING inverted (body);
 
 connection after_table_with_index
 statement ok
-CREATE TABLE dsr_all.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_all.public.s (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_table_with_index
@@ -761,16 +728,6 @@ INSERT INTO dsr_all.public.t VALUES (1, 'alpha');
 connection after_table_with_index
 statement ok
 INSERT INTO dsr_all.public.s VALUES (1, 'alpha');
-
-
-connection after_table_with_index
-statement ok
-VACUUM (REFRESH_TABLE) dsr_all.public.t;
-
-
-connection after_table_with_index
-statement ok
-VACUUM (REFRESH_TABLE) dsr_all.public.s;
 
 
 connection after_table_with_index

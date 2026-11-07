@@ -28,10 +28,6 @@ INSERT INTO tfd VALUES
   (3, 'aple grape')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) tfd;
-
-
 # Document-level WHERE: every doc contains an ap* token, so all tokens of
 # all docs appear.
 query T
@@ -113,10 +109,6 @@ banana
 # near-duplicate of 'apple' and re-run the fuzzy query.
 statement ok
 INSERT INTO tfd VALUES (4, 'apple appl')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tfd;
 
 
 query TIR

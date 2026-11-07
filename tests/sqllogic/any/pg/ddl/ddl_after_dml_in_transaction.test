@@ -1,0 +1,251 @@
+statement ok
+CREATE TABLE dadt (id INT, v TEXT)
+
+
+statement ok
+CREATE INDEX dadt_v ON dadt (v)
+
+
+statement ok
+INSERT INTO dadt VALUES (1, 'a'), (2, 'b')
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO dadt VALUES (3, 'c'), (4, 'x')
+
+
+query
+SELECT count(*) AS n FROM dadt WHERE v = 'c'
+----
+n
+1
+
+
+statement ok
+DELETE FROM dadt WHERE id IN (1, 4)
+
+
+statement ok
+INSERT INTO dadt VALUES (5, 'e')
+
+
+statement ok
+ALTER TABLE dadt ADD COLUMN n INT DEFAULT 7
+
+
+statement ok
+INSERT INTO dadt VALUES (6, 'f', 8)
+
+
+query
+SELECT id, v, n FROM dadt ORDER BY id
+----
+id	v	n
+2	b	7
+3	c	7
+5	e	7
+6	f	8
+
+
+statement ok
+ALTER TABLE dadt ALTER COLUMN id TYPE BIGINT USING id * 10
+
+
+statement ok
+ALTER TABLE dadt DROP COLUMN v
+
+
+statement ok
+INSERT INTO dadt VALUES (70, 9)
+
+
+statement ok
+ALTER TABLE dadt ADD COLUMN w TEXT
+
+
+statement ok
+INSERT INTO dadt VALUES (80, 10, 'w')
+
+
+query
+SELECT id, n, w FROM dadt ORDER BY id
+----
+id	n	w
+20	7	NULL
+30	7	NULL
+50	7	NULL
+60	8	NULL
+70	9	NULL
+80	10	w
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT id, n, w FROM dadt ORDER BY id
+----
+id	n	w
+20	7	NULL
+30	7	NULL
+50	7	NULL
+60	8	NULL
+70	9	NULL
+80	10	w
+
+
+query
+SELECT column_name, data_type FROM information_schema.columns
+WHERE table_name = 'dadt' ORDER BY ordinal_position
+----
+column_name	data_type
+id	bigint
+n	integer
+w	text
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO dadt VALUES (90, 1, 'p')
+
+
+statement ok
+ALTER TABLE dadt ADD COLUMN g INT DEFAULT 3
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT id, n, w FROM dadt ORDER BY id
+----
+id	n	w
+20	7	NULL
+30	7	NULL
+50	7	NULL
+60	8	NULL
+70	9	NULL
+80	10	w
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO dadt VALUES (100, NULL, 'q')
+
+
+statement error
+ALTER TABLE dadt ALTER COLUMN n SET NOT NULL
+----
+db error: ERROR: column "n" of relation "dadt" contains null values
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO dadt VALUES (30, 1, 'r')
+
+
+statement error
+ALTER TABLE dadt ADD CONSTRAINT dadt_id_key UNIQUE (id)
+----
+db error: ERROR: could not create unique index "dadt_id_key"
+DETAIL: Key (id)=(30) is duplicated.
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO dadt VALUES (60, 2, 's')
+
+
+statement error
+CREATE UNIQUE INDEX dadt_id_idx ON dadt (id)
+----
+db error: ERROR: could not create unique index "dadt_id_idx"
+DETAIL: Key (id)=(60) is duplicated.
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+CREATE TABLE dadt_parent (id BIGINT PRIMARY KEY)
+
+
+statement ok
+INSERT INTO dadt_parent SELECT id FROM dadt
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO dadt VALUES (99, 3, 't')
+
+
+statement error
+ALTER TABLE dadt ADD CONSTRAINT dadt_fk FOREIGN KEY (id) REFERENCES dadt_parent (id)
+----
+db error: ERROR: insert or update on table "dadt" violates foreign key constraint "dadt_fk"
+DETAIL: Key (id)=(99) is not present in table "dadt_parent".
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO dadt VALUES (110, 4, 'u')
+
+
+statement ok
+ALTER TABLE dadt ADD CONSTRAINT dadt_id_key UNIQUE (id)
+
+
+statement error
+INSERT INTO dadt VALUES (110, 5, 'v')
+----
+db error: ERROR: duplicate key value violates unique constraint "dadt_id_key"
+DETAIL: Key (id)=(110) already exists.
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+DROP TABLE dadt_parent
+
+
+statement ok
+DROP TABLE dadt

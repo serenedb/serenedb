@@ -15,7 +15,7 @@ DROP TABLE IF EXISTS die_s;
 
 
 statement ok
-CREATE TABLE die_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE die_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -68,7 +68,7 @@ DROP INDEX IF EXISTS die_u;
 
 
 statement ok
-CREATE TABLE die_st (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE die_st (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok

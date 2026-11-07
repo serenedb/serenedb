@@ -8,12 +8,11 @@ CREATE TEXT SEARCH DICTIONARY slots_keyword AS
 
 
 statement ok
-CREATE TABLE slots (id INTEGER PRIMARY KEY, b BOOLEAN, n BIGINT, s VARCHAR);
+CREATE TABLE slots (id INTEGER PRIMARY KEY, b BOOLEAN, n BIGINT, s VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX slots_idx ON slots USING inverted(id, b, n, s slots_keyword)
-  WITH (compaction_interval = 0);
+CREATE INDEX slots_idx ON slots USING inverted(id, b, n, s slots_keyword);
 
 
 statement ok
@@ -25,18 +24,10 @@ INSERT INTO slots VALUES
 
 
 statement ok
-VACUUM (REFRESH_TABLE) slots;
-
-
-statement ok
 INSERT INTO slots VALUES
   (5, false, 50, 'apple'),
   (6, NULL, 60, NULL),
   (7, true, NULL, 'fig');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) slots;
 
 
 query
@@ -59,7 +50,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b IS NULL;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: slots_idx   │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Term ─────────╮ │
 │ │ Field: b(null) │ │
@@ -83,7 +74,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b = true;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: slots_idx   │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Term ─────────╮ │
 │ │ Field: b(bool) │ │
@@ -113,7 +104,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b <> true;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: slots_idx                       │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Not ──────────╮                     │
 │ ╰────────┬───────╯                     │
@@ -140,7 +131,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b > false;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: slots_idx   │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Term ─────────╮ │
 │ │ Field: b(bool) │ │
@@ -166,7 +157,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE b IN (false, true);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: slots_idx                       │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ───────────╮                     │
 │ ╰────────┬───────╯                     │
@@ -200,7 +191,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE n BETWEEN 15 AND 55;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: slots_idx      │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
@@ -246,7 +237,7 @@ EXPLAIN SELECT id FROM slots_idx WHERE NOT (s = 'apple');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: slots_idx                         │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Not ────────────╮                     │
 │ ╰─────────┬────────╯                     │
@@ -327,20 +318,15 @@ id
 # the list UNKNOWN, so a negation excludes the row.
 
 statement ok
-CREATE TABLE slot_lists (id INTEGER PRIMARY KEY, tags VARCHAR[]);
+CREATE TABLE slot_lists (id INTEGER PRIMARY KEY, tags VARCHAR[]) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX slot_lists_idx ON slot_lists USING inverted(id, tags slots_keyword)
-  WITH (compaction_interval = 0);
+CREATE INDEX slot_lists_idx ON slot_lists USING inverted(id, tags slots_keyword);
 
 
 statement ok
 INSERT INTO slot_lists VALUES (1, ['a', NULL]), (2, NULL), (3, ['b']), (4, ['b', NULL]);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) slot_lists;
 
 
 query
@@ -387,10 +373,6 @@ id
 
 statement ok
 INSERT INTO slot_lists VALUES (5, [NULL]), (6, NULL), (7, ['a']);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) slot_lists;
 
 
 query
@@ -442,22 +424,17 @@ id
 # A JSON null makes every cast comparison of the leaf UNKNOWN as well.
 
 statement ok
-CREATE TABLE slot_json (id INTEGER PRIMARY KEY, content JSON);
+CREATE TABLE slot_json (id INTEGER PRIMARY KEY, content JSON) WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE INDEX slot_json_idx ON slot_json
-  USING inverted(id, (content->'val') slots_keyword)
-  WITH (compaction_interval = 0);
+  USING inverted(id, (content->'val') slots_keyword);
 
 
 statement ok
 INSERT INTO slot_json VALUES
   (1, '{"val":42}'), (2, '{"val":null}'), (3, '{"other":1}'), (4, '{"val":7}');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) slot_json;
 
 
 query
@@ -478,7 +455,7 @@ EXPLAIN SELECT id FROM slot_json_idx WHERE NOT ((content->'val')::double = 42);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: slot_json_idx                                                                                                        │
-│ Lookup: table                                                                                                               │
+│ Lookup: search                                                                                                              │
 │ Index Filter:                                                                                                               │
 │ ╭─ Not ────────────────────────────────╮                                                                                    │
 │ ╰───────────────────┬──────────────────╯                                                                                    │
@@ -511,7 +488,7 @@ EXPLAIN SELECT id FROM slot_json_idx WHERE (content->'val')::double IS NULL;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
 │ Index: slot_json_idx                                                              │
-│ Lookup: table                                                                     │
+│ Lookup: search                                                                    │
 │ Index Filter:                                                                     │
 │ ╭─ Or ──────────────────────────────╮                                             │
 │ ╰─────────────────┬─────────────────╯                                             │

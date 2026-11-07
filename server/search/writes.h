@@ -20,10 +20,13 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
+#include <absl/synchronization/mutex.h>
+
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/storage/storage_lock.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -37,45 +40,78 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_sink_writer_base.h"
-#include "connector/key_terms.h"
-#include "connector/primary_key.h"
+#include "connector/search_sink_writer.hpp"
 #include "search/search_table_changes.h"
 #include "search/store.h"
-#include "search/wal_tail_keys.h"
+#include "search/table.h"
+#include "search/table_keys.h"
 
 namespace sdb::search {
 
-struct Slot {
-  std::unique_ptr<irs::IndexWriter::Transaction> trx;
-  std::unique_ptr<connector::DuckDBSinkIndexWriter> writer;
-};
-
 struct StoreWrites {
+  mutable absl::Mutex mutex;
   std::shared_ptr<Store> store;
   const catalog::SearchTableEntry* table = nullptr;
-  // The declared key columns, resolved once with the writer. Empty for a table
-  // without a primary key, which is what turns certification off.
-  std::vector<connector::primary_key::KeySlot> pk_slots;
-  // This transaction's own keys, encoded once and kept: the pass under the
-  // commit lock puts the same set to what committed since, and cannot afford
-  // to build it again there.
-  std::vector<connector::KeyTerms> keys;
-  // How far the WAL has been certified, so the pass under the lock answers
-  // only for what committed after it.
-  WalTailCursor certified;
-  bool pre_certified = false;
-  std::vector<Slot> slots;
+  std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   LocalTableChangesEntry changes;
-  irs::IndexWriter::Transaction* buffer_trx = nullptr;
   WriterGenerations::Writer registration;
   WriterGenerations::Truncate truncate_claim;
-  duckdb::unique_ptr<duckdb::StorageLockKey> checkpoint_lock;
-  irs::SourcePosition position;
+  std::vector<OwnSegment> own_segments;
+  std::vector<irs::DocMap> own_maps;
+  uint64_t rows_generation = 0;
+  Tick rebuilt = 0;
+  bool rebuilt_newer = false;
+  std::shared_ptr<HotContext> hot;
+  uint64_t hot_id = 0;
+  irs::doc_id_t hot_first = 0;
+  irs::doc_id_t hot_end = 0;
+  duckdb::vector<std::string> log;
+  bool prepared = false;
+  bool dropping = false;
+  // The keys the table enforces, and what this transaction's rows were
+  // checked against: the keys of the rows it still buffers (once the commit
+  // is prepared, of the rows it wrote into its hot unit), how many of those
+  // rows and of its own segments were checked, and the committed rows the last
+  // check saw.
+  std::vector<KeySpec> keys;
+  HotKeys buffered_keys;
+  duckdb::idx_t keyed_rows = 0;
+  uint64_t keyed_generation = 0;
+  size_t checked_segments = 0;
+  std::optional<LiveUnits> checked;
+  // The unique keys of the rows this transaction removed, for every unique
+  // key a foreign key references, and how many of them were checked; a key
+  // first referenced after the transaction removed rows misses theirs until
+  // the commit reads them.
+  struct RemovedKeys {
+    irs::field_id field = 0;
+    std::vector<std::string> keys;
+    size_t checked = 0;
+    bool complete = true;
+  };
+  std::vector<RemovedKeys> removed_keys;
+  bool removed_rows = false;
+  // The committed rows of a referenced or referencing table the first check
+  // against it saw, by store.
+  absl::flat_hash_map<duckdb::idx_t, std::shared_ptr<const TableState>>
+    related_checked;
+  // The keys of the rows the commit writes into its hot unit.
+  struct HotKey {
+    irs::field_id field = 0;
+    std::string key;
+    irs::doc_id_t doc = 0;
+  };
+  std::vector<HotKey> hot_keys;
+};
+
+struct LogSection {
+  const catalog::SearchTableEntry* table = nullptr;
+  duckdb::vector<std::string> entries;
 };
 
 class Writes {
  public:
+  explicit Writes(duckdb::transaction_t session) : _session{session} {}
   ~Writes() { Abort(); }
 
   // Registers this transaction as a writer of `store`, once, before anything
@@ -87,122 +123,138 @@ class Writes {
   void RegisterWriter(const std::shared_ptr<Store>& store,
                       const catalog::SearchTableEntry& table);
 
-  // Whether this transaction has already written to `store_id`. CREATE INDEX
-  // refuses to run in such a transaction: the rebuild would wait for writers
-  // that predate its config swap, and this one cannot finish until the
-  // statement it is running does.
-  bool HasWritesFor(duckdb::idx_t store_id) const noexcept {
-    return _writes.contains(store_id);
-  }
+  const WriterGenerations::Writer* Registration(duckdb::idx_t store_id) const;
 
-  void AddParallelSearchTransaction(
+  void AdoptTable(const std::shared_ptr<Store>& store,
+                  const catalog::SearchTableEntry& table);
+
+  void RewriteOwn(duckdb::ClientContext& context,
+                  const std::shared_ptr<Store>& store, duckdb::Catalog& catalog,
+                  absl::FunctionRef<void(const irs::SubReader&,
+                                         connector::SearchSinkInsertBaseImpl&)>
+                    feed);
+
+  void Rebuilt(const std::shared_ptr<Store>& store, Tick tick, bool newer);
+
+  void AddOwnSegments(
     const std::shared_ptr<Store>& store,
-    std::unique_ptr<irs::IndexWriter::Transaction> trx);
+    std::unique_ptr<irs::IndexWriter::Transaction> trx,
+    std::span<const irs::IndexWriter::FlushedSegment> flushed);
 
-  // The segments a bulk statement flushed + fsynced, for the WAL to reference
-  // instead of a second copy of the rows.
-  void AddSegments(const std::shared_ptr<Store>& store,
-                   std::vector<std::string>&& segments);
-
-  void AddInlineRows(const std::shared_ptr<Store>& store,
+  void AddInlineRows(duckdb::ClientContext& context,
+                     const std::shared_ptr<Store>& store,
                      std::span<const connector::ColumnId> column_ids,
                      duckdb::Catalog& catalog,
-                     std::unique_ptr<duckdb::ColumnDataCollection> rows);
+                     std::unique_ptr<duckdb::ColumnDataCollection> rows,
+                     uint64_t flush_above);
 
-  // Bytes a flush would reclaim for `store_id`; deletes are not counted.
-  uint64_t BufferedBytes(duckdb::idx_t store_id) const noexcept {
-    const auto it = _writes.find(store_id);
-    return it == _writes.end() ? 0 : it->second.changes.BufferedBytes();
-  }
-
-  // Replays the whole buffer into the shard's exclusive transaction, creating
-  // it on first use, and empties the row buffer. The rows become that
-  // transaction's to make durable, so the record stops carrying a copy of
-  // them.
-  void FlushBuffer(const std::shared_ptr<Store>& store,
-                   duckdb::ClientContext& context);
-  void FlushBufferTransaction(duckdb::idx_t store_id);
-
-  void AddRemoval(const std::shared_ptr<Store>& store,
+  void AddRemoval(duckdb::ClientContext& context,
+                  const std::shared_ptr<Store>& store,
                   irs::DocRemovalBuilder&& positions);
 
   void AddSearchTruncate(const std::shared_ptr<Store>& store,
-                         const duckdb::Identifier& table_name,
-                         bool clears_store);
+                         const catalog::SearchTableEntry& table, Tick snapshot);
+
+  void ClaimExclusive(const std::shared_ptr<Store>& store,
+                      Store::Exclusive kind);
 
   struct PinnedSearchTable {
     std::shared_ptr<irs::DirectoryReader> reader;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
 
-  const PinnedSearchTable& EnsureSearchTable(const Store& store);
-  const irs::DirectoryReader& PinnedReader(const Store& store) const;
+  template<typename Factory>
+  PinnedSearchTable EnsureSearchTable(duckdb::idx_t database_id,
+                                      duckdb::idx_t store_id, Factory&& make) {
+    const std::pair key{database_id, store_id};
+    {
+      absl::ReaderMutexLock lock{&_mutex};
+      if (const auto it = _readers.find(key);
+          it != _readers.end() && it->second.reader) {
+        return it->second;
+      }
+    }
+    auto made = make();
+    absl::MutexLock lock{&_mutex};
+    auto& pinned = _readers[key];
+    if (!pinned.reader) {
+      pinned = std::move(made);
+    }
+    return pinned;
+  }
 
-  void ResetReaders() noexcept { _readers.clear(); }
+  void ResetReaders() noexcept {
+    absl::MutexLock lock{&_mutex};
+    _readers.clear();
+  }
 
   void ResetReader(duckdb::idx_t database_id, duckdb::idx_t store_id) noexcept {
+    absl::MutexLock lock{&_mutex};
     _readers.erase(std::pair{database_id, store_id});
   }
 
-  Slot& EnsureIndexSlot(
-    duckdb::idx_t index_id, std::shared_ptr<Store> store,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config,
-    size_t slot = 0);
-
-  irs::IndexWriter::Transaction& EnsureIndexTransaction(
-    duckdb::idx_t index_id, std::shared_ptr<Store> store,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config) {
-    return *EnsureIndexSlot(index_id, std::move(store), std::move(config)).trx;
-  }
-
-  std::span<Slot> IndexSlots(duckdb::idx_t index_id) {
-    const auto it = _writes.find(index_id);
-    if (it == _writes.end()) {
-      return {};
-    }
-    return it->second.slots;
-  }
-
-  const duckdb::Vector& FeedColumn(const void* database,
-                                   duckdb::idx_t table_oid,
-                                   duckdb::row_t first_row, duckdb::idx_t count,
-                                   duckdb::idx_t column,
-                                   const duckdb::Vector& source);
+  irs::DirectoryReader View(duckdb::ClientContext& context, Store& store,
+                            Tick snapshot);
+  std::shared_ptr<irs::DirectoryReader> PinnedReader(const Store& store) const;
 
   bool Empty() const noexcept { return _writes.empty(); }
 
-  // Refuses the commit when a row it writes carries the primary key of a row
-  // that already exists. Runs under the commit lock, taking one where it is
-  // handed none, because what it reads -- the published reader, the WAL tail,
-  // the segments committed transactions left unpublished -- only adds up to
-  // the whole truth while no other commit of this database can interleave.
-  void Certify(duckdb::AttachedDatabase& db, duckdb::ClientContext& context,
-               duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> held);
+  // Refuses the statement whose rows of `store` hold a unique key a live row
+  // already holds, theirs or another of its own, or a foreign key the
+  // referenced table does not hold, and the statement that removed the last
+  // row holding a key a foreign key references. Runs once the statement has
+  // handed its rows over.
+  void CheckKeys(duckdb::ClientContext& context, const Store& store);
 
-  // The same question asked before the commit lock is taken, so the pass that
-  // holds it answers only for what committed in between. Runs once the rows
-  // are final: what a statement buffers is still arriving, and what the
-  // commit flushes is only a segment once `PrepareCommit` has flushed it.
-  void CertifyPrepared(StoreWrites& w, duckdb::ClientContext& context);
+  // Refuses the rows of `table`, the whole table, whose reference key `spec`
+  // the referenced table does not hold; the commit checks them again if the
+  // referenced table changes before it.
+  void VerifyReferences(const catalog::SearchTableEntry& table,
+                        const KeySpec& spec);
 
-  void PrepareCommit(duckdb::ClientContext& context);
-  void Stage(const irs::SourcePosition& position,
-             duckdb::idx_t database) noexcept;
-  void Publish(duckdb::idx_t database) noexcept;
+  // Notes the rows this transaction removed that a commit after `snapshot`
+  // removed too, for the commit to refuse: a statement moving the
+  // transaction's snapshot past such a commit would hide the conflict from the
+  // check at commit.
+  void NoteConflicts(Tick snapshot);
+
+  void PrepareCommit(duckdb::ClientContext& context, Tick snapshot);
+  std::vector<LogSection> TakeLog(duckdb::ClientContext& context,
+                                  Tick snapshot);
+  void Apply(Tick tick, Tick oldest, Lsn lsn) noexcept;
+  void BeforePublish() noexcept;
+  void Finish() noexcept;
 
   void Abort() noexcept;
 
  private:
-  struct FeedColumns {
-    const void* database = nullptr;
-    duckdb::idx_t table_oid = 0;
-    duckdb::row_t first_row = 0;
-    duckdb::idx_t count = 0;
-    std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
+  StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
+  void Adopt(StoreWrites& w, const catalog::SearchTableEntry& table);
+  void Flush(duckdb::ClientContext& context, StoreWrites& w);
+  StoreWrites* Related(const Store& store, StoreWrites& w);
+  // The catalog as it is now, with this transaction's own changes.
+  duckdb::CatalogTransaction Latest(
+    const catalog::SearchTableEntry& table) const {
+    return duckdb::CatalogTransaction{table.catalog.GetDatabase(), _session,
+                                      duckdb::VisibilityBound::AllCommitted()};
+  }
+  void CheckReferences(StoreWrites& w, const KeySpec& spec,
+                       std::span<const std::string> keys);
+  void CheckRemovedKeys(StoreWrites& w, bool commit);
+  void CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w);
+  std::shared_ptr<const TableState> VerifyAllReferences(
+    const catalog::SearchTableEntry& table, const KeySpec& spec);
+
+  struct ReferenceCheck {
+    const catalog::SearchTableEntry* table = nullptr;
+    KeySpec spec;
+    std::shared_ptr<const TableState> referenced;
   };
 
-  StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
-
+  duckdb::transaction_t _session;
+  bool _conflict = false;
+  mutable absl::Mutex _mutex;
+  std::vector<ReferenceCheck> _reference_checks;
   // Node-based: the entry is well past FlatHashMap's size cut-off, and the
   // buffer is held by reference across a statement, so the nodes must not
   // move.
@@ -210,7 +262,6 @@ class Writes {
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
                                PinnedSearchTable>
     _readers;
-  FeedColumns _feed_columns;
 };
 
 }  // namespace sdb::search

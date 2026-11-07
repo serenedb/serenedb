@@ -42,7 +42,6 @@
 #include <vector>
 
 #include "connector/copy_from_batches.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "pg/connection_context.h"
 #include "pg/serialize.h"
@@ -165,11 +164,7 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
                  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
   result->file_buffer =
     duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
-  if (auto* state = context.registered_state
-                      ->Get<SereneDBClientState>(kSereneDBClientStateKey)
-                      .get()) {
-    sdb::pg::FillContext(state->GetConnectionContext(), result->ctx);
-  }
+  sdb::pg::FillContext(ConnectionContext::Get(context), result->ctx);
   // CopyText reuses the Text renderers; the inline COPY escaping is keyed off
   // copy_text + the doubled backslash base, so it is a no-op without these two.
   result->ctx.copy_text = true;

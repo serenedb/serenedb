@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "catalog/boot.h"
+#include "catalog/cluster.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::catalog {
@@ -34,10 +35,10 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
   : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
     _options{info.options},
-    _directory{directory
-                 ? std::move(directory)
-                 : std::make_shared<DatabaseDirectory>(
-                     ClusterLayout(catalog.GetAttached()).DatabaseDir(oid))} {
+    _directory{
+      directory ? std::move(directory)
+                : std::make_shared<DatabaseDirectory>(
+                    catalog.Cast<ClusterCatalog>().Layout().DatabaseDir(oid))} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;
@@ -46,6 +47,8 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
 duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
   auto info = duckdb::make_uniq<duckdb::CreateDatabaseInfo>();
   info->SetName(name);
+  info->oid = oid;
+  info->permissions = permissions;
   info->comment = comment;
   info->tags = tags;
   info->options = _options;

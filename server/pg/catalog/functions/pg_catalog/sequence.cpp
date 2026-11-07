@@ -29,7 +29,6 @@
 #include <optional>
 
 #include "auth/role_closure.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/utils/lookup.h"
@@ -57,7 +56,7 @@ SequenceProgress ProgressOf(const duckdb::SequenceData& data) {
 bool Allows(const std::shared_ptr<const auth::RoleClosure>& closure,
             const duckdb::Permissions& permissions, CatalogType type,
             AclMode modes) {
-  return !closure || closure->CanAny(type, permissions, modes);
+  return closure->CanAny(type, permissions, modes);
 }
 
 const duckdb::SequenceCatalogEntry* ReadableSequence(

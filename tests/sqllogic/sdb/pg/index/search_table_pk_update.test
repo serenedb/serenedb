@@ -7,15 +7,11 @@
 
 statement ok
 CREATE TABLE pt (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 
 statement ok
 INSERT INTO pt VALUES (1, 10, 'a'), (2, 20, 'b'), (3, 30, 'c'), (4, 40, 'd');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pt;
 
 
 query
@@ -33,10 +29,6 @@ statement ok
 UPDATE pt SET x = 200 WHERE pk = 2;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pt;
-
-
 query
 SELECT pk, x, s FROM pt ORDER BY pk;
 ----
@@ -51,10 +43,6 @@ pk	x	s
 # other columns carry over, and the new PK value is visible.
 statement ok
 UPDATE pt SET pk = 33 WHERE pk = 3;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pt;
 
 
 query
@@ -79,10 +67,6 @@ statement ok
 DELETE FROM pt WHERE pk = 1;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pt;
-
-
 query
 SELECT count(*) AS c FROM pt;
 ----
@@ -93,10 +77,6 @@ c
 # Re-insert the deleted PK with new values: resolves to a single live row.
 statement ok
 INSERT INTO pt VALUES (1, 111, 'z');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pt;
 
 
 query

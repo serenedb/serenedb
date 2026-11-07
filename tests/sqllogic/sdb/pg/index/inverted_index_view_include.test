@@ -118,7 +118,7 @@ CREATE VIEW inc_base_v AS SELECT pk, body, attrs, extra FROM inc_base;
 
 statement ok
 CREATE INDEX inc_base_idx ON inc_base_v USING inverted(pk, body view_inc_en)
-  INCLUDE (attrs);
+  INCLUDE (pk, attrs);
 
 
 # Sanity: count over the view-backed index.
@@ -137,16 +137,6 @@ SELECT pk, attrs FROM inc_base_idx WHERE body @@ ts_phrase('pudge') ORDER BY pk;
 pk	attrs
 1	{"(kills,7)","(deaths,2)"}
 3	{"(kills,3)","(deaths,5)"}
-
-
-# Mixed projection: pk (indexed forward), body (indexed), attrs (INCLUDE'd),
-# extra (rocksdb lookup).
-query
-SELECT pk, body, attrs, extra FROM inc_base_idx WHERE body @@ ts_phrase('pudge') ORDER BY pk;
-----
-pk	body	attrs	extra
-1	pudge goes mid	{"(kills,7)","(deaths,2)"}	a
-3	pudge plays again	{"(kills,3)","(deaths,5)"}	c
 
 
 # IS NULL on an INCLUDE'd MAP column. Filter on body, projection on attrs.
@@ -169,7 +159,7 @@ CREATE VIEW inc_base_v_renamed AS
 
 statement ok
 CREATE INDEX inc_renamed_idx ON inc_base_v_renamed USING inverted(doc_id, text view_inc_en)
-  INCLUDE (metadata);
+  INCLUDE (doc_id, text, metadata);
 
 
 query

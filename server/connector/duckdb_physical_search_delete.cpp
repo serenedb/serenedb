@@ -34,13 +34,11 @@
 #include <vector>
 
 #include "catalog/entry/search_table.h"
+#include "catalog/transaction.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/row_position_deduplicator.h"
 #include "connector/search_sink_writer.hpp"
-#include "pg/connection_context.h"
-#include "query/transaction.h"
 #include "search/search_table_changes.h"
 #include "search/store.h"
 
@@ -48,7 +46,8 @@ namespace sdb::connector {
 namespace {
 
 struct SearchTableDeleteState final : duckdb::GlobalSinkState {
-  query::Transaction* sdb_txn = nullptr;
+  catalog::SessionTransaction* sdb_txn = nullptr;
+  std::shared_ptr<irs::DirectoryReader> pinned;
   std::optional<RowPositionDeduplicator> deleted_rows;
   std::shared_ptr<search::Store> search_table;
   absl::Mutex mutex;
@@ -107,7 +106,7 @@ SereneDBSearchDelete::SereneDBSearchDelete(
   SDB_ASSERT(!_return_chunk || _return_columns.size() == GetTypes().size());
 }
 
-std::string SereneDBSearchDelete::GetName() const { return "SEARCH_DELETE"; }
+std::string SereneDBSearchDelete::GetName() const { return "DELETE"; }
 
 duckdb::InsertionOrderPreservingMap<std::string>
 SereneDBSearchDelete::ParamsToString() const {
@@ -119,17 +118,17 @@ SereneDBSearchDelete::ParamsToString() const {
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& transaction = catalog::SessionOf(context, _table->catalog);
   auto state = duckdb::make_uniq<SearchTableDeleteState>();
   state->search_table = _table->Storage();
-  conn_ctx.SearchTxn().RegisterWriter(state->search_table, *_table);
+  transaction.SearchTxn().RegisterWriter(state->search_table, *_table);
 
   if (_row_id_handling != duckdb::RowIdHandling::ASSUME_UNIQUE) {
-    state->deleted_rows.emplace(
-      *conn_ctx.SearchTxn().EnsureSearchTable(*state->search_table).reader);
+    state->pinned = transaction.SearchTxn().PinnedReader(*state->search_table);
+    state->deleted_rows.emplace(*state->pinned);
   }
 
-  state->sdb_txn = &conn_ctx;
+  state->sdb_txn = &transaction;
   if (_return_chunk) {
     state->returned.emplace(context, GetTypes());
   }
@@ -181,18 +180,19 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
 }
 
 duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
-  duckdb::ExecutionContext& /*context*/,
+  duckdb::ExecutionContext& context,
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
   absl::MutexLock lock{&gstate.mutex};
 #ifdef SDB_DEV
-  SDB_ASSERT(!gstate.deleted_rows ||
-             gstate.deleted_rows->Covers(
-               gstate.sdb_txn->SearchTxn().PinnedReader(*gstate.search_table)));
+  SDB_ASSERT(
+    !gstate.deleted_rows ||
+    gstate.deleted_rows->Covers(
+      *gstate.sdb_txn->SearchTxn().PinnedReader(*gstate.search_table)));
 #endif
   if (!lstate.positions.Empty()) {
-    gstate.sdb_txn->SearchTxn().AddRemoval(gstate.search_table,
+    gstate.sdb_txn->SearchTxn().AddRemoval(context.client, gstate.search_table,
                                            std::move(lstate.positions));
   }
   gstate.delete_count += lstate.delete_count;
@@ -200,6 +200,14 @@ duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
     gstate.returned->Combine(*lstate.returned);
   }
   return duckdb::SinkCombineResultType::FINISHED;
+}
+
+duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
+  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext& context,
+  duckdb::OperatorSinkFinalizeInput& input) const {
+  auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
+  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.search_table);
+  return duckdb::SinkFinalizeType::READY;
 }
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>

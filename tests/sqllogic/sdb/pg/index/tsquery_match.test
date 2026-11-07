@@ -23,9 +23,6 @@ INSERT INTO tsq values (3, 'slow grey turtle sleeps', 'goodbye world');
 statement ok
 INSERT INTO tsq values (4, 'something else entirely', 'bar');
 
-statement ok
-VACUUM (REFRESH_TABLE) tsq;
-
 # ----------------------------------------------------------------------
 # Basic @@ with PHRASE
 # ----------------------------------------------------------------------
@@ -415,7 +412,6 @@ statement error
 SELECT a FROM tsq_idx WHERE b @@ ts_regexp('\d+', 'posix');
 ----
 db error: ERROR: invalid regular expression: invalid escape sequence: \d
-
 
 
 # ----------------------------------------------------------------------
@@ -931,7 +927,7 @@ EXPLAIN SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(tsquery_phrase(tsquery_p
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: tsq_idx                                                                                             │
-│ Lookup: table                                                                                              │
+│ Lookup: search                                                                                             │
 │ Index Filter:                                                                                              │
 │ ╭─ Phrase ───────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: b(string)                                                                                       │ │
@@ -1050,7 +1046,7 @@ EXPLAIN SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn') ## ts_re
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────╮
 │ Index: tsq_idx                                                                   │
-│ Lookup: table                                                                    │
+│ Lookup: search                                                                   │
 │ Index Filter:                                                                    │
 │ ╭─ Phrase ─────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: b(string)                                                             │ │
@@ -1665,9 +1661,6 @@ CREATE INDEX re_idn_idx ON re_idn USING inverted(a, name);
 statement ok
 INSERT INTO re_idn VALUES (1, 'Foo'), (2, 'foobar'), (3, 'BARFOO'), (4, 'baz');
 
-statement ok
-VACUUM (REFRESH_TABLE) re_idn;
-
 # `~` -- case-sensitive POSIX regex. The literal-prefix range bound
 # pushed by regex_range_filter is upper bound `foo<F4 BF BF C0>`,
 # which (with the BLOB-extraction fix) admits 'foobar' into the range
@@ -2204,9 +2197,6 @@ CREATE INDEX tsq_ngram_idx ON tsq_ngram USING inverted(a, b tsq_ngram_dict);
 statement ok
 INSERT INTO tsq_ngram values (1, 'hello'), (2, 'help'), (3, 'held');
 
-statement ok
-VACUUM (REFRESH_TABLE) tsq_ngram;
-
 query
 SELECT a FROM tsq_ngram_idx WHERE ngram_matches(b, 'hello', 0.3) ORDER BY a;
 ----
@@ -2642,9 +2632,6 @@ CREATE INDEX tsq_kw_idx ON tsq_kw USING inverted(a, b);
 statement ok
 INSERT INTO tsq_kw VALUES (1, 'foo'), (2, 'foobar'), (3, 'bar'), (4, ''), (5, '50%'), (6, 'abc123');
 
-statement ok
-VACUUM (REFRESH_TABLE) tsq_kw;
-
 # contains
 query
 SELECT a FROM tsq_kw_idx WHERE contains(b, 'oo') ORDER BY a;
@@ -2777,9 +2764,6 @@ CREATE INDEX tsq_rx_idx ON tsq_rx USING inverted (id, msg);
 statement ok
 INSERT INTO tsq_rx VALUES (1, 'abc123'), (2, 'xyz'), (3, '42'), (4, 'line' || chr(10) || '7');
 
-statement ok
-VACUUM (REFRESH_TABLE) tsq_rx;
-
 query
 SELECT id FROM tsq_rx WHERE msg ~ '[0-9]+' ORDER BY id;
 ----
@@ -2833,7 +2817,7 @@ EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '[0-9]+';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: tsq_rx_idx                     │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Automaton ───────────────────────╮ │
 │ │ Field: msg(string)                │ │
@@ -2861,7 +2845,7 @@ EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]\Q1';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
 │ Index: tsq_rx_idx                         │
-│ Lookup: table                             │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Automaton ───────────────────────────╮ │
 │ │ Field: msg(string)                    │ │
@@ -2883,7 +2867,7 @@ EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]\Q1\E2';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: tsq_rx_idx                          │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Automaton ────────────────────────────╮ │
 │ │ Field: msg(string)                     │ │
@@ -2905,7 +2889,7 @@ EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '^[a-z]+[0-9]+$';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tsq_rx_idx           │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Automaton ─────────────╮ │
 │ │ Field: msg(string)      │ │
@@ -2943,7 +2927,7 @@ EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '(?m)^7';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: tsq_rx_idx                     │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Automaton ───────────────────────╮ │
 │ │ Field: msg(string)                │ │
@@ -3011,9 +2995,6 @@ CREATE INDEX tsq_rw_idx ON tsq_rw USING inverted (id, msg);
 statement ok
 INSERT INTO tsq_rw VALUES (1, 'a_b'), (2, 'axb'), (3, 'a%b'), (4, 'aXYb'), (5, 'C:\Windows'), (6, 'C:Windows'), (7, 'xa_bx'), (8, 'a_bc'), (9, 'axbc');
 
-statement ok
-VACUUM (REFRESH_TABLE) tsq_rw;
-
 query
 SELECT id FROM tsq_rw_idx WHERE msg ~ 'a_b' ORDER BY id;
 ----
@@ -3053,7 +3034,7 @@ EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ 'a_b';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: tsq_rw_idx      │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Automaton ────────╮ │
 │ │ Field: msg(string) │ │
@@ -3069,7 +3050,7 @@ EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ '^a_b';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: tsq_rw_idx      │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Starts With ──────╮ │
 │ │ Field: msg(string) │ │
@@ -3085,7 +3066,7 @@ EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ '^C:\\W';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: tsq_rw_idx      │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Starts With ──────╮ │
 │ │ Field: msg(string) │ │
@@ -3268,9 +3249,6 @@ CREATE INDEX tsq_codes_idx ON tsq_codes USING inverted (id, code tsq_codes_kw);
 statement ok
 INSERT INTO tsq_codes VALUES
   (1, '50%x'), (2, '500'), (3, 'a_b'), (4, 'axb'), (5, 'a_bc'), (6, 'axbc'), (7, 'a\bc'), (8, 'abc');
-
-statement ok
-VACUUM (REFRESH_TABLE) tsq_codes;
 
 query
 SELECT id FROM tsq_codes_idx WHERE code @@ to_tsquery('50%?') ORDER BY id;

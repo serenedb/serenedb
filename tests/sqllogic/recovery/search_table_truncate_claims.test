@@ -5,13 +5,10 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tcl (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO tcl VALUES (1, 'a'), (2, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) tcl;
 
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
@@ -104,10 +101,6 @@ ROLLBACK;
 connection writer
 statement ok
 INSERT INTO tcl VALUES (5, 'e');
-
-connection writer
-statement ok
-VACUUM (REFRESH_TABLE) tcl;
 
 connection writer
 query

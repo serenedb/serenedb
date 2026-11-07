@@ -55,7 +55,7 @@ CREATE INDEX sdl_t_inv ON sdl_t USING inverted (body);
 
 
 statement ok
-CREATE TABLE sdl_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE sdl_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -68,14 +68,6 @@ CREATE INDEX sdl_s_inv ON sdl_s USING inverted (body);
 
 statement ok
 CREATE INDEX sdl_v_inv ON sdl_v USING inverted (body);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_t;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_s;
 
 
 statement ok
@@ -123,7 +115,7 @@ CREATE INDEX sdl_keep_inv ON sdl_t USING inverted (body);
 
 
 statement ok
-CREATE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -136,14 +128,6 @@ CREATE INDEX sdl_keep_s_inv ON sdl_keep_s USING inverted (body);
 
 statement ok
 CREATE INDEX sdl_keep_v_inv ON sdl_v USING inverted (body);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_t;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_keep_s;
 
 
 statement ok
@@ -205,7 +189,7 @@ CREATE INDEX sdl_rb_inv ON sdl_t USING inverted (body);
 
 
 statement ok
-CREATE TABLE sdl_rb_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE sdl_rb_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -217,7 +201,7 @@ CREATE OR REPLACE INDEX sdl_keep_inv ON sdl_t USING inverted (id, body);
 
 
 statement ok
-CREATE OR REPLACE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -251,7 +235,7 @@ CREATE INDEX sdl_keep_inv ON public.sdl_t USING inverted (body)
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TABLE IF NOT EXISTS sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS sdl_keep_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -290,7 +274,7 @@ CREATE INDEX t_inv ON sdl_db.public.t USING inverted (body);
 
 
 statement ok
-CREATE TABLE sdl_db.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE sdl_db.public.s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -303,14 +287,6 @@ INSERT INTO sdl_db.public.t VALUES (1, 'alpha');
 
 statement ok
 INSERT INTO sdl_db.public.s VALUES (1, 'alpha');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_db.public.t;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_db.public.s;
 
 
 statement ok

@@ -17,7 +17,7 @@ CREATE TEXT SEARCH DICTIONARY db AS
 
 statement ok
 CREATE TABLE t(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ia ON t USING inverted (body);
@@ -28,9 +28,6 @@ CREATE INDEX ib ON t USING inverted (body db);
 
 statement ok
 INSERT INTO t VALUES (1, 'foo'), (2, 'bar');
-
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 # Drop the highest-id index. Its field id is gone from the catalog but its
 # postings linger in the shared store (the rows stay live).
@@ -70,7 +67,7 @@ id
 connection after_crash
 statement ok
 CREATE TABLE t2(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 connection after_crash
 statement ok
@@ -79,10 +76,6 @@ CREATE INDEX i2 ON t2 USING inverted (body db);
 connection after_crash
 statement ok
 INSERT INTO t2 VALUES (10, 'hello'), (11, 'world');
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) t2;
 
 connection after_crash
 query

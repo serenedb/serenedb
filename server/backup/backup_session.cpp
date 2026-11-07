@@ -25,10 +25,6 @@
 
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/storage/storage_lock.hpp>
-#include <duckdb/storage/storage_manager.hpp>
-#include <duckdb/storage/write_ahead_log.hpp>
-#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -46,36 +42,13 @@
 #include "catalog/database_directory.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
-#include "connector/duckdb_storage_extension.h"
+#include "catalog/transaction.h"
 #include "search/store.h"
 #include "storage_engine/search_engine.h"
 #include "utils/file_utils.h"
 
 namespace sdb::backup {
 namespace {
-
-bool LeftByFailedCheckpoint(duckdb::StorageManager& storage) {
-  const auto wal = storage.GetWAL();
-  SDB_ASSERT(wal);
-  return wal->GetPath() != storage.GetWALPath();
-}
-
-uint64_t RetainedRunStart(duckdb::StorageManager& storage, uint64_t end) {
-  auto start = end;
-  while (start > 0) {
-    const auto path = storage.GetRetainedWALPath(start - 1);
-    std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
-    if (ec) {
-      utils::file_utils::ThrowFileError("check", path, ec);
-    }
-    if (!exists) {
-      break;
-    }
-    --start;
-  }
-  return start;
-}
 
 uint64_t GenerationOf(const irs::DirectoryReader& reader) {
   return reader ? reader.Meta().index_meta.gen : 0;
@@ -102,20 +75,10 @@ Cut RecordCut(
   Cut cut;
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCommits);
   const auto commits = CommitGate().Close(context);
-  cut.catalog_link = backup_dir / kCatalogLink;
-  cut.catalog_log_size =
-    catalog::ClusterOf().SnapshotCatalogLog(cut.catalog_link);
-  for (const auto& db : pins) {
-    auto& storage = db->GetStorageManager();
-    auto& entry = cut.databases.emplace_back();
-    entry.oid = db->oid;
-    auto commit_lock = storage.GetCommitLock();
-    entry.with_failed_checkpoint = LeftByFailedCheckpoint(storage);
-    entry.wal_size = storage.GetWALSize();
-    entry.checkpoint_iteration =
-      storage.GetBlockManager().GetCheckpointIteration();
-    entry.retained_from = RetainedRunStart(storage, entry.checkpoint_iteration);
-  }
+  auto* log = catalog::Transactions::Get().GetLog();
+  SDB_ENSURE(log, "cannot start a backup of a server without a log");
+  cut.log_link = backup_dir;
+  cut.log_size = log->Link(cut.log_link);
   for (const auto& db : pins) {
     CollectStores(db->GetCatalog().Cast<catalog::SereneDBCatalog>(), db->oid,
                   cut.stores);
@@ -130,9 +93,9 @@ BackupSession& BackupSession::Instance() {
   return gSession;
 }
 
-StartedBackup BackupSession::Begin(duckdb::ClientContext& context,
-                                   BackupOwner owner, std::string_view label,
-                                   pg::ProgressMetrics& progress) {
+uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
+                              std::string_view label,
+                              pg::ProgressMetrics& progress) {
   progress.SetCommand(pg::ProgressCommand::BaseBackup);
   progress.SetPhase(pg::progress_phase::BaseBackup::Initializing);
   absl::MutexLock lock{&_mutex};
@@ -147,45 +110,11 @@ StartedBackup BackupSession::Begin(duckdb::ClientContext& context,
       ERR_MSG("a backup is already in progress"),
       ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
-  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
-  auto checkpoints = CheckpointGate().Close(context);
   auto pins = catalog::SereneDBDatabases(
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance()));
   std::erase_if(pins,
                 [](const auto& db) { return db->GetCatalog().InMemory(); });
-  std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> checkpoint_keys;
-  for (auto& db : pins) {
-    checkpoint_keys.push_back(
-      duckdb::DuckTransactionManager::Get(*db).SharedCheckpointLock());
-  }
-  std::vector<std::string> with_failed_checkpoint;
-  for (auto& db : pins) {
-    auto& storage = db->GetStorageManager();
-    const bool failed_checkpoint = [&] {
-      auto commit_lock = storage.GetCommitLock();
-      if (!storage.GetWAL()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-          ERR_MSG("cannot start a backup: database \"",
-                  db->GetName().GetIdentifierName(),
-                  "\" has no active WAL after a failed checkpoint"),
-          ERR_HINT("Restart the server, then retry."));
-      }
-      return LeftByFailedCheckpoint(storage);
-    }();
-    if (failed_checkpoint) {
-      with_failed_checkpoint.push_back(db->GetName().GetIdentifierName());
-      continue;
-    }
-    for (const auto& storage : connector::InvertedStorages(*db)) {
-      SDB_ENSURE(!storage->HasPendingCheckpoint(),
-                 "cannot start a backup: inverted index ", storage->GetId(),
-                 " in database \"", db->GetName().GetIdentifierName(),
-                 "\" has an unfinished checkpoint save");
-    }
-  }
-  const auto& layout =
-    catalog::ClusterLayout(catalog::ClusterOf().GetAttached());
+  const auto& layout = catalog::ClusterOf().Layout();
   auto backup_dir = layout.EngineDir() / kBackupDir;
   std::error_code ec;
   std::filesystem::remove_all(backup_dir, ec);
@@ -205,22 +134,20 @@ StartedBackup BackupSession::Begin(duckdb::ClientContext& context,
   auto cut = RecordCut(context, backup_dir, pins, progress);
   auto& positions = PositionSource::Instance();
   const auto start_lsn = positions.Issue();
-  cut.catalog_link = cut.catalog_link.lexically_relative(layout.directory);
+  cut.log_link = cut.log_link.lexically_relative(layout.directory);
   auto label_file = BuildBackupLabel(
     label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
   std::move(resume_removals).Cancel();
   std::move(remove_backup_dir).Cancel();
 
   // Noexcept committing of backup start
-  _checkpoints = std::move(checkpoints);
   _maintenance = std::move(maintenance);
   _pins = std::move(pins);
-  _checkpoint_keys = std::move(checkpoint_keys);
   _backup_dir = std::move(backup_dir);
   _owner = owner;
   _label_file = std::move(label_file);
   _active = true;
-  return StartedBackup{start_lsn, std::move(with_failed_checkpoint)};
+  return start_lsn;
 }
 
 FinishedBackup BackupSession::Finish(const void* session) {
@@ -255,8 +182,6 @@ void BackupSession::End() noexcept {
 void BackupSession::Stop() noexcept {
   _maintenance.reset();
   catalog::ResumeRemovals();
-  _checkpoints.reset();
-  _checkpoint_keys.clear();
   _pins.clear();
   catalog::RemoveTree(_backup_dir);
   _backup_dir.clear();

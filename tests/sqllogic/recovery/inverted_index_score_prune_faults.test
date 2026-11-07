@@ -25,7 +25,7 @@ CREATE TEXT SEARCH DICTIONARY en_prune AS
 
 
 statement ok
-CREATE TABLE prune_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_docs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
@@ -48,20 +48,11 @@ INSERT INTO plain_docs SELECT * FROM prune_docs;
 
 
 statement ok
-CREATE INDEX prune_docs_idx ON prune_docs USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX prune_docs_idx ON prune_docs USING inverted(id, body en_prune);
 
 
 statement ok
 CREATE INDEX plain_docs_idx ON plain_docs USING inverted(id, body en_prune);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) prune_docs;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) plain_docs;
 
 
 # === Positive: shapes that should engage score pruning ===

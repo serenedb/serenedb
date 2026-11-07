@@ -17,9 +17,6 @@ INSERT INTO bigfilter VALUES
   (4, 10, 11, 12, 'delta epsilon alpha'),
   (5, 13, 14, 15, 'epsilon alpha beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) bigfilter;
-
 
 query
 EXPLAIN SELECT id FROM bigfilter_idx
@@ -31,7 +28,7 @@ WHERE (a = 1 OR b = 2 OR c = 3)
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: bigfilter_idx                                                                                                                                                                                         │
-│ Lookup: table                                                                                                                                                                                                │
+│ Lookup: search                                                                                                                                                                                               │
 │ Index Filter:                                                                                                                                                                                                │
 │ ╭─ And ────────────╮                                                                                                                                                                                         │
 │ ╰─────────┬────────╯                                                                                                                                                                                         │
@@ -56,7 +53,7 @@ WHERE a = 1
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: bigfilter_idx                                                                                                                                            │
-│ Lookup: table                                                                                                                                                   │
+│ Lookup: search                                                                                                                                                  │
 │ Index Filter:                                                                                                                                                   │
 │ ╭─ Or ──────────────╮                                                                                                                                           │
 │ ╰─────────┬─────────╯                                                                                                                                           │
@@ -94,7 +91,7 @@ WHERE (a = 1 OR b = 2 OR c = 3 OR a = 4 OR b = 5)
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: bigfilter_idx                                                                                                                                                                                                       │
-│ Lookup: table                                                                                                                                                                                                              │
+│ Lookup: search                                                                                                                                                                                                             │
 │ Index Filter:                                                                                                                                                                                                              │
 │ ╭─ Bool ───────────╮                                                                                                                                                                                                       │
 │ ╰─────────┬────────╯                                                                                                                                                                                                       │
@@ -124,7 +121,7 @@ WHERE (a > 0 AND a < 100)
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: bigfilter_idx                                                                                                                                           │
-│ Lookup: table                                                                                                                                                  │
+│ Lookup: search                                                                                                                                                 │
 │ Index Filter:                                                                                                                                                  │
 │ ╭─ Bool ────────────╮                                                                                                                                          │
 │ ╰─────────┬─────────╯                                                                                                                                          │
@@ -161,7 +158,7 @@ WHERE a = 1
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: bigfilter_idx                                                                                                                                           │
-│ Lookup: table                                                                                                                                                  │
+│ Lookup: search                                                                                                                                                 │
 │ Index Filter:                                                                                                                                                  │
 │ ╭─ And ─────────────╮                                                                                                                                          │
 │ ╰─────────┬─────────╯                                                                                                                                          │
@@ -190,7 +187,7 @@ WHERE (a < 10 OR a > 20)
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────╮
 │ Index: bigfilter_idx                                                            │
-│ Lookup: table                                                                   │
+│ Lookup: search                                                                  │
 │ Index Filter:                                                                   │
 │ ╭─ Bool ───────────╮                                                            │
 │ ╰─────────┬────────╯                                                            │

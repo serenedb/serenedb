@@ -35,13 +35,11 @@
 #include <vector>
 
 #include "catalog/entry/search_table.h"
+#include "catalog/transaction.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/row_position_deduplicator.h"
 #include "connector/search_sink_rows.h"
-#include "pg/connection_context.h"
-#include "query/transaction.h"
 #include "search/search_table_changes.h"
 #include "search/store.h"
 
@@ -50,11 +48,12 @@ namespace {
 
 struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   SearchSinkTable table;
-  query::Transaction* sdb_txn = nullptr;
+  catalog::SessionTransaction* sdb_txn = nullptr;
 
   duckdb::vector<duckdb::column_t> new_row_src;
 
   primary_key::PKColumn rowid;
+  std::shared_ptr<irs::DirectoryReader> pinned;
   std::optional<RowPositionDeduplicator> updated_rows;
 
   absl::Mutex mutex;
@@ -82,10 +81,10 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
   duckdb::vector<duckdb::PhysicalIndex> columns,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk,
-  duckdb::RowIdHandling row_id_handling,
-  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints)
+  duckdb::RowIdHandling row_id_handling)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(table),
@@ -95,7 +94,7 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
     _return_chunk(return_chunk),
     _row_id_handling(row_id_handling) {}
 
-std::string SereneDBSearchUpdate::GetName() const { return "SEARCH_UPDATE"; }
+std::string SereneDBSearchUpdate::GetName() const { return "UPDATE"; }
 
 duckdb::InsertionOrderPreservingMap<std::string>
 SereneDBSearchUpdate::ParamsToString() const {
@@ -108,21 +107,22 @@ SereneDBSearchUpdate::ParamsToString() const {
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchUpdateGlobalState>();
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& transaction = catalog::SessionOf(context, _table.catalog);
 
   auto& target = state->table;
   target.store = _table.Storage();
   target.catalog = &_table.catalog;
   target.table_id = _table.oid;
-  conn_ctx.SearchTxn().RegisterWriter(target.store, _table);
+  transaction.SearchTxn().RegisterWriter(target.store, _table);
   _table.RequireCurrentSchema();
 
   const auto& columns = _table.GetColumns();
-  target.column_ids.reserve(columns.LogicalColumnCount());
-  for (const auto& column : columns.Logical()) {
+  target.column_ids.reserve(columns.PhysicalColumnCount());
+  target.types.reserve(columns.PhysicalColumnCount());
+  for (const auto& column : columns.Physical()) {
     target.column_ids.emplace_back(TableColumnId(column));
+    target.types.push_back(column.Type());
   }
-  target.types = columns.GetColumnTypes();
   target.buffer_bytes =
     duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 
@@ -145,11 +145,11 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   SDB_ASSERT(_table.GetRowIdColumns().size() == 1 && !input_types.empty());
   state->rowid = {input_types.size() - 1, input_types.back()};
   if (_row_id_handling != duckdb::RowIdHandling::ASSUME_UNIQUE) {
-    state->updated_rows.emplace(
-      *conn_ctx.SearchTxn().EnsureSearchTable(*target.store).reader);
+    state->pinned = transaction.SearchTxn().PinnedReader(*target.store);
+    state->updated_rows.emplace(*state->pinned);
   }
 
-  state->sdb_txn = &conn_ctx;
+  state->sdb_txn = &transaction;
   if (_return_chunk) {
     state->returned.emplace(context, GetTypes());
   }
@@ -187,10 +187,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.table.types);
   new_row.ReferenceColumns(chunk, gstate.new_row_src);
-  for (const auto& constraint : _constraints) {
-    duckdb::DataTable::VerifyRowConstraint(context.client, _table, *constraint,
-                                           new_row);
-  }
+  duckdb::DataTable::VerifyRowConstraints(context.client, _table, _constraints,
+                                          new_row);
   lstate.rows.Append(context.client, gstate.table, new_row);
 
   if (lstate.returned) {
@@ -211,11 +209,12 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
 #ifdef SDB_DEV
   SDB_ASSERT(
     !gstate.updated_rows ||
-    gstate.updated_rows->Covers(search_txn.PinnedReader(*gstate.table.store)));
+    gstate.updated_rows->Covers(*search_txn.PinnedReader(*gstate.table.store)));
 #endif
   lstate.rows.HandOver(context.client, gstate.table, search_txn);
   if (!lstate.positions.Empty()) {
-    search_txn.AddRemoval(gstate.table.store, std::move(lstate.positions));
+    search_txn.AddRemoval(context.client, gstate.table.store,
+                          std::move(lstate.positions));
   }
   gstate.update_count += lstate.update_count;
   if (lstate.returned && lstate.returned->Count() != 0) {
@@ -252,10 +251,10 @@ duckdb::SourceResultType SereneDBSearchUpdate::GetDataInternal(
 }
 
 duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
-  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
+  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
-  auto& state = input.global_state.Cast<SearchUpdateGlobalState>();
-  state.sdb_txn->SearchTxn().FlushBufferTransaction(_table.oid);
+  auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
+  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store);
   return duckdb::SinkFinalizeType::READY;
 }
 

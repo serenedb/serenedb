@@ -226,6 +226,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   if (ss.plan_cache.deferred) {
     ApplyDeferredClaim(*state, context, ss);
   }
+  if (ss.score.text && ss.relation.kind == ScanEntryKind::SearchTable &&
+      !state->ClaimedWhere()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(ss.score.text->Name(),
+              "() requires an inverted index scan in the same sub-query"));
+  }
   state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
   state->top_k = ss.score.top_k;
   state->top_offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;
@@ -580,6 +587,18 @@ bool IResearchConsumeTopN(duckdb::ClientContext&,
 
 namespace {
 
+void ScanVerifyDmlTarget(duckdb::ClientContext&,
+                         duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
+  const auto& bind = bind_data->Cast<ScanBindData>();
+  if (bind.relation.IsInvertedIndex()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"",
+              bind.relation.inverted_index->name.GetIdentifierName(), "\""),
+      ERR_DETAIL("This operation is not supported for indexes."));
+  }
+}
+
 duckdb::BindInfo ScanGetBindInfo(
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
   auto& bind = const_cast<ScanBindData&>(bind_data->Cast<ScanBindData>());
@@ -606,7 +625,6 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
   const auto& bind = bind_p->Cast<ScanBindData>();
   if (bind.relation.table_entry) {
     result = bind.relation.table_entry->GetVirtualColumns();
-    result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
   }
   if (bind.IsViewBacked()) {
     result.insert(
@@ -662,6 +680,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.get_bind_info = ScanGetBindInfo;
   func.get_virtual_columns = ScanGetVirtualColumns;
   func.get_row_id_columns = IResearchGetRowIdColumns;
+  func.verify_dml_target = ScanVerifyDmlTarget;
   func.supports_lookup = &IResearchSupportsLookup;
   func.get_lookup_function = &IResearchGetLookupFunction;
   func.get_lookup_source = &IResearchGetLookupSource;

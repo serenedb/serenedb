@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <atomic>
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -33,6 +35,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace duckdb {
 
@@ -85,109 +88,28 @@ bool IsNonTransactionalSetting(std::string_view name);
 void RequireSuperuserToSetGlobal(duckdb::ClientContext& ctx,
                                  std::string_view name);
 
-class Config {
- public:
-  // Per-key tracking for a currently-open transaction. Populated when
-  // `setting_change_handler` sees a SET or RESET inside an explicit txn;
-  // cleared on COMMIT / ROLLBACK.
-  struct TxnVariable {
-    // Value to restore on ROLLBACK. Captured on the first tracked event
-    // for this key and never updated after.
-    duckdb::Value rollback_restore;
-    // Value to restore on COMMIT (to undo a SET LOCAL overlay that
-    // should not persist past the transaction). nullopt means "the live
-    // value is the commit-keeper; nothing to undo at COMMIT".
-    std::optional<duckdb::Value> commit_restore;
-  };
-
-  explicit Config(duckdb::ClientContext& client_ctx)
-    : _client_ctx{client_ctx} {}
-
-  virtual ~Config() = default;
-
-  duckdb::ClientContext& GetClientContext() const noexcept {
-    return _client_ctx;
-  }
-
-  int8_t GetExtraFloatDigits() const;
-  ByteaOutput GetByteaOutput() const;
-  std::string GetTimeZone() const;
-  IsolationLevel GetIsolationLevel() const;
-  bool IsExplicitTransaction() const;
-
-  // The catalog identity a plan is cached against (duckdb's
-  // PreparedStatementData::RequireRebind asks the catalog itself). It is
-  // duckdb's own version of this session's catalog: it moves when a catalog
-  // change commits, this session's or another's.
-  //
-  // Sampled at each statement boundary rather than read live: duckdb records
-  // the identity of every catalog a statement read and asserts that a second
-  // read inside the same statement agrees, so the number a statement sees has
-  // to be fixed for its duration. Resampling at the end is what lets the next
-  // Bind -- which runs between statements -- see the DDL just performed.
-  uint64_t CatalogEpoch() const noexcept { return _catalog_epoch; }
-  void RefreshCatalogEpoch() noexcept;
-  void RefreshCatalogEpoch(duckdb::MetaTransaction& transaction) noexcept;
-
-  // Returns the current value of a setting, or std::nullopt if not found.
-  std::optional<std::string> Get(std::string_view key) const;
-
-  // Record a SET / SET LOCAL event inside an explicit txn.
-  //   old_value -- value currently in effect (pre-event snapshot).
-  void OnSet(std::string_view name, bool is_local, duckdb::Value old_value);
-
-  void SetSetting(std::string_view key, std::string value, bool) {
-    SetInternal(key, std::move(value));
-  }
-
-  // Same as SetSetting but routes through DuckDB's SET pipeline, so type
-  // casting and the option's set_callback run as if the client had issued a
-  // `SET key = value` statement. Throws on unknown settings or validation
-  // failure -- callers translate to the appropriate PG error.
-  void SetSettingChecked(std::string_view key, std::string value,
-                         bool is_local);
-
-  // Monotonic counter bumped whenever a session/local setting changes (via the
-  // setting_change_handler) or is reverted at txn end. Lets the wire layer skip
-  // the per-command ParameterStatus GUC poll unless something actually changed.
-  uint64_t SettingsVersion() const noexcept { return _settings_version; }
-  void MarkSettingsChanged() noexcept { ++_settings_version; }
-
- protected:
-  // Pre-rollback hook: restore every tracked variable to its pre-SET value.
-  void RollbackVariables() noexcept;
-  // Pre/post-commit hook: restore SET LOCAL overlays; plain SET entries
-  // stay as-is.
-  void CommitVariables() noexcept;
-
- private:
-  void SetInternal(std::string_view key, std::string value);
-  void RestoreValue(std::string_view key, duckdb::Value value) noexcept;
-
-  uint64_t _catalog_epoch = 0;
-
-  // Bumped on every tracked setting change; see SettingsVersion().
-  uint64_t _settings_version = 0;
-
-  // Transaction variables (commit-apply / revert semantics).
-
-  // Owning-string keys: values may come from caller-provided buffers (e.g.
-  // native DuckDB setting names forwarded from PhysicalSet), so we cannot
-  // hold string_views that outlive the caller.
-  // TODO: use FlatHashMap, there're now problems with ASAN build
-  irs::containers::NodeHashMap<std::string, TxnVariable> _transaction;
-  duckdb::ClientContext& _client_ctx;
-};
-
 namespace connector {
-
-void RegisterEngineConfigVariables(duckdb::DBConfig& config);
 
 void RegisterConfigVariables(duckdb::DBConfig& config);
 
 duckdb::Value ValidateSetting(duckdb::ClientContext& context,
                               std::string_view name,
                               const duckdb::Value& value);
+
+template<typename Options>
+std::vector<std::string_view> SortedOptionNames(const Options& options) {
+  std::vector<std::string_view> names;
+  names.reserve(options.size());
+  for (const auto& option : options) {
+    if constexpr (requires { option.GetIdentifierName(); }) {
+      names.push_back(option.GetIdentifierName());
+    } else {
+      names.push_back(option.first);
+    }
+  }
+  absl::c_sort(names);
+  return names;
+}
 
 }  // namespace connector
 }  // namespace sdb

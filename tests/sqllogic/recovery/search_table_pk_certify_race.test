@@ -4,15 +4,11 @@
 # between the two, which is where the second pass earns its keep.
 
 statement ok
-CREATE TABLE pk_race(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
+CREATE TABLE pk_race(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
 INSERT INTO pk_race VALUES (1, 'first');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_race;
 
 
 statement ok
@@ -24,7 +20,8 @@ connection writer
 statement async error
 INSERT INTO pk_race VALUES (9, 'parked');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_race"
+db error: ERROR: duplicate key value violates unique constraint "pk_race_pkey"
+DETAIL: Key (i)=(9) already exists.
 
 
 connection default
@@ -46,10 +43,6 @@ SET sdb_faults = 'search_commit_prepared:release';
 wait
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_race;
-
-
 query
 SELECT i, t FROM pk_race ORDER BY i;
 ----
@@ -63,15 +56,11 @@ i	t
 # back would undo somebody's delete.
 
 statement ok
-CREATE TABLE pk_gone(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
+CREATE TABLE pk_gone(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
 INSERT INTO pk_gone VALUES (5, 'original'), (6, 'other');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_gone;
 
 
 statement ok
@@ -82,7 +71,7 @@ connection writer
 statement async error
 UPDATE pk_gone SET t = 'rewritten' WHERE i = 5;
 ----
-db error: ERROR: could not serialize access due to concurrent update of table "pk_gone"
+db error: ERROR: could not serialize access due to concurrent update
 
 
 connection default
@@ -103,10 +92,6 @@ SET sdb_faults = 'search_commit_prepared:release';
 wait
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_gone;
-
-
 # The delete stands.
 query
 SELECT i, t FROM pk_gone ORDER BY i;
@@ -119,15 +104,11 @@ i	t
 # rather than as a duplicate key.
 
 statement ok
-CREATE TABLE pk_both(i INTEGER PRIMARY KEY, n INTEGER) WITH (storage = 'search');
+CREATE TABLE pk_both(i INTEGER PRIMARY KEY, n INTEGER);
 
 
 statement ok
 INSERT INTO pk_both VALUES (1, 10);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_both;
 
 
 statement ok
@@ -138,7 +119,7 @@ connection writer
 statement async error
 UPDATE pk_both SET n = n + 1 WHERE i = 1;
 ----
-db error: ERROR: could not serialize access due to concurrent update of table "pk_both"
+db error: ERROR: could not serialize access due to concurrent update
 
 
 connection default
@@ -157,10 +138,6 @@ SET sdb_faults = 'search_commit_prepared:release';
 
 
 wait
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_both;
 
 
 query

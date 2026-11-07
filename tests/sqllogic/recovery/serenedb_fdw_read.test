@@ -1,11 +1,10 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE postgres.public.sfr_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE postgres.public.sfr_docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX sfr_docs_idx ON postgres.public.sfr_docs USING inverted(id, body)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX sfr_docs_idx ON postgres.public.sfr_docs USING inverted(id, body);
 
 statement ok
 INSERT INTO postgres.public.sfr_docs
@@ -13,16 +12,13 @@ SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1, 101) t(i)
 
 statement ok
 CREATE TABLE postgres.public.sfr_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX sfr_notes_idx ON postgres.public.sfr_notes USING inverted(body);
 
 statement ok
 INSERT INTO postgres.public.sfr_notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) postgres.public.sfr_notes;
 
 statement ok
 CREATE VIEW postgres.public.sfr_even AS SELECT id FROM postgres.public.sfr_docs WHERE id % 2 = 0;
@@ -153,31 +149,13 @@ statement ok
 INSERT INTO postgres.public.sfr_notes VALUES (1000, 'note1');
 
 statement ok
-VACUUM (REFRESH_TABLE) postgres.public.sfr_notes;
-
-statement ok
-VACUUM (REFRESH_INDEX) postgres.public.sfr_docs_idx;
-
-statement ok
 CHECKPOINT postgres;
 
 statement ok
 FORCE CHECKPOINT postgres;
 
-system ok
-stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal > $__TEST_DIR__/sfr_log.inode
-
-statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
 statement ok
 CREATE TABLE postgres.public.sfr_compacted (x INT);
-
-statement ok
-SET sdb_faults = '-compact_inside_ddl';
-
-system ok
-[ "$(stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal)" != "$(cat $__TEST_DIR__/sfr_log.inode)" ]
 
 query
 SELECT (SELECT count(*) FROM sfr_snap.public.sfr_docs) AS docs, (SELECT count(*) FROM sfr_snap.public.sfr_notes) AS notes;

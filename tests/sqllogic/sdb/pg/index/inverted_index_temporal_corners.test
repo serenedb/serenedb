@@ -24,9 +24,6 @@ INSERT INTO c_ep VALUES
     (2, TIMESTAMP '1970-01-01 00:00:00'),
     (3, TIMESTAMP '1970-01-01 00:00:00.000001');
 
-statement ok
-VACUUM (REFRESH_TABLE) c_ep;
-
 query
 SELECT pk FROM c_ep_i WHERE ts @@ ts_between(TIMESTAMP '1969-12-31 23:59:59.999999', TIMESTAMP '1970-01-01 00:00:00.000001', true, true) ORDER BY pk;
 ----
@@ -97,9 +94,6 @@ INSERT INTO c_inf VALUES
     (2, TIMESTAMP '0001-01-01 00:00:00'),
     (3, TIMESTAMP '9999-12-31 23:59:59.999999'),
     (4, 'infinity');
-
-statement ok
-VACUUM (REFRESH_TABLE) c_inf;
 
 query
 SELECT pk FROM c_inf_i WHERE ts @@ ts_between('-infinity'::TIMESTAMP, 'infinity'::TIMESTAMP, true, true) ORDER BY pk;
@@ -181,9 +175,6 @@ INSERT INTO c_d VALUES
     (6, DATE '9999-12-31'),
     (7, 'infinity');
 
-statement ok
-VACUUM (REFRESH_TABLE) c_d;
-
 query
 SELECT pk FROM c_d_i WHERE d @@ ts_between(DATE '1969-12-31', DATE '1970-01-02', true, true) ORDER BY pk;
 ----
@@ -238,9 +229,6 @@ INSERT INTO c_sc VALUES
         TIMESTAMP_NS '1970-01-01 00:00:00.000000001'),
     (4, NULL, NULL, TIMESTAMP_NS '1677-09-22 00:00:00.000000001'),
     (5, NULL, NULL, TIMESTAMP_NS '2262-04-11 23:47:16.854775806');
-
-statement ok
-VACUUM (REFRESH_TABLE) c_sc;
 
 query
 SELECT pk FROM c_sc_s WHERE s @@ ts_between(TIMESTAMP_S '1969-12-31 23:59:59', TIMESTAMP_S '1970-01-01 00:00:01', false, false) ORDER BY pk;
@@ -308,9 +296,6 @@ INSERT INTO c_t VALUES
     (2, TIME '00:00:00.000001', TIME_NS '00:00:00.000000001'),
     (3, TIME '23:59:59.999999', TIME_NS '23:59:59.999999999'),
     (4, TIME '24:00:00',        TIME_NS '24:00:00');
-
-statement ok
-VACUUM (REFRESH_TABLE) c_t;
 
 query
 SELECT pk FROM c_t_t WHERE t @@ ts_between(TIME '00:00:00', TIME '00:00:00', true, true) ORDER BY pk;
@@ -388,9 +373,6 @@ INSERT INTO c_tz VALUES
     (2, TIMESTAMPTZ '2024-01-01 14:00:00+02'),
     (3, TIMESTAMPTZ '2024-01-01 06:30:00-05:30');
 
-statement ok
-VACUUM (REFRESH_TABLE) c_tz;
-
 query
 SELECT pk FROM c_tz_i WHERE ts @@ ts_between(TIMESTAMPTZ '2024-01-01 12:00:00+00', TIMESTAMPTZ '2024-01-01 12:00:00+00', true, true) ORDER BY pk;
 ----
@@ -458,9 +440,6 @@ INSERT INTO c_ttz VALUES
 statement ok
 INSERT INTO c_ttz_plain VALUES
     (1, TIMETZ '12:00:00+00'), (2, TIMETZ '12:30:00+02'), (3, TIMETZ '09:00:00-02');
-
-statement ok
-VACUUM (REFRESH_TABLE) c_ttz;
 
 query
 SELECT pk FROM c_ttz_i WHERE ttz @@ ts_between(TIMETZ '11:30:00+00', TIMETZ '13:00:00+00', true, true) ORDER BY pk;

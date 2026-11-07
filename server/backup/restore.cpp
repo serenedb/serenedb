@@ -20,6 +20,7 @@
 
 #include "backup/restore.h"
 
+#include <absl/container/btree_map.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <fcntl.h>
@@ -33,7 +34,6 @@
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -47,6 +47,7 @@
 #include "catalog/boot.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
+#include "catalog/log.h"
 #include "utils/file_utils.h"
 
 namespace sdb::backup {
@@ -56,9 +57,7 @@ constexpr std::string_view kRetiredLabelFile = "backup_label.old";
 constexpr std::string_view kSubscriptionHoldFile = "subscriptions.hold";
 
 std::filesystem::path SubscriptionHoldPath() {
-  return catalog::ClusterLayout(catalog::ClusterOf().GetAttached())
-           .EngineDir() /
-         kSubscriptionHoldFile;
+  return catalog::ClusterOf().Layout().EngineDir() / kSubscriptionHoldFile;
 }
 
 [[noreturn]] void Fail(std::string_view what, const std::filesystem::path& path,
@@ -127,13 +126,11 @@ void ForEachFile(const std::filesystem::path& directory, Visit&& visit) {
   }
 }
 
-void PruneStore(const std::filesystem::path& directory, uint64_t generation,
-                bool keep_pending) {
+void PruneStore(const std::filesystem::path& directory, uint64_t generation) {
   ForEachFile(directory,
               [&](const std::filesystem::path& path, std::string_view name) {
-                if (absl::StartsWith(name, irs::index_meta::kPendingPrefix)
-                      ? !keep_pending
-                      : irs::index_meta::ParseGeneration(name) > generation) {
+                if (absl::StartsWith(name, irs::index_meta::kPendingPrefix) ||
+                    irs::index_meta::ParseGeneration(name) > generation) {
                   Remove(path);
                 }
               });
@@ -166,67 +163,59 @@ void Restore(const catalog::DataDirectory& layout,
                       ", the copy's is ", control->system_identifier));
   }
   const auto& cut = label->cut;
-  for (const auto& database : cut.databases) {
-    RequireDirectory(layout.DatabaseDir(database.oid));
-    for (auto generation = database.retained_from;
-         generation < database.checkpoint_iteration; ++generation) {
-      const std::filesystem::path retained{absl::StrCat(
-        layout.DatabaseFile(database.oid), ".wal.retained.", generation)};
-      if (!Exists(retained)) {
-        Fail("the copy is incomplete:", retained,
-             absl::StrCat("the backup needs the retained WALs ",
-                          database.retained_from, " to ",
-                          database.checkpoint_iteration - 1));
-      }
-    }
-  }
   for (const auto& store : cut.stores) {
     RequireDirectory(layout.StorageDir(store.database_oid, store.oid));
   }
 
-  const std::filesystem::path catalog_log{layout.CatalogLogFile()};
-  const auto link = data_dir / cut.catalog_link;
+  const auto log = layout.LogDir();
+  const auto link = data_dir / cut.log_link;
   std::error_code ec;
   if (Exists(link)) {
-    std::filesystem::rename(link, catalog_log, ec);
+    std::filesystem::create_directories(log, ec);
     if (ec) {
-      utils::file_utils::ThrowFileError("restore the catalog log from",
-                                        link.string(), ec);
+      utils::file_utils::ThrowFileError("create", log.string(), ec);
+    }
+    ForEachFile(link,
+                [&](const std::filesystem::path& path, std::string_view name) {
+                  if (name != catalog::Log::kHistoryFile &&
+                      !catalog::Log::ChunkBegin(name)) {
+                    return;
+                  }
+                  std::filesystem::rename(path, log / name, ec);
+                  if (ec) {
+                    utils::file_utils::ThrowFileError("restore the log from",
+                                                      path.string(), ec);
+                  }
+                });
+    utils::file_utils::SyncDirectory(log);
+    Remove(link);
+  }
+  absl::btree_map<catalog::Lsn, std::filesystem::path> chunks;
+  ForEachFile(log,
+              [&](const std::filesystem::path& path, std::string_view name) {
+                if (const auto begin = catalog::Log::ChunkBegin(name)) {
+                  chunks.emplace(*begin, path);
+                }
+              });
+  for (auto it = chunks.begin(); it != chunks.end(); ++it) {
+    const auto& [begin, path] = *it;
+    const auto next = std::next(it);
+    if (begin > cut.log_size) {
+      Remove(path);
+    } else if (next == chunks.end() || next->first > cut.log_size) {
+      TruncateFile(path, cut.log_size - begin);
+    } else if (std::filesystem::file_size(path) < next->first - begin) {
+      Fail("the copy is incomplete:", path,
+           absl::StrCat("it has ", std::filesystem::file_size(path),
+                        " bytes, the log needs ", next->first - begin));
     }
   }
-  TruncateFile(catalog_log, cut.catalog_log_size);
-  SDB_IF_FAILURE("crash_in_restore_after_catalog_log") {
-    SDB_IMMEDIATE_ABORT();
-  }
+  utils::file_utils::SyncDirectory(log);
+  SDB_IF_FAILURE("crash_in_restore_after_log") { SDB_IMMEDIATE_ABORT(); }
 
-  irs::containers::FlatHashSet<duckdb::idx_t> with_failed_checkpoint;
-  for (const auto& database : cut.databases) {
-    const auto wal = absl::StrCat(layout.DatabaseFile(database.oid), ".wal");
-    const auto checkpoint_wal = absl::StrCat(wal, ".checkpoint");
-    const auto& active_wal =
-      database.with_failed_checkpoint ? checkpoint_wal : wal;
-    if (database.wal_size == 0) {
-      Remove(active_wal);
-    } else {
-      TruncateFile(active_wal, database.wal_size);
-    }
-    if (database.with_failed_checkpoint) {
-      with_failed_checkpoint.insert(database.oid);
-      SDB_WARN(STARTUP, "database ", database.oid,
-               " was backed up while its checkpoints were failing; boot "
-               "recovers it as after a crash; check its state");
-    } else {
-      Remove(checkpoint_wal);
-    }
-    Remove(absl::StrCat(wal, ".recovery"));
-  }
-  SDB_IF_FAILURE("crash_in_restore_after_database_wals") {
-    SDB_IMMEDIATE_ABORT();
-  }
   for (const auto& store : cut.stores) {
     PruneStore(layout.StorageDir(store.database_oid, store.oid),
-               store.generation,
-               with_failed_checkpoint.contains(store.database_oid));
+               store.generation);
   }
   SDB_IF_FAILURE("crash_in_restore_after_stores") { SDB_IMMEDIATE_ABORT(); }
 
@@ -241,9 +230,6 @@ void Restore(const catalog::DataDirectory& layout,
                             .checkpoint = label->start_lsn});
   SDB_IF_FAILURE("crash_in_restore_after_control") { SDB_IMMEDIATE_ABORT(); }
 
-  for (const auto& database : cut.databases) {
-    utils::file_utils::SyncDirectory(layout.DatabaseDir(database.oid));
-  }
   for (const auto& store : cut.stores) {
     utils::file_utils::SyncDirectory(
       layout.StorageDir(store.database_oid, store.oid));

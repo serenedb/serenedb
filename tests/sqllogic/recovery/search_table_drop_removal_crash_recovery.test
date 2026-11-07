@@ -3,7 +3,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE rmc_gone (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -11,19 +11,11 @@ INSERT INTO rmc_gone VALUES (1, 'alpha');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) rmc_gone;
-
-
-statement ok
-CREATE TABLE rmc_kept (id BIGINT PRIMARY KEY, tag TEXT) WITH (storage = 'search');
+CREATE TABLE rmc_kept (id BIGINT PRIMARY KEY, tag TEXT);
 
 
 statement ok
 INSERT INTO rmc_kept VALUES (7, 'keep');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) rmc_kept;
 
 
 statement ok
@@ -79,17 +71,12 @@ id	tag
 
 connection after_crash
 statement ok
-CREATE TABLE rmc_gone (id BIGINT PRIMARY KEY, tag TEXT) WITH (storage = 'search');
+CREATE TABLE rmc_gone (id BIGINT PRIMARY KEY, tag TEXT);
 
 
 connection after_crash
 statement ok
 INSERT INTO rmc_gone VALUES (2, 'beta');
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) rmc_gone;
 
 
 connection after_crash

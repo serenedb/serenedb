@@ -83,7 +83,6 @@ def test_prepared_statements_survive_concurrent_alters(tmp_path: Path) -> None:
 
         assert failures == []
         with _connect(server) as melstroi:
-            melstroi.execute("VACUUM (REFRESH_TABLE) vjling_wards")
             rows = melstroi.execute("SELECT count(*) FROM vjling_wards").fetchone()[0]
             docs = melstroi.execute("SELECT count(*) FROM vjling_wards_b").fetchone()[0]
             assert docs == rows

@@ -5,26 +5,17 @@ SET threads = 1;
 
 statement ok
 CREATE TABLE rr (id BIGINT, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (compaction_interval = 0,
       row_group_size = 8192);
 
 statement ok
 INSERT INTO rr SELECT i, 'row ' || i FROM range(0, 100000) r(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rr;
-
-statement ok
 INSERT INTO rr SELECT i, 'row ' || i FROM range(100000, 200000) r(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rr;
-
-statement ok
 CHECKPOINT;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 DELETE FROM rr WHERE id < 20000 OR (id < 90000 AND id % 1000 = 3);
@@ -46,7 +37,7 @@ SELECT 1;
 
 connection after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) rr;
+SELECT 1;
 
 connection after
 query

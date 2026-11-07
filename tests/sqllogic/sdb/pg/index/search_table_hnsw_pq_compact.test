@@ -5,7 +5,7 @@ CREATE MACRO pqc_vec(i) AS
 
 statement ok
 CREATE TABLE pqc_l2 (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX pqc_l2_idx ON pqc_l2
@@ -13,7 +13,7 @@ CREATE INDEX pqc_l2_idx ON pqc_l2
 
 statement ok
 CREATE TABLE pqc_ip (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX pqc_ip_idx ON pqc_ip
@@ -29,37 +29,19 @@ statement ok
 INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id < 5000;
 
 statement ok
-VACUUM (REFRESH_TABLE) pqc_l2;
-
-statement ok
 INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id >= 5000 AND id < 10000;
-
-statement ok
-VACUUM (REFRESH_TABLE) pqc_l2;
 
 statement ok
 INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id >= 10000;
 
 statement ok
-VACUUM (REFRESH_TABLE) pqc_l2;
-
-statement ok
 INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id < 5000;
-
-statement ok
-VACUUM (REFRESH_TABLE) pqc_ip;
 
 statement ok
 INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id >= 5000 AND id < 10000;
 
 statement ok
-VACUUM (REFRESH_TABLE) pqc_ip;
-
-statement ok
 INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id >= 10000;
-
-statement ok
-VACUUM (REFRESH_TABLE) pqc_ip;
 
 query
 SELECT count(DISTINCT row_group_id) > 2 AS many

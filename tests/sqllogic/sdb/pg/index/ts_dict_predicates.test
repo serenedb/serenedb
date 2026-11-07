@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # Several term acceptors on the enumerated field compose: the most selective
 # claimable acceptor drives the enumeration (ByTerm > ByTerms > ByPrefix /
 # ByRange > automatons) and every other claimable acceptor becomes a term
@@ -23,11 +20,10 @@ CREATE TEXT SEARCH DICTIONARY tp_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE tp(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+CREATE TABLE tp(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX tp_idx ON tp USING inverted(cat tp_kw, body tp_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO tp VALUES
@@ -35,9 +31,6 @@ INSERT INTO tp VALUES
   (2, 'apricot', 'apex date'),
   (3, 'banana',  'banana'),
   (4, 'avocado', 'amaze arise')
-
-statement ok
-VACUUM (REFRESH_TABLE) tp;
 
 # Two @@ matchers: the prefix drives, the regexp filters terms in the scan.
 query T
@@ -63,6 +56,7 @@ QUERY PLAN
 ╰─────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -97,6 +91,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: tp_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Automaton ──────────╮                 │
 │ │ Field: cat(string)   │                 │
@@ -144,6 +139,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: tp_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Automaton ──────────╮                 │
 │ │ Field: cat(string)   │                 │
@@ -239,6 +235,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: tp_idx                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Automaton ─────────╮        │
 │ │ Field: body(string) │        │
@@ -289,6 +286,7 @@ QUERY PLAN
 ╰─────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ Bool ──────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -378,6 +376,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: tp_idx                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Starts With ───────╮        │
 │ │ Field: body(string) │        │
@@ -424,6 +423,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: tp_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Automaton ───────────────╮            │
 │ │ Field: cat(string)        │            │
@@ -469,6 +469,7 @@ QUERY PLAN
 ╰─────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Index: tp_idx                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ Or ───────────────╮                           │
 │ ╰──────────┬─────────╯                           │

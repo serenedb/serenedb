@@ -5,13 +5,10 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE trw (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO trw VALUES (1, 'refreshed');
-
-statement ok
-VACUUM (REFRESH_TABLE) trw;
 
 statement ok
 INSERT INTO trw VALUES (2, 'pending');
@@ -26,10 +23,6 @@ TRUNCATE trw;
 connection default
 statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
-
-connection refresher
-statement ok
-VACUUM (REFRESH_TABLE) trw;
 
 connection default
 statement ok

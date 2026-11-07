@@ -30,7 +30,6 @@
 #include <absl/strings/str_split.h>
 #include <absl/strings/strip.h>
 
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <string>
 #include <vector>
 
@@ -43,12 +42,9 @@ namespace {
 constexpr std::string_view kStartLocation = "START WAL LOCATION: ";
 constexpr std::string_view kFormatKey = "SERENEDB BACKUP FORMAT: ";
 constexpr std::string_view kSystemKey = "SERENEDB SYSTEM IDENTIFIER: ";
-constexpr std::string_view kCatalogKey = "SERENEDB CATALOG LOG: ";
-constexpr std::string_view kDatabaseKey = "SERENEDB DATABASE: ";
+constexpr std::string_view kLogKey = "SERENEDB LOG: ";
 constexpr std::string_view kStoreKey = "SERENEDB STORE: ";
 constexpr std::string_view kChecksumKey = "SERENEDB CHECKSUM: ";
-constexpr std::string_view kCutMode = "cut";
-constexpr std::string_view kFailedCheckpointMode = "failed_checkpoint";
 constexpr std::string_view kSereneDBPrefix = "SERENEDB ";
 
 std::string Checksum(std::string_view text) {
@@ -93,13 +89,7 @@ std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
     absl::FormatTime("%Y-%m-%d %H:%M:%S UTC", start_time, absl::UTCTimeZone()),
     "\n", "LABEL: ", one_line, "\n", "START TIMELINE: ", kTimeline, "\n",
     kFormatKey, kBackupLabelFormat, "\n", kSystemKey, system_identifier, "\n",
-    kCatalogKey, cut.catalog_link.string(), " ", cut.catalog_log_size, "\n");
-  for (const auto& database : cut.databases) {
-    absl::StrAppend(
-      &out, kDatabaseKey, database.oid, " ", database.checkpoint_iteration, " ",
-      database.wal_size, " ", database.retained_from, " ",
-      database.with_failed_checkpoint ? kFailedCheckpointMode : kCutMode, "\n");
-  }
+    kLogKey, cut.log_link.string(), " ", cut.log_size, "\n");
   for (const auto& store : cut.stores) {
     absl::StrAppend(&out, kStoreKey, store.database_oid, "/", store.oid, " ",
                     store.generation, "\n");
@@ -124,8 +114,7 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
   bool has_start = false;
   bool has_format = false;
   bool has_system = false;
-  bool has_catalog = false;
-  irs::containers::FlatHashSet<duckdb::idx_t> databases;
+  bool has_log = false;
   for (auto line :
        absl::StrSplit(text.substr(0, checksum_at), '\n', absl::SkipEmpty())) {
     std::string_view value;
@@ -154,34 +143,14 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
         return Malformed(line);
       }
       has_system = true;
-    } else if (absl::ConsumePrefix(&value, kCatalogKey)) {
+    } else if (absl::ConsumePrefix(&value, kLogKey)) {
       const auto space = value.rfind(' ');
       if (space == std::string_view::npos || space == 0 ||
-          !absl::SimpleAtoi(value.substr(space + 1),
-                            &label.cut.catalog_log_size)) {
+          !absl::SimpleAtoi(value.substr(space + 1), &label.cut.log_size)) {
         return Malformed(line);
       }
-      label.cut.catalog_link = std::string{value.substr(0, space)};
-      has_catalog = true;
-    } else if (absl::ConsumePrefix(&value, kDatabaseKey)) {
-      DatabaseCut database;
-      const auto mode_at = value.rfind(' ');
-      if (mode_at == std::string_view::npos) {
-        return Malformed(line);
-      }
-      const auto mode = value.substr(mode_at + 1);
-      if (mode != kCutMode && mode != kFailedCheckpointMode) {
-        return Malformed(line);
-      }
-      database.with_failed_checkpoint = mode == kFailedCheckpointMode;
-      if (!ParseFields(value.substr(0, mode_at), database.oid,
-                       database.checkpoint_iteration, database.wal_size,
-                       database.retained_from) ||
-          database.retained_from > database.checkpoint_iteration ||
-          !databases.insert(database.oid).second) {
-        return Malformed(line);
-      }
-      label.cut.databases.push_back(database);
+      label.cut.log_link = std::string{value.substr(0, space)};
+      has_log = true;
     } else if (absl::ConsumePrefix(&value, kStoreKey)) {
       StoreCut store;
       const auto slash = value.find('/');
@@ -196,7 +165,7 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
         absl::StrCat("unknown backup_label line: \"", line, "\""));
     }
   }
-  if (!has_start || !has_format || !has_system || !has_catalog) {
+  if (!has_start || !has_format || !has_system || !has_log) {
     return absl::InvalidArgumentError(
       "backup_label is missing a required line");
   }

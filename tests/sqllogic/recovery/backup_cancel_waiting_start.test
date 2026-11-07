@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE bcw_docs (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE bcw_docs (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -112,10 +112,6 @@ SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_st
 ----
 label
 t
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bcw_docs;
 
 
 query

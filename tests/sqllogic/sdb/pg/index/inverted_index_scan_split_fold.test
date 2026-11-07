@@ -5,7 +5,7 @@ CREATE TEXT SEARCH DICTIONARY sf_words AS split_text_csv(' ')
 
 statement ok
 CREATE TABLE sf (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (compaction_interval = 0,
       row_group_size = 4096)
 
 
@@ -20,17 +20,9 @@ FROM generate_series(1, 61440) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sf
-
-
-statement ok
 INSERT INTO sf
 SELECT i, 'fox' || (i % 7) || ' dog' || (i % 5)
 FROM generate_series(61441, 65536) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sf
 
 
 statement ok
@@ -40,17 +32,9 @@ FROM generate_series(65537, 69632) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sf
-
-
-statement ok
 INSERT INTO sf
 SELECT i, 'fox' || (i % 7) || ' dog' || (i % 5)
 FROM generate_series(69633, 73728) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sf
 
 
 statement ok

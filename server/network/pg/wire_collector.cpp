@@ -30,9 +30,9 @@
 #include <duckdb/main/query_result.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 
-#include "connector/duckdb_client_state.h"
 #include "network/connection.h"
 #include "network/pg/wire_frames.h"
+#include "pg/connection_context.h"
 
 namespace sdb::network::pg {
 namespace {
@@ -99,11 +99,7 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
           types[column], FormatFor(ctx.formats, column), lstate.sctx));
       }
       if (ctx.row_encoding != RowEncoding::DataRow) {
-        if (auto state = context.client.registered_state
-                           ->Get<connector::SereneDBClientState>(
-                             connector::kSereneDBClientStateKey)) {
-          lstate.progress = &state->Progress();
-        }
+        lstate.progress = &ConnectionContext::Get(context.client).Progress();
       }
       lstate.initialized = true;
     }
@@ -287,9 +283,7 @@ bool PlanRunsParallel(duckdb::ClientContext& context,
 
 duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
   duckdb::ClientContext& context, duckdb::PreparedStatementData& data) {
-  auto state = context.registered_state->Get<connector::SereneDBClientState>(
-    connector::kSereneDBClientStateKey);
-  auto ctx = state ? state->wire_sink : nullptr;
+  auto ctx = ConnectionContext::Get(context).wire_sink;
   if (!ctx || data.properties.return_type !=
                 duckdb::StatementReturnType::QUERY_RESULT) {
     return duckdb::PhysicalResultCollector::GetResultCollector(context, data);

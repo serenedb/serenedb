@@ -192,6 +192,15 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
     });
 }
 
+ColReader::ColReader(duckdb::DatabaseInstance& db,
+                     std::vector<std::unique_ptr<ColumnReader>> columns)
+  : _db{&db}, _ctx{db}, _columns{std::move(columns)} {
+  for (const auto& col : _columns) {
+    const bool ok = _by_id.emplace(col->Id(), col.get()).second;
+    SDB_ENSURE(ok, "in-memory columns: duplicate column field_id ", col->Id());
+  }
+}
+
 ColReader::~ColReader() = default;
 
 const ColumnReader* ColReader::Column(field_id id) const noexcept {

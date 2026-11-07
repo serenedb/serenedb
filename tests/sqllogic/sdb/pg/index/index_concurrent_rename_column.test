@@ -136,11 +136,11 @@ icr_inv_id
 
 
 statement ok
-CREATE TABLE icr_st (id INT, b TEXT) WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE icr_st (id INT, b TEXT);
 
 
 statement ok
-CREATE TABLE icr_st2 (id INT, b TEXT) WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE icr_st2 (id INT, b TEXT);
 
 
 connection s1
@@ -210,10 +210,6 @@ icr_st2_b
 
 statement ok
 INSERT INTO icr_st2 VALUES (1, 'alpha');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) icr_st2;
 
 
 query

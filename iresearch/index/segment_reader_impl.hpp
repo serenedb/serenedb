@@ -58,6 +58,12 @@ class SegmentReaderImpl final : public SubReader {
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options);
 
+  static std::shared_ptr<const SegmentReaderImpl> OpenInMemory(
+    const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns);
+
+  std::shared_ptr<const SegmentReaderImpl> WithDocsMask(
+    std::shared_ptr<const DocumentMask> mask) const;
+
   std::shared_ptr<const SegmentReaderImpl> ReopenReader(
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options) const;
@@ -76,6 +82,8 @@ class SegmentReaderImpl final : public SubReader {
 
   uint64_t Id() const noexcept { return _id; }
 
+  bool InMemory() const noexcept { return _in_memory; }
+
   const std::shared_ptr<DocMapsSlot>& DocMaps() const noexcept {
     return _doc_maps;
   }
@@ -83,10 +91,16 @@ class SegmentReaderImpl final : public SubReader {
   lead::Node::ptr docs_iterator() const final;
 
   std::span<const TermReader* const> fields(field_id id) const final {
+    if (!_field_reader) {
+      return {};
+    }
     return _field_reader->fields(id);
   }
 
   std::span<const field_id> field_ids() const final {
+    if (!_field_reader) {
+      return {};
+    }
     return _field_reader->field_ids();
   }
 
@@ -115,6 +129,7 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<DocMapsSlot> _doc_maps;
   std::shared_ptr<ColumnData> _data;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
+  bool _in_memory = false;
 };
 
 }  // namespace irs

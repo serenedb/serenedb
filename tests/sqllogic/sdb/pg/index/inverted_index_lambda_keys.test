@@ -12,7 +12,7 @@ CREATE TEXT SEARCH DICTIONARY lk_dict AS
 
 
 statement ok
-CREATE TABLE lk (id INTEGER, body VARCHAR, tags VARCHAR[], doc JSON)
+CREATE TABLE lk (id INTEGER, body VARCHAR, tags VARCHAR[], doc JSON) WITH (compaction_interval = 0)
 
 
 statement ok
@@ -33,7 +33,6 @@ CREATE INDEX lk_idx ON lk USING inverted (
   (list_sort(tags)) included(),
   (json_keys(doc)) included(),
   (list_aggr(tags, 'string_agg', ',')) included())
-  WITH (refresh_interval = 0, compaction_interval = 0)
 
 
 statement ok
@@ -50,10 +49,6 @@ UPDATE lk SET tags = ['Purple', 'Orange'] WHERE id = 2
 
 statement ok
 DELETE FROM lk WHERE id = 3
-
-
-statement ok
-VACUUM (REFRESH_TABLE) lk
 
 
 query
@@ -149,7 +144,7 @@ db error: ERROR: Index keys cannot contain expressions with side effects. Functi
 
 statement ok
 CREATE TABLE ls (id INTEGER, body VARCHAR, tags VARCHAR[], doc JSON)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+  WITH (compaction_interval = 0)
 
 
 statement ok
@@ -176,19 +171,11 @@ INSERT INTO ls SELECT i, 'bulk ' || i, ['Tag' || i, 'skip'], '{"n": 1}' FROM ran
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ls
-
-
-statement ok
 UPDATE ls SET tags = ['Purple', 'Orange'] WHERE id = 2
 
 
 statement ok
 DELETE FROM ls WHERE id = 3
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ls
 
 
 query

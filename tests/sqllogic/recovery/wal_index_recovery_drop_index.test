@@ -23,19 +23,12 @@ INSERT INTO di_t VALUES (1, 'seed alpha bravo'), (2, 'seed charlie delta');
 statement ok
 CREATE INDEX di_idx ON di_t USING inverted(id, body di_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) di_t;
-
 # Sanity: the seed row is searchable before we touch anything.
 query
 SELECT id FROM di_idx WHERE body @@ ts_phrase('alpha bravo');
 ----
 id
 1
-
-# Block search commits — rocksdb keeps advancing, iresearch falls behind.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # These rows enter the WAL but never reach iresearch.
 statement ok
@@ -90,10 +83,6 @@ id	body
 connection di_after
 statement ok
 CREATE INDEX di_idx ON di_t USING inverted(id, body di_dict);
-
-connection di_after
-statement ok
-VACUUM (REFRESH_TABLE) di_t;
 
 connection di_after
 query

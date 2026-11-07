@@ -165,7 +165,7 @@ query
 EXPLAIN INSERT INTO es.slt_es_big SELECT * FROM es_bulk('slt_es_big', repeat('{"index":{}}' || chr(10) || '{"n":1}' || chr(10), 450000));
 ----
 QUERY PLAN
-╭─ BATCH_INSERT ────╮
+╭─ INSERT ──────────╮
 ╰─────────┬─────────╯
 ╭─ ES_BULK ─────────╮
 │ Function: ES_BULK │

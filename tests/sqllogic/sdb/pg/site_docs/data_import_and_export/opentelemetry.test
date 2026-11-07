@@ -29,7 +29,7 @@ CREATE TABLE otel_logs (
     resource_attributes JSON,
     scope_attributes    JSON,
     log_attributes      JSON
-) WITH (storage = 'search', optimize_top_k = 'bm25(1.2, 0.75)');
+) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
 CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
@@ -107,9 +107,6 @@ INSERT INTO otel_logs SELECT * FROM otel_parse_logs('{
     }]
   }]
 }');
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
 
 # DOCS_TEST: body_tokens
 
@@ -220,9 +217,6 @@ include ../../otel/schema.inc
 statement ok
 INSERT INTO otel_logs ("timestamp", body) VALUES (now()::TIMESTAMP_NS, 'just now');
 
-statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
-
 # DOCS_TEST: retention
 
 # DOCS_TEST_BODY
@@ -252,9 +246,6 @@ EXECUTE JOB otel_traces_retention;
 
 statement ok
 EXECUTE JOB otel_metrics_sum_retention;
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_logs;
 
 query
 SELECT body FROM otel_logs ORDER BY body;

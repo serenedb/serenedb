@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE dm (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE dm (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE dm_plain (id BIGINT, v TEXT);
@@ -9,9 +9,6 @@ INSERT INTO dm SELECT i, 'v' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
 INSERT INTO dm_plain SELECT i, 'v' || i FROM generate_series(0, 9999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) dm;
 
 statement ok
 CREATE TABLE dm_src (id BIGINT);
@@ -25,9 +22,6 @@ DELETE FROM dm USING dm_src WHERE dm.id = dm_src.id;
 statement count 3334
 DELETE FROM dm_plain USING dm_src WHERE dm_plain.id = dm_src.id;
 
-statement ok
-VACUUM (REFRESH_TABLE) dm;
-
 query
 SELECT (SELECT count(*) FROM dm) AS search_n, (SELECT count(*) FROM dm_plain) AS plain_n, (SELECT count(*) FROM dm WHERE id % 3 = 0) AS search_left;
 ----
@@ -39,9 +33,6 @@ UPDATE dm SET v = 'u' || dm_src.id FROM dm_src WHERE dm.id = dm_src.id + 1;
 
 statement count 3333
 UPDATE dm_plain SET v = 'u' || dm_src.id FROM dm_src WHERE dm_plain.id = dm_src.id + 1;
-
-statement ok
-VACUUM (REFRESH_TABLE) dm;
 
 query
 SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'u' || (id - 1)) AS updated FROM dm;
@@ -82,9 +73,6 @@ id	v
 4	r
 7	r
 
-statement ok
-VACUUM (REFRESH_TABLE) dm;
-
 query
 SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'r') AS returned_rows FROM dm;
 ----
@@ -99,9 +87,6 @@ DELETE FROM dm WHERE id IN (SELECT id FROM dm_src WHERE id + 1 < 10) OR id IN (3
 
 statement count 2
 UPDATE dm SET v = 'plain' WHERE id IN (7, 10);
-
-statement ok
-VACUUM (REFRESH_TABLE) dm;
 
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE v = 'once') AS once, count(*) FILTER (WHERE v = 'plain') AS plain FROM dm;
@@ -120,9 +105,6 @@ UPDATE dm SET v = 'txn' FROM dm_src WHERE dm.id = dm_src.id + 2 AND dm.id BETWEE
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) dm;
 
 query
 SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'txn') AS txn FROM dm WHERE id BETWEEN 100 AND 108;
@@ -147,9 +129,6 @@ DELETE FROM dm WHERE EXISTS (SELECT 1 FROM dm_src WHERE dm_src.id = dm.id - 1 AN
 
 statement count 30
 UPDATE dm SET v = 'exists' WHERE EXISTS (SELECT 1 FROM dm_src WHERE dm_src.id = dm.id - 2 AND dm_src.id BETWEEN 500 AND 590);
-
-statement ok
-VACUUM (REFRESH_TABLE) dm;
 
 query
 SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'sub') AS sub, count(*) FILTER (WHERE v = 'exists') AS exists_, count(*) FILTER (WHERE (id BETWEEN 202 AND 289 OR id BETWEEN 403 AND 490) AND id % 3 = 1) AS left_ FROM dm;

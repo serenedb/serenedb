@@ -52,19 +52,15 @@ n
 
 
 statement ok
-CREATE TABLE ck_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE ck_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS ck_s (x INT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS ck_s (x INT);
 
 
 statement ok
 INSERT INTO ck_s VALUES (1, 'a'), (2, 'b');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ck_s;
 
 
 statement ok
@@ -76,7 +72,7 @@ CREATE INDEX IF NOT EXISTS ck_s_inv ON ck_s USING inverted (id);
 
 
 statement ok
-CREATE OR REPLACE TABLE ck_s (id INT PRIMARY KEY, body2 TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE ck_s (id INT PRIMARY KEY, body2 TEXT);
 
 
 query
@@ -88,10 +84,6 @@ n
 
 statement ok
 INSERT INTO ck_s VALUES (3, 'c');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ck_s;
 
 
 query

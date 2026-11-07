@@ -89,8 +89,8 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
 }
 
 void SearchEngine::start() {
+  _loops.Consume(MaintenanceLoop(_loops));
   StartSearchStorageTasks();
-  SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
 void SearchEngine::stop() {
@@ -103,7 +103,7 @@ void SearchEngine::StartTasks(const std::shared_ptr<Store>& store) {
   if (_stopping.load(std::memory_order_acquire)) {
     return;
   }
-  _loops.Consume(RefreshLoop(store), CompactionCoordinator(store));
+  AddMaintenanceTarget(store);
 }
 
 }  // namespace sdb::search

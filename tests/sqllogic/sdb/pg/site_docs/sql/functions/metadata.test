@@ -94,7 +94,8 @@ metadata_demo	CHECK
 query
 SELECT crs_name, auth_name
 FROM sdb_coordinate_systems()
-WHERE crs_name = 'OGC:CRS84';
+WHERE crs_name = 'OGC:CRS84'
+  AND database_name = current_database();
 ----
 crs_name	auth_name
 OGC:CRS84	OGC
@@ -104,14 +105,13 @@ OGC:CRS84	OGC
 # DOCS_TEST_BODY
 
 query
-SELECT database_name
+SELECT database_name, internal
 FROM sdb_databases()
-WHERE database_name IN ('system', 'temp')
+WHERE internal
 ORDER BY database_name;
 ----
-database_name
-system
-temp
+database_name	internal
+temp	t
 
 # DOCS_TEST: example_009
 

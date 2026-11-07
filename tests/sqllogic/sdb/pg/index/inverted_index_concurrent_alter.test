@@ -13,14 +13,16 @@ connection s2
 statement error
 CREATE INDEX ica_z ON ica_t (z);
 ----
-db error: ERROR: Transaction conflict: cannot add an index to a table that has been altered or dropped
+db error: ERROR: search table "ica_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
 statement error
 CREATE INDEX ica_y ON ica_t USING inverted (id, y);
 ----
-db error: ERROR: Transaction conflict: cannot add an index to a table that has been altered or dropped
+db error: ERROR: search table "ica_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1
@@ -34,10 +36,6 @@ CREATE INDEX ica_y ON ica_t USING inverted (id, y);
 connection s2
 statement ok
 INSERT INTO ica_t VALUES (1, 'apple', 'zebra');
-
-connection s2
-statement ok
-VACUUM (REFRESH_TABLE) ica_t;
 
 connection s2
 query

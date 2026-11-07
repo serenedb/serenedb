@@ -153,11 +153,6 @@ t_pkey
 
 
 connection after_checkpoint
-statement ok
-VACUUM (REFRESH_TABLE) ckp.t;
-
-
-connection after_checkpoint
 query
 SELECT count(*) FROM ckp.ckp_inv WHERE a @@ ts_like('row');
 ----
@@ -170,9 +165,9 @@ connection after_checkpoint
 statement error
 DROP TABLE ckp.t;
 ----
-db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
-view "v" depends on table "t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table ckp.t because other objects depend on it
+DETAIL: view ckp.v depends on table ckp.t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_checkpoint
@@ -611,11 +606,6 @@ SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 100) g;
 
 
 connection after_dict_window
-statement ok
-VACUUM (REFRESH_TABLE) ckp_dict_window.t;
-
-
-connection after_dict_window
 query
 SELECT count(*) FROM ckp_dict_window.ckp_dict_inv WHERE txt @@ ts_like('bravo');
 ----
@@ -628,9 +618,9 @@ connection after_dict_window
 statement error
 DROP TEXT SEARCH DICTIONARY ckp_dict_window.d;
 ----
-db error: ERROR: Cannot drop entry "d" because there are entries that depend on it.
-index "ckp_dict_inv" depends on tokenizer "d".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary d because other objects depend on it
+DETAIL: index ckp_dict_window.ckp_dict_inv depends on text search dictionary d
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_dict_window

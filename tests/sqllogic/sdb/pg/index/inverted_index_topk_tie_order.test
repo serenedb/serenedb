@@ -4,17 +4,15 @@ CREATE TEXT SEARCH DICTIONARY tto_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE tto (id INT PRIMARY KEY, body TEXT)
+CREATE TABLE tto (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')
 
 
 statement ok
 CREATE INDEX tto_idx ON tto USING inverted (id, body tto_en)
-  WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX tto_wand ON tto USING inverted (id, body tto_en)
-  WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')
 
 
 statement ok
@@ -26,19 +24,11 @@ FROM generate_series(1, 100000) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) tto
-
-
-statement ok
 INSERT INTO tto
 SELECT i, CASE WHEN i % 100000 IN (10, 50010) THEN repeat('fox ', 5)
                WHEN i % 100000 = 20000 THEN repeat('fox ', 3)
                ELSE 'fox' END
 FROM generate_series(100001, 200000) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tto
 
 
 statement ok
@@ -49,10 +39,6 @@ SELECT i, CASE WHEN i % 100000 IN (10, 50010) THEN repeat('fox ', 5)
 FROM generate_series(200001, 300000) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) tto
-
-
 query
 EXPLAIN SELECT id FROM tto_idx WHERE body @@ 'fox'
         ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 6;
@@ -60,14 +46,14 @@ EXPLAIN SELECT id FROM tto_idx WHERE body @@ 'fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tto_idx              │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
 │ │ Value: fox          │     │
 │ ╰─────────────────────╯     │
 │ Score: bm25(k1=1.2, b=0.75) │
-│ Top: 6                      │
+│ Top: 6, optimized           │
 │ Projections: id             │
 │ ~60,000 rows                │
 ╰─────────────────────────────╯
@@ -75,7 +61,7 @@ QUERY PLAN
 
 query
 SELECT id FROM tto_idx WHERE body @@ 'fox'
-ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 6;
+ORDER BY bm25(tto_idx.tableoid) DESC, id LIMIT 6;
 ----
 id
 10
@@ -88,7 +74,7 @@ id
 
 query
 SELECT id FROM tto_idx WHERE body @@ 'fox'
-ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 9;
+ORDER BY bm25(tto_idx.tableoid) DESC, id LIMIT 9;
 ----
 id
 10
@@ -104,7 +90,7 @@ id
 
 query
 SELECT id FROM tto_idx WHERE body @@ 'fox'
-ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 3 OFFSET 6;
+ORDER BY bm25(tto_idx.tableoid) DESC, id LIMIT 3 OFFSET 6;
 ----
 id
 20000
@@ -114,7 +100,7 @@ id
 
 query
 SELECT id FROM tto_wand WHERE body @@ 'fox'
-ORDER BY bm25(tto_wand.tableoid) DESC LIMIT 6;
+ORDER BY bm25(tto_wand.tableoid) DESC, id LIMIT 6;
 ----
 id
 10
@@ -127,7 +113,7 @@ id
 
 query
 SELECT id FROM tto_wand WHERE body @@ 'fox'
-ORDER BY bm25(tto_wand.tableoid) DESC LIMIT 9;
+ORDER BY bm25(tto_wand.tableoid) DESC, id LIMIT 9;
 ----
 id
 10

@@ -28,9 +28,6 @@ INSERT INTO tags_t VALUES (3, ['delta']);
 statement ok
 CREATE INDEX tags_t_idx ON tags_t USING inverted(pk, tags verbatim_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) tags_t;
-
 query
 SELECT pk FROM tags_t_idx WHERE tags @@ ts_like('beta') ORDER BY pk;
 ----
@@ -54,9 +51,6 @@ pk
 
 statement ok
 INSERT INTO tags_t VALUES (4, ['beta', 'epsilon']);
-
-statement ok
-VACUUM (REFRESH_TABLE) tags_t;
 
 query
 SELECT pk FROM tags_t_idx WHERE tags @@ ts_like('beta') ORDER BY pk;
@@ -88,9 +82,6 @@ INSERT INTO nums_t VALUES (3, [10, 50, 70]);
 
 statement ok
 CREATE INDEX nums_t_idx ON nums_t USING inverted(pk, nums);
-
-statement ok
-VACUUM (REFRESH_TABLE) nums_t;
 
 query
 SELECT pk FROM nums_t_idx WHERE nums @@ ts_between(10, 10, true, true) ORDER BY pk;
@@ -125,9 +116,6 @@ INSERT INTO tags_n VALUES (4, []);
 
 statement ok
 CREATE INDEX tags_n_idx ON tags_n USING inverted(pk, tags verbatim_dict);
-
-statement ok
-VACUUM (REFRESH_TABLE) tags_n;
 
 query
 SELECT pk FROM tags_n_idx WHERE tags @@ ts_like('r') ORDER BY pk;

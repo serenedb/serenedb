@@ -18,12 +18,11 @@ CREATE TEXT SEARCH DICTIONARY sc_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE sc (id INT PRIMARY KEY, body TEXT, g INT, tag TEXT)
+CREATE TABLE sc (id INT PRIMARY KEY, body TEXT, g INT, tag TEXT) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX sc_idx ON sc USING inverted (id, body sc_en) INCLUDE (g, tag)
-  WITH (refresh_interval = 0, compaction_interval = 0)
 
 
 # Four refreshes of unequal size seal four segments of unequal size.
@@ -33,15 +32,9 @@ INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
 FROM range(90000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) sc
-
-statement ok
 INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
        i % 997, 't' || (i % 31)
 FROM range(90000, 110000) t(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) sc
 
 statement ok
 INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
@@ -49,15 +42,9 @@ INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
 FROM range(110000, 118000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) sc
-
-statement ok
 INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
        i % 997, 't' || (i % 31)
 FROM range(118000, 120000) t(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) sc
 
 
 # One worker takes every segment whole, so this is the reference row set.

@@ -1,24 +1,20 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE postgres.public.sfx_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE postgres.public.sfx_docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX sfx_docs_idx ON postgres.public.sfx_docs USING inverted(id, body)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX sfx_docs_idx ON postgres.public.sfx_docs USING inverted(id, body);
 
 statement ok
 INSERT INTO postgres.public.sfx_docs VALUES (1, 'alpha'), (2, 'beta');
 
 statement ok
 CREATE TABLE postgres.public.sfx_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO postgres.public.sfx_notes VALUES (1, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) postgres.public.sfx_notes;
 
 statement ok
 CREATE SEQUENCE postgres.public.sfx_seq;
@@ -134,21 +130,15 @@ db error: ERROR: Cannot execute statement of type "COPY" on database "sfx_snap" 
 
 
 statement error
-VACUUM (REFRESH_TABLE) sfx_snap.public.sfx_notes;
-----
-db error: ERROR: cannot run VACUUM (refresh_table) on database "sfx_snap": it is attached read-only
-
-
-statement error
 VACUUM (COMPACT_TABLE) sfx_snap.public.sfx_docs;
 ----
 db error: ERROR: cannot run VACUUM (compact_table) on database "sfx_snap": it is attached read-only
 
 
 statement error
-VACUUM (REFRESH_DATABASE) sfx_snap;
+VACUUM (COMPACT_DATABASE) sfx_snap;
 ----
-db error: ERROR: cannot run VACUUM (refresh_database) on database "sfx_snap": it is attached read-only
+db error: ERROR: cannot run VACUUM (compact_database) on database "sfx_snap": it is attached read-only
 
 
 statement error
@@ -205,9 +195,6 @@ SELECT id FROM sfx_snap.public.sfx_view_idx WHERE body @@ 'beta';
 ----
 id
 2
-
-statement ok
-VACUUM (REFRESH_ALL);
 
 
 query

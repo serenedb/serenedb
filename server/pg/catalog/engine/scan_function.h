@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/database.hpp>
 
@@ -30,12 +29,12 @@
 namespace sdb::pg {
 
 struct SystemTableBindData final : duckdb::FunctionData {
-  SystemTableBindData(const SystemTable& table, duckdb::DuckCatalog& catalog,
+  SystemTableBindData(const SystemTable& table, catalog::BaseCatalog& catalog,
                       catalog::SystemTableEntry* entry)
     : table{table}, catalog{catalog}, entry{entry} {}
   explicit SystemTableBindData(catalog::SystemTableEntry& entry)
     : SystemTableBindData{entry.Table(),
-                          entry.catalog.Cast<duckdb::DuckCatalog>(), &entry} {}
+                          entry.catalog.Cast<catalog::BaseCatalog>(), &entry} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<SystemTableBindData>(*this);
@@ -48,7 +47,7 @@ struct SystemTableBindData final : duckdb::FunctionData {
   }
 
   const SystemTable& table;
-  duckdb::DuckCatalog& catalog;
+  catalog::BaseCatalog& catalog;
   catalog::SystemTableEntry* entry;
 };
 

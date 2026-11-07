@@ -16,9 +16,6 @@ statement ok
 INSERT INTO t VALUES (1, 'the quick brown fox');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
 connection reader
 
 connection reader

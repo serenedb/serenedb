@@ -23,7 +23,7 @@ INSERT INTO corir_t VALUES (1, 'Alpha'), (2, 'beta'), (3, 'alpha');
 
 
 statement ok
-CREATE TABLE corir_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE corir_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -110,14 +110,6 @@ INSERT INTO corir_t VALUES (4, 'ALPHA');
 
 statement ok
 INSERT INTO corir_s VALUES (4, 'ALPHA');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) corir_t;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) corir_s;
 
 
 query
@@ -211,16 +203,6 @@ INSERT INTO corir_t VALUES (5, 'Alpha');
 connection after_replay
 statement ok
 INSERT INTO corir_s VALUES (5, 'Alpha');
-
-
-connection after_replay
-statement ok
-VACUUM (REFRESH_TABLE) corir_t;
-
-
-connection after_replay
-statement ok
-VACUUM (REFRESH_TABLE) corir_s;
 
 
 connection after_replay

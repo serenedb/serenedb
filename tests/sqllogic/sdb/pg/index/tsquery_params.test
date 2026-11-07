@@ -21,9 +21,6 @@ statement ok
 INSERT INTO tqp VALUES (1, 'quick brown fox'), (2, 'lazy dog'), (3, NULL),
                        (4, 'quick dog');
 
-statement ok
-VACUUM (REFRESH_TABLE) tqp;
-
 # ----------------------------------------------------------------------
 # Whole-value parameter, re-executed with different values
 # ----------------------------------------------------------------------
@@ -334,9 +331,6 @@ a	o
 
 statement ok
 INSERT INTO tqp VALUES (5, 'quick turtle');
-
-statement ok
-VACUUM (REFRESH_TABLE) tqp;
 
 query
 EXECUTE tqp_match('quick');

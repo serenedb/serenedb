@@ -3154,7 +3154,6 @@ def test_dml_then_ddl_one_implicit_block_inverted_index(conn):
     assert not errors(m), errors(m)
     assert statuses(m) == ["I"], statuses(m)
 
-    assert not errors(conn.run("VACUUM (REFRESH_TABLE) iidw"))
     m = conn.run(
         "SELECT id FROM iidw_idx WHERE body @@ ts_phrase('alpha bravo')"
     )

@@ -12,31 +12,19 @@ control substitution on
 # goes back to 0 while it waits.
 
 statement ok
-CREATE TABLE cq (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE cq (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) cq;
-
-statement ok
 INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) cq;
 
 statement ok
 INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) cq;
-
-statement ok
 INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) cq;
 
 query
 SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('cq') WHERE column_name = 'id';

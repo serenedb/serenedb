@@ -9,7 +9,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE num(id BIGINT PRIMARY KEY, a INT, b INT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX num_idx ON num USING inverted ((a + b));
@@ -20,9 +20,6 @@ RESET sdb_faults;
 # --- Fixture: a published baseline, durable on disk. ---
 statement ok
 INSERT INTO num VALUES (1, 10, 20), (2, 5, 5);
-
-statement ok
-VACUUM (REFRESH_TABLE) num;
 
 # Crash AFTER the WAL commit: (3, 100, 1) is fsynced into the WAL but never
 # refresh-published; recovery must recompute a+b=101 for it.

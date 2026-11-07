@@ -34,9 +34,6 @@ INSERT INTO tr_wide
 SELECT i, list_transform(range(1024), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[1024]
 FROM range(1, 401) t(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) tr_wide
-
 # emb is (i, 0, ...), so the distance to the origin is exactly i.
 query
 SELECT pk, emb <-> list_transform(range(1024), lambda x: 0.0::FLOAT)::FLOAT[1024] AS d
@@ -80,9 +77,6 @@ INSERT INTO tr_gap VALUES
   (1002, [1002, 0, 0]::FLOAT[3]),
   (1003, [1003, 0, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) tr_gap
-
 query
 SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_gap_sq8 ORDER BY d LIMIT 4;
 ----
@@ -112,9 +106,6 @@ INSERT INTO tr_nopk VALUES
   (2, [6, 8, 0]::FLOAT[3]),
   (3, [0, 0, 12]::FLOAT[3]),
   (4, [9, 12, 0]::FLOAT[3])
-
-statement ok
-VACUUM (REFRESH_TABLE) tr_nopk
 
 # TopK (emit-side rerank over the index's own vectors).
 query
@@ -157,9 +148,6 @@ CREATE INDEX tr_expr_sq8 ON tr_expr
 statement count 4
 INSERT INTO tr_expr VALUES (1, 3, 4, 0), (2, 6, 8, 0), (3, 0, 0, 12), (4, 9, 12, 0)
 
-statement ok
-VACUUM (REFRESH_TABLE) tr_expr
-
 query
 SELECT pk, array_value(x, y, z) <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_expr_sq8
 ORDER BY d LIMIT 3;
@@ -195,9 +183,6 @@ INSERT INTO tr_flt VALUES
   (2, [6, 8, 0]::FLOAT[3]),
   (3, [0, 0, 12]::FLOAT[3]),
   (4, [9, 12, 0]::FLOAT[3])
-
-statement ok
-VACUUM (REFRESH_TABLE) tr_flt
 
 query
 SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_flt_sq8
@@ -272,7 +257,7 @@ EXPLAIN SELECT pk FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: tr_flt_sq8  │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Vector Range ─╮ │
 │ │ Field: emb     │ │
@@ -296,9 +281,6 @@ INSERT INTO tr_flt_n VALUES
   (3, [0, 0, 12]::FLOAT[3]),
   (4, [9, 12, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) tr_flt_n
-
 query
 SELECT count(*) AS n FROM tr_flt_none WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12;
 ----
@@ -318,9 +300,6 @@ INSERT INTO tr_mvcc VALUES
   (1, [3, 4, 0]::FLOAT[3]),
   (2, [6, 8, 0]::FLOAT[3]),
   (3, [0, 0, 12]::FLOAT[3])
-
-statement ok
-VACUUM (REFRESH_TABLE) tr_mvcc
 
 connection rr
 
@@ -344,10 +323,6 @@ DELETE FROM tr_mvcc WHERE pk = 2
 connection w
 statement count 1
 UPDATE tr_mvcc SET emb = [0, 0, 1]::FLOAT[3] WHERE pk = 3
-
-connection w
-statement ok
-VACUUM (REFRESH_TABLE) tr_mvcc;
 
 connection rr
 query

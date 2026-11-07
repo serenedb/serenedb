@@ -62,9 +62,6 @@ CREATE INDEX articles_idx ON articles USING inverted(id, body en);
 statement ok
 INSERT INTO articles VALUES (1, 'the quick brown fox');
 
-statement ok
-VACUUM (REFRESH_TABLE) articles;
-
 query
 SELECT count(*) FROM articles_idx WHERE body @@ ts_phrase('fox');
 ----
@@ -107,9 +104,9 @@ CREATE TABLE my_table (id INTEGER, name VARCHAR);
 
 # DOCS_TEST_BODY
 statement error
-VACUUM (REFRESH_TABLE, ANALYZE) my_table;
+VACUUM (COMPACT_TABLE, ANALYZE) my_table;
 ----
-db error: ERROR: VACUUM SereneDB option 'refresh_table' cannot be combined with standard VACUUM options
+db error: ERROR: VACUUM SereneDB option 'compact_table' cannot be combined with standard VACUUM options
 
 
 # DOCS_TEST: example_011
@@ -117,7 +114,7 @@ statement ok
 DROP TABLE IF EXISTS docs_store;
 
 statement ok
-CREATE TABLE docs_store (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search');
+CREATE TABLE docs_store (id INTEGER PRIMARY KEY, body VARCHAR);
 
 # DOCS_TEST_BODY
 statement ok

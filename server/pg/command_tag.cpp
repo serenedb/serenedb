@@ -20,8 +20,6 @@
 
 #include "pg/command_tag.h"
 
-#include <absl/strings/match.h>
-
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/enums/set_type.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -35,7 +33,6 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_data/extra_drop_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
-#include <duckdb/parser/statement/attach_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
@@ -44,8 +41,6 @@
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <duckdb/parser/statement/vacuum_statement.hpp>
 #include <iresearch/utils/system_compiler.hpp>
-
-#include "catalog/catalog.h"
 
 namespace sdb::pg {
 namespace {
@@ -235,16 +230,6 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
     case StatementType::ANALYZE_STATEMENT:
       return make("ANALYZE");
     case StatementType::ATTACH_STATEMENT:
-      if (unbound) {
-        const auto& options =
-          unbound->Cast<duckdb::AttachStatement>().info->options;
-        const auto type = options.find("type");
-        if (type != options.end() &&
-            absl::EqualsIgnoreCase(type->second.ToString(),
-                                   catalog::SereneDBCatalog::kStorageType)) {
-          return make("CREATE DATABASE");
-        }
-      }
       return make("ATTACH");
     case StatementType::DETACH_STATEMENT:
       return make("DETACH");

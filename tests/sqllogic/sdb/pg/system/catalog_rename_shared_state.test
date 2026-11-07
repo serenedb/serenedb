@@ -37,7 +37,8 @@ connection s2
 statement error
 ALTER TABLE crs.t RENAME TO t3;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "t"
+db error: ERROR: search table "t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1
@@ -109,7 +110,7 @@ connection s2
 statement error
 ALTER INDEX crs.i RENAME TO i3;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "i"
+db error: ERROR: could not serialize access due to concurrent update of "i"
 
 
 connection s1

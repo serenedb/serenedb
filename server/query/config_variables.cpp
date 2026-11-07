@@ -53,7 +53,7 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/transaction.h"
 #include "pg/connection_context.h"
 #include "pg/types/xml.h"
 #include "pg/version.h"
@@ -244,7 +244,7 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
   if (equal) {
     return;
   }
-  connector::GetSereneDBContext(ctx).AddNotice(SQL_ERROR_DATA(
+  ConnectionContext::Get(ctx).AddNotice(SQL_ERROR_DATA(
     ERR_CODE(ERRCODE_WARNING),
     ERR_MSG(
       "parameter \"", kName,
@@ -292,10 +292,8 @@ void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
 // allow_system_table_mods, debug_discard_caches, wal_consistency_checking.
 void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
                       std::string_view detail) {
-  // No connection context means an internal connection (boot, background
-  // work): the server acting on its own behalf, with no role to check.
-  auto* conn = connector::GetSereneDBContextPtr(ctx);
-  if (!conn || auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
+  if (auth::ClosureFor(&ctx, ConnectionContext::Get(ctx).GetRoleId())
+        ->is_superuser) {
     return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -313,8 +311,8 @@ void SetServerDuration(duckdb::ClientContext&, duckdb::SetScope,
 
 void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
                         duckdb::Value& value) {
-  auto* conn = connector::GetSereneDBContextPtr(ctx);
-  if (conn && !auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
+  if (!auth::ClosureFor(&ctx, ConnectionContext::Get(ctx).GetRoleId())
+         ->is_superuser) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG(
@@ -344,8 +342,8 @@ const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
                                            std::string_view name) {
   auto& cluster = catalog::ClusterOf(ctx);
   auto entry =
-    cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-      .GetEntry(cluster.GetCatalogTransaction(ctx), duckdb::Identifier{name});
+    cluster.Set(duckdb::CatalogType::ROLE_ENTRY)
+      .Get(cluster.GetCatalogTransaction(ctx), duckdb::Identifier{name});
   if (!entry) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -355,12 +353,12 @@ const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
 
 void RefreshSuperuser(ConnectionContext& conn) {
   const bool superuser =
-    auth::ClosureFor(&conn.GetClientContext(), conn.GetRoleId())->is_superuser;
+    auth::ClosureFor(&conn, conn.GetRoleId())->is_superuser;
   conn.SetSetting("is_superuser", superuser ? "on" : "off", false);
 }
 
 void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
-  auto& conn = connector::GetSereneDBContext(ctx);
+  auto& conn = ConnectionContext::Get(ctx);
   conn.SetEffectiveRole(conn.GetSessionRoleId());
   RefreshSuperuser(conn);
 }
@@ -373,7 +371,7 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
     value = duckdb::Value{"none"};
     return;
   }
-  auto& conn = connector::GetSereneDBContext(ctx);
+  auto& conn = ConnectionContext::Get(ctx);
   const auto& role = RoleNamed(ctx, name);
   const auto session_role = conn.GetSessionRoleId();
   const auto session =
@@ -390,7 +388,7 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
 void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
                             duckdb::Value& value) {
   const auto name = value.ToString();
-  auto& conn = connector::GetSereneDBContext(ctx);
+  auto& conn = ConnectionContext::Get(ctx);
   const auto& role = RoleNamed(ctx, name);
   const auto login = conn.GetLoginRoleId();
   if (role.oid != login && !auth::ClosureFor(&ctx, login)->is_superuser) {
@@ -403,7 +401,7 @@ void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
 }
 
 void ResetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
-  auto& conn = connector::GetSereneDBContext(ctx);
+  auto& conn = ConnectionContext::Get(ctx);
   conn.ResetIdentity();
   RefreshSuperuser(conn);
 }
@@ -1165,18 +1163,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      kRefreshIntervalSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Background refresh interval (ms) for newly created inverted indexes "
-        "and search tables. WITH (refresh_interval = ...) overrides it per "
-        "index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. "
-        "0 disables the refresh task. Default: 1000.",
-        [] { return duckdb::Value::UINTEGER(1000); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
       kReindexIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
@@ -1202,19 +1188,6 @@ constexpr std::pair<std::string_view, VariableDescription>
         "changes it later. 0 disables background compaction; VACUUM "
         "(COMPACT_*) still merges on demand. Default: 1000.",
         [] { return duckdb::Value::UINTEGER(1000); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      kCleanupIntervalStepSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Number of automatic refreshes between background unreferenced-file "
-        "cleanup passes for newly created inverted indexes and search tables. "
-        "WITH (cleanup_interval_step = ...) overrides it per index or table. "
-        "0 disables the periodic passes: cleanup then follows only background "
-        "compaction and, on a search table, VACUUM. Default: 1.",
-        [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
@@ -1254,17 +1227,6 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Document count at which an inverted-index segment writer rolls over "
         "to a new on-disk segment. Per-index WITH (segment_docs_max = ...) "
         "overrides. 0 = unlimited (memory limit governs).",
-        [] { return duckdb::Value::UINTEGER(0); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      kRecoveryReplayDepthSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum WAL chunks in flight per inverted index during recovery "
-        "replay (the prefetch window; bounds replay memory). 0 = auto "
-        "(4 x cpu threads).",
         [] { return duckdb::Value::UINTEGER(0); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -1609,7 +1571,7 @@ std::string_view GetOriginalName(std::string_view name) {
 }
 
 // Settings a client may never change, refused for the lifetime of the process
-// by the setting_change_handler.
+// by OnSettingChange.
 const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   // Describes how this process is wired rather than a preference, and is pinned
   // at startup in
@@ -1668,14 +1630,10 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
 }  // namespace
 namespace connector {
 
-void RegisterEngineConfigVariables(duckdb::DBConfig& config) {
+void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kEngineVariableDescription) {
     TryRegister(config, name, desc);
   }
-}
-
-void RegisterConfigVariables(duckdb::DBConfig& config) {
-  RegisterEngineConfigVariables(config);
   for (const auto& [name, desc] : kVariableDescription) {
     TryRegister(config, name, desc);
   }

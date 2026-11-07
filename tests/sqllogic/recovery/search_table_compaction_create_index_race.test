@@ -9,15 +9,11 @@ control substitution on
 # definitions and before it picks the segments to merge.
 
 statement ok
-CREATE TABLE ccr (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE ccr (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
 INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(1, 100) s(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ccr;
 
 
 statement ok
@@ -45,15 +41,7 @@ INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(101, 200) s(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ccr;
-
-
-statement ok
 INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(201, 300) s(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ccr;
 
 
 statement ok

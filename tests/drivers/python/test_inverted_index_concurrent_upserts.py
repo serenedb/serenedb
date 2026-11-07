@@ -30,7 +30,7 @@ def test_a_partial_index_rebuilt_while_writers_run(tmp_path: Path) -> None:
     with make_server(tmp_path) as server:
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
-            indexes = create_schema(conn, "refresh_interval = 10, compaction_interval = 10")
+            indexes = create_schema(conn, "compaction_interval = 10")
             seed_rows(conn, indexes, 200_000)
             workload = Workload(server, seed=21, writers=6, big_inserts=True,
                                 big_updates=True)
@@ -42,8 +42,8 @@ def test_a_partial_index_rebuilt_while_writers_run(tmp_path: Path) -> None:
                     if rebuild:
                         builder.execute(f"DROP INDEX {T_PART.name}")
                     create_index(builder, T_PART, rng.choice([
-                        "refresh_interval = 0, compaction_interval = 0",
-                        "refresh_interval = 5, compaction_interval = 5, "
+                        "compaction_interval = 0",
+                        "compaction_interval = 5, "
                         "segment_docs_max = 5000",
                     ]))
                     time.sleep(rng.random())
@@ -64,8 +64,8 @@ def test_a_partial_index_rebuilt_while_writers_run(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "options",
     [
-        "refresh_interval = 0, compaction_interval = 0",
-        "refresh_interval = 5, compaction_interval = 5, segment_docs_max = 64",
+        "compaction_interval = 0",
+        "compaction_interval = 5, segment_docs_max = 64",
     ],
 )
 def test_concurrent_upserts_keep_the_index_equal_to_the_table(
@@ -153,9 +153,7 @@ def test_concurrent_upserts_keep_the_index_equal_to_the_table(
                 with psycopg.connect(server.dsn(), autocommit=True) as c:
                     while not stop.is_set():
                         op = rng.random()
-                        if op < 0.5:
-                            c.execute("VACUUM (REFRESH_TABLE) v")
-                        elif op < 0.7:
+                        if op < 0.7:
                             checkpoint(c)
                         elif op < 0.8:
                             c.execute("VACUUM (COMPACT_TABLE) v")

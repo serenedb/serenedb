@@ -27,18 +27,12 @@ INSERT INTO pku_t VALUES
 statement ok
 CREATE INDEX pku_idx ON pku_t USING inverted(id, name pku_dict, data pku_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) pku_t;
-
 # Sanity: pre-PK-update everything findable
 query
 SELECT id FROM pku_idx WHERE name @@ ts_phrase('alpha');
 ----
 id
 1
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # PK update: change pk=1 → 10. name and data not changed in SET clause but
 # online code path reads them via txn->Get and writes at new pk.
@@ -59,7 +53,7 @@ SELECT 1;
 
 connection pku_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) pku_t;
+SELECT 1;
 
 # Old pks (1, 2) — gone from index.
 connection pku_after

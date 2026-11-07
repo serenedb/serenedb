@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # Explicit ts_dict_* aggregate family crossed with the segment lifecycle on a
 # keyword field and a text field (frequency = true). refresh_interval = 0 and
 # compaction_interval = 0 disable background maintenance, so deletion masks
@@ -20,11 +17,10 @@ CREATE TEXT SEARCH DICTIONARY ddm_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE ddm(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+CREATE TABLE ddm(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ddm_idx ON ddm USING inverted(cat ddm_kw, body ddm_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO ddm VALUES
@@ -33,9 +29,6 @@ INSERT INTO ddm VALUES
   (3, 'red',   'banana date'),
   (4, 'blue',  'date'),
   (5, 'amber', 'elder fig')
-
-statement ok
-VACUUM (REFRESH_TABLE) ddm;
 
 # Case 1: baseline on a single clean segment.
 
@@ -100,6 +93,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: ddm_idx                                       │
+│ Lookup: search                                       │
 │ TsDict: body                                         │
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
@@ -150,6 +144,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: ddm_idx                           │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~1 row                                   │
@@ -176,9 +171,6 @@ red	2
 
 statement ok
 DELETE FROM ddm WHERE id = 4
-
-statement ok
-VACUUM (REFRESH_TABLE) ddm;
 
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
@@ -233,9 +225,6 @@ n
 statement ok
 DELETE FROM ddm WHERE id = 5
 
-statement ok
-VACUUM (REFRESH_TABLE) ddm;
-
 query T
 SELECT ts_dict_min(cat) AS lo FROM ddm_idx
 ----
@@ -286,9 +275,6 @@ date	\\x64617465
 statement ok
 UPDATE ddm SET cat = 'teal' WHERE id = 2
 
-statement ok
-VACUUM (REFRESH_TABLE) ddm;
-
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
 FROM ddm_idx ORDER BY term
@@ -328,9 +314,6 @@ cats
 statement ok
 DELETE FROM ddm WHERE id = 2
 
-statement ok
-VACUUM (REFRESH_TABLE) ddm;
-
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
 FROM ddm_idx ORDER BY term
@@ -363,9 +346,6 @@ n
 
 statement ok
 INSERT INTO ddm VALUES (6, 'teal', 'cherry'), (7, 'red', 'banana')
-
-statement ok
-VACUUM (REFRESH_TABLE) ddm;
 
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
@@ -416,23 +396,16 @@ cat_docs	body_docs
 # Case 5: deleting every row leaves no live docs and no enumerable terms.
 
 statement ok
-CREATE TABLE ddm2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+CREATE TABLE ddm2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ddm2_idx ON ddm2 USING inverted(cat ddm_kw, body ddm_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO ddm2 VALUES (1, 'a', 'one two'), (2, 'b', 'two'), (3, 'c', 'three')
 
 statement ok
-VACUUM (REFRESH_TABLE) ddm2;
-
-statement ok
 DELETE FROM ddm2
-
-statement ok
-VACUUM (REFRESH_TABLE) ddm2;
 
 query I
 SELECT count(*) AS n FROM ddm2_idx

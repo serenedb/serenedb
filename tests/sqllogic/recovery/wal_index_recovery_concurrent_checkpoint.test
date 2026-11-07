@@ -1,0 +1,275 @@
+control substitution on
+control max-async-connections 16
+
+# Each writer owns a disjoint id range (W*1_000_000 + i) and a unique per-row
+# token (tok_W_i), so after recovery we can assert exact counts and that every
+# token's @@ match count is exactly 1 -- a duplicate posting would make some
+# token match twice, and a lost insert would make it match zero.
+#
+# All async INSERTs are awaited (`wait`) before the crash, so every row is
+# durable in the store WAL and MUST survive recovery: some land in the segments
+# via the racing checkpoint, the rest replay from the WAL. The combined set must
+# equal the store table with no duplicates and nothing missing.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cc_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE cc_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX cc_idx ON cc_t USING inverted(id, body cc_dict);
+
+statement ok
+SET GLOBAL debug_wal_fsync_sleep_ms = 5;
+
+###############################################################################
+# Round 1: 8 concurrent writers x 250 rows, checkpoints in parallel
+###############################################################################
+
+connection w1
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR1_W1_' || i FROM range(1000000, 1000250) AS t(i);
+
+connection w2
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR1_W2_' || i FROM range(2000000, 2000250) AS t(i);
+
+connection w3
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR1_W3_' || i FROM range(3000000, 3000250) AS t(i);
+
+connection w4
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR1_W4_' || i FROM range(4000000, 4000250) AS t(i);
+
+connection w5
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR1_W5_' || i FROM range(5000000, 5000250) AS t(i);
+
+connection w6
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR1_W6_' || i FROM range(6000000, 6000250) AS t(i);
+
+connection w7
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR1_W7_' || i FROM range(7000000, 7000250) AS t(i);
+
+connection w8
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR1_W8_' || i FROM range(8000000, 8000250) AS t(i);
+
+# Concurrent checkpoints racing the writers.
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+connection checkpointer2
+statement async ok
+CHECKPOINT;
+
+wait
+
+###############################################################################
+# Round 2: another 8 writers x 250 rows, checkpoints again
+###############################################################################
+
+connection w1
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR2_W1_' || i FROM range(1000250, 1000500) AS t(i);
+
+connection w2
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR2_W2_' || i FROM range(2000250, 2000500) AS t(i);
+
+connection w3
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR2_W3_' || i FROM range(3000250, 3000500) AS t(i);
+
+connection w4
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR2_W4_' || i FROM range(4000250, 4000500) AS t(i);
+
+connection w5
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR2_W5_' || i FROM range(5000250, 5000500) AS t(i);
+
+connection w6
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR2_W6_' || i FROM range(6000250, 6000500) AS t(i);
+
+connection w7
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR2_W7_' || i FROM range(7000250, 7000500) AS t(i);
+
+connection w8
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR2_W8_' || i FROM range(8000250, 8000500) AS t(i);
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+connection checkpointer2
+statement async ok
+CHECKPOINT;
+
+wait
+
+###############################################################################
+# Round 3: final batch, then crash with an uncovered tail in the WAL
+###############################################################################
+
+connection w1
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR3_W1_' || i FROM range(1000500, 1000750) AS t(i);
+
+connection w2
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR3_W2_' || i FROM range(2000500, 2000750) AS t(i);
+
+connection w3
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR3_W3_' || i FROM range(3000500, 3000750) AS t(i);
+
+connection w4
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR3_W4_' || i FROM range(4000500, 4000750) AS t(i);
+
+connection w5
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR3_W5_' || i FROM range(5000500, 5000750) AS t(i);
+
+connection w6
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR3_W6_' || i FROM range(6000500, 6000750) AS t(i);
+
+connection w7
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR3_W7_' || i FROM range(7000500, 7000750) AS t(i);
+
+connection w8
+statement async ok
+INSERT INTO cc_t SELECT i, 'tokR3_W8_' || i FROM range(8000500, 8000750) AS t(i);
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+# Wait for every writer to durably commit to the store WAL before crashing, so
+# the full set must survive recovery (no in-flight rows are silently dropped).
+wait
+
+# Crash while the post-checkpoint tail is only in the WAL (not the segments). On
+# restart, recovery must replay exactly the un-durable tail -- not re-stream a
+# checkpoint-flushed insert (duplicate) nor skip one (missing).
+connection crasher
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection crasher
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Restart + verification
+###############################################################################
+
+connection after
+statement ok retry 60 backoff 1s
+SELECT 1;
+
+# 8 writers x 250 rows x 3 rounds = 6000 rows.
+connection after
+query
+SELECT COUNT(*) FROM cc_t;
+----
+count
+6000
+
+# The index must match the store table exactly: no duplicate, nothing missing.
+connection after
+query
+SELECT COUNT(*) FROM cc_idx;
+----
+count
+6000
+
+# A duplicate posting would also surface as live docs > table rows on the
+# search side: the total @@ match count across all rows must equal the row
+# count, with no row matched twice.
+connection after
+query
+SELECT COUNT(*) FROM cc_idx WHERE body @@ ts_phrase('tokR1_W1_1000100');
+----
+count
+1
+
+connection after
+query
+SELECT id FROM cc_idx WHERE body @@ ts_phrase('tokR2_W4_4000300');
+----
+id
+4000300
+
+connection after
+query
+SELECT id FROM cc_idx WHERE body @@ ts_phrase('tokR3_W8_8000700');
+----
+id
+8000700
+
+# First, last, and a few mid tokens of round 3 (the uncovered tail most
+# likely to be re-streamed/dropped at recovery) -- each exactly once.
+connection after
+query
+SELECT id FROM cc_idx WHERE body @@ ts_phrase('tokR3_W1_1000500');
+----
+id
+1000500
+
+connection after
+query
+SELECT id FROM cc_idx WHERE body @@ ts_phrase('tokR3_W5_5000749');
+----
+id
+5000749
+
+# Aggregate guard: every round-3 W1 token matches exactly one row (250 rows,
+# 250 matches -> no duplicate posting anywhere in that block).
+connection after
+query
+SELECT COUNT(*) FROM cc_idx
+WHERE body @@ ts_phrase('tokR3_W1_1000500')
+   OR body @@ ts_phrase('tokR3_W1_1000600')
+   OR body @@ ts_phrase('tokR3_W1_1000700')
+   OR body @@ ts_phrase('tokR3_W1_1000749');
+----
+count
+4
+
+# No phantom rows beyond what we inserted.
+connection after
+query
+SELECT COUNT(*) FROM cc_idx WHERE body @@ ts_phrase('tokR3_W1_1000750');
+----
+count
+0
+
+###############################################################################
+# Cleanup
+###############################################################################
+
+connection after
+statement ok
+DROP INDEX cc_idx;
+
+connection after
+statement ok
+DROP TABLE cc_t;
+
+connection after
+statement ok
+DROP TEXT SEARCH DICTIONARY cc_dict;

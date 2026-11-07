@@ -795,7 +795,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
   if (writer.initialized()) [[likely]] {
     // The delete path encodes nothing, so resume unconditionally; the gate
     // below does not apply.
-    if (disable_flush) {
+    if (disable_flush || _hot) {
       return;
     }
     // A pooled segment may be resumed by a later transaction, but only under
@@ -830,7 +830,15 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
   // Hand the per-op options to the (pooled) writer before it materializes a
   // segment; a forced flush above reset it to the fallback, so set after it.
   writer.SetFieldOptions(_field_options);
-  segment.Prepare();
+  writer.SetDeferredColumns(_hot);
+  segment.Prepare(_hot_segment);
+}
+
+void IndexWriter::Transaction::SetHot(uint64_t segment_id) noexcept {
+  SDB_ASSERT(_exclusive_segment && _active.Segment() == nullptr);
+  _hot = true;
+  _hot_segment = segment_id;
+  _writer->ReserveSegmentId(segment_id);
 }
 
 bool IndexWriter::FlushRequired(const SegmentWriter& segment) const noexcept {
@@ -1035,10 +1043,13 @@ IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
                                           segment_writer_options);
 }
 
-void IndexWriter::SegmentContext::Prepare() {
+void IndexWriter::SegmentContext::Prepare(uint64_t segment_id) {
   SDB_ASSERT(!writer->initialized());
   writer_meta.filename.clear();
   writer_meta.meta = meta_generator();
+  if (segment_id != 0) {
+    writer_meta.meta.name = FileName(segment_id);
+  }
   writer->reset(writer_meta.meta);
 }
 
@@ -1340,6 +1351,13 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
   return _seg_counter.load(std::memory_order_relaxed);
 }
 
+void IndexWriter::ReserveSegmentId(uint64_t id) noexcept {
+  for (auto current = _seg_counter.load(std::memory_order_relaxed);
+       current < id && !_seg_counter.compare_exchange_weak(
+                         current, id, std::memory_order_relaxed);) {
+  }
+}
+
 auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const IndexFieldOptions* field_options,
                                const MergeWriter::FlushProgress& progress,
@@ -1536,6 +1554,86 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
             ", size=", pending_segment.segment.meta.byte_size);
   result.error = pending ? CompactionError::Pending : CompactionError::Ok;
   co_return result;
+}
+
+void IndexWriter::MergeClaim::Release() noexcept {
+  if (writer == nullptr) {
+    return;
+  }
+  std::lock_guard lock{writer->_compacting.lock};
+  for (const auto* candidate : candidates) {
+    writer->_compacting.segments.erase(candidate->Meta().name);
+  }
+  writer = nullptr;
+  candidates.clear();
+}
+
+auto IndexWriter::MergeAsync(const CompactionPolicy& policy,
+                             DirectoryReader source,
+                             const IndexFieldOptions* field_options,
+                             const MergeWriter::FlushProgress& progress,
+                             const AnnBuildEnv* env) -> yaclib::Future<Merged> {
+  Merged merged;
+  merged.source = std::move(source);
+  const auto& reader = *merged.source.GetImpl();
+  {
+    std::lock_guard lock{_compacting.lock};
+    CompactingSegments unavailable = _compacting.segments;
+    const auto floor = _compacting.floor;
+    if (floor != 0) {
+      for (const auto& segment : reader) {
+        uint64_t id = 0;
+        const auto& name = segment.Meta().name;
+        if (ParseSegmentId(name, id) && id <= floor) {
+          unavailable.insert(name);
+        }
+      }
+    }
+    Compaction candidates;
+    policy(candidates, reader, unavailable);
+    if (floor != 0) {
+      std::erase_if(candidates, [floor](const SubReader* candidate) {
+        uint64_t id = 0;
+        return ParseSegmentId(candidate->Meta().name, id) && id <= floor;
+      });
+    }
+    if (candidates.empty() ||
+        (candidates.size() == 1 && !HasRemovals(candidates.front()->Meta()))) {
+      co_return merged;
+    }
+    for (const auto* candidate : candidates) {
+      if (_compacting.segments.contains(candidate->Meta().name)) {
+        co_return merged;
+      }
+    }
+    for (const auto* candidate : candidates) {
+      _compacting.segments.emplace(candidate->Meta().name);
+    }
+    merged.claim = MergeClaim{*this, std::move(candidates)};
+  }
+  IndexSegment segment;
+  segment.meta.version = 0;
+  segment.meta.name = FileName(NextSegmentId());
+  RefTrackingDirectory dir{_dir};
+  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
+  merger.Reset(merged.claim.candidates.begin(), merged.claim.candidates.end());
+  if (!(co_await merger.Flush(segment.meta, progress, env))) {
+    co_return merged;
+  }
+  merged.reader = SegmentReaderImpl::Open(_dir, segment.meta, reader.Options());
+  merged.maps = MergeMaps(merged.claim.candidates, merger, *merged.reader);
+  index_utils::FlushIndexSegment(dir, segment, false);
+  std::vector<std::string_view> files{segment.meta.files.begin(),
+                                      segment.meta.files.end()};
+  files.emplace_back(segment.filename);
+  if (!dir.sync(files)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_IO_ERROR),
+      ERR_MSG("Failed to sync merged segment '", segment.meta.name, "'"));
+  }
+  merged.refs = dir.GetRefs();
+  merged.segment = std::move(segment);
+  co_return merged;
 }
 
 CompactionResult IndexWriter::Compact(

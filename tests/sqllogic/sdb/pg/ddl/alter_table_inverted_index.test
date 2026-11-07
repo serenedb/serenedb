@@ -27,10 +27,6 @@ statement count 2
 INSERT INTO ati_t VALUES (1, 'alpha bravo', 'x', 10), (2, 'charlie delta', 'y', 20);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ati_t;
-
-
 query
 SELECT id, extra FROM ati_idx WHERE body @@ ts_phrase('alpha');
 ----
@@ -92,10 +88,6 @@ statement count 1
 INSERT INTO ati_t2 VALUES (3, 'echo foxtrot', 'z', 30, 100);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ati_t2;
-
-
 query
 SELECT id, extra2 FROM ati_idx WHERE body2 @@ ts_phrase('echo');
 ----
@@ -128,10 +120,6 @@ id
 
 statement count 1
 INSERT INTO ati_t2 VALUES (4, 'golf hotel', 40, 100);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ati_t2;
 
 
 query
@@ -205,28 +193,28 @@ CREATE INDEX ati_struct_idx ON ati_struct USING inverted((s['id']::INTEGER));
 statement error
 ALTER TABLE ati_struct ADD COLUMN s.k INTEGER;
 ----
-db error: ERROR: Cannot change the type of this column: an index depends on it!
+db error: ERROR: changing a struct field is not supported
 
 
 # RENAME the indexed sub-field -- rejected.
 statement error
 ALTER TABLE ati_struct RENAME COLUMN s.id TO ident;
 ----
-db error: ERROR: Cannot change the type of this column: an index depends on it!
+db error: ERROR: changing a struct field is not supported
 
 
 # DROP the indexed sub-field -- rejected.
 statement error
 ALTER TABLE ati_struct DROP COLUMN s.id;
 ----
-db error: ERROR: Cannot change the type of this column: an index depends on it!
+db error: ERROR: changing a struct field is not supported
 
 
 # A whole-column type change is rejected for the same reason.
 statement error
 ALTER TABLE ati_struct ALTER COLUMN s TYPE STRUCT(id BIGINT, name VARCHAR);
 ----
-db error: ERROR: Cannot change the type of this column: an index depends on it!
+db error: ERROR: Cannot change the type of column "s": index "ati_struct_idx" depends on it
 
 
 statement ok
@@ -301,10 +289,6 @@ statement count 1
 INSERT INTO ati_tx VALUES (3, 'delta', 'echo', 30);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ati_tx;
-
-
 query
 SELECT id FROM ati_tx_a WHERE a @@ ts_phrase('delta');
 ----
@@ -333,10 +317,6 @@ INSERT INTO ati_tx VALUES (4, 'foxtrot', 40);
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ati_tx;
 
 
 query

@@ -1,7 +1,7 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE s_wal(a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE s_wal(a INTEGER, b TEXT);
 
 statement ok
 RESET sdb_faults;
@@ -9,9 +9,6 @@ RESET sdb_faults;
 # --- Fixture: a published baseline, durable in the iresearch index on disk. ---
 statement ok
 INSERT INTO s_wal VALUES (1, 'one'), (2, 'two'), (3, 'three');
-
-statement ok
-VACUUM (REFRESH_TABLE) s_wal;
 
 query
 SELECT a, b FROM s_wal ORDER BY a;
@@ -46,10 +43,6 @@ a	b
 4	four
 5	five
 
-connection after_commit
-statement ok
-VACUUM (REFRESH_TABLE) s_wal;
-
 
 ###############################################################################
 # 2. Crash BEFORE the WAL commit -> the write is lost (no record written).
@@ -83,15 +76,11 @@ DROP TABLE s_wal;
 
 connection before_commit
 statement ok
-CREATE TABLE s_wal_pk(id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE s_wal_pk(id INTEGER PRIMARY KEY, b TEXT);
 
 connection before_commit
 statement ok
 INSERT INTO s_wal_pk VALUES (1, 'one'), (2, 'two'), (3, 'three');
-
-connection before_commit
-statement ok
-VACUUM (REFRESH_TABLE) s_wal_pk;
 
 connection before_commit
 query
@@ -132,10 +121,6 @@ SELECT b FROM s_wal_pk WHERE id = 4;
 ----
 b
 four
-
-connection pk_after_commit
-statement ok
-VACUUM (REFRESH_TABLE) s_wal_pk;
 
 
 # --- 3b. Crash BEFORE the WAL commit -> lost (no record written). ---
@@ -188,7 +173,7 @@ SET sdb_faults = 'crash_after_commit';
 
 connection pk_before_commit
 statement error connection closed
-CREATE TABLE ctas_after WITH (storage = 'search') AS
+CREATE TABLE ctas_after AS
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/ctas_src.parquet');
 
 # --- restart ---
@@ -209,15 +194,11 @@ v9999
 
 connection ctas_after_conn
 statement ok
-VACUUM (REFRESH_TABLE) ctas_after;
-
-connection ctas_after_conn
-statement ok
 SET sdb_faults = 'crash_before_commit';
 
 connection ctas_after_conn
 statement error connection closed
-CREATE TABLE ctas_before WITH (storage = 'search') AS
+CREATE TABLE ctas_before AS
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/ctas_src.parquet');
 
 # --- restart ---
@@ -239,7 +220,7 @@ DROP TABLE ctas_after;
 
 connection ctas_before_conn
 statement ok
-CREATE TABLE mix_t (x INTEGER, y TEXT) WITH (storage = 'search');
+CREATE TABLE mix_t (x INTEGER, y TEXT);
 
 connection ctas_before_conn
 statement ok
@@ -300,15 +281,11 @@ DROP TABLE mix_t;
 
 connection mix_conn
 statement ok
-CREATE TABLE del_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE del_t (id INTEGER PRIMARY KEY, b TEXT);
 
 connection mix_conn
 statement ok
 INSERT INTO del_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
-
-connection mix_conn
-statement ok
-VACUUM (REFRESH_TABLE) del_t;
 
 connection mix_conn
 statement ok
@@ -337,10 +314,6 @@ three
 
 connection del_after
 statement ok
-VACUUM (REFRESH_TABLE) del_t;
-
-connection del_after
-statement ok
 DROP TABLE del_t;
 
 
@@ -348,15 +321,11 @@ DROP TABLE del_t;
 # stored kGeneratedPKId column); its removal must also survive recovery.
 connection del_after
 statement ok
-CREATE TABLE del_g (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE del_g (a INTEGER, b TEXT);
 
 connection del_after
 statement ok
 INSERT INTO del_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
-
-connection del_after
-statement ok
-VACUUM (REFRESH_TABLE) del_g;
 
 connection del_after
 statement ok
@@ -389,15 +358,11 @@ DROP TABLE del_g;
 
 connection del_g_after
 statement ok
-CREATE TABLE reins (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE reins (id INTEGER PRIMARY KEY, b TEXT);
 
 connection del_g_after
 statement ok
 INSERT INTO reins VALUES (1, 'a');
-
-connection del_g_after
-statement ok
-VACUUM (REFRESH_TABLE) reins;
 
 connection del_g_after
 statement ok
@@ -443,15 +408,11 @@ DROP TABLE reins;
 #     this is the core delete<insert ordering case: the new value must win.
 connection reins_after
 statement ok
-CREATE TABLE upd_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE upd_t (id INTEGER PRIMARY KEY, b TEXT);
 
 connection reins_after
 statement ok
 INSERT INTO upd_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
-
-connection reins_after
-statement ok
-VACUUM (REFRESH_TABLE) upd_t;
 
 connection reins_after
 statement ok
@@ -488,15 +449,11 @@ DROP TABLE upd_t;
 #     position of its own. Both halves must survive recovery.
 connection upd_after
 statement ok
-CREATE TABLE upd_g (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE upd_g (a INTEGER, b TEXT);
 
 connection upd_after
 statement ok
 INSERT INTO upd_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
-
-connection upd_after
-statement ok
-VACUUM (REFRESH_TABLE) upd_g;
 
 connection upd_after
 statement ok
@@ -530,15 +487,11 @@ DROP TABLE upd_g;
 
 connection upd_g_after
 statement ok
-CREATE TABLE trunc_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE trunc_t (id INTEGER PRIMARY KEY, b TEXT);
 
 connection upd_g_after
 statement ok
 INSERT INTO trunc_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
-
-connection upd_g_after
-statement ok
-VACUUM (REFRESH_TABLE) trunc_t;
 
 connection upd_g_after
 statement ok
@@ -560,10 +513,6 @@ n
 connection trunc_after
 statement ok
 INSERT INTO trunc_t VALUES (7, 'seven');
-
-connection trunc_after
-statement ok
-VACUUM (REFRESH_TABLE) trunc_t;
 
 connection trunc_after
 query

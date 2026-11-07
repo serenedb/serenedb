@@ -2,7 +2,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE sacr (id INT, b TEXT, n INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -28,7 +28,7 @@ INSERT INTO sacr VALUES (3, 'z', NULL);
 statement error
 ALTER TABLE sacr ALTER COLUMN n SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: sacr.n
+db error: ERROR: column "n" of relation "sacr" contains null values
 
 
 statement ok
@@ -66,11 +66,6 @@ db error: ERROR: CHECK constraint failed on table "sacr" with expression CHECK((
 connection restarted
 statement ok
 INSERT INTO sacr VALUES (4, 'w', NULL);
-
-
-connection restarted
-statement ok
-VACUUM (REFRESH_TABLE) sacr;
 
 
 connection restarted

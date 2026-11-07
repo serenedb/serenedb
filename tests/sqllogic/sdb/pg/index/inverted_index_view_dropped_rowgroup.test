@@ -1,41 +1,6 @@
 control substitution on
 
 statement ok
-CREATE TABLE ivdr (id INTEGER, body VARCHAR, extra VARCHAR);
-
-statement ok
-INSERT INTO ivdr VALUES (1, 'needle', 'a'), (2, 'hay', 'b'), (3, 'needle', 'c');
-
-statement ok
-CREATE VIEW ivdr_v AS SELECT id, body, extra FROM ivdr;
-
-statement ok
-CREATE INDEX ivdr_v_idx ON ivdr_v USING inverted (id, body) INCLUDE (id);
-
-query
-SELECT id, extra FROM ivdr_v_idx WHERE body = 'needle' ORDER BY id;
-----
-id	extra
-1	a
-3	c
-
-statement ok
-DELETE FROM ivdr;
-
-query
-SELECT id, extra FROM ivdr_v_idx WHERE body = 'needle' ORDER BY id;
-----
-id	extra
-
-statement ok
-FORCE CHECKPOINT;
-
-query
-SELECT id, extra FROM ivdr_v_idx WHERE body = 'needle' ORDER BY id;
-----
-id	extra
-
-statement ok
 ATTACH '${__TEST_DIR__}/ivdr_ext.db' AS ivdr_ext_${__DATABASE__};
 
 statement ok

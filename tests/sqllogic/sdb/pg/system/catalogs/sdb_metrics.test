@@ -76,7 +76,7 @@ t
 
 
 statement ok
-CREATE TABLE sven_storm_hammer (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE sven_storm_hammer (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -85,10 +85,6 @@ CREATE INDEX sven_storm_hammer_idx ON sven_storm_hammer USING inverted (body);
 
 statement ok
 INSERT INTO sven_storm_hammer VALUES (1, 'pudge hook'), (2, 'sven cleave'), (3, 'roshan aegis');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sven_storm_hammer;
 
 
 query
@@ -150,10 +146,6 @@ storage_less_index_rows
 
 statement ok
 DELETE FROM sven_storm_hammer WHERE id = 3;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sven_storm_hammer;
 
 
 query

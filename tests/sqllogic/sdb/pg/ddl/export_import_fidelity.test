@@ -84,11 +84,11 @@ q	q2	w	w2	d	d2	t
 
 
 statement ok
-CREATE TABLE s1.docs (id INT, body TEXT);
+CREATE TABLE s1.docs (id INT, body TEXT) WITH (compaction_max_segments = 3);
 
 
 statement ok
-CREATE INDEX docs_inv ON s1.docs USING inverted (body) WITH (segment_docs_max = 7, compaction_max_segments = 3, cleanup_interval_step = 2);
+CREATE INDEX docs_inv ON s1.docs USING inverted (body);
 
 
 statement ok

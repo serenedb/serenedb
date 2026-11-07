@@ -8,17 +8,13 @@
 
 statement ok
 CREATE TABLE salpf (pk BIGINT PRIMARY KEY, d DOUBLE, f FLOAT, n DOUBLE, s TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 
 statement ok
 INSERT INTO salpf SELECT i, i * 0.01, (i * 0.01)::FLOAT,
   CASE WHEN i % 10 = 0 THEN NULL ELSE i * 0.01 END, 'w' || (i // 4000)
   FROM generate_series(0, 11999) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) salpf;
 
 
 statement ok
@@ -29,10 +25,6 @@ INSERT INTO salpf SELECT i, i * 0.01, (i * 0.01)::FLOAT,
 
 statement ok
 INSERT INTO salpf VALUES (24000, 'nan'::DOUBLE, 'nan'::FLOAT, 'nan'::DOUBLE, 'wnan');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) salpf;
 
 
 # Tiny range inside one ALP vector.
@@ -115,10 +107,6 @@ c
 
 statement ok
 DELETE FROM salpf WHERE pk >= 10003 AND pk < 10008;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) salpf;
 
 
 # The matching vector now has a hole from the delete masks.

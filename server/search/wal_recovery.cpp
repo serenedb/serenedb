@@ -106,7 +106,7 @@ void RecoverSearchStorages(
            absl::FormatDuration(duration));
 }
 
-absl::Status CoverLog(uint64_t target) {
+void CoverLog(uint64_t target) {
   std::vector<std::shared_ptr<Store>> tables;
   for (const auto& db : catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
          irs::DuckDBEngine::Instance().instance()))) {
@@ -122,11 +122,8 @@ absl::Status CoverLog(uint64_t target) {
       [](catalog::InvertedIndexEntry&) {});
   }
   for (const auto& table : tables) {
-    if (auto status = table->Cover(target); !status.ok()) {
-      return status;
-    }
+    table->Cover(target);
   }
-  return absl::OkStatus();
 }
 
 void StartSearchStorageTasks() {

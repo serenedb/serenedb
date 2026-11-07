@@ -23,17 +23,17 @@ A committed row is found at once by every query, through the table and through e
 
 ## Background intervals
 
-`compaction_interval` controls the background compaction of an inverted index (set at `CREATE INDEX`) and of a search table (set at `CREATE TABLE ... WITH (storage = 'search', ...)`); `0` disables it. See [Background compaction](#background-compaction).
+`compaction_interval` controls the background compaction of a table (set at `CREATE TABLE ... WITH`) and of an inverted index on a view (set at `CREATE INDEX ... WITH`); `0` disables it. See [Background compaction](#background-compaction).
 
 View-backed indexes have a second interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data -- see [Refreshing the index](./views.md#refreshing-the-index).
 
-An inverted index on a search table has no storage or background tasks of its own: the table's options run compaction for every index on it. Set them on the table, in `CREATE TABLE ... WITH` or with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options), whether or not it has indexes. `CREATE INDEX ... WITH` and `ALTER INDEX ... SET` reject them for an index on a search table. They also reject the options that only `CREATE TABLE ... WITH` sets on a search table: `row_group_size`, [`segment_memory_max`](#write-memory) and `optimize_top_k`. `segment_docs_max` doesn't apply to such an index and is rejected too.
+An inverted index on a table has no storage or background tasks of its own: the table's options run compaction for every index on it. Set them on the table, in `CREATE TABLE ... WITH` or with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options), whether or not it has indexes. `CREATE INDEX ... WITH` and `ALTER INDEX ... SET` reject them for an index on a table. They also reject the options that only `CREATE TABLE ... WITH` sets on a table: `row_group_size`, [`segment_memory_max`](#write-memory) and `optimize_top_k`. `segment_docs_max` doesn't apply to such an index and is rejected too.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
 
 ## Background compaction
 
-Compaction is on by default, for inverted indexes and search tables alike: every `compaction_interval` milliseconds a background task merges segments of similar size into larger ones, so a table loaded in many small batches does not keep one segment per batch. Three more `WITH` options shape each merge:
+Compaction is on by default, for tables and inverted indexes on views alike: every `compaction_interval` milliseconds a background task merges segments of similar size into larger ones, so a table loaded in many small batches does not keep one segment per batch. Three more `WITH` options shape each merge:
 
 | Option | Default | Controls |
 |---|---|---|
@@ -41,9 +41,9 @@ Compaction is on by default, for inverted indexes and search tables alike: every
 | `compaction_max_segments_bytes` | `5368709120` (5 GB) | Size budget of one background compaction |
 | `compaction_floor_segment_bytes` | `2097152` (2 MB) | Segments smaller than this count as equal-sized when choosing what to merge |
 
-The session settings of the same names hold the defaults a new index or search table takes.
+The session settings of the same names hold the defaults a new table or index takes.
 
-- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with `ALTER INDEX ... SET` for an index and [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a search table. Segments are then merged only when you ask for it.
+- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a table and `ALTER INDEX ... SET` for an index on a view. Segments are then merged only when you ask for it.
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
 - **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` -- see [below](#manual-maintenance-with-vacuum).
 
@@ -160,22 +160,22 @@ The standard `pg_indexes` view also lists them (alongside the primary-key index)
 
 <DocCallout type="info">
 
-`pg_relation_size()` of an inverted index returns its size on disk, and `pg_indexes_size()` of a regular table adds the inverted indexes on it to its other indexes. An index on a search table has no storage of its own, so both count it as `0`; its data is part of `pg_relation_size()` of the table. `pg_indexes_size()` of a view returns `0`.
+An inverted index on a table has no storage of its own, so `pg_relation_size()` and `pg_indexes_size()` count it as `0`; its data is part of `pg_relation_size()` of the table. `pg_relation_size()` of an inverted index on a view returns its size on disk, and `pg_indexes_size()` of a view returns `0`.
 
 </DocCallout>
 
 ### Statistics in `sdb_metrics` {#sdb-metrics}
 
-The `sdb_metrics` system table exposes live runtime metrics. Most rows are process-wide gauges (connection counts, active/pending maintenance tasks) and carry a `NULL` `relation_id`. In addition, **each search table and each inverted index on a regular table or a view contributes a row per statistic**, tagged with its oid in the `relation_id` column -- describing its physical state and the health of its background maintenance. An inverted index on a search table has no storage of its own and contributes no rows: the search table's rows cover its indexes.
+The `sdb_metrics` system table exposes live runtime metrics. Most rows are process-wide gauges (connection counts, active/pending maintenance tasks) and carry a `NULL` `relation_id`. In addition, **each table and each inverted index on a view contributes a row per statistic**, tagged with its oid in the `relation_id` column -- describing its physical state and the health of its background maintenance. An inverted index on a table has no storage of its own and contributes no rows: the table's rows cover its indexes.
 
 | Column | Description |
 | :--- | :--- |
 | `metric` | Metric name |
 | `value` | Current value (`UBIGINT`) |
 | `description` | Human-readable description |
-| `relation_id` | Oid of the search table or inverted index the row describes (a relation in `pg_class`), or `NULL` for a process-wide gauge |
+| `relation_id` | Oid of the table or inverted index the row describes (a relation in `pg_class`), or `NULL` for a process-wide gauge |
 
-The metrics of each search table and inverted index:
+The metrics of each table and inverted index:
 
 | Metric | Meaning |
 | :--- | :--- |
@@ -190,7 +190,7 @@ The metrics of each search table and inverted index:
 | `avg_cleanup_time_ms` | Average duration of the last few cleanups, in ms |
 | `avg_consolidation_time_ms` | Average duration of the last few consolidations, in ms |
 
-The `avg_*` values are a rolling average over a small window of the most recent successful operations. Rows cover the search tables and inverted indexes in the **current database**. Join `pg_class` to resolve the name. To group the rows by table, join `pg_index` as well: an index's rows reach its table through `indrelid`, while a search table's rows carry the table's own oid. Here `my_logs` is a regular table with the inverted index `logs_idx`, and `my_events` a search table:
+The `avg_*` values are a rolling average over a small window of the most recent successful operations. Rows cover the tables and inverted indexes in the **current database**. Join `pg_class` to resolve the name. To group the rows by relation, join `pg_index` as well: an index's rows reach its view through `indrelid`, while a table's rows carry the table's own oid. Here `my_logs` is a table with the inverted index `logs_idx`, and the rows just inserted into `my_events` are still held in memory:
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/sdb_metrics" />
 

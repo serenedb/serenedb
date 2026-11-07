@@ -70,9 +70,6 @@ CREATE TABLE my_events (id INTEGER PRIMARY KEY, msg VARCHAR);
 # DOCS_TEST_BODY
 
 statement ok
-ALTER INDEX logs_idx SET (compaction_interval = 0);
-
-statement ok
 ALTER TABLE my_events SET (compaction_interval = 0);
 
 statement ok
@@ -80,9 +77,6 @@ VACUUM (COMPACT_TABLE) my_events;
 
 statement ok
 ALTER TABLE my_events RESET (compaction_interval);
-
-statement ok
-ALTER INDEX logs_idx RESET (compaction_interval);
 
 # DOCS_TEST: example_007
 
@@ -116,14 +110,16 @@ query
 SELECT c.relname AS relation, m.metric, m.value
 FROM sdb_metrics m
 JOIN pg_class c ON c.oid = m.relation_id
-WHERE m.metric IN ('num_docs', 'num_live_docs')
+WHERE m.metric IN ('num_docs', 'num_live_docs', 'num_buffered_docs')
 ORDER BY c.relname, m.metric;
 ----
 relation	metric	value
-logs_idx	num_docs	2
-logs_idx	num_live_docs	2
-my_events	num_docs	3
-my_events	num_live_docs	3
+my_events	num_buffered_docs	3
+my_events	num_docs	0
+my_events	num_live_docs	0
+my_logs	num_buffered_docs	0
+my_logs	num_docs	2
+my_logs	num_live_docs	2
 
 query
 SELECT t.relname AS table_name, c.relname AS relation, m.value AS live_docs
@@ -135,5 +131,5 @@ WHERE m.metric = 'num_live_docs'
 ORDER BY t.relname, c.relname;
 ----
 table_name	relation	live_docs
-my_events	my_events	3
-my_logs	logs_idx	2
+my_events	my_events	0
+my_logs	my_logs	2

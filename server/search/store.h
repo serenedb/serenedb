@@ -311,8 +311,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   void InvertReplayed(duckdb::ClientContext& context);
   void FinishReplay();
 
-  absl::Status Cool(bool all, size_t& cooled);
-  absl::Status Cover(Lsn target);
+  void Cool(bool all);
+  void Cover(Lsn target);
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).
@@ -361,7 +361,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   void CommitStorage(std::string entry,
                      absl::FunctionRef<void(Tick, Tick, Lsn)> apply);
   void ScheduleCooling();
-  absl::Status CoolRetired(Lsn before);
+  void CoolRetired(Lsn before);
   template<typename Remove>
   void CommitRemovalWith(const Remove& remove);
   auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,

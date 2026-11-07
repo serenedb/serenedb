@@ -164,6 +164,9 @@ void ReplayChange(duckdb::ClientContext& context,
   auto dependencies =
     object.ReadPropertyWithExplicitDefault<duckdb::LogicalDependencyList>(
       108, "dependencies", duckdb::LogicalDependencyList{});
+  const auto constraints =
+    object.ReadPropertyWithExplicitDefault<duckdb::vector<duckdb::idx_t>>(
+      109, "constraints", duckdb::vector<duckdb::idx_t>{});
   const auto transaction = catalog.GetCatalogTransaction(context);
   switch (kind) {
     case ChangeKind::Create:
@@ -184,6 +187,18 @@ void ReplayChange(duckdb::ClientContext& context,
         catalog.Oids().RemoveDependents(table, table.oid);
         table.dependencies = std::move(dependencies);
         catalog.Oids().AddDependents(table, table.oid);
+      }
+      if (!constraints.empty()) {
+        const auto& current =
+          LoggedTable(catalog, transaction, oid).GetConstraints();
+        SDB_ENSURE(current.size() == constraints.size(), "the log gives table ",
+                   oid, " ", constraints.size(), " constraints, replay made ",
+                   current.size());
+        auto& oids = catalog.GetDatabase().GetDatabaseManager();
+        for (size_t i = 0; i < current.size(); ++i) {
+          current[i]->oid = constraints[i];
+          oids.ClaimOid(constraints[i]);
+        }
       }
       return;
     }
@@ -431,9 +446,13 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
                                                          change.set->Owner());
           if (change.kind == ChangeKind::Alter &&
               subject.type == duckdb::CatalogType::TABLE_ENTRY) {
-            object.WriteProperty(
-              108, "dependencies",
-              subject.Cast<duckdb::TableCatalogEntry>().dependencies);
+            const auto& table = subject.Cast<duckdb::TableCatalogEntry>();
+            object.WriteProperty(108, "dependencies", table.dependencies);
+            duckdb::vector<duckdb::idx_t> constraints;
+            for (const auto& constraint : table.GetConstraints()) {
+              constraints.push_back(constraint->oid);
+            }
+            object.WriteProperty(109, "constraints", constraints);
           }
         });
       });

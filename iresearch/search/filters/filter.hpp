@@ -58,6 +58,16 @@ namespace irs {
 struct IndexReader;
 struct PreparedStateVisitor;
 
+struct PrepareTasks {
+  using Next = absl::FunctionRef<uint32_t()>;
+
+  virtual uint32_t Threads() const noexcept = 0;
+  virtual void Run(uint32_t count, absl::FunctionRef<void(Next)> worker) = 0;
+
+ protected:
+  ~PrepareTasks() = default;
+};
+
 struct PrepareContext {
   PrepareCollector* collector = nullptr;
   IResourceManager& memory = IResourceManager::gNoop;
@@ -66,6 +76,7 @@ struct PrepareContext {
   score_t boost = kNoBoost;
   uint32_t thread = 0;
   bool needs_terms = false;
+  PrepareTasks* tasks = nullptr;
 
   void Boost(score_t b) noexcept { boost *= b; }
 

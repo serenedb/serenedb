@@ -1,0 +1,69 @@
+statement ok
+CREATE TABLE curve_walk(id INTEGER PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE, tag INTEGER);
+
+statement ok
+INSERT INTO curve_walk SELECT i, ((i * 48271) % 300007) / 300.007, ((i * 69621 + 123) % 300017) / 300.017,
+ ((i * 40699 + 321) % 300023) / 300.023, i % 5 FROM range(300000) t(i);
+
+statement ok
+INSERT INTO curve_walk SELECT 300000 + i, 500, 500, 500, i % 5 FROM range(2000) t(i);
+
+statement ok
+INSERT INTO curve_walk SELECT 302000 + i, 250 + i % 40, 250 + i % 40, 750, i % 5 FROM range(4000) t(i);
+
+statement ok
+CREATE INDEX curve_walk_idx ON curve_walk USING inverted(id, tag, (curve(ROW(x, y, z))));
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_walk;
+
+statement ok
+VACUUM (COMPACT_TABLE) curve_walk;
+
+query ok retry 480 backoff 250ms
+SELECT max(m.value) = 1 AS one FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+WHERE c.relname = 'curve_walk_idx' AND m.metric = 'num_segments';
+----
+one
+t
+
+statement ok
+SET threads = 4;
+
+query
+SELECT
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk_idx WHERE curve(ROW(x, y, z)) @@ ts_between(ROW(100, 200, 300), ROW(700, 800, 900), true, true)) =
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk WHERE x BETWEEN 100 AND 700 AND y BETWEEN 200 AND 800 AND z BETWEEN 300 AND 900) AS wide,
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk_idx WHERE curve(ROW(x, y, z)) @@ ts_between(ROW(400, NULL, NULL), ROW(450, NULL, NULL), true, true)) =
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk WHERE x BETWEEN 400 AND 450) AS slab,
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk_idx WHERE curve(ROW(x, y, z)) @@ ts_between(ROW(NULL, 300.5, NULL), ROW(NULL, 300.75, NULL), false, false)) =
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk WHERE y > 300.5 AND y < 300.75) AS thin,
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk_idx WHERE curve(ROW(x, y, z)) @@ ts_between(ROW(0, 0, 499), ROW(1000, 1000, 501), true, true)) =
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk WHERE z BETWEEN 499 AND 501) AS shared,
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk_idx WHERE curve(ROW(x, y, z)) @@ ts_between(ROW(240, 240, 700), ROW(300, 300, 800), true, true)) =
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk WHERE x BETWEEN 240 AND 300 AND y BETWEEN 240 AND 300 AND z BETWEEN 700 AND 800) AS repeated,
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk_idx WHERE tag = 3 AND curve(ROW(x, y, z)) @@ ts_between(ROW(0, 100, 0), ROW(900, 1000, 1000), true, true)) =
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk WHERE tag = 3 AND x BETWEEN 0 AND 900 AND y BETWEEN 100 AND 1000) AS tagged,
+ (SELECT count(*) FROM curve_walk_idx WHERE curve(ROW(x, y, z)) @@ ts_between(ROW(0, 0, 0), ROW(1000, 1000, 1000), true, true)) AS every;
+----
+wide	slab	thin	shared	repeated	tagged	every
+t	t	t	t	t	t	306000
+
+statement ok
+SET threads = 1;
+
+query
+SELECT
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk_idx WHERE curve(ROW(x, y, z)) @@ ts_between(ROW(100, 200, 300), ROW(700, 800, 900), true, true)) =
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk WHERE x BETWEEN 100 AND 700 AND y BETWEEN 200 AND 800 AND z BETWEEN 300 AND 900) AS wide,
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk_idx WHERE curve(ROW(x, y, z)) @@ ts_between(ROW(400, NULL, NULL), ROW(450, NULL, NULL), true, true)) =
+ (SELECT count(*) || ':' || sum(id) FROM curve_walk WHERE x BETWEEN 400 AND 450) AS slab;
+----
+wide	slab
+t	t
+
+statement ok
+RESET threads;
+
+statement ok
+DROP TABLE curve_walk;

@@ -13,24 +13,34 @@ TABLES="${CURVE_BENCH_TABLES:-ind cor}"
 INDEXES="${CURVE_BENCH_INDEXES:-granular curve curve32 norm32}"
 PORT="${CURVE_BENCH_PORT:-6471}"
 SEGMENT_MEMORY_MAX="${CURVE_BENCH_SEGMENT_MEMORY_MAX:-}"
+REFRESHES="${CURVE_BENCH_REFRESHES:-1}"
+COMPACT="${CURVE_BENCH_COMPACT:-full}"
 if [[ ! -x "${SERENED_BIN}" ]]; then
 	echo "missing ${SERENED_BIN}; set CURVE_BENCH_BIN" >&2
 	exit 1
 fi
-for value in "${ROWS}" "${BOXES}" "${PASSES}" "${SEED}"; do
+for value in "${ROWS}" "${BOXES}" "${PASSES}" "${SEED}" "${REFRESHES}"; do
 	if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
-		echo "CURVE_BENCH_ROWS, _BOXES, _PASSES and _SEED must be positive integers" >&2
+		echo "CURVE_BENCH_ROWS, _BOXES, _PASSES, _SEED and _REFRESHES must be positive integers" >&2
 		exit 1
 	fi
 done
+if [[ ! "${COMPACT}" =~ ^(full|background|none)$ ]]; then
+	echo "CURVE_BENCH_COMPACT must be full, background or none" >&2
+	exit 1
+fi
 INDEX_OPTIONS=""
 if [[ -n "${SEGMENT_MEMORY_MAX}" ]]; then
 	if [[ ! "${SEGMENT_MEMORY_MAX}" =~ ^[1-9][0-9]*$ ]]; then
 		echo "CURVE_BENCH_SEGMENT_MEMORY_MAX must be a positive byte count" >&2
 		exit 1
 	fi
-	INDEX_OPTIONS=" WITH (segment_memory_max = ${SEGMENT_MEMORY_MAX})"
+	INDEX_OPTIONS="segment_memory_max = ${SEGMENT_MEMORY_MAX}"
 fi
+if [[ "${COMPACT}" == none ]]; then
+	INDEX_OPTIONS="${INDEX_OPTIONS:+${INDEX_OPTIONS}, }compaction_interval = 0"
+fi
+INDEX_OPTIONS="${INDEX_OPTIONS:+ WITH (${INDEX_OPTIONS})}"
 
 declare -A CALLS=(
 	[curve]="curve(ROW(x, y, z))"
@@ -107,6 +117,23 @@ compact() {
 	while [[ "$(unsettled "$1")" != 0 ]]; do
 		sleep 1
 		sql "VACUUM (COMPACT_TABLE) $1" >/dev/null
+	done
+}
+
+settle() {
+	local state previous="" quiet=0
+	while ((quiet < 5)); do
+		sleep 2
+		state=$(sql "SELECT coalesce(sum(CASE WHEN m.metric = 'num_segments' THEN m.value END), 0),
+			coalesce(sum(CASE WHEN m.metric <> 'num_segments' THEN m.value END), 0)
+			FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+			WHERE c.relname LIKE '$1_%' AND m.metric IN ('num_segments', 'compaction_active', 'compaction_pending')")
+		if [[ "${state}" == "${previous}" && "${state#*|}" == 0 ]]; then
+			quiet=$((quiet + 1))
+		else
+			quiet=0
+		fi
+		previous="${state}"
 	done
 }
 
@@ -211,38 +238,68 @@ Y_MOD=$(coprime_modulus 33 69621)
 Z_MOD=$(coprime_modulus 37 40699)
 SCALE=$((ROWS >= 1000 ? ROWS / 1000 : 1))
 
+fill() {
+	sql "INSERT INTO ind SELECT i, ((i*48271)%${X_MOD})::DOUBLE/${SCALE},
+		((i*69621+123)%${Y_MOD})::DOUBLE/${SCALE}, ((i*40699+321)%${Z_MOD})::DOUBLE/${SCALE}
+		FROM generate_series($1::BIGINT, $2::BIGINT) g(i)"
+	if [[ " ${TABLES} " == *" cor "* ]]; then
+		sql "INSERT INTO cor SELECT id, x, x+(id%7-3)*0.1, x+(id%11-5)*0.1 FROM ind WHERE id BETWEEN $1 AND $2"
+	fi
+}
+
+index_of() {
+	local keys
+	if [[ "$2" == granular ]]; then
+		keys="id, x, y, z)"
+	else
+		keys="id, (${CALLS[$2]}))"
+	fi
+	echo "CREATE INDEX $1_$2 ON $1 USING inverted(${keys}${INDEX_OPTIONS}"
+}
+
+metric() {
+	sql "SELECT round(m.value / $3)::BIGINT FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+		WHERE c.relname = '$1' AND m.metric = '$2'"
+}
+
 sql "CREATE TABLE ind(id BIGINT PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE)"
-sql "INSERT INTO ind SELECT i, ((i*48271)%${X_MOD})::DOUBLE/${SCALE},
-	((i*69621+123)%${Y_MOD})::DOUBLE/${SCALE}, ((i*40699+321)%${Z_MOD})::DOUBLE/${SCALE}
-	FROM generate_series(1::BIGINT, ${ROWS}::BIGINT) g(i)"
 if [[ " ${TABLES} " == *" cor "* ]]; then
 	sql "CREATE TABLE cor(id BIGINT PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE)"
-	sql "INSERT INTO cor SELECT id, x, x+(id%7-3)*0.1, x+(id%11-5)*0.1 FROM ind"
 fi
 
-for t in ${TABLES}; do
-	line="build ${t}:"
-	for kind in ${INDEXES}; do
-		if [[ "${kind}" == granular ]]; then
-			keys="id, x, y, z)"
-		else
-			keys="id, (${CALLS[${kind}]}))"
-		fi
-		line+=" ${kind} $(seconds "CREATE INDEX ${t}_${kind} ON ${t} USING inverted(${keys}${INDEX_OPTIONS}; VACUUM (REFRESH_TABLE) ${t}") s"
+if ((REFRESHES == 1)); then
+	fill 1 "${ROWS}"
+	for t in ${TABLES}; do
+		line="build ${t}:"
+		for kind in ${INDEXES}; do
+			line+=" ${kind} $(seconds "$(index_of "${t}" "${kind}"); VACUUM (REFRESH_TABLE) ${t}") s"
+		done
+		echo "${line}"
 	done
-	echo "${line}"
-done
-
+else
+	for t in ${TABLES}; do
+		for kind in ${INDEXES}; do
+			sql "$(index_of "${t}" "${kind}")"
+		done
+	done
+	for ((batch = 0; batch < REFRESHES; batch++)); do
+		fill "$((ROWS * batch / REFRESHES + 1))" "$((ROWS * (batch + 1) / REFRESHES))"
+		for t in ${TABLES}; do
+			sql "VACUUM (REFRESH_TABLE) ${t}" >/dev/null
+		done
+	done
+fi
 start=$(date +%s)
 for t in ${TABLES}; do
-	compact "${t}"
+	case "${COMPACT}" in
+	full) compact "${t}" ;;
+	background) settle "${t}" ;;
+	esac
 done
 echo "compact: $(($(date +%s) - start)) s"
 for t in ${TABLES}; do
 	for kind in ${INDEXES}; do
-		size=$(sql "SELECT round(m.value / 1048576.0)::BIGINT FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
-			WHERE c.relname = '${t}_${kind}' AND m.metric = 'index_size'")
-		echo "size ${t}_${kind}: ${size} MB"
+		echo "size ${t}_${kind}: $(metric "${t}_${kind}" index_size 1048576.0) MB, $(metric "${t}_${kind}" num_segments 1) segments"
 	done
 done
 

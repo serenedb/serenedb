@@ -26,6 +26,7 @@
 
 #include <memory>
 #include <span>
+#include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -67,6 +68,11 @@ struct RangePruner {
   ~RangePruner() = default;
 };
 
+struct PrunedSplit {
+  uint32_t level = 0;
+  std::vector<uint32_t> pieces;
+};
+
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
@@ -104,6 +110,15 @@ struct TermReader : public AttributeProvider {
 
   virtual void VisitPruned(const RangePruner& pruner,
                            RangeVisitor visit) const = 0;
+
+  virtual void SplitPruned(const RangePruner& pruner, uint32_t,
+                           PrunedSplit& split, RangeVisitor visit) const {
+    split.pieces.clear();
+    VisitPruned(pruner, visit);
+  }
+
+  virtual void VisitSplit(const RangePruner&, uint32_t,
+                          std::span<const uint32_t>, RangeVisitor) const {}
 
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;

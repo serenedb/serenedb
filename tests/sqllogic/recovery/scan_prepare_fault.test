@@ -1,0 +1,49 @@
+statement ok
+CREATE TABLE prepare_fault(id INTEGER PRIMARY KEY, x DOUBLE, y DOUBLE, tag INTEGER);
+
+statement ok
+INSERT INTO prepare_fault SELECT i, ((i * 48271) % 400009) / 400.009, ((i * 69621 + 7) % 400031) / 400.031, i % 7
+ FROM range(400000) t(i);
+
+statement ok
+CREATE INDEX prepare_fault_idx ON prepare_fault USING inverted(id, tag, (curve(ROW(x, y))));
+
+statement ok
+VACUUM (REFRESH_TABLE) prepare_fault;
+
+statement ok
+VACUUM (COMPACT_TABLE) prepare_fault;
+
+query ok retry 480 backoff 250ms
+SELECT max(m.value) = 1 AS one FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+WHERE c.relname = 'prepare_fault_idx' AND m.metric = 'num_segments';
+----
+one
+t
+
+statement ok
+SET threads = 4;
+
+statement ok
+SET sdb_faults = 'ScanPrepareFault'
+
+statement error intentional debug error
+SELECT sum(id) FROM prepare_fault_idx WHERE tag = 3;
+
+statement error intentional debug error
+SELECT sum(id) FROM prepare_fault_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(100, 100), ROW(900, 900), true, true);
+
+statement ok
+SET sdb_faults = '-ScanPrepareFault'
+
+query
+SELECT
+ (SELECT sum(id) FROM prepare_fault_idx WHERE tag = 3) = (SELECT sum(id) FROM prepare_fault WHERE tag = 3) AS tagged,
+ (SELECT sum(id) FROM prepare_fault_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(100, 100), ROW(900, 900), true, true)) =
+ (SELECT sum(id) FROM prepare_fault WHERE x BETWEEN 100 AND 900 AND y BETWEEN 100 AND 900) AS boxed;
+----
+tagged	boxed
+t	t
+
+statement ok
+RESET threads;

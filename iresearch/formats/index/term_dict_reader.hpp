@@ -97,6 +97,11 @@ class TermReaderImpl final : public TermReader {
   void VisitRange(bytes_view from, bytes_view to,
                   RangeVisitor visit) const final;
   void VisitPruned(const RangePruner& pruner, RangeVisitor visit) const final;
+  void SplitPruned(const RangePruner& pruner, uint32_t parts,
+                   PrunedSplit& split, RangeVisitor visit) const final;
+  void VisitSplit(const RangePruner& pruner, uint32_t level,
+                  std::span<const uint32_t> pieces,
+                  RangeVisitor visit) const final;
 
   std::unique_ptr<IndexInput> ReopenPayload() const final;
   PostingsHandles Handles() const noexcept final;

@@ -27,6 +27,7 @@
 #include <bit>
 #include <cstring>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "iresearch/formats/index/field_reader.hpp"
@@ -186,7 +187,41 @@ class PrunedWalk {
       return;
     }
     const size_t top = _levels.size() - 1;
-    Pieces(top, 0, _levels[top].count);
+    Pieces(top, 0, _levels[top].count,
+           [&](uint32_t piece) { Descend(top, piece); });
+    PartialPieces();
+  }
+
+  void Split(uint32_t parts, PrunedSplit& split) {
+    split.pieces.clear();
+    if (_levels.empty()) {
+      Terms(0, _field.min(), {});
+      return;
+    }
+    size_t level = _levels.size() - 1;
+    Pieces(level, 0, _levels[level].count,
+           [&](uint32_t piece) { split.pieces.push_back(piece); });
+    std::vector<uint32_t> next;
+    while (level != 0 && !split.pieces.empty() && split.pieces.size() < parts) {
+      next.clear();
+      for (const auto piece : split.pieces) {
+        const auto [begin, end] = Children(level, piece);
+        Pieces(level - 1, begin, end,
+               [&](uint32_t child) { next.push_back(child); });
+      }
+      split.pieces.swap(next);
+      --level;
+    }
+    split.level = static_cast<uint32_t>(level);
+  }
+
+  void Visit(uint32_t level, std::span<const uint32_t> pieces) {
+    if (pieces.empty()) {
+      return;
+    }
+    for (const auto piece : pieces) {
+      Descend(level, piece);
+    }
     PartialPieces();
   }
 
@@ -247,7 +282,26 @@ class PrunedWalk {
     return {_last, next.size()};
   }
 
-  void Pieces(size_t level, uint32_t begin, uint32_t end) {
+  std::pair<uint32_t, uint32_t> Children(size_t level,
+                                         uint32_t piece) const noexcept {
+    const auto& range = _levels[level];
+    return {Load32(range.firsts, piece), piece + 1 == range.count
+                                           ? _levels[level - 1].count
+                                           : Load32(range.firsts, piece + 1)};
+  }
+
+  void Descend(size_t level, uint32_t piece) {
+    if (level == 0) {
+      _partial.emplace_back(piece);
+      return;
+    }
+    const auto [begin, end] = Children(level, piece);
+    Pieces(level - 1, begin, end,
+           [&](uint32_t child) { Descend(level - 1, child); });
+  }
+
+  template<typename OnPartial>
+  void Pieces(size_t level, uint32_t begin, uint32_t end, OnPartial&& partial) {
     const auto& range = _levels[level];
     for (uint32_t i = begin; i != end; ++i) {
       const bool tail = i + 1 == range.count;
@@ -268,12 +322,7 @@ class PrunedWalk {
         case RangeFit::Partial:
           break;
       }
-      if (level == 0) {
-        _partial.emplace_back(i);
-      } else {
-        Pieces(level - 1, Load32(range.firsts, i),
-               tail ? _levels[level - 1].count : Load32(range.firsts, i + 1));
-      }
+      partial(i);
     }
   }
 
@@ -556,6 +605,17 @@ void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,
 void TermReaderImpl::VisitPruned(const RangePruner& pruner,
                                  RangeVisitor visit) const {
   PrunedWalk{*this, pruner, visit}.Run();
+}
+
+void TermReaderImpl::SplitPruned(const RangePruner& pruner, uint32_t parts,
+                                 PrunedSplit& split, RangeVisitor visit) const {
+  PrunedWalk{*this, pruner, visit}.Split(parts, split);
+}
+
+void TermReaderImpl::VisitSplit(const RangePruner& pruner, uint32_t level,
+                                std::span<const uint32_t> pieces,
+                                RangeVisitor visit) const {
+  PrunedWalk{*this, pruner, visit}.Visit(level, pieces);
 }
 
 }  // namespace irs::term_dict

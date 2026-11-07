@@ -19,8 +19,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/functional/function_ref.h>
 #include <absl/random/random.h>
 
+#include <algorithm>
+#include <atomic>
 #include <iresearch/formats/empty_term_reader.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/detail/sorted_docs.hpp>
@@ -34,6 +37,7 @@
 #include <pcg_random.hpp>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "filter_test_case_base.hpp"
@@ -687,6 +691,148 @@ TEST_P(CurveBoxFilterTestCase, doc_sets_stay_intact_between_uses) {
       for (const auto doc : expected) {
         ASSERT_TRUE(set.Contains(doc));
       }
+    }
+  }
+}
+
+class ThreadTasks final : public irs::PrepareTasks {
+ public:
+  explicit ThreadTasks(uint32_t threads) noexcept : _threads{threads} {}
+
+  uint32_t Threads() const noexcept final { return _threads; }
+
+  void Run(uint32_t count, absl::FunctionRef<void(Next)> worker) final {
+    std::atomic_uint32_t cursor{0};
+    const auto next = [&] { return std::min(cursor.fetch_add(1), count); };
+    std::vector<std::thread> helpers;
+    for (uint32_t i = 1; i < _threads; ++i) {
+      helpers.emplace_back([&] { worker(next); });
+    }
+    worker(next);
+    for (auto& helper : helpers) {
+      helper.join();
+    }
+    ++runs;
+  }
+
+  uint32_t runs = 0;
+
+ private:
+  uint32_t _threads;
+};
+
+class ReversedTasks final : public irs::PrepareTasks {
+ public:
+  uint32_t Threads() const noexcept final { return 3; }
+
+  void Run(uint32_t count, absl::FunctionRef<void(Next)> worker) final {
+    uint32_t left = count;
+    const auto next = [&] { return left == 0 ? count : --left; };
+    worker(next);
+    worker(next);
+    ++runs;
+  }
+
+  uint32_t runs = 0;
+};
+
+void AssertMatches(const irs::QueryBuilder::ptr& query,
+                   std::span<const irs::doc_id_t> expected,
+                   irs::doc_id_t docs_count) {
+  if (expected.empty()) {
+    ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*query));
+    return;
+  }
+  auto set = irs::detail::MakeDocSet(query.get(), docs_count);
+  ASSERT_EQ(expected.size(), set.Count());
+  for (const auto doc : expected) {
+    ASSERT_TRUE(set.Contains(doc));
+  }
+}
+
+TEST_P(CurveBoxFilterTestCase, threads_take_small_walks_too) {
+  pcg64 random{2105};
+  for (const uint32_t docs : {1U, 2U, 63U, 64U, 65U, 1000U, 5000U}) {
+    SCOPED_TRACE(docs);
+    const Options options{.dimensions = 2, .max_level = 10};
+    std::vector<Segment> segments(1);
+    segments[0].resize(docs);
+    for (auto& entry : segments[0]) {
+      entry.point = SmallPoint(random, 2, 1024, 10);
+    }
+    Write(options, segments);
+    auto reader = open_reader();
+    ASSERT_EQ(1, reader.size());
+    const auto& segment = reader[0];
+    const auto docs_count = static_cast<irs::doc_id_t>(segment.docs_count());
+    ThreadTasks threads{4};
+    for (uint32_t sample = 0; sample < 20; ++sample) {
+      SCOPED_TRACE(sample);
+      const auto box = SmallBox(random, 2, 1024, 10);
+      const auto filter = MakeFilter(box, options);
+      const auto expected = Expected(segments, [&](const Entry& entry) {
+        return InCell(entry.point, box, options);
+      });
+      AssertMatches(filter.PrepareSegment(segment, {.tasks = &threads}),
+                    expected, docs_count);
+    }
+  }
+}
+
+TEST_P(CurveBoxFilterTestCase, threads_share_the_walk) {
+  pcg64 random{2104};
+  constexpr uint32_t kDocs = 300000;
+  for (const bool hilbert : {false, true}) {
+    SCOPED_TRACE(hilbert);
+    for (const uint32_t layout : {0U, 1U, 2U}) {
+      SCOPED_TRACE(layout);
+      const Options options{
+        .dimensions = 3, .max_level = 12, .hilbert = hilbert};
+      std::vector<Point> points(layout == 1 ? kDocs / 3 : kDocs);
+      for (auto& point : points) {
+        point = SmallPoint(random, 3, 4096, 12);
+      }
+      std::vector<Segment> segments(1);
+      segments[0].resize(kDocs);
+      for (uint32_t i = 0; i < kDocs; ++i) {
+        const uint32_t block = i / 512;
+        const bool shared =
+          layout == 2 && (block % 10 == 1 ||
+                          (block % 10 == 0 && (i * 2654435761U >> 7) % 4 != 0));
+        segments[0][i].point = points[shared ? block * 512 : i % points.size()];
+      }
+      Write(options, segments);
+      auto reader = open_reader();
+      ASSERT_EQ(1, reader.size());
+      const auto& segment = reader[0];
+      const auto docs_count = static_cast<irs::doc_id_t>(segment.docs_count());
+      ThreadTasks threads{4};
+      ReversedTasks reversed;
+      for (uint32_t sample = 0; sample < 12; ++sample) {
+        SCOPED_TRACE(sample);
+        Box box;
+        for (uint32_t axis = 0; axis < 3; ++axis) {
+          if (sample % 4 == 3 && axis != 0) {
+            box.max[axis] = std::numeric_limits<uint64_t>::max();
+            continue;
+          }
+          const auto low = absl::Uniform(random, 0U, 4096U);
+          const auto width = absl::Uniform(random, 1U, 4096U - low + 1);
+          box.min[axis] = Scaled(low, 12);
+          box.max[axis] = Scaled(low + width, 12) - 1;
+        }
+        const auto filter = MakeFilter(box, options);
+        const auto expected = Expected(segments, [&](const Entry& entry) {
+          return InCell(entry.point, box, options);
+        });
+        AssertMatches(filter.PrepareSegment(segment, {}), expected, docs_count);
+        AssertMatches(filter.PrepareSegment(segment, {.tasks = &threads}),
+                      expected, docs_count);
+        AssertMatches(filter.PrepareSegment(segment, {.tasks = &reversed}),
+                      expected, docs_count);
+      }
+      ASSERT_NE(0, threads.runs);
+      ASSERT_NE(0, reversed.runs);
     }
   }
 }

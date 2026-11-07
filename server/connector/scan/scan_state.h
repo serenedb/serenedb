@@ -29,6 +29,7 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter.hpp>
+#include <exception>
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/hit_batcher.hpp>
@@ -108,21 +109,47 @@ struct OrderedUnits {
   uint32_t next = 0;
 };
 
+class PrepareJob final : public irs::PrepareTasks {
+ public:
+  explicit PrepareJob(std::atomic_uint32_t& state) noexcept : _state{state} {}
+
+  void Hire(uint32_t threads) noexcept { _threads = threads; }
+  uint32_t Threads() const noexcept final { return _threads; }
+  void Run(uint32_t count, absl::FunctionRef<void(Next)> worker) final;
+  void Help();
+
+ private:
+  bool Claim(uint32_t& task, uint32_t& count) noexcept;
+  void Work(uint32_t task, uint32_t count);
+  void Finish() noexcept;
+  void Drain() noexcept;
+
+  std::atomic_uint32_t& _state;
+  std::atomic_uint64_t _cursor{0};
+  std::atomic_uint32_t _left{0};
+  std::atomic_uint32_t _inside{0};
+  std::atomic_flag _failed;
+  std::exception_ptr _error;
+  const absl::FunctionRef<void(Next)>* _worker = nullptr;
+  uint32_t _threads = 1;
+};
+
 struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kUnclaimed = 0;
   static constexpr uint8_t kWhole = 1;
   static constexpr uint8_t kSplit = 2;
 
-  static constexpr uint8_t kUnprepared = 0;
-  static constexpr uint8_t kPreparing = 1;
-  static constexpr uint8_t kReady = 2;
+  static constexpr uint32_t kUnprepared = 0;
+  static constexpr uint32_t kReady = 1;
+  static constexpr uint32_t kPreparing = 2;
 
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
   std::atomic_uint32_t next_rg{0};
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
-  std::atomic_uint8_t prepare{kUnprepared};
+  std::atomic_uint32_t prepare{kUnprepared};
+  PrepareJob job{prepare};
   std::unique_ptr<OrderedUnits> ordered;
 };
 

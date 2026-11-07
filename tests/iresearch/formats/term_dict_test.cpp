@@ -967,14 +967,37 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
 
       const BandPruner pruner{from, to};
       std::vector<irs::doc_id_t> pruned;
+      std::vector<irs::bstring> pruned_keys;
       reader.VisitPruned(
-        pruner, [&](irs::bytes_view, const irs::PostingMeta& meta) {
+        pruner, [&](irs::bytes_view key, const irs::PostingMeta& meta) {
+          pruned_keys.emplace_back(key);
           const auto docs = DocsOf(reader, meta);
           pruned.insert(pruned.end(), docs.begin(), docs.end());
         });
       absl::c_sort(pruned);
       pruned.erase(std::ranges::unique(pruned).begin(), pruned.end());
       ASSERT_EQ(actual, pruned);
+      absl::c_sort(pruned_keys);
+      for (const uint32_t parts : {1U, 5U, 64U, 100000U}) {
+        SCOPED_TRACE(testing::Message("parts ") << parts);
+        std::vector<irs::bstring> split_keys;
+        const auto collect = [&](irs::bytes_view key, const irs::PostingMeta&) {
+          split_keys.emplace_back(key);
+        };
+        irs::PrunedSplit split;
+        reader.SplitPruned(pruner, parts, split, collect);
+        ASSERT_TRUE(split.pieces.empty() || split.level == 0 ||
+                    split.pieces.size() >= parts);
+        const std::span<const uint32_t> pieces{split.pieces};
+        for (size_t end = pieces.size(); end != 0;) {
+          const auto begin = end > 3 ? end - 3 : 0;
+          reader.VisitSplit(pruner, split.level,
+                            pieces.subspan(begin, end - begin), collect);
+          end = begin;
+        }
+        absl::c_sort(split_keys);
+        ASSERT_EQ(pruned_keys, split_keys);
+      }
     }
   }
 

@@ -65,6 +65,7 @@ add_executable(
     connector/pgoutput_test.cpp
     connector/reindex_removes_test.cpp
     connector/row_position_deduplicator_test.cpp
+    connector/scan_prepare_job_test.cpp
     connector/scram_client_test.cpp
     connector/search_row_removal_test.cpp
     connector/subscription_lsn_test.cpp

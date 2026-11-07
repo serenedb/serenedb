@@ -708,13 +708,16 @@ duckdb::unique_ptr<duckdb::CatalogEntry> EntrySet::Trim(
   return trimmed;
 }
 
-void EntrySet::Undo(duckdb::CatalogEntry& version) {
+void EntrySet::Undo(duckdb::CatalogEntry& version, ChangeKind kind) {
   if (version.type == duckdb::CatalogType::SCHEMA_ENTRY) {
     version.Cast<duckdb::SchemaCatalogEntry>()
       .GetSchemaInfo()
       ->versions->Rollback(version);
   }
-  version.Rollback(version.Child());
+  if (kind != ChangeKind::Alter ||
+      !duckdb::CatalogEntry::CreatedObject(version.Child())) {
+    version.Rollback(version.Child());
+  }
   duckdb::unique_ptr<duckdb::CatalogEntry> removed;
   absl::MutexLock lock{&_mutex};
   const auto it = _entries.find(version.name);

@@ -563,7 +563,7 @@ void SessionTransaction::Commit(duckdb::ClientContext& context) {
 
 void SessionTransaction::Rollback() noexcept {
   for (auto it = _changes.rbegin(); it != _changes.rend(); ++it) {
-    it->set->Undo(*it->version);
+    it->set->Undo(*it->version, it->kind);
   }
   _changes.clear();
   _lsn_updates.clear();

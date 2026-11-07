@@ -134,7 +134,8 @@ connection after_second_crash
 statement error
 INSERT INTO rsp_late VALUES (3, 20);
 ----
-db error: ERROR: Duplicate key "v: 20" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "rsp_late_v"
+DETAIL: Key (v)=(20) already exists.
 
 
 connection after_second_crash

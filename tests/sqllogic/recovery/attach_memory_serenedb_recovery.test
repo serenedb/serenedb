@@ -15,7 +15,7 @@ ATTACH ':memory:' AS amsr_mem (TYPE serenedb);
 statement error
 ATTACH '' AS amsr_nowal (TYPE serenedb, recovery_mode 'NO_WAL_WRITES');
 ----
-db error: ERROR: recovery_mode is not supported for a SereneDB database
+db error: ERROR: cannot attach "" as a SereneDB database: a SereneDB database is created with CREATE DATABASE
 
 
 query

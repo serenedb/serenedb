@@ -590,6 +590,11 @@ duckdb::Identifier InvertedIndexEntry::GetTableName() const {
   return relation ? relation->name : _relation_name;
 }
 
+duckdb::optional_ptr<duckdb::CatalogEntry> InvertedIndexEntry::GetRelation(
+  duckdb::CatalogTransaction transaction) const {
+  return catalog.Cast<BaseCatalog>().LookupOid(transaction, table_oid);
+}
+
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) {
   if (info.type != duckdb::AlterType::ALTER_INDEX) {

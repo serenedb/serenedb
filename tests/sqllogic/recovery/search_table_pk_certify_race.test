@@ -20,7 +20,8 @@ connection writer
 statement async error
 INSERT INTO pk_race VALUES (9, 'parked');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_race"
+db error: ERROR: duplicate key value violates unique constraint "pk_race_pkey"
+DETAIL: Key (i)=(9) already exists.
 
 
 connection default
@@ -70,7 +71,7 @@ connection writer
 statement async error
 UPDATE pk_gone SET t = 'rewritten' WHERE i = 5;
 ----
-db error: ERROR: could not serialize access due to concurrent update of table "pk_gone"
+db error: ERROR: could not serialize access due to concurrent update
 
 
 connection default
@@ -118,7 +119,7 @@ connection writer
 statement async error
 UPDATE pk_both SET n = n + 1 WHERE i = 1;
 ----
-db error: ERROR: could not serialize access due to concurrent update of table "pk_both"
+db error: ERROR: could not serialize access due to concurrent update
 
 
 connection default

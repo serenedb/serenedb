@@ -24,10 +24,9 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/detail/score_filter.hpp"
+#include "iresearch/search/detail/two_phase.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/phrase_bound.hpp"
 #include "iresearch/search/top/union_member.hpp"
@@ -36,19 +35,22 @@
 namespace irs::top {
 
 template<typename Slots>
-class PhraseUnionMember : public UnionMember {
+class PhraseUnionMember : public UnionMember,
+                          irs::detail::TwoPhaseBase<Slots, true> {
   static_assert(Slots::kHasFreqBound,
                 "a phrase with no bound cannot join a pruned union");
+  using Base = irs::detail::TwoPhaseBase<Slots, true>;
+  using Base::_slots;
+  using Base::FetchScoreArgs;
 
  public:
   template<typename... Args>
   PhraseUnionMember(const SubReader& segment, const TermReader& field,
                     const irs::detail::ScoreArgs& args, Args&&... slots)
-    : _slots{std::forward<Args>(slots)...},
+    : Base{segment, field, args, std::forward<Args>(slots)...},
       _bound{segment, field, args},
       _fetcher{*args.fetcher} {
-    _provider.freq.value = _freqs;
-    _score = irs::detail::PrepareScore(args, segment, field.meta(), _provider);
+    _func = Base::PrepareScore();
   }
 
   bool Bounded() const noexcept { return _bound.Bounded(); }
@@ -77,7 +79,7 @@ class PhraseUnionMember : public UnionMember {
       uint32_t len = 0;
       do {
         _docs[len] = _doc;
-        _freqs[len] = _freq;
+        FetchScoreArgs(len);
         ++len;
         Settle(_slots.Next(_doc));
       } while (len != kScoreBlock && _doc < max);
@@ -113,7 +115,7 @@ class PhraseUnionMember : public UnionMember {
         continue;
       }
       _docs[hits] = doc;
-      _freqs[hits] = _freq;
+      FetchScoreArgs(hits);
       slots[hits] = i;
       if (++hits == kScoreBlock) {
         flush();
@@ -130,23 +132,18 @@ class PhraseUnionMember : public UnionMember {
     while (!doc_limits::eof(doc) && !_slots.Match(doc)) {
       doc = _slots.Next(doc);
     }
-    _freq = _slots.Freq();
     return _doc = doc;
   }
 
   void ScoreBatch(uint32_t len) {
-    FetchAndScore(_fetcher, _score, _docs, _scores, len);
+    FetchAndScore(_fetcher, _func, _docs, _scores, len);
   }
 
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
   ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
-  ABSL_CACHELINE_ALIGNED uint32_t _freqs[kScoreBlock];
-  Slots _slots;
   PhraseBound _bound;
-  irs::detail::LeafProvider _provider;
-  ScoreFunction _score;
+  ScoreFunction _func;
   ColumnArgsFetcher& _fetcher;
-  uint32_t _freq = 0;
 };
 
 }  // namespace irs::top

@@ -73,7 +73,7 @@ Because operator classes are per-column, a single index can mix full-text, verba
 
 <DocCallout type="tip">
 
-**Field order does not matter.** This is a key difference from a regular composite (ART) index, where column order is significant and only a query constraining a *leading prefix* of the columns can use the index. An inverted index indexes each field independently: the order of fields in `USING inverted (...)` carries no meaning, and a query may constrain **any subset of the indexed fields, in any combination**, and still be served entirely by the index.
+**Field order does not matter.** Unlike a composite B-tree index, where column order is significant and only a query constraining a *leading prefix* of the columns can use the index, an inverted index indexes each field independently: the order of fields in `USING inverted (...)` carries no meaning, and a query may constrain **any subset of the indexed fields, in any combination**, and still be served entirely by the index.
 
 </DocCallout>
 

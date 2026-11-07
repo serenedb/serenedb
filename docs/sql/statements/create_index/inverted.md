@@ -105,7 +105,7 @@ Store an extra column alongside the index with `INCLUDE` so it can be returned w
 ## See also
 
 - [Inverted Index](../../indexes/inverted/index.md) — conceptual guide
-- [CREATE INDEX](./index.md) — the general statement (ART)
+- [CREATE INDEX](./index.md) — the general statement
 - [CREATE TEXT SEARCH DICTIONARY](../create_text_search_dictionary/index.md) — analyzer reference
 - [Full-Text Search Functions](../../functions/search/full-text.md)
 

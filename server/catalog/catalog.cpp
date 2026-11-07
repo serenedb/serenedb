@@ -535,6 +535,11 @@ SereneDBCatalog::BindCreateViewIndex(
   if (view.internal) {
     RefuseSystemCatalog(view);
   }
+  if (stmt.info->Cast<duckdb::CreateIndexInfo>().constraint_type ==
+      duckdb::IndexConstraintType::UNIQUE) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("unique indexes on views are not supported"));
+  }
   BindIndexDefinition(binder, stmt, view);
   return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));
 }

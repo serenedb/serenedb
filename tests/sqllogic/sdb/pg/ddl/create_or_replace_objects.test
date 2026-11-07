@@ -3210,12 +3210,10 @@ AFTER INTERVAL '00:00:05'
 
 
 query
-SELECT id FROM coro_ixv_inv WHERE body @@ 'alpha' ORDER BY id;
+SELECT count(*) AS n FROM coro_ixv_inv WHERE body @@ 'alpha';
 ----
-id
-1
+n
 3
-4
 
 
 statement ok

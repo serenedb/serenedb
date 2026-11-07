@@ -251,14 +251,3 @@ Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `DR
 Every row written is checked against the `NOT NULL` and `CHECK` constraints. `SET NOT NULL` and adding a `CHECK` constraint fail if a row of the table violates the new constraint.
 
 `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `SET NOT NULL`, adding a `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint and dropping a `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint wait for the transactions that wrote to the table before them to end. They are refused in a transaction that has already written to the table. While such an `ALTER TABLE` is uncommitted, and in transactions whose snapshot predates its commit, `INSERT` and `UPDATE` of the table fail with `search table "<name>" was altered by a concurrent transaction`; retry the transaction. An `ALTER TABLE` holds the table until its transaction ends, like a change of its indexes; see [Concurrent changes](../create_index/inverted.md#concurrent-changes).
-
-## Limitations
-
-`ALTER COLUMN` fails if values of conflicting types have occurred in the table at any point, even if they have been deleted:
-
-<SqlLogicTest id="sql/statements/alter_table/type_conflict/example_032" />
-
-Currently, this is expected behavior.
-As a workaround, you can create a copy of the table:
-
-<SqlLogicTest id="sql/statements/alter_table/copy_workaround/example_033" />

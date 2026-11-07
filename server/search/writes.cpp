@@ -336,6 +336,25 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
 
 }  // namespace
 
+bool Writes::HasWritesFor(duckdb::idx_t store_id) {
+  absl::MutexLock lock{&_mutex};
+  const auto it = _writes.find(store_id);
+  if (it == _writes.end()) {
+    return false;
+  }
+  {
+    const auto& w = it->second;
+    absl::MutexLock entry{&w.mutex};
+    if (!w.changes.Empty() || !w.own_segments.empty() ||
+        !w.transactions.empty() || w.hot || !w.log.empty() ||
+        w.truncate_claim || w.dropping || w.prepared || w.removed_rows) {
+      return true;
+    }
+  }
+  _writes.erase(it);
+  return false;
+}
+
 StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
   absl::MutexLock lock{&_mutex};
   auto& w = _writes[store->GetId()];

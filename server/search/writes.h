@@ -123,10 +123,7 @@ class Writes {
   // refuses to run in such a transaction: the rebuild would wait for writers
   // that predate its config swap, and this one cannot finish until the
   // statement it is running does.
-  bool HasWritesFor(duckdb::idx_t store_id) const noexcept {
-    absl::ReaderMutexLock lock{&_mutex};
-    return _writes.contains(store_id);
-  }
+  bool HasWritesFor(duckdb::idx_t store_id);
 
   void AddOwnSegments(
     const std::shared_ptr<Store>& store,

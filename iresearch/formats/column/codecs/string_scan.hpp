@@ -44,6 +44,7 @@
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text {
 
@@ -91,6 +92,56 @@ inline uint32_t FrameOfEntry(duckdb::const_data_ptr_t table, uint32_t hi,
   }
   return lo;
 }
+
+class ChainGroups {
+ public:
+  template<typename Entries>
+  void Reset(uint32_t frame_count, Entries entries) {
+    _base.resize(frame_count + 1);
+    uint32_t groups = 0;
+    for (uint32_t f = 0; f < frame_count; ++f) {
+      const auto [first, end] = entries(f);
+      SDB_ENSURE(end > first, "col codec: corrupted frame table");
+      _base[f] = groups;
+      groups += (end - first + kChainRestart - 1) / kChainRestart;
+    }
+    _base[frame_count] = groups;
+    _offsets.resize(groups);
+    _known.assign(frame_count, 0);
+  }
+
+  void Clear() noexcept { _base.clear(); }
+  bool Empty() const noexcept { return _base.empty(); }
+  uint32_t Count() const noexcept { return _base.back(); }
+  uint32_t Base(uint32_t f) const noexcept { return _base[f]; }
+  uint32_t Groups(uint32_t f) const noexcept { return _base[f + 1] - _base[f]; }
+
+  uint64_t Offset(PackedReader& lengths, const FrameMeta& m, uint32_t f,
+                  uint32_t g) {
+    auto* offsets = _offsets.data() + _base[f];
+    auto& known = _known[f];
+    if (known == 0) {
+      offsets[0] = m.comp_off;
+      known = 1;
+    }
+    const uint64_t end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
+    for (; known <= g; ++known) {
+      const auto from = m.first_entry + (known - 1) * kChainRestart;
+      uint64_t offset = offsets[known - 1];
+      for (uint32_t e = from; e < from + kChainRestart; ++e) {
+        offset += lengths.At(e);
+      }
+      SDB_ENSURE(offset <= end, "col codec: corrupted front coding");
+      offsets[known] = offset;
+    }
+    return offsets[g];
+  }
+
+ private:
+  std::vector<uint32_t> _base;
+  std::vector<uint32_t> _known;
+  std::vector<uint64_t> _offsets;
+};
 
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   const ReadContext::CacheSlot& slot);

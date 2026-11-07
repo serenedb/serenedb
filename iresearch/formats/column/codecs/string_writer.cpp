@@ -34,6 +34,7 @@
 
 #include "iresearch/formats/column/codecs/blob_encoder.tpp"
 #include "iresearch/formats/column/codecs/fsst_chain_encoder.hpp"
+#include "iresearch/formats/column/codecs/fsst_plus_encoder.hpp"
 #include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/segment_builder.hpp"

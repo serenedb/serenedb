@@ -3,6 +3,8 @@ target_sources(
     PRIVATE
         column/codecs/fsst.cpp
         column/codecs/fsst_chain_encoder.cpp
+        column/codecs/fsst_plus.cpp
+        column/codecs/fsst_plus_encoder.cpp
         column/codecs/lz4.cpp
         column/codecs/numeric.cpp
         column/codecs/registry.cpp

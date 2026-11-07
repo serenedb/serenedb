@@ -130,41 +130,6 @@ encoded bytes:
 Sections start at 8-byte boundaries.
 */
 
-/*
-FSST+ segments (fsst_plus, dict_fsst_plus) keep the layout above, with entries
-grouped instead of front-coded: a group of neighbouring entries stores the
-FSST codes they share once, and each entry stores the rest of its codes.
-+------------------------------------------------------+
-|                    Entry lengths                     |
-|   +----------------------------------------------+   |
-|   |   bitpacked encoded length[entry_count]      |   |
-|   +----------------------------------------------+   |
-|   length of each entry's codes after its group's     |
-|   shared codes                                       |
-+------------------------------------------------------+
-|                    Entry groups                      |
-|   +----------------------------------------------+   |
-|   |   bitpacked group[entry_count]               |   |
-|   +----------------------------------------------+   |
-|   1-based group of each entry, 0 for none            |
-+------------------------------------------------------+
-|                     Symbol table                     |
-|   +----------------------------------------------+   |
-|   |   FSST symbol table, dictionary_size bytes   |   |
-|   |   uint32 group_count                         |   |
-|   |   uint32 shared_end[group_count]             |   |
-|   |   shared codes of every group                |   |
-|   +----------------------------------------------+   |
-|   group g's shared codes end at shared_end[g - 1]    |
-+------------------------------------------------------+
-|                         Data                         |
-|   +----------------------------------------------+   |
-|   |   each entry's codes after its group's       |   |
-|   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
-+------------------------------------------------------+
-*/
-
 namespace irs::codecs {
 
 const duckdb::CompressionFunction& FsstFunction() {
@@ -178,20 +143,6 @@ const duckdb::CompressionFunction& DictFsstFunction() {
   static const auto kFunction =
     text::StringFunction<text::DictionaryScan<text::FsstLeaf>>(
       duckdb::CompressionType::COMPRESSION_COL_DICT_FSST);
-  return kFunction;
-}
-
-const duckdb::CompressionFunction& FsstPlusFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::FsstPlusLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS);
-  return kFunction;
-}
-
-const duckdb::CompressionFunction& DictFsstPlusFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::FsstPlusLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS);
   return kFunction;
 }
 

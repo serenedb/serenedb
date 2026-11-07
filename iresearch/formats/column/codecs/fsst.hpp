@@ -32,6 +32,8 @@
 
 namespace irs::codecs {
 
+inline constexpr size_t kFsstMaxExpansion = 8;
+
 struct FsstFree {
   void operator()(duckdb_fsst_encoder_t* encoder) const noexcept {
     duckdb_fsst_destroy(encoder);

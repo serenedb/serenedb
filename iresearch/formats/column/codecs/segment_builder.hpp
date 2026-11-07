@@ -298,4 +298,10 @@ class SegmentBuilder {
   std::vector<uint32_t> _lengths;
 };
 
+uint64_t EstimateEntries(const SegmentBuilder& rows,
+                         const RatioHistory& hist) noexcept;
+
+void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
+                 uint32_t target) noexcept;
+
 }  // namespace irs::codecs::text

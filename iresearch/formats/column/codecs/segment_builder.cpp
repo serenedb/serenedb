@@ -38,6 +38,9 @@ namespace {
 using duckdb::BitpackingPrimitives;
 using duckdb::string_t;
 
+constexpr double kEntriesFirstRatio = 0.5;
+constexpr double kMispredicted = 2.0;
+
 uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
   char buf[8] = {};
   if (sv.size() > skip) {
@@ -177,6 +180,30 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
   _max_len = 0;
   _nulls = 0;
   _input = 0;
+}
+
+uint64_t EstimateEntries(const SegmentBuilder& rows,
+                         const RatioHistory& hist) noexcept {
+  return Packed(rows.EntryCount(), rows.MaxLen()) +
+         (rows.Raw() / kFsstFrameRawBytes + 1) * kFrameMetaSize +
+         static_cast<uint64_t>(static_cast<double>(rows.Raw()) *
+                               Ratio(hist, kEntriesFirstRatio));
+}
+
+void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
+                 uint32_t target) noexcept {
+  if (hist.raw != 0 && raw != 0 && comp * kDriftMinFraction >= target) {
+    const auto predicted = static_cast<double>(raw) *
+                           static_cast<double>(hist.comp) /
+                           static_cast<double>(hist.raw);
+    const auto actual = static_cast<double>(comp);
+    if (actual > predicted * kMispredicted ||
+        actual * kMispredicted < predicted) {
+      hist = {};
+    }
+  }
+  hist.raw += raw;
+  hist.comp += comp;
 }
 
 }  // namespace irs::codecs::text

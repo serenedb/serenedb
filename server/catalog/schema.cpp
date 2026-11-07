@@ -59,6 +59,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <ranges>
+#include <span>
 #include <vector>
 
 #include "catalog/base_catalog.h"
@@ -115,6 +116,23 @@ void AlterAllInSchema(Schema& schema, duckdb::CatalogTransaction transaction,
         : entry.get().type;
     info.SetQualifiedName(schema.GetQualifiedName(entry.get().name));
     schema.Alter(transaction, info);
+  }
+}
+
+void ReownSequences(duckdb::CatalogTransaction transaction,
+                    duckdb::CatalogEntry& table,
+                    const duckdb::AlterPermissionsInfo& info) {
+  for (auto& owned : OwnedEntries(transaction, table)) {
+    auto& sequence = owned.get();
+    if (sequence.type != duckdb::CatalogType::SEQUENCE_ENTRY) {
+      continue;
+    }
+    auto& schema = sequence.ParentSchema(transaction).Cast<Schema>();
+    duckdb::AlterPermissionsInfo reown{duckdb::CatalogType::SEQUENCE_ENTRY,
+                                       schema.GetQualifiedName(sequence.name)};
+    reown.new_owner = info.new_owner;
+    reown.new_owner_id = info.new_owner_id;
+    schema.Alter(transaction, reown);
   }
 }
 
@@ -846,6 +864,12 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
     FollowColumnOids(transaction, entry->Cast<duckdb::TableCatalogEntry>(),
                      result->Cast<duckdb::TableCatalogEntry>());
   }
+  if (!replay && result && result->type == duckdb::CatalogType::TABLE_ENTRY &&
+      info.type == duckdb::AlterType::ALTER_PERMISSIONS &&
+      !info.Cast<duckdb::AlterPermissionsInfo>().new_owner.empty()) {
+    ReownSequences(transaction, *result,
+                   info.Cast<duckdb::AlterPermissionsInfo>());
+  }
   if (result && info.type == duckdb::AlterType::CHANGE_OWNERSHIP) {
     auto& owned = result->Cast<duckdb::StandardEntry>();
     auto& oids = catalog.Cast<BaseCatalog>().Oids();
@@ -962,24 +986,17 @@ void Schema::Own(duckdb::CatalogTransaction transaction,
   }
   const auto& column = owner.back();
   const auto& table_name = owner[owner.size() - 2];
-  if (owner.size() > 2) {
-    const auto owner_table =
-      duckdb::QualifiedName::FromPath({owner.begin(), owner.end() - 1});
-    const auto& owner_catalog = owner_table.Catalog();
-    const duckdb::vector<duckdb::Identifier> path{
-      owner.begin() + (owner_catalog.empty() ? 0 : 1), owner.end() - 2};
-    const auto schema =
-      owner_catalog.empty() ||
-          duckdb::IdentifierEquality{catalog.IsCaseSensitive()}(
-            owner_catalog, catalog.GetName())
-        ? catalog.GetSchema(transaction, path,
-                            duckdb::OnEntryNotFound::RETURN_NULL)
-        : nullptr;
-    if (!schema || schema->oid != oid) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-        ERR_MSG("sequence must be in same schema as table it is linked to"));
-    }
+  const auto schema_path = owned.ParentSchemaPath(transaction);
+  const auto qualification = std::span{owner}.first(owner.size() - 2);
+  const duckdb::IdentifierEquality equals{catalog.IsCaseSensitive()};
+  const bool with_catalog = qualification.size() > schema_path.size() &&
+                            equals(qualification.front(), catalog.GetName());
+  if (!qualification.empty() &&
+      !absl::c_equal(with_catalog ? qualification.subspan(1) : qualification,
+                     schema_path, equals)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("sequence must be in same schema as table it is linked to"));
   }
   auto table =
     Set(duckdb::CatalogType::TABLE_ENTRY).Get(transaction, table_name);

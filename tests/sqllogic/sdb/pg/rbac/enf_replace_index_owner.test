@@ -87,7 +87,7 @@ query
 SELECT tablename, indexdef FROM pg_indexes WHERE indexname = 'rio_i';
 ----
 tablename	indexdef
-rio_t	CREATE INDEX rio_i ON public.rio_t USING secondary (x)
+rio_t	CREATE INDEX rio_i ON public.rio_t USING inverted (x)
 
 
 statement ok
@@ -110,7 +110,7 @@ query
 SELECT tablename, indexdef FROM pg_indexes WHERE indexname = 'rio_i';
 ----
 tablename	indexdef
-rio_u	CREATE INDEX rio_i ON public.rio_u USING secondary (y)
+rio_u	CREATE INDEX rio_i ON public.rio_u USING inverted (y)
 
 
 statement ok

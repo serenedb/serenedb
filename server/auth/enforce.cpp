@@ -1519,6 +1519,23 @@ class Enforcer {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                       ERR_MSG("cannot drop the currently open database"));
     }
+    if (catalog::IsSereneDB(database.GetCatalog())) {
+      auto& catalog = database.GetCatalog().Cast<catalog::SereneDBCatalog>();
+      size_t subscriptions = 0;
+      catalog.Set(CatalogType::SUBSCRIPTION_ENTRY)
+        .Scan(catalog.GetCatalogTransaction(_context),
+              [&](duckdb::CatalogEntry&) { ++subscriptions; });
+      if (subscriptions != 0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_OBJECT_IN_USE),
+          ERR_MSG("database \"", database.GetName().GetIdentifierName(),
+                  "\" is being used by logical replication subscription"),
+          ERR_DETAIL(
+            subscriptions == 1
+              ? std::string{"There is 1 subscription."}
+              : absl::StrCat("There are ", subscriptions, " subscriptions.")));
+      }
+    }
     const auto others = pg::ProgressRegistry::Instance().OtherSessions(
       static_cast<int64_t>(database.oid), _connection.GetBackendPid(),
       absl::Seconds(5));

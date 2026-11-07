@@ -182,7 +182,7 @@ int RunServer(int argc, char** argv) {
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
-    catalog::InitCatalog();
+    catalog::InitCatalog(true);
     network.StartIoPool();
     up_network = true;
     // Timers can be armed now. InitCatalog above already scheduled a drop per
@@ -230,16 +230,19 @@ struct ShellServices {
 };
 
 std::optional<ShellServices> gShellServices;
+duckdb_shell::ShellSubcommand gShellSubcommand =
+  duckdb_shell::ShellSubcommand::SHELL;
 
 duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
   const std::string& path) {
   auto& engine = irs::DuckDBEngine::Instance();
+  const bool client = gShellSubcommand == duckdb_shell::ShellSubcommand::PSQL;
   if (!gShellServices) {
     engine.Initialize(&server::query::ConfigureShellDBConfig);
     server::query::RegisterServerExtensions(engine.instance());
     auto& services = gShellServices.emplace();
     services.background.start();
-    catalog::InitCatalog();
+    catalog::InitCatalog(!client);
     services.network.StartIoPool();
     services.background.OpenDelays();
     services.search.start();
@@ -248,8 +251,10 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
   auto& db = engine.instance();
   auto& manager = duckdb::DatabaseManager::Get(db);
   if (path.empty() || path == IN_MEMORY_PATH) {
-    manager.SetDefaultDatabase(
-      duckdb::Identifier{irs::StaticStrings::kDefaultDatabase});
+    if (!client) {
+      manager.SetDefaultDatabase(
+        duckdb::Identifier{irs::StaticStrings::kDefaultDatabase});
+    }
     return db.shared_from_this();
   }
   auto conn = engine.CreateConnection();
@@ -288,6 +293,7 @@ void CloseShellEngine() {
 int RunSubcommand(int argc, char* argv[],
                   duckdb_shell::ShellSubcommand subcommand) {
   argv[1] = argv[0];
+  gShellSubcommand = subcommand;
   docs::RegisterShellDocsBackend();
   absl::Cleanup close = &CloseShellEngine;
   return duckdb_shell::Run(argc - 1, argv + 1, subcommand,

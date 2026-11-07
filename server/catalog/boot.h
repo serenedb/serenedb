@@ -71,6 +71,6 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
 std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
   const std::filesystem::path& directory);
 
-void InitCatalog();
+void InitCatalog(bool default_database);
 
 }  // namespace sdb::catalog

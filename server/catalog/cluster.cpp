@@ -298,7 +298,8 @@ EntrySet& ClusterCatalog::Set(duckdb::CatalogType type) {
 
 void ClusterCatalog::OnCommit() { auth::PublishRoles(*this); }
 
-void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
+void ClusterCatalog::Bootstrap(duckdb::ClientContext& context,
+                               bool default_database) {
   const auto transaction = GetCatalogTransaction(context);
   const duckdb::Identifier root{kRootRole};
   if (!_roles.Get(transaction, root)) {
@@ -320,7 +321,7 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
                   duckdb::make_uniq<RoleCatalogEntry>(*this, info));
   }
   const duckdb::Identifier postgres{irs::StaticStrings::kDefaultDatabase};
-  if (!_databases.Get(transaction, postgres)) {
+  if (default_database && !_databases.Get(transaction, postgres)) {
     duckdb::CreateDatabaseInfo info;
     info.SetName(postgres);
     info.oid = pg::kPgPostgresDatabase;

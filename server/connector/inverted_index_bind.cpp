@@ -1112,7 +1112,7 @@ PkColumnKind ResolvePkColumn(
   const duckdb::case_insensitive_map_t<duckdb::Value>& with, bool table_backed,
   bool has_pk, bool single_key, bool file_row) {
   std::string store_pk = "auto";
-  if (auto* v = catalog::FindOption(with, "store_pk")) {
+  if (auto* v = catalog::FindOption(with, catalog::kStorePkOption)) {
     store_pk = duckdb::StringUtil::Lower(
       v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>());
     if (store_pk == "true") {

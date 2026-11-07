@@ -204,8 +204,12 @@ relname
 ixrb_rank_idx
 
 
-statement ok
+statement error
 INSERT INTO ixrb_t VALUES (7, 50, 'golf');
+----
+db error: ERROR: duplicate key value violates unique constraint "ixrb_rank_idx"
+DETAIL: Key (rank)=(50) already exists.
+
 
 statement ok
 DROP TABLE ixrb_t;

@@ -126,6 +126,9 @@ struct ExpressionKeys {
 using InvertedIndexFields =
   irs::containers::NodeHashMap<irs::field_id, InvertedIndexField>;
 
+inline constexpr std::string_view kKeyColumnsOption = "key_columns";
+inline constexpr std::string_view kStorePkOption = "store_pk";
+
 inline constexpr auto kInvertedIndexSettings = std::to_array({
   kRowGroupSizeSetting,
   kReindexIntervalSetting,

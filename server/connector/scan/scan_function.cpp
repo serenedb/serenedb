@@ -650,11 +650,19 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
   return result;
 }
 
-void ScanSerialize(duckdb::Serializer&,
-                   const duckdb::optional_ptr<duckdb::FunctionData>,
+void ScanSerialize(duckdb::Serializer& serializer,
+                   const duckdb::optional_ptr<duckdb::FunctionData> bind_data,
                    const duckdb::BoundTableFunction&) {
-  throw duckdb::NotImplementedException(
-    "iresearch_scan serialization not implemented");
+  const auto& bind = bind_data->Cast<ScanBindData>();
+  serializer.WriteProperty(100, "relation", std::string{bind.RelationName()});
+  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> summary;
+  bind.AppendSummary(summary);
+  duckdb::vector<std::string> entries;
+  entries.reserve(summary.size());
+  for (const auto& [key, value] : summary) {
+    entries.push_back(absl::StrCat(key, ": ", value.ToString()));
+  }
+  serializer.WriteProperty(101, "summary", entries);
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> ScanDeserialize(
@@ -695,7 +703,6 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.statistics_extended = &IResearchScanStatistics;
   func.serialize = ScanSerialize;
   func.deserialize = ScanDeserialize;
-  func.verify_serialization = false;
   func.projection_pushdown = true;
   func.filter_pushdown = true;
   func.filter_prune = true;

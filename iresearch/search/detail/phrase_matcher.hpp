@@ -61,10 +61,10 @@ using FixedTermPosition = std::pair<FixedTermPositionImpl<Offs>*, TermInterval>;
 template<typename T>
 struct TermPositionTraits;
 
-template<bool Offs>
-struct TermPositionTraits<FixedTermPosition<Offs>> {
-  using T = FixedTermPosition<Offs>;
-  using PositionImpl = FixedTermPositionImpl<Offs>;
+template<typename Pos>
+struct TermPositionTraits<std::pair<Pos*, TermInterval>> {
+  using T = std::pair<Pos*, TermInterval>;
+  using PositionImpl = Pos;
 
   static PosAttr::value_t Position(T& pos) noexcept {
     return pos.first->value();
@@ -77,10 +77,19 @@ struct TermPositionTraits<FixedTermPosition<Offs>> {
   static void ResetPos(const T& pos) { pos.first->reset(); }
 
   static const OffsAttr& Offsets(const T& pos) noexcept {
-    static_assert(Offs);
-    const auto* offs = irs::get<OffsAttr>(*pos.first);
-    SDB_ASSERT(offs);
-    return *offs;
+    if constexpr (requires(const Pos& p) { p.Offsets(); }) {
+      return pos.first->Offsets();
+    } else {
+      const auto* offs = irs::get<OffsAttr>(*pos.first);
+      SDB_ASSERT(offs);
+      return *offs;
+    }
+  }
+
+  static score_t Boost(const T& pos) noexcept
+    requires requires(const Pos& p) { p.Boost(); }
+  {
+    return pos.first->Boost();
   }
 };
 

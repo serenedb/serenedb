@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/codecs/onpair.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
 
 #include <algorithm>
 #include <bit>
@@ -32,6 +33,7 @@
 #include "iresearch/formats/column/codecs/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -117,14 +119,14 @@ bool OnPairTable::Open(std::string_view side) {
     return false;
   }
   const auto bytes = rest.substr(nibbles);
-  _starts.resize(count + 1);
+  _tokens.resize(count);
   uint32_t at = 0;
   for (uint32_t t = 0; t < count; ++t) {
     const auto packed = static_cast<uint8_t>(rest[t / 2]) >> (4 * (t % 2));
-    _starts[t] = at;
-    at += (packed & 0xF) + 1;
+    const uint32_t len = (packed & 0xF) + 1;
+    _tokens[t] = at | (len << 24);
+    at += len;
   }
-  _starts[count] = at;
   if (at != bytes.size()) {
     return false;
   }
@@ -135,27 +137,9 @@ bool OnPairTable::Open(std::string_view side) {
   return true;
 }
 
-uint64_t OnPairTable::Decode(const uint8_t* stream, uint64_t first,
-                             uint64_t count, char* out,
-                             uint64_t capacity) const {
-  uint64_t off = 0;
-  for (uint64_t i = first; i < first + count; ++i) {
-    const auto bit = i * _bits;
-    uint32_t word = 0;
-    std::memcpy(&word, stream + bit / 8, 3);
-    const auto code = (word >> (bit % 8)) & _mask;
-    SDB_ENSURE(code < _count, "col codec: corrupted entry");
-    const auto from = _starts[code];
-    const auto len = _starts[code + 1] - from;
-    SDB_ENSURE(off + len <= capacity, "col codec: corrupted entry");
-    if (off + kOnPairMaxToken <= capacity) {
-      std::memcpy(out + off, _bytes.data() + from, kOnPairMaxToken);
-    } else {
-      std::memcpy(out + off, _bytes.data() + from, len);
-    }
-    off += len;
-  }
-  return off;
+void OnPairTable::Corrupted() {
+  SDB_ENSURE(false, "col codec: corrupted entry");
+  SDB_UNREACHABLE();
 }
 
 OnPairCodec::OnPairCodec()
@@ -277,6 +261,65 @@ void OnPairCodec::Finalize() {
   _pairs.clear();
   _bits =
     static_cast<uint8_t>(std::max<int>(1, std::bit_width(_tokens.size() - 1)));
+  const auto n = static_cast<uint32_t>(_tokens.size());
+  _keys.resize(n);
+  _firsts.assign(65537, 0);
+  for (uint32_t t = 0; t < n; ++t) {
+    _keys[t] = KeyOf(_tokens[t]);
+    ++_firsts[static_cast<uint32_t>(_keys[t] >> 112) + 1];
+  }
+  for (uint32_t p = 1; p < _firsts.size(); ++p) {
+    _firsts[p] += _firsts[p - 1];
+  }
+  _chains.resize(n);
+  _stack.clear();
+  for (uint32_t t = 0; t < n; ++t) {
+    const std::string_view token = _tokens[t];
+    while (!_stack.empty() && !token.starts_with(_tokens[_stack.back()])) {
+      _stack.pop_back();
+    }
+    _stack.push_back(t);
+    auto& chain = _chains[t];
+    chain.lens = 0;
+    for (const auto s : _stack) {
+      const auto len = _tokens[s].size();
+      chain.lens |= static_cast<uint16_t>(1u << (len - 1));
+      for (auto l = len; l <= kOnPairMaxToken; ++l) {
+        chain.ids[l - 1] = static_cast<uint16_t>(s);
+      }
+    }
+  }
+}
+
+OnPairCodec::Key OnPairCodec::KeyOf(std::string_view bytes) noexcept {
+  if (bytes.size() >= kOnPairMaxToken) {
+    return (Key{absl::big_endian::Load64(bytes.data())} << 64) |
+           absl::big_endian::Load64(bytes.data() + 8);
+  }
+  char buf[kOnPairMaxToken] = {};
+  std::memcpy(buf, bytes.data(), bytes.size());
+  return (Key{absl::big_endian::Load64(buf)} << 64) |
+         absl::big_endian::Load64(buf + 8);
+}
+
+OnPairCodec::Match OnPairCodec::Sorted(std::string_view rest) const {
+  const auto key = KeyOf(rest);
+  const auto prefix = static_cast<uint32_t>(key >> 112);
+  uint32_t lo = _firsts[prefix] == 0 ? 0 : _firsts[prefix] - 1;
+  uint32_t n = _firsts[prefix + 1] - lo;
+  while (n > 1) {
+    const auto half = n / 2;
+    lo = _keys[lo + half] <= key ? lo + half : lo;
+    n -= half;
+  }
+  const auto diff = _keys[lo] ^ key;
+  const auto common = diff == 0
+                        ? kOnPairMaxToken
+                        : static_cast<size_t>(std::countl_zero(diff) / 8);
+  const auto& chain = _chains[lo];
+  const auto fits = chain.lens & ((1u << std::min(common, rest.size())) - 1);
+  const auto len = static_cast<uint32_t>(std::bit_width(fits));
+  return {chain.ids[len - 1], len};
 }
 
 void OnPairCodec::Encode(std::string_view entry,
@@ -284,7 +327,7 @@ void OnPairCodec::Encode(std::string_view entry,
   size_t pos = 0;
   while (pos < entry.size()) {
     const auto m =
-      Longest(entry.substr(pos, std::min<size_t>(entry.size() - pos, 16)));
+      Sorted(entry.substr(pos, std::min<size_t>(entry.size() - pos, 16)));
     codes.push_back(static_cast<uint16_t>(m.id));
     pos += m.len;
   }

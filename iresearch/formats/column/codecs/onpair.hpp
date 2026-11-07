@@ -49,11 +49,49 @@ class OnPairTable {
   }
 
   uint64_t Decode(const uint8_t* stream, uint64_t first, uint64_t count,
-                  char* out, uint64_t capacity) const;
+                  char* out, uint64_t capacity) const {
+    if (count * kOnPairMaxToken <= capacity) {
+      return Copy<false>(stream, first, count, out, capacity);
+    }
+    return Copy<true>(stream, first, count, out, capacity);
+  }
 
  private:
+  template<bool kTail>
+  uint64_t Copy(const uint8_t* stream, uint64_t first, uint64_t count,
+                char* out, uint64_t capacity) const {
+    uint64_t off = 0;
+    for (uint64_t i = first; i < first + count; ++i) {
+      const auto bit = i * _bits;
+      uint32_t word = 0;
+      std::memcpy(&word, stream + bit / 8, 3);
+      const auto code = (word >> (bit % 8)) & _mask;
+      if (code >= _count) [[unlikely]] {
+        Corrupted();
+      }
+      const auto token = _tokens[code];
+      const auto len = token >> 24;
+      const auto* from = _bytes.data() + (token & 0xFFFFFF);
+      if constexpr (kTail) {
+        if (off + len > capacity) [[unlikely]] {
+          Corrupted();
+        }
+        if (off + kOnPairMaxToken > capacity) {
+          std::memcpy(out + off, from, len);
+          off += len;
+          continue;
+        }
+      }
+      std::memcpy(out + off, from, kOnPairMaxToken);
+      off += len;
+    }
+    return off;
+  }
+
+  [[noreturn]] static void Corrupted();
+
   std::string _bytes;
-  std::vector<uint32_t> _starts;
+  std::vector<uint32_t> _tokens;
   uint32_t _count = 0;
   uint32_t _mask = 0;
   uint8_t _bits = 0;
@@ -77,9 +115,19 @@ class OnPairCodec {
     uint32_t len;
   };
 
+  struct Chain {
+    uint16_t lens;
+    uint16_t ids[kOnPairMaxToken];
+  };
+
+  using Key = unsigned __int128;
+
+  static Key KeyOf(std::string_view bytes) noexcept;
+
   void Reset();
   uint32_t Insert(std::string_view token);
   Match Longest(std::string_view rest) const;
+  Match Sorted(std::string_view rest) const;
   void Finalize();
 
   absl::flat_hash_map<std::string, uint32_t> _ids;
@@ -87,6 +135,10 @@ class OnPairCodec {
   std::vector<std::string> _tokens;
   std::vector<uint32_t> _order;
   absl::flat_hash_map<uint32_t, uint8_t> _pairs;
+  std::vector<Key> _keys;
+  std::vector<uint32_t> _firsts;
+  std::vector<Chain> _chains;
+  std::vector<uint32_t> _stack;
   uint8_t _bits = 8;
 };
 

@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
@@ -44,7 +45,8 @@ class Walk : public Root {
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     scores_size_t batch = 0;
 
-    for (auto doc = Seek(min, max); doc < max; doc = Next(max)) {
+    for (auto doc = lead::SeekBelow(_node, min, max); doc < max;
+         doc = lead::NextBelow(_node, max)) {
       _docs[batch] = doc;
       _node.FetchScoreArgs(batch);
       if (++batch == kScoreBlock) {
@@ -62,22 +64,6 @@ class Walk : public Root {
   }
 
  private:
-  IRS_FORCE_INLINE doc_id_t Seek(doc_id_t min, doc_id_t max) {
-    if constexpr (requires { _node.Seek(min, max); }) {
-      return _node.Seek(min, max);
-    } else {
-      return _node.Seek(min);
-    }
-  }
-
-  IRS_FORCE_INLINE doc_id_t Next(doc_id_t max) {
-    if constexpr (requires { _node.Next(max); }) {
-      return _node.Next(max);
-    } else {
-      return _node.Next();
-    }
-  }
-
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
   ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
   ColumnArgsFetcher& _fetcher;

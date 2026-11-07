@@ -44,26 +44,29 @@ class Walk : public Root {
     : _node{std::forward<Args>(args)...}, _table{table} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
+    if constexpr (!kTable && requires { _node.Count(min, max); }) {
+      return _node.Count(min, max);
+    }
     uint64_t total = 0;
-    auto doc = _node.Seek(min);
+    auto doc = lead::SeekBelow(_node, min, max);
     if constexpr (kTable) {
       while (doc < max) {
         const auto live = _table.Live(doc);
         if (live != doc) {
-          doc = _node.Seek(live);
+          doc = lead::SeekBelow(_node, live, max);
           continue;
         }
         uint32_t n = 0;
         do {
           _docs[n++] = doc;
-          doc = _node.Next();
+          doc = lead::NextBelow(_node, max);
         } while (n != kRun && doc < max);
         total += _table.Run(_docs.data(), nullptr, n);
       }
     } else {
       while (doc < max) {
         ++total;
-        doc = _node.Next();
+        doc = lead::NextBelow(_node, max);
       }
     }
     return total;

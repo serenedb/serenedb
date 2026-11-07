@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -69,13 +70,41 @@ class BooleanSparse {
   BooleanSparse(BooleanSparse&&) = delete;
   BooleanSparse& operator=(BooleanSparse&&) = delete;
 
-  doc_id_t Next() { return Converge(_lead.Next()); }
+  IRS_FORCE_INLINE doc_id_t Next(doc_id_t max = doc_limits::eof()) {
+    return Converge(_lead.Next(), max);
+  }
 
-  doc_id_t Seek(doc_id_t target) {
+  IRS_FORCE_INLINE doc_id_t Seek(doc_id_t target,
+                                 doc_id_t max = doc_limits::eof()) {
     if (target <= _doc) {
       return _doc;
     }
-    return Converge(_lead.Seek(target));
+    return Converge(_lead.Seek(target), max);
+  }
+
+  uint64_t Count(doc_id_t min, doc_id_t max)
+    requires(!kProbes && !kOptional &&
+             requires(Lead& lead) {
+               lead.Leaf();
+               lead.NextLeaf();
+             })
+  {
+    uint64_t total = 0;
+    for (auto doc = _lead.Seek(min); doc < max;) {
+      const auto leaf = _lead.Leaf();
+      if (leaf.back() < max) {
+        const auto len = static_cast<uint32_t>(leaf.size());
+        total += len - detail::CountExcluded(_excludes, leaf.data(), len);
+        doc = _lead.NextLeaf();
+        continue;
+      }
+      const auto len = static_cast<uint32_t>(
+        std::lower_bound(leaf.begin(), leaf.end(), max) - leaf.begin());
+      total += len - detail::CountExcluded(_excludes, leaf.data(), len);
+      _lead.Seek(max);
+      break;
+    }
+    return total;
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
@@ -131,8 +160,8 @@ class BooleanSparse {
     }
   }
 
-  doc_id_t Converge(doc_id_t doc) {
-    while (!doc_limits::eof(doc)) {
+  IRS_FORCE_INLINE doc_id_t Converge(doc_id_t doc, doc_id_t max) {
+    while (doc < max) {
       if constexpr (kProbes) {
         const auto probe = _probes.Probe(doc);
         if (probe != doc) {
@@ -150,9 +179,9 @@ class BooleanSparse {
       if (detail::SkipExcluded(_excludes, _lead, doc)) {
         continue;
       }
-      break;
+      return _doc = doc;
     }
-    return _doc = doc;
+    return doc;
   }
 
   Lead _lead;

@@ -39,7 +39,6 @@
 #include <vector>
 
 #include "connector/copy_from_batches.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "pg/connection_context.h"
 #include "pg/serialize.h"
@@ -122,9 +121,7 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
                  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
   result->file_buffer =
     duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
-  if (auto* connection = GetSereneDBContextPtr(context)) {
-    sdb::pg::FillContext(*connection, result->ctx);
-  }
+  sdb::pg::FillContext(ConnectionContext::Get(context), result->ctx);
   result->serializers.reserve(bdata.sql_types.size());
   for (const auto& type : bdata.sql_types) {
     result->serializers.push_back(

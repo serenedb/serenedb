@@ -1,0 +1,40 @@
+statement ok
+CREATE TABLE mbn (price DOUBLE)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO mbn
+SELECT (i % 1000)::DOUBLE FROM range(5000) t(i)
+UNION ALL
+SELECT x FROM (VALUES (NULL::DOUBLE), ('inf'::DOUBLE), ('-inf'::DOUBLE), ('nan'::DOUBLE)) v(x)
+
+
+statement ok
+RESET threads
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mbn
+
+
+query
+SELECT count(*) AS n FROM mbn WHERE round(price, -2) < 3 AND price < 1000;
+----
+n
+251
+
+
+query
+SELECT count(*) AS n FROM mbn WHERE floor(price / 100) < 1 AND price > -1;
+----
+n
+500
+
+
+statement ok
+DROP TABLE mbn

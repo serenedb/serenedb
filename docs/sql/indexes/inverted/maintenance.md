@@ -7,21 +7,21 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-An inverted index is **eventually consistent**. Writes to the base table are buffered and become searchable only after the index is *refreshed*; segments are *compacted* in the background to keep queries fast; and per-term statistics used by scorers can be *recomputed*. This page covers that lifecycle and how to inspect an index.
+A row written to a search table is visible to every query as soon as its transaction commits. Full-text matches with `@@`, scores and vector search read the table's inverted index, which takes committed rows in when it is *refreshed*; an inverted index over a view makes its rows searchable only then. Segments are *compacted* in the background to keep queries fast, and per-term statistics used by scorers can be *recomputed*. This page covers that lifecycle and how to inspect an index.
 
 ```mermaid
 flowchart LR
-    w["INSERT / UPDATE / DELETE"] --> buf["pending writes"]
-    buf -->|refresh| vis["searchable"]
-    vis -->|compaction| merged["fewer, larger segments"]
+    w["INSERT / UPDATE / DELETE"] -->|commit| vis["visible to queries"]
+    vis -->|refresh| idx["searchable with @@"]
+    idx -->|compaction| merged["fewer, larger segments"]
 ```
 
 ## Visibility and the refresh model
 
-A newly written row is not searchable until a refresh publishes it to readers. There are two ways a refresh happens:
+A committed row is visible to queries at once; `@@`, scores and vector search find it after the next refresh. There are two ways a refresh happens:
 
-- **Automatically** -- a background thread refreshes each index on an interval (`refresh_interval`, default 1000 ms). Once a change of `refresh_interval` to `0` commits, rows committed after it are not refreshed in the background.
-- **Explicitly** -- run `VACUUM (REFRESH_TABLE)` to publish pending writes immediately. This is what you want right after a bulk load, before querying:
+- **Automatically** -- a background task refreshes each table with an inverted index, and each index over a view, on an interval (`refresh_interval`, default 1000 ms).
+- **Explicitly** -- run `VACUUM (REFRESH_TABLE)` to make every committed row searchable immediately. This is what you want right after a bulk load, before searching:
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_001" />
 
@@ -112,7 +112,7 @@ Memory held while writing to a search table depends on `segment_memory_max`, set
 | Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
 | Parallel `INSERT` / `UPDATE` | ≈ `segment_memory_max` x threads |
 
-Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server, and also decides how often the database checkpoints.
+Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server.
 
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
@@ -127,9 +127,7 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 
 ## Durability {#durability}
 
-A commit to a search table is durable once it is in the write-ahead log of the table's database; a refresh then writes the changes into the table's own index files. A checkpoint leaves search tables alone: it keeps the write-ahead log it retires, as `data.db.wal.retained.<n>` beside the database file, while a search table still has changes in it that its own files do not durably hold, and a later checkpoint deletes the kept logs no table needs anymore. A table's changes are durable in its files once a refresh has written them and a cleanup pass has run after it: by default every automatic refresh runs one (`cleanup_interval_step = 1`), and so do `VACUUM (REFRESH_TABLE)` and `VACUUM (COMPACT_TABLE)`. After a crash, the server replays the kept logs and the current one into the tables that need them.
-
-Kept logs pile up while automatic refresh (`refresh_interval = 0`) or periodic cleanup (`cleanup_interval_step = 0`) is disabled, until `VACUUM (REFRESH_TABLE)` or `VACUUM (COMPACT_TABLE)` saves the table or the server restarts; with only cleanup disabled, a few background compactions save it too.
+A commit is durable once the server's write-ahead log holds it; one log serves every database. The log grows until it reaches [`checkpoint_threshold`](../../../configuration/overview.md) (16 MiB by default); the server then has each search table write the rows the oldest log files hold into its own files and removes those log files, while writes go on. `CHECKPOINT` does the same at once. After a crash, the server replays the log.
 
 ## Session settings {#session-settings}
 

@@ -5,6 +5,7 @@ target_sources(
         column/col_writer.cpp
         column/column_reader.cpp
         column/column_writer.cpp
+        column/hot_column_reader.cpp
         column/internal/write_context.cpp
         column/merge.cpp
         column/norm_column_reader.cpp

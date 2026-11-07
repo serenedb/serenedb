@@ -21,7 +21,8 @@ CREATE UNIQUE INDEX ixdg_rank_idx ON ixdg_t (rank);
 statement error
 INSERT INTO ixdg_t VALUES (3, 10);
 ----
-db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixdg_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
 
 
 statement ok
@@ -48,7 +49,8 @@ n
 statement error
 INSERT INTO ixdg_t VALUES (3, 10);
 ----
-db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixdg_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
 
 
 query
@@ -109,7 +111,8 @@ INSERT INTO ixdg_ok VALUES (1, 10);
 statement error
 INSERT INTO ixdg_ok VALUES (2, 10);
 ----
-db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixdg_ok_idx"
+DETAIL: Key (rank)=(10) already exists.
 
 
 statement ok

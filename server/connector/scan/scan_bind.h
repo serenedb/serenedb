@@ -254,6 +254,9 @@ struct ScanBindData final : duckdb::FunctionData {
     return score.vector && score.vector->kind == irs::AnnKind::Hnsw &&
            score.vector->radius == std::numeric_limits<float>::max();
   }
+  bool ReadsInMemorySegments() const noexcept {
+    return relation.kind != ScanEntryKind::InvertedIndex && !score.vector;
+  }
   bool IsMatchAll() const noexcept {
     return search.MatchAll() && !score.vector.has_value();
   }
@@ -329,6 +332,8 @@ struct DeferredBuild {
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
                                   const search::StoreSnapshot& snapshot);
+
+bool InMemorySegment(const irs::SubReader& segment);
 
 inline const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk,

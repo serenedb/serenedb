@@ -31,7 +31,7 @@
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/binder.hpp>
 
-#include "connector/inverted_store_index.h"
+#include "catalog/entry/inverted_index.h"
 
 namespace sdb::connector {
 namespace {
@@ -43,7 +43,7 @@ duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(
   auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
     context, duckdb::Binder::BindTableName(retriever, input.name),
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!index || !IsInvertedIndex(*index)) {
+  if (!index || !catalog::IsInvertedIndex(*index)) {
     return nullptr;
   }
   duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> path;

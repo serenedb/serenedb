@@ -578,7 +578,7 @@ jd_androed	jd_nested
 statement error
 DROP SCHEMA jd_androed;
 ----
-db error: ERROR: Cannot drop entry "jd_androed" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: cannot drop schema jd_androed because other objects depend on it<slt:ignore>
 
 
 statement ok

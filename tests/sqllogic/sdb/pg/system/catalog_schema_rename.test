@@ -95,14 +95,16 @@ t_pkey	i
 statement error
 DROP SEQUENCE csr_b.t_id_seq;
 ----
-db error: ERROR: Cannot drop entry "t_id_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence csr_b.t_id_seq because other objects depend on it
+DETAIL: default value for column id of table csr_b.t depends on sequence csr_b.t_id_seq
 <slt:ignore>
 
 
 statement error
 DROP TYPE csr_b.mood;
 ----
-db error: ERROR: Cannot drop entry "mood" because there are entries that depend on it.
+db error: ERROR: cannot drop type csr_b.mood because other objects depend on it
+DETAIL: column m of table csr_b.m depends on type csr_b.mood
 <slt:ignore>
 
 
@@ -112,7 +114,8 @@ ALTER TABLE csr_b.m ADD COLUMN extra INTEGER;
 statement error
 DROP TYPE csr_b.mood;
 ----
-db error: ERROR: Cannot drop entry "mood" because there are entries that depend on it.
+db error: ERROR: cannot drop type csr_b.mood because other objects depend on it
+DETAIL: column m of table csr_b.m depends on type csr_b.mood
 <slt:ignore>
 
 

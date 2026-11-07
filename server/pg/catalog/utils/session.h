@@ -58,7 +58,7 @@ inline constexpr size_t kRegOutLimit = 4096;
 
 struct Session {
   duckdb::ClientContext* context;
-  duckdb::DuckCatalog* database;
+  catalog::SereneDBCatalog* database;
   std::optional<duckdb::CatalogTransaction> transaction;
   std::vector<SessionSchema> search_path;
   std::optional<SessionTemporary> temporary;

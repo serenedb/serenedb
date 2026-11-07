@@ -168,7 +168,7 @@ Durability, the write-ahead log, and how rows are laid out on disk.
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
 | `checkpoint_on_detach` | Whether `DETACH` checkpoints the database: `ENABLED` checkpoints it, `DISABLED` does not, and `DEFAULT` checkpoints it unless `PRAGMA disable_checkpoint_on_shutdown` has turned checkpointing on shutdown off. The checkpoint is skipped while another connection still uses the database. | `VARCHAR` | `SESSION` | `DEFAULT` |
-| `checkpoint_threshold` | The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB). Also the size of the row buffer a serial write to a search table fills before it writes the rows to the table's index; see [Write memory](../sql/indexes/inverted/maintenance.md#write-memory). | `VARCHAR` | `GLOBAL` | `16.0 MiB` |
+| `checkpoint_threshold` | The size the server's write-ahead log grows to before the server checkpoints it (e.g. 1GB): each search table writes the rows the oldest log files hold into its own files, and those log files are removed. `CHECKPOINT` does this at once. Also the size of the row buffer a serial write to a search table fills before it writes the rows to the table's index; see [Write memory](../sql/indexes/inverted/maintenance.md#write-memory). | `VARCHAR` | `GLOBAL` | `16.0 MiB` |
 | `default_block_size` | The block size of newly created database files. | `UBIGINT` | `GLOBAL` | `262144` |
 | `disabled_compression_methods` | Disable a specific set of compression methods (comma separated) | `VARCHAR` | `GLOBAL` |  |
 | `enable_optimistic_write` | Whether or not to optimistically write large appends to disk before committing. Disable this to keep bulk appends in memory. | `BOOLEAN` | `GLOBAL` | `true` |

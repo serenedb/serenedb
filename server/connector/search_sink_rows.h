@@ -27,7 +27,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <memory>
-#include <string>
+#include <span>
 #include <vector>
 
 #include "connector/column_id.h"
@@ -61,7 +61,7 @@ class SearchSinkRows {
   std::unique_ptr<duckdb::ColumnDataCollection> _rows;
   std::unique_ptr<irs::IndexWriter::Transaction> _trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> _sink;
-  std::vector<std::string> _segments;
+  std::span<const irs::IndexWriter::FlushedSegment> _flushed;
 };
 
 }  // namespace sdb::connector

@@ -27,7 +27,6 @@
 #include <absl/strings/strip.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
@@ -37,6 +36,7 @@
 #include <tuple>
 
 #include "auth/role_closure.h"
+#include "catalog/base_catalog.h"
 
 namespace sdb::pg {
 namespace {
@@ -218,13 +218,12 @@ void VisitDefaultAcls(
   if (!attached || attached->oid != database.oid) {
     return;
   }
-  auto& catalog = attached->GetCatalog().Cast<duckdb::DuckCatalog>();
-  const auto view = catalog.GetCatalogTransaction(context).view;
+  auto& catalog = attached->GetCatalog().Cast<catalog::BaseCatalog>();
+  const auto transaction = catalog.GetCatalogTransaction(context);
   duckdb::idx_t oid = 0;
   for (const auto& row : database.permissions.defaults) {
     ++oid;
-    if (row.scope == kInvalidOid ||
-        catalog.GetOidIndex().GetVisible(row.scope, view)) {
+    if (row.scope == kInvalidOid || catalog.LookupOid(transaction, row.scope)) {
       visitor(oid, row);
     }
   }

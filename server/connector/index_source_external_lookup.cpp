@@ -126,7 +126,7 @@ void ExternalLookupIndexSource::PrepareLookup(
     _dialect == Dialect::Postgres ? "postgres_lookup" : "clickhouse_lookup";
   auto& sys = duckdb::Catalog::GetSystemCatalog(context);
   auto tx = duckdb::CatalogTransaction::GetSystemTransaction(*context.db);
-  auto& schema = sys.GetSchema(tx, DEFAULT_SCHEMA);
+  auto& schema = sys.GetSchema(tx, *sys.GetDefaultSchema());
   auto entry = schema.GetEntry(tx, duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
                                duckdb::Identifier{func_name});
   SDB_ASSERT(entry);

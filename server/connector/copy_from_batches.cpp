@@ -42,7 +42,6 @@
 #include <vector>
 
 #include "connector/copy_batch_parse.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_batch_builder.h"
 
@@ -56,17 +55,8 @@ constexpr uint64_t kCopyFileRangeBytes = 8 << 20;
 pg::CopyInBatches& RequireCopyInBatches(duckdb::ClientContext& context,
                                         bool binary) {
   const std::string_view format = binary ? "binary" : "text";
-  auto* state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
-      .get();
-  if (!state) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("COPY ... FROM STDIN (FORMAT ", format,
-                            ") is only valid on a server-side PostgreSQL wire "
-                            "connection"));
-  }
   auto* batches =
-    state->GetConnectionContext().GetSideChannel<pg::CopyInBatches>();
+    ConnectionContext::Get(context).GetSideChannel<pg::CopyInBatches>();
   if (!batches) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("COPY ... FROM STDIN (FORMAT ", format,

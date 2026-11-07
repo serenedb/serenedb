@@ -55,7 +55,6 @@
 #include <utility>
 #include <vector>
 
-#include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
@@ -133,14 +132,10 @@ duckdb::DataChunk& Rewritten(RowSource& source, duckdb::DataChunk& chunk) {
 // operator's hit-batching machinery.
 uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      RowSource& source, SearchSinkInsertBaseImpl& sink,
-                     const SearchBackfillTarget& target,
-                     const irs::SourcePosition& snapshot) {
+                     const SearchBackfillTarget& target) {
   uint64_t fed = 0;
   ScanLiveRows(context, sub, source.projections, source.filter_states,
                source.live, source.chunk, [&](duckdb::DataChunk& chunk) {
-                 if (target.shard->TruncatedAfter(snapshot)) {
-                   return false;
-                 }
                  WriteChunkToSearchSink(sink, Rewritten(source, chunk),
                                         source.write_ids, target.table_id,
                                         context);
@@ -217,19 +212,17 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
   FeedSliceTask(duckdb::TaskExecutor& executor_in,
                 duckdb::ClientContext& context_in,
                 const SearchBackfillTarget& target_in, Slice& slice_in,
-                const irs::SourcePosition& snapshot_in,
                 pg::ProgressMetrics* progress_in)
     : BaseExecutorTask{executor_in},
       context{context_in},
       target{target_in},
       slice{slice_in},
-      snapshot{snapshot_in},
       progress{progress_in} {}
 
   duckdb::TaskExecutionResult ExecuteTaskStep() final {
     if (next < slice.segments.size()) {
       const auto fed = FeedSegment(context, *slice.segments[next++],
-                                   slice.source, *slice.sink, target, snapshot);
+                                   slice.source, *slice.sink, target);
       if (progress) {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
@@ -242,9 +235,6 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
     }
     SDB_WAIT_ON_FAILURE("pause_search_backfill_fed");
-    if (target.shard->TruncatedAfter(snapshot)) {
-      return duckdb::TaskExecutionResult::TASK_FINISHED;
-    }
     // On the worker, like SereneDBSearchInsert::Combine: serialising this tail
     // costs more than the feeding it follows.
     slice.flushed = slice.trx.FlushAndFsync();
@@ -256,17 +246,14 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
   duckdb::ClientContext& context;
   const SearchBackfillTarget& target;
   Slice& slice;
-  irs::SourcePosition snapshot;
   pg::ProgressMetrics* progress;
   size_t next = 0;
 };
 
 // Rewrites one group of stale segments into fresh ones and swaps them in.
-// False once a truncate the snapshot misses stops the build.
-bool RebuildGroup(duckdb::ClientContext& context,
+void RebuildGroup(duckdb::ClientContext& context,
                   const SearchBackfillTarget& target,
                   std::span<const irs::SubReader* const> group,
-                  const irs::SourcePosition& snapshot,
                   pg::ProgressMetrics* progress) {
   auto& shard = *target.shard;
   const auto slice_count = std::max<size_t>(
@@ -307,7 +294,7 @@ bool RebuildGroup(duckdb::ClientContext& context,
         continue;
       }
       executor.ScheduleTask(duckdb::make_uniq<FeedSliceTask>(
-        executor, context, target, *slice, snapshot, progress));
+        executor, context, target, *slice, progress));
     }
     executor.WorkOnTasks();
   }
@@ -317,11 +304,6 @@ bool RebuildGroup(duckdb::ClientContext& context,
   // swap carries it through the absorbed doc maps.
   SDB_WAIT_ON_FAILURE("pause_search_backfill_before_swap");
 
-  if (shard.TruncatedAfter(snapshot)) {
-    abort_all();
-    shard.Publish();
-    return false;
-  }
   std::vector<irs::IndexWriter::Replacement> adopted;
   for (const auto& slice : slices) {
     AppendReplacements(*slice, adopted);
@@ -345,7 +327,6 @@ bool RebuildGroup(duckdb::ClientContext& context,
   abort_all();
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
   shard.Publish();
-  return true;
 }
 
 }  // namespace
@@ -371,16 +352,14 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // and none of the ones this rewrites could be reclaimed while it runs. The
   // plan here produces no rows (LogicalEmptyResult), so nothing reads it. A
   // frozen view keeps its pin and pays the disk instead.
-  GetSereneDBContext(context).TryDropSearchReader(target.catalog->GetOid(),
-                                                  target.table_id);
-
-  shard.WatchTruncates();
+  ConnectionContext::Get(context).TryDropSearchReader(target.catalog->GetOid(),
+                                                      target.table_id);
 
   shard.DrainPriorWriters(context);
+  shard.Publish();
 
   irs::IndexWriter::CompactionFloorGuard floor;
   for (;;) {
-    shard.Publish();
     floor = shard.ArmCompactionFloor();
     if (floor.Held()) {
       break;
@@ -391,7 +370,6 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                               "search table ",
                               target.table_id));
     }
-    SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_retry");
     absl::SleepFor(kArmRetry);
   }
 
@@ -406,11 +384,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // bound nothing. A straddler that committed after the drain shows up on a
   // later pass as a sub-floor segment; loop until none do.
   for (;;) {
-    auto [reader, snapshot] = shard.SnapshotWithPosition();
-    if (shard.TruncatedAfter(snapshot)) {
-      shard.Publish();
-      break;
-    }
+    const auto reader = shard.BuildSnapshot();
     std::vector<const irs::SubReader*> group;
     uint64_t live = 0;
     uint64_t bytes = 0;
@@ -434,9 +408,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                                static_cast<int64_t>(live));
       counted = true;
     }
-    if (!RebuildGroup(context, target, group, snapshot, progress)) {
-      break;
-    }
+    RebuildGroup(context, target, group, progress);
     SDB_IF_FAILURE("crash_after_search_backfill_group") {
       SDB_IMMEDIATE_ABORT();
     }

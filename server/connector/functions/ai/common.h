@@ -33,7 +33,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/function/function.hpp>
 #include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/client_context_state.hpp>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -194,7 +193,7 @@ class Limiter {
   size_t _available ABSL_GUARDED_BY(_mutex) = 0;
 };
 
-class AIQuery final : public duckdb::ClientContextState {
+class AIQuery final {
  public:
   struct Target {
     Endpoint endpoint;
@@ -204,11 +203,7 @@ class AIQuery final : public duckdb::ClientContextState {
 
   static AIQuery& Get(duckdb::ClientContext& context);
 
-  void QueryBegin(duckdb::ClientContext& context) final;
-
-  using duckdb::ClientContextState::QueryEnd;
-
-  void QueryEnd(duckdb::ClientContext& context) final;
+  void End() noexcept { _active.store(false, std::memory_order_release); }
 
   const Target& Resolve(duckdb::ClientContext& context, const EndpointRef& ref);
 

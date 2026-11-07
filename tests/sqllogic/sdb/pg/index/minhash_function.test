@@ -157,9 +157,9 @@ id
 statement error
 DROP TEXT SEARCH DICTIONARY mh_words;
 ----
-db error: ERROR: Cannot drop entry "mh_words" because there are entries that depend on it.
-index "mh_lexize_idx" depends on tokenizer "mh_words".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary mh_words because other objects depend on it
+DETAIL: index mh_lexize_idx depends on text search dictionary mh_words
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -171,9 +171,9 @@ CREATE VIEW mh_lexized AS SELECT id, ts_lexize('mh_words', body) AS words FROM m
 statement error
 DROP TEXT SEARCH DICTIONARY mh_words;
 ----
-db error: ERROR: Cannot drop entry "mh_words" because there are entries that depend on it.
-view "mh_lexized" depends on tokenizer "mh_words".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary mh_words because other objects depend on it
+DETAIL: view mh_lexized depends on text search dictionary mh_words
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok

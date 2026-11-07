@@ -52,7 +52,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
 #include "pg/catalog/oids.h"
@@ -246,16 +245,14 @@ class Loader {
  public:
   Loader(std::string_view database, duckdb::idx_t database_id,
          std::span<const Doc> docs)
-    : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, irs::StaticStrings::kDefaultUser, std::string_view{},
-        pg::kRootUser, database, database_id, nullptr, 0, nullptr)},
-      _progress{
-        connector::SereneDBClientState::Register(*_conn->context, _ctx, false)
-          .progress_source},
-      _docs{docs} {
-    connector::SetDefaultSearchPath(*_conn->context, database);
-  }
+    : _conn{MakeConnection(irs::DuckDBEngine::Instance().instance(),
+                           {.user = irs::StaticStrings::kDefaultUser,
+                            .role = pg::kRootUser,
+                            .database = database,
+                            .database_id = database_id})},
+      _ctx{&ConnectionContext::Get(*_conn->context)},
+      _progress{_ctx->ProgressSource()},
+      _docs{docs} {}
 
   ~Loader() {
     _ctx->ConsumeNotices([](auto& notice) {
@@ -348,7 +345,7 @@ class Loader {
   }
 
   duckdb::unique_ptr<duckdb::Connection> _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
+  ConnectionContext* _ctx;
   pg::ProgressRegistration _progress;
   std::span<const Doc> _docs;
 };

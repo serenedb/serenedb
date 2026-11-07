@@ -49,6 +49,7 @@
 #include <tuple>
 #include <utility>
 
+#include "pg/connection_context.h"
 #include "query/config.h"
 
 namespace sdb::connector::ai {
@@ -789,7 +790,7 @@ size_t Limiter::Available() {
 }
 
 AIQuery& AIQuery::Get(duckdb::ClientContext& context) {
-  auto& query = *context.registered_state->GetOrCreate<AIQuery>("sdb_ai_query");
+  auto& query = ConnectionContext::Get(context).AI();
   if (!query._active.load(std::memory_order_acquire)) {
     absl::MutexLock lock{&query._mutex};
     if (!query._active.load(std::memory_order_relaxed)) {
@@ -818,15 +819,6 @@ void AIQuery::Begin(duckdb::ClientContext& context) {
   limiter.Reset(settings.concurrency);
   _targets.clear();
   _active.store(true, std::memory_order_release);
-}
-
-void AIQuery::QueryBegin(duckdb::ClientContext& context) {
-  absl::MutexLock lock{&_mutex};
-  Begin(context);
-}
-
-void AIQuery::QueryEnd(duckdb::ClientContext&) {
-  _active.store(false, std::memory_order_release);
 }
 
 const AIQuery::Target& AIQuery::Resolve(duckdb::ClientContext& context,

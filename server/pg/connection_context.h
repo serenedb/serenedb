@@ -20,16 +20,27 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <atomic>
 #include <duckdb/catalog/permissions.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/connection.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
 
 #include "catalog/entry/role.h"
-#include "query/transaction.h"
+#include "catalog/transaction.h"
+#include "pg/progress_registry.h"
+#include "query/config.h"
+#include "replication/origin_session.h"
 #include "server/utils/message_buffer.h"
 #include "server/utils/pointer_union.h"
+#include "utils/drain_gate.h"
 
 namespace sdb::otel {
 
@@ -45,29 +56,32 @@ namespace sdb::connector {
 struct EsBulkInput;
 
 }  // namespace sdb::connector
+namespace sdb::connector::ai {
+
+class AIQuery;
+
+}  // namespace sdb::connector::ai
 namespace sdb::replication {
 
 struct ReplBatch;
 
 }  // namespace sdb::replication
+namespace sdb::network::pg {
+
+class ProtocolState;
+class WireSinkContext;
+
+}  // namespace sdb::network::pg
 namespace sdb::pg {
 
 class CopyInBatches;
 
-// Outcome of the connect-time login gate. On success `role` is the id of the
-// resolved login role and `error` is default (errcode 0); on failure `role` is
-// unset and `error` carries the FATAL-worthy SqlErrorData. Returned (not
-// thrown) so the pg-wire path can write a fatal frame and the http path can
-// rethrow, each as it needs; test `role` (unset == failed).
 struct LoginCheck {
   duckdb::idx_t role;
   bool superuser = false;
   irs::pg::SqlErrorData error;
 };
 
-// The connect-time login gate shared by the pg-wire and http sessions:
-// role exists -> may log in -> holds CONNECT on the target database
-// (superuser bypasses, as in PG's InitPostgres).
 LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
                             const duckdb::Permissions& perm);
 
@@ -85,15 +99,27 @@ using SideChannel =
                otel::ExportRequest<otel::Metric>, connector::EsBulkInput,
                replication::ReplBatch>;
 
-class ConnectionContext final : public query::Transaction {
- public:
-  ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
-                    std::string_view system_user, duckdb::idx_t role_id,
-                    std::string_view dbname, duckdb::idx_t database_id,
-                    message::Buffer* send_buffer, int32_t backend_pid,
-                    network::CancelRegistry* cancel_registry);
+struct SessionIdentity {
+  std::string_view user;
+  std::string_view system_user;
+  duckdb::idx_t role = 0;
+  std::string_view database;
+  duckdb::idx_t database_id = 0;
+  message::Buffer* send_buffer = nullptr;
+  int32_t backend_pid = 0;
+  network::CancelRegistry* cancel_registry = nullptr;
+  bool client_backend = false;
+};
 
-  ~ConnectionContext() final { SDB_ASSERT(!HasNotices()); }
+class ConnectionContext final : public duckdb::ClientContext {
+ public:
+  ConnectionContext(duckdb::DatabaseInstance& db,
+                    const SessionIdentity& identity);
+  ~ConnectionContext() final;
+
+  static ConnectionContext& Get(duckdb::ClientContext& context) noexcept {
+    return static_cast<ConnectionContext&>(context);
+  }
 
   const std::string& user() const { return _user; }
   const std::string& SystemUser() const { return _system_user; }
@@ -107,13 +133,9 @@ class ConnectionContext final : public query::Transaction {
   duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
   duckdb::idx_t GetSessionRoleId() const { return _session_role_id; }
 
-  std::string EffectiveUserName() const;
-  std::string SessionUserName() const;
+  std::string EffectiveUserName();
+  std::string SessionUserName();
 
-  // SET ROLE r switches the effective (current) role; SET SESSION AUTHORIZATION
-  // moves the session role (and resets the effective role to it); the resets
-  // restore the login role. Whether SHOW role reports 'none' vs a name is
-  // carried by the `role` GUC's own value, not tracked here.
   void SetEffectiveRole(duckdb::idx_t role) { _effective_role_id = role; }
   void SetSessionRole(duckdb::idx_t role) {
     _session_role_id = role;
@@ -141,10 +163,6 @@ class ConnectionContext final : public query::Transaction {
     _in_transaction_block = value;
   }
 
-  // Notices are an intrusive MPSC stack (Strand-style): producers on any
-  // thread CAS-push; the single consumer exchanges the head out and reverses
-  // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
-  // the stack is empty -- no mutex, no allocation.
   void AddNotice(irs::pg::SqlErrorData notice) {
     auto* node = new NoticeNode{std::move(notice), nullptr};
     node->next = _notices.load(std::memory_order_relaxed);
@@ -169,11 +187,95 @@ class ConnectionContext final : public query::Transaction {
     }
   }
 
+  int8_t GetExtraFloatDigits() const;
+  ByteaOutput GetByteaOutput();
+  std::string GetTimeZone() const;
+  IsolationLevel GetIsolationLevel() const {
+    return transaction.GetIsolationLevel();
+  }
+  bool IsExplicitTransaction() const { return !transaction.IsAutoCommit(); }
+
+  uint64_t CatalogEpoch() const noexcept { return _catalog_epoch; }
+
+  std::optional<std::string> Get(std::string_view key);
+
+  void SetSetting(std::string_view key, std::string value, bool);
+  void SetSettingChecked(std::string_view key, std::string value,
+                         bool is_local);
+
+  uint64_t SettingsVersion() const noexcept { return _settings_version; }
+  void MarkSettingsChanged() noexcept { ++_settings_version; }
+
+  std::shared_ptr<catalog::SessionTransaction> AcquireTransaction();
+  catalog::SessionTransaction* CurrentTransaction() const noexcept {
+    return _transaction.get();
+  }
+  catalog::SessionTransaction& Transaction() const noexcept {
+    SDB_ASSERT(_transaction);
+    return *_transaction;
+  }
+
+  bool HadQueryInTransaction() const noexcept {
+    return _had_query_in_transaction;
+  }
+  void MarkQueryInTransaction() noexcept { _had_query_in_transaction = true; }
+  void MarkStatementDml() noexcept { _statement_is_dml = true; }
+
+  bool TryDropSearchReader(duckdb::idx_t database_id, duckdb::idx_t shard_id);
+
+  pg::ProgressMetrics& Progress() const noexcept { return _progress->metrics; }
+  const std::shared_ptr<pg::ProgressSource>& ProgressSource() const noexcept {
+    return _progress;
+  }
+
+  int copy_stdin_open_count = 0;
+  bool copy_stdin_done = false;
+
+  std::shared_ptr<network::pg::WireSinkContext> wire_sink;
+
+  const network::pg::ProtocolState* protocol_state = nullptr;
+
+  pg::ProgressCommand pending_copy_command = pg::ProgressCommand::None;
+  pg::ProgressIoType pending_copy_io = pg::ProgressIoType::None;
+  duckdb::idx_t pending_copy_relid = 0;
+
+  uint32_t job_depth = 0;
+
+  std::unique_ptr<replication::OriginSession> replication_origin;
+
+  connector::ai::AIQuery& AI() const noexcept { return *_ai; }
+
+  void ValidateIsolationLevel(duckdb::TransactionIsolationLevel level) final;
+  bool EmitWarning(const char* message) final;
+  bool IsSettingVisible(const std::string& name) final;
+  void OnSettingChange(const std::string& name, duckdb::SetScope scope) final;
+  void OnQueryBegin() final;
+  void OnQueryEnd() final;
+  void OnTransactionPreCommit(duckdb::MetaTransaction& meta) final;
+  void OnTransactionPreRollback(duckdb::MetaTransaction& meta) final;
+  void OnTransactionCommit(duckdb::MetaTransaction& meta) final;
+  void OnTransactionRollback(duckdb::MetaTransaction& meta) final;
+  void OnBoundPlan(duckdb::Binder& binder, duckdb::LogicalOperator& plan) final;
+
  private:
   struct NoticeNode {
     irs::pg::SqlErrorData data;
     NoticeNode* next;
   };
+
+  struct TxnVariable {
+    duckdb::Value rollback_restore;
+    std::optional<duckdb::Value> commit_restore;
+  };
+
+  bool IsStableSnapshot() const;
+  void RefreshCatalogEpoch() noexcept;
+  void EndTransaction() noexcept;
+
+  void OnSet(std::string_view name, bool is_local, duckdb::Value old_value);
+  void RestoreValue(std::string_view key, duckdb::Value value) noexcept;
+  void RollbackVariables() noexcept;
+  void CommitVariables() noexcept;
 
   const std::string _user;
   const std::string _system_user;
@@ -188,6 +290,33 @@ class ConnectionContext final : public query::Transaction {
   SideChannel _side_channel;
   bool _in_transaction_block = false;
   std::atomic<NoticeNode*> _notices{nullptr};
+  std::shared_ptr<pg::ProgressSource> _progress;
+  std::unique_ptr<connector::ai::AIQuery> _ai;
+  uint64_t _catalog_epoch = 0;
+  uint64_t _settings_version = 0;
+  irs::containers::NodeHashMap<std::string, TxnVariable> _variables;
+  absl::Mutex _transaction_mutex;
+  std::shared_ptr<catalog::SessionTransaction> _transaction;
+  duckdb::transaction_t _transaction_owner = duckdb::MAX_TRANSACTION_ID;
+  utils::DrainGate::Pass _commit_pass;
+  bool _query_in_transaction = false;
+  bool _had_query_in_transaction = false;
+  bool _statement_is_dml = false;
 };
+
+duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(
+  duckdb::DatabaseInstance& db);
+
+duckdb::unique_ptr<duckdb::Connection> MakeConnection(
+  duckdb::DatabaseInstance& db, const SessionIdentity& identity);
+
+struct SystemConnection {
+  duckdb::unique_ptr<duckdb::Connection> conn;
+  pg::ProgressRegistration progress;
+};
+
+SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
+                                      std::string_view database,
+                                      duckdb::idx_t database_id);
 
 }  // namespace sdb

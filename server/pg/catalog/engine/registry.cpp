@@ -29,7 +29,6 @@
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_table_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/optimizer/expression_rewriter.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
@@ -245,8 +244,8 @@ void InitSystemFunctions(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
     defined.emplace(std::get<1>(key));
   }
   auto& catalog =
-    duckdb::Catalog::GetSystemCatalog(db).Cast<duckdb::DuckCatalog>();
-  catalog.ScanSchemas([&](duckdb::SchemaCatalogEntry& schema) {
+    duckdb::Catalog::GetSystemCatalog(db).Cast<catalog::BaseCatalog>();
+  catalog.ScanSchemas([&](catalog::Schema& schema) {
     const auto collect = [&](duckdb::CatalogEntry& entry) {
       defined.emplace(entry.name.GetIdentifierName());
     };

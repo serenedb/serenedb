@@ -71,11 +71,9 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/index_expression.hpp"
-#include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
@@ -179,10 +177,9 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictAggregate(
   duckdb::ClientContext& context, std::string_view agg_name,
   duckdb::unique_ptr<duckdb::Expression> child,
   duckdb::unique_ptr<duckdb::Expression> filter = nullptr) {
-  auto& sys = duckdb::Catalog::GetSystemCatalog(context);
-  auto& entry = sys.GetEntry<duckdb::AggregateFunctionCatalogEntry>(
-    context, duckdb::QualifiedName(sys.GetName(), DEFAULT_SCHEMA,
-                                   duckdb::Identifier{agg_name}));
+  auto& entry =
+    duckdb::Catalog::GetBuiltinEntry<duckdb::AggregateFunctionCatalogEntry>(
+      context, duckdb::Identifier{agg_name});
   duckdb::vector<
     std::pair<duckdb::Identifier, duckdb::unique_ptr<duckdb::Expression>>>
     args;

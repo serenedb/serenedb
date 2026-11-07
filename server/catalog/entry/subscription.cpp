@@ -28,14 +28,14 @@ namespace sdb::catalog {
 SubscriptionCatalogEntry::SubscriptionCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateSubscriptionInfo& info)
   : SubscriptionCatalogEntry{
-      catalog, info,
-      duckdb::make_shared_ptr<duckdb::ReplicationLsnState>(info.remote_lsn)} {}
+      catalog, info, std::make_shared<ReplicationLsnState>(info.remote_lsn)} {}
 
 SubscriptionCatalogEntry::SubscriptionCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateSubscriptionInfo& info,
-  duckdb::shared_ptr<duckdb::ReplicationLsnState> lsn_state)
-  : duckdb::SubscriptionCatalogEntry{catalog, info.GetQualifiedName().Name(),
-                                     info.oid, std::move(lsn_state)},
+  std::shared_ptr<ReplicationLsnState> lsn_state)
+  : ReplicationLsnEntry{duckdb::CatalogType::SUBSCRIPTION_ENTRY, catalog,
+                        info.GetQualifiedName().Name(), info.oid,
+                        std::move(lsn_state)},
     _info{
       duckdb::unique_ptr_cast<duckdb::CreateInfo,
                               duckdb::CreateSubscriptionInfo>(info.Copy())} {
@@ -48,7 +48,7 @@ SubscriptionCatalogEntry::SubscriptionCatalogEntry(
 duckdb::unique_ptr<duckdb::CatalogEntry> SubscriptionCatalogEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
   if (info.type != duckdb::AlterType::REPLACE_DEFINITION) {
-    return duckdb::SubscriptionCatalogEntry::AlterEntry(context, info);
+    return ReplicationLsnEntry::AlterEntry(context, info);
   }
   auto& definition = info.Cast<duckdb::ReplaceDefinitionInfo>()
                        .definition->Cast<duckdb::CreateSubscriptionInfo>();

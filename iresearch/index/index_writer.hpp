@@ -341,6 +341,26 @@ class IndexWriter : private util::Noncopyable {
       _field_options = std::move(options);
     }
 
+    void SetHot(uint64_t segment_id) noexcept;
+
+    const SegmentWriter* HotWriter() const noexcept {
+      const auto* segment = _active.Segment();
+      return segment ? segment->writer.get() : nullptr;
+    }
+
+    void DiscardDocsFrom(doc_id_t first) noexcept {
+      auto* segment = _active.Segment();
+      if (segment == nullptr || !segment->writer->initialized()) {
+        return;
+      }
+      auto& writer = *segment->writer;
+      const auto end =
+        static_cast<doc_id_t>(doc_limits::min() + writer.buffered_docs());
+      for (auto doc = first; doc < end; ++doc) {
+        writer.remove(doc);
+      }
+    }
+
    private:
     bool CommitImpl(const SourcePosition& position) noexcept;
     void UpdateSegment(bool disable_flush);
@@ -355,9 +375,11 @@ class IndexWriter : private util::Noncopyable {
     ActiveSegmentContext _active;
     uint64_t _queries{0};
     uint64_t _first_tick{0};
+    uint64_t _hot_segment{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
     bool _exclusive_segment{false};
     bool _staged{false};
+    bool _hot{false};
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);
@@ -419,6 +441,43 @@ class IndexWriter : private util::Noncopyable {
                     const MergeWriter::FlushProgress& progress,
                     const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
 
+  struct MergeClaim : private util::Noncopyable {
+    MergeClaim() = default;
+    MergeClaim(IndexWriter& owner, Compaction&& claimed) noexcept
+      : writer{&owner}, candidates{std::move(claimed)} {}
+    MergeClaim(MergeClaim&& other) noexcept
+      : writer{std::exchange(other.writer, nullptr)},
+        candidates{std::move(other.candidates)} {}
+    MergeClaim& operator=(MergeClaim&& other) noexcept {
+      if (this != &other) {
+        Release();
+        writer = std::exchange(other.writer, nullptr);
+        candidates = std::move(other.candidates);
+      }
+      return *this;
+    }
+    ~MergeClaim() { Release(); }
+
+    void Release() noexcept;
+
+    IndexWriter* writer = nullptr;
+    Compaction candidates;
+  };
+
+  struct Merged {
+    DirectoryReader source;
+    MergeClaim claim;
+    IndexSegment segment;
+    std::shared_ptr<const SegmentReaderImpl> reader;
+    std::vector<DocMap> maps;
+    FileRefs refs;
+  };
+
+  auto MergeAsync(const CompactionPolicy& policy, DirectoryReader source,
+                  const IndexFieldOptions* field_options,
+                  const MergeWriter::FlushProgress& progress,
+                  const AnnBuildEnv* env) -> yaclib::Future<Merged>;
+
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:
     CompactionFloorGuard() = default;
@@ -449,6 +508,7 @@ class IndexWriter : private util::Noncopyable {
   CompactionFloorGuard ArmCompactionFloor();
 
   uint64_t CurrentSegmentId() const noexcept;
+  void ReserveSegmentId(uint64_t id) noexcept;
 
   struct Replacement {
     std::string_view meta_file;
@@ -602,7 +662,7 @@ class IndexWriter : private util::Noncopyable {
 
     void Flush();
 
-    void Prepare();
+    void Prepare(uint64_t segment_id);
 
     void Reset(bool store_flushed = false) noexcept;
   };

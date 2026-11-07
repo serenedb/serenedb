@@ -104,7 +104,8 @@ void DuckDBEngine::Configure(duckdb::DBConfig& config) {
                          duckdb::Value::BOOLEAN(false));
 }
 
-void DuckDBEngine::ConfigureExtensions(duckdb::DatabaseInstance& db) {
+void DuckDBEngine::ConfigureExtensions() {
+  auto& db = *_db->instance;
   auto& db_config = duckdb::DBConfig::GetConfig(db);
   // Extension settings register at load, and the pre-construct validation
   // rejects them as unrecognized
@@ -130,8 +131,8 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
   Configure(config);
   mutator(config);
 
-  _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
-  ConfigureExtensions(*_db->instance);
+  _db = duckdb::DuckDB::CreateEmpty(&config);
+  ConfigureExtensions();
 
   auto& manager = _db->instance->GetLogManager();
 

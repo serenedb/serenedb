@@ -21,6 +21,7 @@
 #include "docs/docs_search.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/no_destructor.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -34,7 +35,6 @@
 #include <array>
 #include <ctime>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/object_cache.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
@@ -76,7 +76,6 @@
 namespace sdb::docs {
 namespace {
 
-constexpr std::string_view kIndexKey = "sdb_docs_index";
 constexpr std::string_view kEllipsis = "\xE2\x80\xA6";
 constexpr std::string_view kSpaces = " \t\n\v\f\r";
 
@@ -293,17 +292,13 @@ class EmbeddedIndex {
   irs::DirectoryReader _reader;
 };
 
-class DocsIndex final : public duckdb::ObjectCacheEntry {
+class DocsIndex final {
  public:
   explicit DocsIndex(duckdb::DatabaseInstance& db)
     : _layout{ReadLayout(GetDocsIndex())},
       _object_layout{ReadObjectLayout(GetObjectsIndex())},
       _docs{db, GetDocsIndex()},
       _objects{db, GetObjectsIndex()} {}
-
-  static std::string ObjectType() { return std::string{kIndexKey}; }
-  std::string GetObjectType() final { return ObjectType(); }
-  duckdb::optional_idx GetEstimatedCacheMemory() const final { return {}; }
 
   const irs::DirectoryReader& Reader() const noexcept { return _docs.Reader(); }
   const Layout& Fields() const noexcept { return _layout; }
@@ -323,17 +318,18 @@ irs::analysis::Tokenizer::ptr DocsTokenizer() {
   return irs::analysis::TextTokenizer::Make({});
 }
 
-duckdb::shared_ptr<DocsIndex> AcquireIndex(duckdb::DatabaseInstance& db) {
+const DocsIndex* AcquireIndex(duckdb::DatabaseInstance& db) {
   if (GetDocsIndex().empty()) {
     return nullptr;
   }
-  return db.GetObjectCache().GetOrCreate<DocsIndex>(kIndexKey, db);
+  static const absl::NoDestructor<DocsIndex> kIndex{db};
+  return kIndex.get();
 }
 
 template<typename Body>
 auto WithIndex(duckdb::DatabaseInstance& db, Body&& body)
   -> decltype(body(std::declval<const DocsIndex&>())) {
-  const auto index = AcquireIndex(db);
+  const auto* index = AcquireIndex(db);
   if (!index) {
     return {};
   }

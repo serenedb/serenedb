@@ -1,0 +1,242 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE lt (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO lt SELECT i, 'bulk' FROM generate_series(1, 5000) g(i);
+
+statement ok
+INSERT INTO lt VALUES (100001, 'hot'), (100002, 'hot'), (100003, 'hot');
+
+statement ok
+DELETE FROM lt WHERE id % 10 = 0;
+
+statement ok
+CREATE TABLE lt_gone (id INT);
+
+statement ok
+INSERT INTO lt_gone VALUES (1);
+
+statement ok
+DROP TABLE lt_gone;
+
+statement ok
+CREATE TABLE lt_old (id INT);
+
+statement ok
+ALTER TABLE lt_old RENAME TO lt_new;
+
+statement ok
+CREATE SEQUENCE lt_seq;
+
+query
+SELECT nextval('lt_seq') AS n;
+----
+n
+1
+
+statement ok
+CHECKPOINT;
+
+query
+SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+----
+chunks
+1
+
+statement ok
+INSERT INTO lt VALUES (100004, 'after');
+
+statement ok
+UPDATE lt SET v = 'upd' WHERE id = 100001;
+
+statement ok
+SET sdb_faults = 'pause_log_truncate_before_cover';
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_log_truncate_before_cover:parked';
+
+connection default
+statement ok
+INSERT INTO lt VALUES (100005, 'during');
+
+connection default
+statement ok
+DELETE FROM lt WHERE id = 100002;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_log_truncate_before_cover:release';
+
+wait
+
+connection default
+query
+SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+----
+chunks
+1
+
+connection default
+statement ok
+INSERT INTO lt VALUES (100006, 'tail');
+
+connection default
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection default
+statement error connection closed
+INSERT INTO lt VALUES (100007, 'crash');
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM lt;
+----
+n	s
+4506	11850026
+
+connection after_crash
+query
+SELECT id, v FROM lt WHERE id > 100000 ORDER BY id;
+----
+id	v
+100001	upd
+100003	hot
+100004	after
+100005	during
+100006	tail
+100007	crash
+
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relname IN ('lt_gone', 'lt_old', 'lt_new') ORDER BY relname;
+----
+relname
+lt_new
+
+connection after_crash
+query
+SELECT nextval('lt_seq') > 1 AS advanced;
+----
+advanced
+t
+
+connection after_crash
+statement ok
+SET GLOBAL checkpoint_threshold = '1B';
+
+connection after_crash
+statement ok
+CREATE TABLE lv (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+connection after_crash
+statement ok
+INSERT INTO lv SELECT i, repeat('v', 250) FROM generate_series(1, 1000) g(i);
+
+connection after_crash
+statement ok
+INSERT INTO lv SELECT i, repeat('v', 250) FROM generate_series(1001, 2000) g(i);
+
+connection after_crash
+statement ok
+INSERT INTO lv SELECT i, repeat('v', 250) FROM generate_series(2001, 3000) g(i);
+
+connection after_crash
+statement ok
+INSERT INTO lv SELECT i, repeat('v', 250) FROM generate_series(3001, 4000) g(i);
+
+connection after_crash
+statement ok
+INSERT INTO lv SELECT i, repeat('v', 250) FROM generate_series(4001, 5000) g(i);
+
+connection after_crash
+statement ok
+INSERT INTO lv SELECT i, repeat('v', 250) FROM generate_series(5001, 60000) g(i);
+
+connection after_crash
+statement ok
+INSERT INTO lv SELECT i, repeat('w', 250) FROM generate_series(60001, 120000) g(i);
+
+connection after_crash
+statement ok
+DELETE FROM lv WHERE id % 1000 = 0;
+
+connection after_crash
+query ok retry 40 backoff 250ms
+SELECT count(*) <= 2 AS bounded FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+----
+bounded
+t
+
+connection after_crash
+statement ok
+RESET GLOBAL checkpoint_threshold;
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_crash
+statement error connection closed
+INSERT INTO lv VALUES (0, 'last');
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s, count(*) FILTER (WHERE v = 'last') AS last FROM lv;
+----
+n	s	last
+119881	7192800000	1
+
+connection after_second_crash
+query
+SELECT count(*) AS n, sum(id) AS s FROM lt;
+----
+n	s
+4506	11850026
+
+connection after_second_crash
+statement ok
+INSERT INTO lt VALUES (100008, 'pre');
+
+connection after_second_crash
+statement ok
+SET sdb_faults = 'crash_before_log_truncate';
+
+connection after_second_crash
+statement error connection closed
+CHECKPOINT;
+
+connection after_third_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM lt;
+----
+n	s
+4507	11950034
+
+connection after_third_crash
+query
+SELECT count(*) AS n, sum(id) AS s FROM lv;
+----
+n	s
+119881	7192800000
+
+connection after_third_crash
+statement ok
+CHECKPOINT;
+
+connection after_third_crash
+query
+SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+----
+chunks
+1

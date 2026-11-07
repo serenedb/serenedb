@@ -1,0 +1,154 @@
+statement ok
+CREATE TABLE hcp (id BIGINT, s TEXT, d DOUBLE)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+CREATE MACRO hcp_rows(lo, hi) AS TABLE
+SELECT i AS id,
+       CASE WHEN i < 2048 THEN NULL ELSE 'a long prefix string ' || lpad(i::TEXT, 6, '0') END AS s,
+       CASE WHEN i % 1000 = 0 THEN 'nan'::DOUBLE
+            WHEN i = 4097 THEN 'inf'::DOUBLE
+            WHEN i = 4098 THEN '-inf'::DOUBLE
+            ELSE i * 0.5 END AS d
+FROM generate_series(lo, hi) t(i)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(0, 999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(1000, 1999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(2000, 2999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(3000, 3999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(4000, 4999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(5000, 5999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(6000, 6999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(7000, 7999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(8000, 8999)
+
+
+statement ok
+INSERT INTO hcp SELECT * FROM hcp_rows(9000, 9999)
+
+
+query
+SELECT
+  (SELECT count(*) FROM hcp WHERE id = 4100) AS point,
+  (SELECT count(*) FROM hcp WHERE id BETWEEN 2040 AND 2060) AS across,
+  (SELECT count(*) FROM hcp WHERE s IS NULL) AS null_s,
+  (SELECT count(*) FROM hcp WHERE s IS NOT NULL) AS some_s,
+  (SELECT count(*) FROM hcp WHERE s LIKE 'a long prefix string 0099%') AS prefix,
+  (SELECT count(*) FROM hcp WHERE s = 'a long prefix string 002048') AS first_s,
+  (SELECT count(*) FROM hcp WHERE s < 'a long prefix string 002100') AS below_s,
+  (SELECT count(*) FROM hcp WHERE d > 4000) AS above_d,
+  (SELECT count(*) FROM hcp WHERE d < -1) AS minus_inf,
+  (SELECT count(*) FROM hcp WHERE d = 'nan'::DOUBLE) AS nans,
+  (SELECT count(*) FROM hcp WHERE d BETWEEN 1000 AND 1001) AS between_d;
+----
+point	across	null_s	some_s	prefix	first_s	below_s	above_d	minus_inf	nans	between_d
+1	21	2048	7952	100	1	52	2009	1	10	2
+
+
+query
+SELECT string_agg(id::TEXT, ',' ORDER BY id) AS ids, max(s) AS last_s
+FROM hcp WHERE id IN (10, 2050, 4099, 9999);
+----
+ids	last_s
+10,2050,4099,9999	a long prefix string 009999
+
+
+query
+SELECT id, s FROM hcp WHERE id = 3000;
+----
+id	s
+3000	a long prefix string 003000
+
+
+statement ok
+DELETE FROM hcp WHERE id = 4100 OR id = 9999
+
+
+query
+SELECT string_agg(id::TEXT, ',' ORDER BY id) AS ids
+FROM hcp WHERE id IN (4099, 4100, 4101, 9998, 9999);
+----
+ids
+4099,4101,9998
+
+
+query
+SELECT
+  (SELECT count(*) FROM hcp WHERE id = 4100) AS point,
+  (SELECT count(*) FROM hcp WHERE s LIKE 'a long prefix string 0099%') AS prefix,
+  (SELECT count(*) FROM hcp WHERE d > 4000) AS above_d;
+----
+point	prefix	above_d
+0	99	2008
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hcp
+
+
+query
+SELECT
+  (SELECT count(*) FROM hcp WHERE id = 4100) AS point,
+  (SELECT count(*) FROM hcp WHERE id BETWEEN 2040 AND 2060) AS across,
+  (SELECT count(*) FROM hcp WHERE s IS NULL) AS null_s,
+  (SELECT count(*) FROM hcp WHERE s IS NOT NULL) AS some_s,
+  (SELECT count(*) FROM hcp WHERE s LIKE 'a long prefix string 0099%') AS prefix,
+  (SELECT count(*) FROM hcp WHERE s = 'a long prefix string 002048') AS first_s,
+  (SELECT count(*) FROM hcp WHERE s < 'a long prefix string 002100') AS below_s,
+  (SELECT count(*) FROM hcp WHERE d > 4000) AS above_d,
+  (SELECT count(*) FROM hcp WHERE d < -1) AS minus_inf,
+  (SELECT count(*) FROM hcp WHERE d = 'nan'::DOUBLE) AS nans,
+  (SELECT count(*) FROM hcp WHERE d BETWEEN 1000 AND 1001) AS between_d;
+----
+point	across	null_s	some_s	prefix	first_s	below_s	above_d	minus_inf	nans	between_d
+0	21	2048	7950	99	1	52	2008	1	10	2
+
+
+query
+SELECT string_agg(id::TEXT, ',' ORDER BY id) AS ids
+FROM hcp WHERE id IN (4099, 4100, 4101, 9998, 9999);
+----
+ids
+4099,4101,9998
+
+
+query
+SELECT id, s FROM hcp WHERE id = 3000;
+----
+id	s
+3000	a long prefix string 003000
+
+
+statement ok
+DROP TABLE hcp
+
+
+statement ok
+DROP MACRO TABLE hcp_rows

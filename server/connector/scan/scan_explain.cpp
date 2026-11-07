@@ -413,7 +413,7 @@ void ScanBindData::AppendSummary(
                          }),
                          "\n");
   };
-  if (!search.duals.empty()) {
+  if (!search.duals.empty() && KeepsColumnForms()) {
     out.insert("Index or Column Filter", rows_text(search.duals));
   }
   if (!search.row_filters.empty()) {

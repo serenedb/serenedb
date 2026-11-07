@@ -21,13 +21,13 @@
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/storage/storage_manager.hpp>
-#include <duckdb/storage/write_ahead_log.hpp>
 #include <string_view>
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/log.h"
+#include "catalog/transaction.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 #include "search/store.h"
@@ -95,14 +95,12 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
     rows.emplace_back(metrics::Name(gauge), metrics::Get(gauge),
                       metrics::Description(gauge));
   }
-  auto& storage = scan.Database().GetAttached().GetStorageManager();
-  const auto commit_lock = storage.GetCommitLock();
-  const auto wal = storage.GetWAL();
+  const auto* log = catalog::Transactions::Get().GetLog();
   rows.emplace_back("catalog_wal_appended_bytes",
-                    wal ? static_cast<int64_t>(wal->GetFlushedOffset()) : 0,
+                    log ? static_cast<int64_t>(log->Appended()) : 0,
                     "bytes appended to the catalog wal since start");
   rows.emplace_back("catalog_wal_size_on_disk",
-                    wal ? static_cast<int64_t>(storage.GetWALSize()) : 0,
+                    log ? static_cast<int64_t>(log->Size()) : 0,
                     "current catalog wal file size in bytes");
   return rows;
 }

@@ -46,10 +46,6 @@ inline constexpr duckdb::idx_t kMaxSystem = 262144;
 
 #include "pg/catalog/generated/catalog_oids.gen.inc"
 
-inline constexpr duckdb::idx_t kClusterCatalog = kMinSystem + 1;
-
-inline constexpr duckdb::idx_t kPgMainSchema = kMinSystem + 4;
-
 inline constexpr duckdb::idx_t kRootUser = kMinSystem;
 
 inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;

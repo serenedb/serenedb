@@ -1,0 +1,108 @@
+control substitution on
+
+statement ok
+CREATE SEQUENCE sar_other;
+
+
+statement ok
+CREATE TABLE sar_t (id serial, ref bigint DEFAULT nextval('sar_other'), note text);
+
+
+statement ok
+ALTER TABLE sar_t RENAME COLUMN id TO ident;
+
+
+statement ok
+ALTER TABLE sar_t ALTER COLUMN note SET NOT NULL;
+
+
+statement ok
+CREATE TABLE sar_s (id serial, v int) WITH (storage = 'search');
+
+
+statement ok
+ALTER TABLE sar_s SET (compaction_interval = 100);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pg_get_serial_sequence('sar_t', 'ident') AS t, pg_get_serial_sequence('sar_s', 'id') AS s;
+----
+t	s
+public.sar_t_id_seq	public.sar_s_id_seq
+
+
+connection after_log
+statement error
+DROP SEQUENCE sar_other;
+----
+db error: ERROR: cannot drop sequence sar_other because other objects depend on it
+DETAIL: default value for column ref of table sar_t depends on sequence sar_other
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_log
+statement error
+DROP SEQUENCE sar_t_id_seq;
+----
+db error: ERROR: cannot drop sequence sar_t_id_seq because other objects depend on it
+DETAIL: default value for column ident of table sar_t depends on sequence sar_t_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_log
+statement ok
+CHECKPOINT;
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pg_get_serial_sequence('sar_t', 'ident') AS t, pg_get_serial_sequence('sar_s', 'id') AS s;
+----
+t	s
+public.sar_t_id_seq	public.sar_s_id_seq
+
+
+connection after_checkpoint
+statement error
+DROP SEQUENCE sar_other;
+----
+db error: ERROR: cannot drop sequence sar_other because other objects depend on it
+DETAIL: default value for column ref of table sar_t depends on sequence sar_other
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_checkpoint
+statement ok
+DROP TABLE sar_t;
+
+
+connection after_checkpoint
+statement ok
+DROP TABLE sar_s;
+
+
+connection after_checkpoint
+query
+SELECT relname FROM pg_class WHERE relkind = 'S' AND relname LIKE 'sar%' ORDER BY 1;
+----
+relname
+sar_other

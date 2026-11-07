@@ -38,7 +38,7 @@ ALTER TABLE dtc.records ALTER COLUMN id DROP DEFAULT;
 statement error
 DROP TYPE dtc.color;
 ----
-db error: ERROR: Cannot drop entry "color" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: cannot drop type dtc.color because other objects depend on it<slt:ignore>
 
 
 # A column read by a view needs CASCADE.

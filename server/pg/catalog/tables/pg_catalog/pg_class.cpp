@@ -313,8 +313,12 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       Emit<kSystem>(table.Cast<catalog::SystemTableEntry>(), shown);
       return;
     }
+    const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
     Emit<kOrdinary>(
-      {table, dynamic_cast<const catalog::SearchTableEntry*>(&table)}, shown);
+      {table, search && search->Engine() == catalog::TableEngine::Search
+                ? search
+                : nullptr},
+      shown);
     if (Allows<"relkind">('i')) {
       if (Reads<"relowner">()) {
         _owners.emplace(table.oid, table.permissions.owner);

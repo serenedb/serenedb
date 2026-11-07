@@ -1,0 +1,82 @@
+# READ COMMITTED takes a new snapshot per statement also after the transaction
+# wrote. A row it removed that a later commit removed too fails its COMMIT:
+# the first committer wins, where PostgreSQL would wait for the other writer
+# and re-check the row.
+
+statement ok
+CREATE TABLE rcwc (k INTEGER PRIMARY KEY, v INTEGER)
+
+
+statement ok
+INSERT INTO rcwc VALUES (1, 10), (2, 20)
+
+
+connection a
+statement ok
+BEGIN ISOLATION LEVEL READ COMMITTED
+
+
+connection a
+statement count 1
+UPDATE rcwc SET v = 11 WHERE k = 1
+
+
+connection b
+statement count 1
+UPDATE rcwc SET v = 12 WHERE k = 1
+
+
+connection a
+query
+SELECT k, v FROM rcwc WHERE k = 2
+----
+k	v
+2	20
+
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query
+SELECT k, v FROM rcwc ORDER BY k
+----
+k	v
+1	12
+2	20
+
+
+connection a
+statement ok
+BEGIN ISOLATION LEVEL READ COMMITTED
+
+
+connection a
+statement count 1
+UPDATE rcwc SET v = 21 WHERE k = 2
+
+
+connection b
+statement count 1
+UPDATE rcwc SET v = 13 WHERE k = 1
+
+
+connection a
+statement count 1
+UPDATE rcwc SET v = 14 WHERE k = 1
+
+
+connection a
+statement ok
+COMMIT
+
+
+query
+SELECT k, v FROM rcwc ORDER BY k
+----
+k	v
+1	14
+2	21

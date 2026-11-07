@@ -267,16 +267,18 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   }
   auto& tuning = *meta.write_string_tuning;
   auto& blocks = WriteCtx().Blocks();
+  auto& buffers = db.GetBufferManager();
   const auto sink = [&](codecs::StringChoice choice,
                         duckdb::BaseStatistics stats, uint64_t rows,
-                        std::span<const std::string_view> parts) {
+                        std::string_view bytes) {
     const auto& codec = *codecs::GetCodec(db, codecs::TypeOf(choice),
                                           duckdb::PhysicalType::VARCHAR);
+    const std::string_view parts[] = {bytes};
     CaptureBlock(db, codec, std::move(stats), rows, parts, blocks, meta.data);
   };
   if (named && named->shape == codecs::Shape::Plain) {
     return codecs::SealSegments(chunks, *named, _codec_params, type, tuning,
-                                sink)
+                                buffers, sink)
       .all_dedup;
   }
   codecs::StringAccumulator acc;
@@ -285,8 +287,8 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
     acc.Add(c.data);
   }
   tuning.last_distinct = acc.values.size();
-  const auto outcome =
-    codecs::SealSegments(acc, named, _codec_params, type, tuning, sink);
+  const auto outcome = codecs::SealSegments(acc, named, _codec_params, type,
+                                            tuning, buffers, sink);
   if (outcome.sealed) {
     return outcome.all_dedup;
   }

@@ -14,6 +14,7 @@ target_sources(
         column/codecs/onpair.cpp
         column/codecs/onpair_encoder.cpp
         column/codecs/registry.cpp
+        column/codecs/segment_buffer.cpp
         column/codecs/segment_builder.cpp
         column/codecs/segment_dictionary.cpp
         column/codecs/segment_encoder.cpp

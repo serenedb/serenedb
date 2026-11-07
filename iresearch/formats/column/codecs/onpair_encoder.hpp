@@ -41,9 +41,10 @@ class OnPairEncoder {
   explicit OnPairEncoder(StringTuning& tuning, uint32_t target) noexcept
     : _history{tuning.history[static_cast<size_t>(kCodec)]}, _target{target} {}
 
-  void Begin(Shape shape, uint8_t, FrameLayout) noexcept {
+  void Begin(Shape shape, uint8_t, FrameLayout, SegmentBuffer& out) noexcept {
     _shape = shape;
-    _data.clear();
+    _segment = &out;
+    _base = out.Size();
   }
 
   void Retrain() noexcept {}
@@ -56,9 +57,9 @@ class OnPairEncoder {
 
   EncodedFrames Finish(const SegmentEntries& rows, std::span<uint32_t> lengths);
 
-  std::string& Data() noexcept { return _data; }
-
  private:
+  uint64_t Written() const noexcept { return _segment->Size() - _base; }
+
   void Pack(std::span<const duckdb::string_t> entries,
             std::span<const uint32_t> lengths, size_t first, size_t end,
             uint64_t region);
@@ -67,8 +68,9 @@ class OnPairEncoder {
   uint32_t _target;
   Shape _shape = Shape::Dedup;
   OnPairCodec _codec;
+  SegmentBuffer* _segment = nullptr;
+  size_t _base = 0;
   std::vector<FrameMeta> _frames;
-  std::string _data;
   std::string _side;
   std::vector<uint16_t> _codes;
 };

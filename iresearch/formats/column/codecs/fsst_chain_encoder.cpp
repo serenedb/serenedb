@@ -20,14 +20,18 @@
 
 #include "iresearch/formats/column/codecs/fsst_chain_encoder.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <duckdb/common/bitpacking.hpp>
 
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 
 namespace irs::codecs::text {
+namespace {
+
+constexpr uint64_t kEncodeExpansion = 2;
+constexpr uint64_t kEncodeSlack = 8;
+
+}  // namespace
 
 uint64_t FsstChainEncoder::Estimate(const SegmentEntries& rows) const noexcept {
   return EstimateEntries(rows, _history[static_cast<size_t>(_shape)]);
@@ -42,6 +46,7 @@ EncodedFrames FsstChainEncoder::Finish(const SegmentEntries& rows,
   uint32_t max_lcp = 0;
   uint64_t frame_raw = 0;
   uint64_t frame_first = 0;
+  uint64_t suffixes = 0;
   for (size_t i = 0; i < entries.size(); ++i) {
     const auto& entry = entries[i];
     const auto size = entry.GetSize();
@@ -57,13 +62,30 @@ EncodedFrames FsstChainEncoder::Finish(const SegmentEntries& rows,
     _lcp_stream.emplace_back(lcp);
     max_lcp = std::max(max_lcp, lcp);
     frame_raw += size;
+    suffixes += size - lcp;
   }
   if (!entries.empty()) {
     _frames.emplace_back(static_cast<uint32_t>(frame_first),
                          static_cast<uint32_t>(frame_raw), 0, 0);
   }
-  _codec.Encode(entries, std::span{_lcp_stream}.subspan(first_entry), _data,
-                _entry_lengths);
+  const auto skip = std::span{_lcp_stream}.subspan(first_entry);
+  size_t done = 0;
+  const auto encode = [&](uint64_t capacity) {
+    auto* out = _segment->Extend(capacity);
+    const auto encoded =
+      _codec.Encode(entries.subspan(done), skip.subspan(done), out, capacity,
+                    lengths.subspan(done));
+    _segment->Shrink(capacity - encoded.bytes);
+    for (auto i = done; i < done + encoded.strings; ++i) {
+      suffixes -= entries[i].GetSize() - skip[i];
+    }
+    done += encoded.strings;
+  };
+  encode(suffixes + kEncodeSlack);
+  if (done != entries.size()) {
+    encode(kEncodeExpansion * suffixes + kEncodeSlack);
+    SDB_ENSURE(done == entries.size(), "fsst: compression ran out of space");
+  }
   size_t off = 0;
   uint32_t max_enc = 0;
   for (size_t f = 0; f < _frames.size(); ++f) {
@@ -72,19 +94,18 @@ EncodedFrames FsstChainEncoder::Finish(const SegmentEntries& rows,
       f + 1 < _frames.size() ? _frames[f + 1].first_entry : entries.size();
     frame.comp_off = static_cast<uint32_t>(off);
     for (size_t e = frame.first_entry; e < end; ++e) {
-      off += _entry_lengths[e];
-      max_enc = std::max(max_enc, _entry_lengths[e]);
+      off += lengths[e];
+      max_enc = std::max(max_enc, lengths[e]);
     }
     frame.comp_len = static_cast<uint32_t>(off - frame.comp_off);
     frame.first_entry += first_entry;
   }
-  absl::c_copy(_entry_lengths, lengths.begin());
   _lcp_stream.resize(
     duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
     0);
   const auto symtab = _codec.SymbolTable();
   RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
-              _data.size() + symtab.size(), _target);
+              _segment->Size() - _base + symtab.size(), _target);
   return {
     .codec = kCodec,
     .frames = _frames,

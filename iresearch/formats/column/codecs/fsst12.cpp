@@ -47,24 +47,22 @@ void Fsst12Encoder::Reset() noexcept {
   _table_size = 0;
 }
 
-void Fsst12Encoder::Encode(std::span<const duckdb::string_t> strings,
-                           std::span<const uint32_t> skip, std::string& out,
-                           std::vector<uint32_t>& lengths) {
+Fsst12Encoded Fsst12Encoder::Encode(std::span<const duckdb::string_t> strings,
+                                    std::span<const uint32_t> skip, char* out,
+                                    size_t capacity,
+                                    std::span<uint32_t> lengths) {
   SDB_ASSERT(skip.size() == strings.size());
+  SDB_ASSERT(lengths.size() >= strings.size());
   const size_t n = strings.size();
   if (n == 0) {
-    out.clear();
-    lengths.clear();
-    return;
+    return {};
   }
   _in_lengths.resize(n);
   _in_ptrs.resize(n);
-  size_t total = 0;
   for (size_t i = 0; i < n; ++i) {
     _in_lengths[i] = strings[i].GetSize() - skip[i];
     _in_ptrs[i] =
       reinterpret_cast<const unsigned char*>(strings[i].GetData() + skip[i]);
-    total += _in_lengths[i];
   }
   if (!_encoder) {
     _encoder.reset(
@@ -73,24 +71,18 @@ void Fsst12Encoder::Encode(std::span<const duckdb::string_t> strings,
     _table.resize(sizeof(duckdb_fsst12_decoder_t));
     _table_size = duckdb_fsst12_export(_encoder.get(), _table.data());
   }
-
   _out_lengths.resize(n);
   _out_ptrs.resize(n);
-  lengths.resize(n);
-  size_t done = 0;
-  out.resize_and_overwrite(2 * total + 8, [&](char* buf, size_t size) {
-    done = duckdb_fsst12_compress(_encoder.get(), n, _in_lengths.data(),
-                                  _in_ptrs.data(), size,
-                                  reinterpret_cast<unsigned char*>(buf),
-                                  _out_lengths.data(), _out_ptrs.data());
-    size_t used = 0;
-    for (size_t i = 0; i < done; ++i) {
-      lengths[i] = static_cast<uint32_t>(_out_lengths[i]);
-      used += _out_lengths[i];
-    }
-    return used;
-  });
-  SDB_ENSURE(done == n, "fsst12: compression ran out of space");
+  const size_t done = duckdb_fsst12_compress(
+    _encoder.get(), n, _in_lengths.data(), _in_ptrs.data(), capacity,
+    reinterpret_cast<unsigned char*>(out), _out_lengths.data(),
+    _out_ptrs.data());
+  size_t used = 0;
+  for (size_t i = 0; i < done; ++i) {
+    lengths[i] = static_cast<uint32_t>(_out_lengths[i]);
+    used += _out_lengths[i];
+  }
+  return {.strings = done, .bytes = used};
 }
 
 bool Fsst12Decoder::Import(std::string_view table) noexcept {

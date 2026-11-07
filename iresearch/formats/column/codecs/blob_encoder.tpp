@@ -87,11 +87,13 @@ class BlobEncoder {
       _dictionaries{dictionaries},
       _history{tuning.history[static_cast<size_t>(kCodec)]} {}
 
-  void Begin(Shape shape, uint8_t level, FrameLayout layout) {
+  void Begin(Shape shape, uint8_t level, FrameLayout layout,
+             SegmentBuffer& out) {
     _shape = shape;
     Configure(level, layout);
     _frame.clear();
-    _data.clear();
+    _segment = &out;
+    _base = out.Size();
     _frames.clear();
   }
 
@@ -105,7 +107,7 @@ class BlobEncoder {
 
   uint64_t Estimate(const SegmentEntries& rows) const noexcept {
     const auto raw = rows.raw;
-    return (_spans.size() + 1) * kFrameMetaSize + _data.size() +
+    return (_spans.size() + 1) * kFrameMetaSize + Written() +
            (_layout == FrameLayout::Local
               ? SegmentDictionaryBytes(raw, Codec::kDictionaryCap) /
                   kLocalDictionaryPacking
@@ -127,7 +129,7 @@ class BlobEncoder {
     if (_trained && !Pays()) {
       _trained = false;
       _codec->Clear();
-      _data.clear();
+      _segment->Truncate(_base);
       _frames.clear();
       CompressRest();
     }
@@ -146,8 +148,6 @@ class BlobEncoder {
       .flags = flags,
     };
   }
-
-  std::string& Data() noexcept { return _data; }
 
   uint64_t Price(const Profile& p, uint8_t level, FrameLayout layout,
                  uint64_t begin) {
@@ -192,10 +192,9 @@ class BlobEncoder {
     }
     const auto entry_count = p.codes.size() + (p.shape == Shape::Dedup ? 1 : 0);
     Header h;
-    LayOut(h, _spans.size(), Packed(entry_count, p.max_len), 0,
-           CodesBytes(p.shape, p.rows, p.codes.size(), p.runs, _tuning.codes),
-           0);
-    return h.off_data + data;
+    return LayOut(
+      h, data, _spans.size(), Packed(entry_count, p.max_len), 0,
+      CodesBytes(p.shape, p.rows, p.codes.size(), p.runs, _tuning.codes), 0);
   }
 
  private:
@@ -324,11 +323,13 @@ class BlobEncoder {
     return _frame;
   }
 
+  uint64_t Written() const noexcept { return _segment->Size() - _base; }
+
   void CompressRest() {
     for (auto i = _frames.size(); i < _spans.size(); ++i) {
       const auto raw = Slice(i);
-      const auto at = _data.size();
-      const auto n = Compress(raw, _data);
+      const auto at = Written();
+      const auto n = Compress(raw);
       _frames.push_back({static_cast<uint32_t>(_spans[i].first),
                          static_cast<uint32_t>(raw.size()),
                          static_cast<uint32_t>(at), static_cast<uint32_t>(n)});
@@ -414,8 +415,12 @@ class BlobEncoder {
     return Compress(raw, _out, codec);
   }
 
-  size_t Compress(std::string_view raw, std::string& out) {
-    return Compress(raw, out, *_codec);
+  size_t Compress(std::string_view raw) {
+    const auto bound = Codec::Bound(raw.size());
+    auto* out = _segment->Extend(bound);
+    const auto n = _codec->Compress(raw.data(), raw.size(), out, bound);
+    _segment->Shrink(bound - n);
+    return n;
   }
 
   static size_t Compress(std::string_view raw, std::string& out,
@@ -445,7 +450,8 @@ class BlobEncoder {
   size_t _counted = 0;
   uint64_t _packed = 0;
   std::string _frame;
-  std::string _data;
+  SegmentBuffer* _segment = nullptr;
+  size_t _base = 0;
   std::string _out;
   Span _open;
   std::vector<Span> _spans;

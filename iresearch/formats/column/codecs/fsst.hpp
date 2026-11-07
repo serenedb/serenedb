@@ -41,11 +41,16 @@ struct FsstFree {
   }
 };
 
+struct FsstEncoded {
+  size_t strings = 0;
+  size_t bytes = 0;
+};
+
 class FsstEncoder {
  public:
-  void Encode(std::span<const duckdb::string_t> strings,
-              std::span<const uint32_t> skip, std::string& out,
-              std::vector<uint32_t>& lengths);
+  FsstEncoded Encode(std::span<const duckdb::string_t> strings,
+                     std::span<const uint32_t> skip, char* out, size_t capacity,
+                     std::span<uint32_t> lengths);
 
   std::string_view SymbolTable() const noexcept {
     return {reinterpret_cast<const char*>(_table), _table_size};

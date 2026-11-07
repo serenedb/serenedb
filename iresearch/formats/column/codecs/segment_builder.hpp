@@ -38,6 +38,7 @@
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
+#include "iresearch/formats/column/codecs/segment_buffer.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -90,6 +91,8 @@ struct Config {
 };
 
 struct Segment {
+  explicit Segment(duckdb::BufferManager& buffers) noexcept : bytes{buffers} {}
+
   Config config;
   uint64_t begin = 0;
   uint64_t rows = 0;
@@ -97,11 +100,10 @@ struct Segment {
   uint64_t nulls = 0;
   uint64_t input = 0;
   uint32_t max_len = 0;
-  std::string head;
-  std::string data;
+  SegmentBuffer bytes;
   std::optional<duckdb::BaseStatistics> stats;
 
-  uint64_t Size() const noexcept { return head.size() + data.size(); }
+  uint64_t Size() const noexcept { return bytes.Size(); }
 };
 
 class SegmentBuilder {
@@ -111,8 +113,8 @@ class SegmentBuilder {
     : _stats{type}, _type{type}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
 
   template<typename Leaf>
-  void Begin(Leaf& leaf, const Config& config, uint64_t begin,
-             size_t distinct) {
+  void Begin(Leaf& leaf, const Config& config, uint64_t begin, size_t distinct,
+             SegmentBuffer& out) {
     _shape = config.choice.shape;
     _level = config.level;
     _layout = config.layout;
@@ -121,7 +123,8 @@ class SegmentBuilder {
     if (_shape == Shape::Dedup) {
       _dedup.Begin(distinct);
     }
-    leaf.Begin(_shape, _level, _layout);
+    out.Truncate(0);
+    leaf.Begin(_shape, _level, _layout, out);
   }
 
   template<typename Leaf>
@@ -193,7 +196,7 @@ class SegmentBuilder {
       0);
     const auto frames = leaf.Finish(
       View(), std::span{_lengths}.subspan(FirstEntry(), _entries.size()));
-    WriteSegment(frames, leaf.Data(), out);
+    WriteSegment(frames, out);
   }
 
  private:
@@ -238,8 +241,7 @@ class SegmentBuilder {
 
   uint64_t Estimate() const noexcept;
   void SortEntries();
-  void WriteSegment(const EncodedFrames& frames, std::string& data,
-                    Segment& out);
+  void WriteSegment(const EncodedFrames& frames, Segment& out);
 
   duckdb::StatsWriter<duckdb::string_t> _stats;
   const duckdb::LogicalType& _type;

@@ -81,7 +81,7 @@ Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
     const std::span<const uint32_t> codes = acc.codes;
     const std::span<const duckdb::string_t* const> values = acc.values;
     const auto target = _params.segment_target;
-    _builder.Begin(enc, config, begin, values.size());
+    _builder.Begin(enc, config, begin, values.size(), seg->bytes);
     for (auto row = begin; row < codes.size();) {
       _builder.AddCode(enc, codes[row++], values);
       if (_builder.Full(enc, target)) {
@@ -100,13 +100,13 @@ void SegmentEncoder::SealChunks(const Config& config,
   With(config, [&](auto& enc) {
     const auto seal = [&] {
       _builder.Finish(enc, *seg);
-      const std::string_view parts[] = {seg->head, seg->data};
-      sink(seg->config.choice, std::move(*seg->stats), seg->rows, parts);
+      sink(seg->config.choice, std::move(*seg->stats), seg->rows,
+           seg->bytes.View());
     };
     const auto target = _params.segment_target;
     uint64_t row = 0;
     uint64_t first = 0;
-    _builder.Begin(enc, config, first, 0);
+    _builder.Begin(enc, config, first, 0, seg->bytes);
     for (const auto& chunk : chunks) {
       for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
         _builder.AddValue(enc,
@@ -115,7 +115,7 @@ void SegmentEncoder::SealChunks(const Config& config,
         if (_builder.Full(enc, target)) {
           seal();
           first = row;
-          _builder.Begin(enc, config, first, 0);
+          _builder.Begin(enc, config, first, 0, seg->bytes);
         }
       }
     }
@@ -133,7 +133,7 @@ Segment* SegmentEncoder::Encode(const Config& config,
   With(config, [&](auto& enc) {
     const std::span<const uint32_t> codes = acc.codes;
     const std::span<const duckdb::string_t* const> values = acc.values;
-    _builder.Begin(enc, config, begin, values.size());
+    _builder.Begin(enc, config, begin, values.size(), seg->bytes);
     for (auto row = begin; row < end; ++row) {
       _builder.AddCode(enc, codes[row], values);
     }
@@ -219,7 +219,7 @@ const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,
 
 Segment* SegmentEncoder::Acquire() {
   if (_free.empty()) {
-    return _pool.emplace_back(std::make_unique<Segment>()).get();
+    return _pool.emplace_back(std::make_unique<Segment>(_buffers)).get();
   }
   auto* seg = _free.back();
   _free.pop_back();

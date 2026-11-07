@@ -44,8 +44,11 @@ namespace irs::codecs::text {
 class SegmentEncoder {
  public:
   SegmentEncoder(const ColCodecParams& params, const duckdb::LogicalType& type,
-                 StringTuning& tuning)
-    : _params{params}, _tuning{tuning}, _builder{type, _dedup, tuning.codes} {}
+                 StringTuning& tuning, duckdb::BufferManager& buffers)
+    : _params{params},
+      _tuning{tuning},
+      _buffers{buffers},
+      _builder{type, _dedup, tuning.codes} {}
 
   Segment* Cut(const Config& config, const StringAccumulator& acc,
                uint64_t begin);
@@ -88,6 +91,7 @@ class SegmentEncoder {
 
   const ColCodecParams& _params;
   StringTuning& _tuning;
+  duckdb::BufferManager& _buffers;
   DedupScratch _dedup;
   SegmentBuilder _builder;
   TrainedDictionaries _dictionaries;

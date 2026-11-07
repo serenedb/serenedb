@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/codecs/onpair_encoder.hpp"
 
 #include <algorithm>
+#include <cstring>
 
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 
@@ -38,19 +39,18 @@ EncodedFrames OnPairEncoder::Finish(const SegmentEntries& rows,
   _codes.resize(total);
   _codec.Encode(entries, _codes, lengths);
   _frames.clear();
-  _data.clear();
   uint32_t max_codes = 0;
   uint64_t frame_raw = 0;
   size_t frame_first = 0;
   uint64_t frame_region = 0;
   uint64_t region = 0;
   const auto close = [&](size_t end) {
-    const auto at = _data.size();
+    const auto at = Written();
     Pack(entries, lengths, frame_first, end, frame_region);
     _frames.emplace_back(static_cast<uint32_t>(frame_first + first_entry),
                          static_cast<uint32_t>(frame_raw),
                          static_cast<uint32_t>(at),
-                         static_cast<uint32_t>(_data.size() - at));
+                         static_cast<uint32_t>(Written() - at));
   };
   for (size_t i = 0; i < entries.size(); ++i) {
     const auto size = entries[i].GetSize();
@@ -69,7 +69,7 @@ EncodedFrames OnPairEncoder::Finish(const SegmentEntries& rows,
   }
   _codec.Export(_side);
   RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
-              _data.size() + _side.size(), _target);
+              Written() + _side.size(), _target);
   return {
     .codec = kCodec,
     .frames = _frames,
@@ -82,6 +82,12 @@ void OnPairEncoder::Pack(std::span<const duckdb::string_t> entries,
                          std::span<const uint32_t> lengths, size_t first,
                          size_t end, uint64_t region) {
   const auto bits = _codec.Bits();
+  uint64_t count = 0;
+  for (auto e = first; e < end; ++e) {
+    count += lengths[e];
+  }
+  const uint64_t bytes = (count * bits + 7) / 8;
+  auto* out = _segment->Extend(bytes + kOnPairPadding);
   uint64_t acc = 0;
   uint32_t fill = 0;
   for (auto e = first; e < end; ++e) {
@@ -90,7 +96,7 @@ void OnPairEncoder::Pack(std::span<const duckdb::string_t> entries,
       acc |= uint64_t{codes[c]} << fill;
       fill += bits;
       while (fill >= 8) {
-        _data.push_back(static_cast<char>(acc & 0xFF));
+        *out++ = static_cast<char>(acc & 0xFF);
         acc >>= 8;
         fill -= 8;
       }
@@ -98,9 +104,9 @@ void OnPairEncoder::Pack(std::span<const duckdb::string_t> entries,
     region += entries[e].GetSize();
   }
   if (fill != 0) {
-    _data.push_back(static_cast<char>(acc & 0xFF));
+    *out++ = static_cast<char>(acc & 0xFF);
   }
-  _data.append(kOnPairPadding, '\0');
+  std::memset(out, 0, kOnPairPadding);
 }
 
 }  // namespace irs::codecs::text

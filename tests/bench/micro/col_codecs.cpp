@@ -321,7 +321,11 @@ struct FsstFrames {
       views.emplace_back(s.data(), static_cast<uint32_t>(s.size()));
     }
     const std::vector<uint32_t> skip(views.size(), 0);
-    encoder.Encode(views, skip, encoded, lengths);
+    encoded.resize(2 * raw + 8);
+    lengths.resize(views.size());
+    encoded.resize(
+      encoder.Encode(views, skip, encoded.data(), encoded.size(), lengths)
+        .bytes);
     decoder.Import(encoder.SymbolTable());
   }
 };

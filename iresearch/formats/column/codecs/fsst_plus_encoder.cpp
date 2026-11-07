@@ -23,6 +23,7 @@
 #include <absl/strings/match.h>
 
 #include <algorithm>
+#include <cstring>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types.hpp>
 #include <limits>
@@ -34,6 +35,8 @@ namespace {
 
 constexpr uint32_t kNoNode = std::numeric_limits<uint32_t>::max();
 constexpr uint64_t kGroupCost = sizeof(uint32_t);
+constexpr uint64_t kEncodeExpansion = 2;
+constexpr uint64_t kEncodeSlack = 8;
 
 size_t SharedCodes(std::string_view a, std::string_view b) noexcept {
   auto n = absl::FindLongestCommonPrefix(a, b).size();
@@ -57,7 +60,19 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
   const auto first_entry = rows.first_entry;
   const auto n = entries.size();
   _shared.assign(n, 0);
-  _codec.Encode(entries, _shared, _encoded, _encoded_lengths);
+  _encoded_lengths.resize(n);
+  uint64_t total = 0;
+  for (const auto& entry : entries) {
+    total += entry.GetSize();
+  }
+  FsstEncoded encoded;
+  _encoded.resize_and_overwrite(
+    kEncodeExpansion * total + kEncodeSlack, [&](char* out, size_t capacity) {
+      encoded =
+        _codec.Encode(entries, _shared, out, capacity, _encoded_lengths);
+      return encoded.bytes;
+    });
+  SDB_ENSURE(encoded.strings == n, "fsst: compression ran out of space");
   _codes.resize(n);
   uint64_t at = 0;
   for (size_t i = 0; i < n; ++i) {
@@ -68,7 +83,6 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
   _ends.clear();
   _prefixes.clear();
   Cleave(first_entry);
-  _data.clear();
   _frames.clear();
   uint32_t max_length = 0;
   uint64_t frame_raw = 0;
@@ -83,19 +97,19 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
   for (size_t i = 0; i < n; ++i) {
     const auto size = entries[i].GetSize();
     if (frame_raw != 0 && frame_raw + size > kFsstFrameRawBytes) {
-      close(_data.size());
+      close(Written());
       frame_raw = 0;
       frame_first = i;
-      frame_off = _data.size();
+      frame_off = Written();
     }
     const auto suffix = _codes[i].substr(_shared[i]);
-    _data.append(suffix);
+    std::memcpy(_segment->Extend(suffix.size()), suffix.data(), suffix.size());
     lengths[i] = static_cast<uint32_t>(suffix.size());
     max_length = std::max(max_length, lengths[i]);
     frame_raw += size;
   }
   if (n != 0) {
-    close(_data.size());
+    close(Written());
   }
   const auto table = _codec.SymbolTable();
   _side.assign(table);
@@ -108,7 +122,7 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
     duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
     0);
   RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
-              _data.size() + _side.size(), _target);
+              Written() + _side.size(), _target);
   return {
     .codec = kCodec,
     .frames = _frames,

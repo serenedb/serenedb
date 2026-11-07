@@ -512,24 +512,34 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   }
   const std::vector<uint32_t> skip(values.size(), 0);
 
+  size_t total = 0;
+  for (const auto& s : strings) {
+    total += s.size();
+  }
+
   irs::codecs::FsstEncoder encoder;
-  std::string batch;
-  std::vector<uint32_t> lengths;
-  encoder.Encode(values, skip, batch, lengths);
-  ASSERT_EQ(values.size(), lengths.size());
+  std::string batch(2 * total + 8, '\0');
+  std::vector<uint32_t> lengths(values.size());
+  const auto all =
+    encoder.Encode(values, skip, batch.data(), batch.size(), lengths);
+  ASSERT_EQ(values.size(), all.strings);
+  batch.resize(all.bytes);
 
   irs::codecs::FsstDecoder decoder;
   ASSERT_TRUE(decoder.Import(encoder.SymbolTable()));
   std::string single;
-  std::vector<uint32_t> single_lengths;
+  uint32_t single_length = 0;
   std::string decoded;
   size_t offset = 0;
   for (size_t i = 0; i < values.size(); ++i) {
     const std::string_view encoded{batch.data() + offset, lengths[i]};
     offset += lengths[i];
-    encoder.Encode(std::span{&values[i], 1}, std::span{&skip[i], 1}, single,
-                   single_lengths);
-    ASSERT_EQ(encoded, single)
+    single.resize(2 * strings[i].size() + 8);
+    const auto one = encoder.Encode(
+      std::span{&values[i], 1}, std::span{&skip[i], 1}, single.data(),
+      single.size(), std::span{&single_length, 1});
+    ASSERT_EQ(1u, one.strings);
+    ASSERT_EQ(encoded, std::string_view(single.data(), one.bytes))
       << "string " << i << ", " << strings[i].size() << " bytes";
     decoded.resize(strings[i].size() + 8);
     const auto size = decoder.Decode(encoded.data(), encoded.size(),
@@ -537,6 +547,50 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
     ASSERT_EQ(strings[i], std::string_view(decoded.data(), size));
   }
   EXPECT_EQ(batch.size(), offset);
+}
+
+TEST(FsstEncoderTest, ResumesWhereTheOutputRanOut) {
+  std::mt19937_64 rng{5};
+  std::vector<std::string> strings;
+  size_t total = 0;
+  for (size_t i = 0; i < 2000; ++i) {
+    std::string s(8 + rng() % 64, '\0');
+    for (auto& c : s) {
+      c = static_cast<char>(rng() % 256);
+    }
+    total += s.size();
+    strings.emplace_back(std::move(s));
+  }
+  std::vector<duckdb::string_t> values;
+  for (const auto& s : strings) {
+    values.emplace_back(s.data(), static_cast<uint32_t>(s.size()));
+  }
+  const std::vector<uint32_t> skip(values.size(), 1);
+
+  irs::codecs::FsstEncoder whole;
+  std::string expected(2 * total + 8, '\0');
+  std::vector<uint32_t> expected_lengths(values.size());
+  const auto all = whole.Encode(values, skip, expected.data(), expected.size(),
+                                expected_lengths);
+  ASSERT_EQ(values.size(), all.strings);
+  expected.resize(all.bytes);
+
+  irs::codecs::FsstEncoder resumed;
+  std::string out(total / 2, '\0');
+  std::vector<uint32_t> lengths(values.size());
+  const auto first =
+    resumed.Encode(values, skip, out.data(), out.size(), lengths);
+  ASSERT_LT(first.strings, values.size());
+  out.resize(first.bytes);
+  std::string rest(2 * total + 8, '\0');
+  const auto second =
+    resumed.Encode(std::span{values}.subspan(first.strings),
+                   std::span{skip}.subspan(first.strings), rest.data(),
+                   rest.size(), std::span{lengths}.subspan(first.strings));
+  ASSERT_EQ(values.size(), first.strings + second.strings);
+  out.append(rest.data(), second.bytes);
+  EXPECT_EQ(expected, out);
+  EXPECT_EQ(expected_lengths, lengths);
 }
 
 TEST(PackedReaderTest, ReadsEveryWidth) {
@@ -1092,18 +1146,21 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     const irs::ColCodecParams params{.segment_target = 16 * 1024};
     const auto sink = [&](irs::codecs::StringChoice sealed,
                           duckdb::BaseStatistics, uint64_t count,
-                          std::span<const std::string_view>) {
+                          std::string_view) {
       EXPECT_EQ(sealed.shape, choice.shape);
       EXPECT_EQ(sealed.leaf, choice.leaf);
       ++segments;
       rows += count;
     };
+    auto& buffers = Db().GetBufferManager();
     const auto outcome =
       choice.shape == Shape::Dedup
         ? irs::codecs::SealSegments(acc, &choice, params,
-                                    duckdb::LogicalType::VARCHAR, tuning, sink)
+                                    duckdb::LogicalType::VARCHAR, tuning,
+                                    buffers, sink)
         : irs::codecs::SealSegments(write_chunks, choice, params,
-                                    duckdb::LogicalType::VARCHAR, tuning, sink);
+                                    duckdb::LogicalType::VARCHAR, tuning,
+                                    buffers, sink);
     EXPECT_TRUE(outcome.sealed);
     EXPECT_EQ(outcome.all_dedup, choice.shape == Shape::Dedup);
     EXPECT_GT(segments, 1u);
@@ -1130,9 +1187,9 @@ TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
   std::vector<Shape> shapes;
   const auto outcome = irs::codecs::SealSegments(
     acc, nullptr, irs::ColCodecParams{.segment_target = 16 * 1024},
-    duckdb::LogicalType::VARCHAR, tuning,
+    duckdb::LogicalType::VARCHAR, tuning, Db().GetBufferManager(),
     [&](irs::codecs::StringChoice choice, duckdb::BaseStatistics, uint64_t,
-        std::span<const std::string_view>) { shapes.push_back(choice.shape); });
+        std::string_view) { shapes.push_back(choice.shape); });
   ASSERT_TRUE(outcome.sealed);
   ASSERT_GT(shapes.size(), 2u);
   EXPECT_EQ(shapes.front(), Shape::Plain);
@@ -1419,14 +1476,15 @@ TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
 TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   using Chunked = std::vector<std::unique_ptr<duckdb::Vector>>;
   constexpr uint64_t kRowGroup = 1024;
-  const auto seal = [](const Chunked& chunks,
-                       irs::codecs::StringTuning& tuning) {
+  const auto seal = [&](const Chunked& chunks,
+                        irs::codecs::StringTuning& tuning) {
     irs::codecs::StringAccumulator acc;
     Accumulate(acc, chunks);
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
+      Db().GetBufferManager(),
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
-         std::span<const std::string_view>) {});
+         std::string_view) {});
     EXPECT_TRUE(outcome.sealed);
   };
   const auto levels = [](const irs::codecs::StringTuning& tuning) {
@@ -2519,7 +2577,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
     auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
     auto h = irs::codecs::Header::Parse(block, size);
     c.corrupt(h);
-    duckdb::Store(h, block);
+    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2595,7 +2653,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
     auto h = irs::codecs::Header::Parse(block, size);
     ASSERT_EQ(h.flags, irs::codecs::FrameDictionary::Local);
     c.corrupt(h, block);
-    duckdb::Store(h, block);
+    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2685,7 +2743,7 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
     ASSERT_EQ(h.codec, irs::codecs::ByteCodec::FsstPlus);
     ASSERT_GT(duckdb::Load<uint32_t>(kPrefixes(h, block)), 0u);
     c.corrupt(h, block);
-    duckdb::Store(h, block);
+    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2770,7 +2828,7 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
     auto h = irs::codecs::Header::Parse(block, size);
     ASSERT_EQ(h.codec, irs::codecs::ByteCodec::OnPair);
     c.corrupt(h, block);
-    duckdb::Store(h, block);
+    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2852,7 +2910,7 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
     ASSERT_EQ(h.codec, irs::codecs::ByteCodec::Fsst12);
     ASSERT_GT(h.symtab_size, 24u);
     c.corrupt(h, block);
-    duckdb::Store(h, block);
+    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2929,7 +2987,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
     auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
     auto h = irs::codecs::Header::Parse(block, size);
     c.corrupt(h);
-    duckdb::Store(h, block);
+    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -3113,14 +3171,15 @@ TEST_F(ColCodecsTest, WideRowsStayNearTheSegmentTarget) {
 
 TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   using irs::codecs::Shape;
-  const auto seal = [](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
-                       irs::codecs::StringTuning& tuning) {
+  const auto seal = [&](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
+                        irs::codecs::StringTuning& tuning) {
     irs::codecs::StringAccumulator acc;
     Accumulate(acc, in);
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
+      Db().GetBufferManager(),
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
-         std::span<const std::string_view>) {});
+         std::string_view) {});
     EXPECT_TRUE(outcome.sealed);
   };
   const Value urls = [](uint64_t g) -> std::optional<std::string> {
@@ -3157,7 +3216,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
     seal(changed, tuning);
     gaps.push_back(tuning.clock.gap);
   }
-  EXPECT_EQ(gaps, (std::vector<uint32_t>{1, 2, 2, 4}));
+  EXPECT_EQ(gaps, (std::vector<uint32_t>{2, 2, 4, 4}));
 
   seal(steady, tuning);
   EXPECT_EQ(tuning.clock.gap, 1u);
@@ -3215,15 +3274,9 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
                                        irs::codecs::ByteCodec::Fsst};
   const auto outcome = irs::codecs::SealSegments(
     chunks, fsst, irs::ColCodecParams{.segment_target = kTarget},
-    duckdb::LogicalType::VARCHAR, tuning,
+    duckdb::LogicalType::VARCHAR, tuning, Db().GetBufferManager(),
     [&](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
-        std::span<const std::string_view> parts) {
-      uint64_t bytes = 0;
-      for (const auto part : parts) {
-        bytes += part.size();
-      }
-      sizes.push_back(bytes);
-    });
+        std::string_view bytes) { sizes.push_back(bytes.size()); });
   ASSERT_TRUE(outcome.sealed);
   ASSERT_GT(sizes.size(), 8u);
   const auto oversized = std::ranges::count_if(

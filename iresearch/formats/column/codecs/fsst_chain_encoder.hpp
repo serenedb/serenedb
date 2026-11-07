@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
@@ -40,9 +39,10 @@ class FsstChainEncoder {
   explicit FsstChainEncoder(StringTuning& tuning, uint32_t target) noexcept
     : _history{tuning.history[static_cast<size_t>(kCodec)]}, _target{target} {}
 
-  void Begin(Shape shape, uint8_t, FrameLayout) noexcept {
+  void Begin(Shape shape, uint8_t, FrameLayout, SegmentBuffer& out) noexcept {
     _shape = shape;
-    _data.clear();
+    _segment = &out;
+    _base = out.Size();
   }
 
   void Retrain() noexcept { _codec.Reset(); }
@@ -53,16 +53,14 @@ class FsstChainEncoder {
 
   EncodedFrames Finish(const SegmentEntries& rows, std::span<uint32_t> lengths);
 
-  std::string& Data() noexcept { return _data; }
-
  private:
   RatioHistory* _history;
   uint32_t _target;
   Shape _shape = Shape::Dedup;
   FsstEncoder _codec;
+  SegmentBuffer* _segment = nullptr;
+  size_t _base = 0;
   std::vector<FrameMeta> _frames;
-  std::string _data;
-  std::vector<uint32_t> _entry_lengths;
   std::vector<uint32_t> _lcp_stream;
 };
 

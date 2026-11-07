@@ -77,8 +77,8 @@ SealOutcome SealSegments(const StringAccumulator& acc,
                          const StringChoice* named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink) {
-  text::SegmentEncoder encoder{params, type, tuning};
+                         duckdb::BufferManager& buffers, SegmentSink sink) {
+  text::SegmentEncoder encoder{params, type, tuning, buffers};
   text::Calibration calibration{acc, named, params, tuning, encoder};
   SealOutcome outcome{.sealed = true};
   uint64_t row = 0;
@@ -105,8 +105,8 @@ SealOutcome SealSegments(const StringAccumulator& acc,
     }
     outcome.all_dedup =
       outcome.all_dedup && seg->config.choice.shape == Shape::Dedup;
-    const std::string_view parts[] = {seg->head, seg->data};
-    sink(seg->config.choice, std::move(*seg->stats), seg->rows, parts);
+    sink(seg->config.choice, std::move(*seg->stats), seg->rows,
+         seg->bytes.View());
     encoder.Release(seg);
     row = end;
     first = false;
@@ -118,16 +118,16 @@ SealOutcome SealSegments(std::span<const WriteChunk> chunks,
                          const StringChoice& named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink) {
-  text::SegmentEncoder encoder{params, type, tuning};
+                         duckdb::BufferManager& buffers, SegmentSink sink) {
+  text::SegmentEncoder encoder{params, type, tuning, buffers};
   SealOutcome outcome{.sealed = true};
-  encoder.SealChunks(
-    text::NamedConfig(named, params), chunks,
-    [&](StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
-        std::span<const std::string_view> parts) {
-      outcome.all_dedup = outcome.all_dedup && choice.shape == Shape::Dedup;
-      sink(choice, std::move(stats), rows, parts);
-    });
+  encoder.SealChunks(text::NamedConfig(named, params), chunks,
+                     [&](StringChoice choice, duckdb::BaseStatistics stats,
+                         uint64_t rows, std::string_view bytes) {
+                       outcome.all_dedup =
+                         outcome.all_dedup && choice.shape == Shape::Dedup;
+                       sink(choice, std::move(stats), rows, bytes);
+                     });
   return outcome;
 }
 

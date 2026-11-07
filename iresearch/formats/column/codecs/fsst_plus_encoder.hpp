@@ -41,9 +41,10 @@ class FsstPlusEncoder {
   explicit FsstPlusEncoder(StringTuning& tuning, uint32_t target) noexcept
     : _history{tuning.history[static_cast<size_t>(kCodec)]}, _target{target} {}
 
-  void Begin(Shape shape, uint8_t, FrameLayout) noexcept {
+  void Begin(Shape shape, uint8_t, FrameLayout, SegmentBuffer& out) noexcept {
     _shape = shape;
-    _data.clear();
+    _segment = &out;
+    _base = out.Size();
   }
 
   void Retrain() noexcept { _codec.Reset(); }
@@ -56,9 +57,9 @@ class FsstPlusEncoder {
 
   EncodedFrames Finish(const SegmentEntries& rows, std::span<uint32_t> lengths);
 
-  std::string& Data() noexcept { return _data; }
-
  private:
+  uint64_t Written() const noexcept { return _segment->Size() - _base; }
+
   struct Node {
     uint32_t left;
     uint32_t right;
@@ -76,8 +77,9 @@ class FsstPlusEncoder {
   uint32_t _target;
   Shape _shape = Shape::Dedup;
   FsstEncoder _codec;
+  SegmentBuffer* _segment = nullptr;
+  size_t _base = 0;
   std::vector<FrameMeta> _frames;
-  std::string _data;
   std::string _encoded;
   std::string _prefixes;
   std::string _side;

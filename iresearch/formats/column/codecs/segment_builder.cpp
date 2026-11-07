@@ -90,12 +90,12 @@ void SegmentBuilder::SortEntries() {
   }
 }
 
-void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
-                                  std::string& data, Segment& out) {
+void SegmentBuilder::WriteSegment(const EncodedFrames& frames, Segment& out) {
   const auto entry_count = EntryCount();
+  const auto data_size = out.bytes.Size();
   SDB_ENSURE(_rows <= std::numeric_limits<uint32_t>::max() &&
                entry_count <= std::numeric_limits<uint32_t>::max() &&
-               data.size() <= std::numeric_limits<uint32_t>::max(),
+               data_size <= std::numeric_limits<uint32_t>::max(),
              "col codec: segment too large");
 
   Header h{
@@ -109,7 +109,7 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
     .frame_count = static_cast<uint32_t>(frames.frames.size()),
     .dictionary_size = frames.dictionary_size,
     .symtab_size = static_cast<uint32_t>(frames.symtab.size()),
-    .data_size = static_cast<uint32_t>(data.size()),
+    .data_size = static_cast<uint32_t>(data_size),
     .lcp_width =
       BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp),
     .flags = frames.flags,
@@ -119,14 +119,15 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
     _shape == Shape::Dedup
       ? EncodeCodes(_codes, _entries.size(), _runs, _codes_tuning)
       : std::string{};
-  LayOut(h, frames.frames.size(),
-         BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
-         BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
-         codes.size(), frames.symtab.size());
+  const auto total =
+    LayOut(h, data_size, frames.frames.size(),
+           BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
+           BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
+           codes.size(), frames.symtab.size());
 
-  out.head.assign(static_cast<size_t>(h.off_data), '\0');
-  auto* base = reinterpret_cast<duckdb::data_ptr_t>(out.head.data());
-  duckdb::Store(h, base);
+  std::memset(out.bytes.Extend(total - data_size), 0, total - data_size);
+  auto* base = reinterpret_cast<duckdb::data_ptr_t>(out.bytes.Data());
+  duckdb::Store(h, base + total - kHeaderSize);
   for (size_t i = 0; i < frames.frames.size(); ++i) {
     duckdb::Store(frames.frames[i], base + h.off_frames + i * kFrameMetaSize);
   }
@@ -156,7 +157,6 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
   out.nulls = _nulls;
   out.input = _input;
   out.max_len = _max_len;
-  out.data.swap(data);
 
   _stats.Clear();
   _codes.clear();

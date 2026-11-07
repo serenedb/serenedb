@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <span>
 #include <string_view>
@@ -108,20 +109,20 @@ class StringAccumulator {
   const duckdb::string_t* _last = nullptr;
 };
 
-using SegmentSink = absl::FunctionRef<void(
-  StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
-  std::span<const std::string_view> parts)>;
+using SegmentSink =
+  absl::FunctionRef<void(StringChoice choice, duckdb::BaseStatistics stats,
+                         uint64_t rows, std::string_view bytes)>;
 
 SealOutcome SealSegments(const StringAccumulator& acc,
                          const StringChoice* named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink);
+                         duckdb::BufferManager& buffers, SegmentSink sink);
 
 SealOutcome SealSegments(std::span<const WriteChunk> chunks,
                          const StringChoice& named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink);
+                         duckdb::BufferManager& buffers, SegmentSink sink);
 
 }  // namespace irs::codecs

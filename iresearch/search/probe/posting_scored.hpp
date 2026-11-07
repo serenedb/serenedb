@@ -59,20 +59,13 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
                const ScoreArgs& args) {
-    SDB_ASSERT(meta.docs_count != 0);
     SDB_ASSERT(FeaturesHaveFreq(field.meta().index_features));
     this->SetRecipe(segment, field, args);
-
-    if (meta.docs_count == 1) {
-      const auto doc = this->SetSingle(meta);
-      _cursor.base = doc - 1;
+    if (!this->OpenList(meta, doc_in, field.meta().index_features,
+                        field.HasScoreBounds())) {
+      _cursor.base = this->SetSingle(meta) - 1;
       _leaf.Single();
-      return;
     }
-
-    const auto bounds = field.HasScoreBounds();
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, field.meta().index_features, bounds);
   }
 
   ScoreFunction PrepareScore() { return this->MakeDeferredScore(); }

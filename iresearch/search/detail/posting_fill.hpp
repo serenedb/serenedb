@@ -63,18 +63,12 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(has_freq);
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, layout, has_score_bounds)) {
       _cursor.base = this->SetSingle(meta) - 1;
       _at = kBlock - 1;
       _len = 1;
-      return;
     }
-
-    this->OpenInput(meta, doc_in, has_score_bounds);
-    this->ArmWalk(meta, layout, has_score_bounds);
   }
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
@@ -115,17 +109,11 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
       });
   }
 
-  doc_id_t FillSum(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
+  template<ScoreMergeType M>
+  doc_id_t FillMerge(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                     score_t* IRS_RESTRICT scores, score_t constant) {
     return FillScored(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-      Merge<ScoreMergeType::Sum>(scores[offset], constant);
-    });
-  }
-
-  doc_id_t FillMax(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillScored(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-      Merge<ScoreMergeType::Max>(scores[offset], constant);
+      Merge<M>(scores[offset], constant);
     });
   }
 

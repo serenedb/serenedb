@@ -44,8 +44,12 @@ template<typename T>
 concept ConstantProducer =
   Producer<T> && requires(T& t, doc_id_t min, doc_id_t max, uint64_t* mask,
                           score_t* scores, score_t value) {
-    { t.FillSum(min, max, mask, scores, value) } -> std::same_as<doc_id_t>;
-    { t.FillMax(min, max, mask, scores, value) } -> std::same_as<doc_id_t>;
+    {
+      t.template FillMerge<ScoreMergeType::Sum>(min, max, mask, scores, value)
+    } -> std::same_as<doc_id_t>;
+    {
+      t.template FillMerge<ScoreMergeType::Max>(min, max, mask, scores, value)
+    } -> std::same_as<doc_id_t>;
   };
 
 template<typename T>

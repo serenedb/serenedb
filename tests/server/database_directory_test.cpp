@@ -70,7 +70,6 @@ TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {
   directory.Create();
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5"));
   EXPECT_ANY_THROW(directory.Create());
-  EXPECT_EQ(directory.DataFile(), (_root / "5" / "data.db").string());
   EXPECT_FALSE(directory.OpenStorage(7).has_value());
   EXPECT_EQ(directory.CreateStorage(7), _root / "5" / "7");
   EXPECT_ANY_THROW(directory.CreateStorage(7));

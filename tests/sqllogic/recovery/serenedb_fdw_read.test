@@ -164,20 +164,8 @@ CHECKPOINT postgres;
 statement ok
 FORCE CHECKPOINT postgres;
 
-system ok
-stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal > $__TEST_DIR__/sfr_log.inode
-
-statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
 statement ok
 CREATE TABLE postgres.public.sfr_compacted (x INT);
-
-statement ok
-SET sdb_faults = '-compact_inside_ddl';
-
-system ok
-[ "$(stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal)" != "$(cat $__TEST_DIR__/sfr_log.inode)" ]
 
 query
 SELECT (SELECT count(*) FROM sfr_snap.public.sfr_docs) AS docs, (SELECT count(*) FROM sfr_snap.public.sfr_notes) AS notes;

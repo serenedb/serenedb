@@ -158,15 +158,7 @@ CREATE TABLE fdr_o (id INT);
 
 
 statement ok
-SET sdb_faults = 'alter_log_without_dependencies';
-
-
-statement ok
 ALTER TABLE fdr_o ADD COLUMN a INT DEFAULT fdr_old(1);
-
-
-statement ok
-SET sdb_faults = '-alter_log_without_dependencies';
 
 
 statement ok

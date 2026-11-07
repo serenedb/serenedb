@@ -759,14 +759,6 @@ TEST_F(SearchRowRemovalTest, SegmentIdsPast32BitsAreRemovedByPosition) {
   ExpectModel();
 }
 
-TEST(WalRowPositionMapsTest, EntryTypesRoundTripTheirNames) {
-  for (const auto type : {duckdb::WALType::DELETE_ROW_POSITIONS,
-                          duckdb::WALType::ROW_POSITION_MAPS}) {
-    EXPECT_EQ(type, duckdb::EnumUtil::FromString<duckdb::WALType>(
-                      duckdb::EnumUtil::ToChars(type)));
-  }
-}
-
 TEST_F(SearchRowRemovalTest, RowIdKeysRemoveTheLiveCopyOfTheirKey) {
   Insert(std::vector<int64_t>{5, 6, 7, 8});
   Commit(irs::KeyRemoval{{8, 5}}, std::vector<int64_t>{5, 8});

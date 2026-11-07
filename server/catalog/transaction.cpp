@@ -376,6 +376,15 @@ void Transactions::CommitState(absl::FunctionRef<std::vector<uint8_t>()> build,
 }
 
 void Transactions::MaintainLog(duckdb::ClientContext& context, Lsn end) {
+  bool rewrite = false;
+  SDB_IF_FAILURE("compact_inside_ddl") { rewrite = true; }
+  SDB_IF_FAILURE("compact_inside_drop") { rewrite = true; }
+  if (rewrite && !search::IsBackupActive()) {
+    if (const auto status = TruncateLog(true); !status.ok()) {
+      SDB_WARN(GENERAL, "rewriting the log failed: ", status.message());
+    }
+    return;
+  }
   if (!_log->HasSpare() && end - _log->NewestChunk() > Log::kChunkBytes / 2 &&
       BackgroundScheduler::gInstance &&
       !_preparing_spare.exchange(true, std::memory_order_acq_rel)) {

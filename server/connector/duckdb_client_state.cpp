@@ -333,9 +333,6 @@ void SereneDBClientState::TransactionRollback(
   }
   _connection_ctx->Rollback(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
-  SDB_IF_FAILURE("transaction_rollback_fails") {
-    THROW_SQL_ERROR(ERR_MSG("injected rollback failure"));
-  }
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {

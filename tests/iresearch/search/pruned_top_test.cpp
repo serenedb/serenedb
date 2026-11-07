@@ -35,6 +35,7 @@
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/scorers/indri_dirichlet.hpp>
 #include <limits>
 #include <memory>
@@ -736,6 +737,120 @@ TEST_P(PrunedTopTest, nested_groups_score_as_their_parts) {
           both(term("mid"), either(alone(std::make_unique<irs::All>()),
                                    term("dense"), irs::ScoreMergeType::Sum)));
   }
+}
+
+TEST_P(PrunedTopTest, absorbed_all_docs_and_constant_leads) {
+  Build();
+  const irs::ConstantScore constant{2.f};
+  const auto all_and = [](std::string_view a, std::string_view b) {
+    auto filter = std::make_unique<irs::BooleanFilter>();
+    filter->Add(std::make_unique<irs::All>(), irs::Occur::Must);
+    filter->Add(Clause(a), irs::Occur::Must);
+    filter->Add(Clause(b), irs::Occur::Must);
+    return filter;
+  };
+  for (const auto& [x, a, b] : std::vector<std::array<std::string_view, 3>>{
+         {"mid", "dense", "half"},
+         {"sparse", "common", "dense"},
+       }) {
+    SCOPED_TRACE(absl::StrCat(x, " ", a, " ", b));
+    CheckRanking(*all_and(a, b));
+    for (const auto merge :
+         {irs::ScoreMergeType::Sum, irs::ScoreMergeType::Max}) {
+      irs::BooleanFilter filter;
+      filter.Add(Clause(x), irs::Occur::Should);
+      filter.Add(all_and(a, b), irs::Occur::Should);
+      filter.SetMinShouldMatch(1);
+      filter.SetMergeType(merge);
+      CheckRanking(filter);
+    }
+  }
+  for (const auto merge :
+       {irs::ScoreMergeType::Sum, irs::ScoreMergeType::Max}) {
+    SCOPED_TRACE(merge == irs::ScoreMergeType::Max ? "max" : "sum");
+    for (const auto& [a, b] : std::vector<std::array<std::string_view, 2>>{
+           {"rare", "sparse"},
+           {"sparse", "mid"},
+         }) {
+      SCOPED_TRACE(absl::StrCat("+all +", a, " +", b, " -dense"));
+      auto sparse = std::make_unique<irs::BooleanFilter>();
+      sparse->Add(std::make_unique<irs::All>(), irs::Occur::Must);
+      sparse->Add(Clause(a), irs::Occur::Must);
+      sparse->Add(Clause(b), irs::Occur::Must);
+      sparse->Add(Clause("dense"), irs::Occur::MustNot);
+      CheckRanking(*sparse);
+      irs::BooleanFilter either;
+      either.Add(Clause("edge"), irs::Occur::Should);
+      either.Add(std::move(sparse), irs::Occur::Should);
+      either.SetMinShouldMatch(1);
+      either.SetMergeType(merge);
+      CheckRanking(either);
+    }
+    auto excluding = std::make_unique<irs::BooleanFilter>();
+    excluding->Add(std::make_unique<irs::All>(), irs::Occur::Must);
+    excluding->Add(Clause("dense"), irs::Occur::Must);
+    excluding->Add(Clause("half"), irs::Occur::Must);
+    excluding->Add(Clause("mid"), irs::Occur::MustNot);
+    CheckRanking(*excluding);
+    irs::BooleanFilter outer;
+    outer.Add(Clause("sparse"), irs::Occur::Should);
+    outer.Add(std::move(excluding), irs::Occur::Should);
+    outer.SetMinShouldMatch(1);
+    outer.SetMergeType(merge);
+    CheckRanking(outer);
+
+    auto group = std::make_unique<irs::BooleanFilter>();
+    auto constant_member = Clause("dense");
+    constant_member.scorer = &constant;
+    group->Add(std::move(constant_member), irs::Occur::Should);
+    group->Add(Clause("half"), irs::Occur::Should);
+    group->SetMinShouldMatch(1);
+    group->SetMergeType(merge);
+    irs::BooleanFilter nested;
+    nested.Add(Clause("half"), irs::Occur::Must);
+    nested.Add(std::move(group), irs::Occur::Must);
+    CheckRanking(nested);
+  }
+  for (const auto merge :
+       {irs::ScoreMergeType::Sum, irs::ScoreMergeType::Max}) {
+    for (const bool constant_lead : {false, true}) {
+      SCOPED_TRACE(absl::StrCat("constant lead ", constant_lead, " max ",
+                                merge == irs::ScoreMergeType::Max));
+      irs::BooleanFilter filter;
+      auto lead = Clause("half");
+      if (constant_lead) {
+        lead.scorer = &constant;
+      }
+      filter.Add(std::move(lead), irs::Occur::Must);
+      filter.Add(Clause("mid"), irs::Occur::Should);
+      filter.Add(Clause("dense"), irs::Occur::Should);
+      filter.SetMergeType(merge);
+      CheckRanking(filter);
+    }
+  }
+}
+
+TEST_P(PrunedTopTest, phrases_left_alone_in_unions) {
+  Build();
+  for (const auto other : {"edge", "single", "holes"}) {
+    SCOPED_TRACE(other);
+    irs::BooleanFilter filter;
+    filter.Add(PhraseOf({"run", "run"}), irs::Occur::Should);
+    filter.Add(Clause(other), irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
+    CheckRanking(filter);
+  }
+}
+
+TEST_P(PrunedTopTest, sloppy_phrases_in_unions) {
+  Build(PhrasesText);
+  auto phrase = PhraseOf({"brass", "band"});
+  static_cast<irs::ByPhrase&>(*phrase).mutable_options()->set_slop(1);
+  irs::BooleanFilter filter;
+  filter.Add(std::move(phrase), irs::Occur::Should);
+  filter.Add(Clause("town"), irs::Occur::Should);
+  filter.SetMinShouldMatch(1);
+  CheckRanking(filter);
 }
 
 TEST_P(PrunedTopTest, constant_roots_rank_like_the_exhaustive_plan) {

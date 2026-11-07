@@ -87,23 +87,8 @@ class Walk : public Root {
     if (batch == 0) {
       return;
     }
-    if (batch == kBatch) {
-      ScoreFull(_batch, _batch_scores);
-    } else {
-      Score(_batch, _batch_scores, batch);
-    }
+    FetchAndScore(_fetcher, _score, _batch, _batch_scores, batch);
     _batched = batch;
-  }
-
-  void ScoreFull(const doc_id_t* docs, score_t* scores) {
-    _fetcher.FetchScoreBlock(
-      std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
-    _score.ScoreBlock(scores);
-  }
-
-  void Score(const doc_id_t* docs, score_t* scores, uint32_t len) {
-    _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
-    _score.Score(scores, static_cast<scores_size_t>(len));
   }
 
   ColumnArgsFetcher& _fetcher;

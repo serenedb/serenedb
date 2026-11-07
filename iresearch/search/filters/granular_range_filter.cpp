@@ -69,10 +69,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
 
 PrepareCollector::ptr ByGranularRange::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
-  if (!ScoresPerDoc(scorer)) {
-    return std::make_unique<AllCollector>(scorer, stats);
-  }
-  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+  return MakeMultiTermCollector(scorer, stats, threads);
 }
 
 }  // namespace irs

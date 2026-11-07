@@ -197,4 +197,13 @@ void VisitTerms(Terms& terms, MultiTermVisitor& visitor) {
   } while (terms.next());
 }
 
+inline PrepareCollector::ptr MakeMultiTermCollector(const Scorer* scorer,
+                                                    StatsArena& stats,
+                                                    uint32_t threads) {
+  if (!ScoresPerDoc(scorer)) {
+    return std::make_unique<AllCollector>(scorer, stats);
+  }
+  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+}
+
 }  // namespace irs

@@ -350,8 +350,9 @@ void AppendLookup(
   bool has_lookup_filter,
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) {
   const bool suppress_lookup =
-    bind.relation.kind == ScanEntryKind::InvertedIndex && !has_lookup_filter &&
-    (count_only || (!projections.entries.empty() && !projections.has_lookup));
+    bind.relation.kind == ScanEntryKind::SearchTable ||
+    (bind.relation.kind == ScanEntryKind::InvertedIndex && !has_lookup_filter &&
+     (count_only || (!projections.entries.empty() && !projections.has_lookup)));
   if (!bind.lookup.label.empty() && !suppress_lookup) {
     out.insert("Lookup", bind.lookup.label);
   }
@@ -498,7 +499,9 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
     return result;
   }
   auto& bind = input.bind_data->Cast<ScanBindData>();
-  result.insert("Index", std::string{bind.RelationName()});
+  result.insert(
+    bind.relation.kind == ScanEntryKind::SearchTable ? "Table" : "Index",
+    std::string{bind.RelationName()});
   const auto projections = CollectProjections(bind, input);
   bool count_only = input.projected_column_ids;
   if (count_only) {

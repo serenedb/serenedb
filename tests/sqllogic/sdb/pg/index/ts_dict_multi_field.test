@@ -120,6 +120,7 @@ QUERY PLAN
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: mf_idx                              │
+│ Lookup: search                             │
 │ TsDict: title, body                        │
 │ Projections:                               │
 │ sdb_inverted_index_term$title,             │
@@ -166,6 +167,7 @@ QUERY PLAN
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: mf_idx                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ And ────────────────╮                          │
 │ ╰───────────┬──────────╯                          │

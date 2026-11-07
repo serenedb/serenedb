@@ -66,6 +66,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -96,6 +97,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -150,6 +152,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
+│ Lookup: search           │
 │ Output: row-count only   │
 │ Column Filter: c > 150   │
 │ ~40 rows                 │
@@ -208,7 +211,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -315,8 +318,7 @@ QUERY PLAN
 │ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
-│ Index: cfm_st            │
-│ Lookup: search           │
+│ Table: cfm_st            │
 │ Output: row-count only   │
 │ Column Filter: a > 150   │
 │ ~40 rows                 │

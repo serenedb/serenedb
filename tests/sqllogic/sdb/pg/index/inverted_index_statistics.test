@@ -43,6 +43,7 @@ QUERY PLAN
 ╰────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: vedernikoff_idx          │
+│ Lookup: search                  │
 │ Projections: small              │
 │ ~3 rows                         │
 ╰─────────────────────────────────╯
@@ -59,6 +60,7 @@ QUERY PLAN
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: vedernikoff_idx │
+│ Lookup: search         │
 │ Projections: big       │
 │ ~3 rows                │
 ╰────────────────────────╯

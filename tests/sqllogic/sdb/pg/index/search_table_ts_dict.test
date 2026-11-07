@@ -114,8 +114,7 @@ QUERY PLAN
 │ ~1 row                                              │
 ╰──────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────┴──────────────────────────╮
-│ Index: t                                            │
-│ Lookup: search                                      │
+│ Table: t                                            │
 │ TsDict: tag                                         │
 │ Projections:                                        │
 │ sdb_inverted_index_term$tag,                        │
@@ -226,8 +225,7 @@ QUERY PLAN
 │ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
-│ Index: t                                  │
-│ Lookup: search                            │
+│ Table: t                                  │
 │ Index Filter:                             │
 │ ╭─ Term ────────────╮                     │
 │ │ Field: an(string) │                     │
@@ -301,8 +299,7 @@ QUERY PLAN
 │ ~4 rows                                                                           │
 ╰─────────────────────────────────────────┬─────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────────────┴─────────────────────────────────────────╮
-│ Index: g                                                                          │
-│ Lookup: search                                                                    │
+│ Table: g                                                                          │
 │ TsDict: cat, brand                                                                │
 │ Projections:                                                                      │
 │ sdb_inverted_index_term$cat, sdb_inverted_index_term_count$cat,                   │

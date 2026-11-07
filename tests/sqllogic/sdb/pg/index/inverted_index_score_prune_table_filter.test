@@ -46,6 +46,7 @@ EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND n > 20 ORDER B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wtf_idx              │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -75,6 +76,7 @@ EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_any(['term', 'rare']) AND n > 20 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wtf_idx              │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Or ───────────────────╮  │
 │ ╰────────────┬───────────╯  │
@@ -116,7 +118,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: wtf_idx                 │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -137,6 +139,7 @@ EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: wtf_idx              │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -245,6 +248,7 @@ ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 5;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: wtw_idx                        │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Or ─────────────────────╮          │
 │ ╰─────────────┬────────────╯          │
@@ -335,6 +339,7 @@ ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
 │ Index: wtw_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Phrase ──────────────────────────────╮ │
 │ │ Field: body(string)                   │ │

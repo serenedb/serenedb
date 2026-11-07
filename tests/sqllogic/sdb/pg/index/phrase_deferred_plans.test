@@ -49,7 +49,7 @@ EXPLAIN SELECT id FROM pdm_v_idx WHERE body @@ ts_phrase('quick brown') ORDER BY
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pdm_v_idx                         │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Phrase ─────────────────────────────╮ │
 │ │ Field: body(string)                  │ │
@@ -94,6 +94,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: pdm_v_idx                          │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Phrase ─────────────────────────────╮  │
 │ │ Field: body(string)                  │  │
@@ -120,7 +121,7 @@ EXPLAIN SELECT id FROM pdm_v_idx WHERE NOT body @@ ts_phrase('quick brown')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────╮
 │ Index: pdm_v_idx                                                │
-│ Lookup: table                                                   │
+│ Lookup: search                                                  │
 │ Index Filter:                                                   │
 │ ╭─ Not ─────────────╮                                           │
 │ ╰─────────┬─────────╯                                           │
@@ -152,7 +153,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: pdm_v_idx                         │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Phrase ─────────────────────────────╮ │
 │ │ Field: body(string)                  │ │
@@ -161,7 +162,7 @@ QUERY PLAN
 │ │ Verify: inline                       │ │
 │ ╰──────────────────────────────────────╯ │
 │ Offsets: body                            │
-│ Projections: body (i), id (l)            │
+│ Projections: body, id                    │
 │ ~1 row                                   │
 ╰──────────────────────────────────────────╯
 
@@ -180,7 +181,7 @@ EXPLAIN SELECT id FROM pdm_text WHERE body @@ to_tsquery('"qu* fox"~2')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: pdm_text                                  │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -206,7 +207,7 @@ EXPLAIN SELECT id FROM pdm_text WHERE body @@ to_tsquery('"q?ick b*n fo*"~2')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────╮
 │ Index: pdm_text                                                           │
-│ Lookup: table                                                             │
+│ Lookup: search                                                            │
 │ Index Filter:                                                             │
 │ ╭─ And ───────────────╮                                                   │
 │ ╰──────────┬──────────╯                                                   │
@@ -233,7 +234,7 @@ EXPLAIN SELECT id FROM pdm_text WHERE body @@ to_tsquery('"qu* fox"~2') AND body
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: pdm_text                                   │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ And ────────────────╮                          │
 │ ╰───────────┬──────────╯                          │
@@ -259,7 +260,7 @@ EXPLAIN SELECT id FROM pdm_text WHERE body @@ (to_tsquery('"qu* fox"~2'))::score
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────╮
 │ Index: pdm_text                                       │
-│ Lookup: table                                         │
+│ Lookup: search                                        │
 │ Index Filter:                                         │
 │ ╭─ And ────────────────────╮                          │
 │ │ Merge: max               │                          │
@@ -288,7 +289,7 @@ EXPLAIN SELECT id FROM pdm_text WHERE body @@ (to_tsquery('"qu* fox"~2') || 'dog
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
 │ Index: pdm_text                                                       │
-│ Lookup: table                                                         │
+│ Lookup: search                                                        │
 │ Index Filter:                                                         │
 │ ╭─ Or ────────────────╮                                               │
 │ ╰──────────┬──────────╯                                               │
@@ -309,7 +310,7 @@ EXPLAIN SELECT id FROM pdm_text WHERE body @@ (ts_phrase('quick') ## ts_between(
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: pdm_text                                  │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -335,7 +336,7 @@ EXPLAIN SELECT id FROM pdm_syn_text WHERE body @@ to_tsquery('"red au*"~2')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: pdm_syn_text                          │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Phrase ─────────────────────────────────╮ │
 │ │ Field: body(string)                      │ │
@@ -353,7 +354,7 @@ EXPLAIN SELECT id FROM pdm_syn_text WHERE body @@ (ts_phrase('red') ## ts_starts
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: pdm_syn_text                              │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -407,7 +408,7 @@ EXPLAIN SELECT id FROM pdm_text WHERE body @@ to_tsquery('"quik~1 fox"~2')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────╮
 │ Index: pdm_text                                       │
-│ Lookup: table                                         │
+│ Lookup: search                                        │
 │ Index Filter:                                         │
 │ ╭─ And ───────────────╮                               │
 │ ╰──────────┬──────────╯                               │

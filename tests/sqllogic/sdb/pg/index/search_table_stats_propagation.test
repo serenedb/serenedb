@@ -107,8 +107,7 @@ QUERY PLAN
 │ ~1 row                       │
 ╰───────────────┬──────────────╯
 ╭─ IRESEARCH_SCAN ─────────────╮
-│ Index: stp                   │
-│ Lookup: search               │
+│ Table: stp                   │
 │ Output: row-count only       │
 │ Column Filter: n IS NOT NULL │
 │ ~40 rows                     │
@@ -157,8 +156,7 @@ QUERY PLAN
 │ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
-│ Index: stp               │
-│ Lookup: search           │
+│ Table: stp               │
 │ Output: row-count only   │
 │ Column Filter: x >= 150  │
 │ ~30 rows                 │

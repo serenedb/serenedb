@@ -26,8 +26,7 @@ QUERY PLAN
 │ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
-│ Index: wfb               │
-│ Lookup: search           │
+│ Table: wfb               │
 │ Index Filter:            │
 │ ╭─ Automaton ──────╮     │
 │ │ Field: f(string) │     │

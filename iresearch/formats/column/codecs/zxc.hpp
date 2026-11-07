@@ -25,9 +25,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <string>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/segment_dictionary.hpp"
 
 namespace irs::codecs {
 
@@ -40,48 +43,63 @@ struct Zxc {
   static constexpr ByteCodec kCodec = ByteCodec::Zxc;
   static constexpr uint8_t kDefaultLevel = 3;
   static constexpr uint8_t kMaxLevel = 7;
-  static constexpr uint32_t kFirstWindowed = kNeverWindowed;
+  static constexpr size_t kDictionaryCap = 32 * 1024;
 
   static size_t Bound(size_t raw_size) noexcept {
     return zxc_compress_bound(raw_size);
   }
 
-  class Dictionary {
-   public:
-    Dictionary(uint8_t level, std::string_view bytes);
-
-    zxc_cctx* Context() const noexcept { return _ctx.get(); }
-
-   private:
-    std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
-  };
-
   class Compressor {
    public:
     explicit Compressor(uint8_t level);
 
-    size_t Compress(const char* src, size_t size, char* dst, size_t capacity,
-                    const Dictionary* dictionary = nullptr);
+    bool Train(std::string_view frames, std::span<const size_t> sizes);
+    void Use(std::string_view raw);
+    void Clear() noexcept {
+      _dictionary.clear();
+      _stored.clear();
+    }
+    std::string_view Dictionary() const noexcept { return _dictionary; }
+    std::string_view Stored() const noexcept { return _stored; }
+
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
    private:
+    size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
+    void Attach();
+
+    uint8_t _level;
     std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
+    std::unique_ptr<zxc_cctx, ZxcFree> _attached;
+    std::string _dictionary;
+    std::string _stored;
   };
 
   class Decompressor {
    public:
     Decompressor();
 
-    bool Decompress(const char* src, size_t size, char* dst, size_t raw_size,
-                    std::string_view dictionary = {}) noexcept;
-    size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t,
-                            size_t raw_size,
-                            std::string_view dictionary) noexcept {
-      return Decompress(src, size, dst, raw_size, dictionary) ? raw_size : 0;
+    bool Decompress(const char* src, size_t size, char* dst,
+                    size_t raw_size) noexcept;
+
+    bool Load(std::string_view stored, size_t size);
+    bool LoadFrame(const char* src, size_t size, size_t raw_size);
+    void Clear() noexcept {
+      _window.clear();
+      _dictionary = 0;
     }
+    std::string_view Dictionary() const noexcept {
+      return {_window.data(), _dictionary};
+    }
+
+    std::string_view Inflate(const char* src, size_t size, char* dst, size_t,
+                             size_t raw_size);
 
    private:
     std::unique_ptr<zxc_dctx, ZxcFree> _ctx;
     std::unique_ptr<zxc_dctx, ZxcFree> _blocks;
+    std::string _window;
+    size_t _dictionary = 0;
   };
 };
 

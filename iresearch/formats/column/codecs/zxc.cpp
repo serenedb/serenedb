@@ -72,24 +72,51 @@ const duckdb::CompressionFunction& DictZxcFunction() {
   return kFunction;
 }
 
-Zxc::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
-  : _ctx{NewContext(level)} {
-  bytes = ZxcDictionary(bytes);
-  SDB_ASSERT(!bytes.empty());
+Zxc::Compressor::Compressor(uint8_t level)
+  : _level{level}, _ctx{NewContext(level)} {}
+
+bool Zxc::Compressor::Train(std::string_view frames,
+                            std::span<const size_t> sizes) {
+  _stored.clear();
+  TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
+  if (_dictionary.empty()) {
+    return false;
+  }
+  PackDictionary(_dictionary, Bound(_dictionary.size()), _stored,
+                 [&](const char* src, size_t size, char* dst, size_t capacity) {
+                   return Plain(src, size, dst, capacity);
+                 });
+  Attach();
+  return true;
+}
+
+void Zxc::Compressor::Use(std::string_view raw) {
+  _dictionary.assign(raw);
+  _stored.clear();
+  Attach();
+}
+
+void Zxc::Compressor::Attach() {
+  const auto bytes = ZxcDictionary(_dictionary);
+  _attached = NewContext(_level);
   const auto rc =
-    zxc_cctx_set_dict(_ctx.get(), bytes.data(), bytes.size(), nullptr);
+    zxc_cctx_set_dict(_attached.get(), bytes.data(), bytes.size(), nullptr);
   SDB_ENSURE(rc == ZXC_OK, "zxc: cannot load a dictionary: ", rc);
 }
 
-Zxc::Compressor::Compressor(uint8_t level) : _ctx{NewContext(level)} {}
-
 size_t Zxc::Compressor::Compress(const char* src, size_t size, char* dst,
-                                 size_t capacity,
-                                 const Dictionary* dictionary) {
-  const auto n =
-    dictionary && size != 0 && size <= ZXC_BLOCK_SIZE_MAX
-      ? zxc_compress_block(dictionary->Context(), src, size, dst, capacity)
-      : zxc_compress_cctx(_ctx.get(), src, size, dst, capacity);
+                                 size_t capacity) {
+  if (_dictionary.empty() || size == 0 || size > ZXC_BLOCK_SIZE_MAX) {
+    return Plain(src, size, dst, capacity);
+  }
+  const auto n = zxc_compress_block(_attached.get(), src, size, dst, capacity);
+  SDB_ENSURE(n > 0, "zxc compression failed: ", n);
+  return static_cast<size_t>(n);
+}
+
+size_t Zxc::Compressor::Plain(const char* src, size_t size, char* dst,
+                              size_t capacity) {
+  const auto n = zxc_compress_cctx(_ctx.get(), src, size, dst, capacity);
   SDB_ENSURE(n > 0, "zxc compression failed: ", n);
   return static_cast<size_t>(n);
 }
@@ -99,26 +126,53 @@ Zxc::Decompressor::Decompressor() : _ctx{zxc_create_dctx()} {
 }
 
 bool Zxc::Decompressor::Decompress(const char* src, size_t size, char* dst,
-                                   size_t raw_size,
-                                   std::string_view dictionary) noexcept {
-  dictionary = ZxcDictionary(dictionary);
-  if (dictionary.empty() || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
-    const auto n = zxc_decompress_dctx(_ctx.get(), src, size, dst, raw_size);
-    return n >= 0 && static_cast<size_t>(n) == raw_size;
+                                   size_t raw_size) noexcept {
+  const auto n = zxc_decompress_dctx(_ctx.get(), src, size, dst, raw_size);
+  return n >= 0 && static_cast<size_t>(n) == raw_size;
+}
+
+bool Zxc::Decompressor::Load(std::string_view stored, size_t size) {
+  return FillDictionary(_window, _dictionary, size, [&](char* buf) {
+    return UnpackDictionary(
+      stored, buf, size,
+      [&](const char* src, size_t n, char* dst, size_t raw_size) {
+        return Decompress(src, n, dst, raw_size);
+      });
+  });
+}
+
+bool Zxc::Decompressor::LoadFrame(const char* src, size_t size,
+                                  size_t raw_size) {
+  return FillDictionary(_window, _dictionary, raw_size, [&](char* buf) {
+    return Decompress(src, size, buf, raw_size);
+  });
+}
+
+std::string_view Zxc::Decompressor::Inflate(const char* src, size_t size,
+                                            char* dst, size_t,
+                                            size_t raw_size) {
+  if (_dictionary == 0 || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
+    return Decompress(src, size, dst, raw_size)
+             ? std::string_view{dst, raw_size}
+             : std::string_view{};
   }
   if (!_blocks) {
     _blocks.reset(zxc_create_dctx());
     if (!_blocks) {
-      return false;
+      return {};
     }
   }
+  const auto capacity = zxc_decompress_block_bound(raw_size);
+  auto* out = FrameAfterDictionary(_window, _dictionary, capacity);
+  const auto dictionary = ZxcDictionary(Dictionary());
   if (zxc_dctx_ref_dict(_blocks.get(), dictionary.data(), dictionary.size()) !=
       ZXC_OK) {
-    return false;
+    return {};
   }
-  const auto n =
-    zxc_decompress_block_safe(_blocks.get(), src, size, dst, raw_size);
-  return n >= 0 && static_cast<size_t>(n) == raw_size;
+  const auto n = zxc_decompress_block(_blocks.get(), src, size, out, capacity);
+  return n >= 0 && static_cast<size_t>(n) == raw_size
+           ? std::string_view{out, raw_size}
+           : std::string_view{};
 }
 
 }  // namespace irs::codecs

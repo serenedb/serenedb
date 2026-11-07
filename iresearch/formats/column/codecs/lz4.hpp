@@ -26,9 +26,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <string>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/segment_dictionary.hpp"
 
 namespace irs::codecs {
 
@@ -42,38 +45,58 @@ struct Lz4 {
   static constexpr ByteCodec kCodec = ByteCodec::Lz4;
   static constexpr uint8_t kDefaultLevel = 1;
   static constexpr uint8_t kMaxLevel = LZ4HC_CLEVEL_MAX;
-  static constexpr uint32_t kFirstWindowed = 2;
+  static constexpr size_t kDictionaryCap = 64 * 1024;
 
   static size_t Bound(size_t raw_size) noexcept;
-
-  class Dictionary {
-   public:
-    Dictionary(uint8_t level, std::string_view bytes);
-
-    const LZ4_stream_t* Stream() const noexcept { return _stream.get(); }
-
-   private:
-    std::unique_ptr<LZ4_stream_t> _stream;
-  };
 
   class Compressor {
    public:
     explicit Compressor(uint8_t level);
 
-    size_t Compress(const char* src, size_t size, char* dst, size_t capacity,
-                    const Dictionary* dictionary = nullptr);
+    bool Train(std::string_view frames, std::span<const size_t> sizes);
+    void Use(std::string_view raw);
+    void Clear() noexcept {
+      _dictionary.clear();
+      _stored.clear();
+    }
+    std::string_view Dictionary() const noexcept { return _dictionary; }
+    std::string_view Stored() const noexcept { return _stored; }
+
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
    private:
+    size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
+    void Attach();
+
     std::unique_ptr<LZ4_stream_t> _work;
+    std::unique_ptr<LZ4_stream_t> _attached;
+    std::string _dictionary;
+    std::string _stored;
   };
 
-  struct Decompressor {
+  class Decompressor {
+   public:
     static bool Decompress(const char* src, size_t size, char* dst,
-                           size_t raw_size,
-                           std::string_view dictionary = {}) noexcept;
+                           size_t raw_size) noexcept;
     static size_t DecompressPrefix(const char* src, size_t size, char* dst,
-                                   size_t want, size_t raw_size,
-                                   std::string_view dictionary = {}) noexcept;
+                                   size_t want, size_t raw_size) noexcept;
+
+    bool Load(std::string_view stored, size_t size);
+    bool LoadFrame(const char* src, size_t size, size_t raw_size);
+    void Clear() noexcept {
+      _window.clear();
+      _dictionary = 0;
+    }
+    std::string_view Dictionary() const noexcept {
+      return {_window.data(), _dictionary};
+    }
+
+    std::string_view Inflate(const char* src, size_t size, char* dst,
+                             size_t want, size_t raw_size);
+
+   private:
+    std::string _window;
+    size_t _dictionary = 0;
   };
 };
 
@@ -81,29 +104,34 @@ struct Lz4Hc {
   static constexpr ByteCodec kCodec = ByteCodec::Lz4;
   static constexpr uint8_t kDefaultLevel = LZ4HC_CLEVEL_DEFAULT;
   static constexpr uint8_t kMaxLevel = LZ4HC_CLEVEL_MAX;
+  static constexpr size_t kDictionaryCap = Lz4::kDictionaryCap;
 
   static size_t Bound(size_t raw_size) noexcept { return Lz4::Bound(raw_size); }
-
-  class Dictionary {
-   public:
-    Dictionary(uint8_t level, std::string_view bytes);
-
-    const LZ4_streamHC_t* Stream() const noexcept { return _stream.get(); }
-
-   private:
-    std::unique_ptr<LZ4_streamHC_t> _stream;
-  };
 
   class Compressor {
    public:
     explicit Compressor(uint8_t level);
 
-    size_t Compress(const char* src, size_t size, char* dst, size_t capacity,
-                    const Dictionary* dictionary = nullptr);
+    bool Train(std::string_view frames, std::span<const size_t> sizes);
+    void Use(std::string_view raw);
+    void Clear() noexcept {
+      _dictionary.clear();
+      _stored.clear();
+    }
+    std::string_view Dictionary() const noexcept { return _dictionary; }
+    std::string_view Stored() const noexcept { return _stored; }
+
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
    private:
+    size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
+    void Attach();
+
     int _level;
     std::unique_ptr<LZ4_streamHC_t, Lz4HcFree> _work;
+    std::unique_ptr<LZ4_streamHC_t> _attached;
+    std::string _dictionary;
+    std::string _stored;
   };
 };
 

@@ -30,6 +30,7 @@
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/segment_dictionary.hpp"
 
 namespace irs::codecs {
 
@@ -44,57 +45,68 @@ struct Zstd {
   static constexpr ByteCodec kCodec = ByteCodec::Zstd;
   static constexpr uint8_t kDefaultLevel = 1;
   static constexpr uint8_t kMaxLevel = 22;
-  static constexpr uint32_t kFirstWindowed = 1;
+  static constexpr size_t kDictionaryCap = 64 * 1024;
 
   static size_t Bound(size_t raw_size) noexcept {
     return ZSTD_compressBound(raw_size);
   }
 
-  class Dictionary {
-   public:
-    Dictionary(uint8_t level, std::string_view bytes);
-
-    const ZSTD_CDict* Get() const noexcept { return _dictionary.get(); }
-
-   private:
-    std::unique_ptr<ZSTD_CDict, ZstdFree> _dictionary;
-  };
-
   class Compressor {
    public:
     explicit Compressor(uint8_t level);
 
-    size_t Compress(const char* src, size_t size, char* dst, size_t capacity,
-                    const Dictionary* dictionary = nullptr);
+    bool Train(std::string_view frames, std::span<const size_t> sizes);
+    void Use(std::string_view raw);
+    void Clear() noexcept {
+      _dictionary.clear();
+      _stored.clear();
+    }
+    std::string_view Dictionary() const noexcept { return _dictionary; }
+    std::string_view Stored() const noexcept { return _stored; }
+
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
    private:
+    size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
+    void Attach();
+
     int _level;
     std::unique_ptr<ZSTD_CCtx, ZstdFree> _ctx;
+    std::unique_ptr<ZSTD_CDict, ZstdFree> _attached;
+    std::string _dictionary;
+    std::string _stored;
   };
 
   class Decompressor {
    public:
     Decompressor();
 
-    bool Decompress(const char* src, size_t size, char* dst, size_t raw_size,
-                    std::string_view dictionary = {});
+    bool Decompress(const char* src, size_t size, char* dst, size_t raw_size);
 
-    size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t,
-                            size_t raw_size, const auto& dictionary) {
-      return Decompress(src, size, dst, raw_size, dictionary) ? raw_size : 0;
+    bool Load(std::string_view stored, size_t size);
+    bool LoadFrame(const char* src, size_t size, size_t raw_size);
+    void Clear() noexcept {
+      _window.clear();
+      _dictionary = 0;
     }
+    std::string_view Dictionary() const noexcept {
+      return {_window.data(), _dictionary};
+    }
+
+    std::string_view Inflate(const char* src, size_t size, char* dst, size_t,
+                             size_t raw_size);
 
    private:
     bool Run(const char* src, size_t size, char* dst, size_t raw_size,
              const ZSTD_DDict* dictionary) noexcept;
+    const ZSTD_DDict* Attached();
 
     std::unique_ptr<ZSTD_DCtx, ZstdFree> _ctx;
-    std::unique_ptr<ZSTD_DDict, ZstdFree> _raw;
-    std::string_view _raw_bytes;
+    std::unique_ptr<ZSTD_DDict, ZstdFree> _attached;
+    std::string_view _attached_bytes;
+    std::string _window;
+    size_t _dictionary = 0;
   };
 };
-
-void TrainDictionary(std::string_view samples, std::span<const size_t> sizes,
-                     size_t capacity, std::string& dictionary);
 
 }  // namespace irs::codecs

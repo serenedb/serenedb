@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -32,25 +31,16 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/segment_builder.hpp"
+#include "iresearch/formats/column/codecs/segment_dictionary.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
-#include "iresearch/formats/column/codecs/zstd.hpp"
 
 namespace irs::codecs::text {
 
 inline constexpr size_t kPriceFrames = 8;
 inline constexpr size_t kLocalMinFrames = 8;
-inline constexpr uint64_t kLocalDictionaryShare = 25;
-inline constexpr uint64_t kLocalDictionaryMinBytes = 256;
-inline constexpr uint64_t kLocalDictionaryMaxBytes = kMaxDictionaryBytes;
 inline constexpr uint64_t kLocalDictionaryPacking = 2;
-
-constexpr size_t LocalDictionaryBytes(uint64_t raw, uint64_t cap) noexcept {
-  return static_cast<size_t>(
-    std::clamp(raw / kLocalDictionaryShare, kLocalDictionaryMinBytes, cap));
-}
 
 template<typename Codec>
 class BlobEncoder {
@@ -64,7 +54,6 @@ class BlobEncoder {
     _shape = shape;
     _layout = Configure(level, layout);
     _local = layout == FrameLayout::Local;
-    _dictionary.clear();
     _data.clear();
     _frames.clear();
   }
@@ -83,9 +72,10 @@ class BlobEncoder {
 
   uint64_t Estimate(const SegmentBuilder&) const noexcept {
     return (_frames.size() + 1) * kFrameMetaSize + _data.size() +
-           (_local ? LocalDictionaryBytes(_frame.size(), kDictionaryCap) /
-                       kLocalDictionaryPacking
-                   : 0) +
+           (_local
+              ? SegmentDictionaryBytes(_frame.size(), Codec::kDictionaryCap) /
+                  kLocalDictionaryPacking
+              : 0) +
            static_cast<uint64_t>(
              static_cast<double>(_frame.size()) *
              Ratio(_history[static_cast<size_t>(_shape)], 1.0));
@@ -108,8 +98,9 @@ class BlobEncoder {
       .codec = kCodec,
       .frames = _frames,
       .max_length = rows.MaxLen(),
-      .symtab = local ? std::string_view{_packed} : std::string_view{},
-      .dictionary_size = local ? static_cast<uint32_t>(_dictionary.size()) : 0,
+      .symtab = local ? _codec->Stored() : std::string_view{},
+      .dictionary_size =
+        local ? static_cast<uint32_t>(_codec->Dictionary().size()) : 0,
       .flags = flags,
     };
   }
@@ -122,14 +113,16 @@ class BlobEncoder {
     SplitFrames(p, frame_shape);
     uint64_t data = 0;
     if (!_spans.empty()) {
-      if (frame_layout == FrameLayout::Local) {
-        data += PriceDictionary(p);
+      const bool trained = frame_layout == FrameLayout::Local &&
+                           _spans.size() >= kLocalMinFrames && Train(p);
+      if (trained) {
+        data += _codec->Stored().size();
       }
       Assemble(p, _spans[0], _price_dictionary);
       data += CompressFrame(_price_dictionary);
-      if (!_active && frame_shape.dictionary != 0 &&
+      if (!trained && frame_shape.dictionary != 0 &&
           !_price_dictionary.empty() && _spans.size() > 1) {
-        _active = &_first.emplace(level, _price_dictionary);
+        _codec->Use(_price_dictionary);
       }
       const size_t rest = _spans.size() - 1;
       if (rest <= kPriceFrames) {
@@ -188,9 +181,6 @@ class BlobEncoder {
     uint64_t raw;
   };
 
-  static constexpr uint64_t kDictionaryCap =
-    kCodec == ByteCodec::Zxc ? kFrameDictionaryBytes : kLocalDictionaryMaxBytes;
-
   static constexpr FrameShape DictionaryShape() noexcept {
     if constexpr (kCodec == ByteCodec::Zstd) {
       return {kZstdDictionaryFrameBytes, kFrameDictionaryBytes};
@@ -208,12 +198,13 @@ class BlobEncoder {
   }
 
   FrameShape Configure(uint8_t level, FrameLayout layout) {
-    _active = nullptr;
-    _first.reset();
     _trained = false;
+    _first_frame = false;
     if (!_codec || _level != level) {
       _codec.emplace(level);
       _level = level;
+    } else {
+      _codec->Clear();
     }
     if (layout == FrameLayout::Wide) {
       return {kFrameRawBytes, 0};
@@ -225,13 +216,19 @@ class BlobEncoder {
     if (_trained) {
       return FrameDictionary::Local;
     }
-    return !_dictionary.empty() && _frames.size() > 1
-             ? FrameDictionary::FirstFrame
-             : FrameDictionary::None;
+    return _first_frame && _frames.size() > 1 ? FrameDictionary::FirstFrame
+                                              : FrameDictionary::None;
   }
 
   void CloseFrame() {
     if (_local) {
+      auto& hist = _history[static_cast<size_t>(_shape)];
+      if (hist.raw == 0 && _frame.size() != _frame_begin) {
+        const std::string_view raw{_frame.data() + _frame_begin,
+                                   _frame.size() - _frame_begin};
+        hist.raw += raw.size();
+        hist.comp += CompressFrame(raw);
+      }
       _frames.push_back(
         FrameMeta{_frame_first,
                   static_cast<uint32_t>(_frame.size() - _frame_begin), 0, 0});
@@ -241,8 +238,8 @@ class BlobEncoder {
     }
     _frames.push_back(Compress(_frame_first, _frame));
     if (_frames.size() == 1 && _layout.dictionary != 0 && !_frame.empty()) {
-      _dictionary.swap(_frame);
-      _active = &_first.emplace(_level, _dictionary);
+      _codec->Use(_frame);
+      _first_frame = true;
     }
     _frame.clear();
     _frame_entries = 0;
@@ -254,33 +251,86 @@ class BlobEncoder {
       for (const auto& m : _frames) {
         _sizes.push_back(m.raw_len);
       }
-      TrainDictionary(_frame, _sizes,
-                      LocalDictionaryBytes(_frame.size(), kDictionaryCap),
-                      _dictionary);
-      if (!_dictionary.empty()) {
-        _active = &_first.emplace(_level, _dictionary);
-        _trained = true;
-        Pack(_dictionary, _packed);
-      }
+      _trained = _codec->Train(_frame, _sizes);
     }
-    std::string_view rest = _frame;
-    for (auto& m : _frames) {
-      const auto raw = rest.substr(0, m.raw_len);
-      rest.remove_prefix(m.raw_len);
-      m = Compress(m.first_entry, raw);
-      if (!_active && !raw.empty() && _frames.size() > 1) {
-        _dictionary.assign(raw);
-        _active = &_first.emplace(_level, _dictionary);
-      }
+    CompressFrames();
+    if (_trained && !Pays()) {
+      _trained = false;
+      _codec->Clear();
+      _data.clear();
+      CompressFrames();
     }
     _frame.clear();
     _frame_begin = 0;
   }
 
-  uint64_t PriceDictionary(const Profile& p) {
-    if (_spans.size() < kLocalMinFrames) {
-      return 0;
+  void CompressFrames() {
+    std::string_view rest = _frame;
+    for (size_t i = 0; i < _frames.size(); ++i) {
+      auto& m = _frames[i];
+      const auto raw = rest.substr(0, m.raw_len);
+      rest.remove_prefix(m.raw_len);
+      m = Compress(m.first_entry, raw);
+      if (i == 0 && !_trained && !raw.empty() && _frames.size() > 1) {
+        _codec->Use(raw);
+        _first_frame = true;
+      }
     }
+  }
+
+  bool Pays() {
+    if (!_probe || _probe_level != _level) {
+      _probe.emplace(_level);
+      _probe_level = _level;
+    }
+    const std::string_view first{_frame.data(), _frames[0].raw_len};
+    _probe->Clear();
+    const auto first_plain = Probe(first);
+    _probe->Use(first);
+    const size_t rest = _frames.size() - 1;
+    uint64_t sampled_raw = 0;
+    uint64_t sampled_trained = 0;
+    uint64_t sampled_first = 0;
+    size_t f = 1;
+    size_t off = first.size();
+    size_t last = 0;
+    for (size_t j = 0; j < kPriceFrames; ++j) {
+      const size_t i = 1 + j * rest / kPriceFrames;
+      if (i == last) {
+        continue;
+      }
+      last = i;
+      for (; f < i; ++f) {
+        off += _frames[f].raw_len;
+      }
+      const std::string_view raw{_frame.data() + off, _frames[i].raw_len};
+      sampled_raw += raw.size();
+      sampled_trained += _frames[i].comp_len;
+      sampled_first += Probe(raw);
+    }
+    const double scale = sampled_raw == 0
+                           ? 0.0
+                           : static_cast<double>(_frame.size() - first.size()) /
+                               static_cast<double>(sampled_raw);
+    const double trained =
+      static_cast<double>(_frames[0].comp_len + _codec->Stored().size()) +
+      static_cast<double>(sampled_trained) * scale;
+    const double first_frame = static_cast<double>(first_plain) +
+                               static_cast<double>(sampled_first) * scale;
+    return trained < first_frame;
+  }
+
+  uint64_t Probe(std::string_view raw) {
+    const auto bound = Codec::Bound(raw.size());
+    size_t n = 0;
+    _price_out.resize_and_overwrite(bound, [&](char* buf, size_t) {
+      n = _probe->Compress(raw.data(), raw.size(), buf, bound);
+      return n;
+    });
+    return n;
+  }
+
+  bool Train(const Profile& p) {
     _price_samples.clear();
     _price_samples.reserve(p.raw);
     for (const auto entry : p.entries) {
@@ -290,26 +340,7 @@ class BlobEncoder {
     for (const auto& span : _spans) {
       _sizes.push_back(span.raw);
     }
-    TrainDictionary(_price_samples, _sizes,
-                    LocalDictionaryBytes(p.raw, kDictionaryCap),
-                    _price_trained);
-    if (_price_trained.empty()) {
-      return 0;
-    }
-    _active = &_first.emplace(_level, _price_trained);
-    Pack(_price_trained, _price_packed);
-    return _price_packed.size();
-  }
-
-  void Pack(std::string_view dictionary, std::string& out) {
-    if (!_packer) {
-      _packer.emplace(Lz4::kDefaultLevel);
-    }
-    const auto bound = Lz4::Bound(dictionary.size());
-    out.resize_and_overwrite(bound, [&](char* buf, size_t) {
-      return _packer->Compress(dictionary.data(), dictionary.size(), buf,
-                               bound);
-    });
+    return _codec->Train(_price_samples, _sizes);
   }
 
   FrameMeta Compress(uint32_t first, std::string_view raw) {
@@ -363,8 +394,7 @@ class BlobEncoder {
     const auto at = out.size();
     size_t n = 0;
     out.resize_and_overwrite(at + bound, [&](char* buf, size_t) {
-      n =
-        _codec->Compress(frame.data(), frame.size(), buf + at, bound, _active);
+      n = _codec->Compress(frame.data(), frame.size(), buf + at, bound);
       return at + n;
     });
     return n;
@@ -373,16 +403,16 @@ class BlobEncoder {
   const StringTuning& _tuning;
   RatioHistory* _history;
   std::optional<typename Codec::Compressor> _codec;
-  std::optional<typename Codec::Dictionary> _first;
-  const typename Codec::Dictionary* _active = nullptr;
+  std::optional<typename Codec::Compressor> _probe;
   uint8_t _level = 0;
+  uint8_t _probe_level = 0;
   Shape _shape = Shape::Dedup;
   FrameShape _layout{kFrameRawBytes, 0};
   bool _local = false;
   bool _trained = false;
+  bool _first_frame = false;
   std::string _frame;
   size_t _frame_begin = 0;
-  std::string _dictionary;
   uint32_t _frame_first = 0;
   uint32_t _frame_entries = 0;
   std::vector<FrameMeta> _frames;
@@ -393,10 +423,6 @@ class BlobEncoder {
   std::string _price_frame;
   std::string _price_out;
   std::string _price_samples;
-  std::string _price_trained;
-  std::string _price_packed;
-  std::string _packed;
-  std::optional<Lz4::Compressor> _packer;
 };
 
 }  // namespace irs::codecs::text

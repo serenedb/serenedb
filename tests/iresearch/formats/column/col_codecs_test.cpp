@@ -816,13 +816,16 @@ TEST_F(ColCodecsTest, CompactionsTrainADictionaryPerSegment) {
   using duckdb::CompressionType;
   constexpr uint64_t kRows = 120000;
   constexpr uint32_t kRowGroup = 16384;
-  const Value value = [](uint64_t g) -> std::optional<std::string> {
+  std::vector<std::string> templates;
+  for (uint64_t t = 0; t < 200; ++t) {
+    templates.emplace_back(Pseudo(t, 100));
+  }
+  const Value value = [&](uint64_t g) -> std::optional<std::string> {
     if (g % 211 == 0) {
       return std::nullopt;
     }
-    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
-           std::to_string((g * 7919) % 100003) +
-           "/item?id=" + std::to_string(g) + "&ref=" + std::to_string(g % 13);
+    return templates[(g * 0x9E3779B97F4A7C15ULL >> 40) % templates.size()] +
+           std::to_string(g);
   };
   for (const auto codec :
        {CompressionType::COMPRESSION_DICT_LZ4, CompressionType::COMPRESSION_LZ4,
@@ -838,11 +841,34 @@ TEST_F(ColCodecsTest, CompactionsTrainADictionaryPerSegment) {
       Write(dir, codec, {.compression_level = 3, .tier = tier}, kRows,
             kRowGroup, value);
       const auto dictionaries = SegmentInfo(dir, "dictionary");
-      EXPECT_EQ(absl::c_count(dictionaries, "local"),
-                tier == irs::WriteTier::Merge ? std::ssize(dictionaries) : 0)
-        << ::testing::PrintToString(dictionaries);
+      const auto local = absl::c_count(dictionaries, "local");
+      if (tier == irs::WriteTier::Merge) {
+        EXPECT_GT(local * 2, std::ssize(dictionaries))
+          << ::testing::PrintToString(dictionaries);
+      } else {
+        EXPECT_EQ(local, 0) << ::testing::PrintToString(dictionaries);
+      }
       Verify(dir, codec, kRows, value);
     }
+  }
+}
+
+TEST_F(ColCodecsTest, CompactionsDropADictionaryThatDoesNotPay) {
+  using duckdb::CompressionType;
+  constexpr uint64_t kRows = 20000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return Pseudo(g, 24);
+  };
+  for (const auto codec :
+       {CompressionType::COMPRESSION_LZ4, CompressionType::COMPRESSION_COL_ZSTD,
+        CompressionType::COMPRESSION_ZXC}) {
+    SCOPED_TRACE(duckdb::CompressionTypeToString(codec));
+    irs::MemoryDirectory dir{};
+    Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
+    const auto dictionaries = SegmentInfo(dir, "dictionary");
+    EXPECT_EQ(absl::c_count(dictionaries, "local"), 0)
+      << ::testing::PrintToString(dictionaries);
+    Verify(dir, codec, kRows, value);
   }
 }
 
@@ -861,6 +887,25 @@ TEST_F(ColCodecsTest, SegmentsTooSmallToTrainUseTheFirstFrame) {
     Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
     EXPECT_EQ(SegmentInfo(dir, "dictionary"),
               std::vector<std::string>{"first_frame"});
+    Verify(dir, codec, kRows, value);
+  }
+}
+
+TEST_F(ColCodecsTest, AnEmptyFirstFrameIsNoDictionary) {
+  constexpr uint64_t kRows = 105;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g < 100) {
+      return std::string{};
+    }
+    return Pseudo(g % 4, 40000) + std::to_string(g);
+  };
+  for (const auto codec : {duckdb::CompressionType::COMPRESSION_LZ4,
+                           duckdb::CompressionType::COMPRESSION_COL_ZSTD,
+                           duckdb::CompressionType::COMPRESSION_ZXC}) {
+    SCOPED_TRACE(duckdb::CompressionTypeToString(codec));
+    irs::MemoryDirectory dir{};
+    Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
+    EXPECT_EQ(SegmentInfo(dir, "dictionary"), std::vector<std::string>{""});
     Verify(dir, codec, kRows, value);
   }
 }
@@ -2443,10 +2488,13 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
      },
      "corrupted dictionary"},
   };
-  const Value values = [](uint64_t g) -> std::optional<std::string> {
-    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
-           std::to_string((g * 7919) % 100003) +
-           "/item?id=" + std::to_string(g);
+  std::vector<std::string> templates;
+  for (uint64_t t = 0; t < 200; ++t) {
+    templates.emplace_back(Pseudo(t, 100));
+  }
+  const Value values = [&](uint64_t g) -> std::optional<std::string> {
+    return templates[(g * 0x9E3779B97F4A7C15ULL >> 40) % templates.size()] +
+           std::to_string(g);
   };
   for (const auto& c : cases) {
     SCOPED_TRACE(c.name);

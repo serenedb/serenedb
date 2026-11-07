@@ -150,10 +150,6 @@ struct EntryFrames {
 
   char* FrameOut(uint32_t f) noexcept { return heap + frame_off[f]; }
 
-  std::string_view FirstFrame() const noexcept {
-    return {heap, frames[0].raw_len};
-  }
-
   IRS_FORCE_INLINE void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
     if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
       f = FrameOf(e);

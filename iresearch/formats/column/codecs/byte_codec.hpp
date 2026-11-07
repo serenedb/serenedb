@@ -22,11 +22,8 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <limits>
 
 namespace irs::codecs {
-
-inline constexpr uint32_t kNeverWindowed = std::numeric_limits<uint32_t>::max();
 
 enum class ByteCodec : uint8_t {
   Lz4 = 0,

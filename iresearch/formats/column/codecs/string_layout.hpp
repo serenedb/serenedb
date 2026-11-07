@@ -77,11 +77,12 @@ kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                      Dictionary                      |
 |   +----------------------------------------------+   |
-|   |   lz4 block of bytes[dictionary_size]        |   |
+|   |   packed bytes[dictionary_size]              |   |
 |   +----------------------------------------------+   |
-|   trained on the frames of this segment,             |
-|   symtab_size bytes; empty unless flags is           |
-|   Local                                              |
+|   trained on the frames of this segment and          |
+|   packed by the leaf (lz4 for zstd, whose unpacking  |
+|   is slower), or as is when that is not smaller:     |
+|   symtab_size bytes; empty unless flags is Local     |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
@@ -129,11 +130,12 @@ kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                      Dictionary                      |
 |   +----------------------------------------------+   |
-|   |   lz4 block of bytes[dictionary_size]        |   |
+|   |   packed bytes[dictionary_size]              |   |
 |   +----------------------------------------------+   |
-|   trained on the frames of this segment,             |
-|   symtab_size bytes; empty unless flags is           |
-|   Local                                              |
+|   trained on the frames of this segment and          |
+|   packed by the leaf (lz4 for zstd, whose unpacking  |
+|   is slower), or as is when that is not smaller:     |
+|   symtab_size bytes; empty unless flags is Local     |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |

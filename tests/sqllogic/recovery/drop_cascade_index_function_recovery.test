@@ -29,10 +29,6 @@ CREATE INDEX vedernikoff_idx ON vedernikoff_t USING inverted(id, (babsky(n)));
 
 
 statement ok
-VACUUM (REFRESH_TABLE) vedernikoff_t;
-
-
-statement ok
 SET sdb_faults = 'crash_on_packet';
 
 

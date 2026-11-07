@@ -14,9 +14,6 @@ FROM generate_series(1, 6000) s(i);
 statement ok
 CREATE INDEX dd_idx ON dd USING inverted (body dd_en) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
-statement ok
-VACUUM (REFRESH_TABLE) dd;
-
 query
 EXPLAIN SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25(dd_idx.tableoid) DESC LIMIT 10;
 ----

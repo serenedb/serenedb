@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # ----------------------------------------------------------------------------
 # array_agg(DISTINCT col) over a keyword-analyzed inverted-index column is
 # served from the term dictionary: a keyword analyzer emits the whole value as
@@ -39,16 +36,10 @@ INSERT INTO aa VALUES
   (4, 'blue',  'hello again', NULL, 'p3')
 
 statement ok
-VACUUM (REFRESH_TABLE) aa;
-
-statement ok
 INSERT INTO aa VALUES
   (5, 'green', 'red green',   NULL, 'p2'),
   (6, 'amber', 'foo world',   'z',  'p4'),
   (7, 'red',   'qux baz',     'x',  'p1')
-
-statement ok
-VACUUM (REFRESH_TABLE) aa;
 
 # --- keyword column with an explicit keyword dictionary: rewritten.
 query

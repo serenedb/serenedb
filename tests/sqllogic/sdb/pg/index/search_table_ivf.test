@@ -19,9 +19,6 @@ INSERT INTO v VALUES
   (3, array_value(5::FLOAT, 5::FLOAT, 5::FLOAT)),
   (4, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT));
 
-statement ok
-VACUUM (REFRESH_TABLE) v;
-
 # The two nearest neighbours of [1,2,3] are row 1 (itself) and row 4 ([0,0,0]).
 query
 SELECT id FROM v_idx
@@ -79,9 +76,6 @@ CREATE INDEX ve_idx ON ve USING inverted ((array_value(x, y, z)) ivf(metric='l2'
 
 statement ok
 INSERT INTO ve VALUES (1, 1, 2, 3), (2, 10, 10, 10), (3, 5, 5, 5), (4, 0, 0, 0);
-
-statement ok
-VACUUM (REFRESH_TABLE) ve;
 
 query
 SELECT id FROM ve_idx
@@ -143,17 +137,11 @@ INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
   'w' || (i % 10) FROM range(500) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) dv;
-
-statement ok
 DROP INDEX dv_ivf;
 
 statement ok
 INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
   'w' || (i % 10) FROM range(500, 1000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) dv;
 
 statement ok
 VACUUM (COMPACT_TABLE) dv;
@@ -184,9 +172,6 @@ INSERT INTO rv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(500) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rv;
-
-statement ok
 DROP INDEX rv_idx;
 
 statement ok
@@ -195,9 +180,6 @@ CREATE INDEX rv_idx ON rv USING inverted (vec hnsw(metric = 'l2'));
 statement ok
 INSERT INTO rv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(500, 1000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) rv;
 
 statement ok
 VACUUM (COMPACT_TABLE) rv;
@@ -233,9 +215,6 @@ statement ok
 INSERT INTO sv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(300) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) sv;
-
 query
 SELECT (SELECT id FROM sv_a ORDER BY vec <-> array_value(5::FLOAT, 5::FLOAT, 5.1::FLOAT) LIMIT 1) AS a,
        (SELECT id FROM sv_b ORDER BY vec <-> array_value(5::FLOAT, 5::FLOAT, 5.1::FLOAT) LIMIT 1) AS b,
@@ -247,9 +226,6 @@ a	b	eq
 statement ok
 INSERT INTO sv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(300, 600) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) sv;
 
 statement ok
 VACUUM (COMPACT_TABLE) sv;

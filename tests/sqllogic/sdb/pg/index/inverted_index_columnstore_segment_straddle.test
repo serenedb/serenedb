@@ -36,11 +36,6 @@ CREATE INDEX t_idx ON t USING inverted(txt straddle_dict)
 statement ok
 INSERT INTO t SELECT i, i, 'doc' || i::text FROM generate_series(3001, 6000) i;
 
-# Make the second batch a separate, unmerged segment (compaction is disabled,
-# so REFRESH publishes it without consolidating it into the first segment).
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
 # Full-segment scan: materializes `v` across the first segment's 2048->3000 tail
 # and into the second segment.
 query

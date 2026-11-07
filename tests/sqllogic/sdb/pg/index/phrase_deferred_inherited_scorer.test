@@ -22,10 +22,6 @@ statement ok
 CREATE INDEX pdi_pos_idx ON pdi_docs USING inverted (id, body pdi_words_pos)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pdi_docs
-
-
 query
 SELECT id, round(BM25(pdi_pos_idx.tableoid)::numeric, 4) AS score FROM pdi_pos_idx
 WHERE body @@ ts_phrase('quick brown') ORDER BY id

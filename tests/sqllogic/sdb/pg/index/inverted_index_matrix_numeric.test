@@ -34,9 +34,6 @@ INSERT INTO m_bool VALUES
     (2, false, [false, false, false], [false, false, false]),
     (3, true,  [true],                 [true,  true,  true]);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_bool;
-
 query
 SELECT pk FROM m_bool_scalar_col_st WHERE x = true  ORDER BY pk;
 ----
@@ -123,9 +120,6 @@ INSERT INTO m_i VALUES
     (2, 20, [20, 30],        [20, 30, 40]),
     (3, 30, [30],            [30, 30, 30]);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_i;
-
 query
 SELECT pk FROM m_i_scalar_col_st WHERE n @@ ts_between(15, 25, true, true) ORDER BY pk;
 ----
@@ -183,9 +177,6 @@ INSERT INTO m_l VALUES
     (1, 100::BIGINT, [100::BIGINT, 200::BIGINT], [100::BIGINT, 200::BIGINT, 300::BIGINT]),
     (2, 200::BIGINT, [200::BIGINT],              [200::BIGINT, 300::BIGINT, 400::BIGINT]);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_l;
-
 query
 SELECT pk FROM m_l_scalar_col_st WHERE n @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
 ----
@@ -236,9 +227,6 @@ statement ok
 INSERT INTO m_d VALUES
     (1, 1.5, [1.5, 2.5, 3.5], [1.5, 2.5, 3.5]),
     (2, 2.5, [2.5, 3.5],      [2.5, 3.5, 4.5]);
-
-statement ok
-VACUUM (REFRESH_TABLE) m_d;
 
 query
 SELECT pk FROM m_d_scalar_col_st WHERE n @@ ts_between(2.0::DOUBLE, 3.0::DOUBLE, true, true) ORDER BY pk;

@@ -22,19 +22,11 @@ INSERT INTO reg_t VALUES (1, 'alpha bravo charlie');
 statement ok
 CREATE INDEX reg_idx ON reg_t USING inverted(a, b reg_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) reg_t;
-
 query
 SELECT a FROM reg_idx WHERE b @@ ts_phrase('alpha bravo');
 ----
 a
 1
-
-# Freeze the iresearch commit; rows land in the WAL but never reach the index
-# in this process.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO reg_t VALUES (2, 'delta echo foxtrot'), (3, 'golf hotel india');
@@ -50,7 +42,7 @@ SELECT 1;
 
 connection reg_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) reg_t;
+SELECT 1;
 
 connection reg_after
 query

@@ -450,8 +450,6 @@ def _copy_from(cur, table: str, payload: bytes, options: str, source: str,
 
 
 def _count(cur, table: str, storage: str, where: str = "") -> int:
-    if storage:
-        cur.execute(f'VACUUM (REFRESH_TABLE) public."{table}"')
     cur.execute(f'SELECT count(*) FROM public."{table}" {where}')
     return cur.fetchone()[0]
 

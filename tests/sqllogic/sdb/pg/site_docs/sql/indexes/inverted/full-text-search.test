@@ -20,9 +20,6 @@ INSERT INTO sentences VALUES
     (4, 'something else entirely', 'bar'),
     (5, 'plain note', NULL);
 
-statement ok
-VACUUM (REFRESH_TABLE) sentences;
-
 # DOCS_TEST_BODY
 
 query
@@ -337,9 +334,6 @@ INSERT INTO products VALUES
     (1, 'cat'), (2, 'bat'), (3, 'car'),
     (4, 'dog'), (5, 'cats'), (6, 'act');
 
-statement ok
-VACUUM (REFRESH_TABLE) products;
-
 # DOCS_TEST_BODY
 
 query
@@ -369,9 +363,6 @@ statement ok
 INSERT INTO titles VALUES
     (1, 'hello'), (2, 'help'), (3, 'world'),
     (4, 'held'), (5, 'hero');
-
-statement ok
-VACUUM (REFRESH_TABLE) titles;
 
 # DOCS_TEST_BODY
 
@@ -416,9 +407,6 @@ CREATE TEXT SEARCH DICTIONARY basic_dict AS
 statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
-
-statement ok
-VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST_BODY
 
@@ -470,9 +458,6 @@ CREATE INDEX docs_idx ON docs USING inverted (id, body offsets_en);
 statement ok
 INSERT INTO docs VALUES (1, 'quick fox jumps'), (2, 'fox runs fast');
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 # DOCS_TEST_BODY
 
 query
@@ -505,9 +490,6 @@ INSERT INTO notes VALUES
     (1, 'the quick brown fox jumps'),
     (2, 'a brown fox and a quick dog'),
     (3, 'quick brown fox, quick brown fox');
-
-statement ok
-VACUUM (REFRESH_TABLE) notes;
 
 query
 SELECT id, BM25(notes_idx.tableoid) > 0 AS scored

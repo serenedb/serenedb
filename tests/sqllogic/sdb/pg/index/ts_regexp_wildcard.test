@@ -56,9 +56,6 @@ statement ok
 CREATE INDEX rx_words_idx ON rx_t USING inverted(id, v rx_words_dict)
 
 statement ok
-VACUUM (REFRESH_TABLE) rx_t
-
-statement ok
 INSERT INTO rx_t VALUES
     (21, 'user@example.com'),
     (22, 'admin@example.org'),
@@ -75,9 +72,6 @@ INSERT INTO rx_t VALUES
     (33, 'abcdefghijklmnopqrstuvwxyz0123456789'),
     (34, 'aa'),
     (35, 'abab')
-
-statement ok
-VACUUM (REFRESH_TABLE) rx_t
 
 # Through the index and by regexp_full_match over the table: no row on one
 # side only.
@@ -2491,9 +2485,6 @@ CREATE INDEX rx_fold_pos_idx ON rx_fold_t USING inverted(id, v rx_pos_dict)
 statement ok
 CREATE INDEX rx_fold_idx2 ON rx_fold_t USING inverted(id, v rx_dict2)
 
-statement ok
-VACUUM (REFRESH_TABLE) rx_fold_t
-
 query
 SELECT count(*) FROM (
     (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)kelvin')
@@ -2991,9 +2982,6 @@ INSERT INTO rx_list VALUES
 statement ok
 CREATE INDEX rx_list_idx ON rx_list USING inverted(id, tags rx_dict)
 
-statement ok
-VACUUM (REFRESH_TABLE) rx_list
-
 query
 SELECT id FROM rx_list_idx WHERE tags @@ ts_regexp('abc') ORDER BY id
 ----
@@ -3065,9 +3053,6 @@ CREATE INDEX rx_marker_idx ON rx_marker USING inverted (id, msg rx_dict)
 
 statement ok
 INSERT INTO rx_marker VALUES (1, 'abc'), (2, 'a' || chr(31) || 'b'), (3, chr(31) || 'x'), (4, 'y' || chr(31)), (5, '')
-
-statement ok
-VACUUM (REFRESH_TABLE) rx_marker
 
 query
 SELECT id FROM rx_marker WHERE msg LIKE '%' || chr(31) || '%' ORDER BY id

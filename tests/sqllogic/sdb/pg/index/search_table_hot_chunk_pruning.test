@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE hcp (id BIGINT, s TEXT, d DOUBLE)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+WITH (storage = 'search', compaction_interval = 0)
 
 
 statement ok
@@ -107,10 +107,6 @@ SELECT
 ----
 point	prefix	above_d
 0	99	2008
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hcp
 
 
 query

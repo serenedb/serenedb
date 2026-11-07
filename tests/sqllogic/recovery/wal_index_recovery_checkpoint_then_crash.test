@@ -25,9 +25,6 @@ CREATE INDEX ck_idx ON ck_t USING inverted(id, body ck_dict);
 statement ok
 INSERT INTO ck_t SELECT i, 'base_' || i FROM range(0, 2000) AS t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) ck_t;
-
 # Checkpoint: store WAL truncated, iteration bumped, index durable to baseline.
 statement ok
 CHECKPOINT;
@@ -52,7 +49,7 @@ SELECT 1;
 
 connection ck_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) ck_t;
+SELECT 1;
 
 connection ck_after
 query

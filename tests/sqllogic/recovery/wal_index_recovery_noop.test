@@ -18,10 +18,6 @@ INSERT INTO wal_nop_t VALUES (1, 'caught up one'), (2, 'caught up two');
 statement ok
 CREATE INDEX wal_nop_idx ON wal_nop_t USING inverted(a, b nop_dict);
 
-# Flush iresearch so its persisted tick matches rocksdb's tail
-statement ok
-VACUUM (REFRESH_TABLE) wal_nop_t;
-
 query
 SELECT COUNT(*) FROM wal_nop_idx WHERE b @@ ts_phrase('caught');
 ----

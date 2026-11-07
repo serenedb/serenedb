@@ -44,9 +44,6 @@ INSERT INTO t VALUES
   (2, 'blue', 'lazy dog jumps'),
   (3, 'red', 'fox runs fast');
 
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
 # CREATE INDEX on a now-non-empty search table: the rows published before the
 # index are rebuilt into it. Note this leaves `t` with three indexed columns
 # (id, tag, body), which is a shape DML currently cannot handle -- keep the
@@ -208,9 +205,6 @@ INSERT INTO doc VALUES
   (1, 'the quick brown fox'),
   (2, 'lazy dog jumps'),
   (3, 'fox runs fast');
-
-statement ok
-VACUUM (REFRESH_TABLE) doc;
 
 # A bare @@ on the table itself reaches the same term filter the index scan
 # uses: a search table's scan is already an index scan.

@@ -16,9 +16,6 @@ INSERT INTO fo_neg VALUES
   (3, 'gamma', 3, 'gamma delta'),
   (4, 'delta', 4, 'delta alpha');
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_neg;
-
 query
 EXPLAIN SELECT id FROM fo_neg_idx WHERE NOT (t @@ ts_phrase('alpha'));
 ----

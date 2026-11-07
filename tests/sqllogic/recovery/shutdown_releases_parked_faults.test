@@ -2,7 +2,7 @@ control substitution on
 
 statement ok
 CREATE TABLE srp (id INT, body TEXT)
-WITH (storage = 'search', refresh_interval = 100)
+WITH (storage = 'search', compaction_interval = 100)
 
 
 statement ok
@@ -10,11 +10,11 @@ INSERT INTO srp SELECT i, 'fox' FROM generate_series(1, 10) s(i)
 
 
 statement ok
-SET sdb_faults = 'pause_refresh_loop_head'
+SET sdb_faults = 'search_compaction_before_selection'
 
 
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_refresh_loop_head:parked'
+SET sdb_faults = '-search_compaction_before_selection:parked'
 
 
 statement ok

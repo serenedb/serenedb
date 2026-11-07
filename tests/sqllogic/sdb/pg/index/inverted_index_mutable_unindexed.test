@@ -23,7 +23,7 @@ CREATE TABLE doc(pk INT PRIMARY KEY, body TEXT, status TEXT);
 
 # `body` indexed; `status` left out entirely (no INCLUDE).
 statement ok
-CREATE INDEX doc_idx ON doc USING inverted(pk, body en) WITH (refresh_interval = 0);
+CREATE INDEX doc_idx ON doc USING inverted(pk, body en);
 
 
 statement count 4
@@ -32,10 +32,6 @@ INSERT INTO doc VALUES
   (2, 'lazy dog sleeps',      'active'),
   (3, 'brown bear runs',      'pending'),
   (4, 'fox and hound',        'active');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) doc;
 
 
 # Baseline: phrase 'quick' matches pk1, status read live from the table.
@@ -93,12 +89,6 @@ count
 0
 
 
-# Refresh: the index observes the DELETE+INSERT. Old body stops matching, new
-# body starts matching, and the new rowid materialises a live status.
-statement ok
-VACUUM (REFRESH_TABLE) doc;
-
-
 query
 SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('lazy');
 ----
@@ -152,11 +142,6 @@ WHERE body @@ ts_phrase('brown') AND status IS NOT NULL ORDER BY pk;
 ----
 pk	status
 1	archived
-
-
-# After refresh the deleted posting is dropped; only pk1 remains.
-statement ok
-VACUUM (REFRESH_TABLE) doc;
 
 
 query

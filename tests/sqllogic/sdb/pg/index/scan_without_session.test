@@ -23,10 +23,6 @@ statement ok
 INSERT INTO sws VALUES (1, 'red'), (2, 'blue'), (3, 'red');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sws;
-
-
 query
 SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT count(*) AS n FROM ${__DATABASE__}.public.sws'));
 ----
@@ -65,10 +61,6 @@ statement ok
 INSERT INTO sws VALUES (4, 'green');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sws;
-
-
 query
 SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT id, tag FROM ${__DATABASE__}.public.sws ORDER BY id'));
 ----
@@ -87,11 +79,7 @@ INSERT INTO sws_t VALUES (1, 'red'), (2, 'blue'), (3, 'red');
 
 
 statement ok
-CREATE INDEX sws_t_idx ON sws_t USING inverted (id, tag) WITH (refresh_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sws_t;
+CREATE INDEX sws_t_idx ON sws_t USING inverted (id, tag);
 
 
 query
@@ -113,11 +101,7 @@ CREATE VIEW sws_t_view AS SELECT id, tag FROM sws_t;
 
 
 statement ok
-CREATE INDEX sws_t_view_idx ON sws_t_view USING inverted (id, tag) WITH (refresh_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sws_t;
+CREATE INDEX sws_t_view_idx ON sws_t_view USING inverted (id, tag);
 
 
 query
@@ -129,10 +113,6 @@ id
 
 statement ok
 INSERT INTO sws_t VALUES (4, 'red');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sws_t;
 
 
 query

@@ -39,11 +39,6 @@ statement count 1
 INSERT INTO one_seg_docs VALUES (3, 'gamma');
 
 
-# Single VACUUM => single batch flush => one segment.
-statement ok
-VACUUM (REFRESH_TABLE) one_seg_docs;
-
-
 # All three should be uniform.
 query
 SELECT id, BM25(one_seg_idx.tableoid) as d FROM one_seg_idx
@@ -71,20 +66,11 @@ CREATE INDEX three_segs_idx ON three_segs_docs USING inverted(id, body one_seg_e
 statement count 1
 INSERT INTO three_segs_docs VALUES (1, 'alpha');
 
-statement ok
-VACUUM (REFRESH_TABLE) three_segs_docs;
-
 statement count 1
 INSERT INTO three_segs_docs VALUES (2, 'beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) three_segs_docs;
-
 statement count 1
 INSERT INTO three_segs_docs VALUES (3, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) three_segs_docs;
 
 
 query
@@ -118,14 +104,8 @@ INSERT INTO split_docs VALUES (1, 'alpha');
 statement count 1
 INSERT INTO split_docs VALUES (3, 'gamma');
 
-statement ok
-VACUUM (REFRESH_TABLE) split_docs;
-
 statement count 1
 INSERT INTO split_docs VALUES (2, 'beta');
-
-statement ok
-VACUUM (REFRESH_TABLE) split_docs;
 
 
 query
@@ -155,17 +135,11 @@ CREATE INDEX split2_idx ON split2_docs USING inverted(id, body one_seg_en);
 statement count 1
 INSERT INTO split2_docs VALUES (2, 'beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) split2_docs;
-
 statement count 1
 INSERT INTO split2_docs VALUES (1, 'alpha');
 
 statement count 1
 INSERT INTO split2_docs VALUES (3, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) split2_docs;
 
 
 query
@@ -195,20 +169,11 @@ CREATE INDEX compacted_idx ON compacted_docs USING inverted(id, body one_seg_en)
 statement count 1
 INSERT INTO compacted_docs VALUES (1, 'alpha');
 
-statement ok
-VACUUM (REFRESH_TABLE) compacted_docs;
-
 statement count 1
 INSERT INTO compacted_docs VALUES (2, 'beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) compacted_docs;
-
 statement count 1
 INSERT INTO compacted_docs VALUES (3, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) compacted_docs;
 
 statement ok
 VACUUM (COMPACT_TABLE) compacted_docs;

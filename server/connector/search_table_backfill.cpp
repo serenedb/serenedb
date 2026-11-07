@@ -323,10 +323,9 @@ void RebuildGroup(duckdb::ClientContext& context,
               "table ",
               target.table_id, ": ", duckdb::ErrorData{e}.RawMessage()));
   }
-  // Need explicit call here so on Publish we don't have pending transactions.
   abort_all();
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
-  shard.Publish();
+  shard.CoolAll();
 }
 
 }  // namespace
@@ -359,7 +358,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
 
   irs::IndexWriter::CompactionFloorGuard floor;
   for (;;) {
-    shard.Publish();
+    shard.CoolAll();
     floor = shard.ArmCompactionFloor();
     if (floor.Held()) {
       break;

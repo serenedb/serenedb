@@ -37,12 +37,6 @@ INSERT INTO jc VALUES
 statement ok
 INSERT INTO jcs SELECT * FROM jc;
 
-statement ok
-VACUUM (REFRESH_TABLE) jc;
-
-statement ok
-VACUUM (REFRESH_TABLE) jcs;
-
 query
 SELECT id FROM jc WHERE (doc->'v')::INT = 42 ORDER BY id;
 ----
@@ -313,9 +307,6 @@ QUERY PLAN
 statement ok
 CREATE INDEX jc_both_idx ON jc USING inverted (id, (doc->'v') jc_kw, ((doc->'v')::INT));
 
-statement ok
-VACUUM (REFRESH_TABLE) jc;
-
 query
 SELECT id FROM jc_both_idx WHERE (doc->'v')::INT = 42 ORDER BY id;
 ----
@@ -355,9 +346,6 @@ INSERT INTO jb VALUES
   (2, '{"v": 9007199254740993}'),
   (3, '{"v": 42}');
 
-statement ok
-VACUUM (REFRESH_TABLE) jb;
-
 query
 SELECT id FROM jb_idx WHERE (doc->'v')::BIGINT = 9007199254740993 ORDER BY id;
 ----
@@ -376,9 +364,6 @@ INSERT INTO jd VALUES
   (2, '{"v": "2024-01-02"}'),
   (3, '{"v": null}'),
   (4, '{"w": 1}');
-
-statement ok
-VACUUM (REFRESH_TABLE) jd;
 
 query
 SELECT id FROM jd_idx WHERE (doc->'v')::DATE = DATE '2024-01-01' ORDER BY id;
@@ -423,9 +408,6 @@ CREATE INDEX repro_nz_idx ON repro_nz USING inverted (id, x, f);
 
 statement ok
 INSERT INTO repro_nz VALUES (1, '-0'::DOUBLE, '-0'::REAL), (2, 0.0, 0.0), (3, -1.5, -1.5), (4, 2.5, 2.5);
-
-statement ok
-VACUUM (REFRESH_TABLE) repro_nz;
 
 query
 SELECT id FROM repro_nz_idx WHERE x = 0 ORDER BY id;
@@ -476,9 +458,6 @@ CREATE INDEX repro_nan_idx ON repro_nan USING inverted (id, x);
 
 statement ok
 INSERT INTO repro_nan VALUES (1, 'NaN'::DOUBLE), (2, -('NaN'::DOUBLE)), (3, 1.0), (4, 'Infinity'::DOUBLE);
-
-statement ok
-VACUUM (REFRESH_TABLE) repro_nan;
 
 query
 SELECT id FROM repro_nan_idx WHERE x > 0 ORDER BY id;

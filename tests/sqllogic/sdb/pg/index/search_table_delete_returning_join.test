@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE rj (a BIGINT, b BIGINT, c BIGINT, t TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE rj (a BIGINT, b BIGINT, c BIGINT, t TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE rj_plain (a BIGINT, b BIGINT, c BIGINT, t TEXT);
@@ -11,10 +11,7 @@ statement ok
 INSERT INTO rj_plain SELECT i, i * 10, i * 100, 't' || i FROM generate_series(0, 99) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rj;
-
-statement ok
-CREATE TABLE rk (k TEXT PRIMARY KEY, n INT, x BIGINT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE rk (k TEXT PRIMARY KEY, n INT, x BIGINT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE rk_plain (k TEXT PRIMARY KEY, n INT, x BIGINT);
@@ -24,9 +21,6 @@ INSERT INTO rk SELECT 'k' || i, i, i * 7 FROM generate_series(0, 19) g(i);
 
 statement ok
 INSERT INTO rk_plain SELECT 'k' || i, i, i * 7 FROM generate_series(0, 19) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) rk;
 
 statement ok
 CREATE TABLE rj_small (id BIGINT);
@@ -267,9 +261,6 @@ a
 23
 26
 29
-
-statement ok
-VACUUM (REFRESH_TABLE) rj;
 
 query
 SELECT (SELECT count(*) FROM (SELECT * FROM rj EXCEPT ALL SELECT * FROM rj_plain)) + (SELECT count(*) FROM (SELECT * FROM rj_plain EXCEPT ALL SELECT * FROM rj)) AS diff, (SELECT count(*) FROM rj) AS n;

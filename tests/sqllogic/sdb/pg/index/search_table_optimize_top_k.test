@@ -17,9 +17,6 @@ CREATE INDEX st_topk_idx ON st_topk USING inverted (body st_topk_en);
 statement ok
 INSERT INTO st_topk SELECT i, CASE WHEN i % 1000 = 500 THEN repeat('fox ', 30 + i / 1000) WHEN i % 17 = 0 THEN repeat('fox ', 1 + i % 3) ELSE 'dog ' END || repeat('filler ', (i * 104729) % 30) FROM range(30000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) st_topk;
-
 query
 EXPLAIN SELECT id FROM st_topk WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_topk.tableoid) DESC LIMIT 8;
 ----
@@ -91,9 +88,6 @@ CREATE INDEX st_plain_idx ON st_plain USING inverted (body st_topk_en);
 
 statement ok
 INSERT INTO st_plain VALUES (1, 'fox quick'), (2, 'fox lazy'), (3, 'lazy dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) st_plain;
 
 query
 EXPLAIN SELECT id FROM st_plain WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_plain.tableoid) DESC LIMIT 2;

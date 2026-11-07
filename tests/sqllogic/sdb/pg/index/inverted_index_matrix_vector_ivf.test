@@ -38,9 +38,6 @@ INSERT INTO m_vec VALUES
     (2, [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], [4.0::FLOAT, 5.0::FLOAT]),
     (3, [0.0::FLOAT, 0.0::FLOAT, 1.0::FLOAT], [3.0::FLOAT, 3.0::FLOAT, 3.0::FLOAT]);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_vec;
-
 query
 SELECT pk FROM m_vec_ivf_st
 ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]

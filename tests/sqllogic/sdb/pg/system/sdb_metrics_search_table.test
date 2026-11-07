@@ -22,10 +22,7 @@ statement ok
 INSERT INTO sm_s VALUES (1, 'gamma cat'), (2, 'delta dog'), (3, 'epsilon cat');
 
 statement ok
-VACUUM (REFRESH_TABLE) sm_s;
-
-statement ok
-CREATE TABLE sm_empty (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE sm_empty (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 query
 SELECT metric, value

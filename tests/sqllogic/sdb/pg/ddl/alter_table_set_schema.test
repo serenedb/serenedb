@@ -27,10 +27,6 @@ INSERT INTO mrbeast.videos VALUES (6, 'mrbeast squid game'), (7, 'feastables cho
 
 
 statement ok
-VACUUM (REFRESH_TABLE) mrbeast.videos;
-
-
-statement ok
 ALTER TABLE mrbeast.videos SET SCHEMA feastables;
 
 
@@ -50,10 +46,6 @@ id
 
 statement ok
 INSERT INTO feastables.videos VALUES (67, 'feastables six seven');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) feastables.videos;
 
 
 query
@@ -97,10 +89,6 @@ INSERT INTO mrbeast.beast_games VALUES (1, 'squid game'), (2, 'last to leave');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) mrbeast.beast_games;
-
-
-statement ok
 ALTER TABLE mrbeast.beast_games SET SCHEMA feastables;
 
 
@@ -114,10 +102,6 @@ id	title
 
 statement ok
 INSERT INTO feastables.beast_games VALUES (67, 'six seven');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) feastables.beast_games;
 
 
 query
@@ -180,10 +164,6 @@ CREATE INDEX bars_idx ON feastables.bars USING inverted (name feastables.chocola
 
 statement ok
 INSERT INTO feastables.bars VALUES (67, 'feastables bar');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) feastables.bars;
 
 
 query

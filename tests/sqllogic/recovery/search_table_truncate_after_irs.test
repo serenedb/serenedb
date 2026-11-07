@@ -5,13 +5,10 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tai (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO tai VALUES (1, 'a'), (2, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) tai;
 
 statement ok
 INSERT INTO tai VALUES (3, 'c');
@@ -34,10 +31,6 @@ SET sdb_faults = 'pause_search_commit_after_irs';
 connection default
 statement ok
 SET sdb_faults = 'pause_search_commit_before_build_truncate:release';
-
-connection default
-statement ok
-VACUUM (REFRESH_TABLE) tai;
 
 connection default
 query
@@ -77,10 +70,6 @@ n
 connection after_crash
 statement ok
 INSERT INTO tai VALUES (4, 'd');
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) tai;
 
 connection after_crash
 query

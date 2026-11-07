@@ -32,11 +32,6 @@ INSERT INTO melstroi.public.pudge VALUES (1, 'base');
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) melstroi.public.pudge;
-
-
-connection default
-statement ok
 SET sdb_faults = 'pause_checkpoint';
 
 
@@ -131,11 +126,6 @@ SELECT count(*) AS n FROM pg_roles WHERE rolname = 'vjling';
 ----
 n
 1
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) melstroi.public.pudge;
 
 
 connection after_crash

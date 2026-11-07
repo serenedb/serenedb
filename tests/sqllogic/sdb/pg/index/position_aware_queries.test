@@ -22,10 +22,6 @@ CREATE INDEX pq_idx ON pq_docs USING inverted (id, body pq_syn)
   WITH (compaction_interval = 0);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pq_docs;
-
-
 query
 SELECT ts_lexize('pq_syn', 'red car') AS tokens;
 ----

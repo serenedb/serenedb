@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE cct (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE cct_rows (id INTEGER);
@@ -15,9 +15,6 @@ INSERT INTO cct_rows VALUES (1);
 
 statement ok
 INSERT INTO cct VALUES (1, 'a'), (2, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) cct;
 
 connection reader
 statement ok

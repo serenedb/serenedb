@@ -17,19 +17,11 @@ INSERT INTO wal_bulk_t SELECT i, 'seed row ' || i FROM range(0, 50) AS t(i);
 statement ok
 CREATE INDEX wal_bulk_idx ON wal_bulk_t USING inverted(a, b bulk_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) wal_bulk_t;
-
 query
 SELECT COUNT(*) FROM wal_bulk_idx WHERE b @@ ts_phrase('seed');
 ----
 count
 50
-
-# Block commits and ingest > flush-threshold rows so recovery has to flush
-# multiple times.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_bulk_t
@@ -45,7 +37,7 @@ SELECT 1;
 
 connection bulk_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) wal_bulk_t;
+SELECT 1;
 
 connection bulk_after
 query

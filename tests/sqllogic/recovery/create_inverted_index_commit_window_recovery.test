@@ -18,7 +18,7 @@ SET sdb_faults = 'pause_create_index_before_commit';
 
 connection builder
 statement async ok
-CREATE INDEX melstroi_logs_b ON melstroi_logs USING inverted (b) WITH (refresh_interval = 0);
+CREATE INDEX melstroi_logs_b ON melstroi_logs USING inverted (b);
 
 
 connection default
@@ -64,11 +64,6 @@ SELECT count(*) AS n FROM melstroi_logs;
 ----
 n
 600
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) melstroi_logs;
 
 
 connection after_crash

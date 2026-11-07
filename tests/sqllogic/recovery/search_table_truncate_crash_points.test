@@ -5,13 +5,10 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tcp (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO tcp VALUES (1, 'a'), (2, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) tcp;
 
 statement ok
 BEGIN;
@@ -60,10 +57,6 @@ INSERT INTO tcp VALUES (5, 'e');
 
 connection after_autocommit
 statement ok
-VACUUM (REFRESH_TABLE) tcp;
-
-connection after_autocommit
-statement ok
 BEGIN;
 
 connection after_autocommit
@@ -100,10 +93,6 @@ SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcp;
 ----
 ids
 8,9
-
-connection after_txn
-statement ok
-VACUUM (REFRESH_TABLE) tcp;
 
 connection after_txn
 statement ok

@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE mbn (price DOUBLE)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+WITH (storage = 'search', compaction_interval = 0)
 
 
 statement ok
@@ -16,10 +16,6 @@ SELECT x FROM (VALUES (NULL::DOUBLE), ('inf'::DOUBLE), ('-inf'::DOUBLE), ('nan':
 
 statement ok
 RESET threads
-
-
-statement ok
-VACUUM (REFRESH_TABLE) mbn
 
 
 query

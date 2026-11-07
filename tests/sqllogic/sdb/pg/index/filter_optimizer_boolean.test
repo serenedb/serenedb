@@ -16,9 +16,6 @@ INSERT INTO fo_bool VALUES
   (3, 'gamma', 3, 'gamma delta alpha'),
   (4, 'delta', 4, 'delta alpha beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_bool;
-
 query
 EXPLAIN SELECT id FROM fo_bool_idx
 WHERE (t @@ ts_phrase('alpha') AND t @@ ts_phrase('beta')) AND t @@ ts_phrase('gamma');

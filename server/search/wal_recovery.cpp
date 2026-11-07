@@ -66,7 +66,6 @@ void RecoverSearchStorages(
   duckdb::ClientContext& context,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached) {
   const auto begin = std::chrono::steady_clock::now();
-  std::vector<std::shared_ptr<Store>> indexes;
   std::vector<std::shared_ptr<Store>> tables;
   for (const auto& db : attached) {
     catalog::ForEachSearchStorage(
@@ -74,9 +73,7 @@ void RecoverSearchStorages(
       [&](catalog::SearchTableEntry& table) {
         tables.push_back(table.Storage());
       },
-      [&](catalog::InvertedIndexEntry& index) {
-        indexes.push_back(index.Storage());
-      });
+      [](catalog::InvertedIndexEntry&) {});
   }
   context.RunFunctionInTransaction([&] {
     for (auto& table : tables) {
@@ -86,22 +83,13 @@ void RecoverSearchStorages(
   duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance())};
   std::atomic_size_t replayed_tables{0};
-  for (auto& storage : indexes) {
-    executor.ScheduleTask(
-      duckdb::make_uniq<FinishReplayTask>(executor, [storage] {
-        if (const auto status = storage->Refresh(); !status.ok()) {
-          SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
-                   "' after log replay failed: ", status.message());
-        }
-      }));
-  }
   for (auto& table : tables) {
     executor.ScheduleTask(
       duckdb::make_uniq<FinishReplayTask>(executor, [&replayed_tables, table] {
         table->FinishReplay();
         replayed_tables.fetch_add(1, std::memory_order_relaxed);
-        if (const auto status = table->VacuumRefresh(); !status.ok()) {
-          SDB_WARN(SEARCH, "refresh of search table '", table->GetId(),
+        if (const auto status = table->CleanupUnsafe().res; !status.ok()) {
+          SDB_WARN(SEARCH, "cleanup of search table '", table->GetId(),
                    "' after log replay failed: ", status.message());
         }
       }));

@@ -13,13 +13,10 @@ CREATE TABLE numt(id INTEGER PRIMARY KEY, n INTEGER, cat VARCHAR NOT NULL)
 
 statement ok
 CREATE INDEX numt_idx ON numt USING inverted(n, cat num_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO numt VALUES (1, 10, 'red'), (2, 20, 'blue'), (3, 30, 'red')
-
-statement ok
-VACUUM (REFRESH_TABLE) numt;
 
 statement error
 SELECT ts_dict_agg(n) FROM numt_idx

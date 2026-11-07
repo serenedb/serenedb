@@ -10,15 +10,11 @@ CREATE DATABASE st_rparked;
 
 statement ok
 CREATE TABLE st_rparked.public.docs (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 
 statement ok
 INSERT INTO st_rparked.public.docs VALUES (1, 'a'), (2, 'b');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) st_rparked.public.docs;
 
 
 statement ok

@@ -146,12 +146,8 @@ void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
 
 SearchTableOptions ResolveOptions(const WithOptions& options) {
   SearchTableOptions result{
-    .refresh_interval_ms =
-      OptionValue<uint32_t>(options, kRefreshIntervalSetting),
     .compaction_interval_ms =
       OptionValue<uint32_t>(options, kCompactionIntervalSetting),
-    .cleanup_interval_step =
-      OptionValue<uint32_t>(options, kCleanupIntervalStepSetting),
     .row_group_size = OptionValue<uint32_t>(options, kRowGroupSizeSetting),
     .segment_memory_max =
       OptionValue<uint64_t>(options, kSegmentMemoryMaxSetting),
@@ -545,14 +541,8 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
 }
 
 duckdb::Value SearchTableEntry::Option(std::string_view name) const {
-  if (name == kRefreshIntervalSetting) {
-    return duckdb::Value::UINTEGER(_options.refresh_interval_ms);
-  }
   if (name == kCompactionIntervalSetting) {
     return duckdb::Value::UINTEGER(_options.compaction_interval_ms);
-  }
-  if (name == kCleanupIntervalStepSetting) {
-    return duckdb::Value::UINTEGER(_options.cleanup_interval_step);
   }
   if (name == kRowGroupSizeSetting) {
     return duckdb::Value::UINTEGER(_options.row_group_size);

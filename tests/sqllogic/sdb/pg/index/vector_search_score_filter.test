@@ -22,10 +22,6 @@ INSERT INTO t VALUES
   ('r2', '{0,1,0,0}'), ('r3', '{0,0,1,0}')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) t
-
-
 # #964: similarity = -(v <#> q) >= 0 keeps every non-negative-IP row; the top-2
 # by distance are r0, r1. Returned [] before the fix.
 query
@@ -84,10 +80,6 @@ statement ok
 INSERT INTO l2t VALUES
   (1, [0, 0, 0]::FLOAT[3]), (2, [3, 0, 0]::FLOAT[3]),
   (3, [10, 0, 0]::FLOAT[3]), (4, [100, 0, 0]::FLOAT[3])
-
-
-statement ok
-VACUUM (REFRESH_TABLE) l2t
 
 
 # A lower bound on distance (a residual score filter, not a radius): keep the

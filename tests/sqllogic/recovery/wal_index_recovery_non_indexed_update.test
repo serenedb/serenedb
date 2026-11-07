@@ -25,12 +25,6 @@ INSERT INTO ni_t VALUES
 statement ok
 CREATE INDEX ni_idx ON ni_t USING inverted(id, note ni_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) ni_t;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 # Update only the non-indexed column. The index should not see anything.
 statement ok
 UPDATE ni_t SET meta = 'changed_one' WHERE id = 1;
@@ -54,7 +48,7 @@ SELECT 1;
 
 connection ni_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) ni_t;
+SELECT 1;
 
 # Indexed column unchanged for rows 1 and 2.
 connection ni_after

@@ -39,10 +39,6 @@ statement ok
 INSERT INTO arr_n VALUES (3, 'third',  [-1.0, 0.0, 1.0])
 
 
-statement ok
-VACUUM (REFRESH_TABLE) arr_n
-
-
 # Sanity: the ARRAY column is served by the iresearch columnstore (i),
 # so the NULL roundtrip below proves the cs materialiser handles parent
 # validity (the bug this test was written for).

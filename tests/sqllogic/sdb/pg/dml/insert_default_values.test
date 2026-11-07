@@ -27,10 +27,6 @@ statement ok
 INSERT INTO idv VALUES (2, 'goodbye moon', DEFAULT);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) idv;
-
-
 query
 SELECT id, n FROM idv_idx WHERE body @@ ts_phrase('hello world');
 ----

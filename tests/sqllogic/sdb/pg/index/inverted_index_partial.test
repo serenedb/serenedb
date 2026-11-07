@@ -65,10 +65,6 @@ statement ok
 INSERT INTO goshandr_subscribers VALUES (10001, 'fresh_live', true), (10002, 'fresh_dead', false);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
-
-
 query
 SELECT (SELECT count(*) FROM pt_live WHERE label = 'fresh_live') AS live_row, (SELECT count(*) FROM pt_live WHERE label = 'fresh_dead') AS dead_row;
 ----
@@ -85,10 +81,6 @@ statement ok
 UPDATE goshandr_subscribers SET live = true WHERE x = 10002;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
-
-
 query
 SELECT (SELECT count(*) FROM pt_live WHERE label = 'fresh_live') AS demoted, (SELECT count(*) FROM pt_live WHERE label = 'fresh_dead') AS promoted;
 ----
@@ -101,10 +93,6 @@ statement ok
 DELETE FROM goshandr_subscribers WHERE x >= 9999;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
-
-
 query
 SELECT count(*) FROM pt_live;
 ----
@@ -115,10 +103,6 @@ count
 # Updating an indexed column of a matching row replaces its terms.
 statement ok
 UPDATE goshandr_subscribers SET label = 'renamed' WHERE x = 4;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
 
 
 query
@@ -147,10 +131,6 @@ statement ok
 INSERT INTO goshandr_subscribers VALUES (20001, 'null_live', NULL);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
-
-
 query
 SELECT (SELECT count(*) FROM pt_live WHERE label = 'null_live') AS in_live, (SELECT count(*) FROM pt_high WHERE label = 'null_live') AS in_high;
 ----
@@ -161,10 +141,6 @@ in_live	in_high
 # NULL -> true enters pt_live (and stays out of pt_high: NOT true = false).
 statement ok
 UPDATE goshandr_subscribers SET live = true WHERE x = 20001;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
 
 
 query
@@ -211,10 +187,6 @@ statement ok
 INSERT INTO goshandr_subscribers SELECT 30000 + g, 'batch' || g::text, g % 3 = 0 FROM generate_series(1, 300) g;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
-
-
 query
 SELECT (SELECT count(*) FROM pt_live WHERE label = 'batch3') AS hit, (SELECT count(*) FROM pt_live WHERE label = 'batch4') AS miss;
 ----
@@ -234,10 +206,6 @@ statement ok
 UPDATE goshandr_subscribers SET live = false WHERE x <= 100;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
-
-
 query
 SELECT count(*) FROM pt_live;
 ----
@@ -245,18 +213,8 @@ count
 5050
 
 
-# ALTER INDEX SET clones the catalog object; the predicate must survive the
-# round-trip and keep filtering DML.
-statement ok
-ALTER INDEX pt_live SET (refresh_interval = 200);
-
-
 statement ok
 INSERT INTO goshandr_subscribers VALUES (40001, 'post_alter_live', true), (40002, 'post_alter_dead', false);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
 
 
 query
@@ -282,10 +240,6 @@ total	probe
 # true -> NULL leaves the index (NULL predicate = false).
 statement ok
 UPDATE goshandr_subscribers SET live = NULL WHERE x = 20001;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
 
 
 query
@@ -318,10 +272,6 @@ INSERT INTO goshandr_subscribers VALUES (50002, 'committed_live', true), (50003,
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) goshandr_subscribers;
 
 
 query
@@ -541,10 +491,6 @@ pe_typed_text	(empty)
 
 statement ok
 INSERT INTO pe_t VALUES (10, 'ten');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pe_t;
 
 
 query

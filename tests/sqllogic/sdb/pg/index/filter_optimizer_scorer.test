@@ -17,9 +17,6 @@ INSERT INTO fo_score VALUES
   (4, 'delta', 4, 'delta alpha beta');
 
 statement ok
-VACUUM (REFRESH_TABLE) fo_score;
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY fo_score_ng_dict AS
     generate_wildcard_ngrams(split_text_csv(' '), 3)
     WITH (frequency, position);
@@ -32,9 +29,6 @@ CREATE INDEX fo_score_ng_idx ON fo_score_ng USING inverted(id, g fo_score_ng_dic
 
 statement ok
 INSERT INTO fo_score_ng VALUES (1, 'analytical'), (2, 'analyser'), (3, 'analysis');
-
-statement ok
-VACUUM (REFRESH_TABLE) fo_score_ng;
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE s = 'alpha';

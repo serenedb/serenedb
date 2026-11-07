@@ -24,9 +24,6 @@ INSERT INTO chain_t SELECT i, 'seed_' || i FROM range(0, 3000) AS t(i);
 statement ok
 CREATE INDEX chain_idx ON chain_t USING inverted(a, b chain_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) chain_t;
-
 # Initial sanity
 query
 SELECT a FROM chain_idx WHERE b @@ ts_phrase('seed_42');
@@ -47,9 +44,6 @@ count
 #  - UPDATE 1000..1499 → body 'r1upd_<id>'
 #  - crash
 ###############################################################################
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO chain_t SELECT i, 'r1ins_' || i FROM range(3000, 6000) AS t(i);
@@ -76,7 +70,7 @@ SELECT 1;
 
 connection r2
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r2
 statement ok
@@ -108,7 +102,7 @@ SELECT 1;
 
 connection r3
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r3
 statement ok
@@ -140,7 +134,7 @@ SELECT 1;
 
 connection r4
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+SELECT 1;
 
 connection r4
 statement ok
@@ -183,7 +177,7 @@ SELECT 1;
 
 connection final
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) chain_t;
+SELECT 1;
 
 connection final
 query

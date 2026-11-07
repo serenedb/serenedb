@@ -28,15 +28,15 @@ WORDS = [f"w{i}" for i in range(40)]
 ID_SPAN = 1_000_000_000
 
 WRITER_CASES = [
-    ("refresh_interval = 0, compaction_interval = 0", 8, ""),
-    ("refresh_interval = 20, compaction_interval = 10, segment_docs_max = 64", 8, ""),
-    ("refresh_interval = 0, compaction_interval = 5, segment_docs_max = 1000", 4,
+    ("compaction_interval = 0", 8, ""),
+    ("compaction_interval = 10, segment_docs_max = 64", 8, ""),
+    ("compaction_interval = 5, segment_docs_max = 1000", 4,
      "big_inserts"),
-    ("refresh_interval = 10, compaction_interval = 10", 6, "partial second"),
-    ("refresh_interval = 0, compaction_interval = 0", 4, "big_inserts big_updates"),
-    ("refresh_interval = 5, compaction_interval = 5, segment_docs_max = 32", 8,
+    ("compaction_interval = 10", 6, "partial second"),
+    ("compaction_interval = 0", 4, "big_inserts big_updates"),
+    ("compaction_interval = 5, segment_docs_max = 32", 8,
      "partial second big_updates"),
-    ("refresh_interval = 0, compaction_interval = 5", 6,
+    ("compaction_interval = 5", 6,
      "second big_inserts big_updates"),
 ]
 
@@ -116,8 +116,6 @@ def phrase_count(conn: psycopg.Connection, word: str, index: Index = T_IDX) -> i
 def assert_index_matches_table(conn: psycopg.Connection,
                                indexes: list[Index] | None = None) -> None:
     indexes = indexes or [T_IDX]
-    for table in sorted({index.table for index in indexes}):
-        conn.execute(f"VACUUM (REFRESH_TABLE) {table}")
     for index in indexes:
         rows = conn.execute(
             f"SELECT count(*) FROM {index.table} WHERE {index.where}"
@@ -301,9 +299,7 @@ class Workload:
             with psycopg.connect(self.server.dsn(), autocommit=True) as conn:
                 while not self.stop.is_set():
                     op = rng.random()
-                    if op < 0.45:
-                        conn.execute(f"VACUUM (REFRESH_TABLE) {rng.choice(tables)}")
-                    elif op < 0.6:
+                    if op < 0.6:
                         checkpoint(conn)
                     elif op < 0.7:
                         conn.execute(f"VACUUM (COMPACT_TABLE) {rng.choice(tables)}")
@@ -387,7 +383,7 @@ def a_crash_during_concurrent_writes_replays_to_an_equal_index(
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
             indexes = create_schema(
-                conn, "refresh_interval = 50, compaction_interval = 20, "
+                conn, "compaction_interval = 20, "
                       "segment_docs_max = 256", partial=partial, second=second)
             seed_rows(conn, indexes, 5000)
         for _ in range(3):

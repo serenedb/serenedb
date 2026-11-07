@@ -34,9 +34,6 @@ statement ok
 CREATE INDEX pj_json_idx ON pj USING inverted(
     id, (doc->'title') pj_nopos, (doc->'title') included());
 
-statement ok
-VACUUM (REFRESH_TABLE) pj;
-
 query
 SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick brown fox');
 ----
@@ -178,9 +175,6 @@ statement ok
 INSERT INTO pj VALUES
     (7, '{"title":"brown fox and a quick dog","meta":{"note":"lazy, the dog"}}'::json);
 
-statement ok
-VACUUM (REFRESH_TABLE) pj;
-
 query
 SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick', [0, 3], 'dog') ORDER BY id;
 ----
@@ -223,9 +217,6 @@ INSERT INTO pj VALUES
     (8, '{"title":"the \"quick\" brown fox"}'::json),
     (9, '{"title":"quick brown"}'::json);
 
-statement ok
-VACUUM (REFRESH_TABLE) pj;
-
 query
 SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick brown') ORDER BY id;
 ----
@@ -262,9 +253,6 @@ id	scored
 statement ok
 INSERT INTO pj VALUES
     (10, '{"title":"quick\nbrown\tfox"}'::json);
-
-statement ok
-VACUUM (REFRESH_TABLE) pj;
 
 query
 SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick brown fox') ORDER BY id;
@@ -398,9 +386,6 @@ INSERT INTO pj_tags VALUES
     (2, '{"tags":["fox red","red fox"]}'::json),
     (3, '{"tags":[]}'::json);
 
-statement ok
-VACUUM (REFRESH_TABLE) pj_tags;
-
 query
 SELECT id FROM pj_tags_idx WHERE (doc->'tags'->>0) @@ ts_phrase('red fox') ORDER BY id;
 ----
@@ -426,9 +411,6 @@ CREATE INDEX pj_raw_pos_idx ON pj_raw USING inverted(id, body pj_pos);
 
 statement ok
 CREATE INDEX pj_raw_text_idx ON pj_raw USING inverted(id, body pj_nopos) INCLUDE (body);
-
-statement ok
-VACUUM (REFRESH_TABLE) pj_raw;
 
 query
 SELECT id FROM pj_raw_pos_idx WHERE body @@ ts_phrase('quick nbrown') ORDER BY id;
@@ -469,9 +451,6 @@ INSERT INTO pj_search VALUES
     (1, '{"title":"quick\nbrown fox"}'),
     (2, '{"title":"brown quick"}'),
     (3, '{"title":"a \"quick\" brown dog"}');
-
-statement ok
-VACUUM (REFRESH_TABLE) pj_search;
 
 query
 SELECT id FROM pj_search_idx WHERE (doc->'title') @@ ts_phrase('quick brown') ORDER BY id;

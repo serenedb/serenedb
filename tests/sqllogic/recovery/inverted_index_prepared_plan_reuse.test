@@ -14,9 +14,6 @@ INSERT INTO pru SELECT i, i % 10, CASE WHEN i = 7 THEN 'zeta alpha' ELSE 'alpha'
   [i, 0]::FLOAT[2] FROM range(100) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pru;
-
-statement ok
 PREPARE pru_knn AS SELECT pk FROM pru_idx WHERE v = $1::INTEGER
   ORDER BY emb <-> $2::FLOAT[2] LIMIT $3::INTEGER;
 
@@ -58,9 +55,6 @@ SET sdb_faults = '-connector::ScanBind';
 
 statement ok
 INSERT INTO pru VALUES (200, 3, 'omega', [149, 0]);
-
-statement ok
-VACUUM (REFRESH_TABLE) pru;
 
 statement ok
 SET sdb_faults = 'connector::ScanBind';

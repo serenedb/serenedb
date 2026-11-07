@@ -6,7 +6,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE order_docs (id BIGINT, msg TEXT)
-  WITH (storage = 'search', refresh_interval = 20, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 
 statement ok
@@ -14,15 +14,7 @@ INSERT INTO order_docs SELECT i, 'm' || (i % 7) FROM range(100) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) order_docs;
-
-
-statement ok
-SET sdb_faults = 'pause_index_refresh';
-
-
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_index_refresh:parked';
+CHECKPOINT;
 
 
 statement ok
@@ -45,17 +37,17 @@ SET sdb_faults = '-search_commit_prepared:parked';
 
 connection default
 statement ok
-SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+SET sdb_faults = 'pause_search_cooling';
 
 
-connection default
-statement ok
-SET sdb_faults = 'pause_index_refresh:release';
+connection cooler
+statement async ok
+CHECKPOINT;
 
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+SET sdb_faults = '-pause_search_cooling:parked';
 
 
 connection other
@@ -68,22 +60,16 @@ statement ok
 SET sdb_faults = 'search_commit_prepared:release';
 
 
+connection writer
 wait
 
 
 connection default
 statement ok
-SET sdb_faults = 'pause_index_refresh';
+SET sdb_faults = 'pause_search_cooling:release';
 
 
-connection default
-statement ok
-SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
-
-
-connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_index_refresh:parked';
+wait
 
 
 connection default
@@ -111,7 +97,7 @@ INSERT INTO order_docs VALUES (-4, 'm3');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) order_docs;
+CHECKPOINT;
 
 
 connection after_crash

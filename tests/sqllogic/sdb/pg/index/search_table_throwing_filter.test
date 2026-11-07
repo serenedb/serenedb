@@ -9,10 +9,6 @@ INSERT INTO stthrow
   FROM generate_series(0, 99999) g(i);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) stthrow;
-
-
 query
 SELECT count(*) AS c FROM stthrow WHERE id <> 0 AND s::INT = 10;
 ----

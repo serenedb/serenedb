@@ -16,10 +16,6 @@ statement ok
 INSERT INTO iigc_t (a, b, c) VALUES (1, 'red', 'x'), (2, 'blue', 'y'), (3, 'red', 'x');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) iigc_t;
-
-
 query
 SELECT (SELECT count(*) FROM iigc_b WHERE b @@ 'red') AS r, (SELECT count(*) FROM iigc_c WHERE c @@ 'x') AS x;
 ----
@@ -45,7 +41,7 @@ SELECT 1;
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) iigc_t;
+SELECT 1;
 
 
 connection after_crash
@@ -78,7 +74,7 @@ SELECT 1;
 
 connection after_shutdown
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) iigc_t;
+SELECT 1;
 
 
 connection after_shutdown

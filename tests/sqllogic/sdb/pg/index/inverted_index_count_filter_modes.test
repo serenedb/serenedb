@@ -34,17 +34,9 @@ INSERT INTO cfm SELECT i, 'fox', NULL, i*10 FROM generate_series(1,100) g(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) cfm;
-
-
-statement ok
 INSERT INTO cfm
   SELECT i, CASE WHEN i%2=0 THEN 'fox' ELSE 'dog' END, i, i*10
   FROM generate_series(101,200) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cfm;
 
 
 # Pure count: no predicate, no filters -- answered from reader metadata.
@@ -242,10 +234,6 @@ statement ok
 DELETE FROM cfm WHERE id <= 50;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) cfm;
-
-
 query
 SELECT count(*) AS n FROM cfm_idx;
 ----
@@ -300,15 +288,7 @@ INSERT INTO cfm_st SELECT i, 'x'||i FROM generate_series(1,100) g(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) cfm_st;
-
-
-statement ok
 INSERT INTO cfm_st SELECT i, 'x'||i FROM generate_series(101,200) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cfm_st;
 
 
 query
@@ -368,10 +348,6 @@ n
 
 statement ok
 DELETE FROM cfm_st WHERE a <= 50;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cfm_st;
 
 
 query

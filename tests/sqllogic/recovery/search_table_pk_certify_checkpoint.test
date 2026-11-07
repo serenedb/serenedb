@@ -14,7 +14,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE ckpt_pk(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search', refresh_interval = 0);
+  WITH (storage = 'search');
 
 
 statement ok
@@ -104,10 +104,6 @@ statement ok
 RESET sdb_faults;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ckpt_pk;
-
-
 query
 SELECT i, t FROM ckpt_pk ORDER BY i;
 ----
@@ -126,7 +122,7 @@ CREATE DATABASE ckpt_fail;
 
 statement ok
 CREATE TABLE ckpt_fail.public.s(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search', refresh_interval = 0);
+  WITH (storage = 'search');
 
 
 statement ok

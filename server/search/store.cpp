@@ -290,12 +290,18 @@ StoreSnapshotPtr Store::Snapshot() const {
 
 irs::DirectoryReader Store::BuildSnapshot() {
   SDB_ASSERT(_table);
-  if (auto status = PublishAll(); !status.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("search table ", _id, ": publish failed: ", status.message()));
-  }
+  CoolAll();
   return _table->ColdView(kAllApplied);
+}
+
+void Store::CoolAll() {
+  if (!_table) {
+    return;
+  }
+  if (auto status = CoolRetired(kNoLsn); !status.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("search table ", _id, ": ", status.message()));
+  }
 }
 
 std::vector<OwnSegment> Store::OpenFlushed(
@@ -394,6 +400,7 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot) {
     }
   }
   SyncSegments();
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_cooling");
   CommitStorage(
     LogCooled({.id = id, .meta_file = written.segment.filename, .docs = docs}),
     [&](Tick, Tick, Lsn lsn) { _table->Cooled(hot, std::move(written), lsn); });
@@ -458,14 +465,6 @@ absl::Status Store::Cover(Lsn target) {
   return absl::OkStatus();
 }
 
-void Store::OpenReader() {
-  auto [reader, stamp] = IndexDurability::OpenReader(*_dir, ReaderOptions());
-  SetFileManifest(stamp.manifest);
-  std::atomic_store(&_snapshot,
-                    std::make_shared<StoreSnapshot>(std::move(reader),
-                                                    std::move(stamp.manifest)));
-}
-
 void Store::PublishSnapshot() {
   std::atomic_store(&_snapshot, std::make_shared<StoreSnapshot>(
                                   _writer->GetSnapshot(), GetFileManifest()));
@@ -521,56 +520,15 @@ void Store::ReindexReleaser::operator()(Store* store) const noexcept {
   }
 }
 
-ResultWithTime Store::RefreshUnsafe(bool wait,
-                                    const irs::ProgressReportCallback& progress,
-                                    RefreshResult& code) {
-  SDB_ASSERT(_writer);
-  const auto begin = std::chrono::steady_clock::now();
-  const auto enabled = [&] {
-    return _tasks_settings.refresh_interval_msec.load() != 0;
-  };
-  const RefreshGate scheduled{_settings_mutex, enabled};
-  absl::Status result;
-  if (_table) {
-    size_t cooled = 0;
-    if (wait) {
-      result = PublishAll();
-    } else {
-      SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh");
-      absl::MutexLock gate{&scheduled.mutex};
-      if (scheduled.open()) {
-        result = Cool(HasIndexes(), cooled);
-      }
-    }
-    _table->Collect(catalog::Transactions::Get().OldestSnapshot());
-    code = wait || cooled != 0 ? RefreshResult::Done : RefreshResult::NoChanges;
-  } else {
-    result = _durability.Refresh(
-      *_writer, wait, progress, code, [&] { PublishSnapshot(); },
-      [&] { PublishSnapshot(); }, wait ? nullptr : &scheduled);
-  }
-  const auto time_ms = MillisSince(begin);
+void Store::Commit(const irs::ProgressReportCallback& progress) {
+  SDB_ASSERT(_writer && !_table);
   SDB_IF_FAILURE("Search::FailOnCommit") {
-    result = absl::InternalError("debug failure point");
-  }
-  SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
-  _maintenance.RecordCommit(result, code, time_ms);
-  return {std::move(result), time_ms};
-}
-
-absl::Status Store::Refresh(const irs::ProgressReportCallback& progress) {
-  RefreshResult code = RefreshResult::Undefined;
-  return RefreshUnsafe(/*wait=*/true, progress, code).res;
-}
-
-void Store::Publish() {
-  RefreshResult code = RefreshResult::Undefined;
-  const auto result = RefreshUnsafe(/*wait=*/true, nullptr, code);
-  if (!result.res.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("search store ", _id,
-                            ": publish failed: ", result.res.message()));
+                    ERR_MSG("inverted index ", _id, ": debug failure point"));
   }
+  _durability.Commit(*_writer, progress);
+  PublishSnapshot();
+  SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
 }
 
 ResultWithTime Store::CleanupUnsafe() {
@@ -680,6 +638,9 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
     } else if (res.error != irs::CompactionError::Busy) {
       empty_compaction = res.size == 0;
     }
+    if (!empty_compaction) {
+      Commit();
+    }
   } catch (const std::exception& e) {
     co_return absl::InternalError(
       absl::StrCat("compaction of search store ", _id,
@@ -714,24 +675,13 @@ std::shared_ptr<const irs::IndexFieldOptions> Store::CompactionOptions() {
   return nullptr;
 }
 
-absl::Status Store::VacuumRefresh() {
-  RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
-  return CleanupUnsafe().res;
-}
-
 absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
                                   uint32_t target_segments) {
   const irs::MergeWriter::FlushProgress progress = [&context] {
     return !context.IsInterrupted();
   };
   const auto target = std::max<uint32_t>(1, target_segments);
-  RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
+  CoolAll();
   const ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env = slot.AnnEnv();
   for (size_t pass = 0; pass < 8; ++pass) {
@@ -780,9 +730,6 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
       return status;
     }
     SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
-    if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-      return res;
-    }
     if (!merged) {
       break;
     }
@@ -803,11 +750,6 @@ StoreStats Store::GetStats() const {
   }
   _maintenance.Fill(stats);
   return stats;
-}
-
-void Store::Clear(const irs::SourcePosition& position) {
-  _durability.Clear(*_writer, position);
-  PublishSnapshot();
 }
 
 void Store::ReplaceSegments(
@@ -1167,15 +1109,6 @@ void Store::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
   }
 }
 
-bool Store::Replays(const irs::SourcePosition& position) const {
-  if (!_writer) {
-    return false;
-  }
-  SDB_ENSURE(position.offset != 0, "store ", _id,
-             ": a write outside a commit and a replay");
-  return _durability.Position() < position;
-}
-
 void Store::ReplayHotRows(duckdb::Catalog& catalog,
                           std::vector<connector::ColumnId> column_ids,
                           uint64_t segment, irs::doc_id_t first,
@@ -1285,15 +1218,6 @@ void Store::FinishReplay() {
   _writer->ReserveSegmentId(_table->ReplayTop());
   _table->FinishReplay();
   ClaimColumnOids(_table->View(catalog::Transactions::Get().LastCommit(), {}));
-}
-
-void ThrowIfRefreshFailed(const absl::Status& status,
-                          std::string_view index_name) {
-  if (!status.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to refresh index '", index_name,
-                            "': ", status.message()));
-  }
 }
 
 }  // namespace sdb::search

@@ -12,10 +12,6 @@ INSERT INTO pk_race VALUES (1, 'first');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_race;
-
-
-statement ok
 SET sdb_faults = 'search_commit_prepared';
 
 
@@ -46,10 +42,6 @@ SET sdb_faults = 'search_commit_prepared:release';
 wait
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_race;
-
-
 query
 SELECT i, t FROM pk_race ORDER BY i;
 ----
@@ -68,10 +60,6 @@ CREATE TABLE pk_gone(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
 
 statement ok
 INSERT INTO pk_gone VALUES (5, 'original'), (6, 'other');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_gone;
 
 
 statement ok
@@ -103,10 +91,6 @@ SET sdb_faults = 'search_commit_prepared:release';
 wait
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_gone;
-
-
 # The delete stands.
 query
 SELECT i, t FROM pk_gone ORDER BY i;
@@ -124,10 +108,6 @@ CREATE TABLE pk_both(i INTEGER PRIMARY KEY, n INTEGER) WITH (storage = 'search')
 
 statement ok
 INSERT INTO pk_both VALUES (1, 10);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_both;
 
 
 statement ok
@@ -157,10 +137,6 @@ SET sdb_faults = 'search_commit_prepared:release';
 
 
 wait
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_both;
 
 
 query

@@ -2,7 +2,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE mr_s (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100);
+  WITH (storage = 'search', compaction_interval = 100);
 
 statement ok
 CREATE INDEX mr_s_idx ON mr_s USING inverted (body);
@@ -12,52 +12,70 @@ CREATE TABLE mr_t (id INT, body TEXT);
 
 statement ok
 CREATE INDEX mr_t_idx ON mr_t USING inverted (body)
-  WITH (refresh_interval = 100, compaction_interval = 100);
+  WITH (compaction_interval = 100);
 
 statement ok
 RESET sdb_faults;
 
 statement ok
-ALTER TABLE mr_s SET (compaction_interval = 0, refresh_interval = 0);
+ALTER TABLE mr_s SET (compaction_interval = 0);
 
 statement ok
-ALTER INDEX mr_t_idx SET (compaction_interval = 0, refresh_interval = 0);
+ALTER INDEX mr_t_idx SET (compaction_interval = 0);
 
 statement ok
 INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(1, 10) s(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) mr_s;
+query
+SELECT count(*) > 0 AS ok FROM mr_s WHERE body @@ 'fox';
+----
+ok
+t
 
 statement ok
 INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(11, 20) s(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) mr_s;
+query
+SELECT count(*) > 0 AS ok FROM mr_s WHERE body @@ 'fox';
+----
+ok
+t
 
 statement ok
 INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(21, 30) s(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) mr_s;
+query
+SELECT count(*) > 0 AS ok FROM mr_s WHERE body @@ 'fox';
+----
+ok
+t
 
 statement ok
 INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(1, 10) s(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) mr_t;
+query
+SELECT count(*) > 0 AS ok FROM mr_t WHERE body @@ 'fox';
+----
+ok
+t
 
 statement ok
 INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(11, 20) s(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) mr_t;
+query
+SELECT count(*) > 0 AS ok FROM mr_t WHERE body @@ 'fox';
+----
+ok
+t
 
 statement ok
 INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(21, 30) s(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) mr_t;
+query
+SELECT count(*) > 0 AS ok FROM mr_t WHERE body @@ 'fox';
+----
+ok
+t
 
 statement ok
 SET sdb_faults = 'crash_on_packet';
@@ -74,13 +92,12 @@ SELECT 1;
 
 connection after_crash
 query
-SELECT relname, list_contains(reloptions, 'refresh_interval=0') AS refresh_off,
-       list_contains(reloptions, 'compaction_interval=0') AS compaction_off
+SELECT relname, list_contains(reloptions, 'compaction_interval=0') AS compaction_off
 FROM pg_class WHERE relname IN ('mr_s', 'mr_t_idx') ORDER BY relname;
 ----
-relname	refresh_off	compaction_off
-mr_s	t	t
-mr_t_idx	t	t
+relname	compaction_off
+mr_s	t
+mr_t_idx	t
 
 connection after_crash
 statement ok
@@ -91,6 +108,13 @@ statement ok
 INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(31, 40) s(i);
 
 connection after_crash
+query
+SELECT (SELECT count(*) FROM mr_s) AS s_rows, (SELECT count(*) FROM mr_t_idx) AS t_rows;
+----
+s_rows	t_rows
+40	40
+
+connection after_crash
 sleep 2s
 
 connection after_crash
@@ -98,21 +122,19 @@ query
 SELECT
   (SELECT value FROM sdb_metrics WHERE metric = 'num_segments'
      AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mr_s')) AS s_segments,
-  (SELECT count(*) FROM mr_s) AS s_rows,
   (SELECT value FROM sdb_metrics WHERE metric = 'num_segments'
-     AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mr_t_idx')) AS t_segments,
-  (SELECT count(*) FROM mr_t_idx) AS t_rows;
+     AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mr_t_idx')) AS t_segments;
 ----
-s_segments	s_rows	t_segments	t_rows
-3	30	3	30
+s_segments	t_segments
+4	4
 
 connection after_crash
 statement ok
-ALTER TABLE mr_s SET (compaction_interval = 100, refresh_interval = 100);
+ALTER TABLE mr_s SET (compaction_interval = 100);
 
 connection after_crash
 statement ok
-ALTER INDEX mr_t_idx SET (compaction_interval = 100, refresh_interval = 100);
+ALTER INDEX mr_t_idx SET (compaction_interval = 100);
 
 connection after_crash
 query ok retry 60 backoff 200ms

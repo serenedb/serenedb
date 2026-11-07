@@ -4,9 +4,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY sag_kw AS keyword()
 
 statement ok
@@ -17,7 +14,7 @@ CREATE TABLE sag (id INTEGER PRIMARY KEY, n BIGINT, d DATE, cat VARCHAR, body VA
 
 statement ok
 CREATE INDEX sag_idx ON sag USING inverted(cat sag_kw, body sag_en, s) INCLUDE (n, d)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO sag SELECT i, i * 3 - 50, DATE '2024-01-01' + i, 'category-shared-prefix-' || (i % 7),
@@ -25,15 +22,9 @@ INSERT INTO sag SELECT i, i * 3 - 50, DATE '2024-01-01' + i, 'category-shared-pr
   FROM generate_series(1, 100) g(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) sag
-
-statement ok
 INSERT INTO sag SELECT i, i * 3 - 50, DATE '2024-01-01' + i, 'category-shared-prefix-' || (i % 7),
     'slow cat', NULL
   FROM generate_series(101, 150) g(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) sag
 
 query
 EXPLAIN SELECT count(*) FROM sag_idx
@@ -185,9 +176,6 @@ count	max
 statement ok
 INSERT INTO sag VALUES (151, 403, DATE '2024-06-01', 'category-shared-prefix-9', 'slow cat', 'v151')
 
-statement ok
-VACUUM (REFRESH_TABLE) sag
-
 query
 EXECUTE sag_p
 ----
@@ -210,9 +198,6 @@ count	max	max	max
 
 statement ok
 DELETE FROM sag WHERE id IN (1, 77, 151)
-
-statement ok
-VACUUM (REFRESH_TABLE) sag
 
 query
 EXPLAIN SELECT count(*) FROM sag_idx
@@ -282,14 +267,8 @@ INSERT INTO sag_st SELECT i, i * 2, 'category-shared-prefix-' || (i % 5), 'w' ||
   FROM generate_series(1, 60) g(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) sag_st
-
-statement ok
 INSERT INTO sag_st SELECT i, i * 2, 'category-shared-prefix-' || (i % 5), 'w' || i
   FROM generate_series(61, 100) g(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) sag_st
 
 query
 EXPLAIN SELECT count(*), min(n), max(n), min(body), max(body) FROM sag_st
@@ -382,9 +361,6 @@ ROLLBACK
 
 statement ok
 DELETE FROM sag_st WHERE id IN (1, 100)
-
-statement ok
-VACUUM (REFRESH_TABLE) sag_st
 
 query
 EXPLAIN SELECT count(*) FROM sag_st
@@ -510,9 +486,6 @@ CREATE INDEX sag_g_idx ON sag_g USING inverted(c sag_kw) INCLUDE (a, b)
 statement ok
 INSERT INTO sag_g (a, b, c) SELECT i, 1000 - i, 'k' || i FROM generate_series(1, 50) g(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) sag_g
-
 query
 EXPLAIN SELECT count(*), min(a), max(a), min(b), max(b), min(c), max(c) FROM sag_g_idx
 ----
@@ -545,9 +518,6 @@ CREATE TABLE sag_nul (id BIGINT PRIMARY KEY, n BIGINT) WITH (storage = 'search',
 
 statement ok
 INSERT INTO sag_nul SELECT i, NULL FROM generate_series(1, 100) g(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) sag_nul
 
 query
 EXPLAIN SELECT n FROM sag_nul ORDER BY n NULLS FIRST LIMIT 3 OFFSET 100

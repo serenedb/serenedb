@@ -91,17 +91,7 @@ INSERT INTO seq_search VALUES (3, 'three'), (4, 'four');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) seq_search;
-
-
-connection after_crash
-statement ok
 DELETE FROM seq_search WHERE a = 3;
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) seq_search;
 
 
 connection after_crash

@@ -55,7 +55,7 @@ FROM range(1, 200000) t(i)
 
 statement ok
 CREATE INDEX tk_whole ON tkbase USING inverted(body tk_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0,
+    WITH (compaction_interval = 0,
           row_group_size = 1999998976)
 
 
@@ -64,12 +64,8 @@ CREATE INDEX tk_whole ON tkbase USING inverted(body tk_tx)
 # live buffer.
 statement ok
 CREATE INDEX tk_w ON tkbase USING inverted(body tk_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0,
+    WITH (compaction_interval = 0,
           row_group_size = 2048, optimize_top_k = 'bm25(1.2, 0.75)')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tkbase
 
 
 # A second segment with a different length profile, so the two segments' scores
@@ -81,10 +77,6 @@ SELECT i,
          || repeat('filler ', 1 + (i % 61))
          || CASE WHEN i % 5 = 0 THEN 'epsilon zeta' ELSE 'eta' END
 FROM range(200000, 300000) t(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tkbase
 
 
 # Scores, not ids: the top-50 of 30 000 documents has ties, so the id set is

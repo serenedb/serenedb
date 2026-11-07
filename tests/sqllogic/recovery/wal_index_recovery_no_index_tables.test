@@ -37,12 +37,6 @@ INSERT INTO ni2_other_b SELECT i, i * 10, 'b_' || i FROM range(0, 100) AS t(i);
 statement ok
 CREATE INDEX ni2_main_idx ON ni2_main USING inverted(id, body ni2_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) ni2_main;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 # Interleave writes: lots of unrelated activity surrounding the inverted
 # inserts. Recovery must filter to ni2_main only.
 statement ok
@@ -88,7 +82,7 @@ SELECT 1;
 
 connection ni2_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) ni2_main;
+SELECT 1;
 
 # Inverted index counts only the indexed table.
 connection ni2_after

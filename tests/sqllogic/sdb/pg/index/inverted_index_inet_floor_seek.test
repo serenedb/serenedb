@@ -496,9 +496,6 @@ INSERT INTO inet_seek_t VALUES
 statement ok
 CREATE TABLE inet_seek_plain AS SELECT * FROM inet_seek_t;
 
-statement ok
-VACUUM (REFRESH_TABLE) inet_seek_t;
-
 query
 SELECT pk, ip FROM inet_seek_idx WHERE ip >>= '254.0.0.0/7' ORDER BY pk;
 ----

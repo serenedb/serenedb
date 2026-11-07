@@ -60,10 +60,6 @@ CREATE INDEX prune_small_idx ON prune_small USING inverted(id, body en_prune)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) prune_small;
-
-
 # Term-only filter + matching scorer + LIMIT -> pruning engages.
 
 query
@@ -276,14 +272,6 @@ CREATE INDEX prune_big_idx ON prune_big USING inverted(id, body en_prune)
 
 statement ok
 CREATE INDEX plain_big_idx ON plain_big USING inverted(id, body en_prune);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) prune_big;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) plain_big;
 
 
 # Sanity: both indexes match the same population.
@@ -594,10 +582,6 @@ CREATE INDEX bnd_rtf_idx ON bnd USING inverted(id, body en_prune)
 statement ok
 CREATE INDEX bnd_ind_idx ON bnd USING inverted(id, body en_prune)
   WITH (optimize_top_k = 'indri_dirichlet(2000)');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bnd;
 
 
 # lm_jm: DivNorm -- log1p(c * tf/dl) is monotone in tf/dl, and the constant folds

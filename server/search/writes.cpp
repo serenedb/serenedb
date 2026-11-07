@@ -1006,18 +1006,26 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
   w.checked.emplace(std::move(now));
 }
 
-irs::DirectoryReader Writes::View(const Store& store, Tick snapshot) const {
-  const StoreWrites* w = nullptr;
+irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
+                                  Tick snapshot) {
+  StoreWrites* w = nullptr;
   {
     absl::ReaderMutexLock lock{&_mutex};
     if (const auto it = _writes.find(store.GetId()); it != _writes.end()) {
       w = &it->second;
     }
   }
+  const bool indexed = store.HasIndexes();
+  if (indexed) {
+    store.CoolAll();
+  }
   if (!w) {
     return store.View(snapshot, {});
   }
-  absl::ReaderMutexLock lock{&w->mutex};
+  absl::MutexLock lock{&w->mutex};
+  if (indexed && w->changes.HasBufferedRows()) {
+    FlushRows(context, *w);
+  }
   return store.View(snapshot, OwnOf(*w));
 }
 

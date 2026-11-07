@@ -6,10 +6,6 @@ statement ok
 INSERT INTO beast_search VALUES (6, 'karl'), (7, 'chandler'), (67, 'nolan');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) beast_search;
-
-
 query
 SELECT pg_typeof(ctid)::text AS ctid, xmin::text AS xmin, xmax::text AS xmax, cmin::text AS cmin, cmax::text AS cmax
 FROM beast_search
@@ -35,10 +31,6 @@ id
 
 statement ok
 DELETE FROM beast_search WHERE ctid = (SELECT ctid FROM beast_search WHERE name = 'nolan');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) beast_search;
 
 
 query

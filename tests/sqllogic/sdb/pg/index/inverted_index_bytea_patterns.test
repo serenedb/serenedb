@@ -28,9 +28,6 @@ CREATE INDEX bp_wild_pos_idx ON bp USING inverted (id, v bp_wild_pos)
 statement ok
 CREATE INDEX bp_kw_idx ON bp USING inverted (id, v)
 
-statement ok
-VACUUM (REFRESH_TABLE) bp
-
 query
 SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE '%beast%'
 UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('%beast%')

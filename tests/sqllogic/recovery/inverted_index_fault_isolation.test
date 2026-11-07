@@ -34,7 +34,7 @@ CREATE TABLE doc (
 
 statement ok
 CREATE INDEX doc_idx ON doc USING inverted(pk, body en) INCLUDE (label, tag)
-  WITH (refresh_interval = 0, compaction_interval = 0)
+  WITH (compaction_interval = 0)
 
 
 statement ok
@@ -47,10 +47,6 @@ INSERT INTO doc VALUES (2, 'alpha two', 'b', 200, 'x-two')
 
 statement ok
 INSERT INTO doc VALUES (3, 'beta three', 'c', 300, 'x-three')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) doc
 
 
 # Baseline: no fault armed, every shape works.

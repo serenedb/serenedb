@@ -21,13 +21,6 @@ INSERT INTO gayazov_t VALUES (1, 'first batch alpha'), (2, 'first batch bravo');
 statement ok
 CREATE INDEX gayazov_idx ON gayazov_t USING inverted(id, body gayazov_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) gayazov_t;
-
-# Block search commits. Everything below this stays in the WAL until restart.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 # round 1: insert + truncate
 statement ok
 INSERT INTO gayazov_t VALUES (10, 'round1 charlie'), (11, 'round1 delta');

@@ -147,10 +147,6 @@ INSERT INTO union_search VALUES
   (4, 4);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) union_search;
-
-
 query
 SELECT id, u FROM union_search ORDER BY id;
 ----

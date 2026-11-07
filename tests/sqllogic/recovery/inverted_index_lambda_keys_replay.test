@@ -23,7 +23,7 @@ CREATE INDEX lr_idx ON lr USING inverted (
   id,
   (list_reduce(tags, lambda a, b: a || ' ' || b)) lr_dict,
   (list_transform(tags, lambda x: lower(x))) included())
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -45,11 +45,6 @@ SELECT 1;
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 INSERT INTO lr VALUES (40002, ['Blue', 'Yellow']);
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) lr;
 
 
 connection after_crash

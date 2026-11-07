@@ -37,53 +37,12 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
 #include "search/hot_keys.h"
+#include "search/key_spec.h"
 #include "search/table.h"
 
-namespace sdb::catalog {
-
-class SearchTableEntry;
-
-}  // namespace sdb::catalog
 namespace sdb::search {
-
-enum class KeyKind : uint8_t {
-  Unique,
-  Reference,
-};
-
-// A key a table enforces: the rows' sort key over `key.columns`, written as a
-// term under `key.field`. A unique key refuses a second live row holding a
-// value; a reference key needs the referenced table to hold every value.
-struct KeySpec {
-  KeyKind kind = KeyKind::Unique;
-  catalog::ConstraintKey key;
-  std::string constraint;
-  std::vector<std::string> names;
-  // The types the key's values are encoded as.
-  std::vector<duckdb::LogicalType> types;
-  // Reference only: the referenced table and the field of its unique key the
-  // values must be held in. The key's columns follow that unique key's order.
-  duckdb::Identifier referenced_schema;
-  duckdb::Identifier referenced;
-  irs::field_id referenced_field = 0;
-};
-
-// A foreign key of table `table` whose key `field` must be held in the
-// referenced table's unique key `referenced`. Every catalog version of the
-// referencing table holds its own, and the referenced table's store tracks
-// them while any is alive, so a version that no longer declares the key may
-// still be counted.
-struct Referencing {
-  duckdb::idx_t table = 0;
-  irs::field_id field = 0;
-  irs::field_id referenced = 0;
-};
-
-struct TableKeys {
-  std::vector<KeySpec> specs;
-  std::vector<std::shared_ptr<const Referencing>> referencing;
-};
 
 TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
                            duckdb::CatalogTransaction transaction);

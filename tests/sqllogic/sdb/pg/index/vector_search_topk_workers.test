@@ -11,28 +11,16 @@ INSERT INTO vtw SELECT i, [i::FLOAT, 0]::FLOAT[2],
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(0, 1000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) vtw;
-
-statement ok
 INSERT INTO vtw SELECT i, [i::FLOAT, 0]::FLOAT[2],
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1000, 2000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) vtw;
 
 statement ok
 INSERT INTO vtw SELECT i, [i::FLOAT, 0]::FLOAT[2],
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(2000, 3000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) vtw;
-
-statement ok
 INSERT INTO vtw SELECT i, [i::FLOAT, 0]::FLOAT[2],
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(3000, 4000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) vtw;
 
 statement ok
 SET threads = 4;

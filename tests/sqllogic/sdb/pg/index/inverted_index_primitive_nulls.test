@@ -60,10 +60,6 @@ INSERT INTO prim_n VALUES (
 )
 
 
-statement ok
-VACUUM (REFRESH_TABLE) prim_n
-
-
 # Sanity: the INCLUDE'd columns are served by the cs (i), pk by rocksdb (l).
 query
 EXPLAIN SELECT pk, v_int, v_big, v_flt, v_dbl, v_bool, v_str, v_blob, v_date, v_ts

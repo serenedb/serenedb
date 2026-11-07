@@ -25,15 +25,6 @@ INSERT INTO zip SELECT * FROM zl2;
 statement ok
 CREATE INDEX zip_idx ON zip USING inverted(pk, emb hnsw (metric = 'ip', quant = 'none'));
 
-statement ok
-VACUUM (REFRESH_TABLE) zl2;
-
-statement ok
-VACUUM (REFRESH_TABLE) zl1;
-
-statement ok
-VACUUM (REFRESH_TABLE) zip;
-
 query
 SELECT pk, emb <-> [1, 2, 3, 4]::FLOAT[4] AS d
 FROM zl2_idx ORDER BY emb <-> [1, 2, 3, 4]::FLOAT[4] LIMIT 1;

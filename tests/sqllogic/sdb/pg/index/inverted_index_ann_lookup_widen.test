@@ -30,26 +30,14 @@ INSERT INTO lw_hnsw SELECT i, 'l' || (i % 10)::VARCHAR, i % 100, i % 10,
   i % 1000, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(1500) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) lw_hnsw;
-
-statement ok
 INSERT INTO lw_hnsw SELECT i, 'l' || (i % 10)::VARCHAR, i % 100, i % 10,
   i % 1000, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(1500, 3000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) lw_hnsw;
 
 statement ok
 INSERT INTO lw_ivf SELECT * FROM lw_hnsw;
 
 statement ok
-VACUUM (REFRESH_TABLE) lw_ivf;
-
-statement ok
 INSERT INTO lw_flat SELECT * FROM lw_hnsw;
-
-statement ok
-VACUUM (REFRESH_TABLE) lw_flat;
 
 query
 SELECT id FROM lw_hnsw_idx WHERE extra = 7

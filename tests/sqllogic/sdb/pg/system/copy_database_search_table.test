@@ -27,9 +27,6 @@ cdst
 statement ok
 INSERT INTO cdst_dst_${__DATABASE__}.public.cdst VALUES (1, 'pudge goes mid');
 
-statement ok
-VACUUM (REFRESH_TABLE) cdst_dst_${__DATABASE__}.public.cdst;
-
 query
 SELECT id, body FROM cdst_dst_${__DATABASE__}.public.cdst;
 ----

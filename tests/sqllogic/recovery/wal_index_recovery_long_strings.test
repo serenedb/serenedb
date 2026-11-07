@@ -14,12 +14,6 @@ CREATE TABLE ls_t(id INTEGER PRIMARY KEY, body TEXT);
 statement ok
 CREATE INDEX ls_idx ON ls_t USING inverted(id, body ls_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) ls_t;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 # Build very long bodies of repeating tokens. Each row has ~500 unique-ish
 # tokens, total bytes around 4-8 KB per row.
 #   row N: 'tag_<N> filler1 filler2 ... filler500 marker_<N>'
@@ -42,7 +36,7 @@ SELECT 1;
 
 connection ls_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) ls_t;
+SELECT 1;
 
 connection ls_after
 query

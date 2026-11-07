@@ -16,9 +16,6 @@ INSERT INTO sft VALUES
   (5004, 'inf'::DOUBLE, 'inf'::REAL),
   (5005, '-inf'::DOUBLE, '-inf'::REAL);
 
-statement ok
-VACUUM (REFRESH_TABLE) sft;
-
 query
 EXPLAIN SELECT pk FROM sft WHERE d = 0;
 ----

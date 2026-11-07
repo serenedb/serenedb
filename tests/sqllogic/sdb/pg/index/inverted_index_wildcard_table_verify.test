@@ -14,11 +14,11 @@ CREATE TABLE tv_t (id BIGINT PRIMARY KEY, x INTEGER, k VARCHAR, msg VARCHAR)
 
 statement ok
 CREATE INDEX tv_idx ON tv_t USING inverted(id, msg tv_dict, k) INCLUDE (x)
-  WITH (refresh_interval = 0, compaction_interval = 0)
+  WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX tv_pos_idx ON tv_t USING inverted(id, msg tv_pos_dict) INCLUDE (x)
-  WITH (refresh_interval = 0, compaction_interval = 0)
+  WITH (compaction_interval = 0)
 
 # Each refresh seals a segment and nothing merges them: the scan meets several
 # segments, one of them without a stored term at all (every msg is NULL).
@@ -42,9 +42,6 @@ INSERT INTO tv_t SELECT i, i % 100, 'k' || (i % 5),
 FROM range(1, 12001) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) tv_t
-
-statement ok
 INSERT INTO tv_t SELECT i, i % 100, 'k' || (i % 5),
     CASE i % 10
         WHEN 0 THEN 'GET /api/v' || (i % 3) || '/users/' || i || ' 200 ' || (i % 97) || ' ms'
@@ -64,14 +61,8 @@ INSERT INTO tv_t SELECT i, i % 100, 'k' || (i % 5),
 FROM range(12001, 20001) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) tv_t
-
-statement ok
 INSERT INTO tv_t SELECT i, i % 100, 'k' || (i % 5), NULL
 FROM range(20001, 20101) t(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) tv_t
 
 statement ok
 INSERT INTO tv_t VALUES
@@ -87,13 +78,7 @@ INSERT INTO tv_t VALUES
     (30010, 7, 'k4', NULL)
 
 statement ok
-VACUUM (REFRESH_TABLE) tv_t
-
-statement ok
 DELETE FROM tv_t WHERE id % 10 IN (2, 3) AND id <= 6000
-
-statement ok
-VACUUM (REFRESH_TABLE) tv_t
 
 query
 SELECT c.relname, m.value >= 4 AS several
@@ -2151,7 +2136,7 @@ CREATE TABLE tv_thr (id BIGINT PRIMARY KEY, x INTEGER, msg VARCHAR, s VARCHAR)
 
 statement ok
 CREATE INDEX tv_thr_idx ON tv_thr USING inverted(id, msg tv_dict) INCLUDE (x, s)
-  WITH (refresh_interval = 0, compaction_interval = 0)
+  WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO tv_thr VALUES
@@ -2162,9 +2147,6 @@ INSERT INTO tv_thr VALUES
     (5, 5, 'nothing here', 'zzz'),
     (6, 7, 'foobar', '30'),
     (7, 5, NULL, 'qqq')
-
-statement ok
-VACUUM (REFRESH_TABLE) tv_thr
 
 query
 SELECT count(*) AS c FROM tv_thr_idx WHERE msg @@ ts_like('%foo%bar%')

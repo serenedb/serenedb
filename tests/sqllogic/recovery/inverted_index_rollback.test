@@ -48,10 +48,6 @@ statement ok
 INSERT INTO doc_rb VALUES (1, 'baseline alpha', 'a', 100)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) doc_rb
-
-
 # Aborted txn: INSERTs go to the cs writer but ROLLBACK must drop the segment
 # (and remove the partial `.cs`).
 statement ok
@@ -86,10 +82,6 @@ a	100
 # file at the same path or VACUUM would see ghost rows.
 statement ok
 INSERT INTO doc_rb VALUES (4, 'delta', 'd', 400)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) doc_rb
 
 
 query
@@ -127,10 +119,6 @@ CREATE INDEX doc_pre_idx ON doc_pre USING inverted(pk, body en) INCLUDE (label, 
 # after recovery.
 statement ok
 INSERT INTO doc_pre VALUES (1, 'alpha one', 'a', 100)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) doc_pre
 
 
 # Arm the crash: serened will exit(1) before the commit is durable the next COMMIT.
@@ -186,11 +174,6 @@ INSERT INTO doc_pre VALUES (4, 'delta four', 'd', 400)
 
 
 connection pre_after
-statement ok
-VACUUM (REFRESH_TABLE) doc_pre
-
-
-connection pre_after
 query
 SELECT pk, label, tag FROM doc_pre_idx ORDER BY pk
 ----
@@ -235,11 +218,6 @@ statement ok
 INSERT INTO doc_post VALUES (1, 'alpha one', 'a', 100)
 
 
-connection pre_after
-statement ok
-VACUUM (REFRESH_TABLE) doc_post
-
-
 # Arm: crash *after* the commit -- the next COMMIT persists then dies.
 connection pre_after
 statement ok
@@ -273,11 +251,6 @@ pk	body	label	tag
 
 # Index must serve a query that hits the post-recovery row (through cs
 # INCLUDE columns).
-connection post_after
-statement ok
-VACUUM (REFRESH_TABLE) doc_post
-
-
 connection post_after
 query
 SELECT label, tag FROM doc_post_idx WHERE body @@ ts_phrase('beta')

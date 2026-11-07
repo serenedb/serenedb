@@ -31,9 +31,6 @@ INSERT INTO ttzu_plain VALUES
     (3, TIMETZ '09:00:00-02'),
     (4, TIMETZ '10:30:00+00');
 
-statement ok
-VACUUM (REFRESH_TABLE) ttzu;
-
 # Window [11:30, 13:00] UTC — only pk 1 (12:00 UTC) is inside.
 query
 SELECT pk FROM ttzu_i WHERE ttz @@ ts_between(TIMETZ '11:30:00+00', TIMETZ '13:00:00+00', true, true) ORDER BY pk;
@@ -125,9 +122,6 @@ statement ok
 INSERT INTO ttzl VALUES
     (1, [TIMETZ '12:00:00+00', TIMETZ '23:00:00+00']),
     (2, [TIMETZ '12:30:00+02']);
-
-statement ok
-VACUUM (REFRESH_TABLE) ttzl;
 
 query
 SELECT pk FROM ttzl_i WHERE ttzs @@ ts_between(TIMETZ '11:30:00+00', TIMETZ '13:00:00+00', true, true) ORDER BY pk;

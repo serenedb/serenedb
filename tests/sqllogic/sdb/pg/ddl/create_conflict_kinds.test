@@ -64,10 +64,6 @@ INSERT INTO ck_s VALUES (1, 'a'), (2, 'b');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ck_s;
-
-
-statement ok
 CREATE INDEX ck_s_inv ON ck_s USING inverted (body);
 
 
@@ -88,10 +84,6 @@ n
 
 statement ok
 INSERT INTO ck_s VALUES (3, 'c');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ck_s;
 
 
 query

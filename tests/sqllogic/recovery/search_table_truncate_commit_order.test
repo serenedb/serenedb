@@ -5,13 +5,10 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tco (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO tco VALUES (1, 'old'), (2, 'old');
-
-statement ok
-VACUUM (REFRESH_TABLE) tco;
 
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
@@ -40,10 +37,6 @@ wait
 connection writer
 statement ok
 INSERT INTO tco VALUES (3, 'new');
-
-connection writer
-statement ok
-VACUUM (REFRESH_TABLE) tco;
 
 connection writer
 query

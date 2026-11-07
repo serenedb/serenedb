@@ -44,8 +44,6 @@ def _pgbackrest(config: Path, *args: str) -> str:
 
 def _state(server: Serened) -> tuple:
     with _connect(server) as conn:
-        conn.execute("VACUUM (REFRESH_INDEX) docs_idx")
-        conn.execute("VACUUM (REFRESH_TABLE) notes")
         return (
             conn.execute("SELECT count(*), sum(id) FROM docs").fetchone(),
             conn.execute("SELECT count(*) FROM docs_idx WHERE body @@ 'second'").fetchone(),

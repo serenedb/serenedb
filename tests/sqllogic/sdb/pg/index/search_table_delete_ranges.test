@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE dr (id BIGINT, ts TIMESTAMP, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (storage = 'search', compaction_interval = 0,
       row_group_size = 8192)
 
 
@@ -13,15 +13,7 @@ INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row 
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dr
-
-
-statement ok
 INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(100000, 200000) r(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dr
 
 
 statement ok
@@ -29,15 +21,7 @@ INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row 
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dr
-
-
-statement ok
 INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(300000, 400000) r(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dr
 
 
 statement ok
@@ -73,10 +57,6 @@ DELETE FROM dr WHERE (id >= 200000 AND id < 210000) OR id % 997 = 0
 
 statement ok
 DELETE FROM dr_ref WHERE (id >= 200000 AND id < 210000) OR id % 997 = 0
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dr
 
 
 query
@@ -140,10 +120,6 @@ statement ok
 INSERT INTO dr_ref SELECT i, TIMESTAMP '2025-01-01' + i * INTERVAL '1 second', 'new ' || i FROM range(1000000, 1020000) r(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dr
-
-
 query
 SELECT count(*) AS missing FROM (SELECT id, ts, body FROM dr_ref EXCEPT ALL SELECT id, ts, body FROM dr)
 ----
@@ -168,10 +144,6 @@ DELETE FROM dr WHERE id >= 330000
 
 statement ok
 ROLLBACK
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dr
 
 
 query
@@ -207,10 +179,6 @@ statement ok
 DELETE FROM dr_ref WHERE id >= 390000 AND id < 390004
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dr
-
-
 connection writer
 statement ok
 BEGIN
@@ -226,11 +194,6 @@ statement ok
 INSERT INTO dr VALUES (2000000, TIMESTAMP '2025-06-01', 'late')
 
 
-connection other
-statement ok
-VACUUM (REFRESH_TABLE) dr
-
-
 connection writer
 statement ok
 COMMIT
@@ -242,10 +205,6 @@ DELETE FROM dr_ref WHERE ts < TIMESTAMP '2026-01-03'
 
 statement ok
 INSERT INTO dr_ref VALUES (2000000, TIMESTAMP '2025-06-01', 'late')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dr
 
 
 query
@@ -281,10 +240,6 @@ statement ok
 VACUUM (COMPACT_TABLE) dr
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dr
-
-
 query
 SELECT count(*) AS missing FROM (SELECT id, ts, body FROM dr_ref EXCEPT ALL SELECT id, ts, body FROM dr)
 ----
@@ -307,16 +262,12 @@ FROM range(0, 600000) r(i)
 
 statement ok
 CREATE TABLE dp (id BIGINT, ts TIMESTAMP, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (storage = 'search', compaction_interval = 0,
       row_group_size = 8192, segment_memory_max = 4194304)
 
 
 statement ok
 INSERT INTO dp SELECT id, ts, body FROM dp_ref
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dp
 
 
 query
@@ -333,10 +284,6 @@ DELETE FROM dp WHERE ts < TIMESTAMP '2026-01-01' + 400000 * INTERVAL '1 second'
 
 statement ok
 DELETE FROM dp_ref WHERE ts < TIMESTAMP '2026-01-01' + 400000 * INTERVAL '1 second'
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dp
 
 
 query

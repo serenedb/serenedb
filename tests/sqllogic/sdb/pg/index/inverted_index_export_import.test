@@ -123,12 +123,6 @@ sql
 CREATE INDEX ie_docs_idx ON public.ie_docs USING inverted (id, body ie_words, emb ivf (metric = 'l2'))
 CREATE INDEX ie_pts_idx ON public.ie_pts USING inverted (id, emb hnsw (m = 16, metric = 'cosine', quant = 'none'))
 
-statement ok
-VACUUM (REFRESH_TABLE) ie_target.public.ie_docs;
-
-statement ok
-VACUUM (REFRESH_TABLE) ie_target.public.ie_pts;
-
 query
 SELECT id FROM ie_docs_idx WHERE body @@ ts_phrase('running late') ORDER BY id;
 ----

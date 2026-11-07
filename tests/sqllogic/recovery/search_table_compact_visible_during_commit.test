@@ -10,23 +10,11 @@ INSERT INTO cvd SELECT i, 'a' FROM generate_series(1, 100) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) cvd
-
-
-statement ok
 INSERT INTO cvd SELECT i, 'b' FROM generate_series(101, 200) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) cvd
-
-
-statement ok
 INSERT INTO cvd SELECT i, 'c' FROM generate_series(201, 300) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cvd
 
 
 query

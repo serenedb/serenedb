@@ -36,10 +36,6 @@ CREATE INDEX docs_idx ON docs USING inverted(id, body en)
   WITH (compaction_interval = 0);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 # BM25 scores are non-negative; verify they are returned and > 0
 query
 SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
@@ -91,10 +87,6 @@ INSERT INTO docs VALUES (4, 'the fox runs fast');
 
 statement count 1
 INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs;
 
 
 # Both segments contribute matching documents; all should have score > 0
@@ -247,10 +239,6 @@ statement count 1
 INSERT INTO docs VALUES (41, 'smart fox');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 # More than kScoreBlock (32) docs match 'fox'; all should exist in result
 query
 SELECT COUNT(*) FROM docs_idx WHERE body @@ ts_phrase('fox');
@@ -313,7 +301,6 @@ SELECT id, BM25(docs_idx.tableoid) FROM docs_idx WHERE body @@ ts_phrase('fox') 
 ----
 db error: ERROR: Only one scorer function is allowed per inverted index
 HINT: Use UNION to combine different score functions for the same inverted index
-
 
 
 # UNION ALL: same scorer in each branch — each branch is an independent scoring scope
@@ -381,7 +368,6 @@ QUERY PLAN
 ╰─────────────────────────────────────────────────────────╯
 
 
-
 query
 EXPLAIN SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 3;
 ----
@@ -403,8 +389,6 @@ QUERY PLAN
 │              sdb_inverted_index_score  │
 │ ~7 rows                                │
 ╰────────────────────────────────────────╯
-
-
 
 
 query
@@ -432,7 +416,6 @@ QUERY PLAN
 ╰────────────────────────────────────────╯
 
 
-
 query error
 EXPLAIN SELECT * FROM
 (SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox'))
@@ -440,7 +423,6 @@ ORDER BY BM25(docs_idx.tableoid)
 ----
 db error: ERROR: Referenced table "docs_idx" not found!
 Candidate tables: "unnamed_subquery"
-
 
 
 # UNION of two subqueries from same index with outer ORDER BY BM25(docs_idx.tableoid)
@@ -491,7 +473,6 @@ SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM (
 ----
 db error: ERROR: Referenced table "docs_idx" not found!
 Candidate tables: "sub"
-
 
 
 # EXPLAIN for TFIDF
@@ -570,9 +551,6 @@ id	has_score
 statement count 1
 DELETE FROM docs WHERE id = 1;
 
-
-statement ok
-VACUUM (REFRESH_TABLE) docs;
 
 query
 SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND id = 1;
@@ -689,7 +667,6 @@ db error: ERROR: Referenced table "docs2_idx" not found!
 Candidate tables: "docs_idx"
 
 
-
 # EXPLAIN for UNION ALL with BM25 (same scorer per branch)
 query
 EXPLAIN (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
@@ -779,7 +756,6 @@ QUERY PLAN
 ╰────────────────────────────────────────╯
 
 
-
 query
 EXPLAIN SELECT id, score > 0 AS has_score FROM (
   SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox')
@@ -823,7 +799,6 @@ db error: ERROR: Referenced table "docs_idx" not found!
 Candidate tables: "sub"
 
 
-
 query
 EXPLAIN SELECT * FROM docs_idx;
 ----
@@ -849,10 +824,6 @@ INSERT INTO docs2 VALUES (2, 'the swift fox'), (4, 'a clever fox'), (6, 'the laz
 statement ok
 CREATE INDEX docs2_idx ON docs2 USING inverted(id, body en)
   WITH (compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs2;
 
 
 statement ok
@@ -899,8 +870,6 @@ db error: ERROR: Referenced table "docs_idx" not found!
 Candidate tables: "a"
 
 
-
-
 # Works: JOIN two inverted indexes, different scorers (BM25 vs TFIDF) scoped inside each subquery
 query error
 SELECT a.id, a.score > 0 AS has_score, b.score > 0 AS b_has_score FROM
@@ -912,7 +881,6 @@ ORDER BY a.id;
 ----
 db error: ERROR: Referenced table "docs_idx" not found!
 Candidate tables: "a"
-
 
 
 # EXPLAIN for join two inverted indexes with scorer scoped inside subquery
@@ -1153,7 +1121,6 @@ QUERY PLAN
                                                                                         ╰────────────────────────────────────────╯  ╰────────────────────────────────────────╯
 
 
-
 query error
 EXPLAIN (
   (SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
@@ -1189,10 +1156,6 @@ CREATE INDEX bigdocs_idx ON bigdocs USING inverted(id, body en)
 
 statement ok
 INSERT INTO bigdocs SELECT i, 'fox' FROM generate_series(1, 1100) AS s(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bigdocs;
 
 
 # All 1100 docs match 'fox'; count exercises multi-batch materializer path
@@ -1257,10 +1220,6 @@ statement count 1
 INSERT INTO boost_docs VALUES (2, 'beta');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) boost_docs;
-
-
 query
 SELECT id FROM boost_docs_idx
 WHERE body @@ ('alpha'::TSQUERY ^ 1000.5 || 'beta')
@@ -1317,10 +1276,6 @@ INSERT INTO sql_boost_docs VALUES (2, 'beta');
 
 statement count 1
 INSERT INTO sql_boost_docs VALUES (3, 'gamma');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sql_boost_docs;
 
 
 # Baseline (no SQL-surface boost): 3-way OR over the body terms; all
@@ -1439,10 +1394,6 @@ statement count 1
 INSERT INTO prefix_docs VALUES (4, 'gamma-1');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) prefix_docs;
-
-
 # Bare `LIKE 'pre%'` -- DuckDB rewrites to prefix(sku, 'alpha-');
 # claimed via ByPrefix.
 query
@@ -1535,10 +1486,6 @@ INSERT INTO idf_docs VALUES
     (3, 'beta'), (4, 'delta');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) idf_docs;
-
-
 # 'alpha' occurs in 2 of the 4 documents, so its IDF is
 # log1p(2.5 / 2.5) = ln 2. Doc 1 carries the term three times and doc 2
 # once, and they score identically.
@@ -1613,10 +1560,6 @@ statement ok
 INSERT INTO idf_kw VALUES (1, 'red'), (2, 'red'), (3, 'blue'), (4, 'green');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) idf_kw;
-
-
 query
 SELECT id, round(IDF(idf_kw_idx.tableoid)::DOUBLE, 6) AS score
 FROM idf_kw_idx WHERE tag @@ 'red' ORDER BY id;
@@ -1643,10 +1586,6 @@ CREATE INDEX idf_tk_idx ON idf_tk USING inverted(id, tag)
 
 statement ok
 INSERT INTO idf_tk VALUES (1, 'red'), (2, 'red'), (3, 'blue'), (4, 'green');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) idf_tk;
 
 
 query
@@ -1681,10 +1620,6 @@ statement ok
 INSERT INTO bm1_docs VALUES
     (1, 'alpha alpha alpha beta'), (2, 'alpha gamma'),
     (3, 'beta'), (4, 'delta');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bm1_docs;
 
 
 # 'alpha' occurs in 2 of the 4 documents, so its IDF is
@@ -1753,10 +1688,6 @@ statement ok
 INSERT INTO bm1_kw VALUES (1, 'red'), (2, 'red'), (3, 'blue'), (4, 'green');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) bm1_kw;
-
-
 query
 SELECT id, round(BM25(bm1_kw_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
 FROM bm1_kw_idx WHERE tag @@ 'red' ORDER BY id;
@@ -1804,10 +1735,6 @@ CREATE INDEX score_idx ON score_docs USING inverted(id, body en)
 statement ok
 INSERT INTO score_docs VALUES
     (1, 'fox fox fox dog'), (2, 'cat cat'), (3, 'fox cat');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) score_docs;
 
 
 # Baseline: both branches on the query's BM25.
@@ -2233,10 +2160,6 @@ CREATE INDEX score_kw_idx ON score_kw USING inverted(id, tag)
 
 statement ok
 INSERT INTO score_kw VALUES (1, 'red'), (2, 'red'), (3, 'blue');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) score_kw;
 
 
 # Without a dictionary the column stores no frequency and no norms, so a
@@ -2988,11 +2911,7 @@ INSERT INTO score_vec VALUES (1, 'quick brown fox', '[1,0,0]'), (2, 'lazy dog fo
 
 statement ok
 CREATE INDEX score_vec_idx ON score_vec USING inverted(id, body en, emb)
-  WITH (refresh_interval = 0, compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) score_vec;
+  WITH (compaction_interval = 0);
 
 
 query error ::score\(\.\.\.\) used on a predicate the inverted index could not claim
@@ -3035,10 +2954,6 @@ CREATE INDEX score_plain_idx ON score_plain USING inverted (id, body score_plain
 
 statement ok
 INSERT INTO score_plain VALUES (1, 'the mouse ran'), (2, 'a mouse and another mouse'), (3, 'no rodents here');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) score_plain;
 
 
 query

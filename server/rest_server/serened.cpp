@@ -144,9 +144,6 @@ int RunServer(int argc, char** argv) {
         search.RequestStop();
       }
       if (up_background) {
-        // The stop flag above is only observed once a sleeper wakes: cancel the
-        // armed delay timers so the loops see it now instead of when a
-        // stretched refresh timer (up to 5x the interval) expires.
         background.CancelDelays();
       }
       if (up_subscriptions) {

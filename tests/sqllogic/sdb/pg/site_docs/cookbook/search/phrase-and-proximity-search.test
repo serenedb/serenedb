@@ -32,9 +32,6 @@ statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
-statement ok
-VACUUM (REFRESH_TABLE) movies;
-
 # DOCS_TEST_BODY
 
 query

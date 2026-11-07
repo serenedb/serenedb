@@ -26,10 +26,7 @@ INSERT INTO tk VALUES
 
 statement ok
 CREATE INDEX tk_idx ON tk USING inverted(id, body tk_d) INCLUDE (tag, n)
-    WITH (refresh_interval = 0, compaction_interval = 0);
-
-statement ok
-VACUUM (REFRESH_TABLE) tk;
+    WITH (compaction_interval = 0);
 
 
 # The ordering key is not selected, so the scan projects the one column asked

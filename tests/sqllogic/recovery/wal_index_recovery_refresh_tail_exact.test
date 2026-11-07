@@ -25,17 +25,11 @@ CREATE INDEX rt_idx ON rt_t USING inverted(id, body rt_dict);
 statement ok
 INSERT INTO rt_t SELECT i, 'durable_' || i FROM range(0, 4000) AS t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) rt_t;
-
 query
 SELECT COUNT(*) FROM rt_idx;
 ----
 count
 4000
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO rt_t SELECT i, 'tail_' || i FROM range(4000, 5500) AS t(i);
@@ -50,7 +44,7 @@ SELECT 1;
 
 connection rt_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) rt_t;
+SELECT 1;
 
 connection rt_after
 query

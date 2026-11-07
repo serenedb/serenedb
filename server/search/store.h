@@ -134,7 +134,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool ReadOnly() const noexcept { return !_writer; }
 
   void Open();
-  void OpenReader();
 
   // A drop commits while readers may still hold this store; the destructor
   // removes the directory once the last of them lets go. Never set on
@@ -176,33 +175,16 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _writer->GetBatch(exclusive_segment);
   }
 
-  void Clear(const irs::SourcePosition& position);
   void CommitRemoval(std::shared_ptr<const irs::DocRemoval> removal);
   void CommitRemoval(std::vector<irs::KeyRemoval> removals);
   void CommitRemoveAll();
 
-  void MarkStaged(const irs::SourcePosition& position) {
-    _durability.MarkStaged(position);
-  }
-  const irs::SourcePosition& PersistedPosition() const noexcept {
-    return _durability.Position();
-  }
-  bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
-
-  // Launch this store's refresh + compaction loops (via SearchEngine). Call
-  // once, after the store is open and recovery (if any) finalized.
   void StartTasks();
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
   void ApplyOptions(const catalog::SearchTableOptions& options) {
     SetTasksSettings(options);
   }
 
-  // The maintenance ops the loops invoke: RefreshUnsafe publishes pending
-  // inserts, CompactUnsafe merges segments, CleanupUnsafe reclaims unreferenced
-  // files.
-  ResultWithTime RefreshUnsafe(bool wait,
-                               const irs::ProgressReportCallback& progress,
-                               RefreshResult& code);
   // `field_options` (nullable) is the per-merge per-column encoding config,
   // pinned by the caller for the whole merge.
   auto CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
@@ -218,13 +200,10 @@ class Store final : public std::enable_shared_from_this<Store>,
   // once the store's definition is gone.
   std::shared_ptr<const irs::IndexFieldOptions> CompactionOptions();
 
-  [[nodiscard]] absl::Status Refresh(
-    const irs::ProgressReportCallback& progress = nullptr);
-  // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
-  [[nodiscard]] absl::Status VacuumRefresh();
+  void Commit(const irs::ProgressReportCallback& progress = nullptr);
+  void CoolAll();
   [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
                                            uint32_t target_segments);
-  void Publish();
 
   StoreStats GetStats() const;
 
@@ -331,7 +310,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   void ReplayState(std::span<const StateUnit> units, Lsn lsn);
   void InvertReplayed(duckdb::ClientContext& context);
   void FinishReplay();
-  bool Replays(const irs::SourcePosition& position) const;
 
   absl::Status Cool(bool all, size_t& cooled);
   absl::Status Cover(Lsn target);
@@ -384,7 +362,6 @@ class Store final : public std::enable_shared_from_this<Store>,
                      absl::FunctionRef<void(Tick, Tick, Lsn)> apply);
   void ScheduleCooling();
   absl::Status CoolRetired(Lsn before);
-  absl::Status PublishAll() { return CoolRetired(kNoLsn); }
   template<typename Remove>
   void CommitRemovalWith(const Remove& remove);
   auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
@@ -457,8 +434,5 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::atomic<bool> _tasks_started{false};
 #endif
 };
-
-void ThrowIfRefreshFailed(const absl::Status& status,
-                          std::string_view index_name);
 
 }  // namespace sdb::search

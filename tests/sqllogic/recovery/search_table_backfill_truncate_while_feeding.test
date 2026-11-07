@@ -3,13 +3,10 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bff (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO bff VALUES (1, 'a'), (2, 'b'), (3, 'c');
-
-statement ok
-VACUUM (REFRESH_TABLE) bff;
 
 statement ok
 SET sdb_faults = 'pause_search_backfill_fed';
@@ -44,10 +41,6 @@ SET sdb_faults = '-pause_search_backfill_fed';
 wait
 
 connection default
-statement ok
-VACUUM (REFRESH_TABLE) bff;
-
-connection default
 query
 SELECT count(*) AS n FROM bff;
 ----
@@ -64,10 +57,6 @@ n
 connection default
 statement ok
 INSERT INTO bff VALUES (4, 'd');
-
-connection default
-statement ok
-VACUUM (REFRESH_TABLE) bff;
 
 connection default
 query

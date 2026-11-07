@@ -185,7 +185,8 @@ class Writes {
     _readers.erase(std::pair{database_id, store_id});
   }
 
-  irs::DirectoryReader View(const Store& store, Tick snapshot) const;
+  irs::DirectoryReader View(duckdb::ClientContext& context, Store& store,
+                            Tick snapshot);
   std::shared_ptr<irs::DirectoryReader> PinnedReader(const Store& store) const;
 
   bool Empty() const noexcept { return _writes.empty(); }

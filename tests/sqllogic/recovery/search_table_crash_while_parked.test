@@ -11,23 +11,23 @@ SET GLOBAL debug_skip_checkpoint_on_commit = true;
 
 statement ok
 CREATE TABLE cpb (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE cpd (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE cpt (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE cpa (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE cpx (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO cpb VALUES (1, 'a'), (2, 'b');
@@ -43,21 +43,6 @@ INSERT INTO cpa VALUES (1, 'a'), (2, 'b');
 
 statement ok
 INSERT INTO cpx VALUES (1, 'a'), (2, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) cpb;
-
-statement ok
-VACUUM (REFRESH_TABLE) cpd;
-
-statement ok
-VACUUM (REFRESH_TABLE) cpt;
-
-statement ok
-VACUUM (REFRESH_TABLE) cpa;
-
-statement ok
-VACUUM (REFRESH_TABLE) cpx;
 
 statement ok
 INSERT INTO cpt VALUES (3, 'c');
@@ -98,10 +83,6 @@ n	lo	hi
 connection after_bulk
 statement ok
 INSERT INTO cpb VALUES (3, 'c');
-
-connection after_bulk
-statement ok
-VACUUM (REFRESH_TABLE) cpb;
 
 connection after_bulk
 query
@@ -180,10 +161,6 @@ statement ok
 INSERT INTO cpt VALUES (5, 'e');
 
 connection after_clear
-statement ok
-VACUUM (REFRESH_TABLE) cpt;
-
-connection after_clear
 query
 SELECT id, body FROM cpt ORDER BY id;
 ----
@@ -236,14 +213,6 @@ SELECT
 ----
 cpa	cpx
 1,2,3	9
-
-connection after_mixed
-statement ok
-VACUUM (REFRESH_TABLE) cpa;
-
-connection after_mixed
-statement ok
-VACUUM (REFRESH_TABLE) cpx;
 
 connection after_mixed
 query

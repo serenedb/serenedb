@@ -36,17 +36,9 @@ FROM generate_series(1, 300000) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sp
-
-
-statement ok
 INSERT INTO sp
 SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 10000
 FROM generate_series(300001, 305000) s(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sp
 
 
 statement ok
@@ -360,10 +352,6 @@ count	min	max	len
 # mask instead of falling back to a single whole-segment walk.
 statement ok
 DELETE FROM sp WHERE id % 7 = 0
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sp
 
 
 statement ok

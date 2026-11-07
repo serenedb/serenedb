@@ -36,10 +36,6 @@ statement ok
 INSERT INTO ica_t VALUES (1, 'apple', 'zebra');
 
 connection s2
-statement ok
-VACUUM (REFRESH_TABLE) ica_t;
-
-connection s2
 query
 SELECT (SELECT count(*) FROM ica_y WHERE y @@ 'apple') AS apple,
   (SELECT count(*) FROM ica_y WHERE y @@ 'zebra') AS zebra;

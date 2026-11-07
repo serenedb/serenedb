@@ -49,7 +49,7 @@ CREATE TABLE public.tesp_t (id INT, a INT CONSTRAINT tesp_t_a CHECK (tesp_pos(a)
 statement ok
 CREATE TABLE public.tesp_st (id INT, a INT CONSTRAINT tesp_st_a CHECK (tesp_pos(a)),
   d BIGINT DEFAULT tesp_conv(1), g BIGINT GENERATED ALWAYS AS (tesp_conv(a)) STORED)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (storage = 'search', compaction_interval = 0);
 
 
 statement ok
@@ -145,19 +145,11 @@ INSERT INTO public.tesp_st (id, a) VALUES (1, 1);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) public.tesp_st;
-
-
-statement ok
 UPDATE public.tesp_t SET id = 2;
 
 
 statement ok
 UPDATE public.tesp_st SET id = 2;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) public.tesp_st;
 
 
 query

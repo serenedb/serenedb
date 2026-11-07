@@ -24,18 +24,12 @@ SELECT x, 'seed pre x' || x::TEXT FROM generate_series(1, 200) AS t(x);
 statement ok
 CREATE INDEX ivanov_idx ON ivanov_t USING inverted(id, body ivanov_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) ivanov_t;
-
 # Sanity before stress.
 query
 SELECT count(*) FROM ivanov_idx WHERE body @@ ts_phrase('seed pre');
 ----
 count
 200
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # round 1
 statement count 800

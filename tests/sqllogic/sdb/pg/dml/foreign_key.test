@@ -135,9 +135,6 @@ db error: ERROR: insert or update on table "fk_child_i" violates foreign key con
 DETAIL: Key (p)=(77) is not present in table "fk_parent_i".
 
 
-statement ok
-VACUUM (REFRESH_TABLE) fk_child_i;
-
 query
 SELECT id FROM fk_child_i_inv WHERE body @@ ts_phrase('valid child');
 ----

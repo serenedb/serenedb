@@ -176,16 +176,8 @@ statement count 2
 INSERT INTO trg_s VALUES (1, 'x'), (2, 'y');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) trg_s;
-
-
 statement count 1
 DELETE FROM trg_s WHERE a = 1;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) trg_s;
 
 
 query

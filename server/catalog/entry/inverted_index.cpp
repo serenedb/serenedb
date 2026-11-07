@@ -214,11 +214,8 @@ InvertedIndexSettings ResolveSettings(
   };
   return {
     .row_group_size = get(kRowGroupSizeSetting).GetValue<uint32_t>(),
-    .refresh_interval_ms = get(kRefreshIntervalSetting).GetValue<uint32_t>(),
     .compaction_interval_ms =
       get(kCompactionIntervalSetting).GetValue<uint32_t>(),
-    .cleanup_interval_step =
-      get(kCleanupIntervalStepSetting).GetValue<uint32_t>(),
     .segment_memory_max = get(kSegmentMemoryMaxSetting).GetValue<uint64_t>(),
     .segment_docs_max = get(kSegmentDocsMaxSetting).GetValue<uint32_t>(),
     .compaction_max_segments =

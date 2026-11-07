@@ -19,9 +19,6 @@ statement ok
 INSERT INTO sx_last SELECT ts, svc, sev, body FROM sx_src;
 
 statement ok
-VACUUM (REFRESH_TABLE) sx_last;
-
-statement ok
 CREATE TABLE sx_second WITH (storage = 'search', compaction_interval = 0) AS SELECT svc, body, ts, sev FROM sx_src WHERE false;
 
 statement ok
@@ -31,9 +28,6 @@ statement ok
 INSERT INTO sx_second SELECT svc, body, ts, sev FROM sx_src;
 
 statement ok
-VACUUM (REFRESH_TABLE) sx_second;
-
-statement ok
 CREATE TABLE sx_first WITH (storage = 'search', compaction_interval = 0) AS SELECT body, ts, svc, sev FROM sx_src WHERE false;
 
 statement ok
@@ -41,9 +35,6 @@ CREATE INDEX sx_first_idx ON sx_first USING inverted ((split_by_non_alpha(body, 
 
 statement ok
 INSERT INTO sx_first SELECT body, ts, svc, sev FROM sx_src;
-
-statement ok
-VACUUM (REFRESH_TABLE) sx_first;
 
 statement ok
 CREATE TABLE sx_txn AS SELECT ts, svc, sev, body FROM sx_src;

@@ -5,7 +5,7 @@ CREATE TABLE postgres.public.sfsp_docs(id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
 CREATE INDEX sfsp_docs_idx ON postgres.public.sfsp_docs USING inverted(id, body)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO postgres.public.sfsp_docs VALUES (1, 'alpha'), (2, 'beta');

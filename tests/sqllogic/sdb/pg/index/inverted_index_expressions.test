@@ -16,9 +16,6 @@ CREATE INDEX num1_idx ON num1 USING inverted(id, (a + 1));
 statement ok
 INSERT INTO num1 VALUES (1, 10), (2, 41), (3, -5);
 
-statement ok
-VACUUM (REFRESH_TABLE) num1;
-
 query
 SELECT id FROM num1_idx WHERE a + 1 = 42;
 ----
@@ -43,9 +40,6 @@ CREATE INDEX vc1_idx ON vc1 USING inverted(id, (LOWER(s)));
 
 statement ok
 INSERT INTO vc1 VALUES (1, 'HELLO'), (2, 'World'), (3, 'mixed');
-
-statement ok
-VACUUM (REFRESH_TABLE) vc1;
 
 query
 SELECT id FROM vc1_idx WHERE LOWER(s) = 'hello';
@@ -77,9 +71,6 @@ CREATE INDEX b1_idx ON b1 USING inverted(id, (x > 0));
 statement ok
 INSERT INTO b1 VALUES (1, 5), (2, -3), (3, 0), (4, 7);
 
-statement ok
-VACUUM (REFRESH_TABLE) b1;
-
 query
 SELECT id FROM b1_idx WHERE (x > 0) = true ORDER BY id;
 ----
@@ -107,9 +98,6 @@ CREATE INDEX b1d_idx ON b1d USING inverted(id, (x > 0));
 statement ok
 INSERT INTO b1d VALUES (1, 5), (2, -3), (3, 0), (4, 7);
 
-statement ok
-VACUUM (REFRESH_TABLE) b1d;
-
 query
 SELECT id FROM b1d_idx WHERE (x > 0) = true ORDER BY id;
 ----
@@ -128,9 +116,6 @@ CREATE INDEX num2_idx ON num2 USING inverted(id, (a + b));
 
 statement ok
 INSERT INTO num2 VALUES (1, 10, 20), (2, 5, 5), (3, 7, 13);
-
-statement ok
-VACUUM (REFRESH_TABLE) num2;
 
 query
 SELECT id FROM num2_idx WHERE a + b = 30;
@@ -157,9 +142,6 @@ CREATE INDEX vc2_idx ON vc2 USING inverted(id, (s1 || s2));
 statement ok
 INSERT INTO vc2 VALUES (1, 'foo', 'bar'), (2, 'hello', 'world'), (3, 'a', 'b');
 
-statement ok
-VACUUM (REFRESH_TABLE) vc2;
-
 query
 SELECT id FROM vc2_idx WHERE s1 || s2 = 'foobar';
 ----
@@ -183,9 +165,6 @@ CREATE INDEX b2_idx ON b2 USING inverted(id, (a > b));
 
 statement ok
 INSERT INTO b2 VALUES (1, 10, 5), (2, 3, 7), (3, 4, 4);
-
-statement ok
-VACUUM (REFRESH_TABLE) b2;
 
 query
 SELECT id FROM b2_idx WHERE (a > b) = true ORDER BY id;
@@ -212,9 +191,6 @@ CREATE INDEX num3_idx ON num3 USING inverted(id, (a + b + c));
 statement ok
 INSERT INTO num3 VALUES (1, 1, 2, 3), (2, 10, 20, 30), (3, 0, 0, 0);
 
-statement ok
-VACUUM (REFRESH_TABLE) num3;
-
 query
 SELECT id FROM num3_idx WHERE a + b + c = 6;
 ----
@@ -239,9 +215,6 @@ CREATE INDEX vc3_idx ON vc3 USING inverted(id, (CONCAT(a, '-', b, '-', c)));
 statement ok
 INSERT INTO vc3 VALUES (1, 'x', 'y', 'z'), (2, 'foo', 'bar', 'baz');
 
-statement ok
-VACUUM (REFRESH_TABLE) vc3;
-
 query
 SELECT id FROM vc3_idx WHERE CONCAT(a, '-', b, '-', c) = 'x-y-z';
 ----
@@ -265,9 +238,6 @@ CREATE INDEX b3_idx ON b3 USING inverted(id, (a + b > c));
 
 statement ok
 INSERT INTO b3 VALUES (1, 1, 2, 10), (2, 10, 20, 5), (3, 4, 4, 8);
-
-statement ok
-VACUUM (REFRESH_TABLE) b3;
 
 query
 SELECT id FROM b3_idx WHERE (a + b > c) = true ORDER BY id;
@@ -295,9 +265,6 @@ CREATE INDEX mix_idx ON mix USING inverted(
 statement ok
 INSERT INTO mix VALUES
     (1, 'foo', 'bar'), (2, 'hello', 'world'), (3, 'foo', 'baz');
-
-statement ok
-VACUUM (REFRESH_TABLE) mix;
 
 query
 SELECT id FROM mix_idx WHERE a = 'foo' ORDER BY id;
@@ -378,13 +345,7 @@ statement ok
 INSERT INTO dml VALUES (1, 10, 20), (2, 1, 1);
 
 statement ok
-VACUUM (REFRESH_TABLE) dml;
-
-statement ok
 UPDATE dml SET a = 100 WHERE id = 1;
-
-statement ok
-VACUUM (REFRESH_TABLE) dml;
 
 query
 SELECT id FROM dml_idx WHERE a + b = 30;
@@ -399,9 +360,6 @@ id
 
 statement ok
 DELETE FROM dml WHERE id = 2;
-
-statement ok
-VACUUM (REFRESH_TABLE) dml;
 
 query
 SELECT id FROM dml_idx ORDER BY id;
@@ -420,9 +378,6 @@ CREATE INDEX n1_idx ON n1 USING inverted(id, (a + b));
 
 statement ok
 INSERT INTO n1 VALUES (1, 1, 2), (2, NULL, 5), (3, 7, NULL);
-
-statement ok
-VACUUM (REFRESH_TABLE) n1;
 
 query
 SELECT id FROM n1_idx WHERE a + b IS NULL ORDER BY id;
@@ -449,9 +404,6 @@ CREATE INDEX poly_idx ON poly USING inverted(id, (a * a + a));
 
 statement ok
 INSERT INTO poly VALUES (1, 3), (2, 0), (3, 5);
-
-statement ok
-VACUUM (REFRESH_TABLE) poly;
 
 query
 SELECT id FROM poly_idx WHERE a * a + a = 12;
@@ -483,9 +435,6 @@ CREATE INDEX sgn_idx ON sgn USING inverted(
 
 statement ok
 INSERT INTO sgn VALUES (1, 5), (2, -3), (3, 0), (4, 7);
-
-statement ok
-VACUUM (REFRESH_TABLE) sgn;
 
 query
 SELECT id FROM sgn_idx
@@ -524,13 +473,7 @@ statement ok
 INSERT INTO mu1 VALUES (1, 10, 20), (2, 5, 25);
 
 statement ok
-VACUUM (REFRESH_TABLE) mu1;
-
-statement ok
 UPDATE mu1 SET b = 100;
-
-statement ok
-VACUUM (REFRESH_TABLE) mu1;
 
 query
 SELECT id FROM mu1_idx WHERE a + b = 110;
@@ -557,13 +500,7 @@ statement ok
 INSERT INTO mu2 VALUES (1, 10, 20, 'x'), (2, 5, 5, 'y');
 
 statement ok
-VACUUM (REFRESH_TABLE) mu2;
-
-statement ok
 UPDATE mu2 SET extra = 'z' WHERE id = 1;
-
-statement ok
-VACUUM (REFRESH_TABLE) mu2;
 
 query
 SELECT id FROM mu2_idx WHERE a + b = 30;
@@ -591,13 +528,7 @@ statement ok
 INSERT INTO mu3 VALUES (1, 'foo', 'bar'), (2, 'hello', 'world');
 
 statement ok
-VACUUM (REFRESH_TABLE) mu3;
-
-statement ok
 UPDATE mu3 SET a = 'baz' WHERE id = 1;
-
-statement ok
-VACUUM (REFRESH_TABLE) mu3;
 
 query
 SELECT id FROM mu3_idx WHERE a = 'foo';
@@ -633,13 +564,7 @@ statement ok
 INSERT INTO md VALUES (1, 10), (2, 41), (3, -5), (4, 100);
 
 statement ok
-VACUUM (REFRESH_TABLE) md;
-
-statement ok
 DELETE FROM md WHERE a > 10;
-
-statement ok
-VACUUM (REFRESH_TABLE) md;
 
 query
 SELECT id FROM md_idx ORDER BY id;
@@ -672,13 +597,7 @@ statement ok
 INSERT INTO md2 VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
 
 statement ok
-VACUUM (REFRESH_TABLE) md2;
-
-statement ok
 DELETE FROM md2;
-
-statement ok
-VACUUM (REFRESH_TABLE) md2;
 
 query
 SELECT id FROM md2_idx;
@@ -967,9 +886,6 @@ INSERT INTO tx_v VALUES
     (2, 'hello', 'world'),
     (3, 'foo', 'baz');
 
-statement ok
-VACUUM (REFRESH_TABLE) tx_v;
-
 # TERM_EQ
 query
 SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ 'foobar'::tsquery;
@@ -1012,9 +928,6 @@ CREATE INDEX tx_n_idx ON tx_n USING inverted(id, (a + b));
 statement ok
 INSERT INTO tx_n VALUES (1, 10, 20), (2, 5, 5), (3, 7, 13), (4, 50, 50);
 
-statement ok
-VACUUM (REFRESH_TABLE) tx_n;
-
 # TERM_EQ
 query
 SELECT id FROM tx_n_idx WHERE a + b = 30;
@@ -1051,9 +964,6 @@ CREATE INDEX tx_b_idx ON tx_b USING inverted(id, (a > b));
 statement ok
 INSERT INTO tx_b VALUES (1, 10, 5), (2, 3, 7), (3, 4, 4);
 
-statement ok
-VACUUM (REFRESH_TABLE) tx_b;
-
 query
 SELECT id FROM tx_b_idx WHERE (a > b) = true;
 ----
@@ -1082,9 +992,6 @@ INSERT INTO tx_mix VALUES
     (1, 'foo', 'bar'),
     (2, 'hello', 'world'),
     (3, 'foo', 'baz');
-
-statement ok
-VACUUM (REFRESH_TABLE) tx_mix;
 
 # Direct-column @@.
 query
@@ -1175,9 +1082,6 @@ USING inverted(id, ((a + b)::json));
 statement ok
 INSERT INTO strange_json VALUES (1, 10, 20), (2, 5, 5), (3, 7, 8);
 
-statement ok
-VACUUM (REFRESH_TABLE) strange_json;
-
 query
 SELECT id FROM strange_json_idx WHERE ((a + b)::json) = '30'::json;
 ----
@@ -1212,9 +1116,6 @@ CREATE INDEX types_smoke_idx ON types_smoke USING inverted(
 
 statement ok
 INSERT INTO types_smoke VALUES (1, 1), (2, 2);
-
-statement ok
-VACUUM (REFRESH_TABLE) types_smoke;
 
 query
 SELECT id FROM types_smoke_idx WHERE (a + 1)::TINYINT = 2::TINYINT;
@@ -1334,9 +1235,6 @@ CREATE INDEX null_expr_idx ON null_expr USING inverted(
 statement ok
 INSERT INTO null_expr VALUES (1, 1), (2, -1);
 
-statement ok
-VACUUM (REFRESH_TABLE) null_expr;
-
 query
 SELECT id FROM null_expr_idx ORDER BY id;
 ----
@@ -1365,9 +1263,6 @@ CREATE INDEX null_col_idx ON null_col USING inverted(id, a);
 statement ok
 INSERT INTO null_col VALUES (1, NULL), (2, NULL);
 
-statement ok
-VACUUM (REFRESH_TABLE) null_col;
-
 query
 SELECT id FROM null_col_idx ORDER BY id;
 ----
@@ -1394,9 +1289,6 @@ CREATE INDEX inc_e_num_idx ON inc_e_num USING inverted(id, (a + b) included ());
 statement ok
 INSERT INTO inc_e_num VALUES (1, 10, 20), (2, 5, 5), (3, 100, 1);
 
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_num;
-
 query
 SELECT id, a + b AS s FROM inc_e_num_idx WHERE id = 1;
 ----
@@ -1414,9 +1306,6 @@ id	s
 
 statement ok
 UPDATE inc_e_num SET a = 50 WHERE id = 1;
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_num;
 
 query
 SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
@@ -1437,9 +1326,6 @@ CREATE INDEX inc_e_str_idx ON inc_e_str USING inverted(
 statement ok
 INSERT INTO inc_e_str VALUES (1, 'FOO', 'Bar'), (2, 'X', 'Y');
 
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_str;
-
 query
 SELECT id, LOWER(a) || '-' || LOWER(b) AS s FROM inc_e_str_idx ORDER BY id;
 ----
@@ -1457,9 +1343,6 @@ CREATE INDEX inc_e_zstd_idx ON inc_e_zstd USING inverted(
 
 statement ok
 INSERT INTO inc_e_zstd VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_zstd;
 
 query
 SELECT id, a || b AS s FROM inc_e_zstd_idx ORDER BY id;
@@ -1484,9 +1367,6 @@ CREATE INDEX inc_e_rgs_idx ON inc_e_rgs USING inverted(
 
 statement ok
 INSERT INTO inc_e_rgs VALUES (1, 1), (2, 5), (3, 12);
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_rgs;
 
 query
 SELECT id, a * 2 AS s FROM inc_e_rgs_idx ORDER BY id;
@@ -1523,9 +1403,6 @@ CREATE INDEX inc_e_read_idx ON inc_e_read USING inverted(
 
 statement ok
 INSERT INTO inc_e_read VALUES (1, 'New York', 10), (2, 'Boston', 20), (3, 'NEWARK', 30), (4, 'abc', 40);
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_read;
 
 query
 SELECT id, lower(title) AS l, upper(lower(title)) AS u, n + 1 AS m FROM inc_e_read_idx ORDER BY id;
@@ -1587,9 +1464,6 @@ id
 statement ok
 UPDATE inc_e_read SET title = 'Berlin' WHERE id = 2;
 
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_read;
-
 query
 SELECT id, lower(title) AS l FROM inc_e_read_idx WHERE id = 2;
 ----
@@ -1604,9 +1478,6 @@ id
 
 statement ok
 CREATE INDEX inc_e_read_plain ON inc_e_read USING inverted(id, (lower(title)) verbatim_dict) INCLUDE (title);
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_read;
 
 query
 EXPLAIN SELECT id, lower(title) FROM inc_e_read_plain;
@@ -1628,9 +1499,6 @@ QUERY PLAN
 
 statement ok
 INSERT INTO inc_e_read VALUES (5, 'new york', 50);
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_read;
 
 query
 SELECT lower(title) AS l, count(*) AS c, sum(n + 1) AS s FROM inc_e_read_idx GROUP BY lower(title) ORDER BY l;
@@ -1861,17 +1729,11 @@ statement ok
 INSERT INTO inc_e_search VALUES (1, 'New York');
 
 statement ok
-VACUUM (REFRESH_TABLE) inc_e_search;
-
-statement ok
 CREATE INDEX inc_e_search_idx ON inc_e_search USING inverted(
     id, (lower(title)) verbatim_dict, (lower(title)) included());
 
 statement ok
 INSERT INTO inc_e_search VALUES (2, 'Boston'), (3, 'NEWARK');
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_search;
 
 query
 SELECT id, lower(title) AS l FROM inc_e_search_idx ORDER BY id;
@@ -1926,9 +1788,6 @@ CREATE INDEX inc_e_tz_idx ON inc_e_tz USING inverted(
 
 statement ok
 INSERT INTO inc_e_tz VALUES (1, '2026-01-01 23:30:00+00', '2026-01-01 23:30:00', '2026-01-01 23:30:00+00'::TIMESTAMPTZ::VARIANT);
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_tz;
 
 statement ok
 SET TimeZone = 'Asia/Tokyo';
@@ -1989,9 +1848,6 @@ CREATE INDEX inc_e_bytea_idx ON inc_e_bytea USING inverted(id, (b::VARCHAR) incl
 statement ok
 INSERT INTO inc_e_bytea VALUES (1, 'abc'::BYTEA);
 
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_bytea;
-
 query
 SELECT b::VARCHAR AS s FROM inc_e_bytea_idx;
 ----
@@ -2037,9 +1893,6 @@ statement ok
 INSERT INTO inc_e_timetz VALUES (1, '2026-01-01 23:30:00+00');
 
 statement ok
-VACUUM (REFRESH_TABLE) inc_e_timetz;
-
-statement ok
 SET TimeZone = 'Asia/Tokyo';
 
 query
@@ -2077,9 +1930,6 @@ CREATE INDEX inc_e_tz_ns_idx ON inc_e_tz_ns USING inverted(id, (ts::VARCHAR) inc
 
 statement ok
 INSERT INTO inc_e_tz_ns VALUES (1, '2026-01-01 23:30:00+00');
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_tz_ns;
 
 statement ok
 SET TimeZone = 'Asia/Tokyo';
@@ -2137,9 +1987,6 @@ statement ok
 INSERT INTO inc_e_tz_terms VALUES
     (1, '2026-01-01 23:30:00+00', '2026-01-01 23:30:00+00', '2026-01-01 23:30:00+00'::TIMESTAMPTZ::VARIANT, 'abc'::BYTEA, 'A'),
     (2, '2026-01-01 23:30:00+00', '2026-01-01 23:30:00+00', '2026-01-01 23:30:00+00'::TIMESTAMPTZ::VARIANT, 'abc'::BYTEA, 'a');
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_tz_terms;
 
 statement ok
 SET TimeZone = 'Asia/Tokyo';
@@ -2250,9 +2097,6 @@ INSERT INTO inc_e_tz_filters VALUES
     (1, '2026-01-01 23:30:00+00', 'abc'::BYTEA),
     (2, '2026-01-03 12:00:00+00', 'xyz'::BYTEA),
     (3, NULL, NULL);
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_tz_filters;
 
 statement ok
 SET TimeZone = 'Asia/Tokyo';
@@ -2431,9 +2275,6 @@ CREATE INDEX inc_e_dict_idx ON inc_e_dict USING inverted(
 statement ok
 INSERT INTO inc_e_dict VALUES (1, 'red', 'New York'), (2, 'blue', 'Boston'), (3, 'red', 'NEWARK');
 
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_dict;
-
 query
 SELECT min(cat) AS mn, max(cat) AS mx FROM inc_e_dict_idx;
 ----
@@ -2453,9 +2294,6 @@ INSERT INTO inc_e_geo VALUES (1, '{"type":"Point","coordinates":[37.615,55.705]}
 
 statement ok
 CREATE INDEX inc_e_geo_idx ON inc_e_geo USING inverted(id, (raw::JSON) inc_e_geo_dict);
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_geo;
 
 query
 SELECT id FROM inc_e_geo_idx WHERE ST_Intersects(raw::JSON, '{"type":"Polygon","coordinates":[[[37.61,55.70],[37.62,55.70],[37.62,55.71],[37.61,55.71],[37.61,55.70]]]}');
@@ -2499,9 +2337,6 @@ CREATE INDEX inc_e_nest_idx ON inc_e_nest USING inverted(
 
 statement ok
 INSERT INTO inc_e_nest VALUES (1, 'New York'), (2, 'Boston');
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_e_nest;
 
 query
 SELECT id, lower(title) AS l FROM inc_e_nest_idx WHERE upper(lower(title)) @@ 'BOSTON';
@@ -2580,9 +2415,6 @@ INSERT INTO ivf_e VALUES
     (3, 5, 5, 5),
     (4, 0, 0, 0);
 
-statement ok
-VACUUM (REFRESH_TABLE) ivf_e;
-
 query
 SELECT id FROM ivf_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
 ----
@@ -2617,9 +2449,6 @@ CREATE INDEX ivf_e2_idx ON ivf_e2 USING inverted(
 
 statement ok
 INSERT INTO ivf_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
-
-statement ok
-VACUUM (REFRESH_TABLE) ivf_e2;
 
 # `ivf` requires options.
 
@@ -2669,9 +2498,6 @@ CREATE INDEX inc_expr_idx ON inc_expr
   USING inverted(id, (a + b))
   INCLUDE (payload);
 
-statement ok
-VACUUM (REFRESH_TABLE) inc_expr;
-
 query
 SELECT id, payload FROM inc_expr_idx WHERE a + b = 30 ORDER BY id;
 ----
@@ -2703,9 +2529,6 @@ CREATE INDEX inc_expr2_idx ON inc_expr2
   USING inverted(id, (a + b))
   INCLUDE (big included (compression = 'uncompressed'));
 
-statement ok
-VACUUM (REFRESH_TABLE) inc_expr2;
-
 query
 SELECT id, big FROM inc_expr2_idx WHERE a + b = 4 ORDER BY id;
 ----
@@ -2730,9 +2553,6 @@ statement ok
 CREATE INDEX inc_expr3_idx ON inc_expr3
   USING inverted(id, (s1 || s2))
   INCLUDE (label);
-
-statement ok
-VACUUM (REFRESH_TABLE) inc_expr3;
 
 query
 SELECT id, label FROM inc_expr3_idx WHERE s1 || s2 = 'fooqux' ORDER BY id;
@@ -2769,10 +2589,6 @@ CREATE INDEX vedernikoff_fn_idx ON vedernikoff_t USING inverted(id, (babsky(b)))
 # Macro buried inside a built-in call.
 statement ok
 CREATE INDEX vedernikoff_nested_idx ON vedernikoff_t USING inverted(id, (clickclack(a) + b));
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff_t;
 
 
 # clickclack(10) = 11, clickclack(5) = 6 -- query through the macro.
@@ -2839,9 +2655,6 @@ INSERT INTO oj_p VALUES (1), (2), (3);
 
 statement ok
 INSERT INTO oj_d VALUES (1, 'hello'), (3, NULL), (4, 'orphan');
-
-statement ok
-VACUUM (REFRESH_TABLE) oj_d;
 
 query
 SELECT p.id, '[' || coalesce(d.title, '') || ']' AS t FROM oj_p p LEFT JOIN oj_d_idx d ON p.id = d.id ORDER BY p.id;
@@ -2923,9 +2736,6 @@ CREATE INDEX twice_once ON twice USING inverted (id, (lower(body)) twice_words);
 statement ok
 INSERT INTO twice VALUES (3, 'Quick Red Fox');
 
-statement ok
-VACUUM (REFRESH_TABLE) twice;
-
 query
 SELECT id, round(BM25(twice_both.tableoid)::numeric, 4) AS s FROM twice_both WHERE lower(body) @@ 'fox' ORDER BY id;
 ----
@@ -2951,9 +2761,6 @@ CREATE INDEX twice_spelled_idx ON twice_spelled USING inverted (id, (substr(body
 
 statement ok
 INSERT INTO twice_spelled VALUES (3, 'Quick Red Fox');
-
-statement ok
-VACUUM (REFRESH_TABLE) twice_spelled;
 
 query
 SELECT id, substr(body, CAST(1 AS INTEGER)) AS b FROM twice_spelled_idx WHERE substr(body, 1) @@ 'fox' ORDER BY id;

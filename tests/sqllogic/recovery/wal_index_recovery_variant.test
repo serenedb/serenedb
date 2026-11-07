@@ -24,19 +24,11 @@ CREATE INDEX var_rec_idx ON var_rec_t
 statement ok
 INSERT INTO var_rec_t VALUES (1, 'alpha bravo', 42::variant);
 
-statement ok
-VACUUM (REFRESH_TABLE) var_rec_t;
-
 query
 SELECT id, payload FROM var_rec_idx WHERE body @@ ts_phrase('alpha');
 ----
 id	payload
 1	42
-
-# Post-crash rows: suppress the index commit so they land only in the store
-# WAL, post-refresh and not yet durable in the segments.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO var_rec_t VALUES
@@ -54,7 +46,7 @@ SELECT 1;
 
 connection var_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) var_rec_t;
+SELECT 1;
 
 # Pre-crash row's VARIANT still served from cs.
 connection var_after

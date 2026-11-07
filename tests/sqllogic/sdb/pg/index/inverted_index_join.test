@@ -42,10 +42,6 @@ INSERT INTO docs VALUES
 
 
 statement ok
-VACUUM (REFRESH_TABLE) docs
-
-
-statement ok
 CREATE TABLE cats (cat INTEGER)
 
 
@@ -166,10 +162,6 @@ INSERT INTO big SELECT i, i % 50, 'fox doc ' || i FROM generate_series(1, 50000)
 # `cat` is neither indexed nor INCLUDE'd -> not store_values -> no zonemap.
 statement ok
 CREATE INDEX big_idx ON big USING inverted(id, body en)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) big
 
 
 # Correctness under the runtime join filter: every row matches 'fox', and

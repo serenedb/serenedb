@@ -32,10 +32,6 @@ CREATE INDEX vedernikoff_idx ON vedernikoff
     INCLUDE (small, big, s)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff
-
-
 # min=-7 / max=10 over 3 rows cannot overflow int64 -> sum_no_overflow.
 query
 EXPLAIN SELECT SUM(small) FROM vedernikoff_idx;
@@ -126,9 +122,6 @@ s_stats
 # Second segment: the reader must merge statistics across segments.
 statement count 1
 INSERT INTO vedernikoff VALUES (4, 100, 1, 'aa')
-
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff
 
 
 query

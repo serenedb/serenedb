@@ -1,14 +1,10 @@
 statement ok
 CREATE TABLE pk_dup(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search', refresh_interval = 0);
+  WITH (storage = 'search');
 
 
 statement ok
 INSERT INTO pk_dup VALUES (1, 'a'), (2, 'b');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
 
 
 # A key the index already holds.
@@ -46,10 +42,6 @@ db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
 DETAIL: Key (i)=(4) already exists.
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
 query
 SELECT i, t FROM pk_dup ORDER BY i;
 ----
@@ -63,10 +55,6 @@ i	t
 # to take.
 statement ok
 UPDATE pk_dup SET t = 'updated' WHERE i = 1;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
 
 
 # The same within one transaction, spelled out.
@@ -86,10 +74,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
 query
 SELECT i, t FROM pk_dup ORDER BY i;
 ----
@@ -105,15 +89,7 @@ DELETE FROM pk_dup WHERE i = 4;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
-statement ok
 INSERT INTO pk_dup VALUES (4, 'taken again');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
 
 
 query
@@ -138,10 +114,6 @@ statement ok
 INSERT INTO pk_bool VALUES (1, true, 'on'), (1, false, 'off'), (2, true, 'two');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_bool;
-
-
 statement error
 INSERT INTO pk_bool VALUES (1, true, 'again');
 ----
@@ -151,10 +123,6 @@ DETAIL: Key (tenant_id, is_active)=(1, true) already exists.
 
 statement ok
 INSERT INTO pk_bool VALUES (2, false, 'fits');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_bool;
 
 
 query
@@ -186,10 +154,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
 query
 SELECT i, t FROM pk_dup ORDER BY i;
 ----
@@ -213,12 +177,8 @@ db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
 DETAIL: Key (i)=(5) already exists.
 
 
-
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
 
 
 # The rolled-back truncate left the table as it was.
@@ -236,10 +196,6 @@ TRUNCATE pk_dup;
 
 statement ok
 INSERT INTO pk_dup VALUES (1, 'taken once more');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
 
 
 # A key the truncate removed can be taken again.
@@ -263,10 +219,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pk_dup;
-
-
 query
 SELECT i, t FROM pk_dup ORDER BY i;
 ----
@@ -282,10 +234,6 @@ CREATE TABLE pk_none(i INTEGER, t TEXT) WITH (storage = 'search');
 
 statement ok
 INSERT INTO pk_none VALUES (1, 'a'), (1, 'b');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pk_none;
 
 
 query

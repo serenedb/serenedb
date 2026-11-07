@@ -10,9 +10,6 @@ RESET sdb_faults;
 statement ok
 INSERT INTO s_wal VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
-statement ok
-VACUUM (REFRESH_TABLE) s_wal;
-
 query
 SELECT a, b FROM s_wal ORDER BY a;
 ----
@@ -45,10 +42,6 @@ a	b
 3	three
 4	four
 5	five
-
-connection after_commit
-statement ok
-VACUUM (REFRESH_TABLE) s_wal;
 
 
 ###############################################################################
@@ -90,10 +83,6 @@ statement ok
 INSERT INTO s_wal_pk VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection before_commit
-statement ok
-VACUUM (REFRESH_TABLE) s_wal_pk;
-
-connection before_commit
 query
 SELECT id, b FROM s_wal_pk ORDER BY id;
 ----
@@ -132,10 +121,6 @@ SELECT b FROM s_wal_pk WHERE id = 4;
 ----
 b
 four
-
-connection pk_after_commit
-statement ok
-VACUUM (REFRESH_TABLE) s_wal_pk;
 
 
 # --- 3b. Crash BEFORE the WAL commit -> lost (no record written). ---
@@ -206,10 +191,6 @@ SELECT y FROM ctas_after WHERE x = 9999;
 ----
 y
 v9999
-
-connection ctas_after_conn
-statement ok
-VACUUM (REFRESH_TABLE) ctas_after;
 
 connection ctas_after_conn
 statement ok
@@ -308,10 +289,6 @@ INSERT INTO del_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection mix_conn
 statement ok
-VACUUM (REFRESH_TABLE) del_t;
-
-connection mix_conn
-statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection mix_conn
@@ -337,10 +314,6 @@ three
 
 connection del_after
 statement ok
-VACUUM (REFRESH_TABLE) del_t;
-
-connection del_after
-statement ok
 DROP TABLE del_t;
 
 
@@ -353,10 +326,6 @@ CREATE TABLE del_g (a INTEGER, b TEXT) WITH (storage = 'search');
 connection del_after
 statement ok
 INSERT INTO del_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
-
-connection del_after
-statement ok
-VACUUM (REFRESH_TABLE) del_g;
 
 connection del_after
 statement ok
@@ -394,10 +363,6 @@ CREATE TABLE reins (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
 connection del_g_after
 statement ok
 INSERT INTO reins VALUES (1, 'a');
-
-connection del_g_after
-statement ok
-VACUUM (REFRESH_TABLE) reins;
 
 connection del_g_after
 statement ok
@@ -451,10 +416,6 @@ INSERT INTO upd_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection reins_after
 statement ok
-VACUUM (REFRESH_TABLE) upd_t;
-
-connection reins_after
-statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection reins_after
@@ -496,10 +457,6 @@ INSERT INTO upd_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
 
 connection upd_after
 statement ok
-VACUUM (REFRESH_TABLE) upd_g;
-
-connection upd_after
-statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection upd_after
@@ -538,10 +495,6 @@ INSERT INTO trunc_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection upd_g_after
 statement ok
-VACUUM (REFRESH_TABLE) trunc_t;
-
-connection upd_g_after
-statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection upd_g_after
@@ -560,10 +513,6 @@ n
 connection trunc_after
 statement ok
 INSERT INTO trunc_t VALUES (7, 'seven');
-
-connection trunc_after
-statement ok
-VACUUM (REFRESH_TABLE) trunc_t;
 
 connection trunc_after
 query

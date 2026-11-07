@@ -17,9 +17,6 @@ CREATE INDEX jc_idx ON jc_t USING inverted(id, (content->>'host') json_crash_vd)
 statement ok
 INSERT INTO jc_t VALUES (1, '{"host":"server-01"}'::json);
 
-statement ok
-VACUUM (REFRESH_TABLE) jc_t;
-
 query
 SELECT id FROM jc_idx WHERE content->>'host' @@ ts_like('server-01');
 ----
@@ -39,10 +36,6 @@ INSERT INTO jc_t VALUES (2, '{"host":"server-02"}'::json);
 connection jc_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
-
-connection jc_after
-statement ok
-VACUUM (REFRESH_TABLE) jc_t;
 
 # Seed row still indexed.
 connection jc_after
@@ -96,10 +89,6 @@ INSERT INTO jc_patch_t VALUES (1, 'alpha', '{"host":"hp1"}'::json);
 
 connection jc_after
 statement ok
-VACUUM (REFRESH_TABLE) jc_patch_t;
-
-connection jc_after
-statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection jc_after
@@ -109,10 +98,6 @@ UPDATE jc_patch_t SET k = 'beta' WHERE id = 1;
 connection jc_patch_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
-
-connection jc_patch_after
-statement ok
-VACUUM (REFRESH_TABLE) jc_patch_t;
 
 # UPDATE took effect on the plain indexed column.
 connection jc_patch_after
@@ -165,10 +150,6 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
 
 connection jc_multi_after
-statement ok
-VACUUM (REFRESH_TABLE) jc_multi_t;
-
-connection jc_multi_after
 query
 SELECT id FROM jc_multi_idx WHERE content->>'host' @@ ts_like('hm1');
 ----
@@ -209,10 +190,6 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
 
 connection jc_hash_after
-statement ok
-VACUUM (REFRESH_TABLE) jc_hash_t;
-
-connection jc_hash_after
 query
 SELECT id FROM jc_hash_idx WHERE content #>> '{user, name}' @@ ts_like('hashy');
 ----
@@ -234,10 +211,6 @@ CREATE INDEX jc_seq_idx ON jc_seq_t USING inverted(id, (content->>'host') json_c
 connection jc_hash_after
 statement ok
 INSERT INTO jc_seq_t VALUES (1, '{"host":"orig"}'::json);
-
-connection jc_hash_after
-statement ok
-VACUUM (REFRESH_TABLE) jc_seq_t;
 
 connection jc_hash_after
 statement ok
@@ -266,10 +239,6 @@ COMMIT;
 connection jc_seq_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
-
-connection jc_seq_after
-statement ok
-VACUUM (REFRESH_TABLE) jc_seq_t;
 
 # Seed row survived (it was sealed pre-crash).
 connection jc_seq_after
@@ -325,10 +294,6 @@ INSERT INTO jc_bare_t VALUES (2, '{"host":"replayed"}'::json);
 connection jc_bare_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
-
-connection jc_bare_after
-statement ok
-VACUUM (REFRESH_TABLE) jc_bare_t;
 
 connection jc_bare_after
 query

@@ -31,9 +31,6 @@ statement ok
 CREATE INDEX gdm_u32_idx ON gdm USING inverted (id, geo gdm_u32)
 
 statement ok
-VACUUM (REFRESH_TABLE) gdm
-
-statement ok
 CREATE TABLE gdm_g (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
 
 statement ok
@@ -45,9 +42,6 @@ statement ok
 CREATE INDEX gdm_g_s2point_idx ON gdm_g USING inverted (id, geo gdm_s2point)
 
 statement ok
-VACUUM (REFRESH_TABLE) gdm_g
-
-statement ok
 CREATE TABLE gdm_p (id INTEGER PRIMARY KEY, geo JSON)
 
 statement ok
@@ -57,9 +51,6 @@ statement ok
 CREATE INDEX gdm_p_idx ON gdm_p USING inverted (id, geo gdm_geopoint)
 
 statement ok
-VACUUM (REFRESH_TABLE) gdm_p
-
-statement ok
 CREATE TABLE gdm_s (id INTEGER, geo JSON) WITH (storage = 'search')
 
 statement ok
@@ -67,9 +58,6 @@ CREATE INDEX gdm_s_idx ON gdm_s USING inverted (id, geo gdm_shape)
 
 statement ok
 INSERT INTO gdm_s SELECT id, geo FROM gdm
-
-statement ok
-VACUUM (REFRESH_TABLE) gdm_s
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY gdm_words AS split_text(case := 'lower') WITH (frequency, position, offset)
@@ -85,9 +73,6 @@ INSERT INTO gdm_v VALUES
 
 statement ok
 CREATE INDEX gdm_v_idx ON gdm_v USING inverted (id, geo gdm_shape, body gdm_words, emb ivf (metric = 'l2')) INCLUDE (body)
-
-statement ok
-VACUUM (REFRESH_TABLE) gdm_v
 
 query
 SELECT id FROM gdm_v_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}') ORDER BY emb <-> [0, 1, 0]::FLOAT[3] LIMIT 1
@@ -233,9 +218,6 @@ INSERT INTO gdm_score VALUES
 
 statement ok
 CREATE INDEX gdm_score_idx ON gdm_score USING inverted (id, geo gdm_shape, body gdm_norm) INCLUDE (body)
-
-statement ok
-VACUUM (REFRESH_TABLE) gdm_score
 
 query
 SELECT id FROM gdm_score_idx
@@ -632,13 +614,7 @@ statement ok
 CREATE INDEX gdm_centroid_s2_idx ON gdm USING inverted (id, geo gdm_centroid_s2)
 
 statement ok
-VACUUM (REFRESH_TABLE) gdm
-
-statement ok
 CREATE INDEX gdm_g_source_idx ON gdm_g USING inverted (id, geo gdm_shape)
-
-statement ok
-VACUUM (REFRESH_TABLE) gdm_g
 
 query
 SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}') ORDER BY id

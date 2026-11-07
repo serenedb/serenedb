@@ -1341,15 +1341,11 @@ DROP TABLE cmr_tc
 # records below refresh before reading back what a committed writer wrote.
 
 statement ok
-CREATE TABLE cmr_s(a INTEGER, b TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE TABLE cmr_s(a INTEGER, b TEXT) WITH (storage = 'search', compaction_interval = 0)
 
 
 statement ok
 INSERT INTO cmr_s VALUES (1, 'x'), (2, 'y')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cmr_s
 
 
 connection s1
@@ -1359,7 +1355,7 @@ BEGIN
 
 connection s1
 statement ok
-CREATE OR REPLACE TABLE cmr_s(c INTEGER, d TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE OR REPLACE TABLE cmr_s(c INTEGER, d TEXT) WITH (storage = 'search', compaction_interval = 0)
 
 
 connection s1
@@ -1405,11 +1401,6 @@ COMMIT
 
 
 connection s2
-statement ok
-VACUUM (REFRESH_TABLE) cmr_s
-
-
-connection s2
 query
 SELECT c, d FROM cmr_s
 ----
@@ -1441,7 +1432,7 @@ BEGIN
 
 connection s1
 statement ok
-CREATE OR REPLACE TABLE cmr_s(e INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE OR REPLACE TABLE cmr_s(e INTEGER) WITH (storage = 'search', compaction_interval = 0)
 
 
 connection s1
@@ -1457,11 +1448,6 @@ INSERT INTO cmr_s VALUES (11, 'w')
 connection s1
 statement ok
 ROLLBACK
-
-
-connection s2
-statement ok
-VACUUM (REFRESH_TABLE) cmr_s
 
 
 connection s2
@@ -1482,12 +1468,12 @@ BEGIN
 
 connection s1
 statement ok
-CREATE OR REPLACE TABLE cmr_s(e INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE OR REPLACE TABLE cmr_s(e INTEGER) WITH (storage = 'search', compaction_interval = 0)
 
 
 connection s2
 statement error
-CREATE OR REPLACE TABLE cmr_s(f INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE OR REPLACE TABLE cmr_s(f INTEGER) WITH (storage = 'search', compaction_interval = 0)
 ----
 db error: ERROR: Catalog write-write conflict on alter with "cmr_s"
 
@@ -1525,11 +1511,6 @@ e
 connection s2
 statement ok
 INSERT INTO cmr_s VALUES (7)
-
-
-connection s2
-statement ok
-VACUUM (REFRESH_TABLE) cmr_s
 
 
 connection s2
@@ -1593,7 +1574,7 @@ BEGIN
 
 connection s1
 statement ok
-CREATE OR REPLACE TABLE cmr_s(r INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE OR REPLACE TABLE cmr_s(r INTEGER) WITH (storage = 'search', compaction_interval = 0)
 
 
 connection s1
@@ -1616,15 +1597,11 @@ DROP TABLE cmr_s
 # --- the other order, and writers of the old search table ---
 
 statement ok
-CREATE TABLE cmr_sr(a INTEGER, b TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE TABLE cmr_sr(a INTEGER, b TEXT) WITH (storage = 'search', compaction_interval = 0)
 
 
 statement ok
 INSERT INTO cmr_sr VALUES (1, 'x')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cmr_sr
 
 
 connection s2
@@ -1639,7 +1616,7 @@ DROP TABLE cmr_sr
 
 connection s1
 statement error
-CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', compaction_interval = 0)
 ----
 db error: ERROR: Catalog write-write conflict on alter with "cmr_sr"
 
@@ -1661,7 +1638,7 @@ ALTER TABLE cmr_sr RENAME TO cmr_sr_other
 
 connection s1
 statement error
-CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', compaction_interval = 0)
 ----
 db error: ERROR: Catalog write-write conflict on alter with "cmr_sr"
 
@@ -1678,7 +1655,7 @@ BEGIN
 
 connection s1
 statement ok
-CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', compaction_interval = 0)
 
 
 connection s2
@@ -1713,11 +1690,6 @@ DELETE FROM cmr_sr WHERE a = 1
 connection s1
 statement ok
 ROLLBACK
-
-
-connection s2
-statement ok
-VACUUM (REFRESH_TABLE) cmr_sr
 
 
 connection s2
@@ -4622,7 +4594,6 @@ trigger "cmr_gtr" on table "cmr_gt" depends on table "cmr_ga".
 Use DROP...CASCADE to drop all dependents.
 
 
-
 # The trigger writes into the old table, so the firing statement is refused as
 # a whole, its own row included.
 connection s2
@@ -4672,7 +4643,6 @@ CREATE OR REPLACE TABLE cmr_ga(a INTEGER)
 db error: ERROR: Cannot drop entry "cmr_ga" because there are entries that depend on it.
 trigger "cmr_gtr" on table "cmr_gt" depends on table "cmr_ga".
 Use DROP...CASCADE to drop all dependents.
-
 
 
 connection s2
@@ -4785,7 +4755,6 @@ trigger "cmr_gtr" on table "cmr_gt" depends on table "cmr_gt".
 Drop the dependent entries first and recreate them after the change.
 
 
-
 connection s1
 statement ok
 COMMIT
@@ -4807,7 +4776,6 @@ db error: ERROR: Table with name cmr_gt2 does not exist!
 Did you mean "cmr_gt"?
 
 
-
 query
 SELECT a FROM cmr_ga ORDER BY a
 ----
@@ -4827,7 +4795,6 @@ db error: ERROR: Table with name cmr_gt2 does not exist!
 Did you mean "cmr_gt"?
 
 
-
 statement error
 DROP TABLE cmr_ga
 ----
@@ -4835,7 +4802,6 @@ db error: ERROR: Cannot drop entry "cmr_ga" because there are entries that depen
 trigger "cmr_gtr" on table "cmr_gt" depends on table "cmr_ga".
 trigger "cmr_gtr2" on table "cmr_gt" depends on table "cmr_ga".
 Use DROP...CASCADE to drop all dependents.
-
 
 
 # --- BEFORE and AFTER statement triggers on UPDATE follow the same rules ---
@@ -4972,7 +4938,7 @@ DROP TABLE cmr_ua
 # --- triggers on a search table follow the same rules ---
 
 statement ok
-CREATE TABLE cmr_st(a INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+CREATE TABLE cmr_st(a INTEGER) WITH (storage = 'search', compaction_interval = 0)
 
 
 connection s1
@@ -5043,11 +5009,6 @@ SELECT count(*) AS n FROM cmr_ta WHERE tag = 'search'
 ----
 n
 2
-
-
-connection s2
-statement ok
-VACUUM (REFRESH_TABLE) cmr_st
 
 
 connection s2

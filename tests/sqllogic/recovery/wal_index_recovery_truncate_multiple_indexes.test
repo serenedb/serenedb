@@ -26,9 +26,6 @@ CREATE INDEX abramov_body_idx ON abramov_t USING inverted(id, body abramov_dict)
 statement ok
 CREATE INDEX abramov_tag_idx ON abramov_t USING inverted(id, tag abramov_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) abramov_t;
-
 # Sanity: both shards return seed rows.
 query
 SELECT id FROM abramov_body_idx WHERE body @@ ts_phrase('alpha');
@@ -41,9 +38,6 @@ SELECT id FROM abramov_tag_idx WHERE tag @@ ts_phrase('blue');
 ----
 id
 2
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Pre-truncate WAL-only writes that never reach iresearch.
 statement ok

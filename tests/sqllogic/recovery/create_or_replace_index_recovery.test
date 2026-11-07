@@ -112,14 +112,6 @@ statement ok
 INSERT INTO corir_s VALUES (4, 'ALPHA');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) corir_t;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) corir_s;
-
-
 query
 SELECT relname AS indexname, regexp_replace(pg_get_indexdef(oid), ' WITH \(.*', '') AS def FROM pg_class
 WHERE relkind = 'i' AND relname LIKE 'corir%' AND relname <> 'corir_s_pkey' ORDER BY relname;
@@ -211,16 +203,6 @@ INSERT INTO corir_t VALUES (5, 'Alpha');
 connection after_replay
 statement ok
 INSERT INTO corir_s VALUES (5, 'Alpha');
-
-
-connection after_replay
-statement ok
-VACUUM (REFRESH_TABLE) corir_t;
-
-
-connection after_replay
-statement ok
-VACUUM (REFRESH_TABLE) corir_s;
 
 
 connection after_replay

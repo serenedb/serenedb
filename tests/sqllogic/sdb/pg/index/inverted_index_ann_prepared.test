@@ -17,9 +17,6 @@ INSERT INTO ap SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i FROM range(2000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ap;
-
-statement ok
 PREPARE ap_knn AS SELECT pk FROM ap
   ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
 
@@ -82,9 +79,6 @@ RESET sdb_hnsw_ef_search;
 statement ok
 INSERT INTO ap VALUES (5000, [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], 'even', 5000);
 
-statement ok
-VACUUM (REFRESH_TABLE) ap;
-
 query
 EXECUTE ap_knn([100.4, 0, 0, 0, 0, 0, 0, 0]);
 ----
@@ -141,9 +135,6 @@ CREATE INDEX apq_idx ON apq
 
 statement ok
 INSERT INTO apq SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(512) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) apq;
 
 statement ok
 SET sdb_hnsw_ef_search = 64;

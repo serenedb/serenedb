@@ -12,9 +12,6 @@ CREATE INDEX fo_bst_idx ON fo_bst USING inverted(id, w fo_bst_en);
 statement ok
 INSERT INTO fo_bst VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_bst;
-
 query
 SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
 WHERE w @@ 'alpha' OR w @@ 'beta' ORDER BY id;

@@ -305,9 +305,6 @@ VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.request.cou
        (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'http.server.request.count', '{"code":"500"}', 2, 'Cumulative', true),
        (TIMESTAMP_NS '2026-09-08 12:00:45', 'checkout', 'http.server.request.count', '{"code":"500"}', 5, 'Cumulative', true);
 
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_sum;
-
 query
 SELECT minute, service_name, round(sum(per_second), 6) AS requests_per_second
 FROM (
@@ -333,9 +330,6 @@ VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.duration', 
        (TIMESTAMP_NS '2026-09-08 12:00:59', 'checkout', 'http.server.duration', '{}', [9, 5, 4, 2], [10.0, 100.0, 1000.0], 'Cumulative'),
        (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.duration', '{"route":"/b"}', [0, 0, 0, 0], [10.0, 100.0, 1000.0], 'Cumulative'),
        (TIMESTAMP_NS '2026-09-08 12:00:40', 'checkout', 'http.server.duration', '{"route":"/b"}', [2, 0, 0, 0], [10.0, 100.0, 1000.0], 'Cumulative');
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_histogram;
 
 query
 SELECT minute,
@@ -770,9 +764,6 @@ VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'rpc.duration', '{}', 1,
        (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'rpc.duration', '{}', 0, 1, 0, [6, 2], 0, [], 'Cumulative'),
        (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'rpc.duration', '{"route":"/b"}', 0, 0, 1, [1], 0, [], 'Cumulative'),
        (TIMESTAMP_NS '2026-09-08 12:00:40', 'checkout', 'rpc.duration', '{"route":"/b"}', 0, 0, 1, [5], 0, [], 'Cumulative');
-
-statement ok
-VACUUM (REFRESH_TABLE) otel_metrics_exponential_histogram;
 
 query
 SELECT minute,

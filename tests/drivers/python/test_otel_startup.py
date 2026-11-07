@@ -88,7 +88,6 @@ class _Server:
             conn.close()
 
     def count(self, table: str) -> int:
-        self.pg.execute(f"VACUUM (REFRESH_TABLE) {table}")
         return self.pg.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
     def close(self) -> None:

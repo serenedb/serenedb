@@ -1395,8 +1395,6 @@ void EsBulkExecute(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
   output.SetChildCardinality(row);
 }
 
-// --- es_refresh(index): commit inverted shards so writes become searchable -
-
 void EsRefreshExecute(duckdb::ClientContext& context,
                       duckdb::TableFunctionInput& input,
                       duckdb::DataChunk& output) {
@@ -1407,42 +1405,10 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   }
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
-
-  auto refresh_table = [&](duckdb::TableCatalogEntry& table) {
-    VisitInvertedIndexes(
-      context, table, [&](catalog::InvertedIndexEntry& index) {
-        if (const auto& storage = index.SearchStore()) {
-          search::ThrowIfRefreshFailed(storage->Refresh(),
-                                       index.name.GetIdentifierName());
-        }
-      });
-  };
-
-  if (data.index.empty()) {
-    // Collect-then-resolve: reading a table's indexes opens the schema's
-    // index set from inside the relation set's own walk.
-    std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
-    if (auto schema = EsSchema(context)) {
-      schema->Scan(
-        context, duckdb::CatalogType::TABLE_ENTRY,
-        [&](duckdb::CatalogEntry& entry) {
-          if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
-            tables.emplace_back(entry.Cast<duckdb::TableCatalogEntry>());
-          }
-        });
-    }
-    for (auto table : tables) {
-      refresh_table(table.get());
-    }
-  } else {
-    auto table = FindEsTable(context, data.index);
-    if (!table) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                      ERR_MSG("no such index [", data.index, "]"));
-    }
-    refresh_table(*table);
+  if (!data.index.empty() && !FindEsTable(context, data.index)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("no such index [", data.index, "]"));
   }
-
   output.SetChildCardinality(1);
   output.SetValue(0, 0, duckdb::Value::BOOLEAN(true));
 }

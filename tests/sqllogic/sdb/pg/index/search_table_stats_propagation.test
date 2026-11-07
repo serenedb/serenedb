@@ -17,15 +17,7 @@ INSERT INTO stp SELECT i, i, CASE WHEN i < 50 THEN NULL ELSE i END, 'r'||i
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stp;
-
-
-statement ok
 INSERT INTO stp SELECT i, i, i, 'r'||i FROM generate_series(100,199) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) stp;
 
 
 # Below the merged minimum: the scan folds away at plan time.
@@ -152,10 +144,6 @@ c
 
 statement ok
 DELETE FROM stp WHERE x >= 150;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) stp;
 
 
 # Merged stats still cover the deleted rows, so the range does not fold to

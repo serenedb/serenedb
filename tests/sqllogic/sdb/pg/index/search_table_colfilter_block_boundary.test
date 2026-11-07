@@ -14,10 +14,6 @@ statement ok
 INSERT INTO stbb SELECT i, i, 'r' || i FROM generate_series(0, 99999) t(i);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) stbb;
-
-
 # i = 0 plus every i whose decimal form starts with '1'.
 query
 SELECT count(*) AS n FROM stbb WHERE s < 'r2';

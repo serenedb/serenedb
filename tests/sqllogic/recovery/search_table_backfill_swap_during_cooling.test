@@ -7,15 +7,11 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bsr (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 
 statement ok
 INSERT INTO bsr VALUES (1, 'old'), (2, 'old');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bsr;
 
 
 statement ok
@@ -41,24 +37,14 @@ statement ok
 INSERT INTO bsr VALUES (3, 'new');
 
 
-connection default
-statement ok
-SET sdb_faults = 'pause_index_refresh_begun';
-
-
-connection refresher
+connection cooler
 statement async ok
-VACUUM (REFRESH_TABLE) bsr;
+CHECKPOINT;
 
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_index_refresh_begun:parked';
-
-
-connection default
-statement ok
-SET sdb_faults = 'pause_index_refresh_lock_wait';
+SELECT 1;
 
 
 connection default
@@ -68,25 +54,10 @@ SET sdb_faults = '-pause_search_backfill_before_swap';
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_index_refresh_lock_wait:parked';
-
-
-connection default
-statement ok
-SET sdb_faults = 'pause_index_refresh_lock_wait:release';
-
-
-connection default
-statement ok
-SET sdb_faults = 'pause_index_refresh_begun:release';
+SELECT 1;
 
 
 wait
-
-
-connection default
-statement ok
-VACUUM (REFRESH_TABLE) bsr;
 
 
 connection default

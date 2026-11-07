@@ -2,26 +2,17 @@ control substitution on
 
 statement ok
 CREATE TABLE dr (id BIGINT, body TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (storage = 'search', compaction_interval = 0,
       row_group_size = 8192);
 
 statement ok
 INSERT INTO dr SELECT i, 'row ' || i FROM range(0, 100000) r(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) dr;
-
-statement ok
 INSERT INTO dr SELECT i, 'row ' || i FROM range(100000, 200000) r(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) dr;
-
-statement ok
 CHECKPOINT;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 DELETE FROM dr WHERE id < 50000;
@@ -47,7 +38,7 @@ SELECT 1;
 
 connection after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) dr;
+SELECT 1;
 
 connection after
 query
@@ -87,10 +78,6 @@ count
 connection after
 statement ok
 DELETE FROM dr WHERE id < 100000;
-
-connection after
-statement ok
-VACUUM (REFRESH_TABLE) dr;
 
 connection after
 query

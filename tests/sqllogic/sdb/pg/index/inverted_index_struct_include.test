@@ -43,10 +43,6 @@ statement ok
 INSERT INTO struct_t VALUES (4, 'fourth', ROW('delta', NULL))
 
 
-statement ok
-VACUUM (REFRESH_TABLE) struct_t
-
-
 # Sanity: the nested column is served by the iresearch columnstore (i),
 # pk falls through to the rocksdb lookup (l).
 query

@@ -24,23 +24,14 @@ statement ok
 INSERT INTO mt SELECT i, CASE WHEN i <= 8 THEN 'alpha' ELSE 'beta' END, 'x'
 FROM generate_series(1, 10) g(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) mt;
-
 # Segment 2: body = 3x alpha + 7x gamma ; tag = y
 statement ok
 INSERT INTO mt SELECT 10 + i, CASE WHEN i <= 3 THEN 'alpha' ELSE 'gamma' END, 'y'
 FROM generate_series(1, 10) g(i)
 
-statement ok
-VACUUM (REFRESH_TABLE) mt;
-
 # Segment 3: body = 5x beta ; tag = x
 statement ok
 INSERT INTO mt SELECT 20 + i, 'beta', 'x' FROM generate_series(1, 5) g(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) mt;
 
 # docs/freq summed across the three segments:
 #   alpha = 8 + 3      = 11

@@ -17,9 +17,6 @@ INSERT INTO hd SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10, i,
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i % 13
 FROM range(3000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hd;
-
 query
 EXPLAIN SELECT pk FROM hd WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
   ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
@@ -257,9 +254,6 @@ pk
 # Deleted rows stay out on both sides.
 statement ok
 DELETE FROM hd WHERE pk IN (1503, 1493);
-
-statement ok
-VACUUM (REFRESH_TABLE) hd;
 
 statement ok
 SET sdb_hnsw_filter_mode = 'walk';

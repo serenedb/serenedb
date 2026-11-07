@@ -39,9 +39,6 @@ CREATE INDEX g7_j_imp ON g7_j USING inverted(pk, j);
 statement ok
 INSERT INTO g7_j VALUES (1, '"alpha"'), (2, '"beta"'), (3, '42');
 
-statement ok
-VACUUM (REFRESH_TABLE) g7_j;
-
 query
 SELECT pk FROM g7_j_imp WHERE j @@ ts_like('"alpha"') ORDER BY pk;
 ----
@@ -59,9 +56,6 @@ statement ok
 INSERT INTO g7_b VALUES
     (1, '\x68656c6c6f'::BLOB),
     (2, '\xdeadbeef'::BLOB);
-
-statement ok
-VACUUM (REFRESH_TABLE) g7_b;
 
 query
 SELECT pk FROM g7_b_imp WHERE b @@ ts_like('\xdeadbeef'::BLOB) ORDER BY pk;
@@ -92,9 +86,6 @@ CREATE INDEX g7_vl_imp ON g7_vl USING inverted(pk, vs);
 statement ok
 INSERT INTO g7_vl VALUES (1, ['alpha', 'beta']), (2, ['gamma']);
 
-statement ok
-VACUUM (REFRESH_TABLE) g7_vl;
-
 query
 SELECT pk FROM g7_vl_imp WHERE vs @@ ts_like('beta') ORDER BY pk;
 ----
@@ -112,9 +103,6 @@ statement ok
 INSERT INTO g7_bl VALUES
     (1, ['hello'::BLOB, 'world'::BLOB]),
     (2, ['deadbeef'::BLOB]);
-
-statement ok
-VACUUM (REFRESH_TABLE) g7_bl;
 
 query
 SELECT pk FROM g7_bl_imp WHERE bs @@ ts_like('hello'::BLOB) ORDER BY pk;
@@ -134,9 +122,6 @@ INSERT INTO g7_jl VALUES
     (1, ARRAY['"alpha"'::JSON, '"beta"'::JSON]),
     (2, ARRAY['"gamma"'::JSON]);
 
-statement ok
-VACUUM (REFRESH_TABLE) g7_jl;
-
 query
 SELECT pk FROM g7_jl_imp WHERE js @@ ts_like('"beta"') ORDER BY pk;
 ----
@@ -155,9 +140,6 @@ INSERT INTO g7_va VALUES
     (1, ['alpha', 'beta', 'gamma']),
     (2, ['delta', 'epsilon', 'zeta']);
 
-statement ok
-VACUUM (REFRESH_TABLE) g7_va;
-
 query
 SELECT pk FROM g7_va_imp WHERE va @@ ts_like('epsilon') ORDER BY pk;
 ----
@@ -175,9 +157,6 @@ statement ok
 INSERT INTO g7_ba VALUES
     (1, ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB]),
     (2, ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB]);
-
-statement ok
-VACUUM (REFRESH_TABLE) g7_ba;
 
 query
 SELECT pk FROM g7_ba_imp WHERE ba @@ ts_like('eee'::BLOB) ORDER BY pk;
@@ -259,9 +238,6 @@ INSERT INTO g8_nested VALUES
     (2, [[4],[5,6,7]],       [['d'],['e','f','g']],     [[9,8,7],[6,5,4],[3,2,1]],         [40, 50]),
     (3, [[8,9],[10,11,12]],  [['h','i'],['j','k','l']], [[0,0,0],[1,1,1],[2,2,2]],         [60]);
 
-statement ok
-VACUUM (REFRESH_TABLE) g8_nested;
-
 query
 SELECT pk FROM g8_flat_imp WHERE flat = 40 ORDER BY pk;
 ----
@@ -294,9 +270,6 @@ statement ok
 INSERT INTO g9_smv VALUES
     (1, 'alpha', ROW(10, 'x'),  MAP {'k1': 1, 'k2': 2}, 42::VARIANT),
     (2, 'beta',  ROW(20, 'y'),  MAP {'k3': 3},          'hello'::VARIANT);
-
-statement ok
-VACUUM (REFRESH_TABLE) g9_smv;
 
 # Round-trip: anchor served by the index, STRUCT/MAP/VARIANT served by the
 # INCLUDE sidecar.

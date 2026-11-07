@@ -67,11 +67,6 @@ CREATE INDEX ocu_idx ON ocu USING inverted (id, msg);
 
 
 connection default
-statement ok
-VACUUM (REFRESH_TABLE) ocu;
-
-
-connection default
 query
 SELECT (SELECT count(*) FROM ocu_idx) AS total,
        (SELECT count(*) FROM ocu_idx WHERE msg @@ 'fresh') AS fresh;

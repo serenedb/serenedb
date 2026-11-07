@@ -22,13 +22,6 @@ statement ok
 INSERT INTO du_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) du_t;
-
-# Post-refresh mutations, index leg suppressed -> store WAL only.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
-statement ok
 DELETE FROM du_t WHERE id < 100;
 
 statement ok
@@ -44,7 +37,7 @@ SELECT 1;
 
 connection du_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) du_t;
+SELECT 1;
 
 connection du_after
 query

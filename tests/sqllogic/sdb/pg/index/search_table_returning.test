@@ -39,10 +39,6 @@ bumped
 104
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_gen;
-
-
 query
 UPDATE ret_gen SET b = 'z' WHERE a = 1 RETURNING *;
 ----
@@ -62,10 +58,6 @@ DELETE FROM ret_gen WHERE a = 3 RETURNING a * 2 AS twice, b;
 ----
 twice	b
 6	q
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ret_gen;
 
 
 query
@@ -94,10 +86,6 @@ a	b
 11	k
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
-
-
 query
 UPDATE ret_pk SET b = b || '!' WHERE a >= 10 RETURNING *;
 ----
@@ -106,19 +94,11 @@ a	b
 11	k!
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
-
-
 query
 DELETE FROM ret_pk WHERE a = 11 RETURNING *;
 ----
 a	b
 11	k!
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
 
 
 query
@@ -133,16 +113,8 @@ statement count 1
 INSERT INTO ret_pk VALUES (12, 'm');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
-
-
 statement count 1
 UPDATE ret_pk SET b = 'n' WHERE a = 12;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
 
 
 statement count 1

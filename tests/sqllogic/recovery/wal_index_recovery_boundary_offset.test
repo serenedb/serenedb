@@ -39,9 +39,6 @@ CREATE INDEX bo_idx ON bo_t USING inverted(id, body bo_dict);
 statement ok
 INSERT INTO bo_t VALUES (1, 'alpha bravo charlie');
 
-statement ok
-VACUUM (REFRESH_TABLE) bo_t;
-
 query
 SELECT COUNT(*) FROM bo_idx;
 ----
@@ -72,7 +69,7 @@ SELECT 1;
 
 connection bo_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) bo_t;
+SELECT 1;
 
 # Store table has both rows.
 connection bo_after

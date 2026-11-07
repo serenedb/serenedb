@@ -27,10 +27,6 @@ CREATE INDEX pe_idx ON pe USING inverted(body en_pe)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-
 query
 SELECT body FROM pe_idx WHERE body @@ 'x' AND NOT body @@ 'y'
 ORDER BY BM25(pe_idx.tableoid) DESC LIMIT 10;
@@ -50,7 +46,7 @@ x w
 
 statement ok
 CREATE TABLE pes (id INTEGER PRIMARY KEY, body VARCHAR)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+  WITH (storage = 'search', compaction_interval = 0,
         optimize_top_k = 'bm25(1.2, 0.75)');
 
 
@@ -60,10 +56,6 @@ CREATE INDEX pes_idx ON pes USING inverted(body en_pe);
 
 statement ok
 INSERT INTO pes SELECT id, body FROM pe ORDER BY id;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pes;
 
 
 query

@@ -80,9 +80,6 @@ a	body
 3	gamma three
 5	epsilon five
 
-statement ok
-VACUUM (REFRESH_TABLE) merge_idx;
-
 # Index reflects merged state: 'updated' (merged row 2) hits, 'one' (deleted
 # row 1) misses, 'epsilon' (inserted row 5) hits.
 query

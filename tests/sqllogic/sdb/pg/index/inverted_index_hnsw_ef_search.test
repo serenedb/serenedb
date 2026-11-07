@@ -33,9 +33,6 @@ statement ok
 INSERT INTO hnsw_ef SELECT i,
   [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(2000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_ef;
-
 
 query
 SHOW sdb_hnsw_ef_search;
@@ -140,9 +137,6 @@ CREATE INDEX hnsw_efq_idx ON hnsw_efq
 statement ok
 INSERT INTO hnsw_efq SELECT i,
   [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(1376, 1626) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_efq;
 
 # A rescore width reads more of the beam back at full precision but never
 # widens the beam, so a beam of 1 still searches at the LIMIT's floor and the

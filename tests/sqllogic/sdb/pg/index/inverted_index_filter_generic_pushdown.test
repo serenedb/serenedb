@@ -28,10 +28,6 @@ CREATE INDEX gfp_idx ON gfp USING inverted(id, body gfp_en)
   WITH (compaction_interval = 0);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) gfp;
-
-
 query
 SELECT id FROM gfp_idx WHERE body @@ 'fox' AND tag IS NULL ORDER BY id;
 ----

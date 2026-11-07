@@ -26,9 +26,6 @@ INSERT INTO nb VALUES
   (2, 'fox runs fast'),
   (3, 'the lazy dog');
 
-statement ok
-VACUUM (REFRESH_TABLE) nb;
-
 # The term matches the two documents that contain 'fox'.
 query
 SELECT id FROM nb_idx WHERE body @@ 'fox' ORDER BY id;

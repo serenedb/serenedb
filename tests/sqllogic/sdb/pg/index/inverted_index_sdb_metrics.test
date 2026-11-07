@@ -9,7 +9,7 @@ CREATE TEXT SEARCH DICTIONARY test_english AS
 
 statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english)
-WITH (refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c');
@@ -33,10 +33,6 @@ num_failed_consolidations	0
 num_files	1
 num_live_docs	0
 num_segments	0
-
-
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 
 query
@@ -64,9 +60,6 @@ DELETE FROM t WHERE r = 'a';
 
 statement ok
 INSERT INTO t VALUES ('d'), ('e');
-
-statement ok
-VACUUM (REFRESH_TABLE) t;
 
 
 query

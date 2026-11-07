@@ -44,15 +44,6 @@ statement ok
 INSERT INTO ebc SELECT * FROM eb_src WHERE pk < 2000;
 
 statement ok
-VACUUM (REFRESH_TABLE) ebl;
-
-statement ok
-VACUUM (REFRESH_TABLE) ebi;
-
-statement ok
-VACUUM (REFRESH_TABLE) ebc;
-
-statement ok
 INSERT INTO ebl SELECT * FROM eb_src WHERE pk >= 2000;
 
 statement ok
@@ -69,15 +60,6 @@ INSERT INTO ebi VALUES (5000, NULL, 3);
 
 statement ok
 INSERT INTO ebc VALUES (5000, NULL, 3);
-
-statement ok
-VACUUM (REFRESH_TABLE) ebl;
-
-statement ok
-VACUUM (REFRESH_TABLE) ebi;
-
-statement ok
-VACUUM (REFRESH_TABLE) ebc;
 
 statement ok
 SET sdb_ann_force_exact = true;
@@ -188,9 +170,6 @@ count
 
 statement ok
 DELETE FROM ebl WHERE pk % 20 = 0;
-
-statement ok
-VACUUM (REFRESH_TABLE) ebl;
 
 query
 WITH w AS (SELECT pk FROM ebl_idx

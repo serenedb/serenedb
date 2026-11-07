@@ -23,10 +23,6 @@ INSERT INTO ct VALUES
   (5, NULL, 4,    'red')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ct;
-
-
 # COUNT variants — match the values PostgreSQL produces (DB Fiddle output).
 # Constant / star args count every row; column args count non-null values
 # of that column; literal NULL never counts.

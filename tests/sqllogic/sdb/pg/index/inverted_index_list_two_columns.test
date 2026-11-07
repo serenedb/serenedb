@@ -36,18 +36,12 @@ statement ok
 CREATE INDEX words_idx ON words
   USING inverted(pk, tags verbatim_dict, more_tags verbatim_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) words;
-
 # Live INSERT path: same writer processes both LIST columns in one batch.
 statement ok
 INSERT INTO words VALUES (3, ['epsilon', 'zeta'], ['sit']);
 
 statement ok
 INSERT INTO words VALUES (4, ['eta', 'theta'], ['amet', 'consectetur']);
-
-statement ok
-VACUUM (REFRESH_TABLE) words;
 
 # First LIST column (`tags`) indexes correctly -- it's the column that runs
 # first in the per-batch switch sequence and populates children[0].

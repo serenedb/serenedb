@@ -37,10 +37,6 @@ statement ok
 CREATE INDEX ixiv_idx ON ixiv_t USING inverted(id, body ixiv_dict);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ixiv_t;
-
-
 query
 SELECT id FROM ixiv_idx WHERE body @@ ts_phrase('alpha');
 ----
@@ -182,10 +178,6 @@ id
 # that was already there.
 statement ok
 INSERT INTO ixiv_t VALUES (3, 'echo foxtrot', 300);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ixiv_t;
 
 
 query

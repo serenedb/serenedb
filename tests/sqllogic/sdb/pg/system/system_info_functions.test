@@ -14,10 +14,6 @@ statement ok
 INSERT INTO sif_docs VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sif_docs;
-
-
 query
 SELECT pg_stat_get_live_tuples('sif_rows'::regclass) AS duck, pg_stat_get_live_tuples('sif_docs'::regclass) AS search;
 ----

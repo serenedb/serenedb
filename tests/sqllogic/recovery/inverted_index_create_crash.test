@@ -58,10 +58,6 @@ connection cc_after
 statement ok
 CREATE INDEX cc_idx ON cc_t USING inverted(a, b cc_dict);
 
-connection cc_after
-statement ok
-VACUUM (REFRESH_TABLE) cc_t;
-
 
 connection cc_after
 query

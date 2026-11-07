@@ -22,10 +22,6 @@ statement ok
 INSERT INTO ds VALUES (1, 'running runs runner'), (2, 'jumping jumps')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ds;
-
-
 query TI
 SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS docs
 FROM ds_idx ORDER BY term
@@ -66,10 +62,6 @@ statement ok
 INSERT INTO dm VALUES (1, 'alpha beta'), (2, 'alpha gamma'), (3, 'beta gamma')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dm;
-
-
 query TR
 SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS score
 FROM dm_idx ORDER BY term
@@ -95,10 +87,6 @@ gamma	2
 # merged counts must match the single-segment totals plus the new rows.
 statement ok
 INSERT INTO dm VALUES (4, 'alpha alpha'), (5, 'delta')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dm;
 
 
 query TII

@@ -13,10 +13,6 @@ statement ok
 INSERT INTO regexp_names VALUES (1, 'siemens'), (2, 'the siemens ag'), (3, 'The Siemens Financial Services'), (4, 'siemensland'), (5, 'thesiemens'), (6, 'siemens-energy'), (7, 'access point'), (8, 'accessories inc'), (9, 'senior data engineer'), (10, 'bigdata engineer'), (11, 'data engineering'), (12, 'Data Engineer, GCP')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) regexp_names
-
-
 query
 SELECT id FROM regexp_names WHERE name @@ ts_regexp('(?i)^(the\s+)?siemens\b.*') ORDER BY id
 ----

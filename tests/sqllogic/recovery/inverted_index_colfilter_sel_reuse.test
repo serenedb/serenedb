@@ -37,21 +37,11 @@ statement ok
 INSERT INTO cf VALUES (1, 'alpha', 50), (2, 'alpha', 150)
 
 
-onlyif serenedb
-statement ok
-VACUUM (REFRESH_TABLE) cf
-
-
 # Segment 2: every g < 100, so the zonemap answers the filter and it is dropped
 # for this segment -- no filters, and the unguarded write path.
 onlyif serenedb
 statement ok
 INSERT INTO cf VALUES (3, 'alpha', 1), (4, 'alpha', 2), (5, 'alpha', 3)
-
-
-onlyif serenedb
-statement ok
-VACUUM (REFRESH_TABLE) cf
 
 
 onlyif serenedb

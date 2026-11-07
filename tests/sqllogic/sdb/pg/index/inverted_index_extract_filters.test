@@ -19,10 +19,6 @@ INSERT INTO ef SELECT i, 'w' || (i % 3),
 FROM range(10000) t(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ef
-
-
 query
 SELECT count(*) FROM ef_idx WHERE meta.cat = 3
 ----

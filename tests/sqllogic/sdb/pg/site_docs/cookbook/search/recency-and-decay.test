@@ -20,9 +20,6 @@ INSERT INTO articles VALUES
 (3, 'platform notes', 'we run kubernetes in production and the whole team leans on kubernetes every day', 20, 5.0),
 (4, 'yearly retro', 'a few scattered notes on kubernetes and several other tools we tried last year', 200, 400.0);
 
-statement ok
-VACUUM (REFRESH_TABLE) articles;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

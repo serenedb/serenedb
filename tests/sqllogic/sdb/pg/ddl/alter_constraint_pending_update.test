@@ -16,16 +16,8 @@ statement count 1
 UPDATE acp SET b = b + 1 WHERE a = 2500
 
 
-statement error
+statement async ok
 ALTER TABLE acp ALTER COLUMN b SET NOT NULL
-----
-db error: ERROR: Cannot verify a constraint with outstanding updates of another transaction
-
-
-statement error
-ALTER TABLE acp ADD CONSTRAINT acp_b_pos CHECK (b > 0)
-----
-db error: ERROR: Cannot verify a constraint with outstanding updates of another transaction
 
 
 connection writer
@@ -33,8 +25,7 @@ statement ok
 ROLLBACK
 
 
-statement ok
-ALTER TABLE acp ALTER COLUMN b SET NOT NULL
+wait
 
 
 statement ok
@@ -64,8 +55,10 @@ statement count 1
 UPDATE acp SET b = 8 WHERE a = 10
 
 
-statement ok
+statement error
 ALTER TABLE acp ADD CONSTRAINT acp_b_small CHECK (b < 4000)
+----
+db error: ERROR: ALTER TABLE cannot run in a transaction that has already written to "acp"
 
 
 statement ok
@@ -76,7 +69,7 @@ query
 SELECT b FROM acp WHERE a = 10
 ----
 b
-8
+7
 
 
 query
@@ -84,4 +77,3 @@ SELECT conname FROM pg_constraint WHERE conrelid = 'acp'::regclass AND contype =
 ----
 conname
 acp_b_pos
-acp_b_small

@@ -503,12 +503,7 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
   // whole row.
   update.update_is_del_and_insert = true;
   update.update_column_count = 0;
-  duckdb::physical_index_set_t all_columns;
-  for (const auto& column : GetColumns().Physical()) {
-    all_columns.insert(column.Physical());
-  }
-  duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update,
-                                          all_columns);
+  duckdb::LogicalUpdate::BindAllColumns(*this, get, proj, update);
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {

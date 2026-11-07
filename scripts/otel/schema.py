@@ -95,7 +95,7 @@ def render_header():
     )
 
 
-TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*)\) WITH", re.S)
+TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\)", re.S)
 INDEX = re.compile(r"CREATE INDEX IF NOT EXISTS \w+\s+ON (\w+)")
 COLUMN = re.compile(r'^\s*"?(\w+)"?\s+(.+?)(?:\s+NOT NULL)?,?\s*$')
 TYPES = {

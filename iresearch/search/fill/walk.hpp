@@ -140,14 +140,7 @@ class WalkScored {
     if (n == 0) {
       return;
     }
-    if (n == kScoreBlock) [[likely]] {
-      _fetcher.FetchScoreBlock(
-        std::span<const doc_id_t, kScoreBlock>{_docs, kScoreBlock});
-      _score.ScoreBlock(_scores);
-    } else {
-      _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
-      _score.Score(_scores, n);
-    }
+    FetchAndScore(_fetcher, _score, _docs, _scores, n);
     irs::ResolveMergeType(_merge, [&]<ScoreMergeType Merge> {
       for (scores_size_t i = 0; i != n; ++i) {
         irs::Merge<Merge>(scores[_docs[i] - min], _scores[i]);

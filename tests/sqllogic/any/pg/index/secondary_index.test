@@ -929,14 +929,19 @@ query
 EXPLAIN SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 10;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────────╮
-│ Table: babsky_composite         │
-│ Type: Sequential Scan           │
-│ Projections: pid, tag           │
-│ Column Filter: city = 'berlin', │
-│                level = 10       │
-│ ~2 rows                         │
-╰─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Table: babsky_composite                            │
+│ Index Filter:                                      │
+│ ╭─ And ───────────────╮                            │
+│ ╰──────────┬──────────╯                            │
+│            ├─────────────────────────╮             │
+│ ╭─ Terms ──┴──────────╮  ╭─ Terms ───┴───────────╮ │
+│ │ Field: city(string) │  │ Field: level(numeric) │ │
+│ │ Values: 'berlin'    │  │ Values: 10            │ │
+│ ╰─────────────────────╯  ╰───────────────────────╯ │
+│ Projections: pid, tag                              │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
 
 
 query
@@ -1006,7 +1011,7 @@ EXPLAIN SELECT pid, name FROM gayazov_dual_inv_idx WHERE rank = 10;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: gayazov_dual_inv_idx │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Projections: pid, name      │
 │ Column Filter: rank = 10    │
 │ ~1 row                      │
@@ -1083,12 +1088,15 @@ query
 EXPLAIN SELECT pid, nickname FROM vedernikoff_csv_crew WHERE stocks = 30;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────╮
+╭─ IRESEARCH_SCAN ────────────╮
 │ Table: vedernikoff_csv_crew │
-│ Type: Sequential Scan       │
+│ Index Filter:               │
+│ ╭─ Term ─────────────────╮  │
+│ │ Field: stocks(numeric) │  │
+│ │ Value: 30              │  │
+│ ╰────────────────────────╯  │
 │ Projections: pid, nickname  │
-│ Column Filter: stocks = 30  │
-│ ~2 rows                     │
+│ ~1 row                      │
 ╰─────────────────────────────╯
 
 statement ok
@@ -1241,12 +1249,15 @@ query
 EXPLAIN SELECT pid, nickname FROM vedernikoff_pq_crew WHERE stocks = 30;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────╮
+╭─ IRESEARCH_SCAN ───────────╮
 │ Table: vedernikoff_pq_crew │
-│ Type: Sequential Scan      │
+│ Index Filter:              │
+│ ╭─ Term ─────────────────╮ │
+│ │ Field: stocks(numeric) │ │
+│ │ Value: 30              │ │
+│ ╰────────────────────────╯ │
 │ Projections: pid, nickname │
-│ Column Filter: stocks = 30 │
-│ ~2 rows                    │
+│ ~1 row                     │
 ╰────────────────────────────╯
 
 statement ok
@@ -1376,9 +1387,9 @@ query
 EXPLAIN SELECT * FROM babsky_from_idx_val_idx;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────────╮
-│ Table: babsky_from_idx_val_idx │
-│ Type: Sequential Scan          │
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: babsky_from_idx_val_idx │
+│ Lookup: search                 │
 │ Projections: pid, val, tag     │
 │ ~3 rows                        │
 ╰────────────────────────────────╯
@@ -3329,23 +3340,25 @@ EXPLAIN SELECT pid FROM mbkkt_or_suffix_in
   WHERE (a=10 AND b=20 AND c=30 AND d=40 AND e=50) OR e IN (100, 500);
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────────╮
-│ Projections: #5                                                                            │
-│ ~1 row                                                                                     │
-╰──────────────────────────────────────────────┬─────────────────────────────────────────────╯
-╭─ FILTER ─────────────────────────────────────┴─────────────────────────────────────────────╮
-│ Expression:                                                                                │
-│ ((e = 100) OR (e = 500)) OR ((a = 10) AND (b = 20) AND (c = 30) AND (d = 40) AND (e = 50)) │
-│ ~1 row                                                                                     │
-╰──────────────────────────────────────────────┬─────────────────────────────────────────────╯
-╭─ SEQ_SCAN ───────────────────────────────────┴─────────────────────────────────────────────╮
-│ Table: mbkkt_or_suffix_in                                                                  │
-│ Type: Sequential Scan                                                                      │
-│ Projections: a, b, c, d, e, pid                                                            │
-│ Column Filter:                                                                             │
-│ (e = 50) OR (e IN (100, 500))                                                              │
-│ ~2 rows                                                                                    │
-╰────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Table: mbkkt_or_suffix_in                                                                                                                                │
+│ Index Filter:                                                                                                                                            │
+│ ╭─ And ─────────────╮                                                                                                                                    │
+│ ╰─────────┬─────────╯                                                                                                                                    │
+│           ├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮            │
+│ ╭─ Or ────┴─────────╮                                                                                                           ╭─ Or ──────┴──────────╮ │
+│ ╰─────────┬─────────╯                                                                                                           ╰───────────┬──────────╯ │
+│           ├──────────────────────╮                                                                                              ╭─ Terms ───┴──────────╮ │
+│ ╭─ Terms ─┴─────────╮  ╭─ And ───┴─────────╮                                                                                    │ Field: e(numeric)    │ │
+│ │ Field: e(numeric) │  ╰─────────┬─────────╯                                                                                    │ Values: 50, 100, 500 │ │
+│ │ Values: 100, 500  │            ├──────────────────────┬──────────────────────┬──────────────────────┬──────────────────────╮  ╰──────────────────────╯ │
+│ ╰───────────────────╯  ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮                 │
+│                        │ Field: a(numeric) │  │ Field: b(numeric) │  │ Field: c(numeric) │  │ Field: d(numeric) │  │ Field: e(numeric) │                 │
+│                        │ Values: 10        │  │ Values: 20        │  │ Values: 30        │  │ Values: 40        │  │ Values: 50        │                 │
+│                        ╰───────────────────╯  ╰───────────────────╯  ╰───────────────────╯  ╰───────────────────╯  ╰───────────────────╯                 │
+│ Projections: pid                                                                                                                                         │
+│ ~2 rows                                                                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 # Positive case: OR where *every* branch constrains the leading column IS
 # still extractable -- the sweep produces disjoint prefix ranges that the
@@ -3366,23 +3379,25 @@ EXPLAIN SELECT pid FROM mbkkt_or_suffix_in
   WHERE a IN (10, 12) OR (a = 14 AND b = 24);
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────────────────╮
-│ Projections: #2                                   │
-│ ~1 row                                            │
-╰─────────────────────────┬─────────────────────────╯
-╭─ FILTER ────────────────┴─────────────────────────╮
-│ Expression:                                       │
-│ ((a = 10) OR (a = 12)) OR ((a = 14) AND (b = 24)) │
-│ ~1 row                                            │
-╰─────────────────────────┬─────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴─────────────────────────╮
-│ Table: mbkkt_or_suffix_in                         │
-│ Type: Sequential Scan                             │
-│ Projections: a, b, pid                            │
-│ Column Filter:                                    │
-│ (a IN (10, 12)) OR (a = 14)                       │
-│ ~2 rows                                           │
-╰───────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
+│ Table: mbkkt_or_suffix_in                                                         │
+│ Index Filter:                                                                     │
+│ ╭─ And ─────────────╮                                                             │
+│ ╰─────────┬─────────╯                                                             │
+│           ├───────────────────────────────────────────────────────────╮           │
+│ ╭─ Or ────┴─────────╮                                      ╭─ Or ─────┴─────────╮ │
+│ ╰─────────┬─────────╯                                      ╰──────────┬─────────╯ │
+│           ├──────────────────────╮                         ╭─ Terms ──┴─────────╮ │
+│ ╭─ Terms ─┴─────────╮  ╭─ And ───┴─────────╮               │ Field: a(numeric)  │ │
+│ │ Field: a(numeric) │  ╰─────────┬─────────╯               │ Values: 10, 12, 14 │ │
+│ │ Values: 10, 12    │            ├──────────────────────╮  ╰────────────────────╯ │
+│ ╰───────────────────╯  ╭─ Terms ─┴─────────╮  ╭─ Terms ─┴─────────╮               │
+│                        │ Field: a(numeric) │  │ Field: b(numeric) │               │
+│                        │ Values: 14        │  │ Values: 24        │               │
+│                        ╰───────────────────╯  ╰───────────────────╯               │
+│ Projections: pid                                                                  │
+│ ~2 rows                                                                           │
+╰───────────────────────────────────────────────────────────────────────────────────╯
 
 statement ok
 DROP TABLE mbkkt_or_suffix_in;

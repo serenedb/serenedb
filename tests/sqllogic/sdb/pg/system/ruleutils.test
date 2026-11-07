@@ -94,7 +94,8 @@ INSERT INTO rs.t (id, a, b, c) VALUES (1, 1, 1, 'x');
 statement error
 INSERT INTO rs.t (id, a, b, c) VALUES (2, 2, 1, 'y');
 ----
-db error: ERROR: Duplicate key "b: 1" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "t_incl"
+DETAIL: Key (b)=(1) already exists.
 
 
 query

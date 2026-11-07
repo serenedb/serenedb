@@ -57,7 +57,7 @@ statement error
 CREATE INDEX otel_probe_idx ON otel_probe USING inverted (a) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ----
 db error: ERROR: optimize_top_k is a table option
-HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
 
 
 statement ok

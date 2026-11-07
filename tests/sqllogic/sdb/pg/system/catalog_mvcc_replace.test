@@ -787,7 +787,7 @@ connection s2
 statement error
 INSERT INTO cmr_t VALUES (11)
 ----
-db error: ERROR: Failed to commit: Attempting to modify table "cmr_t" but another transaction has no changes this table
+db error: ERROR: Attempting to write to table cmr_t but another transaction is dropping it
 
 
 connection s2
@@ -860,7 +860,7 @@ connection s2
 statement error
 COMMIT
 ----
-db error: ERROR: Failed to commit: Transaction conflict: attempting to insert into table "cmr_t" but it has been dropped by a different transaction
+db error: ERROR: Attempting to write to table cmr_t but another transaction dropped it
 
 
 connection s2
@@ -894,7 +894,7 @@ connection s2
 statement error
 COMMIT
 ----
-db error: ERROR: Failed to commit: Attempting to modify table "cmr_t" but another transaction has dropped this table
+db error: ERROR: Attempting to write to table cmr_t but another transaction dropped it
 
 
 statement ok
@@ -920,7 +920,7 @@ connection s2
 statement error
 COMMIT
 ----
-db error: ERROR: Failed to commit: Attempting to modify table "cmr_t" but another transaction has dropped this table
+db error: ERROR: Attempting to write to table cmr_t but another transaction dropped it
 
 
 connection s2
@@ -951,14 +951,16 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_t(i INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+db error: ERROR: search table "cmr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
 statement error
 DROP TABLE cmr_t
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+db error: ERROR: search table "cmr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
@@ -977,14 +979,16 @@ connection s2
 statement error
 ALTER TABLE cmr_t ADD COLUMN z INTEGER
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+db error: ERROR: search table "cmr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
 statement error
 ALTER TABLE cmr_t RENAME TO cmr_t_other
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+db error: ERROR: search table "cmr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
@@ -1034,7 +1038,8 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+db error: ERROR: search table "cmr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
@@ -1056,7 +1061,8 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+db error: ERROR: search table "cmr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
@@ -1086,7 +1092,8 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+db error: ERROR: search table "cmr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
@@ -1475,7 +1482,8 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_s(f INTEGER) WITH (compaction_interval = 0)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_s"
+db error: ERROR: search table "cmr_s" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 # The search table depends on its schema.
@@ -1483,7 +1491,8 @@ connection s2
 statement error
 DROP TABLE cmr_s
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_s"
+db error: ERROR: search table "cmr_s" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
@@ -1618,7 +1627,8 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (compaction_interval = 0)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sr"
+db error: ERROR: search table "cmr_sr" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
@@ -1640,7 +1650,8 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (compaction_interval = 0)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sr"
+db error: ERROR: search table "cmr_sr" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s2
@@ -4166,7 +4177,7 @@ connection s2
 statement error
 DROP TRIGGER cmr_tr3 ON cmr_tt
 ----
-db error: ERROR: Trigger with name "cmr_tr3" does not exist on table "cmr_tt"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_tr3"
 
 
 connection s2

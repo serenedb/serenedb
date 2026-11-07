@@ -31,7 +31,8 @@ connection s2
 statement error
 ALTER TABLE ccr_t RENAME TO ccr_t2
 ----
-db error: ERROR: Catalog write-write conflict on alter with "ccr_t"
+db error: ERROR: search table "ccr_t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 # The refusal ended the statement, not the connection.

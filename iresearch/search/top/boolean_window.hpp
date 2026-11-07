@@ -53,25 +53,34 @@ class BooleanWindow
   using Clauses::kOptional;
   static constexpr bool kTally = kOptional && irs::detail::Tallies<Optional>();
   static constexpr bool kScoredLead = kLead && kOptional;
+  static constexpr bool kConstant = kLead && !kOptional;
   static_assert(kLead || kOptional);
   static_assert(!kTally || !kExcludes);
   static_assert(!kScoredLead || (!kTally && !kExcludes));
 
   template<typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
-  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
-                OptionalArgs&& optional, ExcludesArgs&& excludes,
-                ScoreMergeType merge, score_t absorbed)
+  BooleanWindow(Table table, bool prune, std::piecewise_construct_t,
+                LeadArgs&& lead, OptionalArgs&& optional,
+                ExcludesArgs&& excludes, ScoreMergeType merge, score_t absorbed)
     : Clauses{std::piecewise_construct, std::forward<LeadArgs>(lead),
               std::tuple<>{}, std::forward<OptionalArgs>(optional),
               std::forward<ExcludesArgs>(excludes)},
       _score{merge, absorbed},
-      _admit{table} {}
+      _admit{table},
+      _constant{merge == ScoreMergeType::Max ? std::max(score_t{0}, absorbed)
+                                             : absorbed},
+      _prune{prune} {}
 
   void Run(doc_id_t begin, doc_id_t end, LoserScoreCollector& collector) final {
     doc_id_t next = begin;
     for (;;) {
       if (!_admit.Skip(next) || next >= end) {
         break;
+      }
+      if constexpr (kConstant) {
+        if (_prune && !collector.Admits(_constant)) {
+          break;
+        }
       }
       const auto min = next;
       const auto max = std::min<doc_id_t>(min + irs::detail::kWindowDocs, end);
@@ -108,6 +117,8 @@ class BooleanWindow
   ABSL_CACHELINE_ALIGNED score_t _window[irs::detail::kWindowDocs]{};
   irs::detail::RootWindowScore _score;
   [[no_unique_address]] Admit<Table> _admit;
+  [[no_unique_address]] utils::Need<kConstant, score_t> _constant;
+  bool _prune;
 };
 
 }  // namespace irs::top

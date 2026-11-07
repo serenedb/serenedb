@@ -58,7 +58,7 @@ struct Family {
 
   template<typename Node, typename... Args>
   static Result Constant(const Context& ctx, score_t value, Args&&... args) {
-    return MakeShape<ConstantWalk, Node>(ctx, value,
+    return MakeShape<ConstantWalk, Node>(ctx, ctx.prune, value,
                                          std::forward<Args>(args)...);
   }
 
@@ -84,7 +84,7 @@ struct Family {
                            ExcludesArgs&& excludes) {
     static_assert(std::is_same_v<Others, utils::Empty>);
     return MakeShape<BooleanWindow, Lead, Optional, Excludes>(
-      ctx, std::piecewise_construct, std::forward<LeadArgs>(lead),
+      ctx, ctx.prune, std::piecewise_construct, std::forward<LeadArgs>(lead),
       std::forward<OptionalArgs>(optional),
       std::forward<ExcludesArgs>(excludes), merge, score.absorbed);
   }

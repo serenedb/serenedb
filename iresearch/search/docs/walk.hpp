@@ -35,13 +35,7 @@ class Walk : public Root {
   explicit Walk(Args&&... args) : _node{std::forward<Args>(args)...} {}
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
-    uint32_t n = 0;
-    auto doc = lead::SeekBelow(_node, min, max);
-    while (doc < max) {
-      out[n++] = doc;
-      doc = lead::NextBelow(_node, max);
-    }
-    return n;
+    return lead::GatherAll(_node, min, max, out);
   }
 
  private:

@@ -46,8 +46,8 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
   if (const auto value = irs::detail::ConstantOf(segment, own, args)) {
     return lead::ResolvePostingDocs<Root::ptr>(
       posting, [&]<typename Leaf>(auto&&... rest) -> Root::ptr {
-        return MakeShape<ConstantWalk, Leaf>(
-          ctx, *value, std::forward<decltype(rest)>(rest)...);
+        return Constant<Leaf>(ctx, *value,
+                              std::forward<decltype(rest)>(rest)...);
       });
   }
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {

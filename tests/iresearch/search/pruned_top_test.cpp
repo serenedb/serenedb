@@ -732,6 +732,15 @@ TEST_P(PrunedTopTest, nested_groups_score_as_their_parts) {
   }
 }
 
+TEST_P(PrunedTopTest, constant_roots_rank_like_the_exhaustive_plan) {
+  Build();
+  CheckRanking(irs::All{});
+  irs::BooleanFilter filter;
+  filter.Add(std::make_unique<irs::All>(), irs::Occur::Must);
+  filter.Add(Clause("dense"), irs::Occur::MustNot);
+  CheckRanking(filter);
+}
+
 TEST_P(PrunedTopTest, prefix_exclusions) {
   Build();
   for (const auto& shape : std::vector<Shape>{

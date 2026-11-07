@@ -473,9 +473,6 @@ bool RowGroupDead(const irs::ColumnReader& reader,
                   const duckdb::ExpressionFilter& filter,
                   duckdb::TableFilterState& state, irs::BlockWindow& window,
                   uint64_t begin, uint64_t end) {
-  if (end > reader.RowCount()) {
-    return false;
-  }
   for (auto row = begin; row < end; row = window.end) {
     window = reader.Locate(row, window);
     if (!irs::ZoneDead(filter.CheckStatistics(
@@ -509,15 +506,17 @@ RowGroupChecks MakeChecks(const LivePass& pass,
                           irs::ColFilterStateCache& states) {
   RowGroupChecks checks;
   for (const auto& spec : pass.specs) {
-    if (spec.is_score || spec.row_gather || !spec.row_fields.empty()) {
+    if (spec.is_score || spec.row_gather) {
       continue;
     }
+    SDB_ASSERT(spec.row_fields.empty());
     const auto* column = pass.col_reader->Column(spec.field);
     SDB_ASSERT(column);
     const auto* reader = irs::FilteredColumn(*column, spec);
     if (!reader || reader->Type().IsNested()) {
       continue;
     }
+    SDB_ASSERT(reader->RowCount() == pass.rows);
     checks.emplace_back(reader, &spec.filter->Cast<duckdb::ExpressionFilter>(),
                         &states.State(*pass.context, *spec.filter));
   }
@@ -694,20 +693,17 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       if (!ordered && !g.col_filters.empty() && threads > 1 &&
           work.rg_count > threads) {
         ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
-        if (cls.segment_dead) {
-          work.claims = {{}, {.rg = work.rg_count}};
-        } else {
-          LivePass pass{.work = &work,
-                        .col_reader = sub.GetColReader(),
-                        .specs = cls.active,
-                        .context = &context,
-                        .rows = docs,
-                        .rg_size = g.rg_size};
-          SDB_ASSERT(pass.col_reader);
-          if (SampleRuledOut(pass, states)) {
-            pass.live.reset(work.rg_count);
-            passes.push_back(std::move(pass));
-          }
+        SDB_ASSERT(!cls.segment_dead);
+        LivePass pass{.work = &work,
+                      .col_reader = sub.GetColReader(),
+                      .specs = cls.active,
+                      .context = &context,
+                      .rows = docs,
+                      .rg_size = g.rg_size};
+        SDB_ASSERT(pass.col_reader);
+        if (SampleRuledOut(pass, states)) {
+          pass.live.reset(work.rg_count);
+          passes.push_back(std::move(pass));
         }
       }
     }

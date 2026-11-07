@@ -460,8 +460,7 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
 bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                      ScanLocalState& l);
 
-std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t live_count,
-                                 uint32_t threads);
+std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads);
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);

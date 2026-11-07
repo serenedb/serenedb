@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
@@ -464,6 +465,9 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
 }
 
 constexpr uint32_t kLiveSamples = 16;
+constexpr uint64_t kParallelLiveRowGroups = 1024;
+constexpr uint64_t kLiveSlicesPerThread = 2;
+constexpr uint64_t kMinLiveSlice = 256;
 
 bool RowGroupDead(const irs::ColumnReader& reader,
                   const duckdb::ExpressionFilter& filter,
@@ -489,60 +493,121 @@ struct RowGroupCheck {
   mutable irs::BlockWindow window;
 };
 
-void LiveRowGroups(const irs::ColReader& col_reader,
-                   std::span<const irs::ColFilterSpec> specs,
-                   duckdb::ClientContext& context,
-                   irs::ColFilterStateCache& states, uint64_t rows,
-                   uint64_t rg_size, uint32_t threads, SegmentWork& work) {
-  absl::InlinedVector<RowGroupCheck, 4> checks;
-  for (const auto& spec : specs) {
+using RowGroupChecks = absl::InlinedVector<RowGroupCheck, 4>;
+
+struct LivePass {
+  SegmentWork* work;
+  const irs::ColReader* col_reader;
+  std::vector<irs::ColFilterSpec> specs;
+  duckdb::ClientContext* context;
+  uint64_t rows;
+  uint64_t rg_size;
+  irs::bitset live;
+};
+
+RowGroupChecks MakeChecks(const LivePass& pass,
+                          irs::ColFilterStateCache& states) {
+  RowGroupChecks checks;
+  for (const auto& spec : pass.specs) {
     if (spec.is_score || spec.row_gather || !spec.row_fields.empty()) {
       continue;
     }
-    const auto* column = col_reader.Column(spec.field);
+    const auto* column = pass.col_reader->Column(spec.field);
     SDB_ASSERT(column);
     const auto* reader = irs::FilteredColumn(*column, spec);
     if (!reader || reader->Type().IsNested()) {
       continue;
     }
     checks.emplace_back(reader, &spec.filter->Cast<duckdb::ExpressionFilter>(),
-                        &states.State(context, *spec.filter));
+                        &states.State(*pass.context, *spec.filter));
   }
-  if (checks.empty()) {
-    return;
-  }
-  const auto live = [&](uint32_t rg) {
-    const auto begin = uint64_t{rg} * rg_size;
-    const auto end = std::min(rows, begin + rg_size);
-    return absl::c_none_of(checks, [&](const RowGroupCheck& c) {
-      return RowGroupDead(*c.reader, *c.filter, *c.state, c.window, begin, end);
-    });
-  };
-  const auto samples = std::min(kLiveSamples, work.rg_count);
-  bool pruned = false;
-  for (uint32_t i = 0; i != samples && !pruned; ++i) {
-    pruned = !live(static_cast<uint32_t>((uint64_t{2} * i + 1) * work.rg_count /
-                                         (uint64_t{2} * samples)));
-  }
-  if (!pruned) {
-    return;
-  }
-  irs::bitset live_rgs{work.rg_count};
-  uint32_t live_count = 0;
-  for (uint32_t rg = 0; rg != work.rg_count; ++rg) {
-    if (live(rg)) {
-      live_rgs.set(rg);
-      ++live_count;
+  return checks;
+}
+
+bool RowGroupLive(const LivePass& pass, const RowGroupChecks& checks,
+                  uint32_t rg) {
+  const auto begin = uint64_t{rg} * pass.rg_size;
+  const auto end = std::min(pass.rows, begin + pass.rg_size);
+  return absl::c_none_of(checks, [&](const RowGroupCheck& c) {
+    return RowGroupDead(*c.reader, *c.filter, *c.state, c.window, begin, end);
+  });
+}
+
+void MarkLive(LivePass& pass, const RowGroupChecks& checks, uint32_t begin,
+              uint32_t end) {
+  for (auto rg = begin; rg != end; ++rg) {
+    if (RowGroupLive(pass, checks, rg)) {
+      pass.live.set(rg);
     }
   }
-  work.claims = CutClaims(live_rgs, live_count, threads);
+}
+
+bool SampleRuledOut(const LivePass& pass, irs::ColFilterStateCache& states) {
+  const auto checks = MakeChecks(pass, states);
+  if (checks.empty()) {
+    return false;
+  }
+  const auto rg_count = pass.work->rg_count;
+  const auto samples = std::min(kLiveSamples, rg_count);
+  for (uint32_t i = 0; i != samples; ++i) {
+    if (!RowGroupLive(pass, checks,
+                      static_cast<uint32_t>((uint64_t{2} * i + 1) * rg_count /
+                                            (uint64_t{2} * samples)))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+struct LiveSlice final : duckdb::BaseExecutorTask {
+  LiveSlice(duckdb::TaskExecutor& executor, LivePass& pass, uint32_t begin,
+            uint32_t end)
+    : BaseExecutorTask{executor}, pass{pass}, begin{begin}, end{end} {}
+
+  void ExecuteTask() final {
+    irs::ColFilterStateCache states;
+    MarkLive(pass, MakeChecks(pass, states), begin, end);
+  }
+
+  LivePass& pass;
+  uint32_t begin;
+  uint32_t end;
+};
+
+void MarkLiveRowGroups(std::span<LivePass> passes,
+                       irs::ColFilterStateCache& states,
+                       duckdb::ClientContext& context, uint64_t threads) {
+  uint64_t total = 0;
+  for (const auto& pass : passes) {
+    total += pass.work->rg_count;
+  }
+  if (total < kParallelLiveRowGroups) {
+    for (auto& pass : passes) {
+      MarkLive(pass, MakeChecks(pass, states), 0, pass.work->rg_count);
+    }
+    return;
+  }
+  constexpr uint64_t kWord = irs::BitsRequired<irs::bitset::word_t>();
+  const auto per = (total + kLiveSlicesPerThread * threads - 1) /
+                   (kLiveSlicesPerThread * threads);
+  const auto slice = static_cast<uint32_t>(
+    (std::max(per, kMinLiveSlice) + kWord - 1) / kWord * kWord);
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                context.GetSchedulerAccount()};
+  for (auto& pass : passes) {
+    const auto rg_count = pass.work->rg_count;
+    for (uint32_t begin = 0; begin < rg_count; begin += slice) {
+      executor.ScheduleTask(duckdb::make_uniq<LiveSlice>(
+        executor, pass, begin, std::min(rg_count, begin + slice)));
+    }
+  }
+  executor.WorkOnTasks();
 }
 
 }  // namespace
 
-std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t live_count,
-                                 uint32_t threads) {
-  SDB_ASSERT(live.count() == live_count);
+std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads) {
+  const auto live_count = static_cast<uint32_t>(live.count());
   const auto step = [&](uint32_t claimed) {
     return claimed + std::max<uint32_t>(1, (live_count - claimed) / threads);
   };
@@ -608,6 +673,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
                               ConstantCount(*where);
   irs::ColFilterStateCache states;
   irs::ColFilterClassification cls;
+  std::vector<LivePass> passes;
   uint64_t parallel = 0;
   uint64_t rgs = 0;
   auto run_end = g.live_segments;
@@ -631,16 +697,33 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
         if (cls.segment_dead) {
           work.claims = {{}, {.rg = work.rg_count}};
         } else {
-          const auto* col_reader = sub.GetColReader();
-          SDB_ASSERT(col_reader);
-          LiveRowGroups(*col_reader, cls.active, context, states, docs,
-                        g.rg_size, static_cast<uint32_t>(threads), work);
+          LivePass pass{.work = &work,
+                        .col_reader = sub.GetColReader(),
+                        .specs = cls.active,
+                        .context = &context,
+                        .rows = docs,
+                        .rg_size = g.rg_size};
+          SDB_ASSERT(pass.col_reader);
+          if (SampleRuledOut(pass, states)) {
+            pass.live.reset(work.rg_count);
+            passes.push_back(std::move(pass));
+          }
         }
       }
     }
     work.run_end = run_end;
-    parallel += split ? std::max<uint32_t>(1, work.LiveCount()) : 1;
     rgs += work.rg_count;
+  }
+  MarkLiveRowGroups(passes, states, context, threads);
+  for (const auto& pass : passes) {
+    pass.work->claims = CutClaims(pass.live, static_cast<uint32_t>(threads));
+  }
+  for (uint32_t i = 0; i != g.live_segments; ++i) {
+    const auto& work = g.Segment(g.segment_order[i]);
+    parallel +=
+      work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit
+        ? std::max<uint32_t>(1, work.LiveCount())
+        : 1;
   }
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);

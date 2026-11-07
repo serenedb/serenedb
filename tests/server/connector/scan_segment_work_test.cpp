@@ -37,7 +37,7 @@ std::vector<LiveClaim> CheckClaims(uint32_t rg_count,
     bits.set(rg);
   }
   const auto count = static_cast<uint32_t>(live.size());
-  auto claims = CutClaims(bits, count, threads);
+  auto claims = CutClaims(bits, threads);
   EXPECT_GE(claims.size(), 2u);
   EXPECT_EQ(claims.front().rg, 0u);
   EXPECT_EQ(claims.front().live, 0u);

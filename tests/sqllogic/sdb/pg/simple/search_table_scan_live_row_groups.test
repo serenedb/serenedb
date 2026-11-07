@@ -267,3 +267,84 @@ DROP TABLE slr;
 
 statement ok
 DROP TABLE slr_d;
+
+
+statement ok
+CREATE TABLE slp (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO slp SELECT i, i // 2048, i % 7 FROM range(1310720) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slp;
+
+
+statement ok
+INSERT INTO slp SELECT i, i // 2048, i % 7 FROM range(1310720, 2621440) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slp;
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
+FROM sdb_metrics WHERE relation_id = 'slp'::regclass;
+----
+segments	docs
+2	2621440
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slp_two.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slp WHERE k IN (7, 900);
+----
+n	s
+4096	12284
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slp_two.json');
+----
+row_groups_scanned
+2
+
+
+query
+SELECT id FROM slp WHERE k = 900 ORDER BY id LIMIT 3;
+----
+id
+1843200
+1843201
+1843202
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP TABLE slp;

@@ -509,7 +509,7 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   }
   const auto& options = info.Base().options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
-  if (!search && !info.Base().sort_orders.empty()) {
+  if (!search && !info.Base().sort_keys.empty()) {
     return duckdb::ErrorData{duckdb::NotImplementedException(
       "SORTED BY is supported only for search tables")};
   }

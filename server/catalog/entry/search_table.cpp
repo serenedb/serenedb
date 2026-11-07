@@ -351,7 +351,7 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
-  _sort_keys = ResolveSortKeys(_columns, base.sort_orders);
+  _sort_keys = ResolveSortKeys(_columns, base.sort_keys);
   if (!_storage) {
     const auto& database = catalog.Cast<SereneDBCatalog>();
     _storage = std::make_shared<search::Store>(
@@ -638,7 +638,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       options.insert_or_assign(name, OptionConstant(value));
     }
   }
-  create.sort_orders = SortOrdersOf(_sort_keys, GetColumns());
+  create.sort_keys = SortOrdersOf(_sort_keys, GetColumns());
   return info;
 }
 
@@ -746,7 +746,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
       auto& table = create->Cast<duckdb::CreateTableInfo>();
       duckdb::TableCatalogEntry::RenameColumn(table.columns, table.constraints,
                                               rename);
-      table.sort_orders = SortOrdersOf(_sort_keys, table.columns);
+      table.sort_keys = SortOrdersOf(_sort_keys, table.columns);
       auto result = Rebuilt(context, info, std::move(create));
       RenameTriggerColumns(context, rename);
       return result;

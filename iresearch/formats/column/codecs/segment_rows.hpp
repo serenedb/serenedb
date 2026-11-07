@@ -117,6 +117,17 @@ struct SegmentEntries {
   uint64_t row_count = 0;
 };
 
+struct SortScratch {
+  struct Key {
+    uint64_t prefix;
+    uint32_t entry;
+  };
+
+  std::vector<Key> order;
+  std::vector<uint32_t> remap;
+  std::vector<duckdb::string_t> sorted;
+};
+
 inline size_t EntryCount(const SegmentEntries& rows) noexcept {
   return rows.entries.size() + rows.first_entry;
 }
@@ -250,7 +261,11 @@ class SegmentRows {
     };
   }
 
-  void Sort();
+  Shape SegmentShape() const noexcept { return _shape; }
+
+  const NumericTuning& CodesTuning() const noexcept { return _codes_tuning; }
+
+  void Sort(SortScratch& scratch);
 
   std::span<uint32_t> Lengths() {
     SDB_ASSERT(_rows != 0);
@@ -263,11 +278,6 @@ class SegmentRows {
   void Write(const EncodedFrames& frames, Segment& out);
 
  private:
-  struct SortKey {
-    uint64_t prefix;
-    uint32_t entry;
-  };
-
   uint32_t FirstEntry() const noexcept {
     return _shape == Shape::Dedup ? 1 : 0;
   }
@@ -311,10 +321,6 @@ class SegmentRows {
   uint32_t _max_len = 0;
   uint64_t _nulls = 0;
   uint64_t _input = 0;
-
-  std::vector<SortKey> _order;
-  std::vector<uint32_t> _remap;
-  std::vector<duckdb::string_t> _sorted;
   std::vector<uint32_t> _lengths;
 };
 

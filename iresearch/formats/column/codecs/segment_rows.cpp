@@ -94,31 +94,35 @@ uint64_t SegmentRows::Estimate() const noexcept {
          CodesBytes(_shape, _rows, _entries.size(), _runs, _codes_tuning);
 }
 
-void SegmentRows::Sort() {
+void SegmentRows::Sort(SortScratch& scratch) {
   const auto n = static_cast<uint32_t>(_entries.size());
   uint32_t common = _entries.empty() ? 0 : _entries[0].GetSize();
   for (uint32_t i = 1; i < n && common != 0; ++i) {
     common = std::min(common, CommonPrefix(_entries[0], _entries[i]));
   }
-  _order.resize(n);
+  auto& order = scratch.order;
+  order.resize(n);
   for (uint32_t i = 0; i < n; ++i) {
-    _order[i] = {PrefixKey(_entries[i], common), i};
+    order[i] = {PrefixKey(_entries[i], common), i};
   }
-  absl::c_sort(_order, [&](const SortKey& a, const SortKey& b) {
-    if (a.prefix != b.prefix) {
-      return a.prefix < b.prefix;
-    }
-    return Less(_entries[a.entry], _entries[b.entry]);
-  });
-  _remap.assign(n + 1, 0);
-  _sorted.resize(n);
+  absl::c_sort(order,
+               [&](const SortScratch::Key& a, const SortScratch::Key& b) {
+                 if (a.prefix != b.prefix) {
+                   return a.prefix < b.prefix;
+                 }
+                 return Less(_entries[a.entry], _entries[b.entry]);
+               });
+  auto& remap = scratch.remap;
+  auto& sorted = scratch.sorted;
+  remap.assign(n + 1, 0);
+  sorted.resize(n);
   for (uint32_t pos = 0; pos < n; ++pos) {
-    _remap[_order[pos].entry + 1] = pos + 1;
-    _sorted[pos] = _entries[_order[pos].entry];
+    remap[order[pos].entry + 1] = pos + 1;
+    sorted[pos] = _entries[order[pos].entry];
   }
-  _entries.swap(_sorted);
+  _entries.swap(sorted);
   for (auto& code : _codes) {
-    code = _remap[code];
+    code = remap[code];
   }
 }
 

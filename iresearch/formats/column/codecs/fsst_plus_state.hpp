@@ -47,7 +47,6 @@ class FsstPlusState {
   void Begin(const Config& config, uint64_t first_row, size_t distinct,
              Segment& out) {
     _rows.Begin(config, first_row, distinct);
-    _shape = config.choice.shape;
     _out = &out;
     out.bytes.Truncate(0);
   }
@@ -66,8 +65,9 @@ class FsstPlusState {
   IRS_FORCE_INLINE bool Full(uint32_t target) {
     return _rows.EstimateDue(target) &&
            _rows.Estimate() +
-               EstimateEntries(_rows.View(),
-                               _history[static_cast<size_t>(_shape)]) >=
+               EstimateEntries(
+                 _rows.View(),
+                 _history[static_cast<size_t>(_rows.SegmentShape())]) >=
              target;
   }
 
@@ -90,9 +90,9 @@ class FsstPlusState {
   void Cleave(uint32_t first_entry);
 
   SegmentRows _rows;
+  SortScratch _sort;
   RatioHistory* _history;
   uint32_t _target;
-  Shape _shape = Shape::Dedup;
   FsstEncoder _codec;
   Segment* _out = nullptr;
   std::vector<FrameMeta> _frames;

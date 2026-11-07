@@ -85,14 +85,12 @@ class BlobState {
   BlobState(const duckdb::LogicalType& type, DedupScratch& dedup,
             StringTuning& tuning, TrainedDictionaries& dictionaries)
     : _rows{type, dedup, tuning.codes},
-      _tuning{tuning},
       _dictionaries{dictionaries},
       _history{tuning.history[static_cast<size_t>(kCodec)]} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct,
              Segment& out) {
     _rows.Begin(config, first_row, distinct);
-    _shape = config.choice.shape;
     Configure(config.level, config.layout);
     _frame.clear();
     _out = &out;
@@ -124,7 +122,7 @@ class BlobState {
     Close();
     if (_layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames) {
       Sizes();
-      _trained = Train(rows.first_row, rows.row_count, _shape);
+      _trained = Train(rows.first_row, rows.row_count, _rows.SegmentShape());
     }
     CompressRest();
     if (_trained && !Pays()) {
@@ -197,7 +195,8 @@ class BlobState {
     Header h;
     return LayOut(
       h, data, _spans.size(), Packed(entry_count, p.max_len), 0,
-      CodesBytes(p.shape, p.rows, p.codes.size(), p.runs, _tuning.codes), 0);
+      CodesBytes(p.shape, p.rows, p.codes.size(), p.runs, _rows.CodesTuning()),
+      0);
   }
 
  private:
@@ -230,7 +229,7 @@ class BlobState {
               : 0) +
            static_cast<uint64_t>(
              static_cast<double>(raw - _packed) *
-             Ratio(_history[static_cast<size_t>(_shape)], 1.0));
+             Ratio(_history[static_cast<size_t>(_rows.SegmentShape())], 1.0));
   }
 
   bool Train(uint64_t first_row, uint64_t rows, Shape shape) {
@@ -244,7 +243,7 @@ class BlobState {
   }
 
   RatioHistory& History() noexcept {
-    return _history[static_cast<size_t>(_shape)];
+    return _history[static_cast<size_t>(_rows.SegmentShape())];
   }
 
   void Configure(uint8_t level, FrameLayout layout) {
@@ -459,14 +458,12 @@ class BlobState {
   }
 
   SegmentRows _rows;
-  const StringTuning& _tuning;
   TrainedDictionaries& _dictionaries;
   RatioHistory* _history;
   std::optional<typename Codec::Compressor> _codec;
   std::optional<typename Codec::Compressor> _probe;
   uint8_t _level = 0;
   uint8_t _probe_level = 0;
-  Shape _shape = Shape::Dedup;
   FrameLayout _layout = FrameLayout::FirstFrame;
   FrameShape _frame_shape{kFrameRawBytes, 0};
   bool _trained = false;

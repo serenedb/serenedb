@@ -34,8 +34,8 @@ constexpr uint64_t kEncodeSlack = 8;
 }  // namespace
 
 void FsstState::Finish() {
-  if (_shape == Shape::Dedup) {
-    _rows.Sort();
+  if (_rows.SegmentShape() == Shape::Dedup) {
+    _rows.Sort(_sort);
   }
   const auto lengths = _rows.Lengths();
   const auto rows = _rows.View();
@@ -105,7 +105,7 @@ void FsstState::Finish() {
     duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
     0);
   const auto symtab = _codec.SymbolTable();
-  RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
+  RecordRatio(_history[static_cast<size_t>(_rows.SegmentShape())], rows.raw,
               data.Size() + symtab.size(), _target);
   _rows.Write(
     {

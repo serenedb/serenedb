@@ -174,7 +174,6 @@ uint64_t SegmentEncoder::Price(const Config& config,
 void SegmentEncoder::Retrain() noexcept {
   RetrainState(_states.fsst);
   RetrainState(_states.fsst_plus);
-  RetrainState(_states.onpair);
   RetrainState(_states.fsst12);
 }
 

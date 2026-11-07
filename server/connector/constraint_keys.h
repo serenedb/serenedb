@@ -63,7 +63,8 @@ class ConstraintKeyEncoder {
 };
 
 // The key's values as PostgreSQL shows them in a DETAIL: `(a, b)=(1, x)`.
-std::string ConstraintKeyText(std::string_view key,
+std::string ConstraintKeyText(duckdb::ClientContext& context,
+                              std::string_view key,
                               std::span<const std::string> names,
                               std::span<const duckdb::LogicalType> types);
 

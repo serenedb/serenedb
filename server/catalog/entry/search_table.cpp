@@ -1587,10 +1587,12 @@ void SearchTableEntry::AdoptAsWritten(duckdb::ClientContext& context) const {
 void SearchTableEntry::VerifyKey(duckdb::ClientContext& context,
                                  const search::KeySpec& spec) const {
   if (spec.kind == search::KeyKind::Reference) {
-    SessionOf(context, catalog).SearchTxn().VerifyReferences(*this, spec);
+    SessionOf(context, catalog)
+      .SearchTxn()
+      .VerifyReferences(context, *this, spec);
     return;
   }
-  search::VerifyUniqueKey(RowsWithOwn(context), spec);
+  search::VerifyUniqueKey(context, RowsWithOwn(context), spec);
 }
 
 void SearchTableEntry::ReplaceStoreColumnsAtCommit(

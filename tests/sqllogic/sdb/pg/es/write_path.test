@@ -49,7 +49,7 @@ SELECT length(_id) AS len FROM es.slt_es_w WHERE _id NOT IN ('a', 'b');
 len
 20
 
-statement error (?i)duplicate key .* violates primary key constraint
+statement error duplicate key value violates unique constraint "slt_es_w_pkey"
 INSERT INTO es.slt_es_w SELECT * FROM es_doc('slt_es_w', 'a', '{"n":1}');
 
 statement error (?i)failed to parse field \[n\]

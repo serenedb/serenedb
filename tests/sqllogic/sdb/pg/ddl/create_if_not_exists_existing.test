@@ -141,7 +141,7 @@ query
 SELECT indexdef FROM pg_indexes WHERE indexname = 'ine_u';
 ----
 indexdef
-CREATE UNIQUE INDEX ine_u ON public.ine_t USING secondary (id)
+CREATE UNIQUE INDEX ine_u ON public.ine_t USING inverted (id)
 
 
 # A transaction that already wrote to a search table may still skip an index

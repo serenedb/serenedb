@@ -84,7 +84,8 @@ std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
                                     duckdb::CatalogTransaction transaction);
 
 // Refuses rows of `reader` sharing unique key `spec`, as a new index on it.
-void VerifyUniqueKey(const irs::DirectoryReader& reader, const KeySpec& spec);
+void VerifyUniqueKey(duckdb::ClientContext& context,
+                     const irs::DirectoryReader& reader, const KeySpec& spec);
 
 // Whether a row is gone: deleted by a commit, or removed by the transaction
 // asking.

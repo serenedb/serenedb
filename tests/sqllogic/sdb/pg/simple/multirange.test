@@ -43,16 +43,34 @@ statement ok
 CREATE TABLE multirange_keys (m int4multirange);
 
 
-statement error
+statement ok
 CREATE INDEX multirange_keys_m ON multirange_keys (m);
+
+
+statement ok
+INSERT INTO multirange_keys VALUES ('{[1,2),[5,6)}'), ('{[2,3)}');
+
+
+query
+SELECT m FROM multirange_keys WHERE m = '{[2,3)}'::int4multirange;
 ----
-db error: ERROR: Invalid Type [int4multirange]: Invalid type for index key.
+m
+{[2,3)}
+
+
+statement ok
+CREATE TABLE multirange_unique (m datemultirange UNIQUE);
+
+
+statement ok
+INSERT INTO multirange_unique VALUES ('{[2020-01-01,2020-01-05)}');
 
 
 statement error
-CREATE TABLE multirange_unique (m datemultirange UNIQUE);
+INSERT INTO multirange_unique VALUES ('{[2020-01-01,2020-01-05)}');
 ----
-db error: ERROR: Invalid Type [datemultirange]: Invalid type for index key.
+db error: ERROR: duplicate key value violates unique constraint "multirange_unique_m_key"
+DETAIL: Key (m)=({[2020-01-01,2020-01-05)}) already exists.
 
 
 statement ok

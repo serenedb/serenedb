@@ -52,30 +52,34 @@ void ReleaseWriter(StoreWrites& w) noexcept {
   w.registration.reset();
 }
 
-[[noreturn]] void ThrowDuplicate(const KeySpec& spec, std::string_view key) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-    ERR_MSG("duplicate key value violates unique constraint \"",
-            spec.constraint, "\""),
-    ERR_DETAIL("Key ",
-               connector::ConstraintKeyText(key, spec.names, spec.types),
-               " already exists."));
+[[noreturn]] void ThrowDuplicate(duckdb::ClientContext& context,
+                                 const KeySpec& spec, std::string_view key) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+                  ERR_MSG("duplicate key value violates unique constraint \"",
+                          spec.constraint, "\""),
+                  ERR_DETAIL("Key ",
+                             connector::ConstraintKeyText(
+                               context, key, spec.names, spec.types),
+                             " already exists."));
 }
 
-[[noreturn]] void ThrowMissingReference(const catalog::SearchTableEntry& table,
+[[noreturn]] void ThrowMissingReference(duckdb::ClientContext& context,
+                                        const catalog::SearchTableEntry& table,
                                         const KeySpec& spec,
                                         std::string_view key) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FOREIGN_KEY_VIOLATION),
     ERR_MSG("insert or update on table \"", table.name.GetIdentifierName(),
             "\" violates foreign key constraint \"", spec.constraint, "\""),
-    ERR_DETAIL("Key ",
-               connector::ConstraintKeyText(key, spec.names, spec.types),
-               " is not present in table \"",
-               spec.referenced.GetIdentifierName(), "\"."));
+    ERR_DETAIL(
+      "Key ",
+      connector::ConstraintKeyText(context, key, spec.names, spec.types),
+      " is not present in table \"", spec.referenced.GetIdentifierName(),
+      "\"."));
 }
 
-[[noreturn]] void ThrowStillReferenced(const catalog::SearchTableEntry& table,
+[[noreturn]] void ThrowStillReferenced(duckdb::ClientContext& context,
+                                       const catalog::SearchTableEntry& table,
                                        const KeySpec& unique,
                                        const ReferencingKey& referencing,
                                        std::string_view key) {
@@ -85,9 +89,10 @@ void ReleaseWriter(StoreWrites& w) noexcept {
     ERR_MSG("update or delete on table \"", table.name.GetIdentifierName(),
             "\" violates foreign key constraint \"",
             referencing.spec->constraint, "\" on table \"", child, "\""),
-    ERR_DETAIL("Key ",
-               connector::ConstraintKeyText(key, unique.names, unique.types),
-               " is still referenced from table \"", child, "\"."));
+    ERR_DETAIL(
+      "Key ",
+      connector::ConstraintKeyText(context, key, unique.names, unique.types),
+      " is still referenced from table \"", child, "\"."));
 }
 
 bool HasUniqueKeys(const StoreWrites& w) noexcept {
@@ -771,11 +776,12 @@ StoreWrites* Writes::Related(const Store& store, StoreWrites& w) {
   return it == _writes.end() ? nullptr : &it->second;
 }
 
-void Writes::CheckReferences(StoreWrites& w, const KeySpec& spec,
+void Writes::CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
+                             const KeySpec& spec,
                              std::span<const std::string> keys) {
   const auto* parent = ReferencedTable(*w.table, spec, Latest(*w.table));
   if (!parent || spec.referenced_field == 0) {
-    ThrowMissingReference(*w.table, spec, keys.front());
+    ThrowMissingReference(context, *w.table, spec, keys.front());
   }
   const auto& store = *parent->Storage();
   auto* related = Related(store, w);
@@ -787,13 +793,14 @@ void Writes::CheckReferences(StoreWrites& w, const KeySpec& spec,
   auto probe = rows.Probe(spec.referenced_field);
   for (const auto& key : keys) {
     if (!probe.Exists(key)) {
-      ThrowMissingReference(*w.table, spec, key);
+      ThrowMissingReference(context, *w.table, spec, key);
     }
   }
   w.related_checked.try_emplace(store.GetId(), rows.Live().State());
 }
 
-void Writes::CheckRemovedKeys(StoreWrites& w, bool commit) {
+void Writes::CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
+                              bool commit) {
   if (w.removed_keys.empty()) {
     return;
   }
@@ -839,7 +846,7 @@ void Writes::CheckRemovedKeys(StoreWrites& w, bool commit) {
           held.emplace(own->Probe(removed.field));
         }
         if (!held->Exists(key)) {
-          ThrowStillReferenced(*w.table, *unique, child, key);
+          ThrowStillReferenced(context, *w.table, *unique, child, key);
         }
       }
       w.related_checked.try_emplace(store.GetId(), rows.Live().State());
@@ -923,7 +930,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     auto& keys = fresh[spec];
     absl::c_sort(keys);
     if (auto duplicate = FindDuplicate(key_spec, segments, keys, existing)) {
-      ThrowDuplicate(key_spec, *duplicate);
+      ThrowDuplicate(context, key_spec, *duplicate);
     }
   }
   for (const auto& row : keyed) {
@@ -952,14 +959,15 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     }
     absl::c_sort(keys);
     keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-    CheckReferences(w, key_spec, keys);
+    CheckReferences(context, w, key_spec, keys);
   }
-  CheckRemovedKeys(w, false);
+  CheckRemovedKeys(context, w, false);
   w.checked.emplace(std::move(live));
 }
 
 std::shared_ptr<const TableState> Writes::VerifyAllReferences(
-  const catalog::SearchTableEntry& table, const KeySpec& spec) {
+  duckdb::ClientContext& context, const catalog::SearchTableEntry& table,
+  const KeySpec& spec) {
   const auto* parent = ReferencedTable(table, spec, Latest(table));
   const auto own = _writes.find(table.Storage()->GetId());
   const auto reader =
@@ -973,7 +981,7 @@ std::shared_ptr<const TableState> Writes::VerifyAllReferences(
   if (!parent || spec.referenced_field == 0) {
     ForEachSegmentKey(segments, spec.key.field,
                       [&](std::string_view key, size_t) -> bool {
-                        ThrowMissingReference(table, spec, key);
+                        ThrowMissingReference(context, table, spec, key);
                       });
     return {};
   }
@@ -989,17 +997,18 @@ std::shared_ptr<const TableState> Writes::VerifyAllReferences(
   ForEachSegmentKey(segments, spec.key.field,
                     [&](std::string_view key, size_t) {
                       if (!probe.Exists(key)) {
-                        ThrowMissingReference(table, spec, key);
+                        ThrowMissingReference(context, table, spec, key);
                       }
                       return true;
                     });
   return rows.Live().State();
 }
 
-void Writes::VerifyReferences(const catalog::SearchTableEntry& table,
+void Writes::VerifyReferences(duckdb::ClientContext& context,
+                              const catalog::SearchTableEntry& table,
                               const KeySpec& spec) {
   absl::MutexLock all{&_mutex};
-  auto referenced = VerifyAllReferences(table, spec);
+  auto referenced = VerifyAllReferences(context, table, spec);
   _reference_checks.push_back(
     {.table = &table, .spec = spec, .referenced = std::move(referenced)});
 }
@@ -1034,7 +1043,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       }
       absl::c_sort(keys);
       if (auto duplicate = FindDuplicate(spec, segments, keys, fresh)) {
-        ThrowDuplicate(spec, *duplicate);
+        ThrowDuplicate(context, spec, *duplicate);
       }
     }
   }
@@ -1058,7 +1067,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       }
       w.related_checked.erase(store.GetId());
     }
-    CheckReferences(w, spec, keys);
+    CheckReferences(context, w, spec, keys);
   }
   const auto referencing = w.store->ReferencingKeys();
   if (w.changes.truncate) {
@@ -1121,7 +1130,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         child.second.reset();
       }
     }
-    CheckRemovedKeys(w, true);
+    CheckRemovedKeys(context, w, true);
   }
   w.checked.emplace(std::move(now));
 }
@@ -1276,7 +1285,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context,
   };
   for (const auto& check : _reference_checks) {
     if (latest(check) != check.referenced) {
-      VerifyAllReferences(*check.table, check.spec);
+      VerifyAllReferences(context, *check.table, check.spec);
     }
   }
   return sections;

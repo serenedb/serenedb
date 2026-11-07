@@ -209,7 +209,8 @@ class Writes {
   // Refuses the rows of `table`, the whole table, whose reference key `spec`
   // the referenced table does not hold; the commit checks them again if the
   // referenced table changes before it.
-  void VerifyReferences(const catalog::SearchTableEntry& table,
+  void VerifyReferences(duckdb::ClientContext& context,
+                        const catalog::SearchTableEntry& table,
                         const KeySpec& spec);
 
   // Notes the rows this transaction removed that a commit after `snapshot`
@@ -238,12 +239,14 @@ class Writes {
     return duckdb::CatalogTransaction{table.catalog.GetDatabase(), _session,
                                       duckdb::VisibilityBound::AllCommitted()};
   }
-  void CheckReferences(StoreWrites& w, const KeySpec& spec,
-                       std::span<const std::string> keys);
-  void CheckRemovedKeys(StoreWrites& w, bool commit);
+  void CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
+                       const KeySpec& spec, std::span<const std::string> keys);
+  void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
+                        bool commit);
   void CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w);
   std::shared_ptr<const TableState> VerifyAllReferences(
-    const catalog::SearchTableEntry& table, const KeySpec& spec);
+    duckdb::ClientContext& context, const catalog::SearchTableEntry& table,
+    const KeySpec& spec);
 
   struct ReferenceCheck {
     const catalog::SearchTableEntry* table = nullptr;

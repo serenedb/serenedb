@@ -140,7 +140,8 @@ void ConstraintKeyEncoder::Encode(duckdb::DataChunk& chunk,
   }
 }
 
-std::string ConstraintKeyText(std::string_view key,
+std::string ConstraintKeyText(duckdb::ClientContext& context,
+                              std::string_view key,
                               std::span<const std::string> names,
                               std::span<const duckdb::LogicalType> types) {
   duckdb::DataChunk values;
@@ -156,7 +157,10 @@ std::string ConstraintKeyText(std::string_view key,
     if (i != 0) {
       out += ", ";
     }
-    out += values.data[i].GetValue(0).ToString();
+    const auto value = values.data[i].GetValue(0);
+    out += value.IsNull() ? "null"
+                          : value.CastAs(context, duckdb::LogicalType::VARCHAR)
+                              .GetValue<std::string>();
   }
   out += ")";
   return out;

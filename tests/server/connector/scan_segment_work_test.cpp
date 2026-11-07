@@ -38,11 +38,15 @@ std::vector<LiveClaim> CheckClaims(uint32_t rg_count,
   }
   const auto count = static_cast<uint32_t>(live.size());
   auto claims = CutClaims(bits, threads);
+  EXPECT_EQ(claims.back().rg, rg_count);
+  EXPECT_EQ(claims.back().live, count);
+  if (count == 0) {
+    EXPECT_EQ(claims.size(), 1u);
+    return claims;
+  }
   EXPECT_GE(claims.size(), 2u);
   EXPECT_EQ(claims.front().rg, 0u);
   EXPECT_EQ(claims.front().live, 0u);
-  EXPECT_EQ(claims.back().rg, rg_count);
-  EXPECT_EQ(claims.back().live, count);
   uint32_t claimed = 0;
   for (size_t i = 1; i < claims.size(); ++i) {
     claimed += std::max<uint32_t>(1, (count - claimed) / threads);
@@ -74,7 +78,7 @@ TEST(ScanSegmentWork, AllLive) {
 TEST(ScanSegmentWork, NoneLive) {
   for (const uint32_t threads : {1, 16}) {
     const auto claims = CheckClaims(130, {}, threads);
-    EXPECT_EQ(claims.size(), 2u);
+    EXPECT_EQ(claims.size(), 1u);
   }
 }
 

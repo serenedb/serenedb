@@ -36,6 +36,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/landings.hpp"
 #include "iresearch/search/detail/masked_leaf.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
@@ -538,39 +539,27 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
     }
     const auto& index = _cursor.Index();
     const auto size = index.Size();
-    auto block = _cursor.NextBlock(_left_in_list);
-    auto next = _needs_reposition ? size : block;
-    doc_id_t upper = _needs_reposition ? doc_limits::invalid() : _max_in_leaf;
-    uint32_t landings = 0;
-    for (uint32_t i = 0; i != n; ++i) {
-      if (in[i] <= upper) {
-        continue;
-      }
-      if (block == size || index.Last(block) < in[i]) {
-        block = index.Find(block, in[i]);
-      }
-      if (block == size) {
-        break;
-      }
-      blocks[landings++] = block;
-      if constexpr (InputType::kVolatileAlways) {
-        if (block != next) {
+    const auto block = _cursor.NextBlock(_left_in_list);
+    return irs::detail::PlanLandings(
+      index,
+      {.block = block,
+       .next = _needs_reposition ? size : block,
+       .upper = _needs_reposition ? doc_limits::invalid() : _max_in_leaf,
+       .cap = n},
+      in, n, blocks, [&](uint32_t landed) IRS_FORCE_INLINE {
+        if constexpr (InputType::kVolatileAlways) {
           const auto begin =
-            reinterpret_cast<uintptr_t>(In().At(_cursor.BlockStart(block)));
-          const auto end = block + 1 != size
+            reinterpret_cast<uintptr_t>(In().At(_cursor.BlockStart(landed)));
+          const auto end = landed + 1 != size
                              ? reinterpret_cast<uintptr_t>(
-                                 In().At(_cursor.BlockStart(block + 1)))
+                                 In().At(_cursor.BlockStart(landed + 1)))
                              : begin + 1;
           for (auto line = begin & ~uintptr_t{ABSL_CACHELINE_SIZE - 1};
                line < end; line += ABSL_CACHELINE_SIZE) {
             __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 2);
           }
         }
-      }
-      upper = index.Last(block);
-      next = ++block;
-    }
-    return landings;
+      });
   }
 
   void LandOn(uint32_t block) {

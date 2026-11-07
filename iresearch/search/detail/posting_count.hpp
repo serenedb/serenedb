@@ -51,16 +51,10 @@ class PostingCount : public PostingLeaf<InputType, kCountShape> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(has_freq);
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, layout, has_score_bounds)) {
       _doc = this->SetSingle(meta);
-      return;
     }
-
-    this->OpenInput(meta, doc_in, has_score_bounds);
-    this->ArmWalk(meta, layout, has_score_bounds);
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts) {

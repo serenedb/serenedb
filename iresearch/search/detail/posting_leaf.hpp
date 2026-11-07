@@ -305,6 +305,17 @@ class PostingLeaf {
     }
   }
 
+  bool OpenList(const PostingMeta& meta, const IndexInput& doc_in,
+                IndexFeatures layout, bool bounds) {
+    SDB_ASSERT(meta.docs_count != 0);
+    if (meta.docs_count == 1) {
+      return false;
+    }
+    OpenInput(meta, doc_in, bounds);
+    ArmWalk(meta, layout, bounds);
+    return true;
+  }
+
   IRS_FORCE_INLINE bool Armed() const noexcept { return _walk.Armed(); }
 
   IRS_FORCE_INLINE BlockCursor& Walk() noexcept { return _walk; }

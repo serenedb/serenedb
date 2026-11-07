@@ -10,9 +10,6 @@ statement ok
 INSERT INTO snr SELECT i, i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END,
   [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) snr;
-
 query
 SELECT count(*) FROM snr WHERE num BETWEEN 1200 AND 1500;
 ----
@@ -303,9 +300,6 @@ statement ok
 INSERT INTO snr_f SELECT i, i * 0.5, [i::FLOAT, 0]::FLOAT[2]
   FROM range(2000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) snr_f;
-
 query
 SELECT pk FROM snr_f WHERE val <= 20.0
   ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
@@ -378,9 +372,6 @@ INSERT INTO snr_t SELECT i, DATE '2000-01-01' + i::INTEGER,
   TIMESTAMP '2000-01-01' + i * INTERVAL 1 HOUR, i * 0.5,
   [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) snr_t;
-
 query
 SELECT count(*) FROM snr_t WHERE d >= DATE '2005-01-01';
 ----
@@ -439,9 +430,6 @@ CREATE INDEX snr_n_idx ON snr_n
 
 statement ok
 INSERT INTO snr_n SELECT i, NULL, [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) snr_n;
 
 statement ok
 SET disabled_optimizers = 'statistics_propagation';

@@ -4,9 +4,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY td_simple AS
     split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position)
@@ -25,10 +22,6 @@ INSERT INTO td VALUES
   (1, 'apple banana cherry'),
   (2, 'apple banana'),
   (3, 'apple date')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) td;
 
 
 # Global term dictionary over a single segment: terms in byte order, with
@@ -67,10 +60,6 @@ statement ok
 INSERT INTO td VALUES
   (4, 'apple apple banana'),
   (5, 'date')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) td;
 
 
 query TII

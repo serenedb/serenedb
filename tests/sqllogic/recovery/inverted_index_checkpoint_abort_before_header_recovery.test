@@ -13,10 +13,6 @@ INSERT INTO pudge_hooks SELECT i, 'hook' || (i % 5) FROM range(0, 1000) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pudge_hooks;
-
-
-statement ok
 INSERT INTO pudge_hooks SELECT i, 'hook' || (i % 5) FROM range(1000, 1500) r(i);
 
 
@@ -42,11 +38,6 @@ SELECT count(*) AS n FROM pudge_hooks;
 ----
 n
 1500
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) pudge_hooks;
 
 
 connection after_crash
@@ -78,11 +69,6 @@ SELECT count(*) AS n FROM pudge_hooks;
 ----
 n
 2000
-
-
-connection after_second_crash
-statement ok
-VACUUM (REFRESH_TABLE) pudge_hooks;
 
 
 connection after_second_crash

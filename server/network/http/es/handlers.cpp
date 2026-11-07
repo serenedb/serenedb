@@ -61,8 +61,6 @@ yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
   co_return std::move(result);
 }
 
-// ?refresh, ?refresh=true and ?refresh=wait_for all refresh synchronously
-// (CommitWait IS the wait); only an explicit false is a no-op.
 bool WantsRefresh(const HttpRequest& request) {
   for (const auto& [key, value] : request.query) {
     if (key == "refresh") {

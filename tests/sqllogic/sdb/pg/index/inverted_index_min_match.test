@@ -23,10 +23,6 @@ CREATE INDEX mm_idx ON mm USING inverted(id, title mm_words, skills mm_words, ed
   WITH (compaction_interval = 0);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mm;
-
-
 query
 SELECT id FROM mm_idx
 WHERE (title @@ ts_phrase('data engineer') OR skills @@ 'gcp'
@@ -574,7 +570,6 @@ id
 5
 
 
-
 query error ::min_match used on a predicate the inverted index could not claim
 SELECT id FROM mm_idx WHERE (skills @@ 'gcp' OR id > id)::min_match(1);
 
@@ -929,10 +924,6 @@ INSERT INTO nm VALUES
 statement ok
 CREATE INDEX nm_idx ON nm USING inverted(id, skills mm_words, bonus, tenure)
   WITH (compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) nm;
 
 
 query

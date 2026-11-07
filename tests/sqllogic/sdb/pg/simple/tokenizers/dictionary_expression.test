@@ -78,9 +78,6 @@ INSERT INTO expr_docs VALUES (1, 'The,Quick,Foxes'), (2, 'Lazy,Dogs');
 statement ok
 CREATE INDEX expr_docs_idx ON expr_docs USING inverted (id, body expr_pipe);
 
-statement ok
-VACUUM (REFRESH_TABLE) expr_docs;
-
 query
 SELECT id FROM expr_docs_idx WHERE body @@ 'fox';
 ----
@@ -197,9 +194,6 @@ INSERT INTO expr_terms VALUES (1, 'search'), (2, 'research'), (3, 'seabird'), (4
 statement ok
 CREATE INDEX expr_terms_idx ON expr_terms USING inverted (id, term expr_wildcard);
 
-statement ok
-VACUUM (REFRESH_TABLE) expr_terms;
-
 query
 SELECT id FROM expr_terms_idx WHERE term @@ ts_like('sea%') ORDER BY id;
 ----
@@ -222,9 +216,6 @@ INSERT INTO expr_wc VALUES (1, 'Search Engine'), (2, 'Plain Text');
 
 statement ok
 CREATE INDEX expr_wc_idx ON expr_wc USING inverted (id, term expr_wildcard_chain);
-
-statement ok
-VACUUM (REFRESH_TABLE) expr_wc;
 
 # The chain's normalize_tokens stage lower-cases, so a lower-case pattern hits.
 
@@ -347,9 +338,6 @@ tokens
 
 statement ok
 INSERT INTO expr_dropped VALUES (2, 'Engines are Running');
-
-statement ok
-VACUUM (REFRESH_TABLE) expr_dropped;
 
 query
 SELECT id FROM expr_dropped_idx WHERE body @@ 'runner' ORDER BY id;

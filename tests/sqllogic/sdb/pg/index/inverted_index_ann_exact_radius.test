@@ -30,19 +30,10 @@ INSERT INTO er_hnsw SELECT i, 'l' || (i % 10)::VARCHAR, i % 100, i % 10,
   [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(3000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) er_hnsw;
-
-statement ok
 INSERT INTO er_ivf SELECT * FROM er_hnsw;
 
 statement ok
-VACUUM (REFRESH_TABLE) er_ivf;
-
-statement ok
 INSERT INTO er_search SELECT * FROM er_hnsw;
-
-statement ok
-VACUUM (REFRESH_TABLE) er_search;
 
 statement ok
 SET sdb_ann_force_exact = true;

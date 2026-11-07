@@ -13,10 +13,6 @@ INSERT INTO lc SELECT i, 'fox ' || i FROM generate_series(1, 200) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) lc
-
-
-statement ok
 CREATE INDEX lc_x ON lc USING inverted (body)
 
 
@@ -58,7 +54,7 @@ HINT: Retry once that transaction commits or rolls back.
 
 connection b
 statement error
-ALTER TABLE lc SET (refresh_interval = 500)
+ALTER TABLE lc SET (compaction_interval = 500)
 ----
 db error: ERROR: search table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
@@ -75,11 +71,6 @@ HINT: Retry once that transaction commits or rolls back.
 connection b
 statement ok
 INSERT INTO lc VALUES (1001, 'wolf')
-
-
-connection b
-statement ok
-VACUUM (REFRESH_TABLE) lc
 
 
 connection b
@@ -108,10 +99,6 @@ COMMIT
 connection b
 statement ok
 CREATE INDEX lc_b ON lc USING inverted (id)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) lc
 
 
 query
@@ -176,7 +163,7 @@ BEGIN
 
 connection a
 statement ok
-ALTER TABLE lc SET (refresh_interval = 700)
+ALTER TABLE lc SET (compaction_interval = 700)
 
 
 connection b
@@ -189,7 +176,7 @@ HINT: Retry once that transaction commits or rolls back.
 
 connection b
 statement error
-ALTER TABLE lc SET (refresh_interval = 900)
+ALTER TABLE lc SET (compaction_interval = 900)
 ----
 db error: ERROR: search table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
@@ -201,10 +188,10 @@ COMMIT
 
 
 query
-SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'lc'
+SELECT reloptions[1] AS compaction FROM pg_class WHERE relname = 'lc'
 ----
-refresh
-refresh_interval=700
+compaction
+compaction_interval=700
 
 
 # --- DROP INDEX holds it ---
@@ -256,7 +243,7 @@ CREATE OR REPLACE INDEX lc_f ON lc USING inverted (body, id)
 
 connection a
 statement ok
-ALTER TABLE lc SET (refresh_interval = 800)
+ALTER TABLE lc SET (compaction_interval = 800)
 
 
 connection a
@@ -318,10 +305,6 @@ SELECT string_agg(indexname, ',' ORDER BY indexname) AS indexes FROM pg_indexes 
 ----
 indexes
 lc_a,lc_b,lc_f,lc_g,lc_h,lc_i,lc_pkey,lc_x
-
-
-statement ok
-VACUUM (REFRESH_TABLE) lc
 
 
 query

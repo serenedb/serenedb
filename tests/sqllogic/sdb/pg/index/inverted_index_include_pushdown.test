@@ -45,10 +45,6 @@ CREATE INDEX logs_idx ON logs
     INCLUDE (service, sev, tag)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) logs
-
-
 # --- inverted+INCLUDE columns: equality and range filters push down ---
 
 # Compound predicate -- all three filters land inside the IRESEARCH_SCAN

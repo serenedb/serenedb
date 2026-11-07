@@ -37,9 +37,6 @@ INSERT INTO wal_hy_t VALUES
     (1, 'red running shoes',     'lightweight trail gear', [100,0,0]::FLOAT[3], [10,0,0,0]::FLOAT[4]),
     (2, 'blue swimming goggles', 'water sport equipment',  [0,100,0]::FLOAT[3], [0,10,0,0]::FLOAT[4]);
 
-statement ok
-VACUUM (REFRESH_TABLE) wal_hy_t;
-
 # Pre-crash sanity: text and vector both resolve from the committed segment.
 query
 SELECT pk FROM wal_hy_idx WHERE title @@ 'red' ORDER BY pk;
@@ -52,12 +49,6 @@ SELECT pk FROM wal_hy_idx ORDER BY va <-> [100,0,0]::FLOAT[3] LIMIT 1;
 ----
 pk
 1
-
-# Freeze iresearch commits BEFORE the second batch. These rows reach WAL
-# but the iresearch trx never flushes -- their fields only exist
-# as WAL bytes when we crash.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_hy_t VALUES
@@ -75,7 +66,7 @@ SELECT 1;
 
 connection hy_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_hy_t;
+SELECT 1;
 
 # All four rows visible after recovery.
 connection hy_after

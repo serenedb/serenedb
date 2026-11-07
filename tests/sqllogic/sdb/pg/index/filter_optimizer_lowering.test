@@ -16,9 +16,6 @@ INSERT INTO fo_low VALUES
   (3, 'gamma',  'gamma delta alpha'),
   (4, 'alfa',   'delta alpha beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_low;
-
 query
 EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ (ts_like('alpha'));
 ----
@@ -418,9 +415,6 @@ INSERT INTO fo_lev_mt VALUES
   (2, 'alpha'),
   (3, 'beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_lev_mt;
-
 query
 EXPLAIN SELECT id FROM fo_lev_mt_idx WHERE t @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]);
 ----
@@ -460,9 +454,6 @@ INSERT INTO fo_lev_mix VALUES
   (1, 'alpha', 'album slpha'),
   (2, 'beta',  'album slpha'),
   (3, 'alphb', 'alpha');
-
-statement ok
-VACUUM (REFRESH_TABLE) fo_lev_mix;
 
 query
 EXPLAIN SELECT id FROM fo_lev_mix_idx WHERE k @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]) AND a @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1)]);

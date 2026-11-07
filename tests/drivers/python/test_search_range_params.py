@@ -13,7 +13,6 @@ DDL = [
         USING inverted(pk, num, tag, emb hnsw (metric = 'l2', quant = 'none'))""",
     """INSERT INTO {schema}.srp SELECT i, i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END,
         [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i)""",
-    "VACUUM (REFRESH_TABLE) {schema}.srp",
 ]
 
 KNN = "SELECT pk FROM {schema}.srp WHERE {where} ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3"

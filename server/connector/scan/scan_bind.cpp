@@ -129,7 +129,7 @@ search::Writes::PinnedSearchTable PinnedSearchTable(
     auto config = store->ScanConfig();
     return search::Writes::PinnedSearchTable{
       .reader = std::make_shared<irs::DirectoryReader>(
-        writes.View(*store, session.Snapshot())),
+        writes.View(context, *store, session.Snapshot())),
       .config = std::move(config),
     };
   };

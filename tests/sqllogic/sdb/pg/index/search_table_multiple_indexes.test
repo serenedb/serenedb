@@ -35,13 +35,7 @@ statement ok
 INSERT INTO mi SELECT * FROM mi_ref WHERE id < 800;
 
 statement ok
-VACUUM (REFRESH_TABLE) mi;
-
-statement ok
 INSERT INTO mi SELECT * FROM mi_ref WHERE id >= 800 AND id < 1500;
-
-statement ok
-VACUUM (REFRESH_TABLE) mi;
 
 statement ok
 CREATE INDEX mi_kw ON mi USING inverted (body);
@@ -116,9 +110,6 @@ hits
 
 statement ok
 INSERT INTO mi SELECT * FROM mi_ref WHERE id >= 1500;
-
-statement ok
-VACUUM (REFRESH_TABLE) mi;
 
 query
 SELECT (SELECT count(*) FROM mi_kw WHERE body = 'fox number 1777') AS kw,

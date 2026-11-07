@@ -28,9 +28,6 @@ INSERT INTO cidr_idx_t VALUES
 statement ok
 CREATE TABLE cidr_plain_t AS SELECT * FROM cidr_idx_t;
 
-statement ok
-VACUUM (REFRESH_TABLE) cidr_idx_t;
-
 statement error has type CIDR and can not use the text search dictionary 'english'
 CREATE INDEX cidr_bad_idx ON cidr_idx_t USING inverted(pk, net english);
 

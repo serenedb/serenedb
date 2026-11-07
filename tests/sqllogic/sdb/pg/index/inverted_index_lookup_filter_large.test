@@ -33,10 +33,6 @@ CREATE INDEX lkf_idx ON lkf
     WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) lkf;
-
-
 # --- streaming lookup filter -------------------------------------------------
 
 # val % 10 = 3 -> 5000 survivors; sum = 5000 * (3 + 49993) / 2.

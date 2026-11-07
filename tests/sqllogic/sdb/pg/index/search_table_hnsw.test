@@ -18,9 +18,6 @@ INSERT INTO h VALUES
   (3, array_value(5::FLOAT, 5::FLOAT, 5::FLOAT), 'b'),
   (4, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT), 'a');
 
-statement ok
-VACUUM (REFRESH_TABLE) h;
-
 # Through the index relation and through the table name.
 query
 SELECT id FROM h_idx
@@ -104,9 +101,6 @@ statement ok
 DELETE FROM h WHERE rowid IN (
   SELECT rowid FROM h
   ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2);
-
-statement ok
-VACUUM (REFRESH_TABLE) h;
 
 query
 SELECT id FROM h ORDER BY id;

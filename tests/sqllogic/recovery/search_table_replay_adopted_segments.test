@@ -11,19 +11,19 @@ SET GLOBAL debug_skip_checkpoint_on_commit = true;
 
 statement ok
 CREATE TABLE ras1 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras2 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras3 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras4 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO ras1 VALUES (1, 'a'), (2, 'b');
@@ -36,18 +36,6 @@ INSERT INTO ras3 VALUES (1, 'a'), (2, 'b');
 
 statement ok
 INSERT INTO ras4 VALUES (1, 'a'), (2, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) ras1;
-
-statement ok
-VACUUM (REFRESH_TABLE) ras2;
-
-statement ok
-VACUUM (REFRESH_TABLE) ras3;
-
-statement ok
-VACUUM (REFRESH_TABLE) ras4;
 
 connection serial
 statement ok
@@ -180,10 +168,6 @@ ras1	5001	5001	7	14999
 ras2	10001	10001	2	14999
 ras3	5001	5001	3	14999
 ras4	150000	150000	200000	449999
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) ras1;
 
 connection after_crash
 statement ok

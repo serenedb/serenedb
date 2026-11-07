@@ -25,9 +25,6 @@ CREATE INDEX movies_idx ON movies
     USING inverted (id, title ranking_dict, description ranking_dict, genre)
     WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
-statement ok
-VACUUM (REFRESH_TABLE) movies;
-
 # DOCS_TEST_BODY
 
 query

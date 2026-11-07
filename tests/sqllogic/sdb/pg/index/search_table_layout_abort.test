@@ -35,15 +35,7 @@ INSERT INTO la SELECT * FROM la_ref WHERE id < 500
 
 
 statement ok
-VACUUM (REFRESH_TABLE) la
-
-
-statement ok
 INSERT INTO la SELECT * FROM la_ref WHERE id >= 500
-
-
-statement ok
-VACUUM (REFRESH_TABLE) la
 
 
 statement ok
@@ -126,7 +118,7 @@ BEGIN
 
 
 statement ok
-ALTER TABLE la SET (refresh_interval = 4321)
+ALTER TABLE la SET (compaction_interval = 4321)
 
 
 statement ok
@@ -134,10 +126,10 @@ ROLLBACK
 
 
 query
-SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'la'
+SELECT reloptions[1] AS compaction FROM pg_class WHERE relname = 'la'
 ----
-refresh
-refresh_interval=1000
+compaction
+compaction_interval=0
 
 
 # --- A rolled-back DROP INDEX ---

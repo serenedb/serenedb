@@ -87,7 +87,7 @@ CREATE TABLE sdb_docs_build.docs (
   title TEXT NOT NULL,
   breadcrumb TEXT NOT NULL,
   content TEXT NOT NULL USING COMPRESSION zstd
-) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+) WITH (storage = 'search', compaction_interval = 0);
 
 CREATE INDEX docs_fts ON sdb_docs_build.docs USING inverted (
   title sdb_docs_build.tokenizer,
@@ -106,7 +106,7 @@ CREATE TABLE sdb_docs_build.objects (
   category TEXT,
   breadcrumb TEXT,
   names TEXT[]
-) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+) WITH (storage = 'search', compaction_interval = 0);
 
 CREATE INDEX objects_names ON sdb_docs_build.objects USING inverted (
   names, kind);
@@ -262,14 +262,12 @@ class Loader {
 
   std::vector<IndexBlob> Build() {
     if (!Run(Sql(kBuildSql)) || !Insert() ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kTable)) ||
         !Run(absl::StrCat(
           "INSERT INTO ", kObjectsTable,
           " SELECT *, list_filter(list_prepend(lower(name), "
           "list_transform(string_split(coalesce(aliases, ''), ','), "
           "lambda part: lower(trim(part)))), lambda term: term <> '') FROM (",
-          Sql(kObjectsSql), ")")) ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kObjectsTable))) {
+          Sql(kObjectsSql), ")"))) {
       return {};
     }
     auto image = ExportImage(*_conn->context, _ctx->GetDatabase(), "docs");
@@ -420,14 +418,19 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
                 table_name, " is not a search table in the catalog");
       return;
     }
-    const auto store = table->Storage()->Path();
-    for (const auto& file : std::filesystem::directory_iterator{store}) {
-      if (file.is_regular_file()) {
-        image.push_back(
-          {.name =
-             absl::StrCat(table_name, "/", file.path().filename().string()),
-           .bytes = utils::file_utils::Slurp(file.path().string())});
+    auto& store = *table->Storage();
+    store.CoolAll();
+    const auto path = store.Path();
+    const auto add = [&](std::string_view file) {
+      image.push_back({.name = absl::StrCat(table_name, "/", file),
+                       .bytes = utils::file_utils::Slurp((path / file).string())});
+    };
+    for (const auto& unit : store.GetTable().State()->units) {
+      if (unit->replaced_at != 0) {
+        continue;
       }
+      absl::c_for_each(unit->segment.meta.files, add);
+      add(unit->segment.filename);
     }
     image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
                      .bytes = DescribeLayout(*table)});

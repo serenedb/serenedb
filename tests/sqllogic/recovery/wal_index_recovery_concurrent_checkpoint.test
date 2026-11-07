@@ -8,7 +8,7 @@ control max-async-connections 16
 #
 # All async INSERTs are awaited (`wait`) before the crash, so every row is
 # durable in the store WAL and MUST survive recovery: some land in the segments
-# via the racing refresh, the rest replay from the WAL. The combined set must
+# via the racing checkpoint, the rest replay from the WAL. The combined set must
 # equal the store table with no duplicates and nothing missing.
 
 statement ok
@@ -20,14 +20,13 @@ statement ok
 CREATE TABLE cc_t(id INTEGER PRIMARY KEY, body TEXT);
 
 statement ok
-CREATE INDEX cc_idx ON cc_t USING inverted(id, body cc_dict)
-  WITH (refresh_interval = 1);
+CREATE INDEX cc_idx ON cc_t USING inverted(id, body cc_dict);
 
 statement ok
 SET GLOBAL debug_wal_fsync_sleep_ms = 5;
 
 ###############################################################################
-# Round 1: 8 concurrent writers x 250 rows, refresher loop in parallel
+# Round 1: 8 concurrent writers x 250 rows, checkpoints in parallel
 ###############################################################################
 
 connection w1
@@ -62,19 +61,19 @@ connection w8
 statement async ok
 INSERT INTO cc_t SELECT i, 'tokR1_W8_' || i FROM range(8000000, 8000250) AS t(i);
 
-# Concurrent explicit refreshes racing the writers.
-connection refresher
+# Concurrent checkpoints racing the writers.
+connection checkpointer
 statement async ok
-VACUUM (REFRESH_TABLE) cc_t;
+CHECKPOINT;
 
-connection refresher2
+connection checkpointer2
 statement async ok
-VACUUM (REFRESH_TABLE) cc_t;
+CHECKPOINT;
 
 wait
 
 ###############################################################################
-# Round 2: another 8 writers x 250 rows, refreshers again
+# Round 2: another 8 writers x 250 rows, checkpoints again
 ###############################################################################
 
 connection w1
@@ -109,18 +108,18 @@ connection w8
 statement async ok
 INSERT INTO cc_t SELECT i, 'tokR2_W8_' || i FROM range(8000250, 8000500) AS t(i);
 
-connection refresher
+connection checkpointer
 statement async ok
-VACUUM (REFRESH_TABLE) cc_t;
+CHECKPOINT;
 
-connection refresher2
+connection checkpointer2
 statement async ok
-VACUUM (REFRESH_TABLE) cc_t;
+CHECKPOINT;
 
 wait
 
 ###############################################################################
-# Round 3: final batch, then crash with un-refreshed tail in the WAL
+# Round 3: final batch, then crash with an uncovered tail in the WAL
 ###############################################################################
 
 connection w1
@@ -155,17 +154,17 @@ connection w8
 statement async ok
 INSERT INTO cc_t SELECT i, 'tokR3_W8_' || i FROM range(8000500, 8000750) AS t(i);
 
-connection refresher
+connection checkpointer
 statement async ok
-VACUUM (REFRESH_TABLE) cc_t;
+CHECKPOINT;
 
 # Wait for every writer to durably commit to the store WAL before crashing, so
 # the full set must survive recovery (no in-flight rows are silently dropped).
 wait
 
-# Crash while the post-refresh tail is only in the WAL (not the segments). On
+# Crash while the post-checkpoint tail is only in the WAL (not the segments). On
 # restart, recovery must replay exactly the un-durable tail -- not re-stream a
-# refresh-flushed insert (duplicate) nor skip one (missing).
+# checkpoint-flushed insert (duplicate) nor skip one (missing).
 connection crasher
 statement ok
 SET sdb_faults = 'crash_on_packet';
@@ -180,7 +179,7 @@ SELECT 1;
 
 connection after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) cc_t;
+SELECT 1;
 
 # 8 writers x 250 rows x 3 rounds = 6000 rows.
 connection after
@@ -222,7 +221,7 @@ SELECT id FROM cc_idx WHERE body @@ ts_phrase('tokR3_W8_8000700');
 id
 8000700
 
-# First, last, and a few mid tokens of round 3 (the un-refreshed tail most
+# First, last, and a few mid tokens of round 3 (the uncovered tail most
 # likely to be re-streamed/dropped at recovery) -- each exactly once.
 connection after
 query

@@ -47,9 +47,6 @@ INSERT INTO docs VALUES
     (4, 'red trail shoes',       'lightweight running gear', [90,10,0]::FLOAT[3], [9,1,0,0]::FLOAT[4]),
     (5, 'yellow tennis racket',  'indoor court equipment',   [50,50,0]::FLOAT[3], [0,0,0,10]::FLOAT[4]);
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 # Exhaustive scan so the tiny-table kNN is exact (nprobe >= nlist).
 statement ok
 SET sdb_ivf_search_nprobe = 256;
@@ -381,9 +378,6 @@ INSERT INTO docs VALUES
     (6, 'red climbing rope',     'durable trail gear',       [80,20,0]::FLOAT[3], [8,2,0,0]::FLOAT[4]),
     (7, 'black cycling helmet',  'road sport equipment',     [0,80,20]::FLOAT[3], [0,8,2,0]::FLOAT[4]),
     (8, 'white golf gloves',     'course accessory',         [0,20,80]::FLOAT[3], [0,0,8,2]::FLOAT[4]);
-
-statement ok
-VACUUM (REFRESH_TABLE) docs;
 
 statement ok
 VACUUM (COMPACT_TABLE) docs;

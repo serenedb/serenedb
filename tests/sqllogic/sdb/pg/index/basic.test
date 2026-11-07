@@ -9,10 +9,6 @@ CREATE TEXT SEARCH DICTIONARY test_english AS
 
 
 statement ok
-VACUUM (REFRESH_TABLE) t;
-
-
-statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
@@ -50,17 +46,14 @@ c
 c
 
 
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
 statement error
-VACUUM (REFRESH_TABLE) wrong_t_name;
+VACUUM (COMPACT_TABLE) wrong_t_name;
 ----
 db error: ERROR: relation "wrong_t_name" does not exist<slt:ignore>
 
 
 statement error
-VACUUM (REFRESH_TABLE) index_t;
+VACUUM (COMPACT_TABLE) index_t;
 ----
 db error: ERROR: relation "index_t" does not exist<slt:ignore>
 
@@ -257,7 +250,6 @@ CREATE INDEX index_ts on tstest USING inverted(c test_english ());
 db error: ERROR: Unknown built-in opclass 'test_english' on 'c' (known: included, ivf, hnsw)
 
 
-
 statement error
 CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
 ----
@@ -276,9 +268,6 @@ CREATE INDEX test_index_numeric ON table_numeric_idx USING inverted (a, b);
 statement ok
 INSERT INTO table_numeric_idx VALUES (1,1), (2,3), (4,5);
 
-statement ok
-VACUUM (REFRESH_TABLE) table_numeric_idx;
-
 query
 SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 ORDER BY a;
 ----
@@ -288,9 +277,6 @@ a	b
 
 statement count 3
 INSERT INTO table_numeric_idx VALUES (3,1), (7,3), (17,5);
-
-statement ok
-VACUUM (REFRESH_TABLE) table_numeric_idx;
 
 statement ok
 BEGIN;
@@ -312,9 +298,6 @@ a	b
 
 statement ok
 ROLLBACK;
-
-statement ok
-VACUUM (REFRESH_TABLE) table_numeric_idx;
 
 statement ok
 BEGIN;
@@ -465,9 +448,7 @@ Explain:
     oneline (boolean) [default: false] - One-line output format for physical plan
     cost (boolean) [default: false] - Show estimated costs in physical plan
 Index:
-  refresh_interval (integer) [default: 1000] - Refresh interval in milliseconds
   compaction_interval (integer) [default: 1000] - Compaction interval in milliseconds
-  cleanup_interval_step (integer) [default: 1] - Cleanup interval step
 
 
 statement ok

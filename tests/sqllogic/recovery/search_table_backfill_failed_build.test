@@ -11,15 +11,11 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bff (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 
 statement ok
 INSERT INTO bff VALUES (1, 'alpha'), (2, 'beta');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bff;
 
 
 # Fails the columnstore scan the rebuild reads its rows through.
@@ -58,10 +54,6 @@ id	tag
 # Writes still work: no claim or floor was left held.
 statement ok
 INSERT INTO bff VALUES (3, 'gamma');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bff;
 
 
 # The retry succeeds. If the failed build had leaked its BuildClaim this would

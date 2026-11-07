@@ -14,10 +14,6 @@ INSERT INTO hnsw_f SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(300) t(i);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_f;
-
-
 # Unfiltered kNN keeps the pushed top-k, so the scan runs the graph search.
 query
 EXPLAIN SELECT pk FROM hnsw_f_idx
@@ -269,9 +265,6 @@ INSERT INTO hnsw_blocks SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
   CASE WHEN i < 8000 THEN 'front' ELSE 'back' END FROM range(40000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_blocks;
-
-statement ok
 SET sdb_hnsw_filter_mode = 'scan';
 
 query
@@ -349,10 +342,6 @@ CREATE INDEX hnsw_l_idx ON hnsw_l
 statement ok
 INSERT INTO hnsw_l SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10
   FROM range(300) t(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_l;
 
 
 query

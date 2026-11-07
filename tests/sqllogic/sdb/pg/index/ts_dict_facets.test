@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # `SELECT col, count(*) FROM idx GROUP BY col` over a keyword NOT NULL column
 # is a facet served from the term dictionary: the groups are exactly the
 # field's live terms and each group's size is the term's live document count.
@@ -38,7 +35,7 @@ CREATE TABLE ft(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR)
 
 statement ok
 CREATE INDEX ft_idx ON ft USING inverted(cat fct_kw, opt fct_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ft VALUES
@@ -48,9 +45,6 @@ INSERT INTO ft VALUES
   (4, 'blue',  'x'),
   (5, 'red',   'x'),
   (6, 'green', 'z')
-
-statement ok
-VACUUM (REFRESH_TABLE) ft;
 
 query TI
 SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat ORDER BY cat
@@ -455,9 +449,6 @@ QUERY PLAN
 statement ok
 DELETE FROM ft WHERE id IN (4, 5)
 
-statement ok
-VACUUM (REFRESH_TABLE) ft;
-
 query TI
 SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat ORDER BY cat
 ----
@@ -468,9 +459,6 @@ red	2
 # A fresh clean segment sums with the dirty one per term.
 statement ok
 INSERT INTO ft VALUES (7, 'red', 'x'), (8, 'amber', NULL)
-
-statement ok
-VACUUM (REFRESH_TABLE) ft;
 
 query TI
 SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat ORDER BY cat
@@ -522,9 +510,6 @@ z	1
 statement ok
 DELETE FROM ft WHERE id = 2
 
-statement ok
-VACUUM (REFRESH_TABLE) ft;
-
 query TI
 SELECT opt, count(*) AS n FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
 ----
@@ -547,9 +532,6 @@ z	1
 # with no NULL rows left anywhere the group vanishes.
 statement ok
 DELETE FROM ft WHERE id = 8
-
-statement ok
-VACUUM (REFRESH_TABLE) ft;
 
 query TI
 SELECT opt, count(*) AS n FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
@@ -581,16 +563,13 @@ CREATE TABLE ftx(id INTEGER PRIMARY KEY, descr VARCHAR NOT NULL)
 
 statement ok
 CREATE INDEX ftx_idx ON ftx USING inverted(descr fct_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ftx VALUES
   (1, 'quick brown fox'),
   (2, 'quick red fox'),
   (3, 'lazy dog')
-
-statement ok
-VACUUM (REFRESH_TABLE) ftx;
 
 query TI
 SELECT descr, count(*) AS n FROM ftx_idx GROUP BY descr ORDER BY descr
@@ -638,7 +617,7 @@ CREATE TABLE ffw(id INTEGER PRIMARY KEY, scope VARCHAR NOT NULL, body VARCHAR NO
 
 statement ok
 CREATE INDEX ffw_idx ON ffw USING inverted(scope fct_kw, body fct_body)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ffw VALUES
@@ -647,9 +626,6 @@ INSERT INTO ffw VALUES
   (3, 'billing', 'charge failed'),
   (4, 'billing', 'charging done'),
   (5, 'net',     'packet drop')
-
-statement ok
-VACUUM (REFRESH_TABLE) ffw;
 
 query TI
 SELECT scope, count(*) AS n FROM ffw_idx
@@ -797,7 +773,7 @@ CREATE TABLE fnw(id INTEGER PRIMARY KEY, opt VARCHAR, body VARCHAR NOT NULL)
 
 statement ok
 CREATE INDEX fnw_idx ON fnw USING inverted(opt fct_kw, body fct_body)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fnw VALUES
@@ -806,9 +782,6 @@ INSERT INTO fnw VALUES
   (3, 'y',  'green pear'),
   (4, NULL, 'green apple'),
   (5, 'x',  'red plum')
-
-statement ok
-VACUUM (REFRESH_TABLE) fnw;
 
 query TI
 SELECT opt, count(*) AS n FROM fnw_idx WHERE body @@ 'red'
@@ -921,7 +894,7 @@ CREATE TABLE gsf(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL,
 
 statement ok
 CREATE INDEX gsf_idx ON gsf USING inverted(brand fct_kw, color fct_kw, body fct_body)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO gsf VALUES
@@ -930,9 +903,6 @@ INSERT INTO gsf VALUES
   (3, 'bolt', 'red',  'charging cable'),
   (4, 'bolt', 'red',  'usb hub'),
   (5, 'core', 'blue', 'wall charger')
-
-statement ok
-VACUUM (REFRESH_TABLE) gsf;
 
 query TTI
 SELECT brand, color, count(*) AS n FROM gsf_idx
@@ -1327,16 +1297,13 @@ CREATE TABLE gsn(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL, opt VARCHAR)
 
 statement ok
 CREATE INDEX gsn_idx ON gsn USING inverted(brand fct_kw, opt fct_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO gsn VALUES
   (1, 'acme', 'x'),
   (2, 'acme', NULL),
   (3, 'bolt', 'x')
-
-statement ok
-VACUUM (REFRESH_TABLE) gsn;
 
 query TTI
 SELECT brand, opt, count(*) AS n FROM gsn_idx
@@ -1389,16 +1356,13 @@ CREATE TABLE fex(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR NOT 
 
 statement ok
 CREATE INDEX fex_idx ON fex USING inverted((lower(cat)) fct_kw, (split_by_non_alpha(body, case := 'lower')) fct_body)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fex VALUES
   (1, 'Red',  'alpha beta'),
   (2, 'RED',  'alpha'),
   (3, 'Blue', 'gamma')
-
-statement ok
-VACUUM (REFRESH_TABLE) fex;
 
 query TI
 SELECT lower(cat) AS lc, count(*) AS n FROM fex_idx
@@ -1484,16 +1448,13 @@ CREATE TABLE fes(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL,
 
 statement ok
 CREATE INDEX fes_idx ON fes USING inverted(lc fct_kw, (split_by_non_alpha(body, case := 'lower')) fct_body)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fes(id, cat, body) VALUES
   (1, 'Red',  'alpha beta'),
   (2, 'RED',  'alpha'),
   (3, 'Blue', 'gamma')
-
-statement ok
-VACUUM (REFRESH_TABLE) fes;
 
 query TI
 SELECT lc, count(*) AS n FROM fes_idx
@@ -1540,16 +1501,13 @@ CREATE TABLE fexs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, brand VARCHAR NO
 
 statement ok
 CREATE INDEX fexs_idx ON fexs USING inverted((lower(cat)) fct_kw, brand fct_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fexs VALUES
   (1, 'Red',  'acme'),
   (2, 'RED',  'bolt'),
   (3, 'Blue', 'acme')
-
-statement ok
-VACUUM (REFRESH_TABLE) fexs;
 
 query TTI
 SELECT lower(cat) AS lc, brand, count(*) AS n FROM fexs_idx
@@ -1598,13 +1556,10 @@ CREATE TABLE ftwo(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR NOT NULL)
 
 statement ok
 CREATE INDEX ftwo_idx ON ftwo USING inverted(a fct_kw, (lower(b)) fct_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ftwo VALUES (1, 'x', 'Q'), (2, NULL, 'q')
-
-statement ok
-VACUUM (REFRESH_TABLE) ftwo;
 
 query TTI
 SELECT a, lower(b) AS lb, count(*) AS n FROM ftwo_idx
@@ -1659,7 +1614,7 @@ CREATE TABLE gsnw(id INTEGER PRIMARY KEY, opt VARCHAR, brand VARCHAR NOT NULL,
 
 statement ok
 CREATE INDEX gsnw_idx ON gsnw USING inverted(opt fct_kw, brand fct_kw, body fct_body)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO gsnw VALUES
@@ -1668,9 +1623,6 @@ INSERT INTO gsnw VALUES
   (3, 'y',  'bolt', 'green pear'),
   (4, NULL, 'bolt', 'green apple'),
   (5, 'x',  'core', 'red plum')
-
-statement ok
-VACUUM (REFRESH_TABLE) gsnw;
 
 query TTI
 SELECT opt, brand, count(*) AS n FROM gsnw_idx WHERE body @@ 'red'
@@ -1741,10 +1693,7 @@ CREATE VIEW fvw AS SELECT id, sev AS SeverityText, body AS Body FROM fvw_base
 
 statement ok
 CREATE INDEX fvw_idx ON fvw USING inverted((split_by_non_alpha(Body, case := 'lower')) fvw_kw, SeverityText fvw_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
-
-statement ok
-VACUUM (REFRESH_TABLE) fvw_base;
+    WITH (compaction_interval = 0)
 
 query TI
 SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
@@ -1892,13 +1841,10 @@ CREATE TABLE fconst(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
 
 statement ok
 CREATE INDEX fconst_idx ON fconst USING inverted(cat fct_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fconst VALUES (1,'red'),(2,'green'),(3,'red'),(4,'blue'),(5,'red'),(6,'green')
-
-statement ok
-VACUUM (REFRESH_TABLE) fconst;
 
 query TI
 SELECT cat, count(*) AS n FROM fconst_idx WHERE true GROUP BY cat ORDER BY cat
@@ -1991,15 +1937,12 @@ CREATE TABLE fgs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, region VARCHAR NO
 
 statement ok
 CREATE INDEX fgs_idx ON fgs USING inverted(cat fct_kw, region fct_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fgs VALUES
   (1,'red','north'),(2,'green','south'),(3,'red','north'),
   (4,'blue','east'),(5,'red','south'),(6,'green','north')
-
-statement ok
-VACUUM (REFRESH_TABLE) fgs;
 
 query TTI
 SELECT cat, region, count(*) AS n FROM fgs_idx WHERE true

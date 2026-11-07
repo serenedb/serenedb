@@ -37,10 +37,6 @@ statement ok
 INSERT INTO arr_c VALUES (3, 'alpha three', [-1.0, 0.0, 1.0])
 
 
-statement ok
-VACUUM (REFRESH_TABLE) arr_c
-
-
 # Segment B: all non-null.
 statement ok
 INSERT INTO arr_c VALUES (4, 'beta one', [4.0, 5.0, 6.0])
@@ -48,10 +44,6 @@ INSERT INTO arr_c VALUES (4, 'beta one', [4.0, 5.0, 6.0])
 
 statement ok
 INSERT INTO arr_c VALUES (5, 'beta two', [7.0, 8.0, 9.0])
-
-
-statement ok
-VACUUM (REFRESH_TABLE) arr_c
 
 
 # Baseline projection across both pre-merge segments.
@@ -152,10 +144,6 @@ statement ok
 INSERT INTO struct_c VALUES (3, 'alpha three', ROW(NULL, 30))
 
 
-statement ok
-VACUUM (REFRESH_TABLE) struct_c
-
-
 # Segment B: also exercises a NULL field on the second slot.
 statement ok
 INSERT INTO struct_c VALUES (4, 'beta one', ROW('delta', NULL))
@@ -163,10 +151,6 @@ INSERT INTO struct_c VALUES (4, 'beta one', ROW('delta', NULL))
 
 statement ok
 INSERT INTO struct_c VALUES (5, 'beta two', ROW('epsilon', 50))
-
-
-statement ok
-VACUUM (REFRESH_TABLE) struct_c
 
 
 query
@@ -263,10 +247,6 @@ statement ok
 INSERT INTO map_c VALUES (3, 'alpha three', MAP {})
 
 
-statement ok
-VACUUM (REFRESH_TABLE) map_c
-
-
 # Segment B: also exercises a NULL value inside a non-null map.
 statement ok
 INSERT INTO map_c VALUES (4, 'beta one', MAP {'c': 3, 'd': 4})
@@ -274,10 +254,6 @@ INSERT INTO map_c VALUES (4, 'beta one', MAP {'c': 3, 'd': 4})
 
 statement ok
 INSERT INTO map_c VALUES (5, 'beta two', MAP {'e': NULL, 'f': 5})
-
-
-statement ok
-VACUUM (REFRESH_TABLE) map_c
 
 
 query

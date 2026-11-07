@@ -79,6 +79,7 @@
 #include "pg/types/logical.h"
 #include "query/config_variable_names.h"
 #include "search/store.h"
+#include "search/table_keys.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::connector {
@@ -532,13 +533,13 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   auto& inverted_storage = *gstate.index_storage;
-  SDB_IF_FAILURE("refresh_before_manifest_publish") {
-    search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
+  SDB_IF_FAILURE("commit_before_manifest_publish") {
+    inverted_storage.Commit();
   }
   if (gstate.file_manifest) {
     inverted_storage.SetFileManifest(gstate.file_manifest);
   }
-  search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
+  inverted_storage.Commit();
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 
   if (gstate.progress) {

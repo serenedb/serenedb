@@ -19,9 +19,6 @@ statement ok
 INSERT INTO xcr_local SELECT i, 'bulk' || i FROM range(0, 20000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) xcr_local;
-
-statement ok
 BEGIN;
 
 statement ok
@@ -32,12 +29,6 @@ INSERT INTO xcr_other.public.xcr_remote VALUES (1, 'both');
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) xcr_local;
-
-statement ok
-VACUUM (REFRESH_TABLE) xcr_other.public.xcr_remote;
 
 statement ok
 INSERT INTO xcr_local SELECT i, 'tail' || i FROM range(200000, 200100) t(i);
@@ -53,11 +44,7 @@ SELECT 1;
 
 connection after_commit
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) xcr_local;
-
-connection after_commit
-statement ok
-VACUUM (REFRESH_TABLE) xcr_other.public.xcr_remote;
+SELECT 1;
 
 connection after_commit
 query
@@ -133,14 +120,6 @@ SELECT (SELECT count(*) FROM xcr_local WHERE id = 400000) AS l, (SELECT count(*)
 ----
 l	r
 1	1
-
-connection after_decided
-statement ok
-VACUUM (REFRESH_TABLE) xcr_local;
-
-connection after_decided
-statement ok
-VACUUM (REFRESH_TABLE) xcr_other.public.xcr_remote;
 
 connection after_decided
 query

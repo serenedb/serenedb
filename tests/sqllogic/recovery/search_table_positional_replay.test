@@ -4,7 +4,7 @@ statement ok
 RESET sdb_faults;
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE rp (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE rp (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE rp_ref (id BIGINT, v TEXT);
@@ -16,25 +16,16 @@ statement ok
 INSERT INTO rp_ref SELECT i, 'a' FROM generate_series(0, 9999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rp;
-
-statement ok
 INSERT INTO rp SELECT i, 'b' FROM generate_series(10000, 19999) g(i);
 
 statement ok
 INSERT INTO rp_ref SELECT i, 'b' FROM generate_series(10000, 19999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rp;
-
-statement ok
 INSERT INTO rp SELECT i, 'c' FROM generate_series(20000, 29999) g(i);
 
 statement ok
 INSERT INTO rp_ref SELECT i, 'c' FROM generate_series(20000, 29999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) rp;
 
 statement ok
 BEGIN;
@@ -57,10 +48,6 @@ SELECT count(*) AS n FROM rp;
 ----
 n
 10000
-
-connection after_long_run
-statement ok
-VACUUM (REFRESH_TABLE) rp;
 
 connection after_long_run
 query
@@ -113,10 +100,6 @@ n	left
 8000	0
 
 connection after_overlap
-statement ok
-VACUUM (REFRESH_TABLE) rp;
-
-connection after_overlap
 query
 SELECT (SELECT count(*) FROM (SELECT id, v FROM rp EXCEPT ALL SELECT id, v FROM rp_ref)) + (SELECT count(*) FROM (SELECT id, v FROM rp_ref EXCEPT ALL SELECT id, v FROM rp)) AS diff;
 ----
@@ -157,10 +140,6 @@ SELECT count(*) AS n, count(*) FILTER (WHERE v = 'u') AS u, count(DISTINCT id) A
 ----
 n	u	ids
 7200	800	7200
-
-connection after_update
-statement ok
-VACUUM (REFRESH_TABLE) rp;
 
 connection after_update
 query
@@ -206,10 +185,6 @@ SELECT count(*) AS n, count(DISTINCT id) AS ids FROM rp;
 ----
 n	ids
 7200	7200
-
-connection after_race
-statement ok
-VACUUM (REFRESH_TABLE) rp;
 
 connection after_race
 query
@@ -271,10 +246,6 @@ SELECT count(*) AS n FROM rp WHERE id % 3 = 0 OR id % 11 = 4;
 ----
 n
 0
-
-connection after_third_crash
-statement ok
-VACUUM (REFRESH_TABLE) rp;
 
 connection after_third_crash
 query

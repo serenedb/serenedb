@@ -24,9 +24,6 @@ INSERT INTO tsf VALUES (2, 'lazy dog', 'quick fox runs', 'animals');
 statement ok
 INSERT INTO tsf VALUES (3, 'slow turtle', 'nothing here', 'reptiles');
 
-statement ok
-VACUUM (REFRESH_TABLE) tsf;
-
 # ----------------------------------------------------------------------
 # A column operand still pins the field, and a prefix is refused.
 # ----------------------------------------------------------------------
@@ -289,9 +286,6 @@ INSERT INTO tsf_cars VALUES (1, 'one', 'a red car here'), (2, 'two', 'red paint 
 
 statement ok
 CREATE INDEX tsf_cars_idx ON tsf_cars USING inverted (id, title tsf_text, body tsf_synonyms);
-
-statement ok
-VACUUM (REFRESH_TABLE) tsf_cars;
 
 query
 SELECT id FROM tsf_cars_idx WHERE tableoid @@ to_tsquery('body:auto') ORDER BY id;

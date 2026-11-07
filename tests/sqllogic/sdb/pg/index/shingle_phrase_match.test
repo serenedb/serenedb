@@ -16,9 +16,6 @@ INSERT INTO test_shingle VALUES
     (4, 'fox quick brown'),
     (5, 'quick brown cat brown fox')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle
-
 query
 SELECT id FROM test_shingle_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -252,9 +249,6 @@ INSERT INTO test_shingle_pos VALUES
     (3, 'brown fox quick'),
     (4, 'fox quick brown'),
     (5, 'quick brown cat brown fox')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_pos
 
 query
 SELECT id FROM test_shingle_pos_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
@@ -1043,9 +1037,6 @@ CREATE INDEX test_shingle_joined_idx ON test_shingle_joined USING inverted(id, b
 statement ok
 INSERT INTO test_shingle_joined VALUES (1, 'quick brown fox'), (2, 'quick bread')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_joined
-
 query
 SELECT id FROM test_shingle_joined_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
 ----
@@ -1088,9 +1079,6 @@ INSERT INTO test_shingle_score VALUES
     (2, 'brown fox brown fox'),
     (3, 'the brown fox jumped over things')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_score
-
 query
 SELECT id FROM test_shingle_score_idx WHERE body @@ ts_phrase('brown fox')
 ORDER BY BM25(test_shingle_score_idx.tableoid) DESC, id
@@ -1122,9 +1110,6 @@ INSERT INTO test_shingle_rank VALUES
     (2, 'quick brown z brown fox y quick brown fox'),
     (3, 'quick brown fox quick brown fox'),
     (4, 'quick brown only and brown fox only')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_rank
 
 query
 SELECT id FROM test_shingle_rank_idx WHERE body @@ ts_phrase('quick brown fox')
@@ -1162,9 +1147,6 @@ INSERT INTO test_shingle_terms VALUES
     (1, 'the quick brown fox jumps'),
     (2, 'quick brown dog'),
     (3, 'brown fox quick')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_terms
 
 query
 SELECT id FROM test_shingle_terms_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
@@ -1207,9 +1189,6 @@ statement ok
 INSERT INTO test_shingle_bare VALUES
     (1, 'the quick brown fox'),
     (2, 'quick brown cat brown fox')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_bare
 
 query
 SELECT id FROM test_shingle_bare_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
@@ -1264,9 +1243,6 @@ CREATE INDEX test_shingle_syn_idx ON test_shingle_syn USING inverted(id, body sh
 
 statement ok
 INSERT INTO test_shingle_syn VALUES (1, 'a red car here'), (2, 'red paint here')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_syn
 
 query
 SELECT id FROM test_shingle_syn_idx WHERE body @@ ts_phrase('red automobile') ORDER BY id
@@ -1335,9 +1311,6 @@ statement ok
 INSERT INTO test_shingle_offs VALUES
     (1, 'the quick brown fox jumps'),
     (2, 'quick brown cat and quick brown fox')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_offs
 
 query
 SELECT id, ts_offsets(body) AS offsets FROM test_shingle_offs_idx WHERE body @@ 'brown' ORDER BY id
@@ -1456,9 +1429,6 @@ INSERT INTO test_shingle_stored VALUES
     (1, 'the quick brown fox jumps'),
     (2, 'quick brown cat and quick brown fox')
 
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_stored
-
 query
 SELECT id, ts_offsets(body) AS offsets FROM test_shingle_stored_idx WHERE body @@ 'brown' ORDER BY id
 ----
@@ -1533,9 +1503,6 @@ INSERT INTO test_shingle_freq VALUES
     (1, 'the quick brown fox'),
     (2, 'quick brown fox jumps'),
     (3, 'fox and the quick brown dog')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_freq
 
 query
 SELECT id FROM test_shingle_freq_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
@@ -1635,9 +1602,6 @@ CREATE INDEX test_shingle_alpha_idx ON test_shingle_alpha USING inverted(id, bod
 
 statement ok
 INSERT INTO test_shingle_alpha VALUES (1, 'quick-brown fox'), (2, 'brown quick fox')
-
-statement ok
-VACUUM (REFRESH_TABLE) test_shingle_alpha
 
 query
 SELECT id FROM test_shingle_alpha_idx WHERE body @@ to_tsquery('"quick-brown fox"') ORDER BY id

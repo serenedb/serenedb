@@ -195,10 +195,6 @@ statement ok
 TRUNCATE tcs
 
 
-statement ok
-VACUUM (REFRESH_TABLE) tcs
-
-
 query
 SELECT id, v FROM tcs ORDER BY id
 ----
@@ -235,10 +231,6 @@ COMMIT
 connection s2
 statement ok
 INSERT INTO tcs VALUES (4, 'd')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tcs
 
 
 query
@@ -299,10 +291,6 @@ TRUNCATE tcn
 connection s2
 statement ok
 INSERT INTO tcn VALUES (2, 'after')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) tcn
 
 
 query

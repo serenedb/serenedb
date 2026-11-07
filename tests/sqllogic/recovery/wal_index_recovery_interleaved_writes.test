@@ -31,12 +31,6 @@ INSERT INTO iw_idx_t VALUES (1, 'pre seed one'), (2, 'pre seed two');
 statement ok
 CREATE INDEX iw_idx ON iw_idx_t USING inverted(id, body iw_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) iw_idx_t;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 # === START of WAL window: indexed writes first ===
 statement ok
 INSERT INTO iw_idx_t VALUES
@@ -118,7 +112,7 @@ SELECT 1;
 
 connection iw_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) iw_idx_t;
+SELECT 1;
 
 # Final pks in iw_idx_t:
 #  pre seeds: 1 was deleted, 2 updated → kept as id=2

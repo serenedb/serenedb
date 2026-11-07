@@ -4,9 +4,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY tl_words AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position)
@@ -26,18 +23,12 @@ SELECT i,
 FROM generate_series(1, 15) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) tl_docs
-
-statement ok
 INSERT INTO tl_docs
 SELECT i,
        'title-' || i || '-long-enough-to-not-inline',
        CASE WHEN i % 3 = 0 THEN 'red fox ' ELSE 'blue cat ' END ||
        CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END
 FROM generate_series(16, 30) t(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) tl_docs
 
 query
 EXPLAIN SELECT id, title FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3

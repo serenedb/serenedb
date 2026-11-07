@@ -39,10 +39,6 @@ statement ok
 INSERT INTO list_t VALUES (4, 'fourth', [])
 
 
-statement ok
-VACUUM (REFRESH_TABLE) list_t
-
-
 # Materialize the LIST column through the new-cs columnstore materializer.
 query
 SELECT pk, tags FROM list_t_idx WHERE text_for_search @@ ts_phrase('first')

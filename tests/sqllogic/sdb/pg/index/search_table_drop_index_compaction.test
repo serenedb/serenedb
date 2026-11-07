@@ -14,13 +14,7 @@ statement ok
 INSERT INTO notes VALUES (1, 'the quick brown fox'), (2, 'lazy dog jumps');
 
 statement ok
-VACUUM (REFRESH_TABLE) notes;
-
-statement ok
 INSERT INTO notes VALUES (3, 'fox runs fast'), (4, 'a dog sleeps');
-
-statement ok
-VACUUM (REFRESH_TABLE) notes;
 
 statement ok
 DROP INDEX notes_body_idx;
@@ -51,9 +45,6 @@ statement ok
 INSERT INTO notes VALUES (5, 'the fox again');
 
 statement ok
-VACUUM (REFRESH_TABLE) notes;
-
-statement ok
 VACUUM (COMPACT_TABLE) notes;
 
 query
@@ -77,9 +68,6 @@ CREATE INDEX notes_body_idx ON notes USING inverted (body dic_plain);
 
 statement ok
 INSERT INTO notes VALUES (6, 'one more fox');
-
-statement ok
-VACUUM (REFRESH_TABLE) notes;
 
 statement ok
 VACUUM (COMPACT_TABLE) notes;
@@ -106,13 +94,7 @@ statement ok
 INSERT INTO held VALUES (1, 'the quick brown fox'), (2, 'lazy dog jumps');
 
 statement ok
-VACUUM (REFRESH_TABLE) held;
-
-statement ok
 INSERT INTO held VALUES (3, 'fox runs fast'), (4, 'a dog sleeps');
-
-statement ok
-VACUUM (REFRESH_TABLE) held;
 
 connection holder
 statement ok

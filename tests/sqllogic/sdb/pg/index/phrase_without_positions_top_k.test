@@ -22,9 +22,6 @@ statement ok
 CREATE INDEX ptk_pos_idx ON ptk USING inverted (id, body ptk_words_pos) INCLUDE (n)
     WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0)
 
-statement ok
-VACUUM (REFRESH_TABLE) ptk
-
 query
 EXPLAIN SELECT id FROM ptk_text_idx WHERE body @@ ts_phrase('w1 w2')
 ORDER BY BM25(ptk_text_idx.tableoid) DESC LIMIT 5
@@ -226,9 +223,6 @@ FROM range(6001, 6004) t(g)
 
 statement ok
 DELETE FROM ptk WHERE id IN (6000, 5500, 6002)
-
-statement ok
-VACUUM (REFRESH_TABLE) ptk
 
 query
 SELECT id, round(BM25(ptk_text_idx.tableoid)::numeric, 4) AS score

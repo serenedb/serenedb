@@ -233,7 +233,7 @@ CREATE INDEX vedernikoff_team_idx ON vedernikoff (team);
 # background refresh loop: the as-of-last-refresh assertions below are only
 # deterministic when refreshes happen solely through the explicit VACUUM.
 statement ok
-CREATE INDEX vedernikoff_quote_idx ON vedernikoff USING inverted(id, team, quote test_english) WITH (refresh_interval = 0);
+CREATE INDEX vedernikoff_quote_idx ON vedernikoff USING inverted(id, team, quote test_english);
 
 # 10000 rows; team cycles through 4 buckets, quote cycles through 5 sentences.
 # Each sentence mentions vedernikoff so a phrase('vedernikoff') match hits
@@ -251,9 +251,6 @@ SELECT
     'vedernikoff and babsky pair on rocksdb'
   ])[1 + x % 5]
 FROM generate_series(1, 10000) AS t(x);
-
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff;
 
 # Sanity-check both indexes before TRUNCATE.
 query
@@ -317,11 +314,6 @@ SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky w
 count
 2000
 
-# Refresh the inverted index so it observes the TRUNCATE; only now does the
-# eventual count drop to 0.
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff;
-
 query
 SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
 ----
@@ -345,9 +337,6 @@ SELECT
     'vedernikoff ships truncate today'
   ])[1 + x % 2]
 FROM generate_series(1, 500) AS t(x);
-
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff;
 
 query
 SELECT count(*) FROM vedernikoff WHERE team = 'babsky';
@@ -779,9 +768,6 @@ ri_serial_id_seq	f
 
 statement ok
 INSERT INTO ri_serial (v) VALUES ('c');
-
-statement ok
-VACUUM (REFRESH_TABLE) ri_serial;
 
 query
 SELECT id, v FROM ri_serial;

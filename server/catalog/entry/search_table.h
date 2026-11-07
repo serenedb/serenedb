@@ -48,7 +48,7 @@
 #include "catalog/entry_set.h"
 #include "catalog/persistence/search_table.h"
 #include "query/config_variable_names.h"
-#include "search/table_keys.h"
+#include "search/key_spec.h"
 
 namespace duckdb {
 
@@ -78,18 +78,14 @@ enum class TableEngine : uint8_t {
 inline constexpr std::string_view kStorageOption = "storage";
 
 inline constexpr auto kSearchTableMaintenanceSettings = std::to_array({
-  kRefreshIntervalSetting,
   kCompactionIntervalSetting,
-  kCleanupIntervalStepSetting,
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
 });
 
 inline constexpr auto kSearchTableSettings = std::to_array({
-  kRefreshIntervalSetting,
   kCompactionIntervalSetting,
-  kCleanupIntervalStepSetting,
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
@@ -98,9 +94,7 @@ inline constexpr auto kSearchTableSettings = std::to_array({
 });
 
 inline constexpr auto kSearchTableOptions = std::to_array({
-  kRefreshIntervalSetting,
   kCompactionIntervalSetting,
-  kCleanupIntervalStepSetting,
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,

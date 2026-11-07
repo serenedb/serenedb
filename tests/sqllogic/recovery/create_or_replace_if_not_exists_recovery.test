@@ -956,10 +956,6 @@ INSERT INTO coinr_st VALUES (1, 'old one'), (2, 'old two');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
-
-
-statement ok
 BEGIN;
 
 
@@ -973,10 +969,6 @@ INSERT INTO coinr_st VALUES (10, 'new ten', 100), (11, 'new eleven', 110);
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
 
 
 query
@@ -997,10 +989,6 @@ CREATE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
 
 statement ok
 INSERT INTO coinr_st_rb VALUES (1, 'kept one'), (2, 'kept two');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st_rb;
 
 
 statement ok
@@ -1028,10 +1016,6 @@ INSERT INTO coinr_st_ine VALUES (1, 'kept');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_ine;
-
-
-statement ok
 CREATE TABLE IF NOT EXISTS coinr_st_ine (x INT) WITH (storage = 'search');
 
 
@@ -1053,19 +1037,11 @@ INSERT INTO coinr_st_to_search VALUES (2, 'searchable');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_to_search;
-
-
-statement ok
 CREATE TABLE coinr_st_to_plain (id INT, body TEXT) WITH (storage = 'search');
 
 
 statement ok
 INSERT INTO coinr_st_to_plain VALUES (1, 'searchable');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st_to_plain;
 
 
 statement ok
@@ -1804,10 +1780,6 @@ statement ok
 INSERT INTO coinr_st_open VALUES (1, 'committed');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st_open;
-
-
 connection w_open
 statement ok
 BEGIN;
@@ -2314,11 +2286,6 @@ hello,world
 
 # The replaced search table holds its own documents and none of the old ones.
 connection after_replay
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
-
-
-connection after_replay
 query
 SELECT id, body, extra FROM coinr_st ORDER BY id;
 ----
@@ -2404,11 +2371,6 @@ SELECT a, b FROM coinr_fr_t ORDER BY a;
 a	b
 1	fr
 2	fr
-
-
-connection after_replay
-statement ok
-VACUUM (REFRESH_TABLE) coinr_fr_st;
 
 
 connection after_replay
@@ -2813,13 +2775,6 @@ pf
 15
 
 
-# The replaced search table kept its committed documents, and the lost
-# replace's document is nowhere.
-connection after_before_commit
-statement ok
-VACUUM (REFRESH_TABLE) coinr_st_rb;
-
-
 connection after_before_commit
 query
 SELECT id, body FROM coinr_st_rb ORDER BY id;
@@ -2860,11 +2815,6 @@ CREATE TABLE coinr_ac_st (id INT, body TEXT) WITH (storage = 'search');
 connection after_before_commit
 statement ok
 INSERT INTO coinr_ac_st VALUES (1, 'old');
-
-
-connection after_before_commit
-statement ok
-VACUUM (REFRESH_TABLE) coinr_ac_st;
 
 
 connection after_before_commit
@@ -2999,11 +2949,6 @@ pf	new_m
 
 # A search table replaced without documents comes back as the new, empty
 # definition; the old table's documents went with it.
-connection after_after_commit
-statement ok
-VACUUM (REFRESH_TABLE) coinr_ac_st;
-
-
 connection after_after_commit
 query
 SELECT (SELECT count(*) FROM coinr_ac_st) AS docs,
@@ -3192,22 +3137,12 @@ INSERT INTO coinr_c_st VALUES (1, 'old one');
 
 connection after_after_commit
 statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
-
-
-connection after_after_commit
-statement ok
 CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
 
 
 connection after_after_commit
 statement ok
 INSERT INTO coinr_c_st VALUES (20, 'checkpoint twenty'), (21, 'checkpoint twentyone');
-
-
-connection after_after_commit
-statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
 
 
 connection after_after_commit
@@ -3716,11 +3651,6 @@ INSERT INTO coinr_c_st VALUES (30, 'tail thirty');
 
 connection after_checkpoint
 statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
-
-
-connection after_checkpoint
-statement ok
 INSERT INTO coinr_c_st VALUES (31, 'tail thirtyone');
 
 
@@ -3806,11 +3736,6 @@ c_v3	2
 connection after_tail
 statement ok
 DELETE FROM coinr_audit;
-
-
-connection after_tail
-statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
 
 
 connection after_tail

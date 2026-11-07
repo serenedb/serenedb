@@ -23,9 +23,6 @@ statement ok
 CREATE INDEX catalog_docs_idx ON catalog_docs
     USING inverted (id, body mig_en, category);
 
-statement ok
-VACUUM (REFRESH_TABLE) catalog_docs;
-
 # DOCS_TEST_BODY
 
 query

@@ -14,9 +14,6 @@ statement ok
 INSERT INTO trt VALUES (1, 'a');
 
 statement ok
-VACUUM (REFRESH_TABLE) trt;
-
-statement ok
 SET sdb_faults = 'crash_after_commit';
 
 statement ok

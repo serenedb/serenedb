@@ -47,10 +47,6 @@ CREATE INDEX topk_del_idx ON topk_del USING inverted(id, body en_topk_del)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) topk_del;
-
-
 # Before any delete: the pruning iterator runs, nothing wraps it.
 
 query
@@ -67,10 +63,6 @@ id
 
 statement count 1
 DELETE FROM topk_del WHERE id = 3;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) topk_del;
 
 
 # The segment now has a mask. Byte identical to the query above, and before the
@@ -103,10 +95,6 @@ count
 
 statement count 1
 DELETE FROM topk_del WHERE id = 1;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) topk_del;
 
 
 query

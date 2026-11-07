@@ -6,10 +6,6 @@ SET compaction_interval = 0
 
 
 statement ok
-SET refresh_interval = 0
-
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY lv_coll AS collate_tokens('en')
 
 
@@ -19,15 +15,11 @@ CREATE TABLE lv(id INTEGER PRIMARY KEY, body VARCHAR)
 
 statement ok
 CREATE INDEX lv_idx ON lv USING inverted(body lv_coll)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 
 statement ok
 INSERT INTO lv VALUES (1, 'short'), (2, repeat('a', 40000)), (3, repeat('b', 40000))
-
-
-statement ok
-VACUUM (REFRESH_TABLE) lv;
 
 
 query

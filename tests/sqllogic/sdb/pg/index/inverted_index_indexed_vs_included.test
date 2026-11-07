@@ -58,10 +58,6 @@ statement ok
 INSERT INTO m VALUES (4, 'delta',      400,  'note four',  40, 'red leaf')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) m
-
-
 # ---- 1. INDEXED-only column projection: pushdown filter + rocksdb lookup ----
 # `body` is indexed but not INCLUDE'd -> EXPLAIN shows `Lookup: rocksdb`
 # and the projection comes through bare (no annotation when everything

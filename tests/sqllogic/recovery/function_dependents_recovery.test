@@ -94,7 +94,7 @@ RESET search_path;
 
 statement ok
 CREATE TABLE fdr_st (id INT, a INT DEFAULT fdr_sdef(1), g INT GENERATED ALWAYS AS (fdr_sgen(a)) STORED)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (storage = 'search', compaction_interval = 0);
 
 
 statement ok
@@ -498,11 +498,6 @@ INSERT INTO fdr_f VALUES (2, -2);
 connection restarted_again
 statement ok
 INSERT INTO fdr_st (id) VALUES (-2);
-
-
-connection restarted_again
-statement ok
-VACUUM (REFRESH_TABLE) fdr_st;
 
 
 connection restarted_again

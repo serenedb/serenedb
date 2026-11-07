@@ -56,12 +56,6 @@ INSERT INTO rwi
   UNION ALL SELECT 101, [255, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8];
 
 statement ok
-VACUUM (REFRESH_TABLE) rw;
-
-statement ok
-VACUUM (REFRESH_TABLE) rwi;
-
-statement ok
 INSERT INTO rw
   SELECT 200 + i, [i * 10, 1, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
 
@@ -70,24 +64,12 @@ INSERT INTO rwi
   SELECT 200 + i, [i * 10, 1, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rw;
-
-statement ok
-VACUUM (REFRESH_TABLE) rwi;
-
-statement ok
 INSERT INTO rw
   SELECT 300 + i, [i * 10 + 5, 2, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
 
 statement ok
 INSERT INTO rwi
   SELECT 300 + i, [i * 10 + 5, 2, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) rw;
-
-statement ok
-VACUUM (REFRESH_TABLE) rwi;
 
 query
 SELECT pk FROM rw ORDER BY emb <-> [100.5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -201,12 +183,6 @@ INSERT INTO sp_hnsw VALUES
 
 statement ok
 INSERT INTO sp_ivf SELECT * FROM sp_hnsw;
-
-statement ok
-VACUUM (REFRESH_TABLE) sp_hnsw;
-
-statement ok
-VACUUM (REFRESH_TABLE) sp_ivf;
 
 statement ok
 SET sdb_ann_rescore_width = 100;

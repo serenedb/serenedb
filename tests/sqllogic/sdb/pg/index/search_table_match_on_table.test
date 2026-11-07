@@ -22,9 +22,6 @@ statement ok
 INSERT INTO mt SELECT ts, svc, body FROM mt_src;
 
 statement ok
-VACUUM (REFRESH_TABLE) mt;
-
-statement ok
 CREATE TABLE mt_expr WITH (storage = 'search', compaction_interval = 0) AS SELECT body, ts, svc FROM mt_src WHERE false;
 
 statement ok
@@ -34,16 +31,10 @@ statement ok
 INSERT INTO mt_expr SELECT body, ts, svc FROM mt_src;
 
 statement ok
-VACUUM (REFRESH_TABLE) mt_expr;
-
-statement ok
 CREATE TABLE mt_bare WITH (storage = 'search', compaction_interval = 0) AS SELECT ts, svc, body FROM mt_src WHERE false;
 
 statement ok
 INSERT INTO mt_bare SELECT ts, svc, body FROM mt_src;
-
-statement ok
-VACUUM (REFRESH_TABLE) mt_bare;
 
 query
 SELECT 'table' AS via, count(*) AS errors, count(*) FILTER (WHERE svc = 'svc1') AS svc1 FROM mt WHERE body @@ ts_phrase('error')
@@ -135,9 +126,6 @@ CREATE INDEX mt_pk_body ON mt_pk USING inverted (body);
 
 statement ok
 INSERT INTO mt_pk SELECT i, 'svc' || (i % 3), CASE WHEN i % 2 = 0 THEN 'error in module ' || (i % 4) ELSE 'all good in module ' || (i % 4) END, i * 10 FROM range(24) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) mt_pk;
 
 query
 SELECT id, svc FROM mt_pk WHERE id = 3 AND svc = 'svc0';

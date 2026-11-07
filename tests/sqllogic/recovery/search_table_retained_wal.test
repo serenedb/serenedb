@@ -10,7 +10,7 @@ CREATE DATABASE st_retained;
 
 statement ok
 CREATE TABLE st_retained.public.docs (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 
 statement ok
@@ -23,10 +23,6 @@ INSERT INTO st_retained.public.docs SELECT i, 'first' FROM range(0, 1000) r(i);
 
 statement ok
 INSERT INTO st_retained.public.counts VALUES (1);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) st_retained.public.docs;
 
 
 statement ok
@@ -183,11 +179,6 @@ SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*
 ----
 n
 1
-
-
-connection after_second_crash
-statement ok
-VACUUM (REFRESH_TABLE) st_retained.public.docs;
 
 
 connection after_second_crash

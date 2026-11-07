@@ -18,7 +18,7 @@ SET sdb_faults = 'IndexWriter::Transaction::Commit';
 
 statement error failed to commit index 'build_fail_idx': out of memory
 CREATE INDEX build_fail_idx ON build_fail USING inverted (id, msg)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -31,11 +31,7 @@ INSERT INTO build_fail VALUES (2000, 'after');
 
 statement ok
 CREATE INDEX build_fail_idx ON build_fail USING inverted (id, msg)
-  WITH (refresh_interval = 0, compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) build_fail;
+  WITH (compaction_interval = 0);
 
 
 query
@@ -61,11 +57,6 @@ SELECT count(*) AS n FROM build_fail;
 ----
 n
 2001
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) build_fail;
 
 
 connection after_crash

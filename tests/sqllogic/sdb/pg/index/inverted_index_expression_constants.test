@@ -18,9 +18,6 @@ CREATE INDEX consts_idx ON consts USING inverted (id,
 statement ok
 INSERT INTO consts VALUES (1, 'a', ['eng', 'data']), (2, 'b', []);
 
-statement ok
-VACUUM (REFRESH_TABLE) consts;
-
 query
 SELECT id FROM consts WHERE list_reverse(v) @@ ts_regexp('data') ORDER BY id;
 ----

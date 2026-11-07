@@ -9,7 +9,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 SET profiling_renderer_settings = {'deterministic': true};
@@ -48,9 +48,6 @@ INSERT INTO u
   UNION ALL
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
 
-statement ok
-VACUUM (REFRESH_TABLE) u;
-
 query
 SELECT value FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
@@ -79,16 +76,13 @@ DROP TABLE u;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO u
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet')
   UNION ALL
   SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y);
-
-statement ok
-VACUUM (REFRESH_TABLE) u;
 
 query
 SELECT value FROM sdb_metrics
@@ -112,16 +106,13 @@ SET threads = 4;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO u
   SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y)
   UNION ALL
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
-
-statement ok
-VACUUM (REFRESH_TABLE) u;
 
 query
 SELECT value > 2 AS parallel FROM sdb_metrics
@@ -151,16 +142,13 @@ DROP TABLE u;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO u
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet')
   UNION ALL
   SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y);
-
-statement ok
-VACUUM (REFRESH_TABLE) u;
 
 query
 SELECT value > 2 AS parallel FROM sdb_metrics
@@ -181,7 +169,7 @@ DROP TABLE u;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 BEGIN;
@@ -197,9 +185,6 @@ INSERT INTO u VALUES (5, 's5'), (7, 's7');
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) u;
 
 query
 SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
@@ -223,7 +208,7 @@ DROP TABLE u;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 SET sdb_faults = 'crash_after_commit';

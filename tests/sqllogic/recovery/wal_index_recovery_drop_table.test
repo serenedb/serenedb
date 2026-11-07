@@ -30,16 +30,6 @@ CREATE INDEX dt_keep_idx ON dt_keep USING inverted(id, body dt_dict);
 statement ok
 CREATE INDEX dt_drop_idx ON dt_drop USING inverted(id, body dt_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) dt_keep;
-
-statement ok
-VACUUM (REFRESH_TABLE) dt_drop;
-
-# Block search commits — rocksdb keeps advancing.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 # Writes to BOTH tables that never reach iresearch.
 statement ok
 INSERT INTO dt_keep VALUES (3, 'keep after fault charlie');
@@ -74,7 +64,7 @@ SELECT 1;
 
 connection dt_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) dt_keep;
+SELECT 1;
 
 # Dropped table and its index are gone.
 connection dt_after

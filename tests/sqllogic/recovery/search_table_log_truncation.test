@@ -4,7 +4,7 @@ statement ok
 RESET sdb_faults;
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE lt (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE lt (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO lt SELECT i, 'bulk' FROM generate_series(1, 5000) g(i);
@@ -137,7 +137,7 @@ SET GLOBAL checkpoint_threshold = '1B';
 
 connection after_crash
 statement ok
-CREATE TABLE lv (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE lv (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 connection after_crash
 statement ok

@@ -33,26 +33,14 @@ INSERT INTO hnsw_m SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
 
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_m;
-
-
-statement ok
 INSERT INTO hnsw_m SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
   FROM range(2000, 3000) t(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_m;
 
 
 # Deletes ~14% of the donor, under the 0.3 missing-ratio gate, so the merge
 # reuses its graph instead of falling back to a full rebuild.
 statement ok
 DELETE FROM hnsw_m WHERE pk % 7 = 0;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_m;
 
 
 statement ok

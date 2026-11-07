@@ -19,7 +19,7 @@ CREATE TABLE ldl(id INTEGER PRIMARY KEY, tags VARCHAR[], pair VARCHAR[2], plain 
 
 statement ok
 CREATE INDEX ldl_idx ON ldl USING inverted(id, tags ldl_kw, pair, plain)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 
 statement ok
@@ -30,10 +30,6 @@ INSERT INTO ldl VALUES
   (4, NULL,                            ['a', 'b'], 'z'),
   (5, [],                              ['c', 'a'], 'x'),
   (6, ['Brand=FENDT', 'Brand=FENDT'],  ['b', 'a'], 'y')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ldl;
 
 
 # Terms are the distinct elements across all rows.
@@ -139,10 +135,6 @@ statement ok
 DELETE FROM ldl WHERE id IN (3, 6)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ldl;
-
-
 query TI
 SELECT t AS term, c AS docs
 FROM (SELECT unnest(ts_dict_agg(tags)) AS t, unnest(ts_dict_count(tags)) AS c
@@ -158,10 +150,6 @@ Status=Open	1
 # A fresh segment sums per term with the dirty one.
 statement ok
 INSERT INTO ldl VALUES (7, ['Brand=FENDT', 'Status=Open'], ['c', 'c'], 'w')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ldl;
 
 
 query TI

@@ -25,19 +25,11 @@ CREATE INDEX uni_rec_idx ON uni_rec_t
 statement ok
 INSERT INTO uni_rec_t VALUES (1, 'alpha bravo', union_value(num := 42));
 
-statement ok
-VACUUM (REFRESH_TABLE) uni_rec_t;
-
 query
 SELECT id, payload FROM uni_rec_idx WHERE body @@ ts_phrase('alpha');
 ----
 id	payload
 1	42
-
-# Post-crash rows: suppress the index commit so they land only in the store
-# WAL, post-refresh and not yet durable in the segments.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO uni_rec_t VALUES
@@ -55,7 +47,7 @@ SELECT 1;
 
 connection uni_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) uni_rec_t;
+SELECT 1;
 
 # Pre-crash row's UNION still served from cs.
 connection uni_after

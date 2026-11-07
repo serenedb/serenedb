@@ -97,9 +97,6 @@ KNOWN_UNTESTED_SOURCE_FAULTS = {
     # Search compaction task fault points; no recovery test drives compaction yet.
     "SearchCompactionTask::compactUnsafe",
     "SearchCompactionTask::lockInvertedIndexStorage",
-    # Search refresh task fault points; cleanup/lock paths untested.
-    "SearchRefreshTask::cleanupUnsafe",
-    "SearchRefreshTask::lockInvertedIndexStorage",
     # Truncate failure injection; no test drives a failed search truncate yet.
     "SereneSearchTruncateFailure",
     # Crash before the drop-task wipes the sequence counter; recovery test pending.

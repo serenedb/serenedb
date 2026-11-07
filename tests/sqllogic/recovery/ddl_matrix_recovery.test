@@ -185,10 +185,6 @@ CREATE INDEX dm_sec_b ON dm.sec (b);
 
 
 statement ok
-ALTER INDEX dm.dm_inv_body SET (refresh_interval = 500);
-
-
-statement ok
 ALTER TABLE dm.inv RENAME COLUMN a TO a2;
 
 
@@ -288,14 +284,6 @@ statement ok
 INSERT INTO dm.ser (v) VALUES ('r3');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dm.st;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dm.st_inv;
-
-
 connection pending
 statement ok
 BEGIN;
@@ -314,7 +302,6 @@ CREATE TABLE dm.ghost (g INT);
 connection pending
 statement ok
 ALTER TABLE dm.uq RENAME COLUMN code TO pending_code;
-
 
 
 query

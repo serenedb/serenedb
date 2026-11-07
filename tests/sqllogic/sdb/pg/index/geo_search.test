@@ -56,9 +56,6 @@ INSERT INTO geo_data VALUES (5, '{"type":"Point","coordinates":[37.701645,55.832
 statement ok
 INSERT INTO geo_data VALUES (6, '{"type":"Polygon","coordinates":[[[37.614323,55.705898],[37.615825,55.705898],[37.615825,55.706520],[37.614323,55.706520],[37.614323,55.705898]]]}')
 
-statement ok
-VACUUM (REFRESH_TABLE) geo_data
-
 
 # --- ST_Intersects ---
 
@@ -199,9 +196,6 @@ id
 
 statement ok
 INSERT INTO geo_data VALUES (7, '{"type":"Point","coordinates":[37.614800,55.704500]}')
-
-statement ok
-VACUUM (REFRESH_TABLE) geo_data
 
 
 # New point [37.6148, 55.7045] is inside both large_poly and medium_poly.
@@ -358,9 +352,6 @@ CREATE INDEX geo_plain_idx ON geo_plain USING inverted(id, geo plain_text)
 statement ok
 INSERT INTO geo_plain VALUES (1, '{"type":"Point","coordinates":[0,0]}')
 
-statement ok
-VACUUM (REFRESH_TABLE) geo_plain
-
 
 statement error
 SELECT id FROM geo_plain_idx WHERE ST_Intersects(geo, '{"type":"Point","coordinates":[0,0]}')
@@ -411,9 +402,6 @@ INSERT INTO geo_data_g VALUES (5, 'POINT(37.701645 55.832144)'::GEOMETRY('OGC:CR
 
 statement ok
 INSERT INTO geo_data_g VALUES (6, 'POLYGON((37.614323 55.705898, 37.615825 55.705898, 37.615825 55.706520, 37.614323 55.706520, 37.614323 55.705898))'::GEOMETRY('OGC:CRS84'))
-
-statement ok
-VACUUM (REFRESH_TABLE) geo_data_g
 
 
 # --- GEOMETRY field + JSON (GeoJSON) shape ---
@@ -631,9 +619,6 @@ id
 statement ok
 INSERT INTO geo_data_g VALUES (7, 'POINT(37.614800 55.704500)'::GEOMETRY('OGC:CRS84'))
 
-statement ok
-VACUUM (REFRESH_TABLE) geo_data_g
-
 
 query
 SELECT id FROM geo_data_g_idx
@@ -798,9 +783,6 @@ INSERT INTO places VALUES (6, '{"type":"Point","coordinates":[37.559509,55.71589
 
 statement ok
 INSERT INTO places VALUES (7, '{"type":"Point","coordinates":[37.701645,55.832144]}', 'blue restaurant outpost')
-
-statement ok
-VACUUM (REFRESH_TABLE) places
 
 
 # --- AND: geo predicate AND text @@ ---
@@ -1177,9 +1159,6 @@ INSERT INTO geo_data_g_src VALUES (6, 'POLYGON((37.614323 55.705898, 37.615825 5
 statement ok
 INSERT INTO geo_data_g_src VALUES (7, 'POINT(37.614800 55.704500)'::GEOMETRY('OGC:CRS84'))
 
-statement ok
-VACUUM (REFRESH_TABLE) geo_data_g_src
-
 
 # --- source-coded GEOMETRY field + GeoJSON shape (SourceWkbParser path) ---
 # large_poly intersects ids 1, 2, 3 and polygon 6.
@@ -1263,9 +1242,6 @@ INSERT INTO geo_pt VALUES (5, '{"name":"e","loc":{"lat":55.832144,"lng":37.70164
 
 statement ok
 INSERT INTO geo_pt VALUES (6, '{"name":"orphan"}')
-
-statement ok
-VACUUM (REFRESH_TABLE) geo_pt
 
 
 # --- ST_Intersects + path-mode geopoint ---
@@ -1360,9 +1336,6 @@ INSERT INTO geo_pt_arr VALUES (5, '[55.832144,37.701645]')
 statement ok
 INSERT INTO geo_pt_arr VALUES (6, '[55.704,37.616,0.0]')
 
-statement ok
-VACUUM (REFRESH_TABLE) geo_pt_arr
-
 
 # --- ST_Distance_Centroid + array-mode geopoint ---
 
@@ -1431,9 +1404,6 @@ CREATE INDEX geo_parts_f64_idx ON geo_parts USING inverted(id, geo geo_parts_f64
 
 statement ok
 CREATE INDEX geo_parts_u32_idx ON geo_parts USING inverted(id, geo geo_parts_u32)
-
-statement ok
-VACUUM (REFRESH_TABLE) geo_parts
 
 query
 SELECT 'source' AS coding, id FROM geo_parts_source_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[1.4,1.4],[1.6,1.4],[1.6,1.6],[1.4,1.6],[1.4,1.4]]]}')
@@ -1624,9 +1594,6 @@ CREATE INDEX geo_pt_s2_idx ON geo_pt_s2 USING inverted(id, geo geojson_point_s2p
 
 statement ok
 INSERT INTO geo_pt_s2 VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}'), (2, '{"type":"Point","coordinates":[37.616297,55.704831]}'), (3, '{"type":"Point","coordinates":[37.617053,55.704610]}'), (4, '{"type":"Point","coordinates":[37.559509,55.715895]}'), (5, '{"type":"Point","coordinates":[37.701645,55.832144]}')
-
-statement ok
-VACUUM (REFRESH_TABLE) geo_pt_s2
 
 query
 SELECT id FROM geo_pt_s2_idx

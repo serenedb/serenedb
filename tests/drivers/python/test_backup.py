@@ -208,12 +208,10 @@ def _worker(server: Serened, journal: Journal, seed: int, stop: threading.Event,
 def _maintenance(server: Serened, stop: threading.Event) -> None:
     with _connect(server) as conn:
         while not stop.wait(0.2):
-            for statement in ("VACUUM (REFRESH_TABLE) ledger_s",
-                              "VACUUM (REFRESH_INDEX) ledger_idx", "CHECKPOINT"):
-                try:
-                    conn.execute(statement)
-                except psycopg.Error:
-                    pass
+            try:
+                conn.execute("CHECKPOINT")
+            except psycopg.Error:
+                pass
 
 
 def _copy_file(source: Path, target: Path, rng: random.Random) -> None:
@@ -261,8 +259,6 @@ class State:
 
 def _read_state(server: Serened) -> State:
     with _connect(server) as conn:
-        conn.execute("VACUUM (REFRESH_TABLE) ledger_s")
-        conn.execute("VACUUM (REFRESH_INDEX) ledger_idx")
         ledger = Counter({(t, b): n for t, b, n in conn.execute(
             "SELECT txid, body, count(*) FROM ledger GROUP BY ALL")})
         search = Counter({t: n for t, n in conn.execute(
@@ -468,9 +464,8 @@ def _retained_backup(tmp_path: Path) -> tuple[Path, int, int]:
             conn.execute("CREATE DATABASE st")
         with _connect(source, "st") as conn:
             conn.execute("CREATE TABLE docs (id BIGINT, body TEXT) WITH "
-                         "(storage = 'search', refresh_interval = 0, compaction_interval = 0)")
+                         "(storage = 'search', compaction_interval = 0)")
             conn.execute("INSERT INTO docs SELECT i, 'first' FROM range(0, 1000) r(i)")
-            conn.execute("VACUUM (REFRESH_TABLE) docs")
             conn.execute("CHECKPOINT st")
             conn.execute("DELETE FROM docs WHERE id < 100")
             conn.execute("INSERT INTO docs SELECT i, 'second' FROM range(1000, 1100) r(i)")
@@ -544,8 +539,6 @@ def test_backup_without_a_retained_wal_refuses_to_boot(tmp_path: Path, missing: 
 
 def _failed_checkpoint_state(server: Serened) -> tuple[Counter, Counter, int]:
     with _connect(server, "fc") as conn:
-        conn.execute("VACUUM (REFRESH_INDEX) t_idx")
-        conn.execute("VACUUM (REFRESH_TABLE) s")
         table = Counter(dict(conn.execute("SELECT b, count(*) FROM t GROUP BY b").fetchall()))
         index = Counter()
         for body in table:

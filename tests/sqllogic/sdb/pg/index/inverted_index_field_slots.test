@@ -25,18 +25,10 @@ INSERT INTO slots VALUES
 
 
 statement ok
-VACUUM (REFRESH_TABLE) slots;
-
-
-statement ok
 INSERT INTO slots VALUES
   (5, false, 50, 'apple'),
   (6, NULL, 60, NULL),
   (7, true, NULL, 'fig');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) slots;
 
 
 query
@@ -339,10 +331,6 @@ statement ok
 INSERT INTO slot_lists VALUES (1, ['a', NULL]), (2, NULL), (3, ['b']), (4, ['b', NULL]);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) slot_lists;
-
-
 query
 SELECT id FROM slot_lists_idx WHERE tags IS NULL ORDER BY id;
 ----
@@ -387,10 +375,6 @@ id
 
 statement ok
 INSERT INTO slot_lists VALUES (5, [NULL]), (6, NULL), (7, ['a']);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) slot_lists;
 
 
 query
@@ -454,10 +438,6 @@ CREATE INDEX slot_json_idx ON slot_json
 statement ok
 INSERT INTO slot_json VALUES
   (1, '{"val":42}'), (2, '{"val":null}'), (3, '{"other":1}'), (4, '{"val":7}');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) slot_json;
 
 
 query

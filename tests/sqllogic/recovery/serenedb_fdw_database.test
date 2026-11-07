@@ -8,7 +8,7 @@ CREATE TABLE sfd_shop.public.docs(id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
 CREATE INDEX docs_idx ON sfd_shop.public.docs USING inverted(id, body)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 ALTER INDEX sfd_shop.public.docs_idx SET (compaction_interval = 600000);
@@ -18,11 +18,8 @@ INSERT INTO sfd_shop.public.docs
 SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1, 101) t(i);
 
 statement ok
-VACUUM (REFRESH_INDEX) sfd_shop.public.docs_idx;
-
-statement ok
 CREATE TABLE sfd_shop.public.notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 ALTER TABLE sfd_shop.public.notes SET (compaction_interval = 600000);
@@ -34,34 +31,25 @@ statement ok
 INSERT INTO sfd_shop.public.notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) sfd_shop.public.notes;
-
-statement ok
 CREATE TABLE sfd_shop.public.gone(id INTEGER, body VARCHAR);
 
 statement ok
 CREATE INDEX gone_idx ON sfd_shop.public.gone USING inverted(body)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO sfd_shop.public.gone VALUES (1, 'kept');
 
 statement ok
-VACUUM (REFRESH_INDEX) sfd_shop.public.gone_idx;
-
-statement ok
 CREATE INDEX gone_id_idx ON sfd_shop.public.gone USING inverted(id)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE sfd_shop.public.gone_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO sfd_shop.public.gone_notes VALUES (1, 'dropped');
-
-statement ok
-VACUUM (REFRESH_TABLE) sfd_shop.public.gone_notes;
 
 statement ok
 COPY (SELECT oid FROM pg_database WHERE datname = 'sfd_shop') TO '${__TEST_DIR__}/sfd_shop.oid' (FORMAT csv, HEADER false);

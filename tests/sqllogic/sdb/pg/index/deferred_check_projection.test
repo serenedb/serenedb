@@ -18,9 +18,6 @@ INSERT INTO dcp VALUES
 statement ok
 CREATE INDEX dcp_idx ON dcp USING inverted (id, body dcp_words, tags dcp_words) INCLUDE (body, tags)
 
-statement ok
-VACUUM (REFRESH_TABLE) dcp
-
 query
 SELECT id, body FROM dcp_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -135,9 +132,6 @@ INSERT INTO dcp_gen SELECT g, NULL FROM range(30001, 30101) t(g)
 statement ok
 CREATE INDEX dcp_gen_idx ON dcp_gen USING inverted (id, body dcp_words) INCLUDE (body)
 
-statement ok
-VACUUM (REFRESH_TABLE) dcp_gen
-
 query
 SELECT (SELECT count(*) FROM dcp_gen_idx WHERE body @@ ts_phrase('w3 w4')) AS matches,
        (SELECT count(*) FROM dcp_gen WHERE (' ' || body || ' ') LIKE '% w3 w4 %') AS expected
@@ -181,9 +175,6 @@ CREATE TABLE dcp_nested AS
 
 statement ok
 CREATE INDEX dcp_nested_idx ON dcp_nested USING inverted (id, body dcp_words, tags dcp_words) INCLUDE (body, tags, s)
-
-statement ok
-VACUUM (REFRESH_TABLE) dcp_nested
 
 query
 SELECT (SELECT count(*) FROM dcp_nested_idx WHERE tags @@ ts_phrase('w1 w2')) AS matches,
@@ -278,9 +269,6 @@ INSERT INTO dcp_geo
 
 statement ok
 CREATE INDEX dcp_geo_idx ON dcp_geo USING inverted (id, geo dcp_shape)
-
-statement ok
-VACUUM (REFRESH_TABLE) dcp_geo
 
 query
 SELECT count(*) FROM dcp_geo_idx

@@ -15,13 +15,7 @@ statement ok
 INSERT INTO tb SELECT i, i * 10, 'r' || i FROM generate_series(1, 2000) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) tb;
-
-statement ok
 INSERT INTO tb SELECT i, i * 10, 'r' || i FROM generate_series(2001, 4000) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) tb;
 
 query
 SELECT pk, x, s FROM tb WHERE pk = 3333;
@@ -66,13 +60,7 @@ statement ok
 INSERT INTO tv SELECT 'k' || i, i FROM generate_series(1, 1500) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) tv;
-
-statement ok
 INSERT INTO tv SELECT 'k' || i, i FROM generate_series(1501, 3000) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) tv;
 
 query
 SELECT pk, n FROM tv WHERE pk = 'k2500';
@@ -94,9 +82,6 @@ CREATE TABLE tc (a BIGINT, b BIGINT, s TEXT, PRIMARY KEY (a, b))
 statement ok
 INSERT INTO tc SELECT i % 10, i, 's' || i FROM generate_series(1, 2000) g(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) tc;
-
 query
 SELECT a, b, s FROM tc WHERE a = 3 AND b = 123;
 ----
@@ -114,9 +99,6 @@ c
 statement ok
 DELETE FROM tb WHERE pk = 3333;
 
-statement ok
-VACUUM (REFRESH_TABLE) tb;
-
 query
 SELECT count(*) AS c FROM tb WHERE pk = 3333;
 ----
@@ -125,9 +107,6 @@ c
 
 statement ok
 INSERT INTO tb VALUES (3333, 999, 'new');
-
-statement ok
-VACUUM (REFRESH_TABLE) tb;
 
 query
 SELECT pk, x, s FROM tb WHERE pk = 3333;
@@ -144,9 +123,6 @@ CREATE TABLE te (pk BIGINT PRIMARY KEY, x BIGINT)
 
 statement ok
 INSERT INTO te SELECT i, i * 10 FROM generate_series(1, 10) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) te;
 
 query
 EXPLAIN SELECT pk, x FROM te WHERE pk = 5;
@@ -187,9 +163,6 @@ CREATE TABLE tec (a BIGINT, b BIGINT, s TEXT, PRIMARY KEY (a, b))
 
 statement ok
 INSERT INTO tec SELECT i, i * 100, 't' || i FROM generate_series(1, 10) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) tec;
 
 # Full composite PK: both a and b claimed -> no Column Filter.
 query

@@ -36,9 +36,7 @@ namespace sdb::catalog::persistence {
 
 struct InvertedIndexSettings {
   uint32_t row_group_size{122880};
-  uint32_t refresh_interval_ms{1000};
   uint32_t compaction_interval_ms{1000};
-  uint32_t cleanup_interval_step{1};
   uint64_t segment_memory_max{268435456};
   uint32_t segment_docs_max{0};
   uint32_t compaction_max_segments{10};

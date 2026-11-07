@@ -64,10 +64,6 @@ statement ok
 INSERT INTO search_dml VALUES (1, 'x'), (2, 'y'), (3, 'z');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) search_dml;
-
-
 query
 SELECT * FROM search_dml ORDER BY a;
 ----
@@ -99,9 +95,6 @@ count
 statement ok
 UPDATE search_dml SET b = 'X' WHERE a = 1;
 
-statement ok
-VACUUM (REFRESH_TABLE) search_dml;
-
 query
 SELECT a, b FROM search_dml ORDER BY a;
 ----
@@ -122,9 +115,6 @@ count
 # (VACUUM REFRESH_TABLE), like inserts.
 statement ok
 DELETE FROM search_dml WHERE a = 1;
-
-statement ok
-VACUUM (REFRESH_TABLE) search_dml;
 
 query
 SELECT a, b FROM search_dml ORDER BY a;
@@ -166,9 +156,6 @@ count
 statement ok
 INSERT INTO search_dml VALUES (5, 'five'), (6, 'six');
 
-statement ok
-VACUUM (REFRESH_TABLE) search_dml;
-
 query
 SELECT a, b FROM search_dml ORDER BY a;
 ----
@@ -190,9 +177,6 @@ INSERT INTO search_dml VALUES (9, 'nine');
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) search_dml;
 
 query
 SELECT a, b FROM search_dml ORDER BY a;
@@ -318,10 +302,6 @@ col_description
 body
 
 
-statement ok
-VACUUM (REFRESH_TABLE) search_dml;
-
-
 query
 SELECT a, b FROM search_dml WHERE a >= 100 ORDER BY a;
 ----
@@ -332,10 +312,6 @@ a	b
 
 statement ok
 DELETE FROM search_dml WHERE a >= 100;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) search_dml;
 
 
 statement ok
@@ -403,9 +379,6 @@ CREATE TABLE search_genpk (a INTEGER, b TEXT) WITH (storage = 'search');
 statement ok
 INSERT INTO search_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r');
 
-statement ok
-VACUUM (REFRESH_TABLE) search_genpk;
-
 query
 SELECT * FROM search_genpk ORDER BY a;
 ----
@@ -419,9 +392,6 @@ a	b
 statement ok
 UPDATE search_genpk SET b = 'Q' WHERE a = 20;
 
-statement ok
-VACUUM (REFRESH_TABLE) search_genpk;
-
 query
 SELECT * FROM search_genpk ORDER BY a;
 ----
@@ -433,9 +403,6 @@ a	b
 # DELETE on a table without a PK: the rowid is the row's position.
 statement ok
 DELETE FROM search_genpk WHERE a >= 20;
-
-statement ok
-VACUUM (REFRESH_TABLE) search_genpk;
 
 query
 SELECT * FROM search_genpk ORDER BY a;
@@ -456,15 +423,9 @@ statement ok
 INSERT INTO search_upd VALUES (1, 'a', 10), (2, 'a', 20), (3, 'b', 30),
   (4, 'b', 40);
 
-statement ok
-VACUUM (REFRESH_TABLE) search_upd;
-
 # Multi-row UPDATE: two rows match; non-matching rows are untouched.
 statement ok
 UPDATE search_upd SET n = n + 100 WHERE grp = 'a';
-
-statement ok
-VACUUM (REFRESH_TABLE) search_upd;
 
 query
 SELECT id, grp, n FROM search_upd ORDER BY id;
@@ -479,9 +440,6 @@ id	grp	n
 # PK. Reachable by the new PK; gone under the old.
 statement ok
 UPDATE search_upd SET id = 20 WHERE id = 2;
-
-statement ok
-VACUUM (REFRESH_TABLE) search_upd;
 
 query
 SELECT id, grp, n FROM search_upd ORDER BY id;
@@ -512,9 +470,6 @@ statement ok
 CREATE TABLE search_ctas WITH (storage = 'search') AS
   SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(x, y);
 
-statement ok
-VACUUM (REFRESH_TABLE) search_ctas;
-
 query
 SELECT * FROM search_ctas ORDER BY x;
 ----
@@ -543,9 +498,6 @@ INSERT INTO search_multi VALUES (20, 'even');
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) search_multi;
 
 
 query
@@ -585,14 +537,8 @@ statement ok
 INSERT INTO search_ine VALUES (1, 'keep'), (2, 'keep');
 
 statement ok
-VACUUM (REFRESH_TABLE) search_ine;
-
-statement ok
 CREATE TABLE IF NOT EXISTS search_ine WITH (storage = 'search') AS
   SELECT * FROM (VALUES (99, 'nope')) AS t(a, b);
-
-statement ok
-VACUUM (REFRESH_TABLE) search_ine;
 
 query
 SELECT a, b FROM search_ine ORDER BY a;
@@ -617,9 +563,6 @@ CREATE TABLE search_gen (a INTEGER,
 statement ok
 INSERT INTO search_gen (note, a) VALUES ('x', 5), ('y', 7);
 
-statement ok
-VACUUM (REFRESH_TABLE) search_gen;
-
 query
 SELECT a, b, note FROM search_gen ORDER BY a;
 ----
@@ -638,9 +581,6 @@ CREATE TABLE search_gen_multi (w INTEGER, h INTEGER,
 
 statement ok
 INSERT INTO search_gen_multi (w, h) VALUES (3, 4), (5, 6);
-
-statement ok
-VACUUM (REFRESH_TABLE) search_gen_multi;
 
 query
 SELECT w, h, area FROM search_gen_multi ORDER BY w;
@@ -665,15 +605,9 @@ statement ok
 INSERT INTO search_gen_upd (id, w, tag) VALUES (1, 3, 'a'), (2, 5, 'b'),
   (3, 8, 'a');
 
-statement ok
-VACUUM (REFRESH_TABLE) search_gen_upd;
-
 # Updating a non-feeder column leaves the generated column and the PK untouched.
 statement ok
 UPDATE search_gen_upd SET tag = 'z' WHERE id = 2;
-
-statement ok
-VACUUM (REFRESH_TABLE) search_gen_upd;
 
 query
 SELECT id, w, tag, area FROM search_gen_upd ORDER BY id;
@@ -687,9 +621,6 @@ id	w	tag	area
 # matched row; the PK is preserved.
 statement ok
 UPDATE search_gen_upd SET w = w + 1 WHERE tag = 'a';
-
-statement ok
-VACUUM (REFRESH_TABLE) search_gen_upd;
 
 query
 SELECT id, w, tag, area FROM search_gen_upd ORDER BY id;
@@ -713,13 +644,7 @@ statement ok
 INSERT INTO search_gen_upd_gpk (w, h) VALUES (3, 4), (5, 6);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_gen_upd_gpk;
-
-statement ok
 UPDATE search_gen_upd_gpk SET h = 10 WHERE w = 3;
-
-statement ok
-VACUUM (REFRESH_TABLE) search_gen_upd_gpk;
 
 query
 SELECT w, h, area FROM search_gen_upd_gpk ORDER BY w;
@@ -746,20 +671,11 @@ statement ok
 INSERT INTO comp_del VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd');
 
 statement ok
-VACUUM (REFRESH_TABLE) comp_del;
-
-statement ok
 INSERT INTO comp_del VALUES (5, 'e'), (6, 'f'), (7, 'g'), (8, 'h');
-
-statement ok
-VACUUM (REFRESH_TABLE) comp_del;
 
 # Delete the even ids across both segments, then publish the tombstones.
 statement ok
 DELETE FROM comp_del WHERE id IN (2, 4, 6, 8);
-
-statement ok
-VACUUM (REFRESH_TABLE) comp_del;
 
 query
 SELECT id, b FROM comp_del ORDER BY id;
@@ -844,16 +760,10 @@ statement ok
 INSERT INTO comp_reins VALUES (1, 'old'), (2, 'keep');
 
 statement ok
-VACUUM (REFRESH_TABLE) comp_reins;
-
-statement ok
 DELETE FROM comp_reins WHERE id = 1;
 
 statement ok
 INSERT INTO comp_reins VALUES (1, 'new');
-
-statement ok
-VACUUM (REFRESH_TABLE) comp_reins;
 
 statement ok
 VACUUM (COMPACT_TABLE) comp_reins;
@@ -884,13 +794,7 @@ statement ok
 INSERT INTO comp_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r'), (40, 's');
 
 statement ok
-VACUUM (REFRESH_TABLE) comp_genpk;
-
-statement ok
 DELETE FROM comp_genpk WHERE a >= 30;
-
-statement ok
-VACUUM (REFRESH_TABLE) comp_genpk;
 
 statement ok
 VACUUM (COMPACT_TABLE) comp_genpk;
@@ -922,9 +826,6 @@ statement ok
 INSERT INTO drop_nopk VALUES (1, 'a'), (2, 'b');
 
 statement ok
-VACUUM (REFRESH_TABLE) drop_nopk;
-
-statement ok
 DROP TABLE drop_nopk;
 
 statement ok
@@ -932,9 +833,6 @@ CREATE TABLE drop_nopk (a INTEGER, b TEXT) WITH (storage = 'search');
 
 statement ok
 INSERT INTO drop_nopk VALUES (3, 'c');
-
-statement ok
-VACUUM (REFRESH_TABLE) drop_nopk;
 
 query
 SELECT a, b FROM drop_nopk ORDER BY a;
@@ -969,9 +867,6 @@ statement ok
 INSERT INTO drop_mix.t_search VALUES (1, 'y');
 
 statement ok
-VACUUM (REFRESH_TABLE) drop_mix.t_search;
-
-statement ok
 DROP SCHEMA drop_mix CASCADE;
 
 statement error
@@ -989,18 +884,15 @@ DROP SCHEMA drop_mix;
 
 
 # Background-maintenance interval WITH options (shared with inverted indexes,
-# resolved against the refresh_interval / compaction_interval /
-# cleanup_interval_step config-variable defaults). Accepted on a search table.
+# resolved against the compaction_interval config-variable default). Accepted
+# on a search table.
 statement ok
 CREATE TABLE search_intervals (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search', refresh_interval = 500,
-        compaction_interval = 7000, cleanup_interval_step = 3);
+  WITH (storage = 'search',
+        compaction_interval = 7000);
 
 statement ok
 INSERT INTO search_intervals VALUES (1, 'x');
-
-statement ok
-VACUUM (REFRESH_TABLE) search_intervals;
 
 query
 SELECT a, b FROM search_intervals ORDER BY a;
@@ -1011,18 +903,10 @@ a	b
 statement ok
 DROP TABLE search_intervals;
 
-# refresh_interval = 0 disables the background commit; still creatable.
-statement ok
-CREATE TABLE search_no_bg (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search', refresh_interval = 0);
-
-statement ok
-DROP TABLE search_no_bg;
-
 # A non-integer interval literal is a clean error.
 statement error
 CREATE TABLE search_bad_interval (a INTEGER PRIMARY KEY)
-  WITH (storage = 'search', refresh_interval = 'x');
+  WITH (storage = 'search', compaction_interval = 'x');
 ----
 db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT32
 
@@ -1031,9 +915,9 @@ db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT32
 # so they are rejected on a transactional table.
 statement error
 CREATE TABLE txn_bad_interval (a INTEGER PRIMARY KEY)
-  WITH (storage = 'transactional', refresh_interval = 500);
+  WITH (storage = 'transactional', compaction_interval = 500);
 ----
-db error: ERROR: unrecognized parameter "refresh_interval"
+db error: ERROR: unrecognized parameter "compaction_interval"
 
 
 # The config variable (shared with inverted indexes) governs the default when
@@ -1062,9 +946,6 @@ CREATE TABLE search_seg (a INTEGER PRIMARY KEY, b TEXT)
 
 statement ok
 INSERT INTO search_seg VALUES (1, 'red'), (2, 'green');
-
-statement ok
-VACUUM (REFRESH_TABLE) search_seg;
 
 query
 SELECT COUNT(*) FROM search_seg;

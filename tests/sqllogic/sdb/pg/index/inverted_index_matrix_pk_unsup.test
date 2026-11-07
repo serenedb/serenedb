@@ -18,9 +18,6 @@ CREATE INDEX m_pk_only_many ON m_pk_only USING inverted INCLUDE (v, n);
 statement ok
 INSERT INTO m_pk_only VALUES (1, 'alpha', 10), (2, 'beta', 20), (3, 'gamma', 30);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_pk_only;
-
 query
 SELECT count(*) FROM m_pk_only_one;
 ----

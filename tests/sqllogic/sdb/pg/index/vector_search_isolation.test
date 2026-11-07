@@ -10,10 +10,6 @@ statement ok
 INSERT INTO v VALUES (1, [1.0, 0.0, 0.0]::FLOAT[3]);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) v;
-
-
 connection reader
 
 connection reader
@@ -32,11 +28,6 @@ id
 connection writer
 statement ok
 INSERT INTO v VALUES (2, [0.5, 0.5, 0.0]::FLOAT[3]);
-
-
-connection writer
-statement ok
-VACUUM (REFRESH_TABLE) v;
 
 
 connection reader
@@ -71,11 +62,6 @@ id
 connection writer
 statement ok
 INSERT INTO v VALUES (3, [0.0, 1.0, 0.0]::FLOAT[3]);
-
-
-connection writer
-statement ok
-VACUUM (REFRESH_TABLE) v;
 
 
 connection reader_rc

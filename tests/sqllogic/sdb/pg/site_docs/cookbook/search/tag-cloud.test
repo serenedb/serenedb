@@ -22,9 +22,6 @@ INSERT INTO posts VALUES
 statement ok
 CREATE INDEX posts_idx ON posts USING inverted (id, body tx);
 
-statement ok
-VACUUM (REFRESH_TABLE) posts;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

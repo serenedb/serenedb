@@ -758,14 +758,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     // Removes-only tick: no pass, publish directly -- REINDEX returning
     // means the deletions are visible.
     storage.SetFileManifest(std::move(manifest_next));
-    auto code = search::RefreshResult::Undefined;
-    if (auto refreshed = storage.RefreshUnsafe(/*wait=*/true, nullptr, code);
-        !refreshed.res.ok()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("REINDEX delta of \"", target.name,
-                "\": publish failed: ", refreshed.res.ToString()));
-    }
+    storage.Commit();
     return;
   }
 
@@ -812,10 +805,11 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
     if constexpr (kIceberg) {
       if (files.version != manifest.version) {
         // Identical files under a moved pin: restamp so reads never pin an
-        // expiring snapshot. Durability rides the next refresh.
+        // expiring snapshot.
         auto restamped = std::make_shared<search::FileManifest>(manifest);
         restamped->version = files.version;
         storage.SetFileManifest(std::move(restamped));
+        storage.Commit();
       }
     }
     return {ReindexAction::UpToDate, files.added, files.changed, files.removed};

@@ -19,10 +19,6 @@ statement ok
 INSERT INTO mk VALUES (3, 'Epsilon', 'Zeta', 30);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mk;
-
-
 query
 SELECT id FROM mk_idx WHERE LOWER(a) = 'alpha';
 ----

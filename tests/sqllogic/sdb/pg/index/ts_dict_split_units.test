@@ -15,9 +15,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY tds_kw AS keyword()
 
 statement ok
@@ -38,22 +35,13 @@ INSERT INTO tds
 statement ok
 CREATE INDEX tds_idx ON tds USING inverted(g, cat tds_kw, body tds_kw,
                                            uniq tds_kw)
-    INCLUDE (h) WITH (refresh_interval = 0, compaction_interval = 0)
-
-statement ok
-VACUUM (REFRESH_TABLE) tds
+    INCLUDE (h) WITH (compaction_interval = 0)
 
 statement ok
 VACUUM (COMPACT_TABLE) tds
 
 statement ok
-VACUUM (REFRESH_TABLE) tds
-
-statement ok
 DELETE FROM tds WHERE id % 31 = 0
-
-statement ok
-VACUUM (REFRESH_TABLE) tds
 
 query
 SELECT count(*) AS n FROM tds;

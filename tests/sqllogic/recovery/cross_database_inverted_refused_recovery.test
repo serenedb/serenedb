@@ -59,16 +59,6 @@ COMMIT;
 
 
 connection t2
-statement ok
-VACUUM (REFRESH_TABLE) cdir_local;
-
-
-connection t2
-statement ok
-VACUUM (REFRESH_TABLE) cdir_other.public.cdir_remote;
-
-
-connection t2
 query
 SELECT (SELECT count(*) FROM cdir_local_idx WHERE body @@ 'refused') AS l, (SELECT count(*) FROM cdir_other.public.cdir_remote_idx WHERE body @@ 'refused') AS r, (SELECT count(*) FROM cdir_local_idx WHERE body @@ 'base') AS lb;
 ----
@@ -93,12 +83,7 @@ SELECT 1;
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) cdir_local;
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) cdir_other.public.cdir_remote;
+SELECT 1;
 
 
 connection after_crash

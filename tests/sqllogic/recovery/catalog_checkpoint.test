@@ -153,11 +153,6 @@ t_pkey
 
 
 connection after_checkpoint
-statement ok
-VACUUM (REFRESH_TABLE) ckp.t;
-
-
-connection after_checkpoint
 query
 SELECT count(*) FROM ckp.ckp_inv WHERE a @@ ts_like('row');
 ----
@@ -608,11 +603,6 @@ connection after_dict_window
 statement ok
 INSERT INTO ckp_dict_window.t
 SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 100) g;
-
-
-connection after_dict_window
-statement ok
-VACUUM (REFRESH_TABLE) ckp_dict_window.t;
 
 
 connection after_dict_window

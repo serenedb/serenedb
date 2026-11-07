@@ -10,7 +10,7 @@ RESET sdb_faults;
 # indexed field -- unreachable through the index for good.
 statement ok
 CREATE TABLE bpu (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO bpu VALUES (1, 'unpublished');
@@ -34,7 +34,7 @@ CREATE TEXT SEARCH DICTIONARY bp_en AS
 
 statement ok
 CREATE TABLE bpb (id BIGINT, body VARCHAR)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO bpb SELECT i, 'w' || (i % 1000) FROM range(100000) t(i);
@@ -56,7 +56,7 @@ DROP TEXT SEARCH DICTIONARY bp_en;
 
 statement ok
 CREATE TABLE bpw (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 connection writer
 statement ok
@@ -97,13 +97,10 @@ DROP TABLE bpw;
 
 statement ok
 CREATE TABLE bpt (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO bpt VALUES (1, 'old'), (2, 'old');
-
-statement ok
-VACUUM (REFRESH_TABLE) bpt;
 
 connection writer
 statement ok

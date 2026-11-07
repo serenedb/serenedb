@@ -13,15 +13,7 @@ INSERT INTO vjling_ward SELECT i, 'w' || (i % 5) FROM range(0, 500) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) vjling_ward;
-
-
-statement ok
 INSERT INTO vjling_ward SELECT i, 'w' || (i % 5) FROM range(500, 1000) r(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vjling_ward;
 
 
 statement ok
@@ -29,23 +21,11 @@ INSERT INTO vjling_ward SELECT i, 'w' || (i % 5) FROM range(1000, 1500) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) vjling_ward;
-
-
-statement ok
 INSERT INTO vjling_ward SELECT i, 'w' || (i % 5) FROM range(1500, 2000) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) vjling_ward;
-
-
-statement ok
 DELETE FROM vjling_ward WHERE id % 3 = 0;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vjling_ward;
 
 
 statement ok
@@ -73,11 +53,6 @@ docs
 
 
 connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) vjling_ward;
-
-
-connection after_crash
 query
 SELECT count(*) AS docs FROM vjling_ward_b;
 ----
@@ -101,11 +76,6 @@ SELECT count(*) AS n FROM vjling_ward;
 ----
 n
 1333
-
-
-connection after_second_crash
-statement ok
-VACUUM (REFRESH_TABLE) vjling_ward;
 
 
 connection after_second_crash

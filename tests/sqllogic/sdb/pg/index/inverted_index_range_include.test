@@ -37,10 +37,6 @@ statement ok
 INSERT INTO vec_r VALUES (4, [10, 10, 10]::FLOAT[3], 'delta', 400, 'body-four')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) vec_r
-
-
 # All-INCLUDE projection: plan should suppress the "Lookup" line --
 # the cs overlay covers every projection and IndexSource has no
 # residual.

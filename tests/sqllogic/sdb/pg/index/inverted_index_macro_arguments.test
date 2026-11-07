@@ -78,9 +78,6 @@ INSERT INTO docs VALUES
   (2, 'Chef', ['x', 'chef'], [{'a': 'Chef', 'b': 'Cook', 't': ['p']}, {'a': 'Sous', 'b': 'Chef', 't': []}]),
   (3, '', [], []);
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 query
 SELECT id FROM docs WHERE array_to_string(list_sort(v), ' ') @@ ts_regexp('chef x') ORDER BY id;
 ----
@@ -851,9 +848,6 @@ CREATE INDEX rewritten_idx ON rewritten USING inverted (id,
 statement ok
 INSERT INTO rewritten VALUES (1, 'a'), (2, 'b');
 
-statement ok
-VACUUM (REFRESH_TABLE) rewritten;
-
 query
 SELECT id FROM rewritten WHERE annotated(string_split(s || '-' || s || '-x', '-')) @@ ts_regexp('x/3') ORDER BY id;
 ----
@@ -940,9 +934,6 @@ CREATE INDEX stamped_idx ON stamped USING inverted (id, (local_stamp(plain + INT
 
 statement ok
 INSERT INTO stamped VALUES (1, '2026-01-01 23:30:00');
-
-statement ok
-VACUUM (REFRESH_TABLE) stamped;
 
 statement ok
 SET TimeZone = 'Asia/Tokyo';

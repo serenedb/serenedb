@@ -45,10 +45,6 @@ statement ok
 INSERT INTO n1 VALUES (4, 'four',  [])
 
 
-statement ok
-VACUUM (REFRESH_TABLE) n1
-
-
 query
 EXPLAIN SELECT pk, v FROM n1_idx WHERE t @@ ts_phrase('one');
 ----
@@ -105,11 +101,6 @@ INSERT INTO n2 VALUES (2, 'two',   NULL)
 skipif pg-wire-extended
 statement ok
 INSERT INTO n2 VALUES (3, 'three', [['x','y','z'],[]])
-
-
-skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n2
 
 
 skipif pg-wire-extended
@@ -180,11 +171,6 @@ INSERT INTO n3 VALUES (4, 'four',  ROW(NULL, NULL, [10.0, 20.0, 30.0]))
 
 
 skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n3
-
-
-skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n3_idx WHERE t @@ ts_phrase('one');
 ----
@@ -251,11 +237,6 @@ INSERT INTO n4 VALUES (3, 'three', MAP {})
 skipif pg-wire-extended
 statement ok
 INSERT INTO n4 VALUES (4, 'four',  MAP {'p': NULL})
-
-
-skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n4
 
 
 skipif pg-wire-extended
@@ -333,11 +314,6 @@ INSERT INTO n5 VALUES (4, 'four',  ROW(NULL, [ROW('only', [99,100])]))
 skipif pg-wire-extended
 statement ok
 INSERT INTO n5 VALUES (5, 'five',  ROW(ROW('h5', NULL), [ROW(NULL, [7,8]), ROW('z', NULL)]))
-
-
-skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n5
 
 
 skipif pg-wire-extended
@@ -420,11 +396,6 @@ statement ok
 INSERT INTO n6 VALUES (4, 'four',  [
   [NULL, ROW(9.0, [1,2], [])]
 ])
-
-
-skipif pg-wire-extended
-statement ok
-VACUUM (REFRESH_TABLE) n6
 
 
 skipif pg-wire-extended

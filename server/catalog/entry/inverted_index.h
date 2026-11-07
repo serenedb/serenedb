@@ -130,10 +130,8 @@ using InvertedIndexFields =
 
 inline constexpr auto kInvertedIndexSettings = std::to_array({
   kRowGroupSizeSetting,
-  kRefreshIntervalSetting,
   kReindexIntervalSetting,
   kCompactionIntervalSetting,
-  kCleanupIntervalStepSetting,
   kSegmentMemoryMaxSetting,
   kSegmentDocsMaxSetting,
   kCompactionMaxSegmentsSetting,

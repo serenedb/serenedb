@@ -24,11 +24,7 @@ INSERT INTO isps_a.src VALUES (1, 'from index');
 
 statement ok
 CREATE INDEX isps_rel ON isps_a.src USING inverted(id) INCLUDE(val)
-  WITH (refresh_interval = 0, compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) isps_a.src;
+  WITH (compaction_interval = 0);
 
 
 statement ok

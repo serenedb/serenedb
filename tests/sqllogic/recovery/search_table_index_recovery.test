@@ -23,9 +23,6 @@ RESET sdb_faults;
 statement ok
 INSERT INTO sidx VALUES (1, 'red'), (2, 'blue');
 
-statement ok
-VACUUM (REFRESH_TABLE) sidx;
-
 # Crash AFTER the WAL commit: (3,'red'),(4,'green') are fsynced into the WAL but
 # never refresh-published, so they exist ONLY in the WAL; recovery must rebuild
 # them into iresearch -- terms included.

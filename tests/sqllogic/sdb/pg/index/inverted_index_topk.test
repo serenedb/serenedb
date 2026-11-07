@@ -37,10 +37,6 @@ statement ok
 CREATE INDEX docs_topk_idx ON docs USING inverted(id, body en_topk);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 query
 EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC LIMIT 5;
 ----
@@ -312,10 +308,6 @@ INSERT INTO docs VALUES (18, 'yellow fox');
 
 statement count 1
 INSERT INTO docs VALUES (19, 'purple fox');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs;
 
 
 # Get expected results from full scan across two segments

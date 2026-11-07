@@ -10,10 +10,6 @@ statement ok
 CREATE INDEX t_ivf ON t USING inverted(v ivf (metric = 'l2'));
 
 
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
-
 # Catalog snapshot pinning under REPEATABLE READ. The optimizer must use
 # the transaction's pinned snapshot when resolving indexes; otherwise a
 # concurrent DROP TABLE publishes a snapshot missing the relation and

@@ -17,10 +17,6 @@ INSERT INTO wfb SELECT i,
   FROM range(3001) t(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) wfb
-
-
 query
 EXPLAIN SELECT count(*) FROM wfb WHERE f LIKE '_b%'
 ----

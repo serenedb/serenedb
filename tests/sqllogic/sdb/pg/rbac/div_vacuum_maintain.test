@@ -1,4 +1,4 @@
-# serenedb-only: VACUUM (REFRESH_*|COMPACT_*|RECOMPUTE_STATS_*) is a serenedb
+# serenedb-only: VACUUM (COMPACT_*|RECOMPUTE_STATS_*) is a serenedb
 # pragma, but its privilege rule mirrors PostgreSQL VACUUM/ANALYZE: the role must
 # own the table, hold MAINTAIN on it, or be a superuser. A role lacking all three
 # does NOT abort the command -- PG (and serenedb) emit a WARNING and SKIP the
@@ -66,21 +66,11 @@ statement ok
 VACUUM (recompute_stats_table) vac_mop;
 
 
-connection c_owner user=vac_clickclack password=vac_clickclack_pw
-statement ok
-VACUUM (refresh_table) vac_mop;
-
-
 # Non-owner without MAINTAIN: the table is SKIPPED with a warning, not an error
 # -- the statement still succeeds (PG warn-and-skip semantics).
 connection c_other user=vac_vedernikoff password=vac_vedernikoff_pw
 statement ok
 VACUUM (recompute_stats_table) vac_mop;
-
-
-connection c_other user=vac_vedernikoff password=vac_vedernikoff_pw
-statement ok
-VACUUM (refresh_table) vac_mop;
 
 
 # Grant MAINTAIN to the non-owner; the oracle flips and the gate now lets it

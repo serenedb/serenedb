@@ -1163,18 +1163,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      kRefreshIntervalSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Background refresh interval (ms) for newly created inverted indexes "
-        "and search tables. WITH (refresh_interval = ...) overrides it per "
-        "index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. "
-        "0 disables the refresh task. Default: 1000.",
-        [] { return duckdb::Value::UINTEGER(1000); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
       kReindexIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
@@ -1200,19 +1188,6 @@ constexpr std::pair<std::string_view, VariableDescription>
         "changes it later. 0 disables background compaction; VACUUM "
         "(COMPACT_*) still merges on demand. Default: 1000.",
         [] { return duckdb::Value::UINTEGER(1000); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      kCleanupIntervalStepSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Number of automatic refreshes between background unreferenced-file "
-        "cleanup passes for newly created inverted indexes and search tables. "
-        "WITH (cleanup_interval_step = ...) overrides it per index or table. "
-        "0 disables the periodic passes: cleanup then follows only background "
-        "compaction and, on a search table, VACUUM. Default: 1.",
-        [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
@@ -1252,17 +1227,6 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Document count at which an inverted-index segment writer rolls over "
         "to a new on-disk segment. Per-index WITH (segment_docs_max = ...) "
         "overrides. 0 = unlimited (memory limit governs).",
-        [] { return duckdb::Value::UINTEGER(0); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      kRecoveryReplayDepthSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum WAL chunks in flight per inverted index during recovery "
-        "replay (the prefetch window; bounds replay memory). 0 = auto "
-        "(4 x cpu threads).",
         [] { return duckdb::Value::UINTEGER(0); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },

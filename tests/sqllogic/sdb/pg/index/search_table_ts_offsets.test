@@ -19,9 +19,6 @@ CREATE INDEX d_off ON d USING inverted (body offs_en);
 statement ok
 INSERT INTO d VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
 
-statement ok
-VACUUM (REFRESH_TABLE) d;
-
 # 'quick' occupies bytes [4,9) in row 1.
 query
 SELECT id, ts_offsets(body) AS bo FROM d_off WHERE body @@ 'quick' ORDER BY id;
@@ -85,9 +82,6 @@ CREATE INDEX d2_idx ON d2 USING inverted (body no_offs_en);
 
 statement ok
 INSERT INTO d2 VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) d2;
 
 query
 SELECT id, ts_offsets(body) AS bo FROM d2_idx WHERE body @@ 'quick' ORDER BY id;

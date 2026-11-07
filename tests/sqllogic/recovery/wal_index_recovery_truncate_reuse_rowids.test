@@ -23,19 +23,11 @@ INSERT INTO tr_t SELECT i, 'before_' || i FROM range(0, 800) AS t(i);
 statement ok
 CREATE INDEX tr_idx ON tr_t USING inverted(id, body tr_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) tr_t;
-
 query
 SELECT COUNT(*) FROM tr_idx WHERE body @@ ts_phrase('before_0');
 ----
 count
 1
-
-# Suppress index commits, then truncate and re-insert reusing the same id
-# values (the freed rowids get reused by the store table).
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 TRUNCATE tr_t;
@@ -53,7 +45,7 @@ SELECT 1;
 
 connection tr_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) tr_t;
+SELECT 1;
 
 connection tr_after
 query

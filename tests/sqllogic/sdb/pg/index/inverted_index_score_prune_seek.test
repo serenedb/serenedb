@@ -22,9 +22,6 @@ statement ok
 CREATE INDEX prune_seek_idx ON prune_seek USING inverted(id, body en_prune_seek)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
-statement ok
-VACUUM (REFRESH_TABLE) prune_seek;
-
 query
 SELECT count(*) FROM prune_seek_idx
 WHERE body @@ ts_phrase('gate')

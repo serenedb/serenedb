@@ -10,7 +10,7 @@
 
 statement ok
 CREATE TABLE st (id BIGINT PRIMARY KEY, r TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE INDEX st_idx ON st USING inverted (r);
@@ -37,9 +37,6 @@ num_files	1
 num_live_docs	0
 num_segments	0
 
-statement ok
-VACUUM (REFRESH_TABLE) st;
-
 query
 SELECT metric, value FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'st')
@@ -61,9 +58,6 @@ num_segments	1
 
 statement ok
 INSERT INTO st VALUES (4, 'd'), (5, 'e');
-
-statement ok
-VACUUM (REFRESH_TABLE) st;
 
 query
 SELECT metric, value FROM sdb_metrics

@@ -190,7 +190,6 @@ def test_missing_storage_directory(tmp_path: Path) -> None:
                 "CREATE TABLE docs(id BIGINT PRIMARY KEY, body TEXT) "
                 "WITH (storage = 'search')")
             conn.execute("INSERT INTO docs VALUES (1, 'kept')")
-            conn.execute("VACUUM (REFRESH_TABLE) docs")
         storage = _search_table_dir(server, datadir, "postgres", "docs")
     finally:
         server.stop()

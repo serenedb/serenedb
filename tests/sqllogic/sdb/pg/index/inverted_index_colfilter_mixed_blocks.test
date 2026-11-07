@@ -43,10 +43,6 @@ CREATE INDEX mxb_idx ON mxb
     WITH (row_group_size = 4096);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mxb;
-
-
 # tag <= 'azz' matches the 'aaa' rows only; NULLs must fail the predicate.
 # Block A: even ids in 1..4096 -> 2048. Blocks B: i in 4097..12288 with
 # i % 10 = 0 and i % 3 <> 0 -> 819 - 273 = 546. Total 2594.

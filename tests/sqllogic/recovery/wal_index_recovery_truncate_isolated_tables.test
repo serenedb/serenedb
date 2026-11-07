@@ -31,15 +31,6 @@ CREATE INDEX vedernikoff_keep_idx ON vedernikoff_keep USING inverted(id, body ve
 statement ok
 CREATE INDEX vedernikoff_drop_idx ON vedernikoff_drop USING inverted(id, body vedernikoff_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff_keep;
-
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff_drop;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
 # Pre-truncate WAL-only writes for both tables.
 statement ok
 INSERT INTO vedernikoff_keep VALUES (3, 'keep wal echo'), (4, 'keep wal foxtrot');

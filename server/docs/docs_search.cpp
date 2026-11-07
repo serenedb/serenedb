@@ -40,9 +40,14 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
+#include <iresearch/formats/segment_meta_writer.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
@@ -71,7 +76,6 @@
 
 #include "connector/functions/markdown_render.h"
 #include "docs/docs_index_data.h"
-#include "search/index_durability.h"
 
 namespace sdb::docs {
 namespace {
@@ -272,10 +276,7 @@ class SpanDirectory final : public irs::Directory {
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{files, kResourceManager},
-      _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
-                search::IndexStamp::Read(payload);
-              }} {}
+    : _dir{files, kResourceManager}, _reader{Open(_dir, files, Options(db))} {}
 
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }
 
@@ -286,6 +287,27 @@ class EmbeddedIndex {
     irs::IndexReaderOptions options;
     options.db = &db;
     return options;
+  }
+
+  static irs::DirectoryReader Open(const irs::Directory& dir,
+                                   std::span<const IndexFile> files,
+                                   const irs::IndexReaderOptions& options) {
+    irs::DirectoryMeta meta;
+    std::vector<irs::SegmentReader> readers;
+    for (const auto& file : files) {
+      if (!absl::EndsWith(file.name,
+                          absl::StrCat(".", irs::segment_meta::kExt))) {
+        continue;
+      }
+      irs::IndexSegment segment;
+      segment.filename = file.name;
+      irs::segment_meta::Read(dir, segment.meta, file.name);
+      readers.emplace_back(
+        irs::SegmentReaderImpl::Open(dir, segment.meta, options));
+      meta.index_meta.segments.push_back(std::move(segment));
+    }
+    return irs::DirectoryReader{std::make_shared<const irs::DirectoryReaderImpl>(
+      dir, options, std::move(meta), std::move(readers))};
   }
 
   SpanDirectory _dir;

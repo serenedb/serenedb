@@ -38,11 +38,6 @@ statement ok
 INSERT INTO big SELECT i, i % 100, 'x' FROM generate_series(1, 200000) s(i)
 
 
-onlyif serenedb
-statement ok
-VACUUM (REFRESH_TABLE) big
-
-
 # Covered `.col` filter + scan order: the best-first reorder scans the second
 # unit behind the first. cat <= 50 keeps 51 of every 100 rows = 102000.
 onlyif serenedb

@@ -54,10 +54,6 @@ count
 0
 
 
-statement ok
-VACUUM (REFRESH_ALL);
-
-
 query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
 ----
@@ -78,10 +74,6 @@ INSERT INTO public.docs VALUES (2, 'beta one');
 
 
 statement ok
-VACUUM (REFRESH_ALL);
-
-
-statement ok
 INSERT INTO public.docs VALUES (3, 'beta two');
 
 
@@ -90,15 +82,7 @@ INSERT INTO s1.notes VALUES (2, 'beta two');
 
 
 statement ok
-VACUUM (REFRESH_ALL);
-
-
-statement ok
 INSERT INTO public.docs VALUES (4, 'beta three');
-
-
-statement ok
-VACUUM (REFRESH_ALL);
 
 
 query

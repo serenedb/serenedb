@@ -17,9 +17,6 @@ INSERT INTO vectors VALUES
     (3, [50, 25, 50]::FLOAT[3]),
     (4, [50, 50, 100]::FLOAT[3]);
 
-statement ok
-VACUUM (REFRESH_TABLE) vectors;
-
 # DOCS_TEST_BODY
 
 query
@@ -54,9 +51,6 @@ INSERT INTO vectors_c VALUES
     (2, [0, 1, 0]::FLOAT[3]),
     (3, [1, 1, 0]::FLOAT[3]);
 
-statement ok
-VACUUM (REFRESH_TABLE) vectors_c;
-
 # DOCS_TEST_BODY
 
 query
@@ -82,9 +76,6 @@ INSERT INTO hnsw_vectors VALUES
     (2, [50, 50, 50]::FLOAT[3]),
     (3, [50, 25, 50]::FLOAT[3]),
     (4, [50, 50, 100]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_vectors;
 
 query
 SELECT id FROM hnsw_index ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;

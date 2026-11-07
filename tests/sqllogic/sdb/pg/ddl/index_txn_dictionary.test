@@ -28,10 +28,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) itd_t;
-
-
 query
 SELECT id FROM itd_idx WHERE body @@ ts_phrase('brown') ORDER BY id;
 ----
@@ -66,10 +62,6 @@ statement ok
 COMMIT;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) itd_fresh;
-
-
 query
 SELECT id FROM itd_fresh_idx WHERE body @@ ts_phrase('fox');
 ----
@@ -79,10 +71,6 @@ id
 
 statement ok
 INSERT INTO itd_fresh VALUES (2, 'red fox');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) itd_fresh;
 
 
 query

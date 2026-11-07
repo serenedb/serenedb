@@ -31,10 +31,6 @@ INSERT INTO places VALUES
   (2, 'POINT(0 0)', 'POINT(0 0)')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) places
-
-
 # A geo analyzer needs to know the coordinates are degrees, so a CRS-less
 # GEOMETRY column cannot be indexed at all.
 

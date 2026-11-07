@@ -613,4 +613,3 @@ def test_cancel_compact(obs, faults, va_schema, driver):
         run=lambda: driver.execute(f"VACUUM (COMPACT_SCHEMA) {va_schema}"),
         pid_sql="SELECT pid FROM pg_stat_progress_vacuum",
         empty_sql="SELECT count(*) FROM pg_stat_progress_vacuum")
-    driver.execute(f"VACUUM (REFRESH_SCHEMA) {va_schema}")

@@ -10,15 +10,11 @@ CREATE TABLE commit_fail (id BIGINT, msg TEXT);
 
 statement ok
 CREATE INDEX commit_fail_idx ON commit_fail USING inverted (id, msg)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
 INSERT INTO commit_fail SELECT i, 'm' || (i % 7) FROM range(500) t(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) commit_fail;
 
 
 statement ok
@@ -31,10 +27,6 @@ INSERT INTO commit_fail SELECT i, 'late' FROM range(500, 600) t(i);
 
 statement ok
 SET sdb_faults = '-IndexWriter::Transaction::Commit';
-
-
-statement ok
-VACUUM (REFRESH_TABLE) commit_fail;
 
 
 query
@@ -65,11 +57,6 @@ SELECT count(*) AS n FROM commit_fail;
 ----
 n
 600
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) commit_fail;
 
 
 connection after_crash

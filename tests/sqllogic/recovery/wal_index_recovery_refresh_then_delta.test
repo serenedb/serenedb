@@ -23,19 +23,11 @@ CREATE INDEX rd_idx ON rd_t USING inverted(id, body rd_dict);
 statement ok
 INSERT INTO rd_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) rd_t;
-
 query
 SELECT COUNT(*) FROM rd_idx;
 ----
 count
 5000
-
-# Batch 2: suppress the index commit so it lands only in the store WAL --
-# post-refresh, not yet durable in the segments.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO rd_t SELECT i, 'doc_' || i FROM range(5000, 7000) AS t(i);
@@ -50,7 +42,7 @@ SELECT 1;
 
 connection rd_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) rd_t;
+SELECT 1;
 
 connection rd_after
 query

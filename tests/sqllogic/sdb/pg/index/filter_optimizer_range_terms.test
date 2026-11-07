@@ -11,9 +11,6 @@ INSERT INTO fo_rng VALUES
   (3, 'gamma', 3),
   (4, 'delta', 4);
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_rng;
-
 query
 EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_between('alpha', 'alpha', true, true);
 ----
@@ -275,9 +272,6 @@ INSERT INTO fo_rng_mt VALUES
   (3, 'gamma alpha', 3),
   (4, 'delta', 4);
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_rng_mt;
-
 
 query
 EXPLAIN SELECT id FROM fo_rng_mt_idx WHERE s @@ ts_gt('alpha') AND s @@ ts_lt('gamma');
@@ -327,9 +321,6 @@ INSERT INTO fo_rng_mix VALUES
   (2, 'zeta', 'alpha gamma'),
   (3, 'beta', 'delta'),
   (4, 'beta', 'zeta');
-
-statement ok
-VACUUM (REFRESH_TABLE) fo_rng_mix;
 
 query
 EXPLAIN SELECT id FROM fo_rng_mix_idx WHERE k @@ ts_gt('alpha') AND k @@ ts_lt('gamma') AND a @@ ts_gt('alpha') AND a @@ ts_lt('gamma');

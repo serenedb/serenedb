@@ -29,9 +29,6 @@ CREATE INDEX beast_idx ON beast_t USING inverted (id, v beast_dict)
 statement ok
 CREATE INDEX beast_pos_idx ON beast_t USING inverted (id, v beast_pos_dict)
 
-statement ok
-VACUUM (REFRESH_TABLE) beast_t
-
 query
 SELECT list_transform(generate_wildcard_ngrams('6' || chr(31) || '7', 3), lambda x: hex(x)) AS control,
        list_transform(generate_wildcard_ngrams('ÿ7', 3), lambda x: hex(x)) AS latin
@@ -193,9 +190,6 @@ CREATE INDEX beast_b_idx ON beast_b USING inverted (id, v beast_dict)
 
 statement ok
 CREATE INDEX beast_b_pos_idx ON beast_b USING inverted (id, v beast_pos_dict)
-
-statement ok
-VACUUM (REFRESH_TABLE) beast_b
 
 query
 SELECT id FROM beast_b_idx WHERE v @@ ts_like('b%') ORDER BY id

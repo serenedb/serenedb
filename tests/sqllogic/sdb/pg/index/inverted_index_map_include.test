@@ -49,10 +49,6 @@ statement ok
 INSERT INTO map_t VALUES (5, 'fifth',  MAP {'e': NULL, 'f': 5})
 
 
-statement ok
-VACUUM (REFRESH_TABLE) map_t
-
-
 # Sanity: the MAP column is served by the iresearch columnstore (i),
 # pk falls through to the rocksdb lookup (l).
 query

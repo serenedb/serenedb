@@ -32,19 +32,11 @@ INSERT INTO uo
   FROM generate_series(0, 130000) g(i);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) uo;
-
-
 # Segment 2: c descends 269999..139999 (best DESC values in the head unit).
 statement ok
 INSERT INTO uo
   SELECT i, 'dog', 400000 - i
   FROM generate_series(130001, 260001) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) uo;
 
 
 query
@@ -105,10 +97,6 @@ sum
 # the forward masked walk (no reordering) -- results stay exact.
 statement ok
 DELETE FROM uo WHERE c = 269999;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) uo;
 
 
 query

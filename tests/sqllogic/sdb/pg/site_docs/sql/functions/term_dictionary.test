@@ -13,7 +13,7 @@ CREATE TABLE products(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL,
 
 statement ok
 CREATE INDEX products_idx ON products USING inverted (cat, promo, body tx)
-    WITH (refresh_interval = 0, compaction_interval = 0);
+    WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO products VALUES
@@ -21,9 +21,6 @@ INSERT INTO products VALUES
     (2, 'phone',  NULL,     'budget phone'),
     (3, 'laptop', 'sale',   'gaming laptop with a great screen'),
     (4, 'tablet', NULL,     'compact tablet');
-
-statement ok
-VACUUM (REFRESH_TABLE) products;
 
 # DOCS_TEST: aligned_lists
 # DOCS_TEST_BODY
@@ -129,9 +126,6 @@ sale	2
 # DOCS_TEST_BODY
 statement ok
 DELETE FROM products WHERE id = 2;
-
-statement ok
-VACUUM (REFRESH_TABLE) products;
 
 query
 SELECT cat, count(*) AS n FROM products_idx GROUP BY cat ORDER BY cat;

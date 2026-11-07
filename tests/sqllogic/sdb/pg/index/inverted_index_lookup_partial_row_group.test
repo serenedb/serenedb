@@ -26,10 +26,6 @@ row_group_id	row_count
 1	122880
 
 
-statement ok
-VACUUM (REFRESH_INDEX) lprg_idx;
-
-
 query
 SELECT count(*) AS n, min(id) AS lo, max(id) AS hi, sum(id) AS total
 FROM lprg_idx

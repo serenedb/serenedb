@@ -19,10 +19,7 @@ CREATE TEXT SEARCH DICTIONARY lj_words AS
     WITH (frequency, position, norm, offset);
 
 statement ok
-CREATE INDEX lj_idx ON lj_docs USING inverted (id, body lj_words, n) INCLUDE (n) WITH (refresh_interval = 0);
-
-statement ok
-VACUUM (REFRESH_TABLE) lj_docs;
+CREATE INDEX lj_idx ON lj_docs USING inverted (id, body lj_words, n) INCLUDE (n);
 
 query
 EXPLAIN SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
@@ -534,9 +531,6 @@ RESET sdb_lookup_join_source_hop;
 statement ok
 CREATE INDEX lj_inc_idx ON lj_docs USING inverted (body lj_words, n) INCLUDE (n, title);
 
-statement ok
-VACUUM (REFRESH_TABLE) lj_docs;
-
 query
 EXPLAIN SELECT title FROM lj_inc_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
 ----
@@ -720,9 +714,6 @@ id
 statement ok
 RESET disabled_optimizers;
 
-statement ok
-VACUUM (REFRESH_TABLE) lj_docs;
-
 query
 SELECT id, title FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
 ----
@@ -744,9 +735,6 @@ SELECT i,
        i * 3,
        md5(i::VARCHAR)
 FROM range(5000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) lj_hits;
 
 query
 EXPLAIN SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
@@ -863,9 +851,6 @@ count	count
 
 statement ok
 DELETE FROM lj_hits WHERE id = 4998;
-
-statement ok
-VACUUM (REFRESH_TABLE) lj_hits;
 
 query
 SELECT id, c1 FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 2;
@@ -1215,9 +1200,6 @@ CREATE INDEX lj_vec_idx ON lj_vec USING inverted(id, emb ivf (metric = 'l2'));
 
 statement count 4
 INSERT INTO lj_vec VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) lj_vec;
 
 query
 EXPLAIN SELECT id FROM lj_vec_idx ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 3;

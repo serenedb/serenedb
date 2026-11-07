@@ -33,12 +33,6 @@ CREATE INDEX ty_idx ON ty_t
   USING inverted(id, txt ty_dict, small_i, big_i, flt, dbl, flag, d);
 
 statement ok
-VACUUM (REFRESH_TABLE) ty_t;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
-statement ok
 INSERT INTO ty_t VALUES
   (4, 'delta', 400, 4000000000000, 4.5, 8.5, false, '2026-03-10'),
   (5, 'echo',  500, 5000000000000, 5.5, 10.5, true, '2026-09-01');
@@ -56,7 +50,7 @@ SELECT 1;
 
 connection ty_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) ty_t;
+SELECT 1;
 
 # Total row count
 connection ty_after

@@ -40,9 +40,6 @@ INSERT INTO ivf_f VALUES
   (5, [0, 10, 0]::FLOAT[3], 50, 0),
   (6, [0, 0, 30]::FLOAT[3], 35, 1)
 
-statement ok
-VACUUM (REFRESH_TABLE) ivf_f
-
 # Collect: unfiltered top-k -> the three nearest overall.
 query
 SELECT pk FROM ivf_f_idx ORDER BY emb <-> [11, 0, 0]::FLOAT[3] LIMIT 3;
@@ -122,9 +119,6 @@ INSERT INTO shortf
          CASE WHEN g IN (5, 12, 13, 14, 15) THEN 1 ELSE 0 END
   FROM generate_series(1, 30) g
 
-statement ok
-VACUUM (REFRESH_TABLE) shortf
-
 # Five rows match the filter.
 query
 SELECT count(*) FROM shortf WHERE ext = 1;
@@ -202,9 +196,6 @@ INSERT INTO neg_f VALUES
   (3, 'cc', [3, 0, 0]::FLOAT[3]),
   (4, 'cd', [4, 0, 0]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) neg_f
-
 # Gap at the head of the match set: pk 1 is skipped, pk 2..4 must survive.
 query
 SELECT pk FROM neg_f_idx WHERE cat != 'ca' ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 10;
@@ -263,9 +254,6 @@ CREATE INDEX ivf_order_idx ON ivf_order
 statement ok
 INSERT INTO ivf_order SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i
   FROM range(2000) t(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) ivf_order
 
 statement ok
 SET sdb_ivf_search_nprobe = 1000

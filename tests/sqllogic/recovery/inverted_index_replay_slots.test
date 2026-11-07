@@ -17,7 +17,7 @@ CREATE TABLE rs(id INTEGER, body TEXT);
 
 statement ok
 CREATE INDEX rs_idx ON rs USING inverted(id, body rs_dict)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -26,7 +26,7 @@ CREATE TABLE rt(id INTEGER, body TEXT);
 
 statement ok
 CREATE INDEX rt_idx ON rt USING inverted(id, body rs_dict)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -71,12 +71,7 @@ SELECT 1;
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) rs;
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) rt;
+SELECT 1;
 
 
 connection after_crash

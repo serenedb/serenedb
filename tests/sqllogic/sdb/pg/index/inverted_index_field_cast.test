@@ -15,9 +15,6 @@ INSERT INTO mfc VALUES
     (1, TIMESTAMP '2024-01-01 00:00:00'),
     (2, TIMESTAMP '2024-06-15 12:00:00');
 
-statement ok
-VACUUM (REFRESH_TABLE) mfc;
-
 query
 SELECT pk FROM mfc_ts_expr
 WHERE (ts + INTERVAL '1 hour') >= TIMESTAMP '2024-03-01 00:00:00' ORDER BY pk;

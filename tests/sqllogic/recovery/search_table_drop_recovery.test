@@ -10,9 +10,6 @@ RESET sdb_faults;
 statement count 3
 INSERT INTO s_drop VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
-statement ok
-VACUUM (REFRESH_TABLE) s_drop;
-
 query
 SELECT a, b FROM s_drop ORDER BY a;
 ----
@@ -28,9 +25,6 @@ CREATE TABLE s_witness (a INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search')
 
 statement ok
 INSERT INTO s_witness VALUES (7, 'keep');
-
-statement ok
-VACUUM (REFRESH_TABLE) s_witness;
 
 
 statement ok
@@ -79,10 +73,6 @@ CREATE TABLE s_drop (a INTEGER, b TEXT) WITH (storage = 'search');
 connection after_crash
 statement ok
 INSERT INTO s_drop VALUES (9, 'nine');
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) s_drop;
 
 connection after_crash
 query

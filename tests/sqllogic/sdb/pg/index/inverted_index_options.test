@@ -33,9 +33,9 @@ query
 SELECT c.relname, a.amname, c.reloptions FROM pg_class c LEFT JOIN pg_am a ON a.oid = c.relam WHERE c.relname IN ('opt_tuned', 'opt_default', 'opt_sec') ORDER BY c.relname;
 ----
 relname	amname	reloptions
-opt_default	inverted	{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+opt_default	inverted	{row_group_size=122880,compaction_interval=1000,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
 opt_sec	secondary	NULL
-opt_tuned	inverted	{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
+opt_tuned	inverted	{row_group_size=122880,compaction_interval=1000,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
 
 
 query
@@ -54,7 +54,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'opt_default';
 ----
 reloptions
-{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=33554432,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+{row_group_size=122880,compaction_interval=1000,segment_memory_max=33554432,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
 
 
 # RESET re-resolves the session value (the default here), leaving the other
@@ -67,19 +67,19 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'opt_default';
 ----
 reloptions
-{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+{row_group_size=122880,compaction_interval=1000,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
 
 
 # Maintenance intervals are alterable too.
 statement ok
-ALTER INDEX opt_tuned SET (refresh_interval = 250, compaction_interval = 500, cleanup_interval_step = 2);
+ALTER INDEX opt_tuned SET (compaction_interval = 500);
 
 
 query
 SELECT reloptions FROM pg_class WHERE relname = 'opt_tuned';
 ----
 reloptions
-{row_group_size=122880,refresh_interval=250,compaction_interval=500,cleanup_interval_step=2,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
+{row_group_size=122880,compaction_interval=500,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
 
 
 # segment_docs_max is the one option where 0 is a real value: unlimited.
@@ -142,7 +142,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'opt_rg';
 ----
 reloptions
-{row_group_size=4096,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+{row_group_size=4096,compaction_interval=1000,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
 
 
 # Norms share the index's one `row_group_size`; there is no separate knob.
@@ -167,7 +167,7 @@ db error: ERROR: invalid value for parameter "compaction_max_segments": "0"
 # The maintenance intervals (and segment_docs_max) DO accept 0: interval 0
 # disables the background task, docs_max 0 means unlimited.
 statement ok
-CREATE INDEX opt_z2 ON opt_t USING inverted(label) WITH (refresh_interval = 0, compaction_interval = 0, segment_docs_max = 0);
+CREATE INDEX opt_z2 ON opt_t USING inverted(label) WITH (compaction_interval = 0, segment_docs_max = 0);
 
 
 statement ok
@@ -176,7 +176,7 @@ DROP INDEX opt_z2;
 
 # uint32-typed options reject out-of-range values on both paths.
 statement error
-ALTER INDEX opt_default SET (refresh_interval = 5000000000);
+ALTER INDEX opt_default SET (compaction_interval = 5000000000);
 ----
 db error: ERROR: Failed to cast value: Type INT64 with value 5000000000 can't be cast because the value is out of range for the destination type UINT32
 
@@ -185,11 +185,6 @@ statement error
 CREATE INDEX opt_big ON opt_t USING inverted(label) WITH (segment_docs_max = 5000000000);
 ----
 db error: ERROR: Failed to cast value: Type INT64 with value 5000000000 can't be cast because the value is out of range for the destination type UINT32
-
-
-# IF EXISTS on a missing index is a no-op.
-statement ok
-ALTER INDEX IF EXISTS opt_missing SET (refresh_interval = 100);
 
 
 # ALTER on a secondary index is rejected: options apply to inverted only.
@@ -216,13 +211,13 @@ db error: ERROR: "opt_sec" is not an inverted index
 # ALTER TABLE ... SET/RESET (PG storage params) parses into the same shape;
 # a table target keeps the generic unsupported error.
 statement error
-ALTER TABLE opt_t SET (refresh_interval = 250);
+ALTER TABLE opt_t SET (compaction_interval = 250);
 ----
 db error: ERROR: SET (<options>) is not supported
 
 
 statement error
-ALTER TABLE opt_t RESET (refresh_interval);
+ALTER TABLE opt_t RESET (compaction_interval);
 ----
 db error: ERROR: RESET (<options>) is not supported
 

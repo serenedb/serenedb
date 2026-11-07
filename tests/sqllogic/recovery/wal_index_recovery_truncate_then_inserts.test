@@ -24,19 +24,12 @@ SELECT x, 'pre truncate row ' || x::TEXT FROM generate_series(1, 500) AS t(x);
 statement ok
 CREATE INDEX mironov_idx ON mironov_t USING inverted(id, body mironov_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) mironov_t;
-
 # Sanity: pre-truncate rows are searchable.
 query
 SELECT count(*) FROM mironov_idx WHERE body @@ ts_phrase('pre truncate');
 ----
 count
 500
-
-# Block search commits, then truncate and burst-insert.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 TRUNCATE mironov_t;

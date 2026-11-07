@@ -3,7 +3,7 @@ hash-threshold 100
 # `${__DATABASE__}` resolves to the per-test database the runner creates.
 control substitution on
 
-# Coverage test for VACUUM (REFRESH_*|COMPACT_*).
+# Coverage test for VACUUM (COMPACT_*|RECOMPUTE_STATS_*).
 # Drives every scope variant on real data and locks down the error paths
 # (missing/extra arguments, over-qualified names, missing objects, mixed
 # extension + standard options, conflicting extension options).
@@ -60,24 +60,8 @@ statement ok
 CREATE INDEX memos_idx ON s2.memos USING inverted(id, body en);
 
 
-# ---------------------------------------------------------------------------
-# REFRESH_* success paths -- each scope publishes its writes to readers.
-# ---------------------------------------------------------------------------
-
-# REFRESH_INDEX: only the named index becomes queryable.
 statement ok
 INSERT INTO public.docs VALUES (1, 'alpha refresh_index');
-
-
-query
-SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
-----
-count
-<slt:ignore>
-
-
-statement ok
-VACUUM (REFRESH_INDEX) docs_idx;
 
 
 query
@@ -87,13 +71,8 @@ count
 1
 
 
-# REFRESH_TABLE: publishes every inverted index under the table.
 statement ok
 INSERT INTO s1.notes VALUES (1, 'beta refresh_table');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) s1.notes;
 
 
 query
@@ -103,13 +82,8 @@ count
 1
 
 
-# REFRESH_SCHEMA: publishes every inverted index in the schema.
 statement ok
 INSERT INTO s2.memos VALUES (1, 'gamma refresh_schema');
-
-
-statement ok
-VACUUM (REFRESH_SCHEMA) s2;
 
 
 query
@@ -119,13 +93,8 @@ count
 1
 
 
-# REFRESH_SCHEMA with database-qualified name.
 statement ok
 INSERT INTO s2.memos VALUES (2, 'gamma refresh_schema qualified');
-
-
-statement ok
-VACUUM (REFRESH_SCHEMA) ${__DATABASE__}.s2;
 
 
 query
@@ -135,17 +104,12 @@ count
 1
 
 
-# REFRESH_DATABASE: publishes everything in the named database.
 statement ok
 INSERT INTO public.docs VALUES (2, 'delta refresh_database');
 
 
 statement ok
 INSERT INTO s1.notes VALUES (2, 'delta refresh_database notes');
-
-
-statement ok
-VACUUM (REFRESH_DATABASE) ${__DATABASE__};
 
 
 query
@@ -162,19 +126,14 @@ count
 1
 
 
-# Note: REFRESH_ALL / COMPACT_ALL are instance-wide and
+# Note: COMPACT_ALL is instance-wide and
 # would touch other tests' per-test databases under the shared sqllogic
-# runner, so their success paths live in
+# runner, so its success path lives in
 # tests/sqllogic/recovery/vacuum_global.test (one serened instance per test).
-# Their argument-validation errors are still covered below.
+# Its argument-validation errors are still covered below.
 
-# Fully-qualified INDEX scope still resolves.
 statement ok
 INSERT INTO public.docs VALUES (4, 'zeta qualified_index');
-
-
-statement ok
-VACUUM (REFRESH_INDEX) ${__DATABASE__}.public.docs_idx;
 
 
 query
@@ -184,13 +143,8 @@ count
 1
 
 
-# Fully-qualified TABLE scope still resolves.
 statement ok
 INSERT INTO s1.notes VALUES (3, 'eta qualified_table');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ${__DATABASE__}.s1.notes;
 
 
 query
@@ -202,7 +156,6 @@ count
 
 # ---------------------------------------------------------------------------
 # COMPACT_* success paths -- compaction must not change query results.
-# We first inflate to several segments via interleaved REFRESH_TABLE.
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -210,23 +163,11 @@ INSERT INTO public.docs VALUES (10, 'theta compact A');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) public.docs;
-
-
-statement ok
 INSERT INTO public.docs VALUES (11, 'theta compact B');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) public.docs;
-
-
-statement ok
 INSERT INTO public.docs VALUES (12, 'theta compact C');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) public.docs;
 
 
 query
@@ -321,30 +262,6 @@ VACUUM (RECOMPUTE_STATS_DATABASE) ${__DATABASE__};
 
 # Missing required argument.
 statement error
-VACUUM (REFRESH_INDEX);
-----
-db error: ERROR: VACUUM (refresh_index) requires an object name
-
-
-statement error
-VACUUM (REFRESH_TABLE);
-----
-db error: ERROR: VACUUM (refresh_table) requires an object name
-
-
-statement error
-VACUUM (REFRESH_SCHEMA);
-----
-db error: ERROR: VACUUM (refresh_schema) requires an object name
-
-
-statement error
-VACUUM (REFRESH_DATABASE);
-----
-db error: ERROR: VACUUM (refresh_database) requires an object name
-
-
-statement error
 VACUUM (COMPACT_INDEX);
 ----
 db error: ERROR: VACUUM (compact_index) requires an object name
@@ -383,12 +300,6 @@ db error: ERROR: VACUUM (RECOMPUTE_STATS_COLUMN) expects [<schema>.]<table>.<col
 
 # Argument forbidden on _ALL scope.
 statement error
-VACUUM (REFRESH_ALL) docs;
-----
-db error: ERROR: VACUUM (refresh_all) does not take an argument
-
-
-statement error
 VACUUM (COMPACT_ALL) docs;
 ----
 db error: ERROR: VACUUM (compact_all) does not take an argument
@@ -400,49 +311,24 @@ VACUUM (RECOMPUTE_STATS_ALL) docs;
 db error: ERROR: VACUUM (recompute_stats_all) does not take an argument
 
 
-
 # Over-qualified database / schema arguments.
-statement error
-VACUUM (REFRESH_DATABASE) ${__DATABASE__}.public;
-----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) expects a single database name
-
-
 statement error
 VACUUM (COMPACT_DATABASE) ${__DATABASE__}.public;
 ----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) expects a single database name
-
-
-statement error
-VACUUM (REFRESH_SCHEMA) ${__DATABASE__}.public.docs;
-----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects [<database>.]<schema>
+db error: ERROR: VACUUM (COMPACT_DATABASE) expects a single database name
 
 
 statement error
 VACUUM (COMPACT_SCHEMA) ${__DATABASE__}.public.docs;
 ----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects [<database>.]<schema>
+db error: ERROR: VACUUM (COMPACT_SCHEMA) expects [<database>.]<schema>
 
 
 # Catalog lookup failures, one per scope.
 statement error
-VACUUM (REFRESH_INDEX) nope_idx;
-----
-db error: ERROR: relation "nope_idx" does not exist<slt:ignore>
-
-
-statement error
 VACUUM (COMPACT_INDEX) nope_idx;
 ----
 db error: ERROR: relation "nope_idx" does not exist<slt:ignore>
-
-
-statement error
-VACUUM (REFRESH_TABLE) nope_table;
-----
-db error: ERROR: relation "nope_table" does not exist<slt:ignore>
 
 
 statement error
@@ -452,21 +338,9 @@ db error: ERROR: relation "nope_table" does not exist<slt:ignore>
 
 
 statement error
-VACUUM (REFRESH_SCHEMA) nope_schema;
-----
-db error: ERROR: schema "nope_schema" does not exist<slt:ignore>
-
-
-statement error
 VACUUM (COMPACT_SCHEMA) nope_schema;
 ----
 db error: ERROR: schema "nope_schema" does not exist<slt:ignore>
-
-
-statement error
-VACUUM (REFRESH_DATABASE) nope_db;
-----
-db error: ERROR: database "nope_db" does not exist<slt:ignore>
 
 
 statement error
@@ -477,28 +351,27 @@ db error: ERROR: database "nope_db" does not exist<slt:ignore>
 
 # Two extension options in one VACUUM -- parser-level rejection.
 statement error
-VACUUM (REFRESH_TABLE, COMPACT_TABLE) public.docs;
+VACUUM (COMPACT_TABLE, RECOMPUTE_STATS_TABLE) public.docs;
 ----
-db error: ERROR: VACUUM accepts at most one SereneDB option (got both 'refresh_table' and 'compact_table')
+db error: ERROR: VACUUM accepts at most one SereneDB option (got both 'compact_table' and 'recompute_stats_table')
 
 
 statement error
-VACUUM (COMPACT_SCHEMA, REFRESH_ALL) s1;
+VACUUM (COMPACT_SCHEMA, RECOMPUTE_STATS_ALL) s1;
 ----
-db error: ERROR: VACUUM accepts at most one SereneDB option (got both 'compact_schema' and 'refresh_all')
+db error: ERROR: VACUUM accepts at most one SereneDB option (got both 'compact_schema' and 'recompute_stats_all')
 
 
 # Extension option mixed with a standard VACUUM option.
 statement error
-VACUUM (REFRESH_TABLE, ANALYZE) public.docs;
+VACUUM (COMPACT_TABLE, ANALYZE) public.docs;
 ----
-db error: ERROR: VACUUM SereneDB option 'refresh_table' cannot be combined with standard VACUUM options
+db error: ERROR: VACUUM SereneDB option 'compact_table' cannot be combined with standard VACUUM options
 
 
 # Cleanup
 statement ok
 DROP TABLE public.docs;
-
 
 
 statement ok

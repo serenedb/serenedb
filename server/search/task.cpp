@@ -63,13 +63,6 @@ constexpr Clock::duration kPoll = std::chrono::milliseconds{100};
 // Upper bound for the empty-compaction backoff: don't hammer compaction while
 // the index is idle, but resume promptly once work appears.
 constexpr Clock::duration kMaxCompactionBackoff = std::chrono::seconds{30};
-// On RefreshResult::NoChanges lengthen the next refresh delay toward this many
-// extra multiples of the configured interval (~x1.5 per idle tick) to avoid
-// fsync churn on an idle index; Done resets to the configured interval.
-constexpr int kMaxRefreshStretch = 4;
-// Run cleanup once stale pressure (raised by non-empty compactions) crosses
-// this, independent of the periodic cleanup step.
-constexpr uint32_t kStalePressureCleanup = 4;
 
 Clock::duration ToDuration(size_t msec) noexcept {
   return std::chrono::milliseconds{msec};
@@ -96,32 +89,7 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
   return irs::index_utils::MakePolicy(tier);
 }
 
-void DoRefresh(Store& idx, bool run_cleanup, RefreshResult& code) {
-  SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
-  SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
-  {
-    metrics::Scoped guard{metrics::Gauge::RefreshActive};
-    code = RefreshResult::Undefined;
-    auto [res, time_ms] = idx.RefreshUnsafe(/*wait=*/false, nullptr, code);
-    if (res.ok()) {
-      SDB_TRACE(SEARCH, "successful sync of Search index '", idx.GetId(),
-                "', took: ", time_ms, "ms");
-    } else {
-      SDB_WARN(SEARCH, "error after running for ", time_ms,
-               "ms while refreshing Search index '", idx.GetId(),
-               "': ", res.message());
-    }
-  }
-  if (!run_cleanup) {
-    return;
-  }
-  SDB_IF_FAILURE("SearchRefreshTask::cleanupUnsafe") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
+void DoCleanup(Store& idx) {
   metrics::Scoped guard{metrics::Gauge::CleanupActive};
   auto [res, time_ms] = idx.CleanupUnsafe();
   if (res.ok()) {
@@ -211,11 +179,6 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
 
 struct Target {
   std::weak_ptr<Store> store;
-  size_t refresh_interval = 0;
-  Clock::time_point refresh_at;
-  int stretch = 0;
-  size_t cleanups = 0;
-  bool refreshing = false;
   size_t compaction_interval = 0;
   Clock::time_point compaction_at;
   Clock::duration backoff{};
@@ -232,75 +195,6 @@ struct Targets {
 Targets& GetTargets() {
   static Targets targets;
   return targets;
-}
-
-struct DueRefresh {
-  std::shared_ptr<Target> target;
-  size_t interval = 0;
-};
-
-enum class RefreshOutcome : uint8_t {
-  Progress,
-  Idle,
-  Neutral,
-};
-
-yaclib::Future<> Refresh(std::shared_ptr<Target> target, size_t interval) {
-  auto& targets = GetTargets();
-  co_await yaclib::On(BackgroundScheduler::instance().executor());
-  auto outcome = RefreshOutcome::Neutral;
-  try {
-    SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-    SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_before_tick");
-    const auto store = target->store.lock();
-    if (store && !ShouldStop() &&
-        store->GetTasksSettings().refresh_interval_msec == interval) {
-      const size_t step = store->GetTasksSettings().cleanup_interval_step;
-      const bool stale = store->StalePressure() >= kStalePressureCleanup;
-      bool run_cleanup = false;
-      {
-        absl::MutexLock lock{&targets.mutex};
-        const bool periodic = step && ++target->cleanups >= step;
-        run_cleanup =
-          (stale || periodic) && !GetSearchEngine().IsBackupActive();
-        if (run_cleanup) {
-          target->cleanups = 0;
-        }
-      }
-      if (run_cleanup) {
-        store->ClearStalePressure();
-      }
-      RefreshResult code = RefreshResult::Undefined;
-      DoRefresh(*store, run_cleanup, code);
-      if (code == RefreshResult::Done) {
-        store->NudgeCompaction();
-        outcome = RefreshOutcome::Progress;
-      } else if (code == RefreshResult::NoChanges) {
-        outcome = RefreshOutcome::Idle;
-      }
-    }
-  } catch (const std::exception& e) {
-    SDB_WARN(SEARCH,
-             "background refresh failed: ", duckdb::ErrorData{e}.RawMessage());
-  }
-  SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_head");
-  absl::MutexLock lock{&targets.mutex};
-  switch (outcome) {
-    case RefreshOutcome::Progress:
-      target->stretch = 0;
-      break;
-    case RefreshOutcome::Idle:
-      target->stretch = std::min(
-        kMaxRefreshStretch,
-        target->stretch == 0 ? 1 : target->stretch + target->stretch / 2 + 1);
-      break;
-    case RefreshOutcome::Neutral:
-      break;
-  }
-  const auto every = ToDuration(target->refresh_interval);
-  target->refresh_at = Clock::now() + every + every * target->stretch;
-  target->refreshing = false;
-  co_return {};
 }
 
 yaclib::Future<> Compact(std::shared_ptr<Target> target) {
@@ -325,9 +219,9 @@ yaclib::Future<> Compact(std::shared_ptr<Target> target) {
     SDB_WARN(SEARCH, "background compaction failed: ",
              duckdb::ErrorData{e}.RawMessage());
   }
-  if (produced) {
+  if (produced && !engine.IsBackupActive()) {
     if (const auto live = target->store.lock()) {
-      live->BumpStalePressure();
+      DoCleanup(*live);
     }
   }
   absl::MutexLock lock{&GetTargets().mutex};
@@ -352,8 +246,6 @@ void AddMaintenanceTarget(const std::shared_ptr<Store>& store) {
   const auto& settings = store->GetTasksSettings();
   const auto now = Clock::now();
   target->store = store;
-  target->refresh_interval = settings.refresh_interval_msec;
-  target->refresh_at = now + ToDuration(target->refresh_interval);
   target->compaction_interval = settings.compaction_interval_msec;
   target->compaction_at = now + ToDuration(target->compaction_interval);
   target->generation = store->CompactionGeneration();
@@ -369,7 +261,6 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
     while (!ShouldStop()) {
       const auto now = Clock::now();
       auto next = now + kPoll;
-      std::vector<DueRefresh> refresh;
       std::vector<std::shared_ptr<Target>> compact;
       {
         absl::MutexLock lock{&targets.mutex};
@@ -382,21 +273,6 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
             continue;
           }
           const auto& settings = store->GetTasksSettings();
-          const size_t refresh_interval = settings.refresh_interval_msec;
-          if (refresh_interval != target->refresh_interval) {
-            target->refresh_interval = refresh_interval;
-            target->stretch = 0;
-            target->refresh_at = now + ToDuration(refresh_interval);
-          }
-          if (refresh_interval != 0 && !target->refreshing) {
-            if (now >= target->refresh_at) {
-              target->refreshing = true;
-              refresh.push_back(
-                {.target = target, .interval = refresh_interval});
-            } else {
-              next = std::min(next, target->refresh_at);
-            }
-          }
           const size_t compaction_interval = settings.compaction_interval_msec;
           if (compaction_interval != target->compaction_interval) {
             target->compaction_interval = compaction_interval;
@@ -417,9 +293,6 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
             }
           }
         }
-      }
-      for (auto& due : refresh) {
-        jobs.Consume(Refresh(std::move(due.target), due.interval));
       }
       for (auto& target : compact) {
         jobs.Consume(Compact(std::move(target)));

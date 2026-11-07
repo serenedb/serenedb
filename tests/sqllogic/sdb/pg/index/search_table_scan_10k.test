@@ -15,23 +15,11 @@ INSERT INTO stk SELECT i, i, 'r'||i, NULL FROM generate_series(0,7999) g(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stk;
-
-
-statement ok
 INSERT INTO stk SELECT i, i, 'r'||i, i FROM generate_series(8000,15999) g(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stk;
-
-
-statement ok
 INSERT INTO stk SELECT i, i, 'r'||i, i FROM generate_series(16000,23999) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) stk;
 
 
 query
@@ -130,15 +118,7 @@ INSERT INTO stk_np SELECT i, 'r'||i FROM generate_series(0,5999) g(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stk_np;
-
-
-statement ok
 INSERT INTO stk_np SELECT i, 'r'||i FROM generate_series(6000,11999) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) stk_np;
 
 
 query
@@ -211,10 +191,6 @@ db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on
 # Deletes: masked rows vanish from filtered scans, counts and top-k.
 statement ok
 DELETE FROM stk WHERE x < 4000;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) stk;
 
 
 query

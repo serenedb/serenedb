@@ -27,9 +27,6 @@ SET threads = 1;
 statement ok
 INSERT INTO wbuf SELECT i, 'v' || i || repeat('x', 200) FROM range(5000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) wbuf;
-
 query
 SELECT count(*) AS n, min(a) AS lo, max(a) AS hi, count(DISTINCT a) AS d FROM wbuf;
 ----
@@ -68,9 +65,6 @@ INSERT INTO wmulti VALUES (900004, 'x');
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) wmulti;
 
 query
 SELECT count(*) AS n, count(DISTINCT a) AS d FROM wmulti;
@@ -118,9 +112,6 @@ INSERT INTO wtrunc SELECT i, 'p2_' || i || repeat('x', 200) FROM range(20000, 25
 statement ok
 COMMIT;
 
-statement ok
-VACUUM (REFRESH_TABLE) wtrunc;
-
 # Neither the seed rows nor either statement's rows may be missing: 10000 total,
 # 5000 from each statement, and nothing left over from before the TRUNCATE.
 query
@@ -154,17 +145,8 @@ CREATE TABLE wupd(a INTEGER, b TEXT)
 statement ok
 INSERT INTO wupd SELECT i, 'seed' || i || repeat('x', 200) FROM range(8000) t(i);
 
-# An UPDATE matches through the index, and a search table publishes rows only
-# on refresh -- without this the UPDATE below sees an empty table and silently
-# updates nothing.
-statement ok
-VACUUM (REFRESH_TABLE) wupd;
-
 statement ok
 UPDATE wupd SET b = 'aupd' || a || repeat('y', 200);
-
-statement ok
-VACUUM (REFRESH_TABLE) wupd;
 
 query
 SELECT count(*) AS n,
@@ -196,9 +178,6 @@ statement ok
 INSERT INTO wmixa SELECT i, 'seed' || i || repeat('x', 200) FROM range(6000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) wmixa;
-
-statement ok
 BEGIN;
 
 statement ok
@@ -209,9 +188,6 @@ UPDATE wmixa SET b = 'aupd' || a || repeat('y', 200) WHERE a < 6000;
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) wmixa;
 
 query
 SELECT count(*) AS n,
@@ -236,9 +212,6 @@ statement ok
 INSERT INTO wmixb SELECT i, 'seed' || i || repeat('x', 200) FROM range(2000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) wmixb;
-
-statement ok
 BEGIN;
 
 statement ok
@@ -249,9 +222,6 @@ INSERT INTO wmixb SELECT i, 'bins' || i || repeat('x', 200) FROM range(300000, 3
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) wmixb;
 
 query
 SELECT count(*) AS n,
@@ -295,10 +265,6 @@ SELECT b FROM wbuf WHERE a = 20002;
 b
 small_b
 
-connection small_after
-statement ok
-VACUUM (REFRESH_TABLE) wbuf;
-
 
 ###############################################################################
 # 4. Crash AFTER the WAL commit on a statement that overran the buffer: the
@@ -336,10 +302,6 @@ SELECT left(b, 6) AS head, length(b) AS len FROM wbuf WHERE a = 15999;
 ----
 head	len
 v15999	206
-
-connection after_commit
-statement ok
-VACUUM (REFRESH_TABLE) wbuf;
 
 
 ###############################################################################
@@ -404,10 +366,6 @@ n	d
 connection before_commit
 statement ok
 INSERT INTO wbuf VALUES (30002, 'after_failure');
-
-connection before_commit
-statement ok
-VACUUM (REFRESH_TABLE) wbuf;
 
 connection before_commit
 query

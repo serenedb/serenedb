@@ -28,12 +28,6 @@ INSERT INTO ppas SELECT i, i % 10,
   [i, 0]::FLOAT[2] FROM range(100) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ppa;
-
-statement ok
-VACUUM (REFRESH_TABLE) ppas;
-
-statement ok
 PREPARE ppa_knn AS SELECT pk FROM ppa_idx WHERE v = $1
   ORDER BY emb <-> $2::FLOAT[2] LIMIT $3;
 
@@ -259,12 +253,6 @@ INSERT INTO ppas SELECT i, i,
 statement ok
 INSERT INTO ppas VALUES (200, 5000, 'beta', [500, 0]);
 
-statement ok
-VACUUM (REFRESH_TABLE) ppa;
-
-statement ok
-VACUUM (REFRESH_TABLE) ppas;
-
 query
 EXECUTE ppa_knn(3, [150, 0], 2);
 ----
@@ -434,9 +422,6 @@ CREATE INDEX ppr_idx ON ppr USING inverted(pk, v, s, f);
 
 statement ok
 INSERT INTO ppr SELECT i, i % 10, (i % 7)::VARCHAR, i % 4 = 0 FROM range(100) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) ppr;
 
 statement ok
 PREPARE ppr_range(text) AS SELECT count(*) AS n FROM ppr_idx

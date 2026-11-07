@@ -4,9 +4,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY wd_kw AS keyword() WITH (frequency)
 
 statement ok
@@ -19,7 +16,7 @@ CREATE TABLE wdk(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, tag VARCHAR)
 
 statement ok
 CREATE INDEX wdk_idx ON wdk USING inverted(cat wd_kw, tag wd_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO wdk VALUES
@@ -38,13 +35,7 @@ INSERT INTO wdk VALUES
   (13, 'quince', 'x')
 
 statement ok
-VACUUM (REFRESH_TABLE) wdk;
-
-statement ok
 DELETE FROM wdk WHERE id IN (2, 5, 6, 8, 11, 12, 13)
-
-statement ok
-VACUUM (REFRESH_TABLE) wdk;
 
 query TI
 SELECT unnest(ts_dict_agg(cat)) AS term, unnest(ts_dict_count(cat)) AS docs
@@ -280,9 +271,6 @@ QUERY PLAN
 statement ok
 DELETE FROM wdk WHERE id IN (3, 4)
 
-statement ok
-VACUUM (REFRESH_TABLE) wdk;
-
 query I
 SELECT count(*) AS n
 FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM wdk_idx WHERE cat = 'grape') x
@@ -433,7 +421,7 @@ CREATE TABLE wdt(id INTEGER PRIMARY KEY, body VARCHAR)
 
 statement ok
 CREATE INDEX wdt_idx ON wdt USING inverted(body wd_tx)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO wdt VALUES
@@ -443,13 +431,7 @@ INSERT INTO wdt VALUES
   (4, 'axle date')
 
 statement ok
-VACUUM (REFRESH_TABLE) wdt;
-
-statement ok
 DELETE FROM wdt WHERE id IN (3, 4)
-
-statement ok
-VACUUM (REFRESH_TABLE) wdt;
 
 query TII
 SELECT unnest(ts_dict_agg(body)) AS term,

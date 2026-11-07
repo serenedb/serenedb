@@ -27,10 +27,6 @@ statement ok
 INSERT INTO sp_t VALUES (1, 'first', ROW('alpha', 10)), (2, 'second', ROW('beta', 20))
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sp_t
-
-
 # Single field: pushed into the scan -- no PROJECTION node above it; the field
 # appears in the scan's Projections as `payload.score (i)`.
 query

@@ -25,16 +25,13 @@ CREATE TABLE ns(id INTEGER PRIMARY KEY, scope VARCHAR, body VARCHAR,
 
 statement ok
 CREATE INDEX ns_idx ON ns USING inverted(scope ns_kw, body ns_tx, pad ns_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ns VALUES
   (1, 'a',  'red blue', 'p'),
   (2, NULL, NULL,       'p'),
   (3, 'y',  'red',      'p')
-
-statement ok
-VACUUM (REFRESH_TABLE) ns;
 
 query I
 SELECT id FROM ns WHERE scope != 'y' ORDER BY id
@@ -542,13 +539,10 @@ CREATE TABLE nse(id INTEGER PRIMARY KEY, raw VARCHAR)
 
 statement ok
 CREATE INDEX nse_idx ON nse USING inverted(id, (lower(raw)) ns_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO nse VALUES (1, 'A'), (2, NULL), (3, 'C')
-
-statement ok
-VACUUM (REFRESH_TABLE) nse
 
 query I
 SELECT id FROM nse WHERE NOT (lower(raw) = 'a' OR lower(raw) = 'b')
@@ -595,7 +589,7 @@ CREATE TABLE nsx(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
 
 statement ok
 CREATE INDEX nsx_idx ON nsx USING inverted(id, kw ns_kw, num, pad ns_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO nsx VALUES
@@ -640,9 +634,6 @@ INSERT INTO nsx VALUES
   (39, 'c', 5, 'q'),
   (40, 'a', 6, 'p')
 
-statement ok
-VACUUM (REFRESH_TABLE) nsx
-
 query I
 SELECT id FROM nsx WHERE num > 3 AND ((num != 4 AND kw IS NULL) OR pad = 'q')
 ORDER BY id
@@ -680,7 +671,7 @@ CREATE TABLE nsx7(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
 
 statement ok
 CREATE INDEX nsx7_idx ON nsx7 USING inverted(id, kw ns_kw, num, pad ns_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO nsx7 VALUES
@@ -724,9 +715,6 @@ INSERT INTO nsx7 VALUES
   (38, 'a', NULL, 'q'),
   (39, 'd', 3, 'p'),
   (40, NULL, 6, 'p')
-
-statement ok
-VACUUM (REFRESH_TABLE) nsx7
 
 query I
 SELECT id FROM nsx7 WHERE (num < 6 OR num > 7) AND num BETWEEN 4 AND 9

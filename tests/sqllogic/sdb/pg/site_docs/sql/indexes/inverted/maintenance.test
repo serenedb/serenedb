@@ -16,9 +16,6 @@ INSERT INTO my_logs VALUES (1, 'disk full'), (2, 'connection reset');
 
 # DOCS_TEST_BODY
 
-statement ok
-VACUUM (REFRESH_TABLE) my_logs;
-
 query
 SELECT id FROM logs_idx WHERE msg @@ 'disk' ORDER BY id;
 ----
@@ -92,10 +89,10 @@ ALTER INDEX logs_idx RESET (compaction_interval);
 # DOCS_TEST_BODY
 
 statement error
-CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (refresh_interval = 0);
+CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (compaction_interval = 0);
 ----
-db error: ERROR: refresh_interval is a table option on a search-backed table
-HINT: Change it with ALTER TABLE ... SET (refresh_interval = ...).
+db error: ERROR: compaction_interval is a table option on a search-backed table
+HINT: Change it with ALTER TABLE ... SET (compaction_interval = ...).
 
 
 statement error
@@ -112,9 +109,6 @@ INSERT INTO my_events VALUES
     (1, 'disk full'),
     (2, 'connection reset'),
     (3, 'disk replaced');
-
-statement ok
-VACUUM (REFRESH_TABLE) my_events;
 
 # DOCS_TEST_BODY
 

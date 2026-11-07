@@ -23,9 +23,6 @@ a	b	c
 statement ok
 INSERT INTO foo values (2, 'quick red fox jumps over lazy dog', 'value a');
 
-statement ok
-VACUUM (REFRESH_TABLE) foo;
-
 query
 SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over lazy dog') ORDER BY a;
 ----
@@ -35,9 +32,6 @@ a	b
 
 statement ok
 UPDATE foo SET c = 'value abc' WHERE a = 1;
-
-statement ok
-VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT a, b, c FROM foo_idx WHERE c @@ ts_phrase('value abc') AND b @@ ts_phrase('over lazy dog');
@@ -50,9 +44,6 @@ INSERT INTO foo values (3, 'quick red fox jumps over big dog', 'value a');
 
 statement ok
 INSERT INTO foo values (4, 'quick brown fox jumps over big dog', 'value b');
-
-statement ok
-VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over big dog') OR b @@ ts_phrase('red fox') ORDER BY a;
@@ -81,9 +72,6 @@ INSERT INTO foo values (5, 'quick brown lazy fox runs over big dog', 'value c');
 
 statement ok
 INSERT INTO foo values (6, 'quick fox over big dog', 'value c');
-
-statement ok
-VACUUM (REFRESH_TABLE) foo;
 
 # Exact gap: 1 word between 'quick' and 'fox' -- matches rows with 'quick brown fox' and 'quick red fox'
 query
@@ -284,10 +272,6 @@ statement ok
 UPDATE vedernikoff SET c = 'deadinside' WHERE a = 3;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff;
-
-
 query
 SELECT a, b, c FROM vedernikoff_idx WHERE c @@ ts_phrase('deadinside') AND b @@ ts_phrase('watches anime');
 ----
@@ -404,7 +388,6 @@ a	b	c
 1	pudge goes mid every game	clickclack university
 2	anchin-chan reads manga all day	clickclack university
 3	vedernikoff carries team again	deadinside academy
-
 
 
 # index backfill from external (file) table
@@ -682,13 +665,7 @@ statement ok
 CREATE INDEX multi_seg_idx ON multi_seg USING inverted(a, b score_en);
 
 statement ok
-VACUUM (REFRESH_TABLE) multi_seg;
-
-statement ok
 INSERT INTO multi_seg VALUES (3, 'gamma fox'), (4, 'delta fox');
-
-statement ok
-VACUUM (REFRESH_TABLE) multi_seg;
 
 query
 SELECT a, BM25(multi_seg_idx.tableoid) > 0 AS has_score FROM multi_seg_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
@@ -1016,17 +993,11 @@ statement ok
 CREATE INDEX dense_multi_idx ON dense_multi USING inverted(a, b test_english);
 
 statement ok
-VACUUM (REFRESH_TABLE) dense_multi;
-
-statement ok
 INSERT INTO dense_multi VALUES
   (5, 'universal token epsilon'),
   (6, 'universal token zeta'),
   (7, 'universal token eta'),
   (8, 'universal token theta');
-
-statement ok
-VACUUM (REFRESH_TABLE) dense_multi;
 
 query
 SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('universal token') ORDER BY a;
@@ -1065,9 +1036,6 @@ statement ok
 INSERT INTO dense_multi VALUES
   (9, 'universal token iota'),
   (10, 'universal token kappa');
-
-statement ok
-VACUUM (REFRESH_TABLE) dense_multi;
 
 query
 SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('universal token') ORDER BY a;
@@ -1221,9 +1189,6 @@ CREATE INDEX dup_tok_stack_idx ON dup_tok USING inverted(id, txt tok_kw, txt inc
 # columnstore-fetch path that `included(...)` enables.
 statement ok
 INSERT INTO dup_tok VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) dup_tok;
 
 query
 SELECT id, txt FROM dup_tok_stack_idx WHERE txt @@ 'alpha';

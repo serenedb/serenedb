@@ -28,12 +28,6 @@ INSERT INTO hc_auto SELECT i, hc_vec(i) FROM range(4000) t(i);
 statement ok
 INSERT INTO hc_raw SELECT i, hc_vec(i) FROM range(4000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hc_auto;
-
-statement ok
-VACUUM (REFRESH_TABLE) hc_raw;
-
 query
 SELECT raw.value - packed.value > 4000 * 64 * 4 / 4 AS raw_vectors_stored
 FROM sdb_metrics raw, sdb_metrics packed

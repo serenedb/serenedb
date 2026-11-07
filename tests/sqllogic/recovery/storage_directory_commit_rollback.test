@@ -71,14 +71,6 @@ CREATE INDEX sdl_v_inv ON sdl_v USING inverted (body);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sdl_t;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_s;
-
-
-statement ok
 INSERT INTO sdl_oids
   SELECT index_name, index_oid FROM duckdb_indexes()
   WHERE database_name = current_database() AND index_name IN ('sdl_t_inv', 'sdl_v_inv')
@@ -136,14 +128,6 @@ CREATE INDEX sdl_keep_s_inv ON sdl_keep_s USING inverted (body);
 
 statement ok
 CREATE INDEX sdl_keep_v_inv ON sdl_v USING inverted (body);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_t;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_keep_s;
 
 
 statement ok
@@ -303,14 +287,6 @@ INSERT INTO sdl_db.public.t VALUES (1, 'alpha');
 
 statement ok
 INSERT INTO sdl_db.public.s VALUES (1, 'alpha');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_db.public.t;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sdl_db.public.s;
 
 
 statement ok

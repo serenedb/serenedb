@@ -14,30 +14,21 @@ statement ok
 INSERT INTO gc_idle VALUES (100, 'idle');
 
 statement ok
-VACUUM (REFRESH_TABLE) gc_idle;
-
-statement ok
 CREATE TABLE gc_fresh (a INTEGER, b TEXT) WITH (storage = 'search');
 
 # Table with explicit (non-default) maintenance intervals: recovery must read
 # the persisted intervals back off the deserialized catalog Table (no context).
 statement ok
 CREATE TABLE gc_tuned (a INTEGER, b TEXT)
-  WITH (storage = 'search', refresh_interval = 300,
-        compaction_interval = 6000, cleanup_interval_step = 2);
+  WITH (storage = 'search',
+        compaction_interval = 6000);
 
 statement ok
 INSERT INTO gc_tuned VALUES (42, 'tuned');
 
-statement ok
-VACUUM (REFRESH_TABLE) gc_tuned;
-
 # Publish a baseline on the active table.
 statement ok
 INSERT INTO gc_active VALUES (1, 'one'), (2, 'two');
-
-statement ok
-VACUUM (REFRESH_TABLE) gc_active;
 
 statement ok
 SET sdb_faults = 'crash_after_commit';
@@ -90,10 +81,6 @@ statement ok
 INSERT INTO gc_fresh VALUES (9, 'nine');
 
 connection after
-statement ok
-VACUUM (REFRESH_TABLE) gc_fresh;
-
-connection after
 query
 SELECT a, b FROM gc_fresh ORDER BY a;
 ----
@@ -103,10 +90,6 @@ a	b
 connection after
 statement ok
 INSERT INTO gc_idle VALUES (200, 'more');
-
-connection after
-statement ok
-VACUUM (REFRESH_TABLE) gc_idle;
 
 connection after
 query

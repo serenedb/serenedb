@@ -45,10 +45,6 @@ SELECT i + 100,
 FROM range(30100) t(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) variant_ann
-
-
 query
 SELECT COUNT(*) FROM variant_ann_idx;
 ----

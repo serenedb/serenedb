@@ -17,13 +17,7 @@ statement ok
 INSERT INTO fl_words VALUES (1, 'cuts');
 
 statement ok
-VACUUM (REFRESH_TABLE) fl_words;
-
-statement ok
 INSERT INTO fl_words VALUES (2, 'bats'), (3, 'cuts'), (4, 'mats'), (5, 'dogs');
-
-statement ok
-VACUUM (REFRESH_TABLE) fl_words;
 
 query
 EXPLAIN SELECT unnest(ts_dict_agg(w)) AS t, unnest(ts_dict_score(w)) AS s
@@ -193,13 +187,7 @@ statement ok
 INSERT INTO fl_docs VALUES (1, 'cuts dogs');
 
 statement ok
-VACUUM (REFRESH_TABLE) fl_docs;
-
-statement ok
 INSERT INTO fl_docs VALUES (2, 'bats cuts'), (3, 'mats');
-
-statement ok
-VACUUM (REFRESH_TABLE) fl_docs;
 
 query
 SELECT t, s, c

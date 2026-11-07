@@ -56,10 +56,6 @@ statement ok
 CREATE INDEX wiki_topk_idx ON wiki_docs USING inverted(id, title, body en_topk_slow);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) wiki_docs;
-
-
 # Insert more to create a second segment
 statement ok
 INSERT INTO wiki_docs
@@ -79,10 +75,6 @@ SELECT
     WHEN 9 THEN 'plus size clothing market has grown significantly in recent years'
   END AS body
 FROM generate_series(1, 3000) AS s;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) wiki_docs;
 
 
 # ---- Search benchmark game-style queries ----

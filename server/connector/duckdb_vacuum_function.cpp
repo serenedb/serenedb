@@ -63,7 +63,6 @@ enum class Scope : uint8_t {
 };
 
 enum class Action : uint8_t {
-  Refresh,
   Compact,
   RecomputeStats,
 };
@@ -75,11 +74,6 @@ struct Verb {
 
 std::optional<Verb> ParseOption(std::string_view option) {
   static constexpr std::pair<std::string_view, Verb> kVerbs[] = {
-    {"refresh_database", {Action::Refresh, Scope::Database}},
-    {"refresh_schema", {Action::Refresh, Scope::Schema}},
-    {"refresh_table", {Action::Refresh, Scope::Table}},
-    {"refresh_index", {Action::Refresh, Scope::Index}},
-    {"refresh_all", {Action::Refresh, Scope::All}},
     {"compact_database", {Action::Compact, Scope::Database}},
     {"compact_schema", {Action::Compact, Scope::Schema}},
     {"compact_table", {Action::Compact, Scope::Table}},
@@ -165,7 +159,7 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
     case Scope::Database: {
       if (!bind.schema.empty() || !bind.catalog.empty()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) "
+                        ERR_MSG("VACUUM (COMPACT_DATABASE) "
                                 "expects a single database name"));
       }
       out.database = bind.name;
@@ -174,7 +168,7 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
       if (!bind.catalog.empty()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects "
+          ERR_MSG("VACUUM (COMPACT_SCHEMA) expects "
                   "[<database>.]<schema>"));
       }
       out.database = bind.schema;
@@ -225,7 +219,6 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
 
 void CompactInvertedStorage(search::Store& inverted,
                             const irs::IndexFieldOptions& field_options,
-                            std::string_view index_name,
                             duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress) {
   static const auto kPolicy = irs::index_utils::MakePolicy(
@@ -241,7 +234,6 @@ void CompactInvertedStorage(search::Store& inverted,
   const search::ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env_ptr = slot.AnnEnv();
 
-  search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
     // The merge encodes against the index definition the step captured, which
@@ -260,16 +252,12 @@ void CompactInvertedStorage(search::Store& inverted,
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("compact_index: compaction failed: ", res.message()));
     }
-    search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
     if (empty_compaction) {
       break;
     }
   }
 }
 
-// One unit of inverted-index maintenance: either an index refresh/compaction
-// or a Search-table commit, in the same per-table order the walk visits them.
-// Owning pointers: the steps run after the collection walk finished.
 struct InvertedStep {
   std::shared_ptr<search::Store> storage;
   // Owned for the whole pass, not aliased into the index: a concurrent DROP
@@ -319,8 +307,6 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
                            index.name.GetIdentifierName());
       }
     });
-  // Search tables also commit/consolidate/GC in the background; VACUUM is the
-  // synchronous, on-demand path through the same maintenance ops.
   if (const auto* search =
         dynamic_cast<const catalog::SearchTableEntry*>(&table)) {
     steps.emplace_back(nullptr, nullptr, search->Storage(),
@@ -341,14 +327,13 @@ bool MayMaintain(ConnectionContext& conn_ctx, const duckdb::Permissions& perm,
   return false;
 }
 
-void DispatchInverted(duckdb::ClientContext& context,
-                      ConnectionContext& conn_ctx, Action action, Scope scope,
-                      const ResolvedName& target,
-                      pg::ProgressMetrics* progress) {
+void DispatchCompact(duckdb::ClientContext& context,
+                     ConnectionContext& conn_ctx, Scope scope,
+                     const ResolvedName& target,
+                     pg::ProgressMetrics* progress) {
   std::vector<InvertedStep> steps;
 
-  const std::string_view verb =
-    action == Action::Refresh ? "refresh" : "compact";
+  constexpr std::string_view verb = "compact";
   auto walk = [&](duckdb::Catalog& database, std::string_view schema) {
     for (const duckdb::TableCatalogEntry& table :
          CollectMaintainTargets(context, database, schema)) {
@@ -362,7 +347,6 @@ void DispatchInverted(duckdb::ClientContext& context,
 
   switch (scope) {
     case Scope::Column:
-      // No refresh/compact at column granularity.
       break;
     case Scope::Index: {
       auto entry = duckdb::Catalog::GetEntry(
@@ -457,48 +441,20 @@ void DispatchInverted(duckdb::ClientContext& context,
   for (auto& step : steps) {
     context.InterruptCheck();
     if (step.storage) {
-      if (action == Action::Refresh) {
-        irs::ProgressReportCallback report;
-        if (progress) {
-          // RefreshCommit reports 4 named stages, each iterating its own
-          // work list; a stage transition is observed as a phase-name change.
-          report = [progress, last_stage = std::string{}](
-                     std::string_view stage_name, size_t current,
-                     size_t total) mutable {
-            if (stage_name != last_stage) {
-              last_stage = stage_name;
-              pg::ProgressMetrics::Add(progress->stage, 1);
-            }
-            pg::ProgressMetrics::Set(progress->steps_total,
-                                     static_cast<int64_t>(total));
-            pg::ProgressMetrics::Set(progress->step,
-                                     static_cast<int64_t>(current));
-          };
-          pg::ProgressMetrics::Set(progress->stages_total, 4);
-          pg::ProgressMetrics::Set(progress->stage, 0);
-        }
-        search::ThrowIfRefreshFailed(step.storage->Refresh(report), step.name);
-      } else {
-        CompactInvertedStorage(*step.storage, *step.field_options, step.name,
-                               context, progress);
-      }
+      CompactInvertedStorage(*step.storage, *step.field_options, context,
+                             progress);
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      const auto status =
-        action == Action::Refresh
-          ? search->VacuumRefresh()
-          : search->VacuumCompact(
-              context, GetIntSetting(context, "sdb_compact_target_segments"));
+      const auto status = search->VacuumCompact(
+        context, GetIntSetting(context, "sdb_compact_target_segments"));
       if (!status.ok()) {
         context.InterruptCheck();
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INTERNAL_ERROR),
-          ERR_MSG("failed to ",
-                  action == Action::Refresh ? "refresh" : "compact",
-                  " search table '", step.name, "': ", status.message()));
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("failed to compact search table '", step.name,
+                                "': ", status.message()));
       }
     }
   }
@@ -663,10 +619,8 @@ void VacuumExecute(duckdb::ClientContext& context,
   pg::ProgressMetrics::Set(progress->relid, static_cast<int64_t>(relid));
 
   switch (verb->action) {
-    case Action::Refresh:
     case Action::Compact:
-      DispatchInverted(context, conn_ctx, verb->action, verb->scope, target,
-                       progress);
+      DispatchCompact(context, conn_ctx, verb->scope, target, progress);
       break;
     case Action::RecomputeStats:
       DispatchRecomputeStats(context, conn_ctx, verb->scope, target, progress);
@@ -677,7 +631,7 @@ void VacuumExecute(duckdb::ClientContext& context,
 }
 
 // PRAGMA serenedb_vacuum('option', 'name', 'schema', 'catalog')
-// Called when DuckDB transforms VACUUM (REFRESH_*|COMPACT_*|...) into this
+// Called when DuckDB transforms VACUUM (COMPACT_*|...) into this
 // PRAGMA. The parameter positions mirror the BaseTableRef qualification
 // produced by the parser.
 void VacuumPragma(duckdb::ClientContext& context,

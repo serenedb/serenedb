@@ -12,10 +12,6 @@ statement ok
 INSERT INTO pudge VALUES (1, 'fresh', 'stinky'), (2, 'fresh', 'stinky'), (3, 'old', 'clean');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) pudge;
-
-
 connection donsimon
 statement ok
 BEGIN;
@@ -82,11 +78,6 @@ n
 connection after_crash
 statement ok
 INSERT INTO pudge VALUES (4, 'stinky', 'clean'), (5, 'old', 'stinky');
-
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) pudge;
 
 
 connection after_crash

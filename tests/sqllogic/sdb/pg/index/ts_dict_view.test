@@ -12,9 +12,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY vkw AS keyword() WITH (frequency)
 
 statement ok
@@ -46,10 +43,7 @@ statement ok
 CREATE INDEX vlog_idx ON vlog USING inverted(
     Brand vkw, Status vkw, Tags vkw, Body vtx,
     (split_by_non_alpha(Body, case := 'lower')) vkw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
-
-statement ok
-VACUUM (REFRESH_TABLE) vbase;
+    WITH (compaction_interval = 0)
 
 # --- Facet on a nullable keyword column: converts, with the NULL group
 # --- synthesized from the null-marker.

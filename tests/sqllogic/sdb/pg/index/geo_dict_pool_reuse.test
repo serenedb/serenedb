@@ -28,9 +28,6 @@ INSERT INTO geo_pool_t VALUES
     (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84')),
     (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'));
 
-statement ok
-VACUUM (REFRESH_TABLE) geo_pool_t;
-
 query
 SELECT count(*) FROM geo_pool_idx;
 ----

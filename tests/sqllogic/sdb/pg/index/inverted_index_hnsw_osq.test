@@ -15,9 +15,6 @@ INSERT INTO hnsw_osq SELECT i,
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_osq;
-
 query
 SELECT pk FROM hnsw_osq_idx
   ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -45,9 +42,6 @@ CREATE INDEX hnsw_osq2_idx ON hnsw_osq2
 statement ok
 INSERT INTO hnsw_osq2 SELECT pk, emb FROM hnsw_osq;
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_osq2;
-
 query
 SELECT pk FROM hnsw_osq2_idx
   ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -68,9 +62,6 @@ CREATE INDEX hnsw_osq4_idx ON hnsw_osq4
 statement ok
 INSERT INTO hnsw_osq4 SELECT pk, emb FROM hnsw_osq;
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_osq4;
-
 query
 SELECT pk FROM hnsw_osq4_idx
   ORDER BY emb <#> [0, 0, 1, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -90,9 +81,6 @@ CREATE INDEX hnsw_osq7_idx ON hnsw_osq7
 
 statement ok
 INSERT INTO hnsw_osq7 SELECT pk, emb FROM hnsw_osq;
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_osq7;
 
 query
 SELECT pk FROM hnsw_osq7_idx
@@ -117,9 +105,6 @@ INSERT INTO hnsw_osq8 VALUES
   (2, [0, 1, 0, 0]::FLOAT[4]),
   (3, [0, 0, 1, 0]::FLOAT[4]),
   (4, [0, 0, 0, 1]::FLOAT[4]);
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_osq8;
 
 query
 SELECT pk FROM hnsw_osq8_idx
@@ -148,9 +133,6 @@ INSERT INTO ivf_osq VALUES
   (5, [0, 0, 100]::FLOAT[3]),
   (6, [0, 0, 101]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) ivf_osq;
-
 query
 SELECT pk FROM ivf_osq_idx ORDER BY emb <-> [0, 0, 101]::FLOAT[3] LIMIT 2;
 ----
@@ -161,9 +143,6 @@ pk
 
 statement ok
 DELETE FROM hnsw_osq WHERE pk = 43;
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_osq;
 
 query
 SELECT pk FROM hnsw_osq_idx

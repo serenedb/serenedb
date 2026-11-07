@@ -44,10 +44,6 @@ statement ok
 INSERT INTO ce VALUES (4, 'delta', NULL)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ce
-
-
 # ---- 1. IS NULL claims the null-marker term ----
 query
 EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual IS NULL;

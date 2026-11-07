@@ -35,10 +35,6 @@ INSERT INTO hnsw_r VALUES
   (6, [8, 0, 0]::FLOAT[3]);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_r;
-
-
 # The scan serves the radius itself -- a plain filter above a full scan would
 # make every assertion below pass without the graph being involved at all.
 query
@@ -162,10 +158,6 @@ statement ok
 INSERT INTO hnsw_rq SELECT pk, emb FROM hnsw_r;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_rq;
-
-
 query
 SELECT pk FROM hnsw_rq_idx
   WHERE emb <-> [11, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
@@ -210,10 +202,6 @@ INSERT INTO hnsw_rq4 VALUES
   (2, [6, 0, 0]::FLOAT[3]),
   (3, [100, 0, 0]::FLOAT[3]),
   (4, [-20, 0, 0]::FLOAT[3]);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_rq4;
 
 
 query
@@ -321,16 +309,8 @@ INSERT INTO hnsw_r_null VALUES (1, NULL), (2, NULL);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_r_null;
-
-
-statement ok
 INSERT INTO hnsw_r_null VALUES (3, [1, 0, 0]::FLOAT[3]),
   (4, [50, 0, 0]::FLOAT[3]);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_r_null;
 
 
 query
@@ -361,10 +341,6 @@ CREATE INDEX hnsw_r_grid_idx ON hnsw_r_grid
 statement ok
 INSERT INTO hnsw_r_grid SELECT x * 100 + y, [x, y]::FLOAT[2]
   FROM range(60) a(x), range(60) b(y);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_r_grid;
 
 
 query

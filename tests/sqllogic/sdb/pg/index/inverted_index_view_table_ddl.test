@@ -23,9 +23,6 @@ statement ok
 INSERT INTO vtd_s VALUES (1, 'pudge goes mid');
 
 statement ok
-VACUUM (REFRESH_TABLE) vtd_s;
-
-statement ok
 CREATE TABLE vtd_t(a int, b text);
 
 statement ok

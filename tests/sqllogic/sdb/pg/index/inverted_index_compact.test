@@ -31,10 +31,6 @@ statement ok
 INSERT INTO docs VALUES (2, 'the quick fox');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 # Batch 2 — segment B
 statement ok
 INSERT INTO docs VALUES (3, 'the lazy dog');
@@ -44,10 +40,6 @@ statement ok
 INSERT INTO docs VALUES (4, 'a fox is a fox is a fox');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-
 # Batch 3 — segment C
 statement ok
 INSERT INTO docs VALUES (5, 'lazy lazy lazy');
@@ -55,10 +47,6 @@ INSERT INTO docs VALUES (5, 'lazy lazy lazy');
 
 statement ok
 INSERT INTO docs VALUES (6, 'nothing here');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) docs;
 
 
 # Snapshot the pre-compaction BM25 ordering for 'fox'. The expected

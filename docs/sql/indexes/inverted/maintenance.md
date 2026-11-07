@@ -7,37 +7,27 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-A row written to a search table is visible to every query as soon as its transaction commits. Full-text matches with `@@`, scores and vector search read the table's inverted index, which takes committed rows in when it is *refreshed*; an inverted index over a view makes its rows searchable only then. Segments are *compacted* in the background to keep queries fast, and per-term statistics used by scorers can be *recomputed*. This page covers that lifecycle and how to inspect an index.
+A row written to a table is visible to every query as soon as its transaction commits, full-text matches with `@@`, scores and vector search included, and a transaction sees its own writes. An inverted index over a view makes its rows searchable when `CREATE INDEX` or a [`REINDEX`](./views.md#refreshing-the-index) pass finishes. Segments are *compacted* in the background to keep queries fast, and per-term statistics used by scorers can be *recomputed*. This page covers that lifecycle and how to inspect an index.
 
 ```mermaid
 flowchart LR
-    w["INSERT / UPDATE / DELETE"] -->|commit| vis["visible to queries"]
-    vis -->|refresh| idx["searchable with @@"]
+    w["INSERT / UPDATE / DELETE"] -->|commit| idx["visible to every query, @@ included"]
     idx -->|compaction| merged["fewer, larger segments"]
 ```
 
-## Visibility and the refresh model
+## Visibility
 
-A committed row is visible to queries at once; `@@`, scores and vector search find it after the next refresh. There are two ways a refresh happens:
-
-- **Automatically** -- a background task refreshes each table with an inverted index, and each index over a view, on an interval (`refresh_interval`, default 1000 ms).
-- **Explicitly** -- run `VACUUM (REFRESH_TABLE)` to make every committed row searchable immediately. This is what you want right after a bulk load, before searching:
+A committed row is found at once by every query, through the table and through each inverted index on it. The first search of a table after writes indexes the rows written since the previous search, so it takes longer than the searches after it.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_001" />
 
 ## Background intervals
 
-Three `WITH` options control the background lifecycle of an inverted index (set at `CREATE INDEX`) and of a search table (set at `CREATE TABLE ... WITH (storage = 'search', ...)`); `0` disables each:
+`compaction_interval` controls the background compaction of an inverted index (set at `CREATE INDEX`) and of a search table (set at `CREATE TABLE ... WITH (storage = 'search', ...)`); `0` disables it. See [Background compaction](#background-compaction).
 
-| Option | Default | Controls |
-|---|---|---|
-| `refresh_interval` | `1000` | Milliseconds between automatic refreshes |
-| `compaction_interval` | `1000` | Milliseconds between automatic segment compactions |
-| `cleanup_interval_step` | `1` | Automatic refreshes between cleanup passes, which delete the files no segment uses anymore |
+View-backed indexes have a second interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data -- see [Refreshing the index](./views.md#refreshing-the-index).
 
-View-backed indexes have a fourth interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data -- see [Refreshing the index](./views.md#refreshing-the-index).
-
-An inverted index on a search table has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it. Set them on the table, in `CREATE TABLE ... WITH` or with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options), whether or not it has indexes. `CREATE INDEX ... WITH` and `ALTER INDEX ... SET` reject them for an index on a search table. They also reject the options that only `CREATE TABLE ... WITH` sets on a search table: `row_group_size`, [`segment_memory_max`](#write-memory) and `optimize_top_k`. `segment_docs_max` doesn't apply to such an index and is rejected too.
+An inverted index on a search table has no storage or background tasks of its own: the table's options run compaction for every index on it. Set them on the table, in `CREATE TABLE ... WITH` or with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options), whether or not it has indexes. `CREATE INDEX ... WITH` and `ALTER INDEX ... SET` reject them for an index on a search table. They also reject the options that only `CREATE TABLE ... WITH` sets on a search table: `row_group_size`, [`segment_memory_max`](#write-memory) and `optimize_top_k`. `segment_docs_max` doesn't apply to such an index and is rejected too.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
 
@@ -65,7 +55,6 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 
 | Operation | Forms | Effect |
 |---|---|---|
-| Refresh | `REFRESH_INDEX` · `REFRESH_TABLE` · `REFRESH_SCHEMA` · `REFRESH_DATABASE` · `REFRESH_ALL` | Publish pending writes to readers |
 | Compact | `COMPACT_INDEX` · `COMPACT_TABLE` · `COMPACT_SCHEMA` · `COMPACT_DATABASE` · `COMPACT_ALL` | Merge segments to reclaim space and speed queries |
 | Recompute statistics | `RECOMPUTE_STATS_COLUMN` · `RECOMPUTE_STATS_TABLE` · `RECOMPUTE_STATS_SCHEMA` · `RECOMPUTE_STATS_DATABASE` · `RECOMPUTE_STATS_ALL` | Rebuild the term statistics used by relevance scoring and planning |
 
@@ -96,7 +85,7 @@ A search table's columns are fixed, whether or not it has indexes: `ADD COLUMN`,
 
 Tuning is mostly about the background cadence and segment layout; use only the options that exist:
 
-- **Refresh vs. compaction cadence** -- lower `refresh_interval` for fresher results, raise it (or `0`) to reduce overhead on write-heavy tables; `compaction_interval` governs how aggressively segments merge, and `cleanup_interval_step` how soon the files they replace are deleted.
+- **Compaction cadence** -- `compaction_interval` governs how aggressively segments merge; the files merged segments replace are deleted after each compaction.
 - **Row-group size** -- `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
 - **Build then index** -- for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Whole-relation aggregates** -- `count(*)` over a search table or an index relation (`FROM my_index`) without a `WHERE` clause is answered from the document counts, without reading any document. `min` and `max` of numeric and temporal `INCLUDE`d columns and of keyword columns are answered the same way while the relation holds no deleted documents; deleted documents are dropped by compaction, and until then `min` and `max` read the documents. `EXPLAIN` shows no index scan for an aggregate answered this way.
@@ -171,7 +160,7 @@ The standard `pg_indexes` view also lists them (alongside the primary-key index)
 
 <DocCallout type="info">
 
-`pg_relation_size()` of an inverted index returns its size on disk, counting the refreshed rows only, and `pg_indexes_size()` of a regular table adds the inverted indexes on it to its other indexes. An index on a search table has no storage of its own, so both count it as `0`; its data is part of `pg_relation_size()` of the table. `pg_indexes_size()` of a view returns `0`.
+`pg_relation_size()` of an inverted index returns its size on disk, and `pg_indexes_size()` of a regular table adds the inverted indexes on it to its other indexes. An index on a search table has no storage of its own, so both count it as `0`; its data is part of `pg_relation_size()` of the table. `pg_indexes_size()` of a view returns `0`.
 
 </DocCallout>
 
@@ -192,14 +181,12 @@ The metrics of each search table and inverted index:
 | :--- | :--- |
 | `num_docs` | Documents in committed segments, **including** deleted-but-not-yet-compacted |
 | `num_live_docs` | Live (non-deleted) documents; `num_docs - num_live_docs` is the deleted backlog awaiting compaction |
-| `num_buffered_docs` | Documents written but not yet committed -- still in memory, not searchable (see the [refresh model](#visibility-and-the-refresh-model)) |
+| `num_buffered_docs` | Committed documents held in memory, not yet written to a segment |
 | `num_segments` | On-disk segments |
 | `num_files` | Files backing the index |
 | `index_size` | On-disk index size, in bytes |
-| `num_failed_commits` | Commit (refresh) operations that failed |
 | `num_failed_cleanups` | Cleanup operations that failed |
 | `num_failed_consolidations` | Consolidation (compaction) operations that failed |
-| `avg_commit_time_ms` | Average duration of the last few commits, in ms |
 | `avg_cleanup_time_ms` | Average duration of the last few cleanups, in ms |
 | `avg_consolidation_time_ms` | Average duration of the last few consolidations, in ms |
 
@@ -207,7 +194,7 @@ The `avg_*` values are a rolling average over a small window of the most recent 
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/sdb_metrics" />
 
-A persistently high `num_buffered_docs`, a growing `num_failed_*`, or a climbing `avg_commit_time_ms` are signs that maintenance is falling behind the write rate -- see [Background intervals](#background-intervals) and [Performance](#performance) for the knobs.
+A growing `num_failed_*` or a climbing `avg_consolidation_time_ms` are signs that maintenance is falling behind the write rate -- see [Background intervals](#background-intervals) and [Performance](#performance) for the knobs.
 
 ## See also
 

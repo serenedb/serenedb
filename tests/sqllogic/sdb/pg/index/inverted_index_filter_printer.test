@@ -17,9 +17,6 @@ INSERT INTO bigfilter VALUES
   (4, 10, 11, 12, 'delta epsilon alpha'),
   (5, 13, 14, 15, 'epsilon alpha beta');
 
-statement ok
-VACUUM (REFRESH_TABLE) bigfilter;
-
 
 query
 EXPLAIN SELECT id FROM bigfilter_idx

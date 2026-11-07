@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE sac (id INT PRIMARY KEY, a INT, b TEXT, n INT NOT NULL)
-WITH (storage = 'search', refresh_interval = 0);
+WITH (storage = 'search');
 
 
 statement ok
@@ -9,10 +9,6 @@ CREATE INDEX sac_b ON sac USING inverted (b);
 
 statement ok
 INSERT INTO sac VALUES (1, 10, 'alpha', 1), (2, 20, 'bravo', 2);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac;
 
 
 statement ok
@@ -29,10 +25,6 @@ ALTER TABLE sac ADD COLUMN IF NOT EXISTS c INT;
 
 statement ok
 INSERT INTO sac VALUES (4, 40, 'delta', 4, 400);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac;
 
 
 query
@@ -68,10 +60,6 @@ statement ok
 INSERT INTO sac (id, a, b, n) VALUES (5, 50, 'echo', 5);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sac;
-
-
 query
 SELECT id, c, d FROM sac ORDER BY id;
 ----
@@ -96,10 +84,6 @@ CREATE SEQUENCE sac_seq;
 
 statement ok
 ALTER TABLE sac ADD COLUMN s BIGINT DEFAULT nextval('sac_seq');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac;
 
 
 query
@@ -142,10 +126,6 @@ db error: ERROR: NOT NULL constraint failed: sac.n
 
 statement ok
 INSERT INTO sac (id, b, n, c) VALUES (6, 'foxtrot', 6, 600);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac;
 
 
 query
@@ -272,10 +252,6 @@ statement ok
 INSERT INTO sac (id, n, cc) VALUES (7, 7, 700);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sac;
-
-
 query
 SELECT id, cc FROM sac WHERE cc >= 600 ORDER BY id;
 ----
@@ -348,10 +324,6 @@ statement ok
 INSERT INTO sac_tx VALUES (3, 'three');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sac_tx;
-
-
 query
 SELECT id, v FROM sac_tx ORDER BY id;
 ----
@@ -374,10 +346,6 @@ INSERT INTO sac_tx VALUES (4, 'four', 6);
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac_tx;
 
 
 query
@@ -418,11 +386,6 @@ INSERT INTO sac_tx VALUES (5, 7);
 
 
 connection s2
-statement ok
-VACUUM (REFRESH_TABLE) sac_tx;
-
-
-connection s2
 query
 SELECT id, w FROM sac_tx ORDER BY id;
 ----
@@ -435,7 +398,7 @@ id	w
 
 statement ok
 CREATE TABLE sac_vec (id INT PRIMARY KEY, emb FLOAT[2], a INT)
-WITH (storage = 'search', refresh_interval = 0);
+WITH (storage = 'search');
 
 
 statement ok
@@ -448,19 +411,11 @@ INSERT INTO sac_vec VALUES (1, [1, 0], 10), (2, [2, 0], 20);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sac_vec;
-
-
-statement ok
 ALTER TABLE sac_vec ADD COLUMN c INT;
 
 
 statement ok
 INSERT INTO sac_vec VALUES (3, [3, 0], 30, 5), (4, [4, 0], 40, 50);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac_vec;
 
 
 query
@@ -499,7 +454,7 @@ id
 
 statement ok
 CREATE TABLE sac_expr (id INT PRIMARY KEY, b TEXT, n INT)
-WITH (storage = 'search', refresh_interval = 0);
+WITH (storage = 'search');
 
 
 statement ok
@@ -511,19 +466,11 @@ INSERT INTO sac_expr VALUES (1, 'Alpha', 1), (2, 'Bravo', 2);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sac_expr;
-
-
-statement ok
 ALTER TABLE sac_expr ADD COLUMN d TEXT DEFAULT 'x';
 
 
 statement ok
 ALTER TABLE sac_expr ALTER COLUMN n TYPE BIGINT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac_expr;
 
 
 query
@@ -543,7 +490,7 @@ id	b	n	d
 
 statement ok
 CREATE TABLE sac_serial (id SERIAL, v INT)
-WITH (storage = 'search', refresh_interval = 0);
+WITH (storage = 'search');
 
 
 statement ok
@@ -582,10 +529,6 @@ public.sac_serial_id_seq
 
 statement ok
 INSERT INTO sac_serial (v) VALUES (30);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac_serial;
 
 
 query

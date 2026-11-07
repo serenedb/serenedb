@@ -20,10 +20,6 @@ INSERT INTO nv
   FROM generate_series(0, 7999) g(i);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) nv;
-
-
 # Segment 2: x fully valued, s fully NULL.
 statement ok
 INSERT INTO nv
@@ -31,19 +27,11 @@ INSERT INTO nv
   FROM generate_series(8000, 15999) g(i);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) nv;
-
-
 # Segment 3: x fully NULL, s fully valued.
 statement ok
 INSERT INTO nv
   SELECT i, NULL, 'v' || i, NULL
   FROM generate_series(16000, 23999) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) nv;
 
 
 # x: 2667 NULLs in seg1 (0,3,...,7997), all 8000 in seg3.
@@ -139,10 +127,6 @@ lo	hi
 
 statement ok
 DELETE FROM nv WHERE pk < 4000;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) nv;
 
 
 query

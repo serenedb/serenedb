@@ -25,13 +25,10 @@ CREATE TABLE aol(id INTEGER, txt TEXT);
 # underneath the comparison.
 statement ok
 CREATE INDEX aol_idx ON aol USING inverted(id, txt aol_dict)
-  WITH (compaction_interval = 0, refresh_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO aol SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 20000) g;
-
-statement ok
-VACUUM (REFRESH_TABLE) aol;
 
 # Segments produced by 20000 rows under the default cap.
 statement ok
@@ -46,9 +43,6 @@ ALTER INDEX aol_idx SET (segment_docs_max = 200);
 
 statement ok
 INSERT INTO aol SELECT g, 'row ' || g || ' bravo' FROM generate_series(20001, 40000) g;
-
-statement ok
-VACUUM (REFRESH_TABLE) aol;
 
 # The same number of rows, now under a 200-document cap, must add strictly more
 # segments than the first insert produced in total. Without the fix the second

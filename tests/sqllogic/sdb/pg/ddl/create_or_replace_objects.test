@@ -2239,10 +2239,6 @@ INSERT INTO coro_s VALUES (1, 'alpha'), (2, 'bravo');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coro_s;
-
-
-statement ok
 CREATE INDEX coro_s_idx ON coro_s USING inverted (body);
 
 
@@ -2274,10 +2270,6 @@ coro_s_pkey
 
 statement count 1
 INSERT INTO coro_s VALUES (3, 'alpha', 7);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_s;
 
 
 query
@@ -2327,10 +2319,6 @@ CREATE OR REPLACE TABLE coro_s WITH (storage = 'search') AS
   SELECT range::INT AS id, 'b' || range AS body FROM range(3);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) coro_s;
-
-
 query
 SELECT id, body FROM coro_s ORDER BY id;
 ----
@@ -2346,10 +2334,6 @@ CREATE OR REPLACE TABLE coro_s WITH (storage = 'search') AS
   SELECT range::INT AS id, (CASE WHEN range = 150000 THEN 'x' ELSE range::TEXT END)::INT::TEXT AS body FROM range(200000);
 ----
 db error: ERROR: Could not convert string 'x' to INT32
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_s;
 
 
 query
@@ -2369,10 +2353,6 @@ CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = '
 
 statement count 2
 INSERT INTO coro_s VALUES (1, 'alpha'), (2, 'bravo');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_s;
 
 
 statement ok
@@ -2402,10 +2382,6 @@ statement ok
 ROLLBACK;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) coro_s;
-
-
 query
 SELECT id, body FROM coro_s ORDER BY id;
 ----
@@ -2424,10 +2400,6 @@ coro_s_pkey
 
 statement count 1
 INSERT INTO coro_s VALUES (3, 'charlie');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_s;
 
 
 query
@@ -2502,16 +2474,8 @@ statement count 2
 INSERT INTO coro_s VALUES (1, 'a'), (2, 'b');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) coro_s;
-
-
 statement count 1
 DELETE FROM coro_s WHERE id = 2;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_s;
 
 
 query
@@ -2559,10 +2523,6 @@ INSERT INTO coro_inv VALUES (1, 'alpha bravo'), (2, 'charlie delta');
 
 statement ok
 CREATE INDEX coro_inv_idx ON coro_inv USING inverted (body coro_dict);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_inv;
 
 
 statement error
@@ -2638,10 +2598,6 @@ coro_dict
 
 statement count 1
 INSERT INTO coro_inv VALUES (3, 'alpha echo');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_inv;
 
 
 query
@@ -2837,10 +2793,6 @@ statement count 1
 INSERT INTO coro_ix VALUES (4, 'ALPHA');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) coro_ix;
-
-
 query
 SELECT id FROM coro_ix_inv WHERE body @@ 'alpha' ORDER BY id;
 ----
@@ -2886,10 +2838,6 @@ ROLLBACK;
 
 statement count 1
 INSERT INTO coro_ix VALUES (5, 'Alpha');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_ix;
 
 
 query
@@ -3087,10 +3035,6 @@ statement ok
 CREATE INDEX coro_ixs_inv ON coro_ixs USING inverted (body);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) coro_ixs;
-
-
 query
 SELECT id FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
 ----
@@ -3100,10 +3044,6 @@ id
 
 statement ok
 CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted (id, body coro_ix_dict) INCLUDE (extra);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_ixs;
 
 
 query
@@ -3116,10 +3056,6 @@ id	extra
 
 statement count 1
 INSERT INTO coro_ixs VALUES (4, 'ALPHA', 40);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_ixs;
 
 
 query
@@ -3135,10 +3071,6 @@ statement error
 CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted ((body::INT));
 ----
 db error: ERROR: Could not convert string <slt:ignore>
-
-
-statement ok
-VACUUM (REFRESH_TABLE) coro_ixs;
 
 
 query
@@ -3205,10 +3137,6 @@ statement count 1
 INSERT INTO coro_ixs VALUES (5, 'Alpha', 50);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) coro_ixs;
-
-
 query
 SELECT id, extra FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
 ----
@@ -3232,11 +3160,6 @@ CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted (body);
 connection s1
 statement ok
 COMMIT;
-
-
-connection s2
-statement ok
-VACUUM (REFRESH_TABLE) coro_ixs;
 
 
 connection s2

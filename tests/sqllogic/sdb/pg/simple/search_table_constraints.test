@@ -41,10 +41,6 @@ COPY sc_nn FROM '${__TEST_DIR__}/sc_nn.csv' (HEADER);
 db error: ERROR: NOT NULL constraint failed: sc_nn.b
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sc_nn;
-
-
 statement error
 UPDATE sc_nn SET b = NULL WHERE id = 2;
 ----
@@ -74,10 +70,6 @@ statement ok
 INSERT INTO sc_ck VALUES (1), (2);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sc_ck;
-
-
 statement error
 INSERT INTO sc_ck VALUES (3), (-3);
 ----
@@ -94,10 +86,6 @@ statement ok
 INSERT INTO sc_ck VALUES (NULL);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sc_ck;
-
-
 query
 SELECT a FROM sc_ck ORDER BY a;
 ----
@@ -109,7 +97,7 @@ NULL
 
 statement ok
 CREATE TABLE sc_alter (id INT PRIMARY KEY, b TEXT, n INT)
-WITH (storage = 'search', refresh_interval = 0);
+WITH (storage = 'search');
 
 
 statement ok
@@ -130,10 +118,6 @@ db error: ERROR: CHECK constraint failed on table "sc_alter" with expression CHE
 
 statement ok
 INSERT INTO sc_alter (id, b, n) VALUES (3, NULL, -3);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_alter;
 
 
 statement ok
@@ -172,10 +156,6 @@ db error: ERROR: NOT NULL constraint failed: sc_alter.b
 
 statement ok
 INSERT INTO sc_alter (id, b, n) VALUES (4, 'z', 4);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sc_alter;
 
 
 query
@@ -261,10 +241,6 @@ statement ok
 INSERT INTO sc_alter (id, b) VALUES (6, 'w');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sc_alter;
-
-
 query
 SELECT id, b, n FROM sc_alter ORDER BY id;
 ----
@@ -276,7 +252,7 @@ id	b	n
 
 
 statement ok
-CREATE TABLE sc_rle (id INT, n INT) WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sc_rle (id INT, n INT) WITH (storage = 'search');
 
 
 statement ok
@@ -290,7 +266,7 @@ db error: ERROR: NOT NULL constraint failed: sc_rle.n
 
 
 statement ok
-CREATE TABLE sc_race (id INT, b TEXT) WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sc_race (id INT, b TEXT) WITH (storage = 'search');
 
 
 connection s1
@@ -386,11 +362,6 @@ db error: ERROR: CHECK constraint failed on table "sc_race" with expression CHEC
 connection s1
 statement ok
 INSERT INTO sc_race VALUES (5, NULL);
-
-
-connection s1
-statement ok
-VACUUM (REFRESH_TABLE) sc_race;
 
 
 connection s1

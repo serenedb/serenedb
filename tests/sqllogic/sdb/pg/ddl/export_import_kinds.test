@@ -60,14 +60,6 @@ INSERT INTO eik.st_numbered VALUES (7, 'numbered');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) eik.st;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) eik.st_numbered;
-
-
-statement ok
 CREATE INDEX eik_child_body ON eik.child (body);
 
 
@@ -133,14 +125,6 @@ SELECT id, parent_id, body, n FROM eik.child ORDER BY id;
 id	parent_id	body	n
 1	1	hello world	15
 2	2	bye	20
-
-
-statement ok
-VACUUM (REFRESH_TABLE) eik.st;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) eik.st_numbered;
 
 
 query

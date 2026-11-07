@@ -1,11 +1,8 @@
 statement ok
-CREATE TABLE pa (id BIGINT, g INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0, segment_memory_max = 2097152);
+CREATE TABLE pa (id BIGINT, g INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
 
 statement ok
 INSERT INTO pa SELECT i, i % 10, 'v' || i FROM generate_series(0, 9999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pa;
 
 statement ok
 BEGIN;
@@ -28,9 +25,6 @@ DELETE FROM pa WHERE id % 10 = 5 AND id >= 3000 AND id < 10000;
 statement ok
 COMMIT;
 
-statement ok
-VACUUM (REFRESH_TABLE) pa;
-
 query
 SELECT count(*) AS n, count(DISTINCT id) AS d, count(*) FILTER (WHERE g = -1) AS upd, count(*) FILTER (WHERE id < 1000) AS gone FROM pa;
 ----
@@ -50,22 +44,16 @@ statement ok
 DROP TABLE pa;
 
 statement ok
-CREATE TABLE pb1 (id BIGINT, g INT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pb1 (id BIGINT, g INT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
-CREATE TABLE pb2 (id BIGINT, g INT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pb2 (id BIGINT, g INT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO pb1 SELECT i, 0 FROM generate_series(0, 999) g(i);
 
 statement ok
 INSERT INTO pb2 SELECT i, 0 FROM generate_series(0, 999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pb1;
-
-statement ok
-VACUUM (REFRESH_TABLE) pb2;
 
 statement ok
 BEGIN;
@@ -85,12 +73,6 @@ DELETE FROM pb1 WHERE id = 1;
 statement ok
 COMMIT;
 
-statement ok
-VACUUM (REFRESH_TABLE) pb1;
-
-statement ok
-VACUUM (REFRESH_TABLE) pb2;
-
 query
 SELECT (SELECT count(*) FROM pb1) AS a, (SELECT count(*) FROM pb2) AS b, (SELECT count(*) FROM pb2 WHERE g = 7) AS seven;
 ----
@@ -104,13 +86,10 @@ statement ok
 DROP TABLE pb2;
 
 statement ok
-CREATE TABLE pc (id BIGINT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pc (id BIGINT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO pc SELECT i FROM generate_series(0, 999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pc;
 
 statement ok
 BEGIN;
@@ -127,9 +106,6 @@ DELETE FROM pc WHERE id < 10;
 statement ok
 COMMIT;
 
-statement ok
-VACUUM (REFRESH_TABLE) pc;
-
 query
 SELECT count(*) AS n, min(id) AS lo FROM pc;
 ----
@@ -140,25 +116,16 @@ statement ok
 DROP TABLE pc;
 
 statement ok
-CREATE TABLE pd (id BIGINT, g INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pd (id BIGINT, g INT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO pd SELECT i, i % 10, 'v' FROM generate_series(0, 9999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pd;
-
-statement ok
 DELETE FROM pd WHERE id % 3 = 0;
 
 statement ok
-VACUUM (REFRESH_TABLE) pd;
-
-statement ok
 UPDATE pd SET v = 'x' WHERE g = 4;
-
-statement ok
-VACUUM (REFRESH_TABLE) pd;
 
 query
 SELECT count(*) AS n, count(DISTINCT id) AS d, count(*) FILTER (WHERE v = 'x') AS x, count(*) FILTER (WHERE g = 4 AND v <> 'x') AS stale FROM pd;
@@ -168,9 +135,6 @@ n	d	x	stale
 
 statement ok
 UPDATE pd SET v = 'y' WHERE g = 4 AND id > 5000;
-
-statement ok
-VACUUM (REFRESH_TABLE) pd;
 
 query
 SELECT count(*) AS n, count(DISTINCT id) AS d, count(*) FILTER (WHERE v = 'y') AS y FROM pd;
@@ -182,187 +146,97 @@ statement ok
 DROP TABLE pd;
 
 statement ok
-CREATE TABLE pe (id BIGINT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pe (id BIGINT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(0, 99) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(100, 199) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(200, 299) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(300, 399) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(400, 499) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(500, 599) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(600, 699) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(700, 799) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(800, 899) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(900, 999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1000, 1099) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(1100, 1199) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1200, 1299) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(1300, 1399) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1400, 1499) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(1500, 1599) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1600, 1699) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(1700, 1799) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1800, 1899) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(1900, 1999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2000, 2099) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(2100, 2199) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2200, 2299) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(2300, 2399) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2400, 2499) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(2500, 2599) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2600, 2699) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(2700, 2799) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2800, 2899) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) pe;
-
-statement ok
 INSERT INTO pe SELECT i FROM generate_series(2900, 2999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 query
 SELECT count(DISTINCT rowid >> 32) AS segments FROM pe;
@@ -372,9 +246,6 @@ segments
 
 statement ok
 DELETE FROM pe WHERE id % 7 = 3;
-
-statement ok
-VACUUM (REFRESH_TABLE) pe;
 
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE id % 7 = 3) AS left FROM pe;
@@ -396,9 +267,6 @@ CREATE INDEX pf_idx ON pf USING inverted (body pf_bm);
 
 statement ok
 INSERT INTO pf VALUES (1, 'quick fox'), (2, 'fox'), (3, 'dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) pf;
 
 query
 SELECT count(rowid) AS n FROM pf WHERE id < 3;
@@ -436,9 +304,6 @@ DELETE FROM pf WHERE rowid = getvariable('pf_top');
 statement ok
 RESET VARIABLE pf_top;
 
-statement ok
-VACUUM (REFRESH_TABLE) pf;
-
 query
 SELECT id FROM pf ORDER BY id;
 ----
@@ -450,13 +315,7 @@ statement ok
 INSERT INTO pf VALUES (1, 'quick fox');
 
 statement ok
-VACUUM (REFRESH_TABLE) pf;
-
-statement ok
 DELETE FROM pf WHERE body = 'fox';
-
-statement ok
-VACUUM (REFRESH_TABLE) pf;
 
 query
 SELECT id FROM pf ORDER BY id;
@@ -473,13 +332,10 @@ DROP TEXT SEARCH DICTIONARY pf_bm;
 
 
 statement ok
-CREATE TABLE pg (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE pg (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO pg SELECT i, 'v' || i FROM generate_series(1, 5000) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pg;
 
 query
 EXPLAIN UPDATE pg SET v = 'x' WHERE id = 3;
@@ -508,9 +364,6 @@ CREATE TEXT SEARCH DICTIONARY pg_bm AS split_text(case := 'lower') WITH (frequen
 statement ok
 CREATE INDEX pg_idx ON pg USING inverted (v pg_bm);
 
-statement ok
-VACUUM (REFRESH_TABLE) pg;
-
 query
 SELECT count(rowid) AS n FROM pg_idx WHERE v @@ ts_phrase('v42');
 ----
@@ -522,9 +375,6 @@ DELETE FROM pg WHERE id IN (SELECT id FROM pg ORDER BY id DESC LIMIT 2);
 
 statement ok
 DELETE FROM pg WHERE id IN (SELECT id FROM pg_idx WHERE v @@ ts_phrase('v42'));
-
-statement ok
-VACUUM (REFRESH_TABLE) pg;
 
 query
 SELECT count(*) AS n, max(id) AS hi, count(*) FILTER (WHERE id = 42) AS v42 FROM pg;

@@ -39,10 +39,6 @@ CREATE INDEX wtf_idx ON wtf USING inverted(body en_wtf) INCLUDE (n)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) wtf;
-
-
 # --- Case 1: single Term (PruningIterator) + `.col` filter + top-k -----
 
 query
@@ -243,10 +239,6 @@ CREATE INDEX wtw_idx ON wtw USING inverted (id, body wtf_words) INCLUDE (n, body
   WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) wtw;
-
-
 query
 EXPLAIN SELECT BM25(wtw_idx.tableoid) FROM wtw_idx
 WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
@@ -325,10 +317,6 @@ count	bool_and	round	round
 
 statement ok
 DELETE FROM wtw WHERE id % 1000 = 7;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) wtw;
 
 
 query

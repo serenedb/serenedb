@@ -37,10 +37,6 @@ statement ok
 INSERT INTO vec_t VALUES (4, [10, 10, 10]::FLOAT[3], 'delta', 400, 'body-four')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) vec_t
-
-
 # All-INCLUDE projection: label + tag are both INCLUDE'd, so the
 # plan should NOT carry a "Lookup" line -- every projection is
 # served from the columnstore overlay and IndexSource has no

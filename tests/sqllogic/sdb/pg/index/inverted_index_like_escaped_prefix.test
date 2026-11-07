@@ -14,10 +14,6 @@ statement ok
 INSERT INTO lep_logs VALUES (1, '50% off'), (2, '500 items'), (3, '%done'), (4, 'done')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) lep_logs
-
-
 query
 SELECT id FROM lep_logs WHERE msg LIKE '50\%%' ORDER BY id
 ----
@@ -42,15 +38,11 @@ CREATE TABLE lep_plain (id INT PRIMARY KEY, msg VARCHAR)
 
 statement ok
 CREATE INDEX lep_plain_idx ON lep_plain USING inverted (id, msg lep_kw)
-  WITH (refresh_interval = 0, compaction_interval = 0)
+  WITH (compaction_interval = 0)
 
 
 statement ok
 INSERT INTO lep_plain VALUES (1, '50% off'), (2, '500 items'), (3, '%done'), (4, 'done')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) lep_plain
 
 
 query
@@ -99,15 +91,11 @@ CREATE TABLE lep_trail (id INT PRIMARY KEY, msg VARCHAR)
 
 statement ok
 CREATE INDEX lep_trail_idx ON lep_trail USING inverted (id, msg lep_kw)
-  WITH (refresh_interval = 0, compaction_interval = 0)
+  WITH (compaction_interval = 0)
 
 
 statement ok
 INSERT INTO lep_trail VALUES (1, 'ab'), (2, 'abc'), (3, 'ab\')
-
-
-statement ok
-VACUUM (REFRESH_TABLE) lep_trail
 
 
 statement error

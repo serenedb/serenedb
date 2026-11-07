@@ -33,10 +33,6 @@ FROM range(20000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) route_docs;
-
-
-statement ok
 SET sdb_hnsw_ef_search = 8;
 
 

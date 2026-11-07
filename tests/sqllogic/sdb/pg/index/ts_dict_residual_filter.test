@@ -15,9 +15,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY rkw AS keyword() WITH (frequency)
 
 statement ok
@@ -43,7 +40,7 @@ INSERT INTO rbase VALUES
 
 statement ok
 CREATE INDEX rtab_idx ON rbase USING inverted(sev rkw, tier rkw, body rtx)
-    INCLUDE (svc, region) WITH (refresh_interval = 0, compaction_interval = 0)
+    INCLUDE (svc, region) WITH (compaction_interval = 0)
 
 statement ok
 CREATE VIEW rlog AS
@@ -52,10 +49,7 @@ FROM rbase
 
 statement ok
 CREATE INDEX rlog_idx ON rlog USING inverted(Sev rkw, Tier rkw, Body rtx)
-    INCLUDE (Svc, Region) WITH (refresh_interval = 0, compaction_interval = 0)
-
-statement ok
-VACUUM (REFRESH_TABLE) rbase;
+    INCLUDE (Svc, Region) WITH (compaction_interval = 0)
 
 # ==========================================================================
 # Table-backed index
@@ -723,9 +717,6 @@ ERROR	1
 
 statement ok
 DELETE FROM rbase WHERE id IN (1, 6)
-
-statement ok
-VACUUM (REFRESH_TABLE) rbase;
 
 # --- covered residual + deletions (Masked mode + Column Filter)
 query

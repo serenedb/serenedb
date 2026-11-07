@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE mt_s (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100)
+WITH (storage = 'search', compaction_interval = 100)
 
 
 statement ok
@@ -35,10 +35,10 @@ NULL
 
 
 statement error
-ALTER INDEX mt_s_idx SET (refresh_interval = 0)
+ALTER INDEX mt_s_idx SET (compaction_max_segments = 5)
 ----
-db error: ERROR: refresh_interval is a table option on a search-backed table
-HINT: Change it with ALTER TABLE ... SET (refresh_interval = ...).
+db error: ERROR: compaction_max_segments is a table option on a search-backed table
+HINT: Change it with ALTER TABLE ... SET (compaction_max_segments = ...).
 
 
 statement error
@@ -56,24 +56,33 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(1, 10) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_s
+query
+SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
+----
+ok
+t
 
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(11, 20) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_s
+query
+SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
+----
+ok
+t
 
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(21, 30) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_s
+query
+SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
+----
+ok
+t
 
 
 sleep 300ms
@@ -107,16 +116,22 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(31, 40) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_s
+query
+SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
+----
+ok
+t
 
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(41, 50) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_s
+query
+SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
+----
+ok
+t
 
 
 sleep 300ms
@@ -150,16 +165,22 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(51, 60) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_s
+query
+SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
+----
+ok
+t
 
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(61, 70) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_s
+query
+SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
+----
+ok
+t
 
 
 sleep 300ms
@@ -186,86 +207,36 @@ segments
 
 
 statement ok
-ALTER TABLE mt_s SET (compaction_interval = 0, refresh_interval = 0)
+ALTER TABLE mt_s SET (compaction_interval = 0)
 
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(101, 110) s(i)
 
 
-sleep 300ms
-
-
 query
 SELECT count(*) FROM mt_s;
 ----
 count
-70
-
-
-statement ok
-ALTER TABLE mt_s SET (refresh_interval = 100)
-
-
-query ok retry 480 backoff 250ms
-SELECT count(*) FROM mt_s;
-----
-count
 80
-
-
-statement ok
-ALTER TABLE mt_s SET (refresh_interval = 0)
 
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(111, 120) s(i)
 
 
-sleep 300ms
-
-
 query
 SELECT count(*) FROM mt_s;
 ----
 count
-80
-
-
-statement ok
-ALTER TABLE mt_s SET (refresh_interval = 100)
-
-
-query ok retry 480 backoff 250ms
-SELECT count(*) FROM mt_s;
-----
-count
 90
-
-
-statement ok
-ALTER TABLE mt_s SET (refresh_interval = 0)
 
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(121, 130) s(i)
 
 
-sleep 300ms
-
-
 query
-SELECT count(*) FROM mt_s;
-----
-count
-90
-
-
-statement ok
-ALTER TABLE mt_s RESET (refresh_interval)
-
-
-query ok retry 480 backoff 250ms
 SELECT count(*) FROM mt_s;
 ----
 count
@@ -284,7 +255,7 @@ CREATE TABLE mt_t (id INT, body TEXT)
 
 
 statement ok
-CREATE INDEX mt_t_idx ON mt_t USING inverted(body) WITH (refresh_interval = 100, compaction_interval = 100)
+CREATE INDEX mt_t_idx ON mt_t USING inverted(body) WITH (compaction_interval = 100)
 
 
 statement error
@@ -301,24 +272,33 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(1, 10) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_t
+query
+SELECT count(*) > 0 AS ok FROM mt_t WHERE body @@ 'fox'
+----
+ok
+t
 
 
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(11, 20) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_t
+query
+SELECT count(*) > 0 AS ok FROM mt_t WHERE body @@ 'fox'
+----
+ok
+t
 
 
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(21, 30) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_t
+query
+SELECT count(*) > 0 AS ok FROM mt_t WHERE body @@ 'fox'
+----
+ok
+t
 
 
 sleep 300ms
@@ -352,16 +332,22 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(31, 40) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_t
+query
+SELECT count(*) > 0 AS ok FROM mt_t WHERE body @@ 'fox'
+----
+ok
+t
 
 
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(41, 50) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_t
+query
+SELECT count(*) > 0 AS ok FROM mt_t WHERE body @@ 'fox'
+----
+ok
+t
 
 
 sleep 300ms
@@ -395,16 +381,22 @@ statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(51, 60) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_t
+query
+SELECT count(*) > 0 AS ok FROM mt_t WHERE body @@ 'fox'
+----
+ok
+t
 
 
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(61, 70) s(i)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_t
+query
+SELECT count(*) > 0 AS ok FROM mt_t WHERE body @@ 'fox'
+----
+ok
+t
 
 
 sleep 300ms
@@ -431,86 +423,36 @@ segments
 
 
 statement ok
-ALTER INDEX mt_t_idx SET (compaction_interval = 0, refresh_interval = 0)
+ALTER INDEX mt_t_idx SET (compaction_interval = 0)
 
 
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(101, 110) s(i)
 
 
-sleep 300ms
-
-
 query
 SELECT count(*) FROM mt_t_idx;
 ----
 count
-70
-
-
-statement ok
-ALTER INDEX mt_t_idx SET (refresh_interval = 100)
-
-
-query ok retry 480 backoff 250ms
-SELECT count(*) FROM mt_t_idx;
-----
-count
 80
-
-
-statement ok
-ALTER INDEX mt_t_idx SET (refresh_interval = 0)
 
 
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(111, 120) s(i)
 
 
-sleep 300ms
-
-
 query
 SELECT count(*) FROM mt_t_idx;
 ----
 count
-80
-
-
-statement ok
-ALTER INDEX mt_t_idx SET (refresh_interval = 100)
-
-
-query ok retry 480 backoff 250ms
-SELECT count(*) FROM mt_t_idx;
-----
-count
 90
-
-
-statement ok
-ALTER INDEX mt_t_idx SET (refresh_interval = 0)
 
 
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(121, 130) s(i)
 
 
-sleep 300ms
-
-
 query
-SELECT count(*) FROM mt_t_idx;
-----
-count
-90
-
-
-statement ok
-ALTER INDEX mt_t_idx RESET (refresh_interval)
-
-
-query ok retry 480 backoff 250ms
 SELECT count(*) FROM mt_t_idx;
 ----
 count

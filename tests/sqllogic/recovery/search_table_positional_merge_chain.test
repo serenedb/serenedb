@@ -4,19 +4,13 @@ statement ok
 RESET sdb_faults;
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE mc (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE mc (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO mc SELECT i, 'a' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) mc;
-
-statement ok
 INSERT INTO mc SELECT i, 'b' || i FROM generate_series(10000, 19999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) mc;
 
 connection racer
 statement ok
@@ -33,10 +27,6 @@ VACUUM (COMPACT_TABLE) mc;
 connection compactor
 statement ok
 INSERT INTO mc SELECT i, 'c' || i FROM generate_series(20000, 29999) g(i);
-
-connection compactor
-statement ok
-VACUUM (REFRESH_TABLE) mc;
 
 connection compactor
 statement ok
@@ -63,10 +53,6 @@ SELECT count(*) AS n, sum(id) AS s FROM mc;
 ----
 n	s
 27143	421417857
-
-connection after_chain
-statement ok
-VACUUM (REFRESH_TABLE) mc;
 
 connection after_chain
 query

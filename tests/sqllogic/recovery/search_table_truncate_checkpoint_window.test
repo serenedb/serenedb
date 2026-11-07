@@ -5,16 +5,13 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tcw (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 CREATE TABLE tcw_rows (id INTEGER, body TEXT);
 
 statement ok
 INSERT INTO tcw VALUES (1, 'a'), (2, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) tcw;
 
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
@@ -106,10 +103,6 @@ SET GLOBAL checkpoint_threshold = '16MB';
 connection after_crash
 statement ok
 INSERT INTO tcw VALUES (4, 'd');
-
-connection after_crash
-statement ok
-VACUUM (REFRESH_TABLE) tcw;
 
 connection after_crash
 query

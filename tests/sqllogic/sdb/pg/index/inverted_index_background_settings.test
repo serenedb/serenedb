@@ -8,7 +8,7 @@ CREATE TABLE ibs(id INTEGER, t TEXT);
 
 
 statement ok
-CREATE INDEX ibs_idx ON ibs USING inverted(t) WITH (refresh_interval = 2000, compaction_interval = 0);
+CREATE INDEX ibs_idx ON ibs USING inverted(t) WITH (compaction_interval = 0);
 
 
 statement count 5
@@ -20,10 +20,6 @@ SELECT count(*) FROM ibs_idx;
 ----
 count
 5
-
-
-statement ok
-ALTER INDEX ibs_idx SET (refresh_interval = 0);
 
 
 statement count 5
@@ -40,10 +36,6 @@ count
 5
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ibs;
-
-
 query
 SELECT count(*) FROM ibs_idx;
 ----
@@ -56,7 +48,7 @@ CREATE TABLE ibc(id INTEGER, t TEXT);
 
 
 statement ok
-CREATE INDEX ibc_idx ON ibc USING inverted(t) WITH (refresh_interval = 100, compaction_interval = 0);
+CREATE INDEX ibc_idx ON ibc USING inverted(t) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -64,23 +56,11 @@ INSERT INTO ibc VALUES (1, 'one common');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ibc;
-
-
-statement ok
 INSERT INTO ibc VALUES (2, 'two common');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ibc;
-
-
-statement ok
 INSERT INTO ibc VALUES (3, 'three common');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ibc;
 
 
 statement ok
@@ -138,15 +118,7 @@ INSERT INTO ibc VALUES (4, 'four common');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ibc;
-
-
-statement ok
 INSERT INTO ibc VALUES (5, 'five common');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ibc;
 
 
 query ok retry 480 backoff 250ms
@@ -158,7 +130,7 @@ segments
 
 
 statement ok
-CREATE TABLE sbs(id INTEGER, t TEXT) WITH (storage = 'search', refresh_interval = 2000);
+CREATE TABLE sbs(id INTEGER, t TEXT) WITH (storage = 'search');
 
 
 statement count 5
@@ -170,10 +142,6 @@ SELECT count(*) FROM sbs;
 ----
 count
 5
-
-
-statement ok
-ALTER TABLE sbs SET (refresh_interval = 0);
 
 
 statement count 5
@@ -194,10 +162,6 @@ statement ok
 BEGIN;
 
 
-statement ok
-ALTER TABLE sbs SET (refresh_interval = 100);
-
-
 sleep 2s
 
 
@@ -213,10 +177,6 @@ SELECT count(*) FROM sbs;
 ----
 count
 5
-
-
-statement ok
-ALTER TABLE sbs RESET (refresh_interval);
 
 
 query ok retry 480 backoff 250ms

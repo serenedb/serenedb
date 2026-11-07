@@ -17,9 +17,6 @@ INSERT INTO notes VALUES
     (2, 'lazy dog sleeps'),
     (3, 'quick red fox');
 
-statement ok
-VACUUM (REFRESH_TABLE) notes;
-
 # DOCS_TEST_BODY
 
 query

@@ -24,9 +24,6 @@ INSERT INTO t VALUES
   (2, 'lazy fox', 'red'),
   (3, 'quick dog', 'blue');
 
-statement ok
-VACUUM (REFRESH_TABLE) t;
-
 # The analyzer column's tokenized terms.
 query
 SELECT list_sort(ts_dict_agg(an)) AS terms FROM i_an;
@@ -165,9 +162,6 @@ CREATE INDEX m_b ON m USING inverted (b d1);
 statement ok
 INSERT INTO m VALUES (1, 'x', 'hello world'), (2, 'y', 'hello there');
 
-statement ok
-VACUUM (REFRESH_TABLE) m;
-
 query
 SELECT list_sort(ts_dict_agg(a)) AS terms FROM m;
 ----
@@ -264,9 +258,6 @@ statement ok
 INSERT INTO g VALUES (1, 'shoe', 'acme', 'x'), (2, 'shoe', 'zed', 'y'),
   (3, 'hat', 'acme', 'z');
 
-statement ok
-VACUUM (REFRESH_TABLE) g;
-
 query TTI
 SELECT cat, brand, count(*) AS n FROM g
 GROUP BY GROUPING SETS ((cat), (brand))
@@ -333,9 +324,6 @@ CREATE INDEX g2_brand ON g2 USING inverted (brand);
 statement ok
 INSERT INTO g2 VALUES (1, 'shoe', 'acme'), (2, 'shoe', 'zed'), (3, 'hat', 'acme');
 
-statement ok
-VACUUM (REFRESH_TABLE) g2;
-
 query TTI
 SELECT cat, brand, count(*) AS n FROM g2
 GROUP BY GROUPING SETS ((cat), (brand))
@@ -358,9 +346,6 @@ CREATE INDEX g3_idx ON g3 USING inverted (cat, brand);
 statement ok
 INSERT INTO g3 VALUES (1, 'shoe', 'acme'), (2, 'shoe', NULL), (3, 'hat', 'acme');
 
-statement ok
-VACUUM (REFRESH_TABLE) g3;
-
 query TTI
 SELECT cat, brand, count(*) AS n FROM g3
 GROUP BY GROUPING SETS ((cat), (brand))
@@ -382,9 +367,6 @@ CREATE INDEX g4_idx ON g4 USING inverted (cat, brand);
 
 statement ok
 INSERT INTO g4 VALUES (1, 'shoe', 'acme'), (2, NULL, NULL), (3, 'hat', 'acme');
-
-statement ok
-VACUUM (REFRESH_TABLE) g4;
 
 query TTI
 SELECT cat, brand, count(*) AS n FROM g4

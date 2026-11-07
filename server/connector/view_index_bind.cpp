@@ -285,8 +285,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("only inverted indexes are supported on a table"));
   }
-  const auto* writes =
-    catalog::SessionOf(context, table.catalog).SearchWrites();
+  auto* writes = catalog::SessionOf(context, table.catalog).SearchWrites();
   if (!IndexNameTaken(context, *info, table) && writes &&
       writes->HasWritesFor(table.oid)) {
     THROW_SQL_ERROR(

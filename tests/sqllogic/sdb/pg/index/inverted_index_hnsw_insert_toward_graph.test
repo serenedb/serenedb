@@ -34,7 +34,7 @@ VACUUM (COMPACT_TABLE) ht_none;
 
 query
 SELECT metric, value FROM sdb_metrics
-WHERE relation_id IN ('ht_sq8_idx'::regclass::oid, 'ht_none_idx'::regclass::oid)
+WHERE relation_id IN ('ht_sq8'::regclass::oid, 'ht_none'::regclass::oid)
   AND metric = 'num_segments';
 ----
 metric	value

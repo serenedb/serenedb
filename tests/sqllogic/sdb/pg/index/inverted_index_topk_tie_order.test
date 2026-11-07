@@ -46,14 +46,14 @@ EXPLAIN SELECT id FROM tto_idx WHERE body @@ 'fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tto_idx              │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
 │ │ Value: fox          │     │
 │ ╰─────────────────────╯     │
 │ Score: bm25(k1=1.2, b=0.75) │
-│ Top: 6                      │
+│ Top: 6, optimized           │
 │ Projections: id             │
 │ ~60,000 rows                │
 ╰─────────────────────────────╯
@@ -61,7 +61,7 @@ QUERY PLAN
 
 query
 SELECT id FROM tto_idx WHERE body @@ 'fox'
-ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 6;
+ORDER BY bm25(tto_idx.tableoid) DESC, id LIMIT 6;
 ----
 id
 10
@@ -74,7 +74,7 @@ id
 
 query
 SELECT id FROM tto_idx WHERE body @@ 'fox'
-ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 9;
+ORDER BY bm25(tto_idx.tableoid) DESC, id LIMIT 9;
 ----
 id
 10
@@ -90,7 +90,7 @@ id
 
 query
 SELECT id FROM tto_idx WHERE body @@ 'fox'
-ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 3 OFFSET 6;
+ORDER BY bm25(tto_idx.tableoid) DESC, id LIMIT 3 OFFSET 6;
 ----
 id
 20000
@@ -100,7 +100,7 @@ id
 
 query
 SELECT id FROM tto_wand WHERE body @@ 'fox'
-ORDER BY bm25(tto_wand.tableoid) DESC LIMIT 6;
+ORDER BY bm25(tto_wand.tableoid) DESC, id LIMIT 6;
 ----
 id
 10
@@ -113,7 +113,7 @@ id
 
 query
 SELECT id FROM tto_wand WHERE body @@ 'fox'
-ORDER BY bm25(tto_wand.tableoid) DESC LIMIT 9;
+ORDER BY bm25(tto_wand.tableoid) DESC, id LIMIT 9;
 ----
 id
 10

@@ -10,19 +10,19 @@ query
 EXPLAIN select * from t;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ────────────╮
-│ Table: t              │
-│ Type: Sequential Scan │
-│ Projections: c1, c2   │
-│ ~0 rows               │
-╰───────────────────────╯
+╭─ IRESEARCH_SCAN ─╮
+│ Table: t         │
+│ Projections: c1, │
+│              c2  │
+│ ~0 rows          │
+╰──────────────────╯
 
 
 query
 EXPLAIN INSERT INTO t VALUES ('text', 42);
 ----
 QUERY PLAN
-╭─ BATCH_INSERT ─────╮
+╭─ INSERT ───────────╮
 ╰──────────┬─────────╯
 ╭─ COLUMN_DATA_SCAN ─╮
 │ ~1 row             │

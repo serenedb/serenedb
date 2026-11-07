@@ -98,7 +98,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │

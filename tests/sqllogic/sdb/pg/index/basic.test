@@ -313,6 +313,8 @@ a	b
 2	3
 7	3
 17	5
+27	3
+28	5
 
 statement ok
 COMMIT;
@@ -553,10 +555,9 @@ wait
 
 # Native MVCC: writing into the dropped table is a transaction conflict.
 connection conn1
-statement error
+statement ok
 INSERT INTO t VALUES (3, 'lol');
 
-# The error aborted the transaction; COMMIT is treated as ROLLBACK.
 connection conn1
-statement ok
+statement error db error: ERROR: Attempting to write to table t but another transaction dropped it
 COMMIT;

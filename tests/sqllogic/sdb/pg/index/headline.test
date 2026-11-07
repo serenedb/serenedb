@@ -511,7 +511,7 @@ id	ts_highlight
 statement error
 SELECT ts_highlight(body) FROM hl_docs WHERE body LIKE '%fox%'
 ----
-db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
+db error: ERROR: ts_offsets() requires an inverted index scan in the same sub-query
 
 
 # Error: virtual-column form without a WHERE predicate on the FTS column.
@@ -715,7 +715,7 @@ QUERY PLAN
 ╰───────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ──┴──────────────────╮
 │ Index: hl_docs_idx                   │
-│ Lookup: table                        │
+│ Lookup: search                       │
 │ Index Filter:                        │
 │ ╭─ Term ──────────────╮              │
 │ │ Field: body(string) │              │
@@ -749,7 +749,7 @@ QUERY PLAN
 ╰──────────────────────────────┬─────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────┴─────────────────────────────╮
 │ Index: hl_docs_idx                                         │
-│ Lookup: table                                              │
+│ Lookup: search                                             │
 │ Index Filter:                                              │
 │ ╭─ Term ──────────────╮                                    │
 │ │ Field: body(string) │                                    │
@@ -834,7 +834,7 @@ QUERY PLAN
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: hl_multi_idx                               │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ And ────────────────╮                          │
 │ ╰───────────┬──────────╯                          │
@@ -1178,9 +1178,8 @@ QUERY PLAN
 │ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL::TSQUERY)) │
 │ ~2 rows                                                              │
 ╰───────────────────────────────────┬──────────────────────────────────╯
-╭─ SEQ_SCAN ────────────────────────┴──────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──────────────────┴──────────────────────────────────╮
 │ Table: hl_dyn                                                        │
-│ Type: Sequential Scan                                                │
 │ Projections: doc                                                     │
 │ ~2 rows                                                              │
 ╰──────────────────────────────────────────────────────────────────────╯
@@ -1200,9 +1199,8 @@ QUERY PLAN
 │ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL::TSQUERY, 2), 'MaxOffsets=2') │
 │ ~2 rows                                                                                 │
 ╰────────────────────────────────────────────┬────────────────────────────────────────────╯
-╭─ SEQ_SCAN ─────────────────────────────────┴────────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────────┴────────────────────────────────────────────╮
 │ Table: hl_dyn                                                                           │
-│ Type: Sequential Scan                                                                   │
 │ Projections: doc                                                                        │
 │ ~2 rows                                                                                 │
 ╰─────────────────────────────────────────────────────────────────────────────────────────╯

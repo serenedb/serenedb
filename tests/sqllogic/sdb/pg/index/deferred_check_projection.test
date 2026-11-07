@@ -37,7 +37,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: dcp_idx                           │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ ╰─────────────┬────────────╯             │
@@ -52,7 +52,7 @@ QUERY PLAN
 │ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
 │ │ Verify: table filter                 │ │
 │ ╰──────────────────────────────────────╯ │
-│ Projections: id (l), body (i)            │
+│ Projections: id, body                    │
 │ ~1 row                                   │
 ╰──────────────────────────────────────────╯
 
@@ -95,7 +95,7 @@ QUERY PLAN
 ╰─────────────────────────────────────────┬────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────────────┴────────────────────────────────────────╮
 │ Index: dcp_idx                                                                   │
-│ Lookup: table                                                                    │
+│ Lookup: search                                                                   │
 │ Index Filter:                                                                    │
 │ ╭─ And ────────────────────╮                                                     │
 │ ╰─────────────┬────────────╯                                                     │
@@ -114,7 +114,7 @@ QUERY PLAN
 │ │ Term:quick(0, 0); Term:brown(1, 1);  │  │ Term:brown(0, 0); Term:dog(1, 1);  │ │
 │ │ Verify: table filter                 │  │ Verify: table filter               │ │
 │ ╰──────────────────────────────────────╯  ╰────────────────────────────────────╯ │
-│ Projections: id (l), body (i), tags (i)                                          │
+│ Projections: id, body, tags                                                      │
 │ ~1 row                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────╯
 
@@ -292,7 +292,7 @@ WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: dcp_geo_idx       │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -307,8 +307,7 @@ QUERY PLAN
 │ │ Shape: S2Polygon     │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: id (l),     │
-│              geo (i)     │
+│ Projections: id, geo     │
 │ ~2,000 rows              │
 ╰──────────────────────────╯
 

@@ -867,7 +867,8 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   auto& anchor =
     func.GetChildren()[0]->Cast<duckdb::BoundColumnRefExpression>();
   auto found = FindIResearchScan(root, anchor.Binding().table_index);
-  if (!found) {
+  if (!found || found->bind_data->relation.kind ==
+                  connector::ScanEntryKind::SearchTable) {
     return nullptr;
   }
   auto& ss = *found->bind_data;

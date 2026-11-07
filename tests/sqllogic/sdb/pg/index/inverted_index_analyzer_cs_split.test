@@ -53,7 +53,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_inc_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -66,8 +66,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: pk (l),     │
-│              geo (i)     │
+│ Projections: pk, geo     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -96,7 +95,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_noi_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -141,7 +140,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_src_noi_idx │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -154,8 +153,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: pk (l),     │
-│              geo (i)     │
+│ Projections: pk, geo     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -190,7 +188,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: t_geo_src_zstd_idx │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Index Filter:             │
 │ ╭─ Geo Distance ─────╮    │
 │ │ Field: geo(string) │    │
@@ -203,8 +201,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │  │
 │ │ Verify: table filter │  │
 │ ╰──────────────────────╯  │
-│ Projections: pk (l),      │
-│              geo (i)      │
+│ Projections: pk, geo      │
 │ ~1 row                    │
 ╰───────────────────────────╯
 
@@ -241,7 +238,7 @@ WHERE b @@ ts_like('percent_alpha_one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: t_wild_inc_idx                      │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Wildcard NGram ───────────────────────╮ │
 │ │ Field: b(string)                       │ │
@@ -262,7 +259,7 @@ QUERY PLAN
 │ │ And("\\xffpercent", "alpha", "one\\xff") │ │
 │ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
-│ Projections: pk (l), b (i)                 │
+│ Projections: pk, b                         │
 │ ~1 row                                     │
 ╰────────────────────────────────────────────╯
 
@@ -290,7 +287,7 @@ WHERE b @@ ts_like('percent_alpha_one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: t_wild_noi_idx                      │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Wildcard NGram ───────────────────────╮ │
 │ │ Field: b(string)                       │ │

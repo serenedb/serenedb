@@ -121,6 +121,7 @@ QUERY PLAN
 ╰────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Index: mt_docs_idx                              │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ And ───────────────╮                         │
 │ ╰──────────┬──────────╯                         │
@@ -250,6 +251,12 @@ CREATE INDEX mt_segs_idx ON mt_segs USING inverted(a, b mt_english);
 
 statement ok
 INSERT INTO mt_segs VALUES (1,'cat'), (2,'bat'), (3,'rat'), (4,'hat'), (5,'mat'), (6,'oat');
+
+query
+SELECT count(*) FROM mt_segs_idx;
+----
+count
+6
 
 statement ok
 INSERT INTO mt_segs VALUES (7,'cab'), (8,'cad'), (9,'can'), (10,'cap'), (11,'car'), (12,'caw');

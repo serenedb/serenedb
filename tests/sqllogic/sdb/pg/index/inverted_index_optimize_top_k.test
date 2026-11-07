@@ -188,7 +188,7 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: docs_topk_idx        │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -215,7 +215,7 @@ QUERY PLAN
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
 │ Index: docs_topk_idx                                     │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Term ──────────────╮                                  │
 │ │ Field: body(string) │                                  │
@@ -239,7 +239,7 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: docs_topk_idx        │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -258,7 +258,7 @@ EXPLAIN SELECT id FROM docs_plain_idx WHERE body @@ ts_phrase('fox') ORDER BY BM
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: docs_plain_idx       │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -456,7 +456,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_topk_idx                   │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -483,7 +483,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: docs_topk_idx                                    │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
 │ │ Field: body(string) │                                 │
@@ -528,7 +528,7 @@ EXPLAIN SELECT id FROM docs_tfidf_idx WHERE body @@ ts_phrase('fox') ORDER BY TF
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: docs_tfidf_idx          │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -567,7 +567,7 @@ EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────╮
 │ Index: docs_bm25_args_idx  │
-│ Lookup: table              │
+│ Lookup: search             │
 │ Index Filter:              │
 │ ╭─ Term ──────────────╮    │
 │ │ Field: body(string) │    │
@@ -589,7 +589,7 @@ EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: docs_bm25_args_idx      │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -607,25 +607,37 @@ QUERY PLAN
 # ---------------------------------------------------------------------------
 
 # Unknown scorer name.
-statement error scorer
+statement error
 CREATE INDEX docs_default_bad_unknown ON docs_default
   USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'mystery_scorer()');
+----
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
+
 
 
 # Out-of-range parameter.
-statement error lambda
+statement error
 CREATE INDEX docs_default_bad_lambda ON docs_default
   USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'lm_jm(2.0)');
+----
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
+
 
 
 # Bare identifier (no parentheses) is rejected -- caller must spell out a
 # function call.
-statement error scorer function call
+statement error
 CREATE INDEX docs_default_bad_bare ON docs_default
   USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'bm25');
+----
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
+
 
 
 # DuckDB's CREATE INDEX grammar still rejects non-constant values like the
@@ -635,5 +647,5 @@ CREATE INDEX docs_default_bad_keyword ON docs_default
   USING inverted(id, body en_topk)
   WITH (optimize_top_k = true);
 ----
-db error: ERROR: 'optimize_top_k' expects a scorer function call, got 'true'
-HINT: Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/fsst_plus_encoder.hpp"
+#include "iresearch/formats/column/codecs/fsst_plus_state.hpp"
 
 #include <absl/strings/match.h>
 
@@ -54,8 +54,12 @@ void AppendU32(std::string& out, uint32_t value) {
 
 }  // namespace
 
-EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
-                                      std::span<uint32_t> lengths) {
+void FsstPlusState::Finish() {
+  if (_shape == Shape::Dedup) {
+    _rows.Sort();
+  }
+  const auto lengths = _rows.Lengths();
+  const auto rows = _rows.View();
   const auto entries = rows.entries;
   const auto first_entry = rows.first_entry;
   const auto n = entries.size();
@@ -103,7 +107,8 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
       frame_off = Written();
     }
     const auto suffix = _codes[i].substr(_shared[i]);
-    std::memcpy(_segment->Extend(suffix.size()), suffix.data(), suffix.size());
+    std::memcpy(_out->bytes.Extend(suffix.size()), suffix.data(),
+                suffix.size());
     lengths[i] = static_cast<uint32_t>(suffix.size());
     max_length = std::max(max_length, lengths[i]);
     frame_raw += size;
@@ -123,18 +128,20 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
     0);
   RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
               Written() + _side.size(), _target);
-  return {
-    .codec = kCodec,
-    .frames = _frames,
-    .max_length = max_length,
-    .lcps = _ids,
-    .max_lcp = static_cast<uint32_t>(_ends.size()),
-    .symtab = _side,
-    .dictionary_size = static_cast<uint32_t>(table.size()),
-  };
+  _rows.Write(
+    {
+      .codec = kCodec,
+      .frames = _frames,
+      .max_length = max_length,
+      .lcps = _ids,
+      .max_lcp = static_cast<uint32_t>(_ends.size()),
+      .symtab = _side,
+      .dictionary_size = static_cast<uint32_t>(table.size()),
+    },
+    *_out);
 }
 
-void FsstPlusEncoder::Cleave(uint32_t first_entry) {
+void FsstPlusState::Cleave(uint32_t first_entry) {
   const auto n = static_cast<uint32_t>(_codes.size());
   if (n < 2) {
     return;

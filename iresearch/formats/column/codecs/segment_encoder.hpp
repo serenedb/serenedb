@@ -27,14 +27,13 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/blob_encoder.tpp"
-#include "iresearch/formats/column/codecs/fsst12_chain_encoder.hpp"
-#include "iresearch/formats/column/codecs/fsst_chain_encoder.hpp"
-#include "iresearch/formats/column/codecs/fsst_plus_encoder.hpp"
-#include "iresearch/formats/column/codecs/leaf_encoder.hpp"
+#include "iresearch/formats/column/codecs/blob_state.tpp"
+#include "iresearch/formats/column/codecs/fsst12_state.hpp"
+#include "iresearch/formats/column/codecs/fsst_plus_state.hpp"
+#include "iresearch/formats/column/codecs/fsst_state.hpp"
 #include "iresearch/formats/column/codecs/lz4.hpp"
-#include "iresearch/formats/column/codecs/onpair_encoder.hpp"
-#include "iresearch/formats/column/codecs/segment_builder.hpp"
+#include "iresearch/formats/column/codecs/onpair_state.hpp"
+#include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/codecs/zxc.hpp"
@@ -45,10 +44,7 @@ class SegmentEncoder {
  public:
   SegmentEncoder(const ColCodecParams& params, const duckdb::LogicalType& type,
                  StringTuning& tuning, duckdb::BufferManager& buffers)
-    : _params{params},
-      _tuning{tuning},
-      _buffers{buffers},
-      _builder{type, _dedup, tuning.codes} {}
+    : _params{params}, _type{type}, _tuning{tuning}, _buffers{buffers} {}
 
   Segment* Cut(const Config& config, const StringAccumulator& acc,
                uint64_t begin);
@@ -67,22 +63,22 @@ class SegmentEncoder {
   void Release(Segment* seg) { _free.push_back(seg); }
 
  private:
-  struct LeafEncoders {
-    std::optional<BlobEncoder<Lz4>> lz4;
-    std::optional<BlobEncoder<Lz4Hc>> lz4_hc;
-    std::optional<BlobEncoder<Zstd>> zstd;
-    std::optional<BlobEncoder<Zxc>> zxc;
-    std::optional<FsstChainEncoder> fsst;
-    std::optional<FsstPlusEncoder> fsst_plus;
-    std::optional<OnPairEncoder> onpair;
-    std::optional<Fsst12ChainEncoder> fsst12;
+  struct States {
+    std::optional<BlobState<Lz4>> lz4;
+    std::optional<BlobState<Lz4Hc>> lz4_hc;
+    std::optional<BlobState<Zstd>> zstd;
+    std::optional<BlobState<Zxc>> zxc;
+    std::optional<FsstState> fsst;
+    std::optional<FsstPlusState> fsst_plus;
+    std::optional<OnPairState> onpair;
+    std::optional<Fsst12State> fsst12;
   };
 
   template<typename F>
   auto With(const Config& config, F&& f);
 
-  template<typename Encoder>
-  Encoder& Get(std::optional<Encoder>& slot);
+  template<typename State>
+  State& Get(std::optional<State>& slot);
 
   const Profile& Measure(const StringAccumulator& acc, Shape shape,
                          uint64_t begin, uint64_t end);
@@ -90,12 +86,12 @@ class SegmentEncoder {
   Segment* Acquire();
 
   const ColCodecParams& _params;
+  const duckdb::LogicalType& _type;
   StringTuning& _tuning;
   duckdb::BufferManager& _buffers;
   DedupScratch _dedup;
-  SegmentBuilder _builder;
   TrainedDictionaries _dictionaries;
-  LeafEncoders _encoders;
+  States _states;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;
   Profile _profile;

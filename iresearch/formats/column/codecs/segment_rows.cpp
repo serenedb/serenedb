@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/segment_builder.hpp"
+#include "iresearch/formats/column/codecs/segment_rows.hpp"
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
@@ -36,6 +36,9 @@ namespace {
 
 using duckdb::BitpackingPrimitives;
 using duckdb::string_t;
+
+constexpr double kEntriesFirstRatio = 0.5;
+constexpr double kMispredicted = 2.0;
 
 uint64_t PrefixKey(const string_t& value, size_t skip) noexcept {
   char buf[8] = {};
@@ -57,12 +60,41 @@ bool Less(const string_t& a, const string_t& b) noexcept {
 
 }  // namespace
 
-uint64_t SegmentBuilder::Estimate() const noexcept {
+uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
+                    const NumericTuning& tuning) noexcept {
+  return shape == Shape::Dedup ? EstimateCodes(tuning, rows, entries, runs) : 0;
+}
+
+uint64_t EstimateEntries(const SegmentEntries& rows,
+                         const RatioHistory& hist) noexcept {
+  return Packed(EntryCount(rows), rows.max_len) +
+         (rows.raw / kFsstFrameRawBytes + 1) * kFrameMetaSize +
+         static_cast<uint64_t>(static_cast<double>(rows.raw) *
+                               Ratio(hist, kEntriesFirstRatio));
+}
+
+void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
+                 uint32_t target) noexcept {
+  if (hist.raw != 0 && raw != 0 && comp * kDriftMinFraction >= target) {
+    const auto predicted = static_cast<double>(raw) *
+                           static_cast<double>(hist.comp) /
+                           static_cast<double>(hist.raw);
+    const auto actual = static_cast<double>(comp);
+    if (actual > predicted * kMispredicted ||
+        actual * kMispredicted < predicted) {
+      hist = {};
+    }
+  }
+  hist.raw += raw;
+  hist.comp += comp;
+}
+
+uint64_t SegmentRows::Estimate() const noexcept {
   return kHeaderSize + Packed(EntryCount(), _max_len) +
          CodesBytes(_shape, _rows, _entries.size(), _runs, _codes_tuning);
 }
 
-void SegmentBuilder::SortEntries() {
+void SegmentRows::Sort() {
   const auto n = static_cast<uint32_t>(_entries.size());
   uint32_t common = _entries.empty() ? 0 : _entries[0].GetSize();
   for (uint32_t i = 1; i < n && common != 0; ++i) {
@@ -90,7 +122,7 @@ void SegmentBuilder::SortEntries() {
   }
 }
 
-void SegmentBuilder::WriteSegment(const EncodedFrames& frames, Segment& out) {
+void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
   const auto entry_count = EntryCount();
   const auto data_size = out.bytes.Size();
   SDB_ENSURE(_rows <= std::numeric_limits<uint32_t>::max() &&

@@ -25,8 +25,8 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/segment_builder.hpp"
 #include "iresearch/formats/column/codecs/segment_encoder.hpp"
+#include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 
 namespace irs::codecs::text {

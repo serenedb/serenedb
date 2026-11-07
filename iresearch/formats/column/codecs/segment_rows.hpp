@@ -20,7 +20,10 @@
 
 #pragma once
 
+#include <absl/strings/match.h>
+
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types.hpp>
@@ -29,17 +32,15 @@
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/segment_buffer.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -48,6 +49,7 @@ namespace irs::codecs::text {
 
 inline constexpr uint64_t kEstimateEvery = 64;
 inline constexpr uint64_t kEstimateSteps = 16;
+inline constexpr uint64_t kDriftMinFraction = 4;
 
 class DedupScratch {
  public:
@@ -106,49 +108,102 @@ struct Segment {
   uint64_t Size() const noexcept { return bytes.Size(); }
 };
 
-class SegmentBuilder {
+struct SegmentEntries {
+  std::span<const duckdb::string_t> entries;
+  uint32_t first_entry = 0;
+  uint64_t raw = 0;
+  uint32_t max_len = 0;
+  uint64_t first_row = 0;
+  uint64_t row_count = 0;
+};
+
+inline size_t EntryCount(const SegmentEntries& rows) noexcept {
+  return rows.entries.size() + rows.first_entry;
+}
+
+inline uint32_t CommonPrefix(const duckdb::string_t& a,
+                             const duckdb::string_t& b) noexcept {
+  return static_cast<uint32_t>(
+    absl::FindLongestCommonPrefix({a.GetData(), a.GetSize()},
+                                  {b.GetData(), b.GetSize()})
+      .size());
+}
+
+struct EncodedFrames {
+  ByteCodec codec = ByteCodec::Lz4;
+  std::span<const FrameMeta> frames;
+  uint32_t max_length = 0;
+  std::span<uint32_t> lcps;
+  uint32_t max_lcp = 0;
+  std::string_view symtab;
+  uint32_t dictionary_size = 0;
+  FrameDictionary flags = FrameDictionary::None;
+};
+
+struct Profile {
+  Shape shape = Shape::Dedup;
+  uint64_t rows = 0;
+  uint64_t runs = 0;
+  uint64_t raw = 0;
+  uint32_t max_len = 0;
+  std::span<const duckdb::string_t* const> values;
+  std::span<const uint32_t> codes;
+};
+
+inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
+  const auto code = p.codes[i];
+  return code == 0 ? duckdb::string_t{} : *p.values[code - 1];
+}
+
+uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
+                    const NumericTuning& tuning) noexcept;
+
+uint64_t EstimateEntries(const SegmentEntries& rows,
+                         const RatioHistory& hist) noexcept;
+
+void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
+                 uint32_t target) noexcept;
+
+class SegmentRows {
  public:
-  explicit SegmentBuilder(const duckdb::LogicalType& type, DedupScratch& dedup,
-                          NumericTuning& codes_tuning)
+  SegmentRows(const duckdb::LogicalType& type, DedupScratch& dedup,
+              NumericTuning& codes_tuning)
     : _stats{type}, _type{type}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
 
-  template<typename Leaf>
-  void Begin(Leaf& leaf, const Config& config, uint64_t begin, size_t distinct,
-             SegmentBuffer& out) {
+  void Begin(const Config& config, uint64_t first_row, size_t distinct) {
     _shape = config.choice.shape;
     _level = config.level;
     _layout = config.layout;
-    _next = begin;
+    _next = first_row;
     _estimated_raw = _raw;
     if (_shape == Shape::Dedup) {
       _dedup.Begin(distinct);
     }
-    out.Truncate(0);
-    leaf.Begin(_shape, _level, _layout, out);
   }
 
-  template<typename Leaf>
-  IRS_FORCE_INLINE void AddValue(Leaf& leaf, const duckdb::string_t* value) {
+  template<typename Append>
+  IRS_FORCE_INLINE void AddValue(const duckdb::string_t* value,
+                                 Append&& append) {
     SDB_ASSERT(_shape == Shape::Plain);
     ++_next;
     if (value) {
       _input += value->GetSize();
       _stats.Update(*value);
-      AppendEntry(leaf, *value);
+      AppendEntry(*value, append);
     } else {
       _stats.SetHasNull();
       ++_nulls;
-      AppendEntry(leaf, duckdb::string_t{});
+      AppendEntry(duckdb::string_t{}, append);
     }
     ++_rows;
   }
 
-  template<typename Leaf>
-  IRS_FORCE_INLINE void AddCode(
-    Leaf& leaf, uint32_t code,
-    std::span<const duckdb::string_t* const> values) {
+  template<typename Append>
+  IRS_FORCE_INLINE void AddCode(uint32_t code,
+                                std::span<const duckdb::string_t* const> values,
+                                Append&& append) {
     if (_shape == Shape::Plain) {
-      AddValue(leaf, code == 0 ? nullptr : values[code - 1]);
+      AddValue(code == 0 ? nullptr : values[code - 1], append);
       return;
     }
     ++_next;
@@ -165,7 +220,7 @@ class SegmentBuilder {
       _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);
     if (fresh) {
       _stats.Update(value);
-      AppendEntry(leaf, value);
+      AppendEntry(value, append);
     } else {
       _stats.UpdateRepeated(value);
     }
@@ -173,38 +228,16 @@ class SegmentBuilder {
     ++_rows;
   }
 
-  template<typename Leaf>
-  IRS_FORCE_INLINE bool Full(Leaf& leaf, uint32_t target) {
+  IRS_FORCE_INLINE bool EstimateDue(uint32_t target) noexcept {
     if (_rows % kEstimateEvery != 0 &&
         _raw - _estimated_raw < target / kEstimateSteps) {
       return false;
     }
     _estimated_raw = _raw;
-    return Estimate() + leaf.Estimate(View()) >= target;
+    return true;
   }
 
-  template<typename Leaf>
-  void Finish(Leaf& leaf, Segment& out) {
-    SDB_ASSERT(_rows != 0);
-    if (_shape == Shape::Dedup) {
-      if constexpr (Sorted(Leaf::kCodec)) {
-        SortEntries();
-      }
-    }
-    _lengths.assign(
-      duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount()),
-      0);
-    const auto frames = leaf.Finish(
-      View(), std::span{_lengths}.subspan(FirstEntry(), _entries.size()));
-    WriteSegment(frames, out);
-  }
-
- private:
-  uint32_t FirstEntry() const noexcept {
-    return _shape == Shape::Dedup ? 1 : 0;
-  }
-
-  size_t EntryCount() const noexcept { return _entries.size() + FirstEntry(); }
+  uint64_t Estimate() const noexcept;
 
   SegmentEntries View() const noexcept {
     return {
@@ -217,18 +250,38 @@ class SegmentBuilder {
     };
   }
 
+  void Sort();
+
+  std::span<uint32_t> Lengths() {
+    SDB_ASSERT(_rows != 0);
+    _lengths.assign(
+      duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount()),
+      0);
+    return std::span{_lengths}.subspan(FirstEntry(), _entries.size());
+  }
+
+  void Write(const EncodedFrames& frames, Segment& out);
+
+ private:
   struct SortKey {
     uint64_t prefix;
     uint32_t entry;
   };
 
-  template<typename Leaf>
-  IRS_FORCE_INLINE void AppendEntry(Leaf& leaf, const duckdb::string_t& value) {
+  uint32_t FirstEntry() const noexcept {
+    return _shape == Shape::Dedup ? 1 : 0;
+  }
+
+  size_t EntryCount() const noexcept { return _entries.size() + FirstEntry(); }
+
+  template<typename Append>
+  IRS_FORCE_INLINE void AppendEntry(const duckdb::string_t& value,
+                                    Append& append) {
     _entries.emplace_back(value);
     const auto size = value.GetSize();
     _max_len = std::max<uint32_t>(_max_len, size);
     _raw += size;
-    leaf.Append(value, static_cast<uint32_t>(EntryCount()) - 1);
+    append(value, static_cast<uint32_t>(EntryCount()) - 1);
   }
 
   IRS_FORCE_INLINE void PushCode(uint32_t code) {
@@ -238,10 +291,6 @@ class SegmentBuilder {
     _last_code = code;
     _codes.push_back(code);
   }
-
-  uint64_t Estimate() const noexcept;
-  void SortEntries();
-  void WriteSegment(const EncodedFrames& frames, Segment& out);
 
   duckdb::StatsWriter<duckdb::string_t> _stats;
   const duckdb::LogicalType& _type;

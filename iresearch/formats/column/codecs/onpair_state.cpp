@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/onpair_encoder.hpp"
+#include "iresearch/formats/column/codecs/onpair_state.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -27,8 +27,12 @@
 
 namespace irs::codecs::text {
 
-EncodedFrames OnPairEncoder::Finish(const SegmentEntries& rows,
-                                    std::span<uint32_t> lengths) {
+void OnPairState::Finish() {
+  if (_shape == Shape::Dedup) {
+    _rows.Sort();
+  }
+  const auto lengths = _rows.Lengths();
+  const auto rows = _rows.View();
   const auto entries = rows.entries;
   const auto first_entry = rows.first_entry;
   _codec.Train(entries, rows.raw);
@@ -70,24 +74,26 @@ EncodedFrames OnPairEncoder::Finish(const SegmentEntries& rows,
   _codec.Export(_side);
   RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
               Written() + _side.size(), _target);
-  return {
-    .codec = kCodec,
-    .frames = _frames,
-    .max_length = max_codes,
-    .symtab = _side,
-  };
+  _rows.Write(
+    {
+      .codec = kCodec,
+      .frames = _frames,
+      .max_length = max_codes,
+      .symtab = _side,
+    },
+    *_out);
 }
 
-void OnPairEncoder::Pack(std::span<const duckdb::string_t> entries,
-                         std::span<const uint32_t> lengths, size_t first,
-                         size_t end, uint64_t region) {
+void OnPairState::Pack(std::span<const duckdb::string_t> entries,
+                       std::span<const uint32_t> lengths, size_t first,
+                       size_t end, uint64_t region) {
   const auto bits = _codec.Bits();
   uint64_t count = 0;
   for (auto e = first; e < end; ++e) {
     count += lengths[e];
   }
   const uint64_t bytes = (count * bits + 7) / 8;
-  auto* out = _segment->Extend(bytes + kOnPairPadding);
+  auto* out = _out->bytes.Extend(bytes + kOnPairPadding);
   uint64_t acc = 0;
   uint32_t fill = 0;
   for (auto e = first; e < end; ++e) {

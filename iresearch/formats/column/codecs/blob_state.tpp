@@ -32,8 +32,8 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_dictionary.hpp"
+#include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -77,49 +77,50 @@ class TrainedDictionaries {
 };
 
 template<typename Codec>
-class BlobEncoder {
+class BlobState {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  explicit BlobEncoder(StringTuning& tuning, TrainedDictionaries& dictionaries)
-    : _tuning{tuning},
+  BlobState(const duckdb::LogicalType& type, DedupScratch& dedup,
+            StringTuning& tuning, TrainedDictionaries& dictionaries)
+    : _rows{type, dedup, tuning.codes},
+      _tuning{tuning},
       _dictionaries{dictionaries},
       _history{tuning.history[static_cast<size_t>(kCodec)]} {}
 
-  void Begin(Shape shape, uint8_t level, FrameLayout layout,
-             SegmentBuffer& out) {
-    _shape = shape;
-    Configure(level, layout);
+  void Begin(const Config& config, uint64_t first_row, size_t distinct,
+             Segment& out) {
+    _rows.Begin(config, first_row, distinct);
+    _shape = config.choice.shape;
+    Configure(config.level, config.layout);
     _frame.clear();
-    _segment = &out;
-    _base = out.Size();
+    _out = &out;
+    out.bytes.Truncate(0);
     _frames.clear();
   }
 
-  void Append(const duckdb::string_t& value, uint32_t entry) {
-    const auto size = value.GetSize();
-    if (Add(entry, size)) {
-      Closed();
-    }
-    _frame.append(value.GetData(), size);
+  IRS_FORCE_INLINE void AddValue(const duckdb::string_t* value) {
+    _rows.AddValue(value, [&](const duckdb::string_t& entry, uint32_t id) {
+      Append(entry, id);
+    });
   }
 
-  uint64_t Estimate(const SegmentEntries& rows) const noexcept {
-    const auto raw = rows.raw;
-    return (_spans.size() + 1) * kFrameMetaSize + Written() +
-           (_layout == FrameLayout::Local
-              ? SegmentDictionaryBytes(raw, Codec::kDictionaryCap) /
-                  kLocalDictionaryPacking
-              : 0) +
-           static_cast<uint64_t>(
-             static_cast<double>(raw - _packed) *
-             Ratio(_history[static_cast<size_t>(_shape)], 1.0));
+  IRS_FORCE_INLINE void AddCode(
+    uint32_t code, std::span<const duckdb::string_t* const> values) {
+    _rows.AddCode(
+      code, values,
+      [&](const duckdb::string_t& entry, uint32_t id) { Append(entry, id); });
   }
 
-  EncodedFrames Finish(const SegmentEntries& rows,
-                       std::span<uint32_t> lengths) {
+  IRS_FORCE_INLINE bool Full(uint32_t target) {
+    return _rows.EstimateDue(target) && _rows.Estimate() + Estimate() >= target;
+  }
+
+  void Finish() {
+    const auto rows = _rows.View();
     SDB_ASSERT(_packed + _frame.size() == rows.raw);
+    const auto lengths = _rows.Lengths();
     Close();
     if (_layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames) {
       Sizes();
@@ -129,7 +130,7 @@ class BlobEncoder {
     if (_trained && !Pays()) {
       _trained = false;
       _codec->Clear();
-      _segment->Truncate(_base);
+      _out->bytes.Truncate(0);
       _frames.clear();
       CompressRest();
     }
@@ -138,15 +139,17 @@ class BlobEncoder {
                       [](const duckdb::string_t& e) { return e.GetSize(); });
     const auto flags = Flags();
     const bool local = flags == FrameDictionary::Local;
-    return {
-      .codec = kCodec,
-      .frames = _frames,
-      .max_length = rows.max_len,
-      .symtab = local ? _codec->Stored() : std::string_view{},
-      .dictionary_size =
-        local ? static_cast<uint32_t>(_codec->Dictionary().size()) : 0,
-      .flags = flags,
-    };
+    _rows.Write(
+      {
+        .codec = kCodec,
+        .frames = _frames,
+        .max_length = rows.max_len,
+        .symtab = local ? _codec->Stored() : std::string_view{},
+        .dictionary_size =
+          local ? static_cast<uint32_t>(_codec->Dictionary().size()) : 0,
+        .flags = flags,
+      },
+      *_out);
   }
 
   uint64_t Price(const Profile& p, uint8_t level, FrameLayout layout,
@@ -203,6 +206,33 @@ class BlobEncoder {
     size_t first;
   };
 
+  struct Span {
+    uint64_t first = 0;
+    uint64_t end = 0;
+    uint64_t offset = 0;
+    uint64_t raw = 0;
+  };
+
+  void Append(const duckdb::string_t& value, uint32_t entry) {
+    const auto size = value.GetSize();
+    if (Add(entry, size)) {
+      Closed();
+    }
+    _frame.append(value.GetData(), size);
+  }
+
+  uint64_t Estimate() const noexcept {
+    const auto raw = _rows.View().raw;
+    return (_spans.size() + 1) * kFrameMetaSize + Written() +
+           (_layout == FrameLayout::Local
+              ? SegmentDictionaryBytes(raw, Codec::kDictionaryCap) /
+                  kLocalDictionaryPacking
+              : 0) +
+           static_cast<uint64_t>(
+             static_cast<double>(raw - _packed) *
+             Ratio(_history[static_cast<size_t>(_shape)], 1.0));
+  }
+
   bool Train(uint64_t first_row, uint64_t rows, Shape shape) {
     if (const auto* dictionary =
           _dictionaries.Find(kCodec, first_row, rows, shape)) {
@@ -212,13 +242,6 @@ class BlobEncoder {
     _dictionaries.Store(kCodec, first_row, rows, shape, _codec->Dictionary());
     return trained;
   }
-
-  struct Span {
-    uint64_t first = 0;
-    uint64_t end = 0;
-    uint64_t offset = 0;
-    uint64_t raw = 0;
-  };
 
   RatioHistory& History() noexcept {
     return _history[static_cast<size_t>(_shape)];
@@ -323,7 +346,7 @@ class BlobEncoder {
     return _frame;
   }
 
-  uint64_t Written() const noexcept { return _segment->Size() - _base; }
+  uint64_t Written() const noexcept { return _out->bytes.Size(); }
 
   void CompressRest() {
     for (auto i = _frames.size(); i < _spans.size(); ++i) {
@@ -411,15 +434,15 @@ class BlobEncoder {
 
   uint64_t CompressedSize(std::string_view raw,
                           typename Codec::Compressor& codec) {
-    _out.clear();
-    return Compress(raw, _out, codec);
+    _scratch.clear();
+    return Compress(raw, _scratch, codec);
   }
 
   size_t Compress(std::string_view raw) {
     const auto bound = Codec::Bound(raw.size());
-    auto* out = _segment->Extend(bound);
+    auto* out = _out->bytes.Extend(bound);
     const auto n = _codec->Compress(raw.data(), raw.size(), out, bound);
-    _segment->Shrink(bound - n);
+    _out->bytes.Shrink(bound - n);
     return n;
   }
 
@@ -435,6 +458,7 @@ class BlobEncoder {
     return n;
   }
 
+  SegmentRows _rows;
   const StringTuning& _tuning;
   TrainedDictionaries& _dictionaries;
   RatioHistory* _history;
@@ -450,9 +474,8 @@ class BlobEncoder {
   size_t _counted = 0;
   uint64_t _packed = 0;
   std::string _frame;
-  SegmentBuffer* _segment = nullptr;
-  size_t _base = 0;
-  std::string _out;
+  Segment* _out = nullptr;
+  std::string _scratch;
   Span _open;
   std::vector<Span> _spans;
   std::vector<size_t> _sizes;

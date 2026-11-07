@@ -23,53 +23,68 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/onpair.hpp"
+#include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 
 namespace irs::codecs::text {
 
-class OnPairEncoder {
+class OnPairState {
  public:
   static constexpr ByteCodec kCodec = ByteCodec::OnPair;
 
-  explicit OnPairEncoder(StringTuning& tuning, uint32_t target) noexcept
-    : _history{tuning.history[static_cast<size_t>(kCodec)]}, _target{target} {}
+  OnPairState(const duckdb::LogicalType& type, DedupScratch& dedup,
+              StringTuning& tuning, uint32_t target)
+    : _rows{type, dedup, tuning.codes},
+      _history{tuning.history[static_cast<size_t>(kCodec)]},
+      _target{target} {}
 
-  void Begin(Shape shape, uint8_t, FrameLayout, SegmentBuffer& out) noexcept {
-    _shape = shape;
-    _segment = &out;
-    _base = out.Size();
+  void Begin(const Config& config, uint64_t first_row, size_t distinct,
+             Segment& out) {
+    _rows.Begin(config, first_row, distinct);
+    _shape = config.choice.shape;
+    _out = &out;
+    out.bytes.Truncate(0);
   }
 
   void Retrain() noexcept {}
 
-  void Append(const duckdb::string_t&, uint32_t) noexcept {}
-
-  uint64_t Estimate(const SegmentEntries& rows) const noexcept {
-    return EstimateEntries(rows, _history[static_cast<size_t>(_shape)]);
+  IRS_FORCE_INLINE void AddValue(const duckdb::string_t* value) {
+    _rows.AddValue(value, [](const duckdb::string_t&, uint32_t) {});
   }
 
-  EncodedFrames Finish(const SegmentEntries& rows, std::span<uint32_t> lengths);
+  IRS_FORCE_INLINE void AddCode(
+    uint32_t code, std::span<const duckdb::string_t* const> values) {
+    _rows.AddCode(code, values, [](const duckdb::string_t&, uint32_t) {});
+  }
+
+  IRS_FORCE_INLINE bool Full(uint32_t target) {
+    return _rows.EstimateDue(target) &&
+           _rows.Estimate() +
+               EstimateEntries(_rows.View(),
+                               _history[static_cast<size_t>(_shape)]) >=
+             target;
+  }
+
+  void Finish();
 
  private:
-  uint64_t Written() const noexcept { return _segment->Size() - _base; }
+  uint64_t Written() const noexcept { return _out->bytes.Size(); }
 
   void Pack(std::span<const duckdb::string_t> entries,
             std::span<const uint32_t> lengths, size_t first, size_t end,
             uint64_t region);
 
+  SegmentRows _rows;
   RatioHistory* _history;
   uint32_t _target;
   Shape _shape = Shape::Dedup;
   OnPairCodec _codec;
-  SegmentBuffer* _segment = nullptr;
-  size_t _base = 0;
+  Segment* _out = nullptr;
   std::vector<FrameMeta> _frames;
   std::string _side;
   std::vector<uint16_t> _codes;

@@ -29,10 +29,10 @@
 namespace irs::codecs::text {
 namespace {
 
-template<typename Encoder>
-void RetrainEncoder(std::optional<Encoder>& encoder) noexcept {
-  if (encoder) {
-    encoder->Retrain();
+template<typename State>
+void RetrainState(std::optional<State>& state) noexcept {
+  if (state) {
+    state->Retrain();
   }
 }
 
@@ -43,32 +43,32 @@ auto SegmentEncoder::With(const Config& config, F&& f) {
   switch (config.choice.leaf) {
     case ByteCodec::Lz4:
       if (EffectiveLevel<Lz4>(config.level) > 1) {
-        return f(Get(_encoders.lz4_hc));
+        return f(Get(_states.lz4_hc));
       }
-      return f(Get(_encoders.lz4));
+      return f(Get(_states.lz4));
     case ByteCodec::Zstd:
-      return f(Get(_encoders.zstd));
+      return f(Get(_states.zstd));
     case ByteCodec::Zxc:
-      return f(Get(_encoders.zxc));
+      return f(Get(_states.zxc));
     case ByteCodec::Fsst:
-      return f(Get(_encoders.fsst));
+      return f(Get(_states.fsst));
     case ByteCodec::FsstPlus:
-      return f(Get(_encoders.fsst_plus));
+      return f(Get(_states.fsst_plus));
     case ByteCodec::OnPair:
-      return f(Get(_encoders.onpair));
+      return f(Get(_states.onpair));
     case ByteCodec::Fsst12:
-      return f(Get(_encoders.fsst12));
+      return f(Get(_states.fsst12));
   }
   SDB_UNREACHABLE();
 }
 
-template<typename Encoder>
-Encoder& SegmentEncoder::Get(std::optional<Encoder>& slot) {
+template<typename State>
+State& SegmentEncoder::Get(std::optional<State>& slot) {
   if (!slot) {
-    if constexpr (Sorted(Encoder::kCodec)) {
-      slot.emplace(_tuning, _params.segment_target);
+    if constexpr (Sorted(State::kCodec)) {
+      slot.emplace(_type, _dedup, _tuning, _params.segment_target);
     } else {
-      slot.emplace(_tuning, _dictionaries);
+      slot.emplace(_type, _dedup, _tuning, _dictionaries);
     }
   }
   return *slot;
@@ -77,18 +77,18 @@ Encoder& SegmentEncoder::Get(std::optional<Encoder>& slot) {
 Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
                              uint64_t begin) {
   auto* seg = Acquire();
-  With(config, [&](auto& enc) {
+  With(config, [&](auto& state) {
     const std::span<const uint32_t> codes = acc.codes;
     const std::span<const duckdb::string_t* const> values = acc.values;
     const auto target = _params.segment_target;
-    _builder.Begin(enc, config, begin, values.size(), seg->bytes);
+    state.Begin(config, begin, values.size(), *seg);
     for (auto row = begin; row < codes.size();) {
-      _builder.AddCode(enc, codes[row++], values);
-      if (_builder.Full(enc, target)) {
+      state.AddCode(codes[row++], values);
+      if (state.Full(target)) {
         break;
       }
     }
-    _builder.Finish(enc, *seg);
+    state.Finish();
   });
   return seg;
 }
@@ -97,25 +97,24 @@ void SegmentEncoder::SealChunks(const Config& config,
                                 std::span<const WriteChunk> chunks,
                                 SegmentSink sink) {
   auto* seg = Acquire();
-  With(config, [&](auto& enc) {
+  With(config, [&](auto& state) {
     const auto seal = [&] {
-      _builder.Finish(enc, *seg);
+      state.Finish();
       sink(seg->config.choice, std::move(*seg->stats), seg->rows,
            seg->bytes.View());
     };
     const auto target = _params.segment_target;
     uint64_t row = 0;
     uint64_t first = 0;
-    _builder.Begin(enc, config, first, 0, seg->bytes);
+    state.Begin(config, first, 0, *seg);
     for (const auto& chunk : chunks) {
       for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
-        _builder.AddValue(enc,
-                          entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
+        state.AddValue(entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
         ++row;
-        if (_builder.Full(enc, target)) {
+        if (state.Full(target)) {
           seal();
           first = row;
-          _builder.Begin(enc, config, first, 0, seg->bytes);
+          state.Begin(config, first, 0, *seg);
         }
       }
     }
@@ -130,14 +129,14 @@ Segment* SegmentEncoder::Encode(const Config& config,
                                 const StringAccumulator& acc, uint64_t begin,
                                 uint64_t end) {
   auto* seg = Acquire();
-  With(config, [&](auto& enc) {
+  With(config, [&](auto& state) {
     const std::span<const uint32_t> codes = acc.codes;
     const std::span<const duckdb::string_t* const> values = acc.values;
-    _builder.Begin(enc, config, begin, values.size(), seg->bytes);
+    state.Begin(config, begin, values.size(), *seg);
     for (auto row = begin; row < end; ++row) {
-      _builder.AddCode(enc, codes[row], values);
+      state.AddCode(codes[row], values);
     }
-    _builder.Finish(enc, *seg);
+    state.Finish();
   });
   return seg;
 }
@@ -146,20 +145,20 @@ uint64_t SegmentEncoder::Price(const Config& config,
                                const StringAccumulator& acc, uint64_t begin,
                                uint64_t end) {
   const auto& profile = Measure(acc, config.choice.shape, begin, end);
-  return With(config, [&](auto& enc) -> uint64_t {
-    if constexpr (Sorted(std::remove_reference_t<decltype(enc)>::kCodec)) {
+  return With(config, [&](auto& state) -> uint64_t {
+    if constexpr (Sorted(std::remove_reference_t<decltype(state)>::kCodec)) {
       SDB_UNREACHABLE();
     } else {
-      return enc.Price(profile, config.level, config.layout, begin);
+      return state.Price(profile, config.level, config.layout, begin);
     }
   });
 }
 
 void SegmentEncoder::Retrain() noexcept {
-  RetrainEncoder(_encoders.fsst);
-  RetrainEncoder(_encoders.fsst_plus);
-  RetrainEncoder(_encoders.onpair);
-  RetrainEncoder(_encoders.fsst12);
+  RetrainState(_states.fsst);
+  RetrainState(_states.fsst_plus);
+  RetrainState(_states.onpair);
+  RetrainState(_states.fsst12);
 }
 
 const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,

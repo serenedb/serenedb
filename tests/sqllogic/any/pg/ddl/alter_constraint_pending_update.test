@@ -55,10 +55,8 @@ statement count 1
 UPDATE acp SET b = 8 WHERE a = 10
 
 
-statement error
+statement ok
 ALTER TABLE acp ADD CONSTRAINT acp_b_small CHECK (b < 4000)
-----
-db error: ERROR: ALTER TABLE cannot run in a transaction that has already written to "acp"
 
 
 statement ok
@@ -69,7 +67,7 @@ query
 SELECT b FROM acp WHERE a = 10
 ----
 b
-7
+8
 
 
 query
@@ -77,3 +75,4 @@ SELECT conname FROM pg_constraint WHERE conrelid = 'acp'::regclass AND contype =
 ----
 conname
 acp_b_pos
+acp_b_small

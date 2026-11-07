@@ -53,24 +53,29 @@ Avoid representing numeric values as strings, especially if you intend to perfor
 
 ## Constraints
 
-SereneDB allows defining constraints such as `UNIQUE`, `PRIMARY KEY`, and `FOREIGN KEY`. These constraints can be beneficial for ensuring data integrity but they have a negative effect on load performance as they necessitate building indexes and performing checks. Moreover, they _very rarely improve the performance of queries_ as SereneDB does not rely on these indexes for join and aggregation operators.
+`PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` constraints are integrity tools. They guarantee that keys are unique and that references point at existing rows, and every load and update pays to keep that guarantee.
+
+Schemas written for transactional databases such as PostgreSQL usually give every table a primary key and add unique and foreign keys out of habit. An analytical schema rarely needs them: a key can help an occasional query, but most analytical workloads gain little from one while paying for it on every write.
+
+Declare a key when:
+
+- your application relies on the guarantee: no duplicate keys, no rows referencing a missing parent;
+- a statement requires one: `INSERT ... ON CONFLICT` needs a unique key on its conflict target.
+
+To look rows up or search by a column, create an [index](../../sql/indexes/index.md) on it rather than a key.
 
 <DocCallout type="bestPractice">
 
-Do not define constraints unless your goal is to ensure data integrity.
+Leave out `PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` unless your data or your statements need them.
 
 </DocCallout>
 
-### The Effect of Primary Keys
+### Loading Into a Table With Keys
 
-Primary key (and unique) constraints require SereneDB to build and maintain an index and to check uniqueness for every inserted row. During bulk loading this slows ingestion considerably, and the overhead grows with the size of the data.
-
-When a primary key is required, loading the data first and adding the constraint afterwards is faster than loading into a table that already has the primary key defined: the index is then built once over the final data rather than incrementally row by row.
-
-Primary keys (or indexes) only help highly selective queries, such as filtering on a single identifier. They do not speed up join and aggregation operators.
+When a table needs keys, load the data first and add the keys afterwards with [`ALTER TABLE`](../../sql/statements/alter_table/index.md): checking them once over the loaded data is cheaper than checking them on every insert.
 
 <DocCallout type="bestPractice">
 
-For best bulk load performance, avoid primary key constraints. If they are required, define them after the bulk loading step.
+For the best bulk load performance, define the keys after the bulk loading step.
 
 </DocCallout>

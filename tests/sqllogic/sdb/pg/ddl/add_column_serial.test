@@ -6,16 +6,12 @@ statement count 2
 INSERT INTO acsl VALUES (1), (2)
 
 
-statement error
+statement ok
 ALTER TABLE acsl ADD COLUMN id serial PRIMARY KEY
-----
-db error: ERROR: ALTER TABLE cannot run in a transaction that has already written to "acsl"
 
 
-statement error
+statement ok
 ALTER TABLE acsl ADD COLUMN u bigserial UNIQUE
-----
-db error: ERROR: ALTER TABLE cannot run in a transaction that has already written to "acsl"
 
 
 query
@@ -23,13 +19,15 @@ SELECT column_name FROM information_schema.columns WHERE table_name = 'acsl' ORD
 ----
 column_name
 v
+id
+u
 
 
 query
 SELECT count(*) AS sequences FROM pg_class WHERE relname LIKE 'acsl%' AND relkind = 'S'
 ----
 sequences
-0
+2
 
 
 statement ok

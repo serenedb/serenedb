@@ -69,17 +69,13 @@ struct LocalTableChangesEntry {
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
   bool truncate = false;
   bool clears_shard = false;
-  // Segments a bulk statement flushed, for the record to reference by name.
-  std::vector<std::string> segments;
 
   void AppendInsertRows(std::unique_ptr<duckdb::ColumnDataCollection> rows,
                         std::span<const connector::ColumnId> cols,
                         duckdb::Catalog& cat) {
-    if (column_ids.empty()) {
+    if (collection == nullptr) {
       column_ids.assign(cols.begin(), cols.end());
       catalog = &cat;
-    }
-    if (collection == nullptr) {
       collection = std::move(rows);
     } else {
       collection->Combine(*rows);
@@ -94,21 +90,8 @@ struct LocalTableChangesEntry {
   void AppendTruncate(bool clears) {
     collection.reset();
     removals.clear();
-    segments.clear();
     truncate = true;
     clears_shard = clears;
-  }
-
-  void AppendSegments(std::vector<std::string>&& refs) {
-    if (refs.empty()) {
-      return;
-    }
-    if (segments.empty()) {
-      segments = std::move(refs);
-      return;
-    }
-    segments.insert(segments.end(), std::make_move_iterator(refs.begin()),
-                    std::make_move_iterator(refs.end()));
   }
 
   bool HasBufferedRows() const noexcept {
@@ -133,8 +116,7 @@ struct LocalTableChangesEntry {
   }
 
   bool Empty() const noexcept {
-    return collection == nullptr && removals.empty() && !truncate &&
-           segments.empty();
+    return collection == nullptr && removals.empty() && !truncate;
   }
 };
 

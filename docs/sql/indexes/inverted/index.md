@@ -49,7 +49,7 @@ A trailing `WHERE <predicate>` builds a [partial index](../../statements/create_
 
 <DocCallout type="tip">
 
-After loading data, run `VACUUM (REFRESH_TABLE) table_name` to make newly inserted rows visible to the index immediately. A background thread otherwise refreshes the index on an interval — see [Maintenance](./maintenance.md).
+The index is part of its table: rows are searchable as soon as the transaction that wrote them commits, and that transaction finds its own rows through the index before it commits. See [Maintenance](./maintenance.md) for compaction and statistics.
 
 </DocCallout>
 
@@ -120,7 +120,7 @@ See [What to Index](./modeling.md) for choosing indexed vs. `INCLUDE`d columns, 
 
 An inverted index can be built over a base **table** or a **view**:
 
-- **Base tables** need no `PRIMARY KEY`: the index identifies each row by the table's hidden row id, and the background refresh tracks inserts, updates and deletes.
+- **Tables** need no `PRIMARY KEY`: the index is part of the table and changes with it, transaction by transaction.
 - **Views** let you index data the database does not own a primary copy of — including [external Parquet/CSV/JSON files](./external-data.md) on disk or S3. A view-backed index holds a snapshot of its source that `REINDEX INDEX` or the `reindex_interval` option refreshes; see [Refreshing the index](./views.md#refreshing-the-index).
 
 <SqlLogicTest id="sql/indexes/inverted/index/example_005" />
@@ -129,7 +129,7 @@ See [Indexing Views](./views.md) and [Indexing External Data](./external-data.md
 
 ## Lifecycle
 
-An inverted index is **eventually consistent**: after a write, the new rows become searchable once the index is refreshed — immediately with `VACUUM (REFRESH_TABLE)`, or automatically by the background refresh thread. Compaction merges segments in the background. See [Maintenance & Introspection](./maintenance.md) for the full refresh / compaction / statistics model and how to inspect an index.
+An inverted index on a table is **transactional**: it changes in the same transactions as the table and at the same isolation level, so a search sees exactly the rows a scan of the table sees. Compaction merges segments in the background. See [Maintenance & Introspection](./maintenance.md) for compaction, statistics and how to inspect an index.
 
 ## Limitations
 

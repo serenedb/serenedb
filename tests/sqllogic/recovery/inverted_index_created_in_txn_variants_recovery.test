@@ -189,7 +189,8 @@ connection after_crash
 statement error
 INSERT INTO iciv_art VALUES (9, 'one');
 ----
-db error: ERROR: Duplicate key "body: one" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "iciv_art_body"
+DETAIL: Key (body)=(one) already exists.
 
 
 connection after_crash

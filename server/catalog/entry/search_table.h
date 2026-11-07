@@ -38,6 +38,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
 #include <span>
@@ -47,6 +48,7 @@
 
 #include "catalog/entry_set.h"
 #include "catalog/persistence/search_table.h"
+#include "connector/search_table_backfill.h"
 #include "query/config_variable_names.h"
 #include "search/key_spec.h"
 
@@ -182,6 +184,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   const std::vector<search::KeySpec>& KeySpecs() const noexcept {
     return _keys;
   }
+  irs::DirectoryReader RowsWithOwn(duckdb::ClientContext& context) const;
+  void AdoptAsWritten(duckdb::ClientContext& context) const;
 
  private:
   duckdb::unique_ptr<duckdb::CreateTableInfo> Definition() const;
@@ -236,6 +240,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context, duckdb::AddConstraintInfo& info);
   void VerifyKey(duckdb::ClientContext& context,
                  const search::KeySpec& spec) const;
+  connector::SearchBackfillTarget BackfillTarget(
+    duckdb::ClientContext& context, irs::field_id field,
+    duckdb::unique_ptr<duckdb::Expression> value) const;
   void Backfill(duckdb::ClientContext& context, irs::field_id field,
                 duckdb::unique_ptr<duckdb::Expression> value) const;
   void ReplaceStoreColumnsAtCommit(duckdb::ClientContext& context) const;

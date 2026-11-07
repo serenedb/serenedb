@@ -139,7 +139,7 @@ CREATE VIEW recent_articles AS
 
 statement ok
 CREATE INDEX recent_articles_idx ON recent_articles
-    USING inverted (id, body english_dict);
+    USING inverted (id, body english_dict) INCLUDE (id, title);
 
 query
 SELECT id, title FROM recent_articles_idx WHERE body @@ 'search' ORDER BY id;

@@ -14,7 +14,7 @@ In SQL, constraints can be specified for tables. Constraints enforce certain pro
 
 <DocCallout type="attention">
 
-Constraints have a strong impact on performance: they slow down loading and updates but speed up certain queries. Please consult the [Performance Guide](../../cookbook/performance/schema.md#constraints) for details.
+`PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` constraints guarantee integrity and cost time on every load and update; most analytical tables are better off without them. See the [Performance Guide](../../cookbook/performance/schema.md#constraints) for when to declare them.
 
 </DocCallout>
 
@@ -42,8 +42,6 @@ Primary key or unique constraints define a column, or set of columns, that are a
 
 <SqlLogicTest id="sql/constraints/index/example_004" />
 
-To enforce this property efficiently, an [ART index is automatically created](../../sql/indexes/index.md) for every primary key or unique constraint that is defined in the table.
-
 Primary key constraints and unique constraints are identical except for two points:
 
 -   A table can only have one primary key constraint defined, but many unique constraints
@@ -52,12 +50,6 @@ Primary key constraints and unique constraints are identical except for two poin
 <SqlLogicTest id="sql/constraints/index/example_005" />
 
 <SqlLogicTest id="sql/constraints/index/example_006" />
-
-<DocCallout type="attention">
-
-Indexes have certain limitations that might result in constraints being evaluated too eagerly, leading to constraint errors such as `violates primary key constraint` and `violates unique constraint`. See the [ART index limitations](../../sql/indexes/art.md#limitations) for more details.
-
-</DocCallout>
 
 You can also define a uniqueness constraint on multiple columns:
 
@@ -78,11 +70,3 @@ The `constraint_check_mode` column of [`sdb_constraints()`](../../sql/functions/
 Foreign keys define a column, or set of columns, that refer to a primary key or unique constraint from _another_ table. The constraint enforces that the key exists in the other table.
 
 <SqlLogicTest id="sql/constraints/index/example_008" />
-
-To enforce this property efficiently, an [ART index is automatically created](../../sql/indexes/index.md) for every foreign key constraint that is defined in the table.
-
-<DocCallout type="attention">
-
-Indexes have certain limitations that might result in constraints being evaluated too eagerly, leading to constraint errors such as `violates primary key constraint` and `violates unique constraint`. See the [ART index limitations](../../sql/indexes/art.md#limitations) for more details.
-
-</DocCallout>

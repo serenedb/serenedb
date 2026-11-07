@@ -198,135 +198,135 @@ connection restarted
 statement error
 DROP FUNCTION fdr_def(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_def" because there are entries that depend on it.
-table "fdr_t" depends on macro function "fdr_def".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_def(integer) because other objects depend on it
+DETAIL: default value for column a of table fdr_t depends on function fdr_def(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_add(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_add" because there are entries that depend on it.
-table "fdr_t" depends on macro function "fdr_add".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_add(integer) because other objects depend on it
+DETAIL: default value for column b of table fdr_t depends on function fdr_add(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_set(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_set" because there are entries that depend on it.
-table "fdr_t" depends on macro function "fdr_set".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_set(integer) because other objects depend on it
+DETAIL: default value for column c of table fdr_t depends on function fdr_set(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_chk(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_chk" because there are entries that depend on it.
-table "fdr_t" depends on macro function "fdr_chk".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_chk(integer) because other objects depend on it
+DETAIL: constraint fdr_t_chk on table fdr_t depends on function fdr_chk(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_gen(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_gen" because there are entries that depend on it.
-table "fdr_t" depends on macro function "fdr_gen".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_gen(integer) because other objects depend on it
+DETAIL: column g of table fdr_t depends on function fdr_gen(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_idx(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_idx" because there are entries that depend on it.
-index "fdr_t_idx" depends on macro function "fdr_idx".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_idx(integer) because other objects depend on it
+DETAIL: index fdr_t_idx depends on function fdr_idx(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_s.fdr_far(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_far" because there are entries that depend on it.
-table "fdr_f" depends on macro function "fdr_far".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_s.fdr_far(integer) because other objects depend on it
+DETAIL: constraint fdr_f_chk on table fdr_f depends on function fdr_s.fdr_far(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_sdef(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_sdef" because there are entries that depend on it.
-table "fdr_st" depends on macro function "fdr_sdef".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_sdef(integer) because other objects depend on it
+DETAIL: default value for column a of table fdr_st depends on function fdr_sdef(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_sadd(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_sadd" because there are entries that depend on it.
-table "fdr_st" depends on macro function "fdr_sadd".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_sadd(integer) because other objects depend on it
+DETAIL: default value for column b of table fdr_st depends on function fdr_sadd(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_schk(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_schk" because there are entries that depend on it.
-table "fdr_st" depends on macro function "fdr_schk".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_schk(integer) because other objects depend on it
+DETAIL: constraint fdr_st_chk on table fdr_st depends on function fdr_schk(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP FUNCTION fdr_sgen(INT);
 ----
-db error: ERROR: Cannot drop entry "fdr_sgen" because there are entries that depend on it.
-table "fdr_st" depends on macro function "fdr_sgen".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function fdr_sgen(integer) because other objects depend on it
+DETAIL: column g of table fdr_st depends on function fdr_sgen(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP SEQUENCE fdr_seq;
 ----
-db error: ERROR: Cannot drop entry "fdr_seq" because there are entries that depend on it.
-table "fdr_q" depends on sequence "fdr_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence fdr_seq because other objects depend on it
+DETAIL: default value for column n of table fdr_q depends on sequence fdr_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP TYPE fdr_mood;
 ----
-db error: ERROR: Cannot drop entry "fdr_mood" because there are entries that depend on it.
-table "fdr_e" depends on type "fdr_mood".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type fdr_mood because other objects depend on it
+DETAIL: default value for column m of table fdr_e depends on type fdr_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP SEQUENCE fdr_r_a_seq;
 ----
-db error: ERROR: Cannot drop entry "fdr_r_a_seq" because there are entries that depend on it.
-table "fdr_r" depends on sequence "fdr_r_a_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence fdr_r_a_seq because other objects depend on it
+DETAIL: default value for column a of table fdr_r depends on sequence fdr_r_a_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted
 statement error
 DROP SEQUENCE fdr_r2_id_seq;
 ----
-db error: ERROR: Cannot drop entry "fdr_r2_id_seq" because there are entries that depend on it.
-table "fdr_r2" depends on sequence "fdr_r2_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence fdr_r2_id_seq because other objects depend on it
+DETAIL: default value for column id of table fdr_r2 depends on sequence fdr_r2_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection restarted

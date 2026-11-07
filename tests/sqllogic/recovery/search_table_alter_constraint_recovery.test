@@ -28,7 +28,7 @@ INSERT INTO sacr VALUES (3, 'z', NULL);
 statement error
 ALTER TABLE sacr ALTER COLUMN n SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: sacr.n
+db error: ERROR: column "n" of relation "sacr" contains null values
 
 
 statement ok

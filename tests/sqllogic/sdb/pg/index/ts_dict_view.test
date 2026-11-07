@@ -1,5 +1,7 @@
 hash-threshold 100
 
+control substitution on
+
 # ts_dict_* pushdown over a VIEW-backed inverted index. A view has no catalog
 # table, so no column can be proven NOT NULL: every key is treated as nullable
 # (rides the field's null-marker for the synthesized NULL group), count/min/max
@@ -35,9 +37,12 @@ INSERT INTO vbase VALUES
   (5, 'FENDT', 'open', NULL,             'ok gamma')
 
 statement ok
+COPY vbase TO '${__TEST_DIR__}/vbase.parquet' (FORMAT PARQUET)
+
+statement ok
 CREATE VIEW vlog AS
 SELECT id, brand AS Brand, status AS Status, tags AS Tags, body AS Body
-FROM vbase
+FROM read_parquet('${__TEST_DIR__}/vbase.parquet')
 
 statement ok
 CREATE INDEX vlog_idx ON vlog USING inverted(
@@ -234,10 +239,10 @@ QUERY PLAN
                     ├─────────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
 │ Index: vlog_idx                       │  ╰──────────────┬──────────────╯
-│ Projections: brand, status            │                 ├────────────────────────────────╮
-│ ~5 rows                               │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
-╰───────────────────────────────────────╯  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
-                                           │              NULL::VARCHAR, │  │              #0, #1         │
+│ Lookup: parquet                       │                 ├────────────────────────────────╮
+│ Projections: brand, status            │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
+│ ~5 rows                               │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
+╰───────────────────────────────────────╯  │              NULL::VARCHAR, │  │              #0, #1         │
                                            │              #1             │  │ ~2 rows                     │
                                            │ ~2 rows                     │  ╰──────────────┬──────────────╯
                                            ╰──────────────┬──────────────╯  ╭─ HASH_GROUP_BY ─────────────╮
@@ -337,6 +342,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: vlog_idx           │
+│ Lookup: parquet           │
 │ Projections: brand        │
 │ ~5 rows                   │
 ╰───────────────────────────╯

@@ -56,7 +56,7 @@ class WriterGenerations final {
     const auto state = _state.load(std::memory_order_acquire);
     return Writers(state, 0) + Writers(state, 1) == 1;
   }
-  void Drain(duckdb::ClientContext& context);
+  void Drain(duckdb::ClientContext& context, const Writer* own);
 
  private:
   static constexpr uint64_t kGeneration = 1;

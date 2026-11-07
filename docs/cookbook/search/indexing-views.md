@@ -19,7 +19,7 @@ An [inverted index](../../sql/indexes/inverted/index.md) in SereneDB is a named 
 
 ## Index a view and search it
 
-Build the index on the view with `CREATE INDEX ... ON v_docs USING inverted(...)`, then query the index relation `v_docs_idx`. Full-text `@@` and [BM25](./ranking.md) ranking work exactly as they do on a table-backed index.
+Build the index on the view with `CREATE INDEX ... ON v_docs USING inverted(...)`, then query the index relation `v_docs_idx`. Full-text `@@` and [BM25](./ranking.md) ranking work exactly as they do on a table-backed index. The view here reads a table, so the index [`INCLUDE`s](../../sql/indexes/inverted/views.md#include-columns) the columns the queries return; over [files](./indexing-external-data.md) the columns it does not store are read live from the source instead.
 
 <SqlLogicTest id="cookbook/search/indexing-views/example_001" />
 
@@ -37,10 +37,10 @@ Wrap a search in a view and it becomes a named query you point applications at. 
 
 ## No materialized views
 
-SereneDB has no `MATERIALIZED VIEW`. You do not need one here: an index built on a view over a base table already holds a postings snapshot that only moves when you run `REINDEX INDEX` or set `reindex_interval`, which covers the usual reason to reach for a materialized view in the first place.
+SereneDB has no `MATERIALIZED VIEW`. You do not need one here: an index on a view that `INCLUDE`s the columns you return already holds a searchable snapshot of the view that only moves when you run `REINDEX INDEX` or set `reindex_interval`, which covers the usual reason to reach for a materialized view in the first place.
 
 ## See also
 
-- [Indexing Views](../../sql/indexes/inverted/views.md): the reference on building an index over a view, including the `pk` rule for union and join views
+- [Indexing Views](../../sql/indexes/inverted/views.md): the reference on building an index over a view, including which views read columns live from their source
 - [Indexing External Data](./indexing-external-data.md): the real payoff, an index over a view of Parquet, CSV or S3 files
 - [Migrating from Elasticsearch](../../sql/indexes/inverted/migrating-from-elasticsearch.md): where index aliases map to views

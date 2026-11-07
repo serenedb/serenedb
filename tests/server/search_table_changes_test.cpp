@@ -136,13 +136,11 @@ TEST_F(SearchTableChangesRows, TruncateDropsEverythingBufferedBeforeIt) {
   const std::vector<uint64_t> positions{11, 12};
   AppendRows(changes, 2);
   changes.removals.push_back(Removal(positions));
-  changes.AppendSegments({"_1"});
   changes.AppendTruncate(false);
   EXPECT_TRUE(changes.truncate);
   EXPECT_FALSE(changes.ClearsShard());
   EXPECT_FALSE(changes.HasBufferedRows());
   EXPECT_TRUE(changes.removals.empty());
-  EXPECT_TRUE(changes.segments.empty());
   EXPECT_FALSE(changes.Empty());
 }
 

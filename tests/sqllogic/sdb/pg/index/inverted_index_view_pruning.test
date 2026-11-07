@@ -222,7 +222,6 @@ count
 
 
 # Case 6: single-column inverted index on a view over a base table.
-# The view's surrogate PK is the base table's real PK.
 
 statement ok
 CREATE TABLE prune_base (
@@ -245,14 +244,13 @@ query
 EXPLAIN CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
 ----
 QUERY PLAN
-╭─ EXTENSION ────────╮
-╰──────────┬─────────╯
-╭─ IRESEARCH_SCAN ───╮
-│ Table: prune_base  │
-│ Projections: body, │
-│              id    │
-│ ~3 rows            │
-╰────────────────────╯
+╭─ EXTENSION ───────╮
+╰─────────┬─────────╯
+╭─ IRESEARCH_SCAN ──╮
+│ Table: prune_base │
+│ Projections: body │
+│ ~3 rows           │
+╰───────────────────╯
 
 statement ok
 CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
@@ -269,7 +267,6 @@ count
 statement ok
 CREATE VIEW prune_v7 AS SELECT * FROM prune_base;
 
-# `id` appears twice in projections: once as an index key, once as PK plumbing.
 query
 EXPLAIN CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);
 ----
@@ -279,8 +276,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Table: prune_base  │
 │ Projections: id,   │
-│              body, │
-│              id    │
+│              body  │
 │ ~3 rows            │
 ╰────────────────────╯
 

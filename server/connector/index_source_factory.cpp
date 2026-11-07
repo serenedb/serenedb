@@ -24,11 +24,9 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "catalog/catalog.h"
 #include "connector/column_id.h"
 #include "connector/index_source_external_lookup.h"
 #include "connector/index_source_native.h"
-#include "connector/index_source_table_key.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -64,12 +62,6 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
       fp.pinned_iceberg_snapshot_id = snapshot.file_manifest->version;
     }
     if (fp.catalog_ref && IsExternalPK(fp.pk_spec)) {
-      if (catalog::IsSereneDB(duckdb::Catalog::GetCatalog(
-            context, duckdb::Identifier{fp.catalog_ref->catalog}))) {
-        return std::make_unique<TableKeyIndexSource>(
-          context, std::move(fp), projected_columns, projected_types,
-          bind_column_ids);
-      }
       return std::make_unique<ExternalLookupIndexSource>(
         context, std::move(fp), projected_columns, projected_types,
         bind_column_ids);

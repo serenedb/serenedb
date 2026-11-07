@@ -752,7 +752,7 @@ StoreStats Store::GetStats() const {
   return stats;
 }
 
-void Store::ReplaceSegments(
+Tick Store::ReplaceSegments(
   std::span<const irs::SubReader* const> replaced,
   std::vector<irs::IndexWriter::Replacement> replacements) {
   SDB_ASSERT(_table);
@@ -778,11 +778,14 @@ void Store::ReplaceSegments(
     segments.push_back(std::move(opened));
   }
   SyncSegments();
+  Tick published = 0;
   CommitStorage(LogReplace(ids, named, maps),
                 [&](Tick tick, Tick oldest, Lsn lsn) {
                   _table->Replace(tick, tick, oldest, lsn, ids,
                                   std::move(segments), std::move(maps));
+                  published = tick;
                 });
+  return published;
 }
 
 template<typename Remove>
@@ -813,7 +816,9 @@ void Store::CommitRemoveAll() {
 }
 
 void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  _writers.Drain(context);
+  const auto* writes =
+    ConnectionContext::Get(context).Transaction().SearchWrites();
+  _writers.Drain(context, writes ? writes->Registration(_id) : nullptr);
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> Store::Config() const {
@@ -906,15 +911,8 @@ void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name,
       ERR_MSG("could not serialize access due to concurrent update of \"", name,
               "\""));
   }
-  auto& session = ConnectionContext::Get(context).Transaction();
-  if (change == TableChange::Schema && session.SearchTxn().HasWritesFor(_id)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG("ALTER TABLE cannot run in a transaction that has already "
-              "written to \"",
-              name, "\""));
-  }
-  session.ClaimSearchLayout(shared_from_this(), name, change);
+  ConnectionContext::Get(context).Transaction().ClaimSearchLayout(
+    shared_from_this(), name, change);
 }
 
 void Store::ClaimExclusive(duckdb::ClientContext& context,

@@ -235,6 +235,9 @@ class Table final {
   Tick LastAppend() const noexcept {
     return _last_append.load(std::memory_order_acquire);
   }
+  Tick LastWrite() const noexcept {
+    return _last_write.load(std::memory_order_acquire);
+  }
 
   void Apply(Tick tick, Tick oldest, TableCommit&& commit);
   void Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
@@ -311,6 +314,7 @@ class Table final {
   mutable absl::Mutex _state_mutex;
   Lsn _needed ABSL_GUARDED_BY(_state_mutex) = kNoLsn;
   std::atomic<Tick> _last_append{0};
+  std::atomic<Tick> _last_write{0};
   mutable absl::Mutex _hot_mutex;
   std::vector<std::shared_ptr<HotContext>> _free ABSL_GUARDED_BY(_hot_mutex);
   absl::flat_hash_set<const HotContext*> _held ABSL_GUARDED_BY(_hot_mutex);

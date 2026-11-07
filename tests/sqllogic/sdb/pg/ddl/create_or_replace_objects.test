@@ -2716,14 +2716,15 @@ statement count 1
 INSERT INTO coro_ix VALUES (1, 'dup');
 
 
-statement ok
-CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
-
-
 statement error
-COMMIT;
+CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
 ----
-db error: ERROR: Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
+db error: ERROR: could not create unique index "coro_ix_art"
+DETAIL: Key (id)=(1) is duplicated.
+
+
+statement ok
+COMMIT;
 
 
 statement ok

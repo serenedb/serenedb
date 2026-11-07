@@ -46,7 +46,6 @@ target_sources(
         iresearch_replacement_scan.cpp
         index_source_native.cpp
         index_source_external_lookup.cpp
-        index_source_table_key.cpp
         view_fast_path.cpp
         view_index_bind.cpp
         duckdb_copy_filesystem.cpp

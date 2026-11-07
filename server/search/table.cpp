@@ -626,6 +626,10 @@ void Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
   if (commit.hot || !commit.segments.empty()) {
     _last_append.store(tick, std::memory_order_release);
   }
+  if (commit.hot || !commit.segments.empty() || !commit.removals.empty() ||
+      commit.truncate) {
+    _last_write.store(tick, std::memory_order_release);
+  }
   for (auto& segment : commit.segments) {
     auto unit = std::make_shared<TableUnit>();
     unit->id = segment.reader->Id();

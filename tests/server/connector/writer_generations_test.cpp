@@ -51,8 +51,8 @@ TEST(WriterGenerationsTest, DrainWaitsForPriorWritersOnly) {
   ASSERT_TRUE(prior);
   auto connection = irs::DuckDBEngine::Instance().CreateConnection();
 
-  auto drain =
-    std::async(std::launch::async, [&] { gens.Drain(*connection->context); });
+  auto drain = std::async(std::launch::async,
+                          [&] { gens.Drain(*connection->context, nullptr); });
   const auto later = RegisterInNextGeneration(gens);
   EXPECT_NE(drain.wait_for(kBlocked), std::future_status::ready);
 
@@ -68,7 +68,7 @@ TEST(WriterGenerationsTest, TheNextDrainWaitsForWritersLeftByAnInterruptedOne) {
   auto first_connection = irs::DuckDBEngine::Instance().CreateConnection();
   auto& first_context = *first_connection->context;
   auto first =
-    std::async(std::launch::async, [&] { gens.Drain(first_context); });
+    std::async(std::launch::async, [&] { gens.Drain(first_context, nullptr); });
   auto straddler = RegisterInNextGeneration(gens);
   EXPECT_NE(first.wait_for(kBlocked), std::future_status::ready);
   first_context.Interrupt();
@@ -79,10 +79,10 @@ TEST(WriterGenerationsTest, TheNextDrainWaitsForWritersLeftByAnInterruptedOne) {
   auto connection = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *connection->context;
   context.Interrupt();
-  EXPECT_THROW(gens.Drain(context), duckdb::InterruptException);
+  EXPECT_THROW(gens.Drain(context, nullptr), duckdb::InterruptException);
 
   straddler.reset();
-  EXPECT_NO_THROW(gens.Drain(context));
+  EXPECT_NO_THROW(gens.Drain(context, nullptr));
 }
 
 TEST(WriterGenerationsTest, WritersLeavingBeforeTheFlipDoNotHoldTheDrain) {
@@ -91,7 +91,7 @@ TEST(WriterGenerationsTest, WritersLeavingBeforeTheFlipDoNotHoldTheDrain) {
   auto first_connection = irs::DuckDBEngine::Instance().CreateConnection();
   auto& first_context = *first_connection->context;
   auto first =
-    std::async(std::launch::async, [&] { gens.Drain(first_context); });
+    std::async(std::launch::async, [&] { gens.Drain(first_context, nullptr); });
   auto straddler = RegisterInNextGeneration(gens);
   first_context.Interrupt();
   ASSERT_EQ(first.wait_for(kJoin), std::future_status::ready);
@@ -99,8 +99,8 @@ TEST(WriterGenerationsTest, WritersLeavingBeforeTheFlipDoNotHoldTheDrain) {
 
   auto current = gens.Register();
   auto connection = irs::DuckDBEngine::Instance().CreateConnection();
-  auto drain =
-    std::async(std::launch::async, [&] { gens.Drain(*connection->context); });
+  auto drain = std::async(std::launch::async,
+                          [&] { gens.Drain(*connection->context, nullptr); });
   EXPECT_NE(drain.wait_for(kBlocked), std::future_status::ready);
   current.reset();
   straddler.reset();
@@ -128,7 +128,26 @@ TEST(WriterGenerationsTest, DrainWithNoWritersIgnoresAnInterrupt) {
   WriterGenerations gens;
   auto connection = irs::DuckDBEngine::Instance().CreateConnection();
   connection->context->Interrupt();
-  EXPECT_NO_THROW(gens.Drain(*connection->context));
+  EXPECT_NO_THROW(gens.Drain(*connection->context, nullptr));
+}
+
+TEST(WriterGenerationsTest, DrainSkipsTheCallersOwnRegistration) {
+  WriterGenerations gens;
+  auto own = gens.Register();
+  auto prior = gens.Register();
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto drain = std::async(std::launch::async,
+                          [&] { gens.Drain(*connection->context, &own); });
+  EXPECT_NE(drain.wait_for(kBlocked), std::future_status::ready);
+
+  prior.reset();
+  ASSERT_EQ(drain.wait_for(kJoin), std::future_status::ready);
+  EXPECT_NO_THROW(drain.get());
+
+  own.reset();
+  const auto later = RegisterInNextGeneration(gens);
+  connection->context->Interrupt();
+  EXPECT_NO_THROW(gens.Drain(*connection->context, &later));
 }
 
 }  // namespace

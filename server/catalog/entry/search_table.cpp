@@ -917,6 +917,40 @@ std::vector<irs::ColumnstoreProjection> ConstrainedColumns(
   return projections;
 }
 
+void VerifyExistingChunk(duckdb::ClientContext& context,
+                         const duckdb::TableCatalogEntry& table,
+                         const duckdb::BoundConstraint& constraint,
+                         duckdb::DataChunk& rows) {
+  if (constraint.type == duckdb::ConstraintType::NOT_NULL) {
+    const auto& not_null = constraint.Cast<duckdb::BoundNotNullConstraint>();
+    if (duckdb::VectorOperations::HasNull(rows.data[not_null.index.index])) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_NOT_NULL_VIOLATION),
+        ERR_MSG("column \"",
+                table.GetColumns()
+                  .GetColumn(not_null.index)
+                  .Name()
+                  .GetIdentifierName(),
+                "\" of relation \"", table.name.GetIdentifierName(),
+                "\" contains null values"));
+    }
+    return;
+  }
+  const auto& check = constraint.Cast<duckdb::BoundCheckConstraint>();
+  duckdb::ExpressionExecutor executor{context, *check.expression};
+  duckdb::Vector result{duckdb::LogicalType::INTEGER};
+  executor.ExecuteExpression(rows, result);
+  for (const auto entry : result.Values<int32_t>()) {
+    if (entry.IsValid() && entry.GetValue() == 0) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_CHECK_VIOLATION),
+        ERR_MSG("check constraint \"", check.source.constraint_name,
+                "\" of relation \"", table.name.GetIdentifierName(),
+                "\" is violated by some row"));
+    }
+  }
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::CreateTableInfo> SearchTableEntry::Definition()
@@ -971,6 +1005,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::ChangeColumns(
   altered->BeginSchemaChange(context);
   altered->ApplyKeys();
   change_rows(*altered);
+  altered->AdoptAsWritten(context);
   return altered;
 }
 
@@ -985,7 +1020,9 @@ SearchTableEntry::AddVerifiedConstraint(duckdb::ClientContext& context,
     altered->BeginSchemaChange(context);
     altered->VerifyExistingRows(
       context, *SchemaBinder(context, *this)
-                  ->BindConstraint(constraint, name, altered->_columns));
+                  ->BindConstraint(*altered->GetConstraints().back(), name,
+                                   altered->_columns));
+    altered->AdoptAsWritten(context);
   }
   return altered;
 }
@@ -1183,6 +1220,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AddKeyConstraint(
       altered->VerifyKey(context, spec);
     }
   }
+  altered->AdoptAsWritten(context);
   return altered;
 }
 
@@ -1240,6 +1278,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropConstraint(
       altered->BeginSchemaChange(context);
     }
     altered->ApplyKeys();
+    if (!IsReplay(info)) {
+      altered->AdoptAsWritten(context);
+    }
   }
   return altered;
 }
@@ -1276,6 +1317,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterAddColumn(
       _storage->AddTableColumns(altered._columns);
       if (auto& value = defaults.back(); !IsNullConstant(context, *value)) {
         Backfill(context, connector::TableColumnId(column), std::move(value));
+      } else {
+        connector::RewriteOwnRows(context, BackfillTarget(context, 0, nullptr));
       }
     });
 }
@@ -1325,11 +1368,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropColumn(
   auto definition = Definition();
   definition->columns = ColumnsWithout(_columns, dropped);
   definition->constraints = ConstraintsAfterDrop(context, *this, dropped);
-  return ChangeColumns(context, info,
-                       Altered(context, info, std::move(definition)),
-                       [&](SearchTableEntry& altered) {
-                         altered.ReplaceStoreColumnsAtCommit(context);
-                       });
+  return ChangeColumns(
+    context, info, Altered(context, info, std::move(definition)),
+    [&](SearchTableEntry& altered) {
+      altered.ReplaceStoreColumnsAtCommit(context);
+      connector::RewriteOwnRows(context,
+                                altered.BackfillTarget(context, 0, nullptr));
+    });
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterColumnType(
@@ -1426,7 +1471,7 @@ void SearchTableEntry::BeginSchemaChange(duckdb::ClientContext& context) {
   _storage->DrainPriorWriters(context);
 }
 
-void SearchTableEntry::Backfill(
+connector::SearchBackfillTarget SearchTableEntry::BackfillTarget(
   duckdb::ClientContext& context, irs::field_id field,
   duckdb::unique_ptr<duckdb::Expression> value) const {
   connector::SearchBackfillTarget target{
@@ -1443,7 +1488,28 @@ void SearchTableEntry::Backfill(
     target.added_ids.emplace_back(field);
     target.added.push_back(std::move(value));
   }
-  connector::RunSearchTableBackfill(context, target, nullptr);
+  return target;
+}
+
+void SearchTableEntry::Backfill(
+  duckdb::ClientContext& context, irs::field_id field,
+  duckdb::unique_ptr<duckdb::Expression> value) const {
+  connector::RunSearchTableBackfill(
+    context, BackfillTarget(context, field, std::move(value)), nullptr);
+}
+
+irs::DirectoryReader SearchTableEntry::RowsWithOwn(
+  duckdb::ClientContext& context) const {
+  if (auto* writes = SessionOf(context, catalog).SearchWrites()) {
+    return writes->View(context, *_storage, search::kAllApplied);
+  }
+  return _storage->View(search::kAllApplied, {});
+}
+
+void SearchTableEntry::AdoptAsWritten(duckdb::ClientContext& context) const {
+  if (auto* writes = SessionOf(context, catalog).SearchWrites()) {
+    writes->AdoptTable(_storage, *this);
+  }
 }
 
 void SearchTableEntry::VerifyKey(duckdb::ClientContext& context,
@@ -1452,7 +1518,7 @@ void SearchTableEntry::VerifyKey(duckdb::ClientContext& context,
     SessionOf(context, catalog).SearchTxn().VerifyReferences(*this, spec);
     return;
   }
-  search::VerifyUniqueKey(_storage->View(search::kAllApplied, {}), spec);
+  search::VerifyUniqueKey(RowsWithOwn(context), spec);
 }
 
 void SearchTableEntry::ReplaceStoreColumnsAtCommit(
@@ -1472,12 +1538,12 @@ void SearchTableEntry::VerifyExistingRows(
   irs::ColFilterStateCache filter_states;
   duckdb::SelectionVector live_rows{STANDARD_VECTOR_SIZE +
                                     irs::doc_limits::kDocsSlack};
-  for (const auto& segment : _storage->View(search::kAllApplied, {})) {
+  for (const auto& segment : RowsWithOwn(context)) {
     connector::ScanLiveRows(context, segment, projections, filter_states,
                             live_rows, chunk, [&](duckdb::DataChunk& rows) {
                               context.InterruptCheck();
-                              duckdb::DataTable::VerifyRowConstraint(
-                                context, *this, constraint, rows);
+                              VerifyExistingChunk(context, *this, constraint,
+                                                  rows);
                               return true;
                             });
   }

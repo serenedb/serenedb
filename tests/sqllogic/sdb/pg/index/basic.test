@@ -555,9 +555,9 @@ wait
 
 # Native MVCC: writing into the dropped table is a transaction conflict.
 connection conn1
-statement ok
+statement error db error: ERROR: Attempting to write to table t but another transaction dropped it
 INSERT INTO t VALUES (3, 'lol');
 
 connection conn1
-statement error db error: ERROR: Attempting to write to table t but another transaction dropped it
+statement ok
 COMMIT;

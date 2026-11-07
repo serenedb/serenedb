@@ -56,7 +56,6 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <iterator>
 
-#include "catalog/catalog.h"
 #include "pg/types/logical.h"
 #include "planning/iceberg_multi_file_list.hpp"
 
@@ -284,25 +283,6 @@ std::optional<ViewFastPath> ExternalColumnKeyFastPath(
   return out;
 }
 
-std::optional<ViewFastPath> SereneDBFastPath(
-  const duckdb::TableCatalogEntry& table, ViewFastPath out) {
-  // Only the check that every projected name is one of the relation's
-  // columns: a name that belongs to none is not this fast path's to serve.
-  if (!absl::c_all_of(out.projection_columns, [&](const std::string& name) {
-        return table.GetColumns().ColumnExists(duckdb::Identifier{name});
-      })) {
-    return std::nullopt;
-  }
-  const auto pk = table.GetPrimaryKey();
-  if (!pk) {
-    return std::nullopt;
-  }
-  return ExternalColumnKeyFastPath(
-    std::move(out),
-    FindKeyColumns(table,
-                   pk->Cast<duckdb::UniqueConstraint>().GetColumnNames()));
-}
-
 std::optional<ViewFastPath> ExternalFastPath(
   duckdb::TableCatalogEntry& table, ViewFastPath out,
   std::span<const std::string> key_columns) {
@@ -368,9 +348,6 @@ std::optional<ViewFastPath> ResolveTableSource(
   }
   if (cat_type == "duckdb") {
     return AttachedDuckDBFastPath(catalog, std::move(out));
-  }
-  if (catalog::IsSereneDB(catalog)) {
-    return SereneDBFastPath(table, std::move(out));
   }
   if (cat_type == "postgres" || cat_type == "clickhouse") {
     return ExternalFastPath(table, std::move(out), key_columns);

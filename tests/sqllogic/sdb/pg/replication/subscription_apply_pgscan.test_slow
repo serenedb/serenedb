@@ -285,24 +285,23 @@ statement ok
 CALL postgres_execute('rapp_${__DATABASE__}', 'UPDATE rapp_conflict SET v = ''FIVE'' WHERE id = 5');
 
 
-sleep 1s
+connection default
+query ok retry 120 backoff 250ms
+SELECT v FROM rapp_conflict WHERE id = 5;
+----
+v
+FIVE
+
+
+connection local_writer
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
 
 
 connection default
 query
-SELECT v FROM rapp_conflict WHERE id = 5;
-----
-v
-five
-
-
-connection local_writer
-statement ok
-COMMIT;
-
-
-connection default
-query ok retry 120 backoff 250ms
 SELECT v FROM rapp_conflict WHERE id = 5;
 ----
 v

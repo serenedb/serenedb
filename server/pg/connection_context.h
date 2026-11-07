@@ -56,11 +56,6 @@ namespace sdb::connector {
 struct EsBulkInput;
 
 }  // namespace sdb::connector
-namespace sdb::connector::ai {
-
-class AIQuery;
-
-}  // namespace sdb::connector::ai
 namespace sdb::replication {
 
 struct ReplBatch;
@@ -243,8 +238,6 @@ class ConnectionContext final : public duckdb::ClientContext {
 
   std::unique_ptr<replication::OriginSession> replication_origin;
 
-  connector::ai::AIQuery& AI() const noexcept { return *_ai; }
-
   void ValidateIsolationLevel(duckdb::TransactionIsolationLevel level) final;
   bool EmitWarning(const char* message) final;
   bool IsSettingVisible(const std::string& name) final;
@@ -291,7 +284,6 @@ class ConnectionContext final : public duckdb::ClientContext {
   bool _in_transaction_block = false;
   std::atomic<NoticeNode*> _notices{nullptr};
   std::shared_ptr<pg::ProgressSource> _progress;
-  std::unique_ptr<connector::ai::AIQuery> _ai;
   uint64_t _catalog_epoch = 0;
   uint64_t _settings_version = 0;
   irs::containers::NodeHashMap<std::string, TxnVariable> _variables;

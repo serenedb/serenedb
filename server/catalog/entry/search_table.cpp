@@ -1390,6 +1390,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterAddColumn(
       } else {
         connector::RewriteOwnRows(context, BackfillTarget(context, 0, nullptr));
       }
+      altered.ReplaceStoreColumnsAtCommit(context);
     });
 }
 

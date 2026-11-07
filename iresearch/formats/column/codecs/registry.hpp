@@ -36,6 +36,8 @@ const duckdb::CompressionFunction& DictZxcFunction();
 const duckdb::CompressionFunction& ZxcFunction();
 const duckdb::CompressionFunction& DictFsstFunction();
 const duckdb::CompressionFunction& FsstFunction();
+const duckdb::CompressionFunction& DictFsstPlusFunction();
+const duckdb::CompressionFunction& FsstPlusFunction();
 const duckdb::CompressionFunction* NumericFunction(
   duckdb::PhysicalType physical);
 

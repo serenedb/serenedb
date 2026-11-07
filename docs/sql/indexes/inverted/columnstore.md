@@ -26,6 +26,8 @@ A column's codec is either picked automatically (`auto`, the default: each segme
 | `bitpacking`, `rle`, `alp`, `alprd`, `roaring` | numeric / boolean | the transactional codecs, unchanged |
 | `dict_fsst` | text | sorted dictionary, front-coded, FSST-encoded |
 | `fsst` | text | one entry per row, front-coded against the previous row, FSST-encoded |
+| `dict_fsst_plus` | text | sorted dictionary, a prefix shared by neighbouring entries stored once, FSST-encoded; reading one entry decodes only that entry |
+| `fsst_plus` | text | one entry per row, a prefix shared by neighbouring rows stored once, FSST-encoded; reading one row decodes only that row |
 | `dict_lz4` | text | dictionary, lz4 over the dictionary bytes |
 | `dict_zstd` | text | dictionary, zstd over the dictionary bytes |
 | `lz4` | text | one entry per row, lz4 over the row bytes, for long text with few repeats |
@@ -33,7 +35,7 @@ A column's codec is either picked automatically (`auto`, the default: each segme
 | `zxc` | text | one entry per row, zxc over the row bytes |
 | `zstd` | text | one entry per row, zstd over the row bytes; on a transactional table, duckdb's codec (zstd over each 2048-row vector, no level) |
 
-A scan that reads whole vectors of a dictionary column hands out **dictionary vectors**, so an expression over the column runs once per distinct value. On `dict_fsst`, whose dictionary is sorted, a comparison of the column with a constant (`=`, `<>`, `<`, `<=`, `>`, `>=`), an `IN` list, or an `AND` / `OR` of them is answered without decoding the dictionary; `IS NULL` / `IS NOT NULL` need no decoding on any dictionary codec, and any other filter on a dictionary column is evaluated once per distinct value. The one-entry-per-row codecs answer filters by decoding the rows. A sparse read, such as a point lookup, a `LIMIT` or the few rows a selective filter keeps, decodes only the parts of a segment it touches.
+A scan that reads whole vectors of a dictionary column hands out **dictionary vectors**, so an expression over the column runs once per distinct value. On `dict_fsst` and `dict_fsst_plus`, whose dictionaries are sorted, a comparison of the column with a constant (`=`, `<>`, `<`, `<=`, `>`, `>=`), an `IN` list, or an `AND` / `OR` of them is answered without decoding the dictionary; `IS NULL` / `IS NOT NULL` need no decoding on any dictionary codec, and any other filter on a dictionary column is evaluated once per distinct value. The one-entry-per-row codecs answer filters by decoding the rows. A sparse read, such as a point lookup, a `LIMIT` or the few rows a selective filter keeps, decodes only the parts of a segment it touches.
 
 A refresh writes text with the codecs that encode and decode fastest, `fsst` and level-1 `lz4`, and prefers `fsst` when it is about as small, since it reads a single value without decompressing anything else. A compaction re-encodes text with every leaf and level `auto` considers, and trains a compression dictionary for each `lz4`, `zstd` and `zxc` segment on the segment's own values, so that values are compressed in small blocks and a point lookup decodes only one of them: a named codec always gets the dictionary, `auto` only when it makes the segment smaller. Under `auto` it leaves `zstd` out: on text, `zstd` is 10-25% smaller than the `lz4` leaves but decodes about three times slower, so [name `dict_zstd`](#choosing-a-codec) on the text columns that queries seldom read. When values repeat, the dictionary shape is kept unless one entry per row is clearly smaller; a row group that compression would make larger is stored as-is (`uncompressed`).
 
@@ -62,7 +64,7 @@ A refresh stores the transformed values as they are or compressed with `lz4`. A 
 
 ## Choosing a codec
 
-Name the codec on the column with `USING COMPRESSION`, optionally with a level in parentheses, as in `USING COMPRESSION zstd(compression_level = 9)`. A named codec is used as named: it is not measured against other codecs, and without a level it runs at its default level (1 for `lz4` and `zstd`, 3 for `zxc`). `lz4` and `dict_lz4` take levels 1 to 12, `zstd` and `dict_zstd` 1 to 22, `zxc` and `dict_zxc` 1 to 7; `fsst` and `dict_fsst` take none. A `zstd` frame decodes several times slower than an `fsst` or `lz4` one, which shows on point lookups and cold scans; `zxc` reads like `fsst` at levels 3 to 5 and trades read and write speed for size at 6 and 7.
+Name the codec on the column with `USING COMPRESSION`, optionally with a level in parentheses, as in `USING COMPRESSION zstd(compression_level = 9)`. A named codec is used as named: it is not measured against other codecs, and without a level it runs at its default level (1 for `lz4` and `zstd`, 3 for `zxc`). `lz4` and `dict_lz4` take levels 1 to 12, `zstd` and `dict_zstd` 1 to 22, `zxc` and `dict_zxc` 1 to 7; `fsst`, `dict_fsst`, `fsst_plus` and `dict_fsst_plus` take none. A `zstd` frame decodes several times slower than an `fsst` or `lz4` one, which shows on point lookups and cold scans; `zxc` reads like `fsst` at levels 3 to 5 and trades read and write speed for size at 6 and 7.
 
 <SqlLogicTest id="sql/indexes/inverted/columnstore/example_001" />
 

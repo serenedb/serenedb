@@ -11,6 +11,8 @@ CREATE TABLE lvl_columns (a INTEGER PRIMARY KEY,
                           dlz4_tbl TEXT USING COMPRESSION dict_lz4,
                           dfsst TEXT USING COMPRESSION dict_fsst,
                           fsst_col TEXT USING COMPRESSION fsst,
+                          dfsstp TEXT USING COMPRESSION dict_fsst_plus,
+                          fsstp_col TEXT USING COMPRESSION fsst_plus,
                           auto_col TEXT,
                           zstd_3 TEXT USING COMPRESSION zstd(compression_level = 3),
                           zstd_22 TEXT USING COMPRESSION zstd(compression_level = 22),
@@ -23,6 +25,8 @@ INSERT INTO lvl_columns SELECT a,
   'z' || (a % 13), 'y' || (a % 17), repeat('r' || a, 6), repeat('s' || a, 6),
   'x' || (a % 19), 'w' || (a % 23), 'https://example.org/users/' || lpad((a // 100)::VARCHAR, 6, '0'),
   CASE WHEN a % 7 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END,
+  'https://example.org/items/' || lpad((a // 50)::VARCHAR, 6, '0'),
+  CASE WHEN a % 11 = 0 THEN NULL ELSE 'row-' || lpad(a::VARCHAR, 8, '0') END,
   CASE WHEN a % 5 = 0 THEN NULL ELSE 'v' || (a % 31) END,
   repeat('t' || a, 6), CASE WHEN a % 9 = 0 THEN NULL ELSE repeat('u' || a, 6) END, 'n' || a
   FROM range(20000) t(a);
@@ -38,12 +42,14 @@ GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
 dfsst	DICT_FSST
+dfsstp	DICT_FSST_PLUS
 dlz4_6	DICT_LZ4
 dlz4_tbl	DICT_LZ4
 dzstd_1	DICT_ZSTD
 dzstd_22	DICT_ZSTD
 dzxc_4	DICT_ZXC
 fsst_col	FSST
+fsstp_col	FSST_PLUS
 lz4_1	LZ4
 lz4_12	LZ4
 zstd_22	ZSTD
@@ -65,6 +71,8 @@ WHERE lz4_1 IS DISTINCT FROM repeat('p' || a, 8)
    OR dlz4_tbl IS DISTINCT FROM 'w' || (a % 23)
    OR dfsst IS DISTINCT FROM 'https://example.org/users/' || lpad((a // 100)::VARCHAR, 6, '0')
    OR fsst_col IS DISTINCT FROM (CASE WHEN a % 7 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END)
+   OR dfsstp IS DISTINCT FROM 'https://example.org/items/' || lpad((a // 50)::VARCHAR, 6, '0')
+   OR fsstp_col IS DISTINCT FROM (CASE WHEN a % 11 = 0 THEN NULL ELSE 'row-' || lpad(a::VARCHAR, 8, '0') END)
    OR auto_col IS DISTINCT FROM (CASE WHEN a % 5 = 0 THEN NULL ELSE 'v' || (a % 31) END)
    OR zstd_3 IS DISTINCT FROM repeat('t' || a, 6)
    OR zstd_22 IS DISTINCT FROM (CASE WHEN a % 9 = 0 THEN NULL ELSE repeat('u' || a, 6) END)
@@ -86,6 +94,12 @@ SELECT count(*) FROM lvl_columns WHERE dzstd_22 = 'y3' AND zxc_7 LIKE 's1%' AND 
 ----
 count
 6
+
+query
+SELECT count(*) FROM lvl_columns WHERE dfsstp = 'https://example.org/items/000002' AND fsstp_col LIKE 'row-000001%';
+----
+count
+46
 
 statement ok
 DROP TABLE lvl_columns;
@@ -216,6 +230,18 @@ statement error
 CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst(compression_level = 1)) WITH (storage = 'search');
 ----
 db error: ERROR: Column "v": compression 'fsst' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst_plus(compression_level = 2)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'dict_fsst_plus' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst_plus(compression_level = 1)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'fsst_plus' takes no compression_level
 
 
 statement error

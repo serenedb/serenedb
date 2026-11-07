@@ -30,12 +30,13 @@ enum class ByteCodec : uint8_t {
   Zstd = 1,
   Fsst = 2,
   Zxc = 3,
+  FsstPlus = 4,
 };
 
-inline constexpr uint8_t kByteCodecCount = 4;
+inline constexpr uint8_t kByteCodecCount = 5;
 
 constexpr bool Sorted(ByteCodec leaf) noexcept {
-  return leaf == ByteCodec::Fsst;
+  return leaf == ByteCodec::Fsst || leaf == ByteCodec::FsstPlus;
 }
 
 template<typename Codec>

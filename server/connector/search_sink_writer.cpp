@@ -38,6 +38,7 @@
 
 #include "catalog/catalog.h"
 #include "connector/common.h"
+#include "connector/constraint_keys.h"
 #include "connector/inet_terms.h"
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"
@@ -256,7 +257,7 @@ bool SearchSinkInsertBaseImpl::InvertDictionary(
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-  EntryInfoProvider&& entry_info_provider, PkColumnKind pk,
+  EntryInfoProvider&& entry_info_provider, catalog::PkColumnKind pk,
   std::vector<IndexedExpression>&& indexed_exprs,
   const catalog::InvertedIndexConfig* config)
   : _tokenizer_provider{std::move(tokenizer_provider)},
@@ -267,13 +268,18 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   if (!config) {
     return;
   }
+  _constraint_keys = config->constraint_keys;
   for (const auto& key : config->keys) {
     if (!irs::field_limits::valid(key.column_id)) {
       continue;
     }
     const auto* entry = config->FindEntry(key.field_id);
-    if (entry && entry->IsTermDict()) {
-      _terms_by_column[key.column_id].push_back(key.field_id);
+    if (!entry || !entry->IsTermDict()) {
+      continue;
+    }
+    auto& fields = _terms_by_column[key.column_id];
+    if (!absl::c_linear_search(fields, key.field_id)) {
+      fields.push_back(key.field_id);
     }
   }
 }
@@ -1075,6 +1081,11 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                                         table_id, column_ids, context);
     sink.SwitchExpressionImpl(indexed_expr.field_id, result.GetType(), result,
                               num_rows);
+  }
+  for (const auto& key : sink.ConstraintKeys()) {
+    duckdb::Vector keys{duckdb::LogicalType::BLOB, num_rows};
+    EncodeConstraintKeys(chunk, column_ids, key, keys);
+    sink.SwitchFieldImpl(key.field, duckdb::LogicalType::BLOB, keys, num_rows);
   }
   sink.FinishImpl();
 }

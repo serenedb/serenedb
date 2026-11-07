@@ -224,6 +224,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
 
   const auto* active = ActiveFieldOptions();
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
+  _col_writer->SetDeferredSeal(_deferred_columns);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());

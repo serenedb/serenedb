@@ -21,18 +21,18 @@ id	c
 statement error
 DROP TYPE iceberg_partition_kind;
 ----
-db error: ERROR: Cannot drop entry "iceberg_partition_kind" because there are entries that depend on it.
-table "iceberg_manifests" depends on type "iceberg_partition_kind".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type iceberg_partition_kind because other objects depend on it
+DETAIL: column c of table iceberg_manifests depends on type iceberg_partition_kind
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP TYPE iceberg_partition_kind RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "iceberg_partition_kind" because there are entries that depend on it.
-table "iceberg_manifests" depends on type "iceberg_partition_kind".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type iceberg_partition_kind because other objects depend on it
+DETAIL: column c of table iceberg_manifests depends on type iceberg_partition_kind
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -88,9 +88,10 @@ INSERT INTO clickclack_workers VALUES (1, 'on', 'off', 'lamp');
 statement error
 DROP TYPE clickclack_node_state;
 ----
-db error: ERROR: Cannot drop entry "clickclack_node_state" because there are entries that depend on it.
-table "clickclack_workers" depends on type "clickclack_node_state".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type clickclack_node_state because other objects depend on it
+DETAIL: column s2 of table clickclack_workers depends on type clickclack_node_state
+column s1 of table clickclack_workers depends on type clickclack_node_state
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -146,9 +147,8 @@ INSERT INTO mop_recruiter_calls VALUES (1, 'low');
 statement error
 DROP TYPE mop_application_priority;
 ----
-db error: ERROR: Cannot drop entry "mop_application_priority" because there are entries that depend on it.
+db error: ERROR: cannot drop type mop_application_priority because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -358,9 +358,9 @@ CREATE INDEX ix_jobs_label ON vedernikoff_clickclack_data.jobs(label);
 statement error
 DROP TYPE vedernikoff_clickclack_types.priority;
 ----
-db error: ERROR: Cannot drop entry "priority" because there are entries that depend on it.
-table "jobs" depends on type "priority".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type vedernikoff_clickclack_types.priority because other objects depend on it
+DETAIL: column p of table vedernikoff_clickclack_data.jobs depends on type vedernikoff_clickclack_types.priority
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

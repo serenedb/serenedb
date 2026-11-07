@@ -38,6 +38,7 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/joinref.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
@@ -165,14 +166,22 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     if (!Allows<"deptype">('n') && !Allows<"deptype">('a')) {
       return;
     }
+    irs::containers::FlatHashSet<duckdb::idx_t> sequences;
     ScanSubjects(table, [&](duckdb::CatalogEntry& object,
-                            const duckdb::DependencyDependentFlags& flags) {
+                            const duckdb::DependencyDependentFlags&) {
       if (object.type == duckdb::CatalogType::TYPE_ENTRY) {
         ColumnTypes(table, object);
-      } else if (object.type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-        Sequence(table, object, flags.IsOwnedBy());
+      } else if (object.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
+                 sequences.insert(object.oid).second) {
+        Sequence(table, object);
       }
     });
+    for (const auto& owned : catalog::OwnedEntries(Transaction(), table)) {
+      if (owned.get().type == duckdb::CatalogType::SEQUENCE_ENTRY &&
+          sequences.insert(owned.get().oid).second) {
+        Sequence(table, owned);
+      }
+    }
     if (Triggered(table)) {
       table.ScanTriggers(Transaction(), [&](duckdb::CatalogEntry& trigger) {
         Trigger(table, trigger.Cast<duckdb::TriggerCatalogEntry>());
@@ -248,7 +257,30 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     });
   }
 
-  void Row(duckdb::SequenceCatalogEntry& sequence) { Namespace(sequence); }
+  void Row(duckdb::SequenceCatalogEntry& sequence) {
+    Namespace(sequence);
+    if (!Allows<"deptype">('a')) {
+      return;
+    }
+    const auto owner = catalog::OwnerOf(Transaction(), sequence);
+    if (!owner || owner->type != duckdb::CatalogType::TABLE_ENTRY) {
+      return;
+    }
+    const auto& table = owner->Cast<duckdb::TableCatalogEntry>();
+    const auto& owner_column = sequence.owner_column;
+    int32_t attnum = 0;
+    for (const auto& column : table.GetColumns().Logical()) {
+      if (owner_column.IsValid()
+            ? owner_column.GetIndex() == column.CatalogOid()
+            : (HasDefault(column) || column.Generated()) &&
+                NamesSequence(DefaultExpression(column), sequence.name)) {
+        attnum = Attnum(column);
+        break;
+      }
+    }
+    Depend(kPgClassTable, sequence.oid, 0, kPgClassTable, table.oid, attnum,
+           'a');
+  }
 
   void Row(const duckdb::TypeCatalogEntry& type) {
     Namespace(type);
@@ -528,26 +560,13 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   }
 
   void Sequence(const duckdb::TableCatalogEntry& table,
-                const duckdb::CatalogEntry& sequence, bool owned_by) {
-    const auto& owner =
-      sequence.Cast<duckdb::SequenceCatalogEntry>().owner_column;
-    int32_t owner_column = 0;
+                const duckdb::CatalogEntry& sequence) {
     for (const auto& column : table.GetColumns().Logical()) {
-      const bool names =
-        (HasDefault(column) || column.Generated()) &&
-        NamesSequence(DefaultExpression(column), sequence.name);
-      if (names && HasAttrdef(column)) {
+      if ((HasDefault(column) || column.Generated()) && HasAttrdef(column) &&
+          NamesSequence(DefaultExpression(column), sequence.name)) {
         Depend(kPgAttrdefTable, column.CatalogOid(), 0, kPgClassTable,
                sequence.oid, 0, 'n');
       }
-      if (owner_column == 0 &&
-          (owner.IsValid() ? owner.GetIndex() == column.CatalogOid() : names)) {
-        owner_column = Attnum(column);
-      }
-    }
-    if (owned_by) {
-      Depend(kPgClassTable, sequence.oid, 0, kPgClassTable, table.oid,
-             owner_column, 'a');
     }
   }
 };

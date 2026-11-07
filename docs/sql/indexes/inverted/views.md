@@ -38,7 +38,7 @@ How the index derives a stable per-row identity depends on the view body:
 
 | View body | Row identity | Can be overridden |
 |---|---|---|
-| `SELECT … FROM base_table` | The hidden row id | — |
+| `SELECT … FROM base_table` | The table's primary-key columns | — |
 | `SELECT … FROM read_parquet('file')` | The reader's `file_row_number` | — |
 | `read_csv` / `read_json` single file | The byte offset within the file | — |
 | Reader over a **glob** (`'…/*.parquet'`) | `(file_index, position)` pair | — |
@@ -51,7 +51,7 @@ Row identity is always derived automatically — there is no `pk` index option. 
 
 ## Fast-path sources
 
-A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: SereneDB base tables, `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
+A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: SereneDB base tables with a primary key, `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
 
 The view body may shape the source and still qualify as fast-path:
 
@@ -72,6 +72,7 @@ Besides losing [materialization](#materializing-real-columns), a generic view's 
 | An expression in the select list: `SELECT id, upper(body) AS body FROM …` | A plain view, with the expression in the index: `USING inverted((upper(body)) en)` |
 | A qualified column: `SELECT t.id, t.body FROM … AS t` | Bare column names: `SELECT id, body FROM …` |
 | A join, a subquery, `UNION ALL` or inline `VALUES` | One table or one reader call per view |
+| A SereneDB table without a primary key | A `PRIMARY KEY` on the table, or [`INCLUDE`](#include-columns) the columns you return |
 | `GROUP BY`, `HAVING`, `DISTINCT`, `QUALIFY`, `SAMPLE` or a `WITH` clause | A plain view; aggregate or deduplicate in the query |
 | A reader over a list of files: `read_parquet(['a.parquet', 'b.parquet'])` | One glob: `read_parquet('data/*.parquet')` |
 | Compressed JSON: a `.gz` / `.zst` path, or `compression = 'gzip'` / `'zstd'` | Uncompressed files, or [`INCLUDE`](#include-columns) the columns you return |

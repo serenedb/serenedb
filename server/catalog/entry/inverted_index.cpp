@@ -54,13 +54,13 @@
 #include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/dependency.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
+#include "catalog/transaction.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_reindex_function.h"
-#include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
@@ -130,16 +130,12 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   }
   config->pk = data.pk;
   config->top_k_scorer = std::move(data.top_k_scorer);
-  return config;
-}
-
-duckdb::shared_ptr<duckdb::IndexDataTableInfo> DataTableInfoOf(
-  duckdb::optional_ptr<duckdb::TableCatalogEntry> table) {
-  if (!table || !table->IsDuckTable()) {
-    return nullptr;
+  if (data.unique_key) {
+    config->constraint_keys.push_back(
+      {.field = data.unique_key->field,
+       .columns = std::move(data.unique_key->columns)});
   }
-  return duckdb::make_shared_ptr<duckdb::IndexDataTableInfo>(
-    table->Cast<duckdb::DuckTableEntry>().GetStorage().GetDataTableInfo());
+  return config;
 }
 
 constexpr auto kCreateOnlyOptions = std::to_array({
@@ -182,7 +178,7 @@ void SetJobOwnedBy(duckdb::CatalogTransaction transaction,
   duckdb::ChangeOwnershipInfo ownership{
     duckdb::CatalogType::JOB_ENTRY,
     duckdb::AlterEntryData{job, duckdb::OnEntryNotFound::THROW_EXCEPTION},
-    job.Schema(), owner};
+    duckdb::Identifier{}, owner};
   catalog.Alter(transaction, ownership);
 }
 
@@ -325,8 +321,8 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      const auto dict =
-        serene.FindIn<TokenizerCatalogEntry>(&context, field.text_dictionary);
+      const auto dict = serene.FindIn<TokenizerCatalogEntry>(
+        serene.GetCatalogTransaction(context), field.text_dictionary);
       if (!dict) {
         continue;
       }
@@ -527,6 +523,12 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
   for (const auto& [field_id, field] : _config->fields) {
     data.fields.emplace(field_id, field);
   }
+  SDB_ASSERT(_config->constraint_keys.size() <= 1);
+  if (!_config->constraint_keys.empty()) {
+    const auto& key = _config->constraint_keys.front();
+    data.unique_key =
+      persistence::UniqueKeyRecord{.field = key.field, .columns = key.columns};
+  }
   return data;
 }
 
@@ -534,9 +536,9 @@ InvertedIndexEntry::InvertedIndexEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateIndexInfo& info,
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table)
-  : duckdb::DuckIndexEntry{catalog, schema, info, DataTableInfoOf(table)},
+  : duckdb::IndexCatalogEntry{catalog, schema, info},
     _relation_name{info.table} {
-  if (table && !table->IsDuckTable()) {
+  if (table) {
     _search_table = table->Cast<SearchTableEntry>().Storage();
   }
   if (auto data =
@@ -572,18 +574,17 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo(
 }
 
 duckdb::Identifier InvertedIndexEntry::GetTableName() const {
-  if (info) {
-    return duckdb::DuckIndexEntry::GetTableName();
-  }
+  auto& owner = catalog.Cast<BaseCatalog>();
+  const CommittedView view;
   const auto relation =
-    catalog.Cast<duckdb::DuckCatalog>().GetOidIndex().GetCommitted(table_oid);
+    owner.LookupOid(view.Transaction(owner.GetDatabase()), table_oid);
   return relation ? relation->name : _relation_name;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) {
   if (info.type != duckdb::AlterType::ALTER_INDEX) {
-    return duckdb::DuckIndexEntry::AlterEntry(transaction, info);
+    return duckdb::IndexCatalogEntry::AlterEntry(transaction, info);
   }
   auto& index_alter = info.Cast<duckdb::AlterIndexInfo>();
   auto& context = transaction.GetContext();
@@ -645,14 +646,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   }
   if (_storage) {
     auto settings = ResolveSettings(new_options);
-    if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-      connection->DeferToCommit(
-        [storage = _storage, settings = std::move(settings)] {
-          storage->ApplyOptions(settings);
-        });
-    } else {
-      _storage->ApplyOptions(settings);
-    }
+    SessionOf(context, catalog)
+      .DeferToCommit([storage = _storage, settings = std::move(settings)] {
+        storage->ApplyOptions(settings);
+      });
   }
   return result;
 }
@@ -679,8 +676,7 @@ void InvertedIndexEntry::CreateReindexJob(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> InvertedIndexEntry::ReindexJob(
   duckdb::CatalogTransaction transaction) const {
-  const auto owned =
-    catalog.GetDependencyManager()->OwnedEntries(transaction, *this);
+  const auto owned = OwnedEntries(transaction, *this);
   const auto job = absl::c_find_if(owned, [](const auto& entry) {
     return entry.get().type == duckdb::CatalogType::JOB_ENTRY;
   });
@@ -719,8 +715,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
   auto& index_info = info_copy->Cast<duckdb::CreateIndexInfo>();
   auto result = duckdb::make_uniq<InvertedIndexEntry>(
     catalog, ParentSchema(context), index_info, nullptr);
-  result->info = info;
-  result->initial_index_size = initial_index_size;
   result->_storage = _storage;
   result->_search_table = _search_table;
   result->_config = _config;
@@ -755,7 +749,6 @@ void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (CreatedObject(prev_entry)) {
     OnDrop();
   }
-  duckdb::DuckIndexEntry::Rollback(prev_entry);
 }
 
 bool InvertedIndexEntry::ScanColumnSegmentInfo(
@@ -788,20 +781,16 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
 }
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
-  duckdb::DuckCatalog& catalog) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  BaseCatalog& catalog) {
   std::vector<duckdb::reference<InvertedIndexEntry>> indexes;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
+  catalog.ScanSchemas([&](Schema& schema) {
+    schema.Scan(
       duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (connector::IsInvertedIndex(
-              entry.Cast<duckdb::IndexCatalogEntry>())) {
+        if (IsInvertedIndex(entry.Cast<duckdb::IndexCatalogEntry>())) {
           indexes.emplace_back(entry.Cast<InvertedIndexEntry>());
         }
       });
-  }
+  });
   return indexes;
 }
 

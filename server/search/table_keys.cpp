@@ -1,0 +1,449 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "search/table_keys.h"
+
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
+
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <iresearch/utils/type_limits.hpp>
+
+#include "catalog/base_catalog.h"
+#include "catalog/entry/search_table.h"
+#include "catalog/schema.h"
+#include "connector/column_id.h"
+#include "connector/constraint_keys.h"
+#include "search/store.h"
+
+namespace sdb::search {
+namespace {
+
+irs::bytes_view Bytes(std::string_view key) noexcept {
+  return {reinterpret_cast<const irs::byte_type*>(key.data()), key.size()};
+}
+
+std::string_view Chars(irs::bytes_view term) noexcept {
+  return {reinterpret_cast<const char*>(term.data()), term.size()};
+}
+
+const irs::TermReader* KeyField(const irs::SubReader& sub,
+                                irs::field_id field) {
+  for (const auto* reader : sub.fields(field)) {
+    if (reader->meta().dict == connector::kConstraintKeyDict) {
+      return reader;
+    }
+  }
+  return nullptr;
+}
+
+std::string DefaultName(const catalog::SearchTableEntry& table,
+                        std::span<const std::string> names,
+                        std::string_view suffix) {
+  return absl::StrCat(table.name.GetIdentifierName(), "_",
+                      absl::StrJoin(names, "_"), "_", suffix);
+}
+
+const catalog::SearchTableEntry* LookupTable(
+  const catalog::SearchTableEntry& table, const duckdb::Identifier& schema,
+  const duckdb::Identifier& name, duckdb::CatalogTransaction transaction) {
+  auto parent = table.catalog.GetSchema(
+    transaction, schema.empty() ? table.ParentSchema(transaction).name : schema,
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!parent) {
+    return nullptr;
+  }
+  const auto entry = parent->Cast<catalog::Schema>()
+                       .Set(duckdb::CatalogType::TABLE_ENTRY)
+                       .Get(transaction, name);
+  if (!entry || !catalog::IsSearchTable(*entry)) {
+    return nullptr;
+  }
+  return &entry->Cast<catalog::SearchTableEntry>();
+}
+
+const catalog::SearchTableEntry* ReferencedTable(
+  const catalog::SearchTableEntry& table,
+  const duckdb::ForeignKeyConstraint& fk,
+  duckdb::CatalogTransaction transaction) {
+  if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
+    return &table;
+  }
+  return LookupTable(table, fk.info.schema, fk.info.table, transaction);
+}
+
+const duckdb::Constraint* ReferencedKey(
+  const catalog::SearchTableEntry& parent,
+  std::span<const duckdb::Identifier> columns) {
+  const auto& parent_columns = parent.GetColumns();
+  for (const auto& constraint : parent.GetConstraints()) {
+    if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+      continue;
+    }
+    const auto indexes = constraint->Cast<duckdb::UniqueConstraint>()
+                           .GetLogicalIndexes(parent_columns);
+    if (indexes.size() == columns.size() &&
+        absl::c_all_of(columns, [&](const duckdb::Identifier& name) {
+          return parent_columns.ColumnExists(name) &&
+                 absl::c_linear_search(indexes,
+                                       parent_columns.GetColumn(name).Logical());
+        })) {
+      return constraint.get();
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
+                           duckdb::CatalogTransaction transaction) {
+  TableKeys keys;
+  const auto& columns = table.GetColumns();
+  const auto add_column = [&](KeySpec& spec,
+                              const duckdb::ColumnDefinition& column) {
+    spec.key.columns.push_back(connector::TableColumnId(column));
+    spec.names.push_back(column.Name().GetIdentifierName());
+    spec.types.push_back(column.Type());
+  };
+  for (const auto& constraint : table.GetConstraints()) {
+    if (constraint->type == duckdb::ConstraintType::UNIQUE) {
+      const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+      KeySpec spec{.kind = KeyKind::Unique,
+                   .key = {.field = constraint->oid},
+                   .constraint = constraint->constraint_name};
+      for (const auto index : unique.GetLogicalIndexes(columns)) {
+        add_column(spec, columns.GetColumn(index));
+      }
+      if (spec.constraint.empty()) {
+        spec.constraint = unique.IsPrimaryKey()
+                            ? absl::StrCat(table.name.GetIdentifierName(),
+                                           "_pkey")
+                            : DefaultName(table, spec.names, "key");
+      }
+      keys.specs.push_back(std::move(spec));
+      continue;
+    }
+    if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
+      continue;
+    }
+    const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+    if (!fk.info.IsAppendConstraint()) {
+      continue;
+    }
+    KeySpec spec{.kind = KeyKind::Reference,
+                 .key = {.field = constraint->oid},
+                 .constraint = constraint->constraint_name,
+                 .referenced_schema = fk.info.schema,
+                 .referenced = fk.info.table};
+    if (spec.constraint.empty()) {
+      std::vector<std::string> names;
+      for (const auto& name : fk.fk_columns) {
+        names.push_back(name.GetIdentifierName());
+      }
+      spec.constraint = DefaultName(table, names, "fkey");
+    }
+    const auto* parent = ReferencedTable(table, fk, transaction);
+    const auto* referenced = parent ? ReferencedKey(*parent, fk.pk_columns)
+                                    : nullptr;
+    if (parent && !referenced) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_FOREIGN_KEY),
+        ERR_MSG("there is no unique constraint matching given keys for "
+                "referenced table \"",
+                parent->name.GetIdentifierName(), "\""));
+    }
+    if (!referenced) {
+      for (const auto& name : fk.fk_columns) {
+        add_column(spec, columns.GetColumn(name));
+      }
+      keys.specs.push_back(std::move(spec));
+      continue;
+    }
+    spec.referenced_field = referenced->oid;
+    const auto& parent_columns = parent->GetColumns();
+    std::vector<duckdb::LogicalType> own_types;
+    for (const auto index :
+         referenced->Cast<duckdb::UniqueConstraint>().GetLogicalIndexes(
+           parent_columns)) {
+      const auto& parent_column = parent_columns.GetColumn(index);
+      const auto at = absl::c_find_if(fk.pk_columns, [&](const auto& name) {
+                        return parent_columns.GetColumn(name).Logical() == index;
+                      }) -
+                      fk.pk_columns.begin();
+      const auto& column = columns.GetColumn(fk.fk_columns[at]);
+      spec.key.columns.push_back(connector::TableColumnId(column));
+      spec.names.push_back(column.Name().GetIdentifierName());
+      spec.types.push_back(parent_column.Type());
+      own_types.push_back(column.Type());
+    }
+    if (own_types != spec.types) {
+      spec.key.types = spec.types;
+    }
+    auto referencing = std::make_shared<const Referencing>(
+      Referencing{.table = table.Storage()->GetId(),
+                  .field = spec.key.field,
+                  .referenced = spec.referenced_field});
+    parent->Storage()->AddReferencing(referencing);
+    keys.referencing.push_back(std::move(referencing));
+    keys.specs.push_back(std::move(spec));
+  }
+  return keys;
+}
+
+const catalog::SearchTableEntry* ReferencedTable(
+  const catalog::SearchTableEntry& table, const KeySpec& spec,
+  duckdb::CatalogTransaction transaction) {
+  return LookupTable(table, spec.referenced_schema, spec.referenced,
+                     transaction);
+}
+
+std::vector<ReferencingKey> LiveReferencing(
+  const catalog::SearchTableEntry& table,
+  std::span<const std::shared_ptr<const Referencing>> referencing,
+  irs::field_id field, duckdb::CatalogTransaction transaction) {
+  std::vector<ReferencingKey> live;
+  auto& oids = table.catalog.Cast<catalog::BaseCatalog>().Oids();
+  for (const auto& reference : referencing) {
+    if (reference->referenced != field ||
+        absl::c_any_of(live, [&](const ReferencingKey& key) {
+          return key.table->oid == reference->table &&
+                 key.spec->key.field == reference->field;
+        })) {
+      continue;
+    }
+    auto entry = oids.Find(transaction, reference->table);
+    if (!entry || !catalog::IsSearchTable(*entry)) {
+      continue;
+    }
+    auto& child = entry->Cast<catalog::SearchTableEntry>();
+    const auto& specs = child.KeySpecs();
+    const auto spec = absl::c_find_if(specs, [&](const KeySpec& candidate) {
+      return candidate.kind == KeyKind::Reference &&
+             candidate.key.field == reference->field &&
+             candidate.referenced_field == field;
+    });
+    if (spec == specs.end()) {
+      continue;
+    }
+    const auto* referenced = ReferencedTable(child, *spec, transaction);
+    if (referenced && referenced->Storage() == table.Storage()) {
+      live.push_back({.table = &child, .spec = &*spec});
+    }
+  }
+  return live;
+}
+
+KeySpec UniqueIndexKey(const catalog::SearchTableEntry& table,
+                       irs::field_id field, std::string name,
+                       std::span<const duckdb::Identifier> columns) {
+  KeySpec spec{.kind = KeyKind::Unique,
+               .key = {.field = field},
+               .constraint = std::move(name)};
+  for (const auto& column_name : columns) {
+    const auto& column = table.GetColumns().GetColumn(column_name);
+    spec.key.columns.push_back(connector::TableColumnId(column));
+    spec.names.push_back(column.Name().GetIdentifierName());
+    spec.types.push_back(column.Type());
+  }
+  return spec;
+}
+
+std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
+                                    const catalog::ConstraintKey& key,
+                                    duckdb::CatalogTransaction transaction) {
+  transaction.view.visibility_bound =
+    duckdb::VisibilityBound::IncludingUncommitted();
+  const auto entry =
+    table.catalog.Cast<catalog::BaseCatalog>().Oids().Find(transaction,
+                                                           key.field);
+  if (!entry || entry->type != duckdb::CatalogType::INDEX_ENTRY) {
+    return std::nullopt;
+  }
+  KeySpec spec{.kind = KeyKind::Unique,
+               .key = key,
+               .constraint = entry->name.GetIdentifierName()};
+  for (const auto id : key.columns) {
+    for (const auto& column : table.GetColumns().Logical()) {
+      if (connector::TableColumnId(column) == id) {
+        spec.names.push_back(column.Name().GetIdentifierName());
+        spec.types.push_back(column.Type());
+      }
+    }
+  }
+  return spec;
+}
+
+void VerifyUniqueKey(const irs::DirectoryReader& reader, const KeySpec& spec) {
+  std::vector<KeyProbe::Segment> segments;
+  for (const auto& segment : reader) {
+    segments.push_back({.sub = &segment});
+  }
+  ForEachSegmentKey(
+    segments, spec.key.field, [&](std::string_view key, size_t rows) {
+      if (rows > 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+          ERR_MSG("could not create unique index \"", spec.constraint, "\""),
+          ERR_DETAIL("Key ",
+                     connector::ConstraintKeyText(key, spec.names, spec.types),
+                     " is duplicated."));
+      }
+      return true;
+    });
+}
+
+void KeyProbe::Add(const Segment& segment) {
+  if (const auto* field = KeyField(*segment.sub, _field)) {
+    _segments.push_back({.unit = segment.unit,
+                         .field = field,
+                         .mask = segment.sub->MaskedDocs(),
+                         .masks = segment.masks,
+                         .first = segment.first});
+  }
+}
+
+void KeyProbe::AddLive(const LiveUnits& live, const LiveUnits* since) {
+  for (const auto& unit : live.Units()) {
+    irs::doc_id_t first = 0;
+    if (since) {
+      if (const auto* before = since->Find(unit.unit->id)) {
+        if (before->visible >= unit.visible) {
+          continue;
+        }
+        first = before->visible;
+      }
+    }
+    const RowMasks masks{.deleted = unit.deleted, .removed = unit.removed};
+    if (unit.unit->hot) {
+      Add(Hot{.unit = unit.unit->id,
+              .keys = &unit.unit->hot->Keys(),
+              .first = first,
+              .docs = unit.visible,
+              .masks = masks});
+    } else {
+      Add(Segment{.unit = unit.unit->id,
+                  .sub = unit.unit->reader.get(),
+                  .masks = masks,
+                  .first = first});
+    }
+  }
+}
+
+void KeyProbe::ForEach(std::string_view key,
+                       absl::FunctionRef<bool(const KeyHolder&)> visit) {
+  bool more = true;
+  for (const auto& source : _segments) {
+    source.field->ReadDocs(Bytes(key), [&](irs::doc_id_t doc) {
+      if (doc - irs::doc_limits::min() < source.first ||
+          source.mask.Contains(doc) || source.masks.Contains(doc)) {
+        return true;
+      }
+      more = visit({.unit = source.unit, .doc = doc});
+      return more;
+    });
+    if (!more) {
+      return;
+    }
+  }
+  for (const auto& hot : _hots) {
+    hot.keys->ForEach(_field, key, [&](irs::doc_id_t doc) {
+      const auto row = doc - irs::doc_limits::min();
+      if (row < hot.first || row >= hot.docs || hot.masks.Contains(doc)) {
+        return true;
+      }
+      more = visit({.unit = hot.unit, .doc = doc});
+      return more;
+    });
+    if (!more) {
+      return;
+    }
+  }
+}
+
+bool KeyProbe::Exists(std::string_view key) {
+  bool found = false;
+  ForEach(key, [&](const KeyHolder&) {
+    found = true;
+    return false;
+  });
+  return found;
+}
+
+void ForEachSegmentKey(
+  std::span<const KeyProbe::Segment> segments, irs::field_id field,
+  absl::FunctionRef<bool(std::string_view key, size_t rows)> visit) {
+  struct Cursor {
+    const KeyProbe::Segment* segment = nullptr;
+    const irs::TermReader* reader = nullptr;
+    irs::DocumentMask::Iterator mask;
+    irs::SeekTermIterator::ptr terms;
+  };
+  std::vector<Cursor> cursors;
+  cursors.reserve(segments.size());
+  for (const auto& segment : segments) {
+    const auto* reader = KeyField(*segment.sub, field);
+    if (!reader) {
+      continue;
+    }
+    auto terms = reader->iterator();
+    if (terms && terms->next()) {
+      cursors.push_back({.segment = &segment,
+                         .reader = reader,
+                         .mask = segment.sub->MaskedDocs(),
+                         .terms = std::move(terms)});
+    }
+  }
+  std::string least;
+  while (!cursors.empty()) {
+    least.assign(Chars(cursors.front().terms->value()));
+    for (const auto& cursor : cursors) {
+      const auto term = Chars(cursor.terms->value());
+      if (term < least) {
+        least.assign(term);
+      }
+    }
+    size_t rows = 0;
+    for (auto& cursor : cursors) {
+      if (Chars(cursor.terms->value()) != least) {
+        continue;
+      }
+      const auto& masks = cursor.segment->masks;
+      const auto first = cursor.segment->first;
+      cursor.reader->ReadDocs(Bytes(least), [&](irs::doc_id_t doc) {
+        if (doc - irs::doc_limits::min() >= first && !cursor.mask.Contains(doc) &&
+            !masks.Contains(doc)) {
+          ++rows;
+        }
+        return true;
+      });
+      if (!cursor.terms->next()) {
+        cursor.terms.reset();
+      }
+    }
+    std::erase_if(cursors, [](const Cursor& cursor) { return !cursor.terms; });
+    if (rows != 0 && !visit(least, rows)) {
+      return;
+    }
+  }
+}
+
+}  // namespace sdb::search

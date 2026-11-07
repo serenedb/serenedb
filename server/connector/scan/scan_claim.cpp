@@ -678,6 +678,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   std::vector<LivePass> passes;
   uint64_t parallel = 0;
   uint64_t rgs = 0;
+  uint64_t in_memory_docs = 0;
   auto run_end = g.live_segments;
   for (auto i = g.live_segments; i-- != 0;) {
     const auto seg = g.segment_order[i];
@@ -721,7 +722,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
   uint32_t skipped = 0;
   for (uint32_t i = 0; i != g.live_segments; ++i) {
-    const auto& work = g.Segment(g.segment_order[i]);
+    const auto seg = g.segment_order[i];
+    const auto& work = g.Segment(seg);
     const auto live =
       work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit
         ? work.LiveCount()
@@ -730,10 +732,15 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       ++skipped;
       continue;
     }
-    parallel += live;
     rgs += work.rg_count;
+    if (const auto& sub = (*g.reader)[seg]; InMemorySegment(sub)) {
+      in_memory_docs += sub.Meta().docs_count;
+    } else {
+      parallel += live;
+    }
   }
   g.done_segments.store(skipped, std::memory_order_relaxed);
+  parallel += (in_memory_docs + g.rg_size - 1) / g.rg_size;
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);
   }

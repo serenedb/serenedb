@@ -26,7 +26,8 @@ onlyif serenedb # native constraint error
 statement error
 INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
 ----
-db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 skipif serenedb # Postgres error
@@ -41,7 +42,8 @@ onlyif serenedb # native constraint error
 statement error
 INSERT INTO t1 VALUES (1, 10), (4, 40), (5, 50);
 ----
-db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 skipif serenedb # Postgres error
@@ -69,7 +71,8 @@ onlyif serenedb # native constraint error
 statement error
 INSERT INTO t1 VALUES (100, 100), (100, 100);
 ----
-db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "100"
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(100) already exists.
 
 
 skipif serenedb # Postgres error
@@ -104,7 +107,8 @@ onlyif serenedb # native constraint error
 statement error
 INSERT INTO t2 VALUES (1, 42);
 ----
-db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
+db error: ERROR: duplicate key value violates unique constraint "t2_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 skipif serenedb # Postgres error

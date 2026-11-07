@@ -1,0 +1,315 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/formats/column/hot_column_reader.hpp"
+
+#include <absl/algorithm/container.h>
+
+#include <algorithm>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/main/config.hpp>
+#include <duckdb/storage/statistics/base_statistics.hpp>
+#include <duckdb/storage/statistics/stats_writer.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
+#include <utility>
+
+#include "iresearch/utils/assert.hpp"
+
+namespace irs {
+namespace {
+
+bool HasOwnBlocks(const duckdb::LogicalType& type) noexcept {
+  switch (type.InternalType()) {
+    case duckdb::PhysicalType::STRUCT:
+    case duckdb::PhysicalType::LIST:
+    case duckdb::PhysicalType::ARRAY:
+      return false;
+    default:
+      return type.id() != duckdb::LogicalTypeId::VARIANT;
+  }
+}
+
+template<typename T, typename Writer>
+void Collect(Writer& writer, const WriteChunk& chunk) {
+  const auto values = chunk.data.Values<T>();
+  for (duckdb::idx_t i = 0; i < chunk.count; ++i) {
+    const auto entry = values[i];
+    if (entry.IsValid()) {
+      writer.Update(entry.GetValue());
+    } else {
+      writer.SetHasNull();
+    }
+  }
+}
+
+template<typename T>
+void CollectNumeric(duckdb::BaseStatistics& stats, const WriteChunk& chunk) {
+  duckdb::StatsWriter<T> writer;
+  Collect<T>(writer, chunk);
+  writer.Merge(stats);
+}
+
+duckdb::BaseStatistics ChunkStatistics(const duckdb::LogicalType& type,
+                                       const WriteChunk& chunk) {
+  auto stats = duckdb::BaseStatistics::CreateEmpty(type);
+  switch (duckdb::BaseStatistics::GetStatsType(type)) {
+    case duckdb::StatisticsType::NUMERIC_STATS:
+      switch (type.InternalType()) {
+        case duckdb::PhysicalType::INT8:
+          CollectNumeric<int8_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::INT16:
+          CollectNumeric<int16_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::INT32:
+          CollectNumeric<int32_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::INT64:
+          CollectNumeric<int64_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::UINT8:
+          CollectNumeric<uint8_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::UINT16:
+          CollectNumeric<uint16_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::UINT32:
+          CollectNumeric<uint32_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::UINT64:
+          CollectNumeric<uint64_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::INT128:
+          CollectNumeric<duckdb::hugeint_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::UINT128:
+          CollectNumeric<duckdb::uhugeint_t>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::FLOAT:
+          CollectNumeric<float>(stats, chunk);
+          return stats;
+        case duckdb::PhysicalType::DOUBLE:
+          CollectNumeric<double>(stats, chunk);
+          return stats;
+        default:
+          break;
+      }
+      break;
+    case duckdb::StatisticsType::STRING_STATS:
+      if (type.InternalType() == duckdb::PhysicalType::VARCHAR) {
+        duckdb::StatsWriter<duckdb::string_t> writer{type};
+        Collect<duckdb::string_t>(writer, chunk);
+        writer.Merge(stats);
+        return stats;
+      }
+      break;
+    default:
+      break;
+  }
+  return duckdb::BaseStatistics::CreateUnknown(type);
+}
+
+}  // namespace
+
+duckdb::BaseStatistics HotChunkStats::Get(const duckdb::LogicalType& type,
+                                          const WriteChunk& chunk) {
+  if (chunk.count != STANDARD_VECTOR_SIZE) {
+    return ChunkStatistics(type, chunk);
+  }
+  const auto [it, fresh] =
+    _full.try_emplace(chunk.data.GetBufferRef().get(),
+                      duckdb::BaseStatistics::CreateUnknown(type));
+  if (fresh) {
+    it->second = ChunkStatistics(type, chunk);
+  }
+  return it->second.Copy();
+}
+
+std::unique_ptr<ColumnReader> HotColumnReader::Make(
+  duckdb::DatabaseInstance& db, StagedColumn&& column, HotChunkStats* stats) {
+  std::vector<std::unique_ptr<ColumnReader>> children;
+  if (column.type.InternalType() == duckdb::PhysicalType::STRUCT &&
+      column.type.id() != duckdb::LogicalTypeId::VARIANT) {
+    const auto& child_types = duckdb::StructType::GetChildTypes(column.type);
+    children.reserve(child_types.size());
+    for (size_t i = 0; i < child_types.size(); ++i) {
+      StagedColumn child{.id = column.id, .type = child_types[i].second};
+      child.chunks.reserve(column.chunks.size());
+      for (const auto& chunk : column.chunks) {
+        const auto& entries = duckdb::StructVector::GetEntries(chunk.data);
+        child.chunks.push_back(
+          WriteChunk{duckdb::Vector::Ref(entries[i]), chunk.count});
+      }
+      children.push_back(Make(db, std::move(child), stats));
+    }
+  }
+  std::vector<ColumnBlockMeta> blocks;
+  if (HasOwnBlocks(column.type)) {
+    const auto codec =
+      duckdb::DBConfig::GetConfig(db).TryGetCompressionFunction(
+        duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+        column.type.InternalType());
+    SDB_ASSERT(codec);
+    blocks.reserve(column.chunks.size());
+    for (const auto& chunk : column.chunks) {
+      blocks.push_back(ColumnBlockMeta{
+        .statistics = stats
+                        ? stats->Get(column.type, chunk)
+                        : duckdb::BaseStatistics::CreateUnknown(column.type),
+        .tuple_count = chunk.count,
+        .codec = codec.get(),
+      });
+    }
+  }
+  return std::make_unique<HotColumnReader>(
+    column.id, std::move(column.type), std::move(blocks),
+    std::move(column.chunks), std::move(children));
+}
+
+HotColumnReader::HotColumnReader(
+  field_id id, duckdb::LogicalType type, std::vector<ColumnBlockMeta> blocks,
+  std::vector<WriteChunk> chunks,
+  std::vector<std::unique_ptr<ColumnReader>> children)
+  : ColumnReader{id, std::move(type), std::move(blocks), nullptr,
+                 std::move(children)},
+    _chunks{std::move(chunks)} {
+  _starts.reserve(_chunks.size() + 1);
+  uint64_t rows = 0;
+  _starts.push_back(rows);
+  for (const auto& chunk : _chunks) {
+    rows += chunk.count;
+    _starts.push_back(rows);
+  }
+  _row_count = rows;
+  if (DataBlocks().empty()) {
+    _stats = duckdb::BaseStatistics::CreateUnknown(_type).ToUnique();
+  }
+}
+
+size_t HotColumnReader::ChunkOf(uint64_t row) const noexcept {
+  return static_cast<size_t>(absl::c_upper_bound(_starts, row) -
+                             _starts.begin()) -
+         1;
+}
+
+void HotColumnReader::CopyRows(uint64_t row, duckdb::idx_t count,
+                               duckdb::Vector& out, duckdb::idx_t out_offset,
+                               bool share_strings) const {
+  while (count != 0) {
+    if (row >= _row_count) {
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        duckdb::FlatVector::SetNull(out, out_offset + i, true);
+      }
+      return;
+    }
+    const auto chunk = ChunkOf(row);
+    const auto in_chunk = static_cast<duckdb::idx_t>(row - _starts[chunk]);
+    const auto take =
+      std::min<duckdb::idx_t>(count, _chunks[chunk].count - in_chunk);
+    const auto& source = _chunks[chunk].data;
+    if (share_strings &&
+        source.GetType().InternalType() == duckdb::PhysicalType::VARCHAR &&
+        source.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
+      std::copy_n(
+        duckdb::FlatVector::GetData<duckdb::string_t>(source) + in_chunk, take,
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(out) + out_offset);
+      const auto& valid = duckdb::FlatVector::Validity(source);
+      auto& target = duckdb::FlatVector::ValidityMutable(out);
+      if (!valid.AllValid() || !target.AllValid()) {
+        for (duckdb::idx_t i = 0; i < take; ++i) {
+          target.Set(out_offset + i, valid.RowIsValid(in_chunk + i));
+        }
+      }
+      out.AddHeapReference(source);
+    } else {
+      duckdb::VectorOperations::Copy(source, out, in_chunk + take, in_chunk,
+                                     out_offset);
+    }
+    row += take;
+    count -= take;
+    out_offset += take;
+  }
+}
+
+bool HotColumnReader::FetchInMemory(uint64_t row, duckdb::Vector& out,
+                                    duckdb::idx_t out_offset) const {
+  if (row >= _row_count) {
+    duckdb::FlatVector::SetNull(out, out_offset, true);
+    return false;
+  }
+  CopyRows(row, 1, out, out_offset, true);
+  return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
+}
+
+uint64_t HotColumnReader::RowGroupEnd(uint64_t row) const noexcept {
+  if (row >= _row_count) {
+    return _row_count;
+  }
+  return *absl::c_upper_bound(_starts, row);
+}
+
+duckdb::idx_t HotColumnReader::Scan(ScanState& s, duckdb::Vector& result,
+                                    duckdb::idx_t count) const {
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  return ScanCount(s, result, count, 0);
+}
+
+duckdb::idx_t HotColumnReader::ScanCount(ScanState& s, duckdb::Vector& result,
+                                         duckdb::idx_t count,
+                                         duckdb::idx_t result_offset) const {
+  CopyRows(s.st.offset_in_column, count, result, result_offset, true);
+  s.st.offset_in_column += count;
+  return count;
+}
+
+duckdb::idx_t HotColumnReader::GatherFilter(
+  ScanState& s, uint64_t anchor, duckdb::idx_t span,
+  duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
+  const duckdb::TableFilter&, duckdb::TableFilterState& filter_state,
+  NullCheckKind, duckdb::Vector& scratch) const {
+  SDB_ASSERT(anchor >= s.st.offset_in_column,
+             "GatherFilter requires ascending rows");
+  SDB_ASSERT(span <= STANDARD_VECTOR_SIZE, "GatherFilter decodes one vector");
+  s.st.offset_in_column = anchor + span;
+  duckdb::idx_t approved = sel_count;
+  if (anchor < _row_count) {
+    const auto chunk = ChunkOf(anchor);
+    const auto in_chunk = static_cast<duckdb::idx_t>(anchor - _starts[chunk]);
+    const auto& source = _chunks[chunk].data;
+    if (in_chunk + span <= _chunks[chunk].count &&
+        source.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+        source.GetType() == scratch.GetType()) {
+      scratch.Reference(duckdb::Vector{source, in_chunk, in_chunk + span});
+      duckdb::ColumnSegment::FilterSelection(sel, scratch, filter_state, span,
+                                             approved);
+      return approved;
+    }
+  }
+  scratch.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  duckdb::FlatVector::ValidityMutable(scratch).SetAllValid(span);
+  CopyRows(anchor, span, scratch, 0, false);
+  duckdb::ColumnSegment::FilterSelection(sel, scratch, filter_state, span,
+                                         approved);
+  return approved;
+}
+
+}  // namespace irs

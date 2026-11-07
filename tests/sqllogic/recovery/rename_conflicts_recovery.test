@@ -94,7 +94,7 @@ connection s2
 statement error
 ALTER SCHEMA rcr RENAME TO rcr3;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "rcr"
+db error: ERROR: could not serialize access due to concurrent update of "rcr"
 
 
 connection s1

@@ -37,18 +37,16 @@ vedernikoff_clickclack_step4
 statement error
 DROP FUNCTION vedernikoff_clickclack_step1(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_step1" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_clickclack_step1(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP FUNCTION vedernikoff_clickclack_step1(INT) RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_step1" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_clickclack_step1(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -110,27 +108,25 @@ id
 statement error
 DROP TABLE vedernikoff_iceberg_base;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_base" because there are entries that depend on it.
+db error: ERROR: cannot drop table vedernikoff_iceberg_base because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP VIEW vedernikoff_iceberg_tower1;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_tower1" because there are entries that depend on it.
+db error: ERROR: cannot drop view vedernikoff_iceberg_tower1 because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP VIEW vedernikoff_iceberg_tower2;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_tower2" because there are entries that depend on it.
-view "vedernikoff_iceberg_tower3" depends on view "vedernikoff_iceberg_tower2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view vedernikoff_iceberg_tower2 because other objects depend on it
+DETAIL: view vedernikoff_iceberg_tower3 depends on view vedernikoff_iceberg_tower2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -254,9 +250,8 @@ id	tag
 statement error
 DROP SEQUENCE vedernikoff_mop_offer_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_offer_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence vedernikoff_mop_offer_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -360,11 +355,11 @@ INSERT INTO vedernikoff_mop_team.candidates (note) VALUES ('mop_round1');
 statement error
 DROP SCHEMA vedernikoff_resumes;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_resumes" because there are entries that depend on it.
-sequence "shared_id_seq" depends on schema "vedernikoff_resumes".
-table "candidates" depends on sequence "shared_id_seq".
-table "candidates" depends on sequence "shared_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop schema vedernikoff_resumes because other objects depend on it
+DETAIL: sequence vedernikoff_resumes.shared_id_seq depends on schema vedernikoff_resumes
+default value for column id of table vedernikoff_clickclack_team.candidates depends on sequence vedernikoff_resumes.shared_id_seq
+default value for column id of table vedernikoff_mop_team.candidates depends on sequence vedernikoff_resumes.shared_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -443,9 +438,9 @@ db error: ERROR: CHECK constraint failed on table "runs" with expression CHECK(v
 statement error
 DROP FUNCTION vedernikoff_ml_paper.is_positive(INT);
 ----
-db error: ERROR: Cannot drop entry "is_positive" because there are entries that depend on it.
-table "runs" depends on macro function "is_positive".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function vedernikoff_ml_paper.is_positive(integer) because other objects depend on it
+DETAIL: constraint score_must_be_positive on table vedernikoff_iceberg_audit.runs depends on function vedernikoff_ml_paper.is_positive(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -506,10 +501,10 @@ next_token
 statement error
 DROP SCHEMA vedernikoff_solid_module;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_module" because there are entries that depend on it.
-sequence "token_seq" depends on schema "vedernikoff_solid_module".
-macro function "next_token" depends on sequence "token_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop schema vedernikoff_solid_module because other objects depend on it
+DETAIL: sequence vedernikoff_solid_module.token_seq depends on schema vedernikoff_solid_module
+function vedernikoff_mop_recruiting.next_token() depends on sequence vedernikoff_solid_module.token_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -563,9 +558,8 @@ count
 statement error
 DROP SEQUENCE vedernikoff_iceberg_partition_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_partition_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence vedernikoff_iceberg_partition_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -652,18 +646,18 @@ INSERT INTO vedernikoff_clickclack_dashboard (payload) VALUES ('row1');
 statement error
 DROP TABLE vedernikoff_clickclack_owner;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
-table "vedernikoff_clickclack_dashboard" depends on sequence "vedernikoff_clickclack_owner_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table vedernikoff_clickclack_owner because other objects depend on it
+DETAIL: default value for column id of table vedernikoff_clickclack_dashboard depends on sequence vedernikoff_clickclack_owner_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP TABLE vedernikoff_clickclack_owner RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_owner_id_seq" because there are entries that depend on it.
-table "vedernikoff_clickclack_dashboard" depends on sequence "vedernikoff_clickclack_owner_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table vedernikoff_clickclack_owner because other objects depend on it
+DETAIL: default value for column id of table vedernikoff_clickclack_dashboard depends on sequence vedernikoff_clickclack_owner_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -779,18 +773,16 @@ CREATE VIEW vedernikoff_mop_ats_window AS
 statement error
 DROP SEQUENCE vedernikoff_mop_ats_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_ats_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence vedernikoff_mop_ats_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP SEQUENCE vedernikoff_mop_ats_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_ats_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence vedernikoff_mop_ats_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -839,17 +831,17 @@ CREATE TABLE vedernikoff_clickclack_offsite.itinerary (id INT, slot TEXT);
 statement error
 DROP SCHEMA vedernikoff_clickclack_offsite;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_offsite" because there are entries that depend on it.
-table "itinerary" depends on schema "vedernikoff_clickclack_offsite".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop schema vedernikoff_clickclack_offsite because other objects depend on it
+DETAIL: table vedernikoff_clickclack_offsite.itinerary depends on schema vedernikoff_clickclack_offsite
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement error
 DROP SCHEMA vedernikoff_clickclack_offsite RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_offsite" because there are entries that depend on it.
-table "itinerary" depends on schema "vedernikoff_clickclack_offsite".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop schema vedernikoff_clickclack_offsite because other objects depend on it
+DETAIL: table vedernikoff_clickclack_offsite.itinerary depends on schema vedernikoff_clickclack_offsite
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -962,18 +954,18 @@ INSERT INTO vedernikoff_mop_offer_check_user VALUES (1, 1000000);
 statement error
 DROP TABLE vedernikoff_mop_offer_owner;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_offer_owner_id_seq" because there are entries that depend on it.
-table "vedernikoff_mop_offer_check_user" depends on sequence "vedernikoff_mop_offer_owner_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table vedernikoff_mop_offer_owner because other objects depend on it
+DETAIL: constraint under_offer_count on table vedernikoff_mop_offer_check_user depends on sequence vedernikoff_mop_offer_owner_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP TABLE vedernikoff_mop_offer_owner RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_offer_owner_id_seq" because there are entries that depend on it.
-table "vedernikoff_mop_offer_check_user" depends on sequence "vedernikoff_mop_offer_owner_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table vedernikoff_mop_offer_owner because other objects depend on it
+DETAIL: constraint under_offer_count on table vedernikoff_mop_offer_check_user depends on sequence vedernikoff_mop_offer_owner_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -1089,9 +1081,10 @@ INSERT INTO vedernikoff_solid_journal (body) VALUES ('entry_alpha');
 statement error
 DROP SEQUENCE vedernikoff_solid_journal_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_journal_seq" because there are entries that depend on it.
-table "vedernikoff_solid_journal" depends on sequence "vedernikoff_solid_journal_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence vedernikoff_solid_journal_seq because other objects depend on it
+DETAIL: default value for column id of table vedernikoff_solid_journal depends on sequence vedernikoff_solid_journal_seq
+constraint body_window on table vedernikoff_solid_journal depends on sequence vedernikoff_solid_journal_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -1165,9 +1158,8 @@ db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t_gamma" 
 statement error
 DROP FUNCTION vedernikoff_iceberg_threshold(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_threshold" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_iceberg_threshold(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -1241,9 +1233,8 @@ INSERT INTO vedernikoff_mop_pipeline_c VALUES ('vedernikoff', 'hired');
 statement error
 DROP TYPE vedernikoff_mop_stage;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_stage" because there are entries that depend on it.
+db error: ERROR: cannot drop type vedernikoff_mop_stage because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -1411,9 +1402,8 @@ step
 statement error
 DROP SEQUENCE vedernikoff_mop_dispatch_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_dispatch_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence vedernikoff_mop_dispatch_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 

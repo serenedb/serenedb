@@ -50,7 +50,6 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "connector/common.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
@@ -67,7 +66,6 @@ namespace sdb::pg {
 namespace {
 
 using connector::AsView;
-using connector::GetSereneDBContext;
 using duckdb::AclMode;
 using duckdb::CatalogType;
 using duckdb::Identifier;
@@ -683,9 +681,8 @@ struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
     SDB_ASSERT(session.database);
-    if (const auto entry =
-          session.database->GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-            .GetEntry(*session.transaction, Identifier{name})) {
+    if (const auto entry = session.database->Servers().Get(
+          *session.transaction, Identifier{name})) {
       return entry->oid;
     }
     ThrowUndefinedObject("server", name);
@@ -1002,7 +999,8 @@ duckdb::ScalarFunction PrivilegeFunction() {
                       ->Cast<PrivilegeCheck<F>>()
                       .ForChunk();
       if constexpr (std::is_void_v<Role>) {
-        const auto role = GetSereneDBContext(state.GetContext()).GetRoleId();
+        const auto role =
+          ConnectionContext::Get(state.GetContext()).GetRoleId();
         duckdb::VariadicExecutor::Execute<bool, Object..., duckdb::string_t>(
           args, result, [&](Object... object, duckdb::string_t text) {
             return check.Answer(role, text, object...);

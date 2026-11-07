@@ -72,7 +72,9 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
   for (const auto [index_segment, reader] :
        std::views::zip(segments, readers)) {
     const auto& [filename, segment] = index_segment;
-    file_refs.emplace_back(refs.add(filename));
+    if (!filename.empty()) {
+      file_refs.emplace_back(refs.add(filename));
+    }
     docs_count += segment.docs_count;
     live_docs_count += segment.live_docs_count;
 

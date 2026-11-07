@@ -21,7 +21,7 @@
 #pragma once
 
 #include <array>
-#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
@@ -42,6 +42,7 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog/base_catalog.h"
 #include "catalog/entry/tokenizer.h"
 #include "catalog/persistence/inverted_index.h"
 #include "query/config_variable_names.h"
@@ -91,9 +92,12 @@ struct InvertedIndexFieldLookup {
   const InvertedIndexField* entry = nullptr;
 };
 
-// The index type name duckdb stores in IndexCatalogEntry::index_type, and the
-// name the index type is registered under.
+// The index type name duckdb stores in IndexCatalogEntry::index_type.
 inline constexpr const char* kInvertedIndexTypeName = "inverted";
+
+inline bool IsInvertedIndex(const duckdb::IndexCatalogEntry& entry) {
+  return entry.index_type == kInvertedIndexTypeName;
+}
 
 // The two built-in opclasses. An opclass written bare resolves against the
 // schema's text search dictionaries first, so a dictionary of either name
@@ -104,6 +108,16 @@ inline constexpr std::string_view kHNSWKind = "hnsw";
 
 struct InvertedIndexKey : persistence::KeyRecord {
   std::string expression_text;
+};
+
+// A key a table constraint enforces, written as one term per row under
+// `field`: the sort key of `columns`, null where any of them is null. A
+// foreign key's values are cast to `types`, the referenced key's, so the two
+// tables write equal values alike.
+struct ConstraintKey {
+  irs::field_id field = irs::field_limits::invalid();
+  std::vector<irs::field_id> columns;
+  std::vector<duckdb::LogicalType> types;
 };
 
 struct ExpressionKeys {
@@ -184,6 +198,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
   irs::containers::FlatHashSet<irs::field_id> table_columns;
+  std::vector<ConstraintKey> constraint_keys;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
@@ -241,7 +256,7 @@ class IndexTokenizers {
   duckdb::ClientContext* _context = nullptr;
 };
 
-class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
+class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
  public:
   InvertedIndexEntry(duckdb::Catalog& catalog,
                      duckdb::SchemaCatalogEntry& schema,
@@ -263,7 +278,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
 
-  using duckdb::DuckIndexEntry::AlterEntry;
+  using duckdb::IndexCatalogEntry::AlterEntry;
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
     duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) final;
 
@@ -303,7 +318,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
  private:
   persistence::InvertedIndexData ToPersisted() const;
 
-  bool ViewBacked() const noexcept { return !info && !_search_table; }
+  bool ViewBacked() const noexcept { return !_search_table; }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> ReindexJob(
     duckdb::CatalogTransaction transaction) const;
@@ -319,6 +334,6 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 };
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
-  duckdb::DuckCatalog& catalog);
+  BaseCatalog& catalog);
 
 }  // namespace sdb::catalog

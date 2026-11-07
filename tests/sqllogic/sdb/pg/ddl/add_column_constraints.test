@@ -89,8 +89,12 @@ statement ok
 INSERT INTO acc_pk VALUES (1, 1);
 
 
-statement error violates primary key constraint
+statement error
 INSERT INTO acc_pk VALUES (2, 1);
+----
+db error: ERROR: duplicate key value violates unique constraint "acc_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
+
 
 
 statement error NOT NULL constraint failed
@@ -113,8 +117,12 @@ statement ok
 INSERT INTO acc_rows VALUES (1), (2);
 
 
-statement error contains duplicates
+statement error
 ALTER TABLE acc_rows ADD COLUMN id INT DEFAULT 5 PRIMARY KEY;
+----
+db error: ERROR: could not create unique index "acc_rows_pkey"
+DETAIL: Key (id)=(5) is duplicated.
+
 
 
 statement error not supported

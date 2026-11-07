@@ -304,7 +304,7 @@ connection default
 statement error
 GRANT USAGE ON SCHEMA xsai_s TO xsai_bob;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "xsai_s"
+db error: ERROR: could not serialize access due to concurrent update of "xsai_s"
 
 
 connection c_owner user=xsai_owner password=xsai_owner_pw

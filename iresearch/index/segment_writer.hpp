@@ -159,6 +159,15 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return MakePersistedNormReader(*col);
   }
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
+  const ColWriter* GetColWriter() const noexcept { return _col_writer.get(); }
+
+  void SetDeferredColumns(bool deferred) noexcept {
+    _deferred_columns = deferred;
+  }
+
+  size_t StagedColumnBytes() const noexcept {
+    return _col_writer ? _col_writer->StagedBytes() : 0;
+  }
 
   // Owning per-op encoding config (the snapshot's InvertedIndex): flush encodes
   // against the schema the rows were written under, not the live catalog.
@@ -281,6 +290,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;
+  bool _deferred_columns = false;
 };
 
 }  // namespace irs

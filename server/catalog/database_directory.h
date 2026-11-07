@@ -22,17 +22,11 @@
 
 #include <atomic>
 #include <duckdb/common/typedefs.hpp>
-#include <duckdb/storage/storage_extension.hpp>
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <string>
-#include <string_view>
 
 namespace sdb::catalog {
-
-inline constexpr std::string_view kDataFile = "data.db";
-inline constexpr std::string_view kCatalogLog = "catalog.wal";
 
 void CreateDirectory(const std::filesystem::path& path);
 void RemoveDirectory(const std::filesystem::path& path);
@@ -40,13 +34,12 @@ void RemoveTree(const std::filesystem::path& path) noexcept;
 void DeferRemovals() noexcept;
 void ResumeRemovals();
 
-class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
+class DatabaseDirectory final {
  public:
   explicit DatabaseDirectory(std::filesystem::path path);
-  ~DatabaseDirectory() final;
+  ~DatabaseDirectory();
 
   const std::filesystem::path& Path() const noexcept { return _path; }
-  std::string DataFile() const;
   std::filesystem::path StoragePath(duckdb::idx_t oid) const;
 
   void Create() const;

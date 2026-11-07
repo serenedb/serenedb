@@ -1,0 +1,82 @@
+control substitution on
+
+statement ok
+CREATE TABLE sir (id INT, v TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sir VALUES (1, 'a'), (2, 'a'), (3, 'a')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sir
+
+
+statement ok
+INSERT INTO sir VALUES (4, 'b'), (5, 'b'), (6, 'b')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sir
+
+
+statement ok
+DELETE FROM sir WHERE v = 'b'
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet'
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_first
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM sir;
+----
+n
+3
+
+
+connection after_first
+statement ok
+SET sdb_faults = 'crash_on_packet'
+
+
+connection after_first
+statement error connection closed
+SELECT 1;
+
+
+connection after_second
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM sir;
+----
+n
+3
+
+
+connection after_second
+statement ok
+INSERT INTO sir VALUES (7, 'c'), (8, 'c')
+
+
+connection after_second
+statement ok
+SET sdb_faults = 'crash_on_packet'
+
+
+connection after_second
+statement error connection closed
+SELECT 1;
+
+
+connection after_third
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(id::VARCHAR || v, ',' ORDER BY id) AS rows FROM sir;
+----
+rows
+1a,2a,3a,7c,8c

@@ -41,10 +41,10 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
     duckdb::vector<duckdb::PhysicalIndex> columns,
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
+    duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk,
-    duckdb::RowIdHandling row_id_handling,
-    duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints);
+    duckdb::RowIdHandling row_id_handling);
 
   std::string GetName() const final;
   duckdb::InsertionOrderPreservingMap<std::string> ParamsToString() const final;

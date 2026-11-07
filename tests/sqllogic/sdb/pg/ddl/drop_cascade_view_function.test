@@ -26,18 +26,18 @@ s
 statement error
 DROP FUNCTION ml_square(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_square" because there are entries that depend on it.
-view "v_ml_square" depends on macro function "ml_square".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function ml_square(integer) because other objects depend on it
+DETAIL: view v_ml_square depends on function ml_square(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP FUNCTION ml_square;
 ----
-db error: ERROR: Cannot drop entry "ml_square" because there are entries that depend on it.
-view "v_ml_square" depends on macro function "ml_square".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function ml_square(integer) because other objects depend on it
+DETAIL: view v_ml_square depends on function ml_square(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -87,9 +87,8 @@ CREATE VIEW v_ml_cube3 AS SELECT ml_cube(ml_cube(n)) AS c FROM ml_nums;
 statement error
 DROP FUNCTION ml_cube(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_cube" because there are entries that depend on it.
+db error: ERROR: cannot drop function ml_cube(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -140,9 +139,8 @@ CREATE VIEW v_ml_double3 AS SELECT x + 1 AS y FROM v_ml_double2;
 statement error
 DROP FUNCTION ml_double_it(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_double_it" because there are entries that depend on it.
+db error: ERROR: cannot drop function ml_double_it(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -221,9 +219,9 @@ n	u
 statement error
 DROP TABLE ml_builtin_t;
 ----
-db error: ERROR: Cannot drop entry "ml_builtin_t" because there are entries that depend on it.
-view "v_ml_builtin" depends on table "ml_builtin_t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table ml_builtin_t because other objects depend on it
+DETAIL: view v_ml_builtin depends on table ml_builtin_t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -254,18 +252,18 @@ CREATE VIEW v_ml_mix7 AS SELECT ml_mix7(id) AS r FROM ml_t7;
 statement error
 DROP FUNCTION ml_mix7(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_mix7" because there are entries that depend on it.
-view "v_ml_mix7" depends on macro function "ml_mix7".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function ml_mix7(integer) because other objects depend on it
+DETAIL: view v_ml_mix7 depends on function ml_mix7(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP TABLE ml_t7;
 ----
-db error: ERROR: Cannot drop entry "ml_t7" because there are entries that depend on it.
-view "v_ml_mix7" depends on table "ml_t7".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table ml_t7 because other objects depend on it
+DETAIL: view v_ml_mix7 depends on table ml_t7
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -319,9 +317,9 @@ y
 statement error
 DROP FUNCTION ml_fn_sch.ml_times3(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_times3" because there are entries that depend on it.
-view "v_ml_outputs" depends on macro function "ml_times3".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function ml_fn_sch.ml_times3(integer) because other objects depend on it
+DETAIL: view ml_vw_sch.v_ml_outputs depends on function ml_fn_sch.ml_times3(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

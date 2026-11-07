@@ -25,9 +25,7 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <memory>
 
-#include "connector/duckdb_client_state.h"
-#include "pg/connection_context.h"
-#include "query/transaction.h"
+#include "catalog/transaction.h"
 #include "search/store.h"
 
 namespace sdb::connector {
@@ -43,10 +41,10 @@ SereneDBSearchTruncate::SereneDBSearchTruncate(
 duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& /*chunk*/,
   duckdb::OperatorSourceInput& /*input*/) const {
-  auto& search_txn = GetSereneDBContext(context.client).SearchTxn();
+  auto& session = catalog::SessionOf(context.client, _table.catalog);
+  auto& search_txn = session.SearchTxn();
   search_txn.RegisterWriter(_table.Storage(), _table);
-  search_txn.AddSearchTruncate(_table.Storage(), _table.name,
-                               context.client.transaction.IsAutoCommit());
+  search_txn.AddSearchTruncate(_table.Storage(), _table, session.Snapshot());
   return duckdb::SourceResultType::FINISHED;
 }
 

@@ -27,7 +27,6 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
@@ -90,10 +89,8 @@
 #include "catalog/rest/catalog_entry/schema/iceberg_schema_entry.hpp"
 #include "catalog/rest/catalog_entry/table/iceberg_table.hpp"
 #include "catalog/rest/iceberg_catalog.hpp"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/file_manifest.h"
-#include "connector/inverted_store_index.h"
 #include "connector/reindex_removes.h"
 #include "connector/view_fast_path.h"
 #include "core/deletes/iceberg_equality_delete.hpp"
@@ -227,17 +224,19 @@ class PassConnection {
   PassConnection(duckdb::ClientContext& context, ConnectionContext& caller,
                  const ReindexTarget& target)
     : _caller{caller},
-      _conn{*context.db},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn.context, caller.user(), caller.SystemUser(), caller.GetRoleId(),
-        target.database, target.database_id, nullptr, caller.GetBackendPid(),
-        nullptr)},
-      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
-                  .progress_source} {
+      _conn{duckdb::make_shared_ptr<ConnectionContext>(
+        *context.db, SessionIdentity{.user = caller.user(),
+                                     .system_user = caller.SystemUser(),
+                                     .role = caller.GetRoleId(),
+                                     .database = target.database,
+                                     .database_id = target.database_id,
+                                     .backend_pid = caller.GetBackendPid()})},
+      _ctx{ConnectionContext::Get(*_conn.context)},
+      _progress{_ctx.ProgressSource()} {
     _conn.context->config.user_settings = context.config.user_settings;
   }
   ~PassConnection() {
-    _ctx->ConsumeNotices(
+    _ctx.ConsumeNotices(
       [&](auto& notice) { _caller.AddNotice(std::move(notice)); });
   }
 
@@ -286,7 +285,7 @@ class PassConnection {
  private:
   ConnectionContext& _caller;
   duckdb::Connection _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
+  ConnectionContext& _ctx;
   pg::ProgressRegistration _progress;
 };
 
@@ -956,26 +955,28 @@ class ReindexSession {
                  duckdb::idx_t role_id, const std::string& database,
                  duckdb::idx_t database_id, int32_t backend_pid,
                  NoticeSink sink)
-    : _conn{db},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn.context, user, std::string_view{}, role_id, database,
-        database_id, nullptr, backend_pid, nullptr)},
-      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
-                  .progress_source},
+    : _conn{duckdb::make_shared_ptr<ConnectionContext>(
+        db, SessionIdentity{.user = user,
+                            .role = role_id,
+                            .database = database,
+                            .database_id = database_id,
+                            .backend_pid = backend_pid})},
+      _ctx{ConnectionContext::Get(*_conn.context)},
+      _progress{_ctx.ProgressSource()},
       _sink{std::move(sink)} {}
   ~ReindexSession() {
-    _ctx->ConsumeNotices([&](auto& notice) { _sink(notice); });
+    _ctx.ConsumeNotices([&](auto& notice) { _sink(notice); });
   }
   ReindexSession(const ReindexSession&) = delete;
   ReindexSession& operator=(const ReindexSession&) = delete;
 
   duckdb::ClientContext& Context() { return *_conn.context; }
-  ConnectionContext& Conn() { return *_ctx; }
+  ConnectionContext& Conn() { return _ctx; }
   void Begin() { _conn.BeginTransaction(); }
 
  private:
   duckdb::Connection _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
+  ConnectionContext& _ctx;
   pg::ProgressRegistration _progress;
   NoticeSink _sink;
 };
@@ -984,7 +985,7 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
                                 const std::string& name,
                                 duckdb::vector<duckdb::Identifier> schema_path,
                                 const std::string& catalog_p) {
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = ConnectionContext::Get(context);
   const auto target =
     ResolveTarget(context, conn_ctx, name, std::move(schema_path), catalog_p);
   const auto storage = target.index->Storage();
@@ -993,18 +994,13 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
   catalog::ThrowIfReadOnly(target.index->catalog, "REINDEX");
-  pg::ProgressMetrics* progress = nullptr;
-  if (auto client_state = context.registered_state->Get<SereneDBClientState>(
-        kSereneDBClientStateKey);
-      client_state && client_state->progress_source) {
-    progress = &client_state->Progress();
-    progress->SetCommand(pg::ProgressCommand::Reindex);
-    progress->SetPhase(pg::progress_phase::Reindex::WaitingForReindex);
-    pg::ProgressMetrics::Set(progress->relid,
-                             static_cast<int64_t>(target.relation_id));
-    pg::ProgressMetrics::Set(progress->current_relid,
-                             static_cast<int64_t>(target.index->oid));
-  }
+  auto* progress = &conn_ctx.Progress();
+  progress->SetCommand(pg::ProgressCommand::Reindex);
+  progress->SetPhase(pg::progress_phase::Reindex::WaitingForReindex);
+  pg::ProgressMetrics::Set(progress->relid,
+                           static_cast<int64_t>(target.relation_id));
+  pg::ProgressMetrics::Set(progress->current_relid,
+                           static_cast<int64_t>(target.index->oid));
   const auto claim = storage->ClaimReindex(context);
   if (progress) {
     progress->SetPhase(pg::progress_phase::Reindex::Refreshing);
@@ -1144,9 +1140,9 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   }
   auto& catalog = *database;
   const auto trx = catalog.GetCatalogTransaction(context);
-  auto index = catalog.FindIn<duckdb::DuckIndexEntry>(
-    &context, static_cast<duckdb::idx_t>(index_id));
-  if (!index || index->index_type != "inverted") {
+  auto index = catalog.FindIn<duckdb::IndexCatalogEntry>(
+    trx, static_cast<duckdb::idx_t>(index_id));
+  if (!index || !catalog::IsInvertedIndex(*index)) {
     return;
   }
   const auto relation = index->GetRelation(trx);
@@ -1161,7 +1157,7 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   if (!claim) {
     return;
   }
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = ConnectionContext::Get(context);
   const auto& index_name = index->name.GetIdentifierName();
   const auto& database_name = catalog.GetName().GetIdentifierName();
   try {

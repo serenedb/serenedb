@@ -302,9 +302,9 @@ CREATE TABLE coro_def (id INT DEFAULT nextval('coro_def_seq'), v TEXT);
 statement error
 DROP SEQUENCE coro_def_seq;
 ----
-db error: ERROR: Cannot drop entry "coro_def_seq" because there are entries that depend on it.
-table "coro_def" depends on sequence "coro_def_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence coro_def_seq because other objects depend on it
+DETAIL: default value for column id of table coro_def depends on sequence coro_def_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -1672,35 +1672,35 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE coro_race_t (b INT);
 ----
-db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+db error: ERROR: could not serialize access due to concurrent update of <slt:ignore>
 
 
 connection s2
 statement error
 CREATE OR REPLACE VIEW coro_race_v AS SELECT 2 AS a;
 ----
-db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+db error: ERROR: could not serialize access due to concurrent update of <slt:ignore>
 
 
 connection s2
 statement error
 CREATE OR REPLACE MACRO coro_race_m(x) AS x + 1;
 ----
-db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+db error: ERROR: could not serialize access due to concurrent update of <slt:ignore>
 
 
 connection s2
 statement error
 CREATE OR REPLACE SEQUENCE coro_race_s;
 ----
-db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+db error: ERROR: could not serialize access due to concurrent update of <slt:ignore>
 
 
 connection s2
 statement error
 CREATE OR REPLACE TYPE coro_race_ty AS TEXT;
 ----
-db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+db error: ERROR: could not serialize access due to concurrent update of <slt:ignore>
 
 
 connection s1
@@ -2060,7 +2060,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE coro_od (e INT);
 ----
-db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+db error: ERROR: could not serialize access due to concurrent update of <slt:ignore>
 
 
 connection s1
@@ -2089,7 +2089,7 @@ connection s1
 statement error
 CREATE OR REPLACE MACRO coro_od_m(x) AS x + 2;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coro_od_m"
+db error: ERROR: could not serialize access due to concurrent update of "coro_od_m"
 
 
 connection s1
@@ -2568,9 +2568,9 @@ VACUUM (REFRESH_TABLE) coro_inv;
 statement error
 DROP TEXT SEARCH DICTIONARY coro_dict;
 ----
-db error: ERROR: Cannot drop entry "coro_dict" because there are entries that depend on it.
-index "coro_inv_idx" depends on tokenizer "coro_dict".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop text search dictionary coro_dict because other objects depend on it
+DETAIL: index coro_inv_idx depends on text search dictionary coro_dict
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # There is no OR REPLACE form for a dictionary, used or not.
@@ -3427,9 +3427,9 @@ DROP MACRO coro_m_outer;
 statement error
 DROP MACRO coro_m;
 ----
-db error: ERROR: Cannot drop entry "coro_m" because there are entries that depend on it.
-view "coro_m_v" depends on macro function "coro_m".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function coro_m(unknown,unknown) because other objects depend on it
+DETAIL: view coro_m_v depends on function coro_m(unknown,unknown)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -3540,9 +3540,9 @@ a	b	g
 statement error
 DROP MACRO coro_mdef;
 ----
-db error: ERROR: Cannot drop entry "coro_mdef" because there are entries that depend on it.
-table "coro_mt" depends on macro function "coro_mdef".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function coro_mdef() because other objects depend on it
+DETAIL: default value for column a of table coro_mt depends on function coro_mdef()
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -3602,9 +3602,9 @@ a
 statement error
 DROP MACRO coro_mchk;
 ----
-db error: ERROR: Cannot drop entry "coro_mchk" because there are entries that depend on it.
-table "coro_mchk_t" depends on macro function "coro_mchk".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function coro_mchk(unknown) because other objects depend on it
+DETAIL: constraint coro_mchk_t_a_check on table coro_mchk_t depends on function coro_mchk(unknown)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -3647,9 +3647,9 @@ n
 statement error
 DROP FUNCTION coro_pgf;
 ----
-db error: ERROR: Cannot drop entry "coro_pgf" because there are entries that depend on it.
-view "coro_pgf_v" depends on macro function "coro_pgf".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function coro_pgf(integer) because other objects depend on it
+DETAIL: view coro_pgf_v depends on function coro_pgf(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -3886,7 +3886,7 @@ connection s2
 statement error
 CREATE OR REPLACE MACRO coro_mx(x) AS x + 60;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coro_mx"
+db error: ERROR: could not serialize access due to concurrent update of "coro_mx"
 
 
 connection s1
@@ -4203,7 +4203,7 @@ connection s2
 statement error
 CREATE OR REPLACE SEQUENCE coro_seq_tx START 900;
 ----
-db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+db error: ERROR: could not serialize access due to concurrent update of <slt:ignore>
 
 
 connection s1
@@ -4641,7 +4641,7 @@ connection s2
 statement error
 CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k7', SECRET 'coro_s7', SCOPE 's3://coro-objects-bucket');
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coro_sec"
+db error: ERROR: could not serialize access due to concurrent update of "coro_sec"
 
 
 connection s1
@@ -4886,14 +4886,14 @@ statement error
 CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t2 FOR EACH STATEMENT
   INSERT INTO coro_audit VALUES ('t2_other', 0);
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coro_trg"
+db error: ERROR: could not serialize access due to concurrent update of "coro_trg"
 
 
 connection s2
 statement error
 DROP TRIGGER coro_trg ON coro_trg_t2;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coro_trg"
+db error: ERROR: could not serialize access due to concurrent update of "coro_trg"
 
 
 connection s1
@@ -5012,7 +5012,7 @@ connection s2
 statement error
 CREATE OR REPLACE VIEW coro_vv AS SELECT a FROM coro_vt WHERE a < 0;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coro_vv"
+db error: ERROR: could not serialize access due to concurrent update of "coro_vv"
 
 
 connection s1

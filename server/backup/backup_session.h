@@ -28,7 +28,6 @@
 #include <duckdb/common/unique_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/storage/storage_lock.hpp>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -40,15 +39,6 @@
 namespace sdb::backup {
 
 inline constexpr std::string_view kBackupDir = "backup";
-inline constexpr std::string_view kCatalogLink = "catalog.wal";
-
-struct DatabaseCut {
-  duckdb::idx_t oid = 0;
-  uint64_t checkpoint_iteration = 0;
-  duckdb::idx_t wal_size = 0;
-  uint64_t retained_from = 0;
-  bool with_failed_checkpoint = false;
-};
 
 struct StoreCut {
   duckdb::idx_t database_oid = 0;
@@ -57,20 +47,14 @@ struct StoreCut {
 };
 
 struct Cut {
-  std::filesystem::path catalog_link;
-  duckdb::idx_t catalog_log_size = 0;
-  std::vector<DatabaseCut> databases;
+  std::filesystem::path log_link;
+  uint64_t log_size = 0;
   std::vector<StoreCut> stores;
 };
 
 struct BackupOwner {
   const void* session = nullptr;
   int32_t pid = 0;
-};
-
-struct StartedBackup {
-  uint64_t lsn = 0;
-  std::vector<std::string> with_failed_checkpoint;
 };
 
 struct FinishedBackup {
@@ -82,8 +66,8 @@ class BackupSession final {
  public:
   static BackupSession& Instance();
 
-  StartedBackup Begin(duckdb::ClientContext& context, BackupOwner owner,
-                      std::string_view label, pg::ProgressMetrics& progress);
+  uint64_t Begin(duckdb::ClientContext& context, BackupOwner owner,
+                 std::string_view label, pg::ProgressMetrics& progress);
   FinishedBackup Finish(const void* session);
   void AbortIfOwnedBy(const void* session) noexcept;
   void End() noexcept;
@@ -93,11 +77,8 @@ class BackupSession final {
 
   absl::Mutex _mutex;
   bool _active ABSL_GUARDED_BY(_mutex) = false;
-  utils::DrainGate::Closed _checkpoints ABSL_GUARDED_BY(_mutex);
   utils::DrainGate::Closed _maintenance ABSL_GUARDED_BY(_mutex);
   std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> _pins
-    ABSL_GUARDED_BY(_mutex);
-  std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> _checkpoint_keys
     ABSL_GUARDED_BY(_mutex);
   std::filesystem::path _backup_dir ABSL_GUARDED_BY(_mutex);
   BackupOwner _owner ABSL_GUARDED_BY(_mutex);

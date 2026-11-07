@@ -101,9 +101,9 @@ a
 statement error
 DROP VIEW corv;
 ----
-db error: ERROR: Cannot drop entry "corv" because there are entries that depend on it.
-view "corv_child" depends on view "corv".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view corv because other objects depend on it
+DETAIL: view corv_child depends on view corv
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # Functions: the replaced body keeps the entry and its comment.

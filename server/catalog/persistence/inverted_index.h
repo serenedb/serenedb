@@ -72,11 +72,17 @@ struct FieldRecord {
   duckdb::idx_t text_dictionary = 0;
 };
 
+struct UniqueKeyRecord {
+  irs::field_id field = irs::field_limits::invalid();
+  std::vector<irs::field_id> columns;
+};
+
 struct InvertedIndexData {
   PkColumnKind pk = PkColumnKind::Has;
   std::vector<KeyRecord> keys;
   irs::containers::NodeHashMap<irs::field_id, FieldRecord> fields;
   std::optional<irs::ScorerOptions> top_k_scorer;
+  std::optional<UniqueKeyRecord> unique_key;
 };
 
 }  // namespace sdb::catalog::persistence

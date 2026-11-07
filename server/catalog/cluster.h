@@ -22,92 +22,94 @@
 
 #include <absl/functional/function_ref.h>
 
-#include <atomic>
-#include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/constants.hpp>
-#include <duckdb/common/enums/database_modification_type.hpp>
-#include <duckdb/storage/write_ahead_log.hpp>
-#include <duckdb/transaction/duck_transaction_manager.hpp>
-#include <filesystem>
-#include <mutex>
+#include <duckdb/parser/parsed_data/create_replication_origin_info.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "auth/role_closure.h"
+#include "catalog/base_catalog.h"
+#include "catalog/boot.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "catalog/snapshot.h"
+#include "catalog/transaction.h"
 
 namespace sdb::catalog {
 
-class ClusterCatalog final : public duckdb::DuckCatalog {
+class ClusterCatalog final : public BaseCatalog {
  public:
-  static constexpr const char* kStorageType = "sdb_cluster";
-  static constexpr const char* kDatabaseName = "sdb_cluster";
+  ClusterCatalog(duckdb::AttachedDatabase& db, DataDirectory layout)
+    : BaseCatalog{db, false},
+      _layout{std::move(layout)},
+      _roles{true, _oids},
+      _databases{true, _oids},
+      _origins{true, _oids},
+      _temporary_secrets{true, _oids},
+      _persistent_secrets{true, _oids} {}
 
-  explicit ClusterCatalog(duckdb::AttachedDatabase& db)
-    : duckdb::DuckCatalog{db, true} {}
+  void Initialize(bool load_builtin) final;
 
-  std::string GetCatalogType() final { return kStorageType; }
-  duckdb::idx_t DefaultSchemaOid() const final;
-
-  bool UsesCatalogLog() const final { return true; }
-  duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final {
-    std::lock_guard guard{_log_mutex};
-    return _catalog_log;
+  duckdb::optional<duckdb::Identifier> GetDefaultSchema() const final {
+    return duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema};
   }
-  duckdb::Catalog& ReplayUseCatalog(duckdb::ClientContext& context,
-                                    duckdb::idx_t catalog_oid) final;
-  void OnCatalogLogPrepared() final;
-  void OnCatalogLogDecided() final;
-  void EndCatalogLogCommit() final;
-  void OpenCatalogLog(duckdb::unique_ptr<duckdb::WriteAheadLog> log,
-                      bool compactable);
-  void MaybeCompactCatalogLog();
-  duckdb::idx_t SnapshotCatalogLog(const std::filesystem::path& link);
 
-  duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
-    duckdb::CreateRoleInfo& info) final;
-  bool IsPinnedEntry(const duckdb::CatalogEntry& entry) const final;
-  duckdb::unique_ptr<duckdb::InCatalogEntry> MakeDatabaseEntry(
-    duckdb::CreateDatabaseInfo& info) final {
-    return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
-  }
+  std::string GetCatalogType() final { return "cluster"; }
+  bool InMemory() final { return true; }
+  std::string GetDBPath() final { return {}; }
+  bool Durable() const final { return true; }
+  duckdb::idx_t RecordId() const final { return 0; }
+
+  const DataDirectory& Layout() const noexcept { return _layout; }
+
+  EntrySet& Set(duckdb::CatalogType type) final;
 
   void Bootstrap(duckdb::ClientContext& context);
+
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
-
-  duckdb::CatalogTransaction LoginTransaction() {
-    return duckdb::CatalogTransaction{
-      GetDatabase(), duckdb::TRANSACTION_ID_START - 1,
-      duckdb::VisibilityBound::Through(
-        duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit())};
-  }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(
     duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) final;
   void DropRole(duckdb::CatalogTransaction transaction,
                 duckdb::DropInfo& info) final;
+
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateDatabase(
-    duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info);
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateDatabaseInfo& info) final;
   void DropDatabase(duckdb::CatalogTransaction transaction,
                     duckdb::DropInfo& info) final;
 
-  auth::RoleCache& Roles() noexcept { return _roles; }
+  duckdb::optional_ptr<duckdb::CatalogEntry> CreateReplicationOrigin(
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateReplicationOriginInfo& info);
+  void DropReplicationOrigin(duckdb::CatalogTransaction transaction,
+                             duckdb::DropInfo& info);
+
+  void ReplayCreate(duckdb::ClientContext& context,
+                    duckdb::unique_ptr<duckdb::CreateInfo> info) final;
+  void ReplayDrop(duckdb::ClientContext& context,
+                  duckdb::CatalogEntry& entry) final;
+
+  void OnCommit() final;
+
+  auth::RoleCache& Roles() noexcept { return _role_cache; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
+  EntrySet& Secrets(bool persistent) noexcept {
+    return persistent ? _persistent_secrets : _temporary_secrets;
+  }
 
  private:
-  void CompactCatalogLog();
-  bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
-
-  std::mutex _log_mutex;
-  duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
-  bool _compactable = false;
-  std::atomic<duckdb::idx_t> _live_bytes{0};
-  auth::RoleCache _roles;
+  DataDirectory _layout;
+  EntrySet _roles;
+  EntrySet _databases;
+  EntrySet _origins;
+  EntrySet _temporary_secrets;
+  EntrySet _persistent_secrets;
+  auth::RoleCache _role_cache;
   CatalogSnapshots _snapshots{*this};
 };
 
@@ -119,21 +121,29 @@ inline bool ReadDatabase(
   std::string_view name,
   absl::FunctionRef<void(const DatabaseCatalogEntry&)> read) {
   auto& cluster = ClusterOf();
-  return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .ReadEntry(cluster.LoginTransaction(), duckdb::Identifier{name},
-               [&](duckdb::CatalogEntry& entry) {
-                 read(entry.Cast<DatabaseCatalogEntry>());
-               });
+  const CommittedView view;
+  const auto entry =
+    cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+      .Get(view.Transaction(cluster.GetDatabase()), duckdb::Identifier{name});
+  if (!entry) {
+    return false;
+  }
+  read(entry->Cast<DatabaseCatalogEntry>());
+  return true;
 }
 
 inline bool ReadRole(std::string_view name,
                      absl::FunctionRef<void(const RoleCatalogEntry&)> read) {
   auto& cluster = ClusterOf();
-  return cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-    .ReadEntry(cluster.LoginTransaction(), duckdb::Identifier{name},
-               [&](duckdb::CatalogEntry& entry) {
-                 read(entry.Cast<RoleCatalogEntry>());
-               });
+  const CommittedView view;
+  const auto entry =
+    cluster.Set(duckdb::CatalogType::ROLE_ENTRY)
+      .Get(view.Transaction(cluster.GetDatabase()), duckdb::Identifier{name});
+  if (!entry) {
+    return false;
+  }
+  read(entry->Cast<RoleCatalogEntry>());
+  return true;
 }
 
 }  // namespace sdb::catalog

@@ -36,7 +36,6 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/es.h"
 #include "network/http/common.h"
 #include "network/http/es/common.h"
@@ -190,7 +189,7 @@ class BulkHandler final : public HttpHandler {
     std::vector<std::vector<connector::EsBulkItem>> items;
     const connector::EsBulkInput input{
       .body = body, .capacity = padded.size(), .items = &items};
-    auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
+    auto& connection = ConnectionContext::Get(*ctx.Connection().context);
     connection.SetSideChannel(&input);
     const absl::Cleanup clear = [&] {
       connection.SetSideChannel<const connector::EsBulkInput>(nullptr);

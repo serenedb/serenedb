@@ -40,7 +40,6 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/file_manifest.h"
@@ -295,8 +294,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("partial indexes are not supported on a search-backed table"));
   }
-  if (!IndexNameTaken(context, *info, table) &&
-      GetSereneDBContext(context).SearchTxn().HasWritesFor(table.oid)) {
+  const auto* writes =
+    catalog::SessionOf(context, table.catalog).SearchWrites();
+  if (!IndexNameTaken(context, *info, table) && writes &&
+      writes->HasWritesFor(table.oid)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
       ERR_MSG("CREATE INDEX on a search-backed table cannot run in a "

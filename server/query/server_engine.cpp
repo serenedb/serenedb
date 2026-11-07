@@ -27,8 +27,11 @@
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
 
 #include "catalog/boot.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/secret_store.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
@@ -54,13 +57,13 @@
 #include "connector/functions/otel.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
-#include "connector/inverted_store_index.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/scan/scan_function.h"
 #include "docs/docs_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
+#include "pg/connection_context.h"
 #include "pg/types/register.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -90,22 +93,38 @@ ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
 ABSL_DECLARE_FLAG(std::string, server_directory);
 
 namespace sdb::server::query {
+namespace {
 
-void ConfigureServerDBConfig(duckdb::DBConfig& config) {
-  // Server-mode DuckDB state lives under the datadir, never in cwd-relative
-  // temp files or ~/.duckdb fallbacks (shell/psql subcommands return before
-  // this mutator runs and keep DuckDB defaults).
-  const auto datadir =
-    lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
-  auto layout = duckdb::make_shared_ptr<catalog::DataDirectory>(datadir);
-  connector::RegisterSereneDBStorage(config, layout);
-  catalog::RegisterClusterStorage(config, std::move(layout));
+void ConfigureEngineDBConfig(duckdb::DBConfig& config,
+                             const std::string& datadir) {
+  duckdb::FunctionExpression::SetBuiltinPrefix({});
+  config.create_internal_catalog =
+    [layout = catalog::DataDirectory{datadir}](duckdb::AttachedDatabase& db) {
+      return catalog::CreateInternalCatalog(db, layout);
+    };
+  config.create_client_context = CreateClientContext;
+  config.create_secret_storage = catalog::CreateSecretStorage;
+  connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
   config.AddExtensionOption(
     duckdb::Identifier{"data_directory"}, "Shows the data directory.",
     duckdb::LogicalType::VARCHAR, duckdb::Value{datadir}, nullptr, nullptr,
     duckdb::SetScope::AUTOMATIC, true);
   connector::RegisterIResearchReplacementScan(config);
+}
+
+}  // namespace
+
+void ConfigureShellDBConfig(duckdb::DBConfig& config) {
+  ConfigureEngineDBConfig(config, {});
+}
+
+void ConfigureServerDBConfig(duckdb::DBConfig& config) {
+  // Server-mode DuckDB state lives under the datadir, never in cwd-relative
+  // temp files or ~/.duckdb fallbacks.
+  const auto datadir =
+    lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
+  ConfigureEngineDBConfig(config, datadir);
   config.SetOptionByName(
     "temp_directory",
     duckdb::Value{utils::file_utils::BuildFilename(datadir, "tmp")});
@@ -136,11 +155,13 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // parallelism by one and make `threads`/`cpu_threads` resolve to N-1 internal
   // workers; zero makes the count exact and `threads=1` a true single worker.
   // Sessions run as tasks on that pool, so it must never be left empty; the
-  // value is refused for the lifetime of the process (kUnchangeableSettings in
-  // connector/duckdb_client_state.cpp), which is what keeps `threads -
+  // value is refused for the lifetime of the process (IsUnchangeableSetting),
+  // which is what keeps `threads -
   // external_threads` from ever resolving to zero internal workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
 }
+
+namespace {
 
 void RegisterEngineModules(duckdb::DatabaseInstance& db) {
   connector::RegisterPgMathFunctions(db);
@@ -169,6 +190,8 @@ void RegisterEngineModules(duckdb::DatabaseInstance& db) {
 
   connector::RegisterAIFunctions(db);
 }
+
+}  // namespace
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   RegisterEngineModules(db);
@@ -205,12 +228,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterSereneDBOptimizers(db);
 
-  // The inverted index: its build plan and its store-side instance are
-  // serenedb's. A plain CREATE INDEX is duckdb's ART end to end -- the bind
-  // normalizes every non-inverted spelling to it.
-  auto& index_types = db.config.GetIndexTypes();
-  index_types.RegisterIndexType(
-    connector::InvertedStoreIndex::GetInvertedIndexType());
+  duckdb::IndexType inverted;
+  inverted.name = catalog::kInvertedIndexTypeName;
+  inverted.create_plan = &connector::SereneDBCreateIndexPlan;
+  db.config.GetIndexTypes().RegisterIndexType(inverted);
 
   // Register filesystem for COPY FROM STDIN support.
   // Intercepts "/dev/stdin" and reads from PG CopyData messages.

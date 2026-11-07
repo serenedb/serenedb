@@ -24,7 +24,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
@@ -45,8 +44,6 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
-#include "connector/duckdb_client_state.h"
-#include "connector/inverted_store_index.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -313,7 +310,7 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
     context, duckdb::CatalogType::INDEX_ENTRY,
     [&](duckdb::CatalogEntry& entry) {
       auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-      if (!IsInvertedIndex(index) || index.table_oid != table.oid) {
+      if (!catalog::IsInvertedIndex(index) || index.table_oid != table.oid) {
         return;
       }
       const auto& inverted = index.Cast<catalog::InvertedIndexEntry>();
@@ -333,7 +330,7 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
 
 bool MayMaintain(ConnectionContext& conn_ctx, const duckdb::Permissions& perm,
                  std::string_view name, std::string_view verb) {
-  if (auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
+  if (auth::ClosureFor(&conn_ctx, conn_ctx.GetRoleId())
         ->Can(duckdb::CatalogType::TABLE_ENTRY, perm,
               duckdb::AclMode::Maintain)) {
     return true;
@@ -378,16 +375,12 @@ void DispatchInverted(duckdb::ClientContext& context,
         duckdb::OnEntryNotFound::RETURN_NULL);
       duckdb::optional_ptr<duckdb::IndexCatalogEntry> index;
       const catalog::InvertedIndexEntry* inverted = nullptr;
-      std::shared_ptr<search::Store> storage;
       if (entry) {
         index = &entry->Cast<duckdb::IndexCatalogEntry>();
         inverted =
           dynamic_cast<const catalog::InvertedIndexEntry*>(index.get());
-        if (inverted) {
-          storage = inverted->Storage();
-        }
       }
-      if (!storage) {
+      if (!inverted || (!inverted->Storage() && !inverted->SearchStore())) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
           ERR_MSG("relation \"", target.object, "\" does not exist"));
@@ -400,8 +393,13 @@ void DispatchInverted(duckdb::ClientContext& context,
                                    relation->name.GetIdentifierName(), verb)) {
         return;
       }
-      steps.emplace_back(std::move(storage), inverted->Config(), nullptr,
-                         index->name.GetIdentifierName());
+      if (inverted->Storage()) {
+        steps.emplace_back(inverted->Storage(), inverted->Config(), nullptr,
+                           index->name.GetIdentifierName());
+      } else {
+        steps.emplace_back(nullptr, nullptr, inverted->SearchStore(),
+                           index->name.GetIdentifierName());
+      }
     } break;
     case Scope::Table: {
       auto entry = duckdb::Catalog::GetEntry(
@@ -613,7 +611,7 @@ void VacuumExecute(duckdb::ClientContext& context,
                    duckdb::TableFunctionInput& input,
                    duckdb::DataChunk& output) {
   auto& bind_data = input.bind_data->Cast<VacuumBindData>();
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = ConnectionContext::Get(context);
 
   auto verb = ParseOption(bind_data.option);
   if (!verb) {
@@ -640,34 +638,29 @@ void VacuumExecute(duckdb::ClientContext& context,
                              "VACUUM (", bind_data.option, ")");
   }
 
-  pg::ProgressMetrics* progress = nullptr;
-  if (auto client_state = context.registered_state->Get<SereneDBClientState>(
-        kSereneDBClientStateKey)) {
-    duckdb::idx_t relid = pg::kInvalidOid;
-    if (verb->scope == Scope::Table || verb->scope == Scope::Column) {
-      auto table = duckdb::Catalog::GetEntry(
-        context,
-        duckdb::EntryLookupInfo{
-          duckdb::CatalogType::TABLE_ENTRY,
-          duckdb::QualifiedName{duckdb::Identifier{target.database},
-                                duckdb::Identifier{target.schema},
-                                duckdb::Identifier{target.object}}},
-        duckdb::OnEntryNotFound::RETURN_NULL);
-      if (table) {
-        relid = table->oid;
-      }
+  duckdb::idx_t relid = pg::kInvalidOid;
+  if (verb->scope == Scope::Table || verb->scope == Scope::Column) {
+    auto table = duckdb::Catalog::GetEntry(
+      context,
+      duckdb::EntryLookupInfo{
+        duckdb::CatalogType::TABLE_ENTRY,
+        duckdb::QualifiedName{duckdb::Identifier{target.database},
+                              duckdb::Identifier{target.schema},
+                              duckdb::Identifier{target.object}}},
+      duckdb::OnEntryNotFound::RETURN_NULL);
+    if (table) {
+      relid = table->oid;
     }
-    auto& metrics = client_state->Progress();
-    if (verb->action == Action::RecomputeStats) {
-      metrics.SetCommand(pg::ProgressCommand::Analyze);
-      metrics.SetPhase(pg::progress_phase::Analyze::Initializing);
-    } else {
-      metrics.SetCommand(pg::ProgressCommand::Vacuum);
-      metrics.SetPhase(pg::progress_phase::Vacuum::Initializing);
-    }
-    pg::ProgressMetrics::Set(metrics.relid, static_cast<int64_t>(relid));
-    progress = &metrics;
   }
+  auto* progress = &conn_ctx.Progress();
+  if (verb->action == Action::RecomputeStats) {
+    progress->SetCommand(pg::ProgressCommand::Analyze);
+    progress->SetPhase(pg::progress_phase::Analyze::Initializing);
+  } else {
+    progress->SetCommand(pg::ProgressCommand::Vacuum);
+    progress->SetPhase(pg::progress_phase::Vacuum::Initializing);
+  }
+  pg::ProgressMetrics::Set(progress->relid, static_cast<int64_t>(relid));
 
   switch (verb->action) {
     case Action::Refresh:

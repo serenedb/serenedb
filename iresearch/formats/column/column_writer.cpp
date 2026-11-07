@@ -567,19 +567,21 @@ void ColumnWriter::SealColumn(const duckdb::LogicalType& type,
 ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
                            duckdb::LogicalType type, bool skip_validity,
                            uint32_t row_group_size,
-                           duckdb::CompressionType forced, bool hyperloglog)
+                           duckdb::CompressionType forced, bool hyperloglog,
+                           bool deferred)
   : _owner{&owner},
     _id{id},
     _type{std::move(type)},
     _skip_validity{skip_validity},
     _row_group_size{row_group_size},
-    _forced{forced} {
+    _forced{forced},
+    _deferred{deferred} {
   const auto pt = _type.InternalType();
   _is_nested = pt == duckdb::PhysicalType::STRUCT ||
                pt == duckdb::PhysicalType::LIST ||
                pt == duckdb::PhysicalType::ARRAY;
   if (_type.id() == duckdb::LogicalTypeId::VARIANT) {
-    const auto& config = duckdb::DBConfig::GetConfig(WriteCtx().Database());
+    const auto& config = duckdb::DBConfig::GetConfig(_owner->Database());
     _variant_min_shred_size =
       duckdb::Settings::Get<duckdb::VariantMinimumShreddingSizeSetting>(config);
     _force_variant_shredding = config.options.force_variant_shredding;
@@ -598,7 +600,7 @@ WriteChunk& ColumnWriter::OpenChunk() {
     return _staged[_staged_chunks - 1];
   }
   if (_staged_chunks == _staged.size()) {
-    auto& alloc = duckdb::Allocator::Get(WriteCtx().Database());
+    auto& alloc = duckdb::Allocator::Get(_owner->Database());
     auto& cache =
       _staged_caches.emplace_back(alloc, _type, STANDARD_VECTOR_SIZE);
     _staged.push_back(WriteChunk{duckdb::Vector{cache}, 0});
@@ -618,7 +620,8 @@ void ColumnWriter::AppendDense(const duckdb::Vector& vec, duckdb::idx_t count) {
   while (off < count) {
     auto& back = OpenChunk();
     const auto rg_room =
-      static_cast<duckdb::idx_t>(_row_group_size - _staged_rows);
+      _deferred ? duckdb::idx_t{STANDARD_VECTOR_SIZE}
+                : static_cast<duckdb::idx_t>(_row_group_size - _staged_rows);
     const auto take = std::min(
       {count - off, duckdb::idx_t{STANDARD_VECTOR_SIZE} - back.count, rg_room});
     duckdb::ImmutableStrings::Copy(vec, back.data, off + take,
@@ -628,7 +631,7 @@ void ColumnWriter::AppendDense(const duckdb::Vector& vec, duckdb::idx_t count) {
     duckdb::FlatVector::SetSize(back.data, back.count);
     _staged_rows += take;
     off += take;
-    if (_staged_rows == _row_group_size) {
+    if (!_deferred && _staged_rows == _row_group_size) {
       SealRowGroup();
     }
   }
@@ -649,7 +652,8 @@ void ColumnWriter::PadNestedNulls(uint64_t count) {
   while (off < count) {
     auto& back = OpenChunk();
     const auto rg_room =
-      static_cast<duckdb::idx_t>(_row_group_size - _staged_rows);
+      _deferred ? duckdb::idx_t{STANDARD_VECTOR_SIZE}
+                : static_cast<duckdb::idx_t>(_row_group_size - _staged_rows);
     const auto take = std::min<duckdb::idx_t>(
       {static_cast<duckdb::idx_t>(count - off),
        duckdb::idx_t{STANDARD_VECTOR_SIZE} - back.count, rg_room});
@@ -662,7 +666,7 @@ void ColumnWriter::PadNestedNulls(uint64_t count) {
     duckdb::FlatVector::SetSize(back.data, back.count);
     _staged_rows += take;
     off += take;
-    if (_staged_rows == _row_group_size) {
+    if (!_deferred && _staged_rows == _row_group_size) {
       SealRowGroup();
     }
   }
@@ -718,10 +722,54 @@ void ColumnWriter::SealRowGroup() {
       _meta.hyperloglog->Update(chunk.data, _hll_hashes);
     }
   }
-  SealColumn(_type, chunks, _staged_rows, _skip_validity, _forced, _meta);
-  _row_start += _staged_rows;
+  if (!_deferred) {
+    SealColumn(_type, chunks, _staged_rows, _skip_validity, _forced, _meta);
+    _row_start += _staged_rows;
+  } else {
+    const size_t per_seal = std::max<size_t>(
+      1, size_t{_row_group_size} / size_t{STANDARD_VECTOR_SIZE});
+    for (size_t begin = 0; begin < chunks.size(); begin += per_seal) {
+      const auto slice =
+        chunks.subspan(begin, std::min(per_seal, chunks.size() - begin));
+      uint64_t rows = 0;
+      for (const auto& chunk : slice) {
+        rows += chunk.count;
+      }
+      SealColumn(_type, slice, rows, _skip_validity, _forced, _meta);
+      _row_start += rows;
+    }
+  }
   _staged_chunks = 0;
   _staged_rows = 0;
+}
+
+std::vector<WriteChunk> ColumnWriter::Snapshot(uint64_t rows) const {
+  SDB_ASSERT(_deferred && _row_start == 0);
+  std::vector<WriteChunk> chunks;
+  auto left = std::min(rows, _staged_rows);
+  for (size_t i = 0; i < _staged_chunks && left != 0; ++i) {
+    const auto& chunk = _staged[i];
+    const auto take =
+      static_cast<duckdb::idx_t>(std::min<uint64_t>(left, chunk.count));
+    if (take == duckdb::idx_t{STANDARD_VECTOR_SIZE}) {
+      chunks.push_back(WriteChunk{duckdb::Vector::Ref(chunk.data), take});
+    } else {
+      duckdb::Vector copy{_type, take};
+      duckdb::VectorOperations::Copy(chunk.data, copy, take, 0, 0);
+      duckdb::FlatVector::SetSize(copy, take);
+      chunks.push_back(WriteChunk{std::move(copy), take});
+    }
+    left -= take;
+  }
+  return chunks;
+}
+
+size_t ColumnWriter::StagedBytes() const noexcept {
+  size_t bytes = 0;
+  for (size_t i = 0; i < _staged_chunks; ++i) {
+    bytes += _staged[i].data.GetAllocationSize();
+  }
+  return bytes;
 }
 
 void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {

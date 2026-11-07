@@ -309,17 +309,15 @@ ALTER TABLE sac_ck DROP CONSTRAINT IF EXISTS sac_ck_pos;
 statement error
 ALTER TABLE sac_ck DROP CONSTRAINT sac_ck_pos;
 ----
-db error: ERROR: constraint "sac_ck_pos" of table sac_ck does not exist
+db error: ERROR: constraint "sac_ck_pos" of relation "sac_ck" does not exist
 
 
 statement ok
 INSERT INTO sac_ck VALUES (-1);
 
 
-statement error
+statement ok
 ALTER TABLE sac DROP CONSTRAINT sac_pkey;
-----
-db error: ERROR: dropping a PRIMARY KEY or UNIQUE constraint of a search-backed table is not supported
 
 
 statement ok

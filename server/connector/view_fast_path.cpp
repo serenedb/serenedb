@@ -274,8 +274,16 @@ std::optional<ViewFastPath> AttachedDuckDBFastPath(duckdb::Catalog& catalog,
   return out;
 }
 
-// Views over a serenedb table ride the same rowid-keyed machinery as views
-// over an attached database.
+std::optional<ViewFastPath> ExternalColumnKeyFastPath(
+  ViewFastPath out, std::vector<ExternalKeyColumn> keys) {
+  if (keys.empty()) {
+    return std::nullopt;
+  }
+  out.pk_spec = PkSpec::ExternalColumnKey;
+  out.key_columns = std::move(keys);
+  return out;
+}
+
 std::optional<ViewFastPath> SereneDBFastPath(
   const duckdb::TableCatalogEntry& table, ViewFastPath out) {
   // Only the check that every projected name is one of the relation's
@@ -285,19 +293,14 @@ std::optional<ViewFastPath> SereneDBFastPath(
       })) {
     return std::nullopt;
   }
-  out.pk_spec = PkSpec::DuckDBRowId;
-  out.supports_filters = true;
-  return out;
-}
-
-std::optional<ViewFastPath> ExternalColumnKeyFastPath(
-  ViewFastPath out, std::vector<ExternalKeyColumn> keys) {
-  if (keys.empty()) {
+  const auto pk = table.GetPrimaryKey();
+  if (!pk) {
     return std::nullopt;
   }
-  out.pk_spec = PkSpec::ExternalColumnKey;
-  out.key_columns = std::move(keys);
-  return out;
+  return ExternalColumnKeyFastPath(
+    std::move(out),
+    FindKeyColumns(table,
+                   pk->Cast<duckdb::UniqueConstraint>().GetColumnNames()));
 }
 
 std::optional<ViewFastPath> ExternalFastPath(
@@ -583,13 +586,8 @@ duckdb::unique_ptr<duckdb::LogicalGet> BindReaderSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
   SDB_ASSERT(!fp.args.empty());
   auto& reader =
-    duckdb::Catalog::GetEntry(
-      context,
-      duckdb::EntryLookupInfo{
-        duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
-        duckdb::QualifiedName(SYSTEM_CATALOG, DEFAULT_SCHEMA,
-                              duckdb::Identifier{fp.function_name})})
-      .Cast<duckdb::TableFunctionCatalogEntry>();
+    duckdb::Catalog::GetBuiltinEntry<duckdb::TableFunctionCatalogEntry>(
+      context, duckdb::Identifier{fp.function_name});
   const bool pin_snapshot =
     fp.pinned_iceberg_snapshot_id != 0 && fp.function_name == "iceberg_scan";
   const duckdb::Identifier snapshot_param{"snapshot_from_id"};

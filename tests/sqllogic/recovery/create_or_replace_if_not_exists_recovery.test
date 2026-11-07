@@ -180,7 +180,7 @@ connection w2
 statement error
 CREATE OR REPLACE VIEW coinr_v_ww AS SELECT 3 AS k;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coinr_v_ww"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_v_ww"
 
 
 connection w2
@@ -258,9 +258,9 @@ CREATE VIEW coinr_t_dep_v AS SELECT a FROM coinr_t_dep;
 statement error
 CREATE OR REPLACE TABLE coinr_t_dep (z INT);
 ----
-db error: ERROR: Cannot drop entry "coinr_t_dep" because there are entries that depend on it.
-view "coinr_t_dep_v" depends on table "coinr_t_dep".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coinr_t_dep because other objects depend on it
+DETAIL: view coinr_t_dep_v depends on table coinr_t_dep
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -374,7 +374,7 @@ connection w2
 statement error
 CREATE TABLE IF NOT EXISTS coinr_t_race (b TEXT);
 ----
-db error: ERROR: Catalog write-write conflict on create with "coinr_t_race"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_t_race"
 
 
 connection w1
@@ -555,7 +555,7 @@ connection w2
 statement error
 CREATE OR REPLACE MACRO coinr_m_ww(x) AS x + 3;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coinr_m_ww"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_m_ww"
 
 
 connection w2
@@ -685,9 +685,9 @@ INSERT INTO coinr_s_user (v) VALUES ('first');
 statement error
 CREATE OR REPLACE SEQUENCE coinr_s_used START 100;
 ----
-db error: ERROR: Cannot drop entry "coinr_s_used" because there are entries that depend on it.
-table "coinr_s_user" depends on sequence "coinr_s_used".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence coinr_s_used because other objects depend on it
+DETAIL: default value for column id of table coinr_s_user depends on sequence coinr_s_used
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # ----------------------------------------------------------------------
@@ -751,9 +751,9 @@ INSERT INTO coinr_ty_user VALUES ('on');
 statement error
 CREATE OR REPLACE TYPE coinr_ty_used AS ENUM ('other');
 ----
-db error: ERROR: Cannot drop entry "coinr_ty_used" because there are entries that depend on it.
-table "coinr_ty_user" depends on type "coinr_ty_used".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type coinr_ty_used because other objects depend on it
+DETAIL: column s of table coinr_ty_user depends on type coinr_ty_used
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # ----------------------------------------------------------------------

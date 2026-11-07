@@ -102,6 +102,33 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   return reader;
 }
 
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
+  const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns) {
+  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
+  reader->_id = id;
+  reader->_doc_maps = std::make_shared<DocMapsSlot>();
+  reader->_data = std::make_shared<ColumnData>();
+  reader->_data->col_reader = std::move(columns);
+  reader->_in_memory = true;
+  return reader;
+}
+
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
+  std::shared_ptr<const DocumentMask> mask) const {
+  SegmentMeta meta;
+  static_cast<SegmentInfo&>(meta) = _info;
+  meta.docs_mask = std::move(mask);
+  meta.live_docs_count = meta.docs_count - RemovalCount(meta);
+  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
+  reader->_refs = _refs;
+  reader->_id = _id;
+  reader->_doc_maps = _doc_maps;
+  reader->_field_reader = _field_reader;
+  reader->_data = _data;
+  reader->_in_memory = _in_memory;
+  return reader;
+}
+
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) const {

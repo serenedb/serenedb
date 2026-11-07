@@ -582,6 +582,18 @@ bool IResearchConsumeTopN(duckdb::ClientContext&,
 
 namespace {
 
+void ScanVerifyDmlTarget(duckdb::ClientContext&,
+                         duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
+  const auto& bind = bind_data->Cast<ScanBindData>();
+  if (bind.relation.IsInvertedIndex()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("cannot open relation \"",
+              bind.relation.inverted_index->name.GetIdentifierName(), "\""),
+      ERR_DETAIL("This operation is not supported for indexes."));
+  }
+}
+
 duckdb::BindInfo ScanGetBindInfo(
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
   auto& bind = const_cast<ScanBindData&>(bind_data->Cast<ScanBindData>());
@@ -608,7 +620,6 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
   const auto& bind = bind_p->Cast<ScanBindData>();
   if (bind.relation.table_entry) {
     result = bind.relation.table_entry->GetVirtualColumns();
-    result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
   }
   if (bind.IsViewBacked()) {
     result.insert(
@@ -664,6 +675,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.get_bind_info = ScanGetBindInfo;
   func.get_virtual_columns = ScanGetVirtualColumns;
   func.get_row_id_columns = IResearchGetRowIdColumns;
+  func.verify_dml_target = ScanVerifyDmlTarget;
   func.supports_lookup = &IResearchSupportsLookup;
   func.get_lookup_function = &IResearchGetLookupFunction;
   func.get_lookup_source = &IResearchGetLookupSource;

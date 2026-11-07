@@ -29,7 +29,6 @@
 #include <iresearch/utils/static_strings.hpp>
 
 #include "catalog/catalog.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
 #include "pg/catalog/utils/lookup.h"
 
@@ -38,9 +37,8 @@ namespace sdb::pg {
 Session MakeSession(duckdb::ClientContext* context) {
   Session session{
     .context = context,
-    .database = context && connector::GetSereneDBContextPtr(*context)
-                  ? catalog::DefaultDuckCatalog(*context).get()
-                  : nullptr,
+    .database =
+      context ? catalog::DefaultSereneDBCatalog(*context).get() : nullptr,
     .transaction = std::nullopt,
     .search_path = {},
     .temporary = std::nullopt,
@@ -89,11 +87,11 @@ Session MakeSession(duckdb::ClientContext* context) {
     duckdb::ClientData::Get(*context).temporary_objects->GetCatalog();
   const auto transaction = temporary.GetCatalogTransaction(*context);
   auto schema =
-    temporary.GetSchema(transaction, duckdb::Identifier::DefaultSchema(),
+    temporary.GetSchema(transaction, *temporary.GetDefaultSchema(),
                         duckdb::OnEntryNotFound::RETURN_NULL);
   SDB_ASSERT(schema);
   for (const auto type : kRelationSets) {
-    schema->Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type).Scan(
+    schema->Cast<catalog::Schema>().Set(type).Scan(
       transaction, [&](duckdb::CatalogEntry& entry) {
         if (!entry.internal && !session.temporary) {
           session.temporary.emplace(transaction, *schema);

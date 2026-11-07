@@ -1,0 +1,33 @@
+control substitution on
+
+statement ok
+CREATE TABLE srp (id INT, body TEXT)
+WITH (storage = 'search', refresh_interval = 100)
+
+
+statement ok
+INSERT INTO srp SELECT i, 'fox' FROM generate_series(1, 10) s(i)
+
+
+statement ok
+SET sdb_faults = 'pause_refresh_loop_head'
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_refresh_loop_head:parked'
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet'
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM srp;
+----
+n
+10

@@ -37,15 +37,17 @@
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
-#include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "catalog/entry_set.h"
 #include "catalog/persistence/search_table.h"
+#include "search/table_keys.h"
 #include "query/config_variable_names.h"
 
 namespace duckdb {
@@ -115,14 +117,13 @@ void RequireSearchTableIndexOption(std::string_view name);
 
 using persistence::SearchTableOptions;
 
-class SearchTableEntry final : public duckdb::TableCatalogEntry,
-                               public duckdb::TableLogStorage {
+class SearchTableEntry final : public duckdb::TableCatalogEntry {
  public:
-  SearchTableEntry(
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,
-    std::shared_ptr<search::Store> inherited_storage = {},
-    duckdb::shared_ptr<duckdb::CatalogSet> inherited_triggers = {});
+  SearchTableEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+                   duckdb::BoundCreateTableInfo& info,
+                   duckdb::CatalogTransaction transaction,
+                   std::shared_ptr<search::Store> inherited_storage = {},
+                   std::shared_ptr<EntrySet> triggers = {});
 
   const duckdb::ColumnList& GetColumns() const final { return _columns; }
 
@@ -170,30 +171,34 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
                              duckdb::LogicalUpdate& update,
                              duckdb::ClientContext& context) final;
 
-  duckdb::optional_ptr<duckdb::TableLogStorage> GetLogStorage() final {
-    return this;
-  }
-
-  void ReplayInsert(duckdb::ClientContext& context,
-                    duckdb::DataChunk& chunk) final;
-  void ReplayDeleteRowPositions(
-    std::shared_ptr<const duckdb::data_t> entry,
-    const duckdb::vector<duckdb::WALFrozenRowPositionGroup>& groups) final;
-  void ReplayRowPositionMaps(
-    std::shared_ptr<const duckdb::data_t> entry, uint64_t source,
-    const duckdb::vector<duckdb::WALFrozenRowPositionMap>& maps) final;
-  void ReplayTruncate() final;
-  void ReplayAdoptSegments(duckdb::vector<std::string> segments) final;
+  duckdb::optional_ptr<duckdb::CatalogEntry> CreateTrigger(
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateTriggerInfo& info) final;
+  void ScanTriggers(
+    duckdb::CatalogTransaction transaction,
+    const std::function<void(duckdb::CatalogEntry&)>& callback) const final;
+  duckdb::optional_ptr<duckdb::CatalogEntry> GetTrigger(
+    duckdb::CatalogTransaction transaction,
+    const duckdb::Identifier& name) const final;
+  bool DropTrigger(duckdb::CatalogTransaction transaction,
+                   const duckdb::Identifier& name, bool cascade) final;
+  duckdb::vector<std::reference_wrapper<duckdb::TableCatalogEntry>>
+  ReferencingTables(duckdb::ClientContext& context) final;
 
   const auto& Storage() const noexcept { return _storage; }
   void RequireCurrentSchema() const;
+  const std::vector<search::KeySpec>& KeySpecs() const noexcept {
+    return _keys;
+  }
+
+  TableEngine Engine() const noexcept { return _engine; }
 
  private:
   duckdb::unique_ptr<duckdb::CreateTableInfo> Definition() const;
   duckdb::unique_ptr<SearchTableEntry> Successor(
     duckdb::ClientContext& context, duckdb::BoundCreateTableInfo& bound) const;
   duckdb::unique_ptr<SearchTableEntry> Altered(
-    duckdb::ClientContext& context, duckdb::AlterInfo& info,
+    duckdb::ClientContext& context, const duckdb::AlterInfo& info,
     duckdb::unique_ptr<duckdb::CreateTableInfo> definition,
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>* bound_defaults =
       nullptr) const;
@@ -236,16 +241,32 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   duckdb::idx_t UnusedColumnOid() const;
 
   void BeginSchemaChange(duckdb::ClientContext& context);
+  void ApplyKeys() const;
+  duckdb::unique_ptr<duckdb::CatalogEntry> AddKeyConstraint(
+    duckdb::ClientContext& context, duckdb::AddConstraintInfo& info);
+  void VerifyKey(duckdb::ClientContext& context,
+                 const search::KeySpec& spec) const;
   void Backfill(duckdb::ClientContext& context, irs::field_id field,
                 duckdb::unique_ptr<duckdb::Expression> value) const;
   void ReplaceStoreColumnsAtCommit(duckdb::ClientContext& context) const;
   void VerifyExistingRows(duckdb::ClientContext& context,
                           const duckdb::BoundConstraint& constraint) const;
+  void AlterTriggers(duckdb::ClientContext& context,
+                     duckdb::AlterTableInfo& info,
+                     const duckdb::Identifier& name);
 
   duckdb::ColumnList _columns;
   std::shared_ptr<search::Store> _storage;
+  std::shared_ptr<EntrySet> _triggers;
+  TableEngine _engine = TableEngine::Transactional;
   SearchTableOptions _options;
   uint64_t _schema_epoch = 0;
+  std::vector<search::KeySpec> _keys;
+  std::vector<std::shared_ptr<const search::Referencing>> _referencing;
 };
+
+inline bool IsSearchTable(const duckdb::CatalogEntry& entry) {
+  return dynamic_cast<const SearchTableEntry*>(&entry) != nullptr;
+}
 
 }  // namespace sdb::catalog

@@ -184,7 +184,7 @@ connection s2
 statement error
 CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a > 0
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v"
 
 
 connection s2
@@ -196,7 +196,7 @@ connection s2
 statement error
 CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a > 0
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v"
 
 
 # Inside a transaction the refusal aborts it.
@@ -216,28 +216,28 @@ connection s2
 statement error
 DROP VIEW cmr_v
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v"
 
 
 connection s2
 statement error
 ALTER VIEW cmr_v RENAME TO cmr_v_other
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v"
 
 
 connection s2
 statement error
 COMMENT ON VIEW cmr_v IS 'late'
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v"
 
 
 connection s2
 statement error
 CREATE VIEW cmr_v AS SELECT 0 AS a
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v"
 
 
 # IF NOT EXISTS finds the committed view and leaves it alone.
@@ -283,7 +283,7 @@ connection s1
 statement error
 CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a = 1
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v"
 
 
 connection s2
@@ -315,14 +315,14 @@ connection s1
 statement error
 CREATE OR REPLACE VIEW cmr_v AS SELECT a FROM cmr_vt WHERE a = 1
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v"
 
 
 connection s1
 statement error
 CREATE OR REPLACE VIEW cmr_v2 AS SELECT a FROM cmr_vt WHERE a = 1
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_v2"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_v2"
 
 
 connection s2
@@ -480,9 +480,9 @@ connection s2
 statement error
 DROP TABLE cmr_vd1
 ----
-db error: ERROR: Cannot drop entry "cmr_vd1" because there are entries that depend on it.
-view "cmr_vd" depends on table "cmr_vd1".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table cmr_vd1 because other objects depend on it
+DETAIL: view cmr_vd depends on table cmr_vd1
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection s1
@@ -965,7 +965,7 @@ connection s2
 statement error
 CREATE TABLE cmr_t(q INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_t"
 
 
 connection s2
@@ -1685,7 +1685,7 @@ connection s2
 statement error
 COMMENT ON TABLE cmr_sr IS 'late'
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sr"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_sr"
 
 
 # Writes into the old search table that commit ahead of the pending
@@ -1883,7 +1883,7 @@ connection s2
 statement error
 CREATE OR REPLACE MACRO cmr_m(x) AS x + 8
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_m"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_m"
 
 
 # The committed view still depends on the committed macro.
@@ -1891,13 +1891,13 @@ connection s2
 statement error
 DROP MACRO cmr_m
 ----
-db error: ERROR: Cannot drop entry "cmr_m" because there are entries that depend on it.
-view "cmr_mv" depends on macro function "cmr_m".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function cmr_m(unknown) because other objects depend on it
+DETAIL: view cmr_mv depends on function cmr_m(unknown)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "cmr_m"
+statement error could not serialize access due to concurrent update of "cmr_m"
 DROP MACRO cmr_m CASCADE
 
 
@@ -1913,7 +1913,7 @@ connection s2
 statement error
 COMMENT ON FUNCTION cmr_m IS 'late'
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_m"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_m"
 
 
 connection s1
@@ -1935,7 +1935,7 @@ connection s1
 statement error
 CREATE OR REPLACE FUNCTION cmr_f(x INTEGER) RETURNS INTEGER LANGUAGE SQL AS $$ SELECT x + 7 $$
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_f"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_f"
 
 
 connection s2
@@ -2083,7 +2083,7 @@ connection s2
 statement error
 CREATE OR REPLACE MACRO cmr_tm(n) AS TABLE SELECT 0 AS r
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_tm"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_tm"
 
 
 # IF NOT EXISTS finds the committed macro and leaves it alone.
@@ -2285,21 +2285,21 @@ connection s2
 statement error
 CREATE OR REPLACE SEQUENCE cmr_sq START 600
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sq"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_sq"
 
 
 connection s2
 statement error
 DROP SEQUENCE cmr_sq
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sq"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_sq"
 
 
 connection s2
 statement error
 ALTER SEQUENCE cmr_sq RENAME TO cmr_sq_other
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sq"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_sq"
 
 
 connection s2
@@ -2334,7 +2334,7 @@ connection s1
 statement error
 CREATE OR REPLACE SEQUENCE cmr_sq START 700
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sq"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_sq"
 
 
 connection s2
@@ -2399,7 +2399,7 @@ connection s2
 statement error
 COMMENT ON SEQUENCE cmr_sq2 IS 'late'
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sq2"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_sq2"
 
 
 connection s1
@@ -2421,14 +2421,14 @@ connection s1
 statement error
 CREATE OR REPLACE SEQUENCE cmr_sq2 START 50
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_sq2"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_sq2"
 
 
 connection s1
 statement error
 CREATE OR REPLACE SEQUENCE cmr_sq3 START 50
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_sq3"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_sq3"
 
 
 connection s2
@@ -2619,21 +2619,21 @@ connection s2
 statement error
 CREATE OR REPLACE TYPE cmr_ty AS ENUM ('q')
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_ty"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_ty"
 
 
 connection s2
 statement error
 DROP TYPE cmr_ty
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_ty"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_ty"
 
 
 connection s2
 statement error
 CREATE TYPE cmr_ty AS ENUM ('q')
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_ty"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_ty"
 
 
 connection s2
@@ -2668,7 +2668,7 @@ connection s1
 statement error
 CREATE OR REPLACE TYPE cmr_ty AS ENUM ('p')
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_ty"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_ty"
 
 
 connection s2
@@ -2708,7 +2708,7 @@ connection s2
 statement error
 COMMENT ON TYPE cmr_ty2 IS 'late'
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_ty2"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_ty2"
 
 
 # A table on the old type, created meanwhile, makes the replacement fail.
@@ -2833,70 +2833,70 @@ connection s2
 statement error
 CREATE VIEW IF NOT EXISTS cmr_nv AS SELECT 2 AS x
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nv"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nv"
 
 
 connection s2
 statement error
 CREATE OR REPLACE VIEW cmr_nv AS SELECT 2 AS x
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nv"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nv"
 
 
 connection s2
 statement error
 CREATE TABLE IF NOT EXISTS cmr_nt(b INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nt"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nt"
 
 
 connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_nt(b INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nt"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nt"
 
 
 connection s2
 statement error
 CREATE MACRO IF NOT EXISTS cmr_nm() AS 2
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nm"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nm"
 
 
 connection s2
 statement error
 CREATE OR REPLACE MACRO cmr_nm() AS 2
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nm"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nm"
 
 
 connection s2
 statement error
 CREATE SEQUENCE IF NOT EXISTS cmr_nsq
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nsq"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nsq"
 
 
 connection s2
 statement error
 CREATE OR REPLACE SEQUENCE cmr_nsq
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nsq"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nsq"
 
 
 connection s2
 statement error
 CREATE TYPE IF NOT EXISTS cmr_nty AS ENUM ('b')
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nty"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nty"
 
 
 connection s2
 statement error
 CREATE OR REPLACE TYPE cmr_nty AS ENUM ('b')
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_nty"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_nty"
 
 
 connection s1
@@ -3259,7 +3259,7 @@ connection s3
 statement error
 CREATE OR REPLACE VIEW cmr_ov AS SELECT 3 AS x
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_ov"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_ov"
 
 
 connection s3
@@ -3289,7 +3289,7 @@ connection s3
 statement error
 CREATE OR REPLACE TABLE cmr_ot(c INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_ot"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_ot"
 
 
 connection s3
@@ -3319,7 +3319,7 @@ connection s3
 statement error
 CREATE OR REPLACE MACRO cmr_om() AS 3
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_om"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_om"
 
 
 connection s3
@@ -3349,7 +3349,7 @@ connection s3
 statement error
 CREATE OR REPLACE SEQUENCE cmr_osq START 8
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_osq"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_osq"
 
 
 connection s3
@@ -3379,7 +3379,7 @@ connection s3
 statement error
 CREATE OR REPLACE TYPE cmr_oty AS ENUM ('c')
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_oty"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_oty"
 
 
 connection s3
@@ -3407,7 +3407,7 @@ CREATE OR REPLACE TRIGGER cmr_otr AFTER INSERT ON cmr_ott FOR EACH ROW
 
 
 connection s3
-statement error Catalog write-write conflict on alter with "cmr_otr"
+statement error could not serialize access due to concurrent update of "cmr_otr"
 CREATE OR REPLACE TRIGGER cmr_otr AFTER INSERT ON cmr_ott FOR EACH ROW
   INSERT INTO cmr_ota VALUES (NEW.a * 3)
 
@@ -3440,7 +3440,7 @@ connection s3
 statement error
 DROP VIEW cmr_ov
 ----
-db error: ERROR: Catalog write-write conflict on alter with "cmr_ov"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_ov"
 
 
 connection s3
@@ -3472,7 +3472,7 @@ connection s3
 statement error
 CREATE OR REPLACE VIEW cmr_onv AS SELECT 2 AS x
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_onv"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_onv"
 
 
 connection s3
@@ -3502,7 +3502,7 @@ connection s3
 statement error
 CREATE VIEW IF NOT EXISTS cmr_onv2 AS SELECT 2 AS x
 ----
-db error: ERROR: Catalog write-write conflict on create with "cmr_onv2"
+db error: ERROR: could not serialize access due to concurrent update of "cmr_onv2"
 
 
 connection s3
@@ -4057,23 +4057,23 @@ CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "cmr_tr"
+statement error could not serialize access due to concurrent update of "cmr_tr"
 CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('v3', NEW.a)
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "cmr_tr"
+statement error could not serialize access due to concurrent update of "cmr_tr"
 DROP TRIGGER cmr_tr ON cmr_tt
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "cmr_tr"
+statement error could not serialize access due to concurrent update of "cmr_tr"
 DROP TRIGGER IF EXISTS cmr_tr ON cmr_tt
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "cmr_tr"
+statement error could not serialize access due to concurrent update of "cmr_tr"
 CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('v3', NEW.a)
 
@@ -4135,7 +4135,7 @@ DROP TRIGGER cmr_tr ON cmr_tt
 
 
 connection s1
-statement error Catalog write-write conflict on alter with "cmr_tr"
+statement error could not serialize access due to concurrent update of "cmr_tr"
 CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('v2', NEW.a)
 
@@ -4173,13 +4173,13 @@ CREATE TRIGGER cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
 
 
 connection s2
-statement error Catalog write-write conflict on create with "cmr_tr3"
+statement error could not serialize access due to concurrent update of "cmr_tr3"
 CREATE TRIGGER IF NOT EXISTS cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('ins3b', NEW.a)
 
 
 connection s2
-statement error Catalog write-write conflict on create with "cmr_tr3"
+statement error could not serialize access due to concurrent update of "cmr_tr3"
 CREATE OR REPLACE TRIGGER cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('ins3b', NEW.a)
 

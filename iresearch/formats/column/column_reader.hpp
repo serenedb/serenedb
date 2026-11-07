@@ -261,13 +261,17 @@ class ColumnReader {
   // (rows must ascend across calls). `scratch` is a caller-owned throwaway of
   // this column's type. Returns the survivor count; on return
   // `sel[0..survivors)` are the surviving span offsets.
-  duckdb::idx_t GatherFilter(ScanState& s, uint64_t anchor, duckdb::idx_t span,
-                             duckdb::SelectionVector& sel,
-                             duckdb::idx_t sel_count,
-                             const duckdb::TableFilter& filter,
-                             duckdb::TableFilterState& filter_state,
-                             NullCheckKind null_check,
-                             duckdb::Vector& scratch) const;
+  virtual duckdb::idx_t GatherFilter(
+    ScanState& s, uint64_t anchor, duckdb::idx_t span,
+    duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
+    const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
+    NullCheckKind null_check, duckdb::Vector& scratch) const;
+
+  virtual bool InMemory() const noexcept { return false; }
+  virtual bool FetchInMemory(uint64_t /*row*/, duckdb::Vector& /*out*/,
+                             duckdb::idx_t /*out_offset*/) const {
+    return false;
+  }
 
   class PointReader {
    public:

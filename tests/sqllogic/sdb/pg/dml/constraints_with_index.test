@@ -109,7 +109,8 @@ INSERT INTO cwi_uniq VALUES (1, 'A', 'first body');
 statement error
 INSERT INTO cwi_uniq VALUES (2, 'A', 'dup body');
 ----
-db error: ERROR: Duplicate key "code: A" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "cwi_uniq_code"
+DETAIL: Key (code)=(A) already exists.
 
 
 statement ok

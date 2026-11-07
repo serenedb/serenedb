@@ -50,7 +50,6 @@ namespace sdb::search {
 struct IndexStamp {
   irs::SourcePosition position;
   std::shared_ptr<const FileManifest> manifest;
-  uint64_t checkpoint = 0;
 
   static IndexStamp Read(duckdb::BinaryDeserializer& in);
 };
@@ -74,34 +73,16 @@ class IndexDurability {
     irs::Directory& dir, const irs::IndexReaderOptions& options);
 
   const irs::SourcePosition& Position() const noexcept { return _position; }
-  // The position everything the index holds is published up to. Read on its
-  // own, without the lock a refresh holds for its whole length, because a
-  // commit asking this must never wait for one.
-  irs::SourcePosition PublishedPosition() const;
   void MarkStaged(const irs::SourcePosition& position);
-  std::optional<uint64_t> NeededWAL() const;
 
   absl::Status Refresh(irs::IndexWriter& writer, bool wait,
                        const irs::ProgressReportCallback& progress,
                        RefreshResult& code, absl::FunctionRef<void()> unchanged,
                        absl::FunctionRef<void()> published,
                        const RefreshGate* gate);
-  void ReplaceSegments(irs::IndexWriter& writer,
-                       std::span<const irs::SubReader* const> replaced,
-                       std::vector<irs::IndexWriter::Replacement> replacements);
   void Clear(irs::IndexWriter& writer, const irs::SourcePosition& position);
-  void PrepareCheckpoint(irs::IndexWriter& writer, uint64_t iteration);
-  bool FinishCheckpoint(irs::IndexWriter& writer);
-  bool FinishCheckpointIfIdle(irs::IndexWriter& writer);
-  bool HasPendingCheckpoint() {
-    absl::MutexLock lock{&_refresh_mutex};
-    return _pending_checkpoint != 0;
-  }
-  std::pair<irs::DirectoryReader, irs::SourcePosition> Snapshot(
-    irs::IndexWriter& writer);
 
   absl::Status Cleanup(irs::Directory& dir);
-  [[nodiscard]] bool SyncPublished();
   void MarkOutOfSync() noexcept {
     _out_of_sync.store(true, std::memory_order_relaxed);
   }
@@ -112,18 +93,12 @@ class IndexDurability {
  private:
   void SyncDirectory();
   void MarkPublished();
-  bool FinishPendingSave(irs::IndexWriter& writer);
-  void AwaitPendingSave(std::unique_lock<absl::Mutex>& lock,
-                        irs::IndexWriter& writer);
   void WritePayload(const irs::SourcePosition& position,
                     const FileManifest* manifest,
                     duckdb::BinarySerializer& out);
-  void ResolvePendingSave(irs::Directory& dir) const;
+  void RemovePendingSave(irs::Directory& dir) const;
   bool PayloadChanged() const;
   bool CanPersist() const;
-  uint64_t RunningCheckpoint(uint64_t generation) const;
-  bool CheckpointWritten(uint64_t iteration) const;
-  void WaitForCheckpoint() const;
 
   duckdb::idx_t _db_id;
   std::string _name;
@@ -139,8 +114,6 @@ class IndexDurability {
   irs::SourcePosition _published;
   irs::SourcePosition _durable ABSL_GUARDED_BY(_positions_mutex);
   irs::SourcePosition _staged ABSL_GUARDED_BY(_positions_mutex);
-  uint64_t _checkpoint = 0;
-  uint64_t _pending_checkpoint = 0;
 };
 
 }  // namespace sdb::search

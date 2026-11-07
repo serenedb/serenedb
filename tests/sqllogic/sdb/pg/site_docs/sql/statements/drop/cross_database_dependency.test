@@ -21,17 +21,17 @@ CREATE VIEW sales_report AS
 statement error
 DROP TABLE sales.public.orders;
 ----
-db error: ERROR: Cannot drop entry "orders" because there are entries that depend on it.
-view "sales_report" depends on table "orders".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table orders because other objects depend on it
+DETAIL: view sales_report depends on table orders
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement error
 DROP DATABASE sales;
 ----
-db error: ERROR: Cannot drop entry "sales" because there are entries that depend on it.
-view "sales_report" depends on database "sales".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop database sales because other objects depend on it
+DETAIL: view sales_report depends on database sales
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok

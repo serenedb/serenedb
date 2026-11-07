@@ -1,0 +1,84 @@
+statement ok
+CREATE TABLE cwi_plain (id INT, body TEXT)
+WITH (storage = 'search', refresh_interval = 100)
+
+
+statement ok
+INSERT INTO cwi_plain SELECT i, 'fox' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+SET sdb_faults = 'pause_refresh_loop_before_tick'
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_refresh_loop_before_tick:parked'
+
+
+statement ok
+SET sdb_faults = 'pause_refresh_loop_head'
+
+
+statement ok
+SET sdb_faults = 'pause_refresh_loop_before_tick:release'
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_refresh_loop_head:parked'
+
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'cwi_plain')
+  AND metric IN ('num_buffered_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_buffered_docs	100
+num_segments	0
+
+
+statement ok
+RESET sdb_faults
+
+
+statement ok
+ALTER TABLE cwi_plain SET (refresh_interval = 0)
+
+
+statement ok
+CREATE TABLE cwi_indexed (id INT, body TEXT)
+WITH (storage = 'search', refresh_interval = 100)
+
+
+statement ok
+CREATE INDEX cwi_indexed_idx ON cwi_indexed USING inverted(body)
+
+
+statement ok
+INSERT INTO cwi_indexed SELECT i, 'fox' FROM generate_series(1, 100) s(i)
+
+
+query ok retry 60 backoff 200ms
+SELECT count(*) FROM cwi_indexed WHERE body @@ 'fox';
+----
+count
+100
+
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'cwi_indexed')
+  AND metric IN ('num_buffered_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_buffered_docs	0
+num_segments	1
+
+
+query
+SELECT count(*) FROM cwi_plain;
+----
+count
+100

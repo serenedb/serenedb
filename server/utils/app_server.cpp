@@ -26,6 +26,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/log.hpp>
 #include <string>
 
@@ -105,6 +106,9 @@ void AppServer::parseOptions(int argc, char* argv[]) {
 void AppServer::wait() {
   lifecycle::WaitForShutdown();
   SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
+#ifdef SDB_FAULT_INJECTION
+  duckdb::FaultPoints::Clear();
+#endif
 }
 
 }  // namespace sdb::app

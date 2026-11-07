@@ -63,12 +63,10 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
 #include "connector/index_expression.hpp"
-#include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
 #include "connector/scan/deferred_check.h"
@@ -1512,7 +1510,8 @@ bool ClaimSearchConjuncts(
                               ? connector::WideRanges::DeclineWide
                               : connector::WideRanges::Build;
   std::vector<std::shared_ptr<const duckdb::Expression>> claimed_exprs;
-  const bool keeps_columns = scan.KeepsColumnForms();
+  const bool keeps_columns =
+    scan.KeepsColumnForms() || scan.ReadsInMemorySegments();
   const auto stored_column = [&](const duckdb::Expression& conjunct)
     -> const duckdb::BoundColumnRefExpression* {
     const auto* ref = SoleColumn(conjunct);

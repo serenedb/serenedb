@@ -66,9 +66,9 @@ id
 statement error
 DROP FUNCTION babsky_double(INT);
 ----
-db error: ERROR: Cannot drop entry "babsky_double" because there are entries that depend on it.
-index "kostya_idx" depends on macro function "babsky_double".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function babsky_double(integer) because other objects depend on it
+DETAIL: index kostya_idx depends on function babsky_double(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

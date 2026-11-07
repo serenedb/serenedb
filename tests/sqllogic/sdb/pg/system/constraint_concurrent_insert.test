@@ -1,0 +1,78 @@
+statement ok
+CREATE TABLE cci (a int, b int)
+
+
+statement ok
+INSERT INTO cci VALUES (1, 1)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+ALTER TABLE cci ALTER COLUMN b SET NOT NULL
+
+
+connection s2
+statement error
+INSERT INTO cci VALUES (2, NULL)
+----
+db error: ERROR: search table "cci" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO cci VALUES (2, 2)
+
+
+connection s2
+query
+SELECT a, b FROM cci ORDER BY a
+----
+a	b
+1	1
+2	2
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+INSERT INTO cci VALUES (3, 3)
+
+
+connection s2
+statement async ok
+ALTER TABLE cci ADD CONSTRAINT cci_a_pos CHECK (a > 0)
+
+
+connection s1
+statement ok
+COMMIT
+
+
+wait
+
+
+connection s2
+statement error
+INSERT INTO cci VALUES (-1, 4)
+----
+db error: ERROR: CHECK constraint failed on table "cci" with expression CHECK((a > 0))
+
+
+connection s2
+statement ok
+DROP TABLE cci

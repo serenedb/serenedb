@@ -2,8 +2,6 @@ target_sources(
     sereneserver
     PRIVATE
         server_engine.cpp
-        config.cpp
         utils.cpp
         config_variables.cpp
-        transaction.cpp
 )

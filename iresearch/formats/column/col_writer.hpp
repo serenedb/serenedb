@@ -61,6 +61,14 @@ class ColWriter final {
 
   void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
 
+  void SetDeferredSeal(bool deferred) noexcept {
+    SDB_ASSERT(_columns.empty());
+    _deferred = deferred;
+  }
+
+  std::vector<StagedColumn> Snapshot(uint64_t rows) const;
+  size_t StagedBytes() const noexcept;
+
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
@@ -90,6 +98,7 @@ class ColWriter final {
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
   IndexOutput& Out() const noexcept { return *_out; }
+  duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
   struct AnnEntry {
@@ -121,6 +130,7 @@ class ColWriter final {
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
   irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
   bool _committed = false;
+  bool _deferred = false;
 };
 
 }  // namespace irs

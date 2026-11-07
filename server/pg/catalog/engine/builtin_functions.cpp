@@ -266,13 +266,21 @@ void VisitBuiltinOverloads(duckdb::ClientContext& context, Visit&& visit) {
   };
   duckdb::Catalog::GetSystemCatalog(context).ScanSchemas(
     context, [&](duckdb::SchemaCatalogEntry& schema) {
-      const auto collect = [&](duckdb::CatalogEntry& entry) {
-        emit_source(schema.name.GetIdentifierName(),
-                    entry.name.GetIdentifierName(), &entry, nullptr, {});
+      const auto& schema_name = schema.name.GetIdentifierName();
+      const auto collect = [&](duckdb::CatalogType type,
+                               std::optional<duckdb::MacroType> shadowing) {
+        schema.Scan(context, type, [&](duckdb::CatalogEntry& entry) {
+          const auto& name = entry.name.GetIdentifierName();
+          if (!shadowing || !GetSystemFunction(schema_name, name, *shadowing)) {
+            emit_source(schema_name, name, &entry, nullptr, {});
+          }
+        });
       };
-      schema.Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
-      schema.Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
-      schema.Scan(context, duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, collect);
+      collect(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY,
+              duckdb::MacroType::SCALAR_MACRO);
+      collect(duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
+              duckdb::MacroType::TABLE_MACRO);
+      collect(duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, std::nullopt);
     });
   for (const auto& schema : kSystemNamespaces) {
     for (const auto kind :

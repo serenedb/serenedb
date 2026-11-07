@@ -18,7 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "pg/catalog/functions/pg_catalog/objectaddress.h"
+
 #include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -79,8 +82,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ObjectEntry(const Session& session,
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
-  return session.database->GetOidIndex().GetVisible(oid,
-                                                    session.transaction->view);
+  return session.database->LookupOid(*session.transaction, oid);
 }
 
 std::string_view RelationKind(const RelationAccess& relation) {
@@ -557,6 +559,48 @@ void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 }
 
 }  // namespace
+
+std::string DescribeObject(duckdb::ClientContext& context,
+                           const duckdb::CatalogEntry& entry, int32_t column) {
+  using enum duckdb::CatalogType;
+  uint64_t classid = 0;
+  switch (entry.type) {
+    case TABLE_ENTRY:
+    case VIEW_ENTRY:
+    case INDEX_ENTRY:
+    case SEQUENCE_ENTRY:
+      classid = kPgClassTable;
+      break;
+    case MACRO_ENTRY:
+    case TABLE_MACRO_ENTRY:
+      classid = kPgProcTable;
+      break;
+    case TYPE_ENTRY:
+      classid = kPgTypeTable;
+      break;
+    case SCHEMA_ENTRY:
+      classid = kPgNamespaceTable;
+      break;
+    case TOKENIZER_ENTRY:
+      return absl::StrCat("text search dictionary ",
+                          entry.name.GetIdentifierName());
+    case FOREIGN_SERVER_ENTRY:
+      return absl::StrCat("server ", entry.name.GetIdentifierName());
+    default:
+      return absl::StrCat(
+        absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)), " ",
+        entry.name.GetIdentifierName());
+  }
+  const auto session = MakeSession(&context);
+  auto identity = IdentifyObject(
+    session, {.classid = classid, .objid = entry.oid, .objsubid = column});
+  if (identity && identity->description) {
+    return std::move(*identity->description);
+  }
+  return absl::StrCat(
+    absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)), " ",
+    entry.name.GetIdentifierName());
+}
 
 void RegisterObjectAddressFunctions(duckdb::ExtensionLoader& loader) {
   using enum duckdb::FunctionStability;

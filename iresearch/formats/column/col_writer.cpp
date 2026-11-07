@@ -128,10 +128,12 @@ ColumnWriter& ColWriter::OpenColumnInternal(
       "ColWriter::OpenColumn: re-opened id ", id, " with mismatched settings");
     return existing;
   }
-  EnsureOut();
-  auto col =
-    std::make_unique<ColumnWriter>(*this, id, std::move(type), skip_validity,
-                                   row_group_size, forced, hyperloglog);
+  if (!_deferred) {
+    EnsureOut();
+  }
+  auto col = std::make_unique<ColumnWriter>(*this, id, std::move(type),
+                                            skip_validity, row_group_size,
+                                            forced, hyperloglog, _deferred);
   auto* ptr = col.get();
   _by_id.emplace(id, ptr);
   _columns.push_back(std::move(col));
@@ -241,6 +243,24 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
 }
 
 void ColWriter::Rollback() noexcept { _out.reset(); }
+
+std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
+  std::vector<StagedColumn> columns;
+  columns.reserve(_columns.size());
+  for (const auto& cw : _columns) {
+    columns.push_back(StagedColumn{
+      .id = cw->Id(), .type = cw->Type(), .chunks = cw->Snapshot(rows)});
+  }
+  return columns;
+}
+
+size_t ColWriter::StagedBytes() const noexcept {
+  size_t bytes = 0;
+  for (const auto& cw : _columns) {
+    bytes += cw->StagedBytes();
+  }
+  return bytes;
+}
 
 constexpr auto kNoCancel = [] { return true; };
 

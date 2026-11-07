@@ -79,6 +79,7 @@
 #include "pg/types/range.h"
 #include "pg/types/tid.h"
 #include "pg/types/xml.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
 
 namespace sdb::pg {
@@ -2829,7 +2830,8 @@ void ByteaOutEscape(char* buf, std::string_view value) {
   }
 }
 
-void FillContext(const Config& config, SerializationContext& context) {
+void FillContext(duckdb::ClientContext& client, SerializationContext& context) {
+  auto& config = ConnectionContext::Get(client);
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
   std::string tz_name{config.GetTimeZone()};
@@ -2841,7 +2843,7 @@ void FillContext(const Config& config, SerializationContext& context) {
   } else {
     context.zone_lut.reset();
   }
-  context.client = &config.GetClientContext();
+  context.client = &client;
   context.caches.reset();
 }
 

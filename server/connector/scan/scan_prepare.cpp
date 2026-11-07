@@ -22,6 +22,7 @@
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/utils/assert.hpp>
 
+#include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
 
 namespace sdb::connector {
@@ -50,8 +51,12 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
       .collector = collector,
       .thread = collector != nullptr ? l.thread_slot : 0,
       .needs_terms = g.needs_terms};
+    const auto index_only = g.ClaimedIndexOnly();
+    const auto& filter = !UsesColumnForms(g, segment) ? *g.filter
+                         : index_only                 ? *index_only
+                                                      : MatchAllFilter();
     g.queries[seg_idx] = g.vector_scorer == nullptr
-                           ? irs::PrepareMasked(*g.filter, segment, ctx)
+                           ? irs::PrepareMasked(filter, segment, ctx)
                            : g.filter->PrepareSegment(segment, ctx);
     work.prepare.store(SegmentWork::kReady, std::memory_order_release);
     work.prepare.notify_all();

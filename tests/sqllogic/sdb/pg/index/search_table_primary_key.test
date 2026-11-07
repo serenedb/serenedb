@@ -1,6 +1,3 @@
-# Nothing is published until a refresh is asked for, so what a row is certified
-# against is the tier this file puts it in rather than whichever one a timer
-# got to first.
 statement ok
 CREATE TABLE pk_dup(i INTEGER PRIMARY KEY, t TEXT)
   WITH (storage = 'search', refresh_interval = 0);
@@ -18,18 +15,19 @@ VACUUM (REFRESH_TABLE) pk_dup;
 statement error
 INSERT INTO pk_dup VALUES (1, 'again');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(1) already exists.
 
 
 # Two rows of one statement carrying the same key.
 statement error
 INSERT INTO pk_dup VALUES (3, 'x'), (3, 'y');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(3) already exists.
 
 
-# A key committed but not published: the reader cannot answer for it, so the
-# WAL tail has to.
+# A key a just-committed statement wrote.
 statement ok
 INSERT INTO pk_dup VALUES (4, 'fresh');
 
@@ -38,13 +36,14 @@ query
 SELECT count(*) AS published FROM pk_dup WHERE i = 4;
 ----
 published
-0
+1
 
 
 statement error
 INSERT INTO pk_dup VALUES (4, 'again');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(4) already exists.
 
 
 statement ok
@@ -146,7 +145,8 @@ VACUUM (REFRESH_TABLE) pk_bool;
 statement error
 INSERT INTO pk_bool VALUES (1, true, 'again');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_bool"
+db error: ERROR: duplicate key value violates unique constraint "pk_bool_pkey"
+DETAIL: Key (tenant_id, is_active)=(1, true) already exists.
 
 
 statement ok
@@ -197,9 +197,7 @@ i	t
 1	after truncate
 
 
-# What the truncate does not excuse is a key repeated after it. The keys are
-# certified where the transaction commits, so inside an explicit one that is
-# the COMMIT and not the statement that wrote the rows.
+# A key repeated after the truncate fails its statement.
 statement ok
 BEGIN;
 
@@ -208,15 +206,16 @@ statement ok
 TRUNCATE pk_dup;
 
 
-statement ok
-INSERT INTO pk_dup VALUES (5, 'x'), (5, 'y');
-
-
 statement error
-COMMIT;
+INSERT INTO pk_dup VALUES (5, 'x'), (5, 'y');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+db error: ERROR: duplicate key value violates unique constraint "pk_dup_pkey"
+DETAIL: Key (i)=(5) already exists.
 
+
+
+statement ok
+COMMIT;
 
 statement ok
 VACUUM (REFRESH_TABLE) pk_dup;
@@ -243,9 +242,7 @@ statement ok
 VACUUM (REFRESH_TABLE) pk_dup;
 
 
-# The barrier reaches the tail as well as the reader: this key is committed and
-# unpublished when the truncate kills it, and taking it again is not a
-# duplicate.
+# A key the truncate removed can be taken again.
 statement ok
 INSERT INTO pk_dup VALUES (8, 'unpublished');
 

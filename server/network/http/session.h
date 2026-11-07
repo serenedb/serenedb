@@ -55,7 +55,6 @@
 #include <yaclib/coro/task.hpp>
 
 #include "catalog/cluster.h"
-#include "connector/duckdb_client_state.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
 #include "network/cpu_resumer.h"
@@ -172,9 +171,6 @@ class HttpSession final
   bool Broken() const noexcept final { return SendBroken(); }
 
   // --- RequestContext -------------------------------------------------------
-  // First use sets up the full SereneDB client state (like pg-wire's
-  // SetupConnection, minus the wire collector): server-side functions reach
-  // ConnectionContext through GetSereneDBContext.
   duckdb::Connection& Connection() final {
     if (!_conn) {
       const std::string_view dbname =
@@ -197,21 +193,24 @@ class HttpSession final
       }
       const auto& role = login.role;
 
-      _conn = irs::DuckDBEngine::Instance().CreateConnection();
+      _conn = MakeConnection(
+        irs::DuckDBEngine::Instance().instance(),
+        {.user = user,
+         .role = role,
+         .database = dbname,
+         .database_id = database_id,
+         .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
+         .cancel_registry = _cancel,
+         .client_backend = true});
       _conn->context->SetSchedulerAccount(_task->Account());
-      _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, std::string_view{}, role, dbname, database_id,
-        nullptr, static_cast<int32_t>(_cancel_key >> 32), _cancel);
+      _connection_ctx = &ConnectionContext::Get(*_conn->context);
       _cancel_token->role.store(role, std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
       }
       _progress =
-        sdb::pg::ProgressRegistration{connector::SereneDBClientState::Register(
-                                        *_conn->context, _connection_ctx, true)
-                                        .progress_source};
-      connector::SetDefaultSearchPath(*_conn->context, dbname);
+        sdb::pg::ProgressRegistration{_connection_ctx->ProgressSource()};
       _conn_user = _user;
     }
     return *_conn;
@@ -347,7 +346,7 @@ class HttpSession final
     }
     _prepared = {};
     _progress = {};
-    _connection_ctx.reset();
+    _connection_ctx = nullptr;
     _conn.reset();
   }
 
@@ -391,7 +390,7 @@ class HttpSession final
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
-  std::shared_ptr<ConnectionContext> _connection_ctx;
+  ConnectionContext* _connection_ctx = nullptr;
   sdb::pg::ProgressRegistration _progress;
   // Statements prepared on _conn; declared after it so they are destroyed
   // first.

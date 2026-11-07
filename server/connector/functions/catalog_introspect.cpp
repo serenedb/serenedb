@@ -23,9 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -44,10 +42,10 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/dependency.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
@@ -56,8 +54,8 @@ namespace {
 // The dump spans every database and includes definitions a role could never
 // SELECT (role rows carry password verifiers), so it is superuser-only.
 void RequireSuperuser(duckdb::ClientContext& context, std::string_view what) {
-  auto& conn = GetSereneDBContext(context);
-  if (!auth::ClosureFor(&context, conn.GetRoleId())->is_superuser) {
+  if (!auth::ClosureFor(&context, ConnectionContext::Get(context).GetRoleId())
+         ->is_superuser) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("must be superuser to use ", what));
   }
@@ -123,12 +121,12 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
   auto& state = input.global_state->Cast<CatalogSetsState>();
   if (!state.loaded) {
     state.loaded = true;
-    if (auto database = catalog::DefaultDuckCatalog(context);
-        database && catalog::IsSereneDB(*database)) {
+    if (auto database = catalog::DefaultSereneDBCatalog(context)) {
       auto& catalog = *database;
       const auto transaction = catalog.GetCatalogTransaction(context);
+      std::vector<duckdb::CatalogEntry*> members;
       for (auto& schema_entry : catalog.GetSchemas(context)) {
-        auto& schema = schema_entry.get().Cast<duckdb::DuckSchemaEntry>();
+        auto& schema = schema_entry.get().Cast<catalog::Schema>();
         // The schema entry itself, which is what owns the sets below. The two
         // static schemas have no definition of their own and are reported by
         // name alone.
@@ -147,7 +145,7 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
               duckdb::CatalogType::SEQUENCE_ENTRY,
               duckdb::CatalogType::MACRO_ENTRY, duckdb::CatalogType::TYPE_ENTRY,
               duckdb::CatalogType::TOKENIZER_ENTRY}) {
-          schema.GetCatalogSet(type).Scan(
+          schema.Set(type).Scan(
             transaction, [&](duckdb::CatalogEntry& entry) {
               state.rows.push_back(
                 {.schema = schema.name.GetIdentifierName(),
@@ -155,13 +153,26 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
                  .name = entry.name.GetIdentifierName(),
                  .entry_oid = entry.oid,
                  .visible = true});
+              members.push_back(&entry);
             });
         }
       }
+      for (auto* member : members) {
+        catalog::ScanSubjects(
+          transaction, *member,
+          [&](duckdb::CatalogEntry& referenced,
+              const duckdb::DependencyDependentFlags&) {
+            state.rows.push_back({.schema = {},
+                                  .entry_type = "Dependency",
+                                  .name = absl::StrCat(member->oid),
+                                  .entry_oid = referenced.oid,
+                                  .visible = true});
+          });
+      }
       // Foreign servers are database children, so their set hangs off the
       // catalog and has no schema name to report.
-      catalog.GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
-        .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+      catalog.Servers().Scan(
+        transaction, [&](duckdb::CatalogEntry& entry) {
           state.rows.push_back(
             {.schema = {},
              .entry_type = duckdb::CatalogTypeToString(entry.type),
@@ -183,29 +194,8 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
            .entry_oid = entry.oid,
            .visible = true});
       };
-      cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-        .Scan(transaction, row);
-      cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-        .Scan(transaction, row);
-    }
-    // One row per recorded edge, from every attached manager: an edge is kept
-    // by the dependent's own catalog, so no one of them holds the whole graph.
-    // entry_oid is the referenced object and the name is the dependent.
-    for (auto& attached :
-         duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-      auto manager = attached->GetCatalog().GetDependencyManager();
-      if (!manager) {
-        continue;
-      }
-      manager->Scan(context, [&](duckdb::CatalogEntry& referenced,
-                                 duckdb::CatalogEntry& dependent,
-                                 const duckdb::DependencyDependentFlags&) {
-        state.rows.push_back({.schema = {},
-                              .entry_type = "Dependency",
-                              .name = absl::StrCat(dependent.oid),
-                              .entry_oid = referenced.oid,
-                              .visible = true});
-      });
+      cluster.Set(duckdb::CatalogType::ROLE_ENTRY).Scan(transaction, row);
+      cluster.Set(duckdb::CatalogType::DATABASE_ENTRY).Scan(transaction, row);
     }
   }
   const auto n =
@@ -251,7 +241,7 @@ void DeferredCatalogExecute(duckdb::ClientContext& context,
     return;
   }
   duckdb::FlatVector::Writer<uint64_t>(output.data[0], 1)
-    .WriteValue(GetSereneDBContext(context).CatalogEpoch());
+    .WriteValue(ConnectionContext::Get(context).CatalogEpoch());
   output.SetCardinalityUnsafe(1);
 }
 

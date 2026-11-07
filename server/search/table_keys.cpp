@@ -28,8 +28,8 @@
 #include <iresearch/utils/type_limits.hpp>
 
 #include "catalog/base_catalog.h"
+#include "catalog/dependency.h"
 #include "catalog/entry/search_table.h"
-#include "catalog/schema.h"
 #include "connector/column_id.h"
 #include "connector/constraint_keys.h"
 #include "search/store.h"
@@ -62,18 +62,14 @@ std::string DefaultName(const catalog::SearchTableEntry& table,
                       absl::StrJoin(names, "_"), "_", suffix);
 }
 
-const catalog::SearchTableEntry* LookupTable(
-  const catalog::SearchTableEntry& table, const duckdb::Identifier& schema,
-  const duckdb::Identifier& name, duckdb::CatalogTransaction transaction) {
-  auto parent = table.catalog.GetSchema(
-    transaction, schema.empty() ? table.ParentSchema(transaction).name : schema,
-    duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!parent) {
+const catalog::SearchTableEntry* TableByOid(
+  const catalog::SearchTableEntry& table, duckdb::idx_t oid,
+  duckdb::CatalogTransaction transaction) {
+  if (!oid) {
     return nullptr;
   }
-  const auto entry = parent->Cast<catalog::Schema>()
-                       .Set(duckdb::CatalogType::TABLE_ENTRY)
-                       .Get(transaction, name);
+  const auto entry =
+    table.catalog.Cast<catalog::BaseCatalog>().Oids().Find(transaction, oid);
   if (!entry || !catalog::IsSearchTable(*entry)) {
     return nullptr;
   }
@@ -87,7 +83,7 @@ const catalog::SearchTableEntry* ReferencedTable(
   if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
     return &table;
   }
-  return LookupTable(table, fk.info.schema, fk.info.table, transaction);
+  return TableByOid(table, catalog::ReferencedTableOid(table, fk), transaction);
 }
 
 const duckdb::Constraint* ReferencedKey(
@@ -153,7 +149,6 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
     KeySpec spec{.kind = KeyKind::Reference,
                  .key = {.field = constraint->oid},
                  .constraint = constraint->constraint_name,
-                 .referenced_schema = fk.info.schema,
                  .referenced = fk.info.table};
     if (spec.constraint.empty()) {
       std::vector<std::string> names;
@@ -179,6 +174,9 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
       keys.specs.push_back(std::move(spec));
       continue;
     }
+    spec.self_reference =
+      fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE;
+    spec.referenced_table = parent->oid;
     spec.referenced_field = referenced->oid;
     const auto& parent_columns = parent->GetColumns();
     std::vector<duckdb::LogicalType> own_types;
@@ -216,8 +214,9 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
 const catalog::SearchTableEntry* ReferencedTable(
   const catalog::SearchTableEntry& table, const KeySpec& spec,
   duckdb::CatalogTransaction transaction) {
-  return LookupTable(table, spec.referenced_schema, spec.referenced,
-                     transaction);
+  return TableByOid(table,
+                    spec.self_reference ? table.oid : spec.referenced_table,
+                    transaction);
 }
 
 std::vector<ReferencingKey> LiveReferencing(

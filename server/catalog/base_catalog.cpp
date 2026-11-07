@@ -232,11 +232,24 @@ void BaseCatalog::AlterSchemaEntry(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::ALTER_TABLE);
   auto& set = SchemaSet(transaction, schema);
+  std::vector<PendingDefault> defaults;
+  std::vector<duckdb::idx_t> tables;
+  const auto old_name = schema.name;
   if (const auto new_name = info.GetNewName();
-      new_name && !set.SameName(*new_name, schema.name)) {
-    FollowSchemaRename(transaction, schema, *new_name);
+      new_name && !set.SameName(*new_name, schema.name) &&
+      info.bind_mode != duckdb::AlterBindMode::SKIP_BINDING) {
+    FollowSchemaRename(transaction, schema, *new_name, defaults);
+    schema.Cast<Schema>()
+      .Set(duckdb::CatalogType::TABLE_ENTRY)
+      .Scan(transaction,
+            [&](duckdb::CatalogEntry& table) { tables.push_back(table.oid); });
   }
   catalog::AlterEntry(transaction, set, schema, info);
+  SetDefaults(transaction, *this, defaults);
+  for (const auto oid : tables) {
+    auto table = LookupOid(transaction, oid);
+    FollowReferences(transaction, *table, old_name, table->name);
+  }
 }
 
 void BaseCatalog::AlterSchema(duckdb::CatalogTransaction transaction,

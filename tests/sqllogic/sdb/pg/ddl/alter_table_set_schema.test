@@ -64,20 +64,23 @@ statement ok
 CREATE VIEW mrbeast.subscriber_count AS SELECT id FROM mrbeast.subscribers;
 
 
-statement error
+statement ok
 ALTER TABLE mrbeast.subscribers SET SCHEMA feastables;
+
+
+statement ok
+INSERT INTO feastables.subscribers VALUES (1);
+
+
+query
+SELECT id FROM mrbeast.subscriber_count;
 ----
-db error: ERROR: Cannot alter entry "subscribers" because there are entries that depend on it.
-view "subscriber_count" depends on table "subscribers".
-Drop the dependent entries first and recreate them after the change.
+id
+1
 
 
 statement ok
 DROP VIEW mrbeast.subscriber_count;
-
-
-statement ok
-ALTER TABLE mrbeast.subscribers SET SCHEMA feastables;
 
 
 statement ok
@@ -209,7 +212,18 @@ CREATE TYPE mrbeast.int4 AS ENUM ('six', 'seven');
 
 
 statement error
-ALTER TYPE mrbeast.int4 SET SCHEMA main;
+ALTER TYPE mrbeast.int4 SET SCHEMA pg_catalog;
+----
+db error: ERROR: permission denied to create "pg_catalog.int4"
+DETAIL: System catalog modifications are currently disallowed.
+
+
+statement ok
+CREATE TYPE feastables.int4 AS ENUM ('six');
+
+
+statement error
+ALTER TYPE mrbeast.int4 SET SCHEMA feastables;
 ----
 db error: ERROR: Type with name "int4" already exists!
 
@@ -289,9 +303,9 @@ ALTER VIEW mrbeast.far_bars SET SCHEMA feastables;
 statement error
 DROP TABLE atss_far_${__DATABASE__}.public.chocolate;
 ----
-db error: ERROR: Cannot drop entry "chocolate" because there are entries that depend on it.
-view "far_bars" depends on table "chocolate".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table chocolate because other objects depend on it
+DETAIL: view feastables.far_bars depends on table chocolate
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok

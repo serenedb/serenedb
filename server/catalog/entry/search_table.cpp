@@ -189,10 +189,21 @@ void RequireAlterableOption(std::string_view name) {
                   ERR_MSG("unrecognized parameter \"", name, "\""));
 }
 
+void RequireAlterableOptions(std::vector<std::string_view> names) {
+  absl::c_sort(names);
+  for (const auto name : names) {
+    RequireAlterableOption(name);
+  }
+}
+
 void SetOptions(duckdb::ClientContext& context, WithOptions& options,
                 const duckdb::SetTableOptionsInfo& info) {
+  std::vector<std::string_view> names;
   for (const auto& [name, expr] : info.table_options) {
-    RequireAlterableOption(name);
+    names.push_back(name);
+  }
+  RequireAlterableOptions(std::move(names));
+  for (const auto& [name, expr] : info.table_options) {
     if (!expr ||
         expr->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
       THROW_SQL_ERROR(
@@ -207,9 +218,13 @@ void SetOptions(duckdb::ClientContext& context, WithOptions& options,
 
 void ResetOptions(duckdb::ClientContext& context, WithOptions& options,
                   duckdb::ResetTableOptionsInfo& info) {
+  std::vector<std::string_view> names;
+  for (const auto& identifier : info.table_options) {
+    names.push_back(identifier.GetIdentifierName());
+  }
+  RequireAlterableOptions(std::move(names));
   for (const auto& identifier : info.table_options) {
     const auto& name = identifier.GetIdentifierName();
-    RequireAlterableOption(name);
     duckdb::Value value;
     if (const auto it = info.values.find(name); it != info.values.end()) {
       value = it->second;
@@ -267,7 +282,7 @@ SearchTableEntry::SearchTableEntry(
     _triggers{triggers ? std::move(triggers)
                        : std::make_shared<EntrySet>(
                            catalog.IsCaseSensitive(),
-                           catalog.Cast<BaseCatalog>().Oids(), oid)} {
+                           catalog.Cast<BaseCatalog>().Oids(), oid, true)} {
   auto& oids = catalog.GetDatabase().GetDatabaseManager();
   for (duckdb::idx_t i = 0; i < _columns.LogicalColumnCount(); ++i) {
     auto& column = _columns.GetColumnMutable(duckdb::LogicalIndex{i});
@@ -978,6 +993,12 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     info.Cast<duckdb::AlterPermissionsInfo>().ApplyTo(
       definition->permissions, type, &definition->columns);
     return Altered(context, info, std::move(definition));
+  }
+  if (info.type == duckdb::AlterType::REPLACE_DEFINITION) {
+    return Successor(
+      context, *duckdb::Binder::BindCreateTableCheckpoint(
+                 info.Cast<duckdb::ReplaceDefinitionInfo>().definition->Copy(),
+                 ParentSchema(context)));
   }
   if (info.type != duckdb::AlterType::ALTER_TABLE) {
     return duckdb::TableCatalogEntry::AlterEntry(context, info);

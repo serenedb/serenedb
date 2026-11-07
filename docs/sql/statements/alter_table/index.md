@@ -76,7 +76,7 @@ Add a primary key to a column of a table:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_014" />
 
-The `RENAME TO` clause renames an entire table, changing its name in the schema. Indexes follow the rename, except in an [attached DuckDB file](../attach/duckdb.md), where a table that has an index can't be renamed. A table that a view, a function or another table's `DEFAULT`, `CHECK` or generated column uses can't be renamed: the error lists those dependents, which have to be dropped first and recreated afterwards.
+The `RENAME TO` clause renames an entire table, changing its name in the schema. Indexes follow the rename, except in an [attached DuckDB file](../attach/duckdb.md), where a table that has an index can't be renamed. Views, functions and foreign keys that refer to the table follow the new name. A table that a trigger body names, its own triggers' included, can't be renamed: the error lists those triggers, which have to be dropped first and recreated afterwards.
 
 <DocCallout type="tip">
     `ALTER TABLE` changes the schema of an existing table.
@@ -90,7 +90,7 @@ All the changes made by `ALTER TABLE` fully respect the transactional semantics,
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_038" />
 
-The `SET SCHEMA` clause moves a table into another schema, keeping its rows, together with its indexes, its triggers and the sequences it owns, such as those of its `SERIAL` columns. Search tables move the same way, and `ALTER TABLE ... SET SCHEMA` also moves a view or a sequence; given an index, it fails with `cannot change schema of index`. The target schema must exist and must not already hold a relation of that name, and moving a table needs the `CREATE` privilege on the target schema. Moving a table into the schema it is already in changes nothing. A table that a view, a function, a trigger or another table uses can't be moved, the same as for `RENAME TO`. A name without a schema in a column default or a constraint is looked up in the table's own schema first, so a default such as `nextval('order_ids')` stops finding a sequence of the old schema that the table doesn't own once the table moves. [`ALTER VIEW`](../alter_view.md) and [`ALTER SEQUENCE`](../create_sequence/index.md#moving-a-sequence) move views and sequences, and [`ALTER TYPE`](../create_type/index.md), [`ALTER FUNCTION`](../create_macro/index.md#moving-to-another-schema) and [`ALTER TEXT SEARCH DICTIONARY`](../create_text_search_dictionary/index.md) move types, functions and dictionaries; a sequence that a table owns moves only with its table, and an index always stays in its table's schema.
+The `SET SCHEMA` clause moves a table into another schema, keeping its rows, together with its indexes, its triggers and the sequences it owns, such as those of its `SERIAL` columns. `ALTER TABLE ... SET SCHEMA` also moves a view or a sequence; given an index, it fails with `cannot change schema of index`. The target schema must exist, must not be a system schema such as `pg_catalog`, and must not already hold a relation of that name, and moving a table needs the `CREATE` privilege on the target schema. Moving a table into the schema it is already in changes nothing. Views, functions, column defaults and foreign keys that refer to the moved table, view or sequence follow it into the new schema; a trigger body that names it blocks the move, the same as for `RENAME TO`. A name without a schema in a column default or a constraint of the moved table is looked up in its new schema first, so a default such as `nextval('order_ids')` stops finding a sequence of the old schema that the table doesn't own once the table moves. [`ALTER VIEW`](../alter_view.md) and [`ALTER SEQUENCE`](../create_sequence/index.md#moving-a-sequence) move views and sequences, and [`ALTER TYPE`](../create_type/index.md), [`ALTER FUNCTION`](../create_macro/index.md#moving-to-another-schema) and [`ALTER TEXT SEARCH DICTIONARY`](../create_text_search_dictionary/index.md) move types, functions and dictionaries; a sequence that a table owns moves only with its table, and an index always stays in its table's schema.
 
 ## `RENAME COLUMN`
 
@@ -200,19 +200,17 @@ The statement fails if the table already has a primary key, if an index depends 
 
 ## `SET` / `RESET` (Table Options)
 
-<DocCallout type="tip">
-The `SET` and `RESET` table-option clauses are not yet supported in SereneDB.
-</DocCallout>
+`SET (option = value, …)` changes the background maintenance options of a table, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `compaction_interval`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back. `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. `pg_class.reloptions` lists the options whose values differ from the defaults.
 
-Attempting to set table options returns an error:
+<SqlLogicTest id="sql/statements/alter_table/index/example_036" />
+
+An option that doesn't exist is an error:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_029" />
 
-Attempting to reset table options returns an error:
-
 <SqlLogicTest id="sql/statements/alter_table/index/example_030" />
 
-Attempting to set or reset multiple options in a single statement returns an error:
+A statement that sets or resets several options fails as a whole when one of them doesn't exist:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_031" />
 
@@ -232,14 +230,6 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE` or `PRIMARY KEY` constraint
 
 `FOREIGN KEY` constraints cannot be added with `ADD CONSTRAINT`.
 
-## `SET` / `RESET` storage options
-
-For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the background maintenance options it was created with, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back; once `SET (refresh_interval = 0)` commits, rows committed after it are not refreshed in the background until `VACUUM (REFRESH_TABLE)`. `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. The current values are listed in `pg_class.reloptions`.
-
-<SqlLogicTest id="sql/statements/alter_table/index/example_036" />
-
-`SET` and `RESET` of storage options are supported only for search tables.
-
 ## `ENABLE` / `DISABLE TRIGGER`
 
 `DISABLE TRIGGER name` stops a trigger of the table from firing, and `ENABLE TRIGGER name` lets it fire again. With `ALL` or `USER` instead of a name the change applies to every trigger of the table. Like in PostgreSQL, a trigger can also be enabled for a [replication role](../../../configuration/overview.md): `ENABLE REPLICA TRIGGER` makes it fire only in sessions where `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md), and `ENABLE ALWAYS TRIGGER` makes it fire in every session. A plain `ENABLE TRIGGER` trigger fires when the role is `origin` (the default) or `local`. `pg_trigger.tgenabled` shows the state as `O`, `D`, `R` or `A`. The change is transactional.
@@ -248,7 +238,7 @@ For a table created with `WITH (storage = 'search')`, `SET (option = value, …)
 
 Foreign keys are not triggers in SereneDB, so `DISABLE TRIGGER ALL` does not turn off foreign key checks; a session with `session_replication_role` set to `replica` skips them.
 
-## Search tables
+## Rewrites and concurrent changes
 
 Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `DROP NOT NULL`, `DROP CONSTRAINT` and `RENAME CONSTRAINT` of a `CHECK` or `NOT NULL` constraint, and `COMMENT ON COLUMN` change only the table's definition.
 
@@ -258,13 +248,9 @@ Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `DR
 
 `ALTER COLUMN TYPE` rewrites the table, converting each value with the `USING` expression, or with a cast when there is none. It is refused for a column of the `PRIMARY KEY`, a column an index covers, a column a `CHECK` constraint or a generated column uses, and a generated column. If the column is `NOT NULL`, every converted value must be non-`NULL`.
 
-Adding a `PRIMARY KEY` or `UNIQUE` constraint, dropping one, and `ENABLE` / `DISABLE TRIGGER` in any form are rejected, so the table's triggers stay enabled and never fire in a session whose `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md).
+Every row written is checked against the `NOT NULL` and `CHECK` constraints. `SET NOT NULL` and adding a `CHECK` constraint fail if a row of the table violates the new constraint.
 
-As on any table, every row written is checked against the `NOT NULL` and `CHECK` constraints. `SET NOT NULL` and adding a `CHECK` constraint fail if a row of the table violates the new constraint, rows not yet refreshed included.
-
-`ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `SET NOT NULL` and adding a `CHECK` constraint wait for the transactions that wrote to the table before them to end, and refresh the table. They are refused in a transaction that has already written to the table. While such an `ALTER TABLE` is uncommitted, and in transactions whose snapshot predates its commit, `INSERT` and `UPDATE` of the table fail with `search table "<name>" was altered by a concurrent transaction`; retry the transaction. An `ALTER TABLE` of a search table holds it until its transaction ends, like a change of its indexes; see [Concurrent changes](../create_index/inverted.md#concurrent-changes).
-
-<SqlLogicTest id="sql/statements/alter_table/index/search_table_triggers" />
+`ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `SET NOT NULL`, adding a `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint and dropping a `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint wait for the transactions that wrote to the table before them to end. They are refused in a transaction that has already written to the table. While such an `ALTER TABLE` is uncommitted, and in transactions whose snapshot predates its commit, `INSERT` and `UPDATE` of the table fail with `search table "<name>" was altered by a concurrent transaction`; retry the transaction. An `ALTER TABLE` holds the table until its transaction ends, like a change of its indexes; see [Concurrent changes](../create_index/inverted.md#concurrent-changes).
 
 ## Limitations
 

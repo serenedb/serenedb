@@ -171,6 +171,10 @@ class Schema final : public duckdb::SchemaCatalogEntry {
                          duckdb::CatalogType type,
                          const duckdb::Identifier& name);
 
+  void Move(duckdb::CatalogTransaction transaction, EntrySet& set,
+            duckdb::CatalogType type, duckdb::CatalogEntry& entry,
+            Schema& target, const duckdb::AlterInfo& info);
+
   std::shared_ptr<SchemaSets> _sets;
   std::vector<Inherited> _inherited;
 };

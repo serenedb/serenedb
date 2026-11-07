@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <limits>
 #include <optional>
+#include <type_traits>
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -277,6 +278,22 @@ IRS_FORCE_INLINE void Merge(score_t* res, std::span<const I, N> hits,
                             std::span<const score_t, N> args) noexcept {
   SDB_ASSERT(hits.size() <= args.size());
   Merge<MergeType>(res, hits.data(), args.data(), hits.size());
+}
+
+template<ScoreMergeType MergeType, bool HasScale, typename Formula>
+IRS_FORCE_INLINE void ScoreFreqs(
+  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
+  [[maybe_unused]] const uint32_t* IRS_RESTRICT norm,
+  [[maybe_unused]] const score_t* IRS_RESTRICT scale,
+  Formula formula) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
+    const auto tf = ScaledFreq<HasScale>(freq, scale, i);
+    if constexpr (std::is_invocable_v<Formula, score_t, score_t>) {
+      Merge<MergeType>(res[i], formula(tf, TermCountToScore(norm[i])));
+    } else {
+      Merge<MergeType>(res[i], formula(tf));
+    }
+  }
 }
 
 }  // namespace irs

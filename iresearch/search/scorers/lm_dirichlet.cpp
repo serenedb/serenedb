@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -43,25 +44,17 @@
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void LmDirImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t mu_p_inv,
-  score_t mu_inv, score_t const_boost) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
-    const score_t dl = TermCountToScore(norm[i]);
+struct LmDirFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
     const score_t weight = std::log1p(tf * mu_p_inv);
     const score_t doc_norm = std::log1p(dl * mu_inv);
-    score_t r = weight - doc_norm;
-    if (r < 0.f) {
-      r = 0.f;
-    }
-    r *= const_boost;
-    Merge<MergeType>(res[i], r);
+    return std::max(weight - doc_norm, 0.f) * boost;
   }
-}
+
+  score_t boost;
+  score_t mu_inv;
+  score_t mu_p_inv;
+};
 
 template<bool HasScale>
 struct LmDirScore : public ScoreOperatorOf<LmDirScore<HasScale>> {
@@ -71,23 +64,19 @@ struct LmDirScore : public ScoreOperatorOf<LmDirScore<HasScale>> {
     : freq{freq},
       norm{norm},
       scale{scale},
-      boost{boost},
-      mu_inv{1.f / mu},
-      mu_p_inv{1.f / (mu * stats.collection_prob)} {}
+      formula{boost, 1.f / mu, 1.f / (mu * stats.collection_prob)} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    LmDirImpl<MergeType, HasScale>(res, n, freq->value, norm,
-                                   TryGetValue(scale), mu_p_inv, mu_inv, boost);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
+                                    TryGetValue(scale), formula);
   }
 
   const FreqBlockAttr* freq;
   const uint32_t* norm;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  score_t boost;
-  score_t mu_inv;
-  score_t mu_p_inv;
+  LmDirFormula formula;
 };
 
 }  // namespace

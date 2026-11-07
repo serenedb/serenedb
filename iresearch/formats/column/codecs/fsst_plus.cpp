@@ -29,12 +29,6 @@ segments (fsst.cpp), with entries grouped instead of front-coded: a group of
 neighbouring entries stores the FSST codes they share once, and each entry
 stores the rest of its codes.
 +------------------------------------------------------+
-|                         Data                         |
-|   +----------------------------------------------+   |
-|   |   each entry's codes after its group's       |   |
-|   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
-+------------------------------------------------------+
 |                    Entry lengths                     |
 |   +----------------------------------------------+   |
 |   |   bitpacked encoded length[entry_count]      |   |
@@ -56,6 +50,12 @@ stores the rest of its codes.
 |   |   shared codes of every group                |   |
 |   +----------------------------------------------+   |
 |   group g's shared codes end at shared_end[g - 1]    |
++------------------------------------------------------+
+|                         Data                         |
+|   +----------------------------------------------+   |
+|   |   each entry's codes after its group's       |   |
+|   +----------------------------------------------+   |
+|   frames of up to 16 KiB of decoded entries          |
 +------------------------------------------------------+
 */
 

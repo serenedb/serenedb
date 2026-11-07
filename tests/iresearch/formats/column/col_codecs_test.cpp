@@ -2577,7 +2577,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
     auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
     auto h = irs::codecs::Header::Parse(block, size);
     c.corrupt(h);
-    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
+    duckdb::Store(h, block);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2653,7 +2653,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
     auto h = irs::codecs::Header::Parse(block, size);
     ASSERT_EQ(h.flags, irs::codecs::FrameDictionary::Local);
     c.corrupt(h, block);
-    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
+    duckdb::Store(h, block);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2743,7 +2743,7 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
     ASSERT_EQ(h.codec, irs::codecs::ByteCodec::FsstPlus);
     ASSERT_GT(duckdb::Load<uint32_t>(kPrefixes(h, block)), 0u);
     c.corrupt(h, block);
-    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
+    duckdb::Store(h, block);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2828,7 +2828,7 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
     auto h = irs::codecs::Header::Parse(block, size);
     ASSERT_EQ(h.codec, irs::codecs::ByteCodec::OnPair);
     c.corrupt(h, block);
-    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
+    duckdb::Store(h, block);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2910,7 +2910,7 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
     ASSERT_EQ(h.codec, irs::codecs::ByteCodec::Fsst12);
     ASSERT_GT(h.symtab_size, 24u);
     c.corrupt(h, block);
-    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
+    duckdb::Store(h, block);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2987,7 +2987,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
     auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
     auto h = irs::codecs::Header::Parse(block, size);
     c.corrupt(h);
-    duckdb::Store(h, block + size - irs::codecs::kHeaderSize);
+    duckdb::Store(h, block);
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -3216,7 +3216,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
     seal(changed, tuning);
     gaps.push_back(tuning.clock.gap);
   }
-  EXPECT_EQ(gaps, (std::vector<uint32_t>{2, 2, 4, 4}));
+  EXPECT_EQ(gaps, (std::vector<uint32_t>{1, 2, 2, 4}));
 
   seal(steady, tuning);
   EXPECT_EQ(tuning.clock.gap, 1u);

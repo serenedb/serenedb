@@ -157,9 +157,11 @@ void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
            BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
            codes.size(), frames.symtab.size());
 
-  std::memset(out.bytes.Extend(total - data_size), 0, total - data_size);
+  out.bytes.Extend(total - data_size);
   auto* base = reinterpret_cast<duckdb::data_ptr_t>(out.bytes.Data());
-  duckdb::Store(h, base + total - kHeaderSize);
+  std::memmove(base + h.off_data, base, data_size);
+  std::memset(base, 0, h.off_data);
+  duckdb::Store(h, base);
   for (size_t i = 0; i < frames.frames.size(); ++i) {
     duckdb::Store(frames.frames[i], base + h.off_frames + i * kFrameMetaSize);
   }

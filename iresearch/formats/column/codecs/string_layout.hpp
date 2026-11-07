@@ -55,14 +55,12 @@ Data layout per PlainScan segment of the lz4, zstd and zxc leaves, one block
 of one column; a text column's row group is cut into segments of about
 kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
-|                         Data                         |
+|                        Header                        |
 |   +----------------------------------------------+   |
-|   |   leaf frames of the concatenated entries    |   |
+|   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
-|   each frame compressed with the Dictionary;         |
-|   or frame 0 is the dictionary of the later          |
-|   frames; or frames without a dictionary;            |
-|   the leaf's file gives the frame sizes              |
+|   shape, leaf, level, bit widths, counts,            |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -86,12 +84,14 @@ kDefaultColSegmentTarget encoded bytes:
 |   is slower), or as is when that is not smaller:     |
 |   symtab_size bytes; empty unless flags is Local     |
 +------------------------------------------------------+
-|                        Header                        |
+|                         Data                         |
 |   +----------------------------------------------+   |
-|   |   Header, the last 72 bytes                  |   |
+|   |   leaf frames of the concatenated entries    |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   each frame compressed with the Dictionary;         |
+|   or frame 0 is the dictionary of the later          |
+|   frames; or frames without a dictionary;            |
+|   the leaf's file gives the frame sizes              |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */
@@ -101,11 +101,12 @@ Data layout per DictionaryScan segment of the lz4, zstd and zxc leaves, one
 block of one column; a text column's row group is cut into segments of about
 kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
-|                         Data                         |
+|                        Header                        |
 |   +----------------------------------------------+   |
-|   |   leaf frames of the concatenated entries    |   |
+|   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
-|   as in a PlainScan segment                          |
+|   shape, leaf, level, bit widths, counts,            |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -136,12 +137,11 @@ kDefaultColSegmentTarget encoded bytes:
 |   is slower), or as is when that is not smaller:     |
 |   symtab_size bytes; empty unless flags is Local     |
 +------------------------------------------------------+
-|                        Header                        |
+|                         Data                         |
 |   +----------------------------------------------+   |
-|   |   Header, the last 72 bytes                  |   |
+|   |   leaf frames of the concatenated entries    |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   as in a PlainScan segment                          |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */
@@ -176,7 +176,7 @@ struct Header {
     using duckdb::BitpackingPrimitives;
     SDB_ENSURE(segment_size >= kHeaderSize,
                "col codec: segment smaller than its header");
-    const auto h = duckdb::Load<Header>(p + segment_size - kHeaderSize);
+    const auto h = duckdb::Load<Header>(p);
     SDB_ENSURE(h.version == kSegmentVersion,
                "col codec: unsupported segment version ", h.version);
     SDB_ENSURE(
@@ -191,7 +191,8 @@ struct Header {
           !Sorted(h.codec))) &&
         (h.codec != ByteCodec::FsstPlus ||
          h.symtab_size >= uint64_t{h.dictionary_size} + sizeof(uint32_t)) &&
-        h.off_data == 0 && h.data_size <= h.off_frames &&
+        static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
+        h.off_frames >= kHeaderSize &&
         h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
           h.off_lengths &&
         h.off_lengths + BitpackingPrimitives::GetRequiredSize(h.entry_count,
@@ -201,8 +202,7 @@ struct Header {
             BitpackingPrimitives::GetRequiredSize(h.entry_count, h.lcp_width) <=
           h.off_codes &&
         h.off_codes <= h.off_symtab &&
-        h.off_symtab + static_cast<uint64_t>(h.symtab_size) <=
-          segment_size - kHeaderSize,
+        h.off_symtab + static_cast<uint64_t>(h.symtab_size) <= h.off_data,
       "col codec: corrupted segment header");
     return h;
   }
@@ -237,15 +237,14 @@ static_assert(offsetof(Header, raw_bytes) == 64);
 inline uint64_t LayOut(Header& h, uint64_t data_bytes, uint64_t frames,
                        uint64_t lengths_bytes, uint64_t lcps_bytes,
                        uint64_t codes_bytes, uint64_t symtab_bytes) noexcept {
-  h.off_data = 0;
-  h.off_frames = duckdb::AlignValue<uint64_t, 8>(data_bytes);
+  h.off_frames = kHeaderSize;
   h.off_lengths =
-    duckdb::AlignValue<uint64_t, 8>(h.off_frames + frames * kFrameMetaSize);
+    duckdb::AlignValue<uint64_t, 8>(kHeaderSize + frames * kFrameMetaSize);
   h.off_lcps = duckdb::AlignValue<uint64_t, 8>(h.off_lengths + lengths_bytes);
   h.off_codes = duckdb::AlignValue<uint64_t, 8>(h.off_lcps + lcps_bytes);
   h.off_symtab = duckdb::AlignValue<uint64_t, 8>(h.off_codes + codes_bytes);
-  return duckdb::AlignValue<uint64_t, 8>(h.off_symtab + symtab_bytes) +
-         kHeaderSize;
+  h.off_data = duckdb::AlignValue<uint64_t, 8>(h.off_symtab + symtab_bytes);
+  return h.off_data + data_bytes;
 }
 
 }  // namespace irs::codecs

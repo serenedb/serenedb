@@ -30,11 +30,12 @@
 Data layout per PlainScan segment, one block of one column; a text column's
 row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
-|                         Data                         |
+|                        Header                        |
 |   +----------------------------------------------+   |
-|   |   FSST-encoded suffixes                      |   |
+|   |   Header (string_layout.hpp), 72 bytes       |   |
 |   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
+|   shape, leaf, level, bit widths, counts,            |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -64,12 +65,11 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 |   trained per row group and again when its data      |
 |   drifts; each FSST segment stores a copy            |
 +------------------------------------------------------+
-|                        Header                        |
+|                         Data                         |
 |   +----------------------------------------------+   |
-|   |   Header (string_layout.hpp), last 72 bytes  |   |
+|   |   FSST-encoded suffixes                      |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   frames of up to 16 KiB of decoded entries          |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */
@@ -79,11 +79,12 @@ Data layout per DictionaryScan segment, one block of one column; a text
 column's row group is cut into segments of about kDefaultColSegmentTarget
 encoded bytes:
 +------------------------------------------------------+
-|                         Data                         |
+|                        Header                        |
 |   +----------------------------------------------+   |
-|   |   FSST-encoded suffixes                      |   |
+|   |   Header (string_layout.hpp), 72 bytes       |   |
 |   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
+|   shape, leaf, level, bit widths, counts,            |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -120,12 +121,11 @@ encoded bytes:
 |   trained per row group and again when its data      |
 |   drifts; each FSST segment stores a copy            |
 +------------------------------------------------------+
-|                        Header                        |
+|                         Data                         |
 |   +----------------------------------------------+   |
-|   |   Header (string_layout.hpp), last 72 bytes  |   |
+|   |   FSST-encoded suffixes                      |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   frames of up to 16 KiB of decoded entries          |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */

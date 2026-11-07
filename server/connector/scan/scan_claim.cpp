@@ -607,6 +607,9 @@ void MarkLiveRowGroups(std::span<LivePass> passes,
 
 std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads) {
   const auto live_count = static_cast<uint32_t>(live.count());
+  if (live_count == 0) {
+    return {{.rg = static_cast<uint32_t>(live.size())}};
+  }
   const auto step = [&](uint32_t claimed) {
     return claimed + std::max<uint32_t>(1, (live_count - claimed) / threads);
   };
@@ -694,7 +697,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
           work.rg_count > threads) {
         ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
         if (cls.segment_dead) {
-          work.claims = {{}, {.rg = work.rg_count}};
+          work.claims = {{.rg = work.rg_count}};
         } else {
           LivePass pass{.work = &work,
                         .col_reader = sub.GetColReader(),
@@ -711,19 +714,26 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       }
     }
     work.run_end = run_end;
-    rgs += work.rg_count;
   }
   MarkLiveRowGroups(passes, states, context, threads);
   for (const auto& pass : passes) {
     pass.work->claims = CutClaims(pass.live, static_cast<uint32_t>(threads));
   }
+  uint32_t skipped = 0;
   for (uint32_t i = 0; i != g.live_segments; ++i) {
     const auto& work = g.Segment(g.segment_order[i]);
-    parallel +=
+    const auto live =
       work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit
-        ? std::max<uint32_t>(1, work.LiveCount())
+        ? work.LiveCount()
         : 1;
+    if (live == 0) {
+      ++skipped;
+      continue;
+    }
+    parallel += live;
+    rgs += work.rg_count;
   }
+  g.done_segments.store(skipped, std::memory_order_relaxed);
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);
   }

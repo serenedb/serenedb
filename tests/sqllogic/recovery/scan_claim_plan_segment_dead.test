@@ -5,8 +5,11 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE cpd (id BIGINT PRIMARY KEY, k INTEGER)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 2048);
+CREATE TEXT SEARCH DICTIONARY cpd_words AS split_text(case := 'lower') WITH (frequency, norm);
+
+
+statement ok
+CREATE TABLE cpd (id BIGINT PRIMARY KEY, k INTEGER, v BIGINT, body TEXT);
 
 
 statement ok
@@ -14,24 +17,19 @@ SET threads = 1
 
 
 statement ok
-INSERT INTO cpd SELECT i, i // 2048 FROM range(20480) t(i);
+INSERT INTO cpd SELECT i, CASE WHEN i < 20480 THEN i // 2048 ELSE 1000 + (i - 20480) // 2048 END, i,
+  CASE WHEN i < 20480 THEN 'quick brown fox' ELSE 'lazy dog' END
+FROM range(40960) t(i) ORDER BY i;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) cpd;
-
-
-statement ok
-INSERT INTO cpd SELECT i, 1000 + (i - 20480) // 2048 FROM range(20480, 40960) t(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cpd;
+CREATE INDEX cpd_idx ON cpd USING inverted (id, body cpd_words) INCLUDE (k, v)
+  WITH (row_group_size = 2048, segment_docs_max = 20480, compaction_interval = 0);
 
 
 query
 SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
-FROM sdb_metrics WHERE relation_id = 'cpd'::regclass;
+FROM sdb_metrics WHERE relation_id = 'cpd_idx'::regclass;
 ----
 segments	docs
 2	40960
@@ -54,7 +52,7 @@ SET profiling_output = '${__TEST_DIR__}/cpd_dead.json'
 
 
 query
-SELECT count(*) AS n, sum(id) AS s FROM cpd WHERE k = 3;
+SELECT count(*) AS n, sum(v) AS s FROM cpd_idx WHERE k = 3;
 ----
 n	s
 2048	14679040
@@ -65,10 +63,25 @@ RESET enable_profiling
 
 
 query
-SELECT count(*) AS n, sum(id) AS s FROM cpd WHERE k = 1005;
+SELECT count(*) AS n, sum(v) AS s FROM cpd_idx WHERE k = 1005;
 ----
 n	s
 2048	65010688
+
+
+query
+SELECT count(*) AS n, bool_and(v BETWEEN 6144 AND 8191) AS k3
+FROM (SELECT v FROM cpd_idx WHERE body @@ 'fox' AND k = 3 ORDER BY BM25(cpd_idx.tableoid) DESC LIMIT 5) t;
+----
+n	k3
+5	t
+
+
+query
+SELECT list_sort(ts_dict_agg(body)) AS terms FROM cpd_idx WHERE k = 3;
+----
+terms
+{brown,fox,quick}
 
 
 statement ok
@@ -88,4 +101,12 @@ RESET threads
 
 
 statement ok
+DROP INDEX cpd_idx;
+
+
+statement ok
 DROP TABLE cpd;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cpd_words;

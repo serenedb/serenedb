@@ -65,11 +65,16 @@ std::vector<ReferencingKey> LiveReferencing(
   std::span<const std::shared_ptr<const Referencing>> referencing,
   irs::field_id field, duckdb::CatalogTransaction transaction);
 
-// The unique key of index `name` on `columns` of `table`, written under
-// `field`.
+struct UniqueIndexPart {
+  duckdb::Identifier column;
+  std::string expression;
+  std::string text;
+  duckdb::LogicalType type;
+};
+
 KeySpec UniqueIndexKey(const catalog::SearchTableEntry& table,
                        irs::field_id field, std::string name,
-                       std::span<const duckdb::Identifier> columns);
+                       std::span<const UniqueIndexPart> parts);
 
 // The unique key `key` of `table` if it is an index's, committed or not: a
 // table's store writes and checks the key from the start of the index's

@@ -46,6 +46,10 @@ void ScanDependents(duckdb::CatalogTransaction transaction,
 void DropDependents(duckdb::CatalogTransaction transaction,
                     duckdb::CatalogEntry& entry, bool cascade);
 
+std::vector<duckdb::Identifier> DropOwnedSequences(
+  duckdb::CatalogTransaction transaction, duckdb::TableCatalogEntry& table,
+  std::span<const duckdb::LogicalIndex> columns, bool cascade);
+
 duckdb::catalog_entry_vector_t OwnedEntries(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& owner);
 
@@ -92,6 +96,11 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& table,
                         const duckdb::Identifier& old_column,
                         const duckdb::Identifier& new_column);
+
+void DropColumnReaders(duckdb::CatalogTransaction transaction,
+                       duckdb::TableCatalogEntry& table,
+                       std::span<const duckdb::LogicalIndex> columns,
+                       bool cascade);
 
 void FollowSchemaRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& schema,

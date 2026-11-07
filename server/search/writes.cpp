@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/sql_identifier.hpp>
@@ -102,26 +103,43 @@ const KeySpec* UniqueSpec(const StoreWrites& w, irs::field_id field) {
 }
 
 // Visits the keys under unique key `spec` of rows `docs` of `segment`.
-void ForEachRowKey(duckdb::ClientContext& context, const KeySpec& spec,
-                   const irs::SubReader& segment, const irs::DocumentMask& docs,
+void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
+                   const KeySpec& spec, const irs::SubReader& segment,
+                   const irs::DocumentMask& docs,
                    absl::FunctionRef<void(std::string_view key)> visit) {
   const auto* columns = segment.GetColReader();
   if (!columns || docs.Empty()) {
     return;
   }
-  std::vector<irs::ColumnstoreProjection> projections;
+  const connector::ConstraintKeyEncoder encoder{
+    context,
+    table_id,
+    {.field = spec.key.field,
+     .columns = spec.key.columns,
+     .expressions = spec.key.expressions}};
+  std::vector<connector::ColumnId> column_ids;
+  duckdb::vector<duckdb::LogicalType> types;
   for (size_t i = 0; i != spec.key.columns.size(); ++i) {
-    projections.push_back({.output_slot = i, .column_id = spec.key.columns[i]});
+    if (i >= spec.key.expressions.size() || spec.key.expressions[i].empty()) {
+      column_ids.push_back(spec.key.columns[i]);
+      types.push_back(spec.types[i]);
+    }
+  }
+  for (auto& read : encoder.ExpressionReads()) {
+    if (!absl::c_linear_search(column_ids, read.column)) {
+      column_ids.push_back(read.column);
+      types.push_back(std::move(read.type));
+    }
+  }
+  std::vector<irs::ColumnstoreProjection> projections;
+  for (size_t i = 0; i != column_ids.size(); ++i) {
+    projections.push_back({.output_slot = i, .column_id = column_ids[i]});
   }
   irs::ColFilterStateCache filter_states;
   connector::FullScanner scanner{
     *columns, projections, {}, &context, filter_states};
   duckdb::DataChunk chunk;
-  chunk.Initialize(
-    duckdb::Allocator::Get(context),
-    duckdb::vector<duckdb::LogicalType>{spec.types.begin(), spec.types.end()});
-  const catalog::ConstraintKey key{.field = spec.key.field,
-                                   .columns = spec.key.columns};
+  chunk.Initialize(duckdb::Allocator::Get(context), types);
   duckdb::Vector keys{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
   duckdb::SelectionVector rows{STANDARD_VECTOR_SIZE};
   const uint64_t docs_count = segment.Meta().docs_count;
@@ -136,7 +154,7 @@ void ForEachRowKey(duckdb::ClientContext& context, const KeySpec& spec,
       window, std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs_count - window),
       chunk, &rows, count);
     chunk.SetCardinality(scanned);
-    connector::EncodeConstraintKeys(chunk, spec.key.columns, key, keys);
+    encoder.Encode(chunk, column_ids, keys);
     auto values = keys.Values<duckdb::string_t>();
     for (duckdb::idx_t row = 0; row != scanned; ++row) {
       if (const auto entry = values[row]; entry.IsValid()) {
@@ -165,11 +183,11 @@ void ForEachRowKey(duckdb::ClientContext& context, const KeySpec& spec,
 // the document each row is: `first` for the first row.
 void ForEachChunkKey(
   duckdb::DataChunk& chunk, std::span<const connector::ColumnId> column_ids,
-  const catalog::ConstraintKey& key, irs::doc_id_t first,
+  const connector::ConstraintKeyEncoder& key, irs::doc_id_t first,
   absl::FunctionRef<void(std::string_view key, irs::doc_id_t doc)> visit) {
   const auto count = chunk.size();
   duckdb::Vector keys{duckdb::LogicalType::BLOB, count};
-  connector::EncodeConstraintKeys(chunk, column_ids, key, keys);
+  key.Encode(chunk, column_ids, keys);
   auto values = keys.Values<duckdb::string_t>();
   for (duckdb::idx_t row = 0; row != count; ++row) {
     const auto entry = values[row];
@@ -557,7 +575,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
         if (const auto it = segments.find(group.segment);
             it != segments.end()) {
           ForEachRowKey(
-            context, spec, *it->second, group.docs,
+            context, store->GetId(), spec, *it->second, group.docs,
             [&](std::string_view key) { keys.keys.emplace_back(key); });
         }
       }
@@ -850,6 +868,11 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
   std::vector<StoreWrites::HotKey> keyed;
   duckdb::idx_t rows = 0;
   if (w.changes.HasBufferedRows()) {
+    std::vector<connector::ConstraintKeyEncoder> encoders;
+    encoders.reserve(w.keys.size());
+    for (const auto& spec : w.keys) {
+      encoders.emplace_back(context, w.store->GetId(), spec.key);
+    }
     for (auto& chunk : w.changes.collection->Chunks()) {
       const auto first = rows;
       rows += chunk.size();
@@ -858,7 +881,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
       }
       for (size_t spec = 0; spec != w.keys.size(); ++spec) {
         ForEachChunkKey(
-          chunk, w.changes.column_ids, w.keys[spec].key,
+          chunk, w.changes.column_ids, encoders[spec],
           static_cast<irs::doc_id_t>(irs::doc_limits::min() + first),
           [&](std::string_view key, irs::doc_id_t doc) {
             if (doc - irs::doc_limits::min() < w.keyed_rows) {
@@ -908,6 +931,11 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
   }
   w.keyed_rows = rows;
   w.checked_segments = w.own_segments.size();
+  if (duckdb::GetReplicationRole(context) == duckdb::ReplicationRole::REPLICA) {
+    w.removed_keys.clear();
+    w.checked.emplace(std::move(live));
+    return;
+  }
   for (size_t spec = 0; spec != w.keys.size(); ++spec) {
     const auto& key_spec = w.keys[spec];
     if (key_spec.kind != KeyKind::Reference) {
@@ -1011,8 +1039,10 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
     }
   }
   const auto latest = Latest(*w.table);
+  const bool replica =
+    duckdb::GetReplicationRole(context) == duckdb::ReplicationRole::REPLICA;
   for (const auto& spec : w.keys) {
-    if (spec.kind != KeyKind::Reference) {
+    if (replica || spec.kind != KeyKind::Reference) {
       continue;
     }
     const auto keys = OwnKeys(w, spec.key.field, now);
@@ -1052,7 +1082,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         }
       }
     }
-  } else if (w.removed_rows) {
+  } else if (w.removed_rows && !replica) {
     for (const auto& reference : referencing) {
       auto it = absl::c_find_if(w.removed_keys, [&](const auto& removed) {
         return removed.field == reference->referenced;
@@ -1076,7 +1106,8 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
                                const irs::DocumentMaskBuilder* removed) {
         if (removed) {
           ForEachRowKey(
-            context, *spec, reader, irs::DocumentMaskBuilder{*removed}.Finish(),
+            context, w.store->GetId(), *spec, reader,
+            irs::DocumentMaskBuilder{*removed}.Finish(),
             [&](std::string_view key) { it->keys.emplace_back(key); });
         }
       };
@@ -1175,7 +1206,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context, Tick snapshot) {
                 chunk, changes.column_ids, key,
                 static_cast<irs::doc_id_t>(irs::doc_limits::min() + first),
                 [&](std::string_view value, irs::doc_id_t doc) {
-                  w.hot_keys.push_back({.field = key.field,
+                  w.hot_keys.push_back({.field = key.Key().field,
                                         .key = std::string{value},
                                         .doc = doc});
                 });

@@ -138,7 +138,7 @@ ALTER TABLE ati_t2 ALTER COLUMN score TYPE BIGINT;
 statement error
 ALTER TABLE ati_t2 ALTER COLUMN body2 TYPE VARCHAR(100);
 ----
-db error: ERROR: Cannot change the type of this column: an index depends on it!
+db error: ERROR: Cannot change the type of column "body2": index "ati_idx2" depends on it
 
 
 statement ok

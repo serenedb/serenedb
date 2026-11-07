@@ -111,14 +111,11 @@ struct InvertedIndexKey : persistence::KeyRecord {
   std::string expression_text;
 };
 
-// A key a table constraint enforces, written as one term per row under
-// `field`: the sort key of `columns`, null where any of them is null. A
-// foreign key's values are cast to `types`, the referenced key's, so the two
-// tables write equal values alike.
 struct ConstraintKey {
   irs::field_id field = irs::field_limits::invalid();
   std::vector<irs::field_id> columns;
   std::vector<duckdb::LogicalType> types;
+  std::vector<std::string> expressions;
 };
 
 struct ExpressionKeys {

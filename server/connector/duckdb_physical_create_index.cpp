@@ -254,16 +254,20 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       if (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE &&
           catalog::IsSearchTable(_relation)) {
         auto& table = _relation.Cast<catalog::SearchTableEntry>();
-        std::vector<duckdb::Identifier> columns;
+        const auto column_ids = KeyColumnIds(_relation, _info->column_ids);
+        std::vector<search::UniqueIndexPart> parts;
         for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
           if (_info->column_opclasses[i] == "included") {
             continue;
           }
           const auto& expr = *_info->parsed_expressions[i];
           if (expr.GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                            ERR_MSG("unique indexes on expressions are not "
-                                    "supported"));
+            const auto& bound = *_bound_expressions[i];
+            parts.push_back({.expression = NormalizedExpression(
+                               bound, _relation.oid, column_ids, context),
+                             .text = expr.ToString(),
+                             .type = bound.GetReturnType()});
+            continue;
           }
           const auto& name =
             expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
@@ -274,11 +278,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
               ERR_MSG(
                 "indexes on virtual generated columns are not supported"));
           }
-          columns.push_back(name);
+          parts.push_back({.column = name});
         }
         state->unique_key = search::UniqueIndexKey(
           table, static_cast<irs::field_id>(index_entry.oid), state->index_name,
-          columns);
+          parts);
         auto unique = std::make_shared<catalog::InvertedIndexConfig>(*config);
         unique->constraint_keys.push_back(state->unique_key->key);
         config = std::move(unique);

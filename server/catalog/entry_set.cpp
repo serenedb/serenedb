@@ -35,10 +35,17 @@
 #include <vector>
 
 #include "catalog/base_catalog.h"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/transaction.h"
 
 namespace sdb::catalog {
 namespace {
+
+bool Dropped(duckdb::AttachedDatabase& database) {
+  auto& catalog = database.GetCatalog();
+  return IsSereneDB(catalog) && catalog.Cast<SereneDBCatalog>().IsDropped();
+}
 
 duckdb::CatalogEntry* Visible(const duckdb::SnapshotView& view,
                               duckdb::CatalogEntry& head) {
@@ -95,6 +102,14 @@ void ForEachSubject(
   for (const auto& dependency :
        version.Cast<duckdb::StandardEntry>().dependencies.Set()) {
     subject(dependency.oid, &dependency);
+  }
+  if (version.type == duckdb::CatalogType::ROLE_ENTRY) {
+    return;
+  }
+  subject(version.permissions.owner, nullptr);
+  for (const auto& item : version.permissions.acl) {
+    subject(item.grantee, nullptr);
+    subject(item.grantor, nullptr);
   }
 }
 
@@ -270,7 +285,7 @@ void OidIndex::ForEachDependent(
     duckdb::shared_ptr<duckdb::AttachedDatabase> pinned;
     if (dependent.index != this) {
       pinned = duckdb::AttachedDatabase::TryGetReference(dependent.database);
-      if (!pinned) {
+      if (!pinned || Dropped(*pinned)) {
         continue;
       }
     }
@@ -302,7 +317,7 @@ void OidIndex::ForEachForeignDependent(
       }
       const auto pinned =
         duckdb::AttachedDatabase::TryGetReference(dependent.database);
-      if (!pinned) {
+      if (!pinned || Dropped(*pinned)) {
         continue;
       }
       if (auto member = dependent.index->Find(transaction, dependent.oid);
@@ -345,6 +360,23 @@ void OidIndex::CheckCreated(const duckdb::CatalogEntry& version) {
       slot.set->CheckSubjectLive(slot.name, subject);
     }
   });
+  if (version.deleted || version.type == duckdb::CatalogType::ROLE_ENTRY) {
+    return;
+  }
+  auto& roles = ClusterOf().Oids();
+  const auto check_role = [&](duckdb::idx_t role) {
+    if (!role) {
+      return;
+    }
+    if (const auto slot = roles.Newest(role); slot.set) {
+      slot.set->CheckSubjectLive(slot.name, role);
+    }
+  };
+  check_role(version.permissions.owner);
+  for (const auto& item : version.permissions.acl) {
+    check_role(item.grantee);
+    check_role(item.grantor);
+  }
 }
 
 void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
@@ -581,6 +613,14 @@ bool EntrySet::PushTombstone(duckdb::CatalogTransaction transaction,
   return true;
 }
 
+void EntrySet::CheckNameWritable(duckdb::CatalogTransaction transaction,
+                                 const duckdb::Identifier& name) {
+  absl::MutexLock lock{&_mutex};
+  if (const auto it = _entries.find(name); it != _entries.end()) {
+    CheckWritable(transaction.view, *it->second);
+  }
+}
+
 bool EntrySet::Create(duckdb::CatalogTransaction transaction,
                       duckdb::unique_ptr<duckdb::CatalogEntry> entry) {
   absl::MutexLock lock{&_mutex};
@@ -729,6 +769,10 @@ void EntrySet::Undo(duckdb::CatalogEntry& version, ChangeKind kind) {
   UnindexDependents(*removed);
   if (removed->oid && it->second->deleted) {
     _oids.Remove(removed->oid, *this);
+  }
+  if (!it->second->deleted &&
+      it->second->type != duckdb::CatalogType::INVALID) {
+    it->second->SetAsRoot(nullptr, nullptr);
   }
   if (it->second->type == duckdb::CatalogType::INVALID) {
     _entries.erase(it);

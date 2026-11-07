@@ -386,7 +386,7 @@ statement error
 CREATE OR REPLACE TABLE coro_sink (x INT);
 ----
 db error: ERROR: cannot drop table coro_sink because other objects depend on it
-DETAIL: trigger coro_src_trg depends on table coro_sink
+DETAIL: trigger coro_src_trg on table coro_src depends on table coro_sink
 HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 

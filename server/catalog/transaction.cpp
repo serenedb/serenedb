@@ -78,13 +78,12 @@ void RequireLog(const ReplicationLsnEntry& entry) {
 void CheckDependencies(SessionTransaction& transaction) {
   const auto view = transaction.View();
   for (const auto& change : transaction.Changes()) {
-    if (!change.set->Members()) {
-      continue;
-    }
     switch (change.kind) {
       case ChangeKind::Create:
       case ChangeKind::Alter:
-        change.set->Oids().CheckCreated(*change.version);
+        if (change.set->Members()) {
+          change.set->Oids().CheckCreated(*change.version);
+        }
         break;
       case ChangeKind::Drop:
         change.set->Oids().CheckDropped(view, change.Subject());
@@ -101,6 +100,9 @@ SessionTransaction::SessionTransaction(duckdb::transaction_t id)
   : _id{id}, _snapshot{Transactions::Get().Begin()} {}
 
 SessionTransaction::~SessionTransaction() {
+  if (_held) {
+    Transactions::Get().End(*_held);
+  }
   Transactions::Get().End(Snapshot());
 }
 
@@ -110,6 +112,10 @@ void SessionTransaction::Refresh() {
   }
   if (_search) {
     _search->NoteConflicts(Snapshot());
+    if (!_held && !_search->Empty()) {
+      _held = Snapshot();
+      Transactions::Get().Hold(*_held);
+    }
   }
   _snapshot.store(Transactions::Get().Advance(Snapshot()),
                   std::memory_order_release);
@@ -173,6 +179,11 @@ duckdb::transaction_t Transactions::Begin() {
   const auto snapshot = LastCommit();
   ++_snapshots[snapshot];
   return snapshot;
+}
+
+void Transactions::Hold(duckdb::transaction_t snapshot) {
+  absl::MutexLock lock{&_snapshots_mutex};
+  ++_snapshots[snapshot];
 }
 
 duckdb::transaction_t Transactions::Advance(duckdb::transaction_t snapshot) {
@@ -564,6 +575,9 @@ void SessionTransaction::Release() noexcept {
   _layout_claims.clear();
   _search_snapshots.clear();
   _search.reset();
+  if (_held) {
+    Transactions::Get().End(*std::exchange(_held, std::nullopt));
+  }
   _on_commit.clear();
 }
 

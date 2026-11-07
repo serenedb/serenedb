@@ -259,16 +259,17 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider, catalog::PkColumnKind pk,
   std::vector<IndexedExpression>&& indexed_exprs,
-  const catalog::InvertedIndexConfig* config)
+  const catalog::InvertedIndexConfig* config,
+  std::vector<ConstraintKeyEncoder>&& constraint_keys)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _trx{&trx},
     _pk{pk},
-    _indexed_expressions{std::move(indexed_exprs)} {
+    _indexed_expressions{std::move(indexed_exprs)},
+    _constraint_keys{std::move(constraint_keys)} {
   if (!config) {
     return;
   }
-  _constraint_keys = config->constraint_keys;
   for (const auto& key : config->keys) {
     if (!irs::field_limits::valid(key.column_id)) {
       continue;
@@ -1049,6 +1050,11 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
       DeserializeBoundExpression(key.normalized_expression, context),
       key.field_id);
   }
+  std::vector<ConstraintKeyEncoder> constraint_keys;
+  constraint_keys.reserve(config->constraint_keys.size());
+  for (const auto& key : config->constraint_keys) {
+    constraint_keys.emplace_back(context, shard.GetId(), key);
+  }
   auto tokenizers =
     catalog::IndexTokenizers{context, catalog, *config}.AcquireAll(context);
   auto entry_of = [config](irs::field_id field_id) {
@@ -1058,7 +1064,8 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   trx.SetFieldOptions(config);
   return std::make_unique<SearchSinkInsertBaseImpl>(
     trx, BoundTokenizers(std::move(tokenizers)), std::move(entry_of),
-    catalog::PkColumnKind::None, std::move(indexed_exprs), config.get());
+    catalog::PkColumnKind::None, std::move(indexed_exprs), config.get(),
+    std::move(constraint_keys));
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
@@ -1084,8 +1091,9 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   }
   for (const auto& key : sink.ConstraintKeys()) {
     duckdb::Vector keys{duckdb::LogicalType::BLOB, num_rows};
-    EncodeConstraintKeys(chunk, column_ids, key, keys);
-    sink.SwitchFieldImpl(key.field, duckdb::LogicalType::BLOB, keys, num_rows);
+    key.Encode(chunk, column_ids, keys);
+    sink.SwitchFieldImpl(key.Key().field, duckdb::LogicalType::BLOB, keys,
+                         num_rows);
   }
   sink.FinishImpl();
 }

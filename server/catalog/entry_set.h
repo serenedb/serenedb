@@ -168,6 +168,9 @@ class EntrySet {
   duckdb::optional_ptr<duckdb::CatalogEntry> GetCommitted(
     const duckdb::Identifier& name);
 
+  void CheckNameWritable(duckdb::CatalogTransaction transaction,
+                         const duckdb::Identifier& name);
+
   bool Create(duckdb::CatalogTransaction transaction,
               duckdb::unique_ptr<duckdb::CatalogEntry> entry);
 

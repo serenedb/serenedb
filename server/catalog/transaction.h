@@ -152,6 +152,7 @@ class SessionTransaction final {
 
   duckdb::transaction_t _id;
   std::atomic<duckdb::transaction_t> _snapshot;
+  std::optional<duckdb::transaction_t> _held;
   std::vector<Change> _changes;
   std::vector<LsnUpdate> _lsn_updates;
   std::vector<duckdb::reference<duckdb::AttachedDatabase>> _attached;
@@ -203,6 +204,7 @@ class Transactions final {
   }
 
   duckdb::transaction_t Begin();
+  void Hold(duckdb::transaction_t snapshot);
   duckdb::transaction_t Advance(duckdb::transaction_t snapshot);
   void End(duckdb::transaction_t snapshot);
   duckdb::transaction_t OldestSnapshot() ABSL_LOCKS_EXCLUDED(_snapshots_mutex);

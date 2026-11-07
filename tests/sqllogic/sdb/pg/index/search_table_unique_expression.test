@@ -1,0 +1,128 @@
+statement ok
+CREATE TABLE ue_users (id INT, email TEXT, team INT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ue_users VALUES (1, 'Ann@x', 1), (2, 'ann@X', 2), (3, 'bob@x', 1);
+
+
+statement error
+CREATE UNIQUE INDEX ue_users_email ON ue_users (lower(email));
+----
+db error: ERROR: could not create unique index "ue_users_email"
+DETAIL: Key (lower(email))=(ann@x) is duplicated.
+
+
+statement ok
+DELETE FROM ue_users WHERE id = 2;
+
+
+statement ok
+CREATE UNIQUE INDEX ue_users_email ON ue_users (lower(email));
+
+
+statement error
+INSERT INTO ue_users VALUES (4, 'BOB@X', 2);
+----
+db error: ERROR: duplicate key value violates unique constraint "ue_users_email"
+DETAIL: Key (lower(email))=(bob@x) already exists.
+
+
+statement error
+INSERT INTO ue_users VALUES (4, 'cid@x', 1), (5, 'CID@x', 2);
+----
+db error: ERROR: duplicate key value violates unique constraint "ue_users_email"
+DETAIL: Key (lower(email))=(cid@x) already exists.
+
+
+statement error
+UPDATE ue_users SET email = 'ANN@x' WHERE id = 3;
+----
+db error: ERROR: duplicate key value violates unique constraint "ue_users_email"
+DETAIL: Key (lower(email))=(ann@x) already exists.
+
+
+statement ok
+UPDATE ue_users SET email = 'BOB@x' WHERE id = 3;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DELETE FROM ue_users WHERE id = 1;
+
+
+statement ok
+INSERT INTO ue_users VALUES (6, 'ann@x', 3);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+INSERT INTO ue_users VALUES (7, NULL, 1), (8, NULL, 2);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) ue_users;
+
+
+statement error
+INSERT INTO ue_users VALUES (9, 'Ann@X', 1);
+----
+db error: ERROR: duplicate key value violates unique constraint "ue_users_email"
+DETAIL: Key (lower(email))=(ann@x) already exists.
+
+
+query
+SELECT id, email FROM ue_users ORDER BY id;
+----
+id	email
+3	BOB@x
+6	ann@x
+7	NULL
+8	NULL
+
+
+statement ok
+CREATE UNIQUE INDEX ue_users_team_email ON ue_users (team, upper(email));
+
+
+statement ok
+INSERT INTO ue_users VALUES (10, 'dan@x', 1), (11, 'eve@x', 1);
+
+
+statement error
+INSERT INTO ue_users VALUES (12, 'Dan@X', 2);
+----
+db error: ERROR: duplicate key value violates unique constraint "ue_users_email"
+DETAIL: Key (lower(email))=(dan@x) already exists.
+
+
+statement ok
+DROP INDEX ue_users_email;
+
+
+statement error
+INSERT INTO ue_users VALUES (12, 'Dan@X', 1);
+----
+db error: ERROR: duplicate key value violates unique constraint "ue_users_team_email"
+DETAIL: Key (team, upper(email))=(1, DAN@X) already exists.
+
+
+statement ok
+INSERT INTO ue_users VALUES (12, 'Dan@X', 2);
+
+
+query
+SELECT count(*) AS n FROM ue_users WHERE lower(email) = 'dan@x';
+----
+n
+2

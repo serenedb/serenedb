@@ -73,6 +73,7 @@ struct FieldRecord {
 struct UniqueKeyRecord {
   irs::field_id field = irs::field_limits::invalid();
   std::vector<irs::field_id> columns;
+  std::vector<std::string> expressions;
 };
 
 struct InvertedIndexData {

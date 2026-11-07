@@ -442,8 +442,7 @@ Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
     return std::nullopt;
   }
   const auto& trigger = *found;
-  const auto& table =
-    SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
+  const auto& table = TriggerTable(*session.transaction, trigger);
   auto definition = absl::StrCat(
     "CREATE TRIGGER ", QuoteIdentifier(trigger.name.GetIdentifierName()));
   switch (trigger.timing) {

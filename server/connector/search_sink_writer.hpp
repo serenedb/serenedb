@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
+#include "connector/constraint_keys.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
 #include "connector/inet_terms.h"
@@ -113,7 +114,8 @@ class SearchSinkInsertBaseImpl {
     EntryInfoProvider&& entry_info_provider,
     catalog::PkColumnKind pk = catalog::PkColumnKind::Has,
     std::vector<IndexedExpression>&& indexed_exprs = {},
-    const catalog::InvertedIndexConfig* config = nullptr);
+    const catalog::InvertedIndexConfig* config = nullptr,
+    std::vector<ConstraintKeyEncoder>&& constraint_keys = {});
 
   void InitImpl(size_t batch_size, const duckdb::Vector* pk = nullptr);
 
@@ -140,7 +142,7 @@ class SearchSinkInsertBaseImpl {
     return _indexed_expressions;
   }
 
-  std::span<const catalog::ConstraintKey> ConstraintKeys() const noexcept {
+  std::span<const ConstraintKeyEncoder> ConstraintKeys() const noexcept {
     return _constraint_keys;
   }
 
@@ -311,7 +313,7 @@ class SearchSinkInsertBaseImpl {
   std::unique_ptr<InetBatch> _inet_batch;
   StoreAppender _store_appender;
   std::vector<IndexedExpression> _indexed_expressions;
-  std::vector<catalog::ConstraintKey> _constraint_keys;
+  std::vector<ConstraintKeyEncoder> _constraint_keys;
   irs::containers::FlatHashMap<ColumnId, std::vector<irs::field_id>>
     _terms_by_column;
 

@@ -22,8 +22,11 @@ BEGIN;
 
 
 connection s2
-statement ok
+statement error
 CREATE INDEX icr_art_b ON icr_art (b);
+----
+db error: ERROR: search table "icr_art" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1
@@ -32,10 +35,8 @@ COMMIT;
 
 
 connection s2
-statement error
-COMMIT;
-----
-db error: ERROR: Failed to commit: Catalog write-write conflict on create with "icr_art_b": table "icr_art" was altered by a concurrent transaction
+statement ok
+ROLLBACK;
 
 
 connection s1
@@ -49,15 +50,21 @@ ALTER TABLE icr_inv RENAME COLUMN b TO c;
 
 
 connection s2
-statement ok
+statement error
 CREATE INDEX icr_inv_b ON icr_inv USING inverted (b);
+----
+db error: ERROR: search table "icr_inv" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1
-statement error
-COMMIT;
-----
-db error: ERROR: Failed to commit: Catalog write-write conflict on alter of "icr_inv": index "icr_inv_b" was created by a concurrent transaction
+statement ok
+ROLLBACK;
+
+
+connection s2
+statement ok
+CREATE INDEX icr_inv_b ON icr_inv USING inverted (b);
 
 
 query

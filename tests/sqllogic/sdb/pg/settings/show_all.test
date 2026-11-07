@@ -70,10 +70,10 @@ checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically t
 checkpoint_timeout	300	Not used. Added for PostgreSQL compatibility only.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
-compaction_floor_segment_bytes	2097152	Segments of an inverted index or search table below this size count as equal-sized for compaction candidate selection. WITH (compaction_floor_segment_bytes = ...) overrides it per index or table. Default 2097152 (2MB).
-compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes and search tables. WITH (compaction_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables background compaction; VACUUM (COMPACT_*) still merges on demand. Default: 1000.
-compaction_max_segments	10	Maximum segments of an inverted index or search table merged by one background compaction. WITH (compaction_max_segments = ...) overrides it per index or table. Default 10.
-compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of an inverted index or search table (the tier target size). WITH (compaction_max_segments_bytes = ...) overrides it per index or table. Default 5368709120 (5GB).
+compaction_floor_segment_bytes	2097152	Segments of a table or of an inverted index over a view below this size count as equal-sized for compaction candidate selection. Their WITH (compaction_floor_segment_bytes = ...) overrides it. Default 2097152 (2MB).
+compaction_interval	1000	Background compaction interval (ms) for newly created tables and inverted indexes over views. Their WITH (compaction_interval = ...) overrides it, ALTER TABLE / ALTER INDEX ... SET changes it later. 0 disables background compaction; VACUUM (COMPACT_*) still merges on demand. Default: 1000.
+compaction_max_segments	10	Maximum segments of a table or of an inverted index over a view merged by one background compaction. Their WITH (compaction_max_segments = ...) overrides it. Default 10.
+compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of a table or of an inverted index over a view (the tier target size). Their WITH (compaction_max_segments_bytes = ...) overrides it. Default 5368709120 (5GB).
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
 custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
@@ -247,7 +247,7 @@ progress_bar_time	2000	Configures how long (in milliseconds) a query needs to ta
 read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = automatic, with the backlog being bound by a memory budget, 0 = disabled.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
-row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
+row_group_size	122880	Default columnstore row-group size for newly created tables and inverted indexes over views. Their WITH (row_group_size = ...) overrides it. Reads from existing ones are unaffected. Default: 122'880.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
 rtree_index_scan_ratio	0.075	the maximum estimated fraction of a table's rows that a bounding-box filter may match for an R-tree index scan to be used instead of a full table scan
 s3_access_key_id	NULL	S3 Access Key ID
@@ -305,8 +305,8 @@ sdb_scan_split	auto	How an inverted-index scan shares a segment between workers:
 search_backfill_group_bytes	1073741824	Bytes of existing segments a search-table CREATE INDEX rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
-segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
-segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Per-object WITH (segment_memory_max = ...) overrides. A serial write to a search table also buffers up to checkpoint_threshold of rows. Default 268435456 (256MB).
+segment_docs_max	0	Document count at which the segment writer of an inverted index over a view rolls over to a new on-disk segment. The index's WITH (segment_docs_max = ...) overrides it. 0 = unlimited (memory limit governs).
+segment_memory_max	268435456	In-memory bytes the segment writer of a table or of an inverted index over a view fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Their WITH (segment_memory_max = ...) overrides it. A serial write to a table also buffers up to checkpoint_threshold of rows. Default 268435456 (256MB).
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.6	Shows the server version.
 server_version_num	180006	Shows the server version as an integer.
@@ -418,10 +418,10 @@ checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically t
 checkpoint_timeout	300	Not used. Added for PostgreSQL compatibility only.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
-compaction_floor_segment_bytes	2097152	Segments of an inverted index or search table below this size count as equal-sized for compaction candidate selection. WITH (compaction_floor_segment_bytes = ...) overrides it per index or table. Default 2097152 (2MB).
-compaction_interval	1000	Background compaction interval (ms) for newly created inverted indexes and search tables. WITH (compaction_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables background compaction; VACUUM (COMPACT_*) still merges on demand. Default: 1000.
-compaction_max_segments	10	Maximum segments of an inverted index or search table merged by one background compaction. WITH (compaction_max_segments = ...) overrides it per index or table. Default 10.
-compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of an inverted index or search table (the tier target size). WITH (compaction_max_segments_bytes = ...) overrides it per index or table. Default 5368709120 (5GB).
+compaction_floor_segment_bytes	2097152	Segments of a table or of an inverted index over a view below this size count as equal-sized for compaction candidate selection. Their WITH (compaction_floor_segment_bytes = ...) overrides it. Default 2097152 (2MB).
+compaction_interval	1000	Background compaction interval (ms) for newly created tables and inverted indexes over views. Their WITH (compaction_interval = ...) overrides it, ALTER TABLE / ALTER INDEX ... SET changes it later. 0 disables background compaction; VACUUM (COMPACT_*) still merges on demand. Default: 1000.
+compaction_max_segments	10	Maximum segments of a table or of an inverted index over a view merged by one background compaction. Their WITH (compaction_max_segments = ...) overrides it. Default 10.
+compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of a table or of an inverted index over a view (the tier target size). Their WITH (compaction_max_segments_bytes = ...) overrides it. Default 5368709120 (5GB).
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
 custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
@@ -595,7 +595,7 @@ progress_bar_time	2000	Configures how long (in milliseconds) a query needs to ta
 read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = automatic, with the backlog being bound by a memory budget, 0 = disabled.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
-row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
+row_group_size	122880	Default columnstore row-group size for newly created tables and inverted indexes over views. Their WITH (row_group_size = ...) overrides it. Reads from existing ones are unaffected. Default: 122'880.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
 rtree_index_scan_ratio	0.075	the maximum estimated fraction of a table's rows that a bounding-box filter may match for an R-tree index scan to be used instead of a full table scan
 s3_access_key_id	NULL	S3 Access Key ID
@@ -653,8 +653,8 @@ sdb_scan_split	auto	How an inverted-index scan shares a segment between workers:
 search_backfill_group_bytes	1073741824	Bytes of existing segments a search-table CREATE INDEX rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
-segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
-segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Per-object WITH (segment_memory_max = ...) overrides. A serial write to a search table also buffers up to checkpoint_threshold of rows. Default 268435456 (256MB).
+segment_docs_max	0	Document count at which the segment writer of an inverted index over a view rolls over to a new on-disk segment. The index's WITH (segment_docs_max = ...) overrides it. 0 = unlimited (memory limit governs).
+segment_memory_max	268435456	In-memory bytes the segment writer of a table or of an inverted index over a view fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Their WITH (segment_memory_max = ...) overrides it. A serial write to a table also buffers up to checkpoint_threshold of rows. Default 268435456 (256MB).
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.6	Shows the server version.
 server_version_num	180006	Shows the server version as an integer.

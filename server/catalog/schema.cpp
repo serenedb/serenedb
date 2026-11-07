@@ -118,6 +118,44 @@ void AlterAllInSchema(Schema& schema, duckdb::CatalogTransaction transaction,
   }
 }
 
+void ResolveDependencyOids(duckdb::CatalogTransaction transaction,
+                           duckdb::Catalog& catalog,
+                           duckdb::CatalogEntry& entry) {
+  if (entry.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+    return;
+  }
+  auto& dependencies = entry.Cast<duckdb::StandardEntry>().dependencies;
+  if (absl::c_none_of(dependencies.Set(),
+                      [](const duckdb::LogicalDependency& dependency) {
+                        return dependency.oid == 0;
+                      })) {
+    return;
+  }
+  const duckdb::IdentifierEquality same_name{catalog.IsCaseSensitive()};
+  duckdb::LogicalDependencyList resolved;
+  for (auto dependency : dependencies.Set()) {
+    if (dependency.oid == 0 && !dependency.entry.schema_path.empty() &&
+        (dependency.catalog.empty() ||
+         same_name(dependency.catalog, catalog.GetName()))) {
+      const auto name = duckdb::QualifiedName::FromCatalogSchema(
+        catalog.GetName(), dependency.entry.schema_path, dependency.entry.name);
+      if (auto schema = catalog.Cast<BaseCatalog>().LookupSchema(
+            transaction,
+            duckdb::EntryLookupInfo{duckdb::CatalogType::SCHEMA_ENTRY,
+                                    name.Parent()},
+            duckdb::OnEntryNotFound::RETURN_NULL)) {
+        if (const auto subject = schema->Cast<Schema>()
+                                   .Set(dependency.entry.type)
+                                   .Get(transaction, dependency.entry.name)) {
+          dependency.oid = subject->oid;
+        }
+      }
+    }
+    resolved.AddDependency(dependency);
+  }
+  dependencies = std::move(resolved);
+}
+
 }  // namespace
 
 SchemaSets::SchemaSets(bool case_sensitive, OidIndex& oids)
@@ -243,6 +281,15 @@ void Schema::CheckRelationName(duckdb::CatalogTransaction transaction,
   if (auto taken = SiblingEntry(transaction, type, entry_name, true)) {
     ThrowEntryExists(taken->type, entry_name);
   }
+  if (!catalog.IsCaseSensitive() || !IsRelation(type)) {
+    return;
+  }
+  for (auto* set :
+       {&_sets->tables, &_sets->indexes, &_sets->sequences, &_sets->types}) {
+    if (set != &Set(type)) {
+      set->CheckNameWritable(transaction, entry_name);
+    }
+  }
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> Schema::Add(
@@ -283,6 +330,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Schema::Add(
     }
   }
   CheckRelationName(transaction, type, entry_name);
+  ResolveDependencyOids(transaction, catalog, *entry);
   auto* result = entry.get();
   if (!set.Create(transaction, std::move(entry))) {
     if (on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
@@ -742,6 +790,16 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
     }
     if (target->oid == oid) {
       return;
+    }
+    if (entry->type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+      if (const auto owner = OwnerOf(transaction, *entry)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("cannot move an owned sequence into another schema"),
+          ERR_DETAIL("Sequence \"", entry->name.GetIdentifierName(),
+                     "\" is linked to table \"",
+                     owner->name.GetIdentifierName(), "\"."));
+      }
     }
     DeclareModified(transaction, catalog,
                     duckdb::DatabaseModificationType::ALTER_TABLE);

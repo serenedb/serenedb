@@ -20,6 +20,7 @@
 
 #include "search/table_keys.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -257,15 +258,28 @@ std::vector<ReferencingKey> LiveReferencing(
 
 KeySpec UniqueIndexKey(const catalog::SearchTableEntry& table,
                        irs::field_id field, std::string name,
-                       std::span<const duckdb::Identifier> columns) {
+                       std::span<const UniqueIndexPart> parts) {
   KeySpec spec{.kind = KeyKind::Unique,
                .key = {.field = field},
                .constraint = std::move(name)};
-  for (const auto& column_name : columns) {
-    const auto& column = table.GetColumns().GetColumn(column_name);
+  for (const auto& part : parts) {
+    if (!part.expression.empty()) {
+      spec.key.columns.push_back(irs::field_limits::invalid());
+      spec.names.push_back(part.text);
+      spec.types.push_back(part.type);
+      continue;
+    }
+    const auto& column = table.GetColumns().GetColumn(part.column);
     spec.key.columns.push_back(connector::TableColumnId(column));
     spec.names.push_back(column.Name().GetIdentifierName());
     spec.types.push_back(column.Type());
+  }
+  if (absl::c_any_of(parts, [](const UniqueIndexPart& part) {
+        return !part.expression.empty();
+      })) {
+    for (const auto& part : parts) {
+      spec.key.expressions.push_back(part.expression);
+    }
   }
   return spec;
 }
@@ -283,9 +297,20 @@ std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
   KeySpec spec{.kind = KeyKind::Unique,
                .key = key,
                .constraint = entry->name.GetIdentifierName()};
-  for (const auto id : key.columns) {
+  const auto& config = entry->Cast<catalog::InvertedIndexEntry>().Config();
+  for (size_t i = 0; i != key.columns.size(); ++i) {
+    if (i < key.expressions.size() && !key.expressions[i].empty()) {
+      const auto found =
+        absl::c_find_if(config->keys, [&](const catalog::InvertedIndexKey& k) {
+          return k.normalized_expression == key.expressions[i];
+        });
+      SDB_ASSERT(found != config->keys.end());
+      spec.names.push_back(found->expression_text);
+      spec.types.push_back(found->type);
+      continue;
+    }
     for (const auto& column : table.GetColumns().Logical()) {
-      if (connector::TableColumnId(column) == id) {
+      if (connector::TableColumnId(column) == key.columns[i]) {
         spec.names.push_back(column.Name().GetIdentifierName());
         spec.types.push_back(column.Type());
       }

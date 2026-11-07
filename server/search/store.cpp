@@ -998,7 +998,7 @@ void Store::SetConstraintKeys(std::vector<catalog::ConstraintKey> keys) {
   const auto same = [](const catalog::ConstraintKey& lhs,
                        const catalog::ConstraintKey& rhs) {
     return lhs.field == rhs.field && lhs.columns == rhs.columns &&
-           lhs.types == rhs.types;
+           lhs.types == rhs.types && lhs.expressions == rhs.expressions;
   };
   if (absl::c_equal(keys, _constraint_keys, same)) {
     return;
@@ -1202,14 +1202,14 @@ void Store::InvertReplayed(duckdb::ClientContext& context) {
           auto& chunk = *replayed.chunk;
           duckdb::Vector encoded{duckdb::LogicalType::BLOB, chunk.size()};
           for (const auto& constraint : constraints) {
-            connector::EncodeConstraintKeys(chunk, replayed.column_ids,
-                                            constraint, encoded);
+            constraint.Encode(chunk, replayed.column_ids, encoded);
             auto values = encoded.Values<duckdb::string_t>();
             for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
               const auto entry = values[row];
               if (entry.IsValid()) {
                 const auto& value = entry.GetValue();
-                keys.Add(constraint.field, {value.GetData(), value.GetSize()},
+                keys.Add(constraint.Key().field,
+                         {value.GetData(), value.GetSize()},
                          static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                     replayed.first + row));
               }

@@ -45,9 +45,9 @@ db error: ERROR: cannot drop type dtc.color because other objects depend on it<s
 statement error
 ALTER TABLE dtc.records DROP COLUMN c;
 ----
-db error: ERROR: Cannot alter entry "records" because there are entries that depend on it.
-view "v_c" depends on table "records".
-Drop the dependent entries first and recreate them after the change.
+db error: ERROR: cannot drop column c of table dtc.records because other objects depend on it
+DETAIL: view dtc.v_c depends on column c of table dtc.records
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # A column no view reads goes without CASCADE.

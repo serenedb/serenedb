@@ -99,7 +99,7 @@ connection s2
 statement error
 CREATE INDEX crn_x ON crn_t(a)
 ----
-db error: ERROR: Catalog write-write conflict on create with "crn_x"
+db error: ERROR: could not serialize access due to concurrent update of "crn_x"
 
 
 # The refusal ended the statement, not the connection.
@@ -120,7 +120,7 @@ connection s2
 statement error
 CREATE INDEX crn_x ON crn_t(a)
 ----
-db error: ERROR: Index with name "crn_x" already exists!
+db error: ERROR: Table with name "crn_x" already exists!
 
 
 # A rolled back holder frees the name.
@@ -138,7 +138,7 @@ connection s2
 statement error
 CREATE TABLE crn_y(a INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on create with "crn_y"
+db error: ERROR: could not serialize access due to concurrent update of "crn_y"
 
 
 connection s1
@@ -166,7 +166,7 @@ connection s2
 statement error
 ALTER TABLE crn_y RENAME TO crn_z
 ----
-db error: ERROR: Catalog write-write conflict on create with "crn_z"
+db error: ERROR: could not serialize access due to concurrent update of "crn_z"
 
 
 connection s1
@@ -178,7 +178,7 @@ connection s2
 statement error
 ALTER TABLE crn_y RENAME TO crn_z
 ----
-db error: ERROR: Could not rename "crn_y" to "crn_z": another entry with this name already exists!
+db error: ERROR: Sequence with name "crn_z" already exists!
 
 
 connection s2

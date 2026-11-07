@@ -35,12 +35,14 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_job_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/parser/statement/pragma_statement.hpp>
 #include <duckdb/storage/data_table.hpp>
@@ -133,7 +135,8 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   if (data.unique_key) {
     config->constraint_keys.push_back(
       {.field = data.unique_key->field,
-       .columns = std::move(data.unique_key->columns)});
+       .columns = std::move(data.unique_key->columns),
+       .expressions = std::move(data.unique_key->expressions)});
   }
   return config;
 }
@@ -536,7 +539,9 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
   if (!_config->constraint_keys.empty()) {
     const auto& key = _config->constraint_keys.front();
     data.unique_key =
-      persistence::UniqueKeyRecord{.field = key.field, .columns = key.columns};
+      persistence::UniqueKeyRecord{.field = key.field,
+                                   .columns = key.columns,
+                                   .expressions = key.expressions};
   }
   return data;
 }
@@ -547,6 +552,24 @@ InvertedIndexEntry::InvertedIndexEntry(
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table)
   : duckdb::IndexCatalogEntry{catalog, schema, info},
     _relation_name{info.table} {
+  const duckdb::IdentifierEquality same_name{catalog.IsCaseSensitive()};
+  const auto unqualify = [&](duckdb::ParsedExpression& expression) {
+    duckdb::ParsedExpressionIterator::VisitExpressionMutable<
+      duckdb::ColumnRefExpression>(
+      expression, [&](duckdb::ColumnRefExpression& reference) {
+        auto& names = reference.ColumnNamesMutable();
+        if (reference.IsQualified() &&
+            same_name(names[names.size() - 2], info.table)) {
+          names.erase(names.begin(), names.end() - 1);
+        }
+      });
+  };
+  for (auto& expression : parsed_expressions) {
+    unqualify(*expression);
+  }
+  if (where_clause) {
+    unqualify(*where_clause);
+  }
   if (table) {
     _search_table = table->Cast<SearchTableEntry>().Storage();
   }
@@ -597,6 +620,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> InvertedIndexEntry::GetRelation(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::REPLACE_DEFINITION) {
+    auto& definition = info.Cast<duckdb::ReplaceDefinitionInfo>()
+                         .definition->Cast<duckdb::CreateIndexInfo>();
+    auto result = duckdb::make_uniq<InvertedIndexEntry>(
+      catalog, ParentSchema(transaction.GetContext()), definition, nullptr);
+    result->_storage = _storage;
+    result->_search_table = _search_table;
+    return std::move(result);
+  }
   if (info.type != duckdb::AlterType::ALTER_INDEX) {
     return duckdb::IndexCatalogEntry::AlterEntry(transaction, info);
   }

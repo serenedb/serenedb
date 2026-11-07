@@ -29,7 +29,11 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/create_sort_key.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/utils/assert.hpp>
+
+#include "connector/index_expression.hpp"
 
 namespace sdb::connector {
 namespace {
@@ -37,42 +41,85 @@ namespace {
 const duckdb::OrderModifiers kKeyOrder{duckdb::OrderType::ASCENDING,
                                        duckdb::OrderByNullType::NULLS_LAST};
 
+void CollectReads(const duckdb::Expression& expr, std::vector<KeyRead>& reads) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    const auto& ref = expr.Cast<duckdb::BoundColumnRefExpression>();
+    const auto column =
+      static_cast<ColumnId>(ref.Binding().column_index.GetIndex());
+    if (absl::c_none_of(
+          reads, [&](const KeyRead& read) { return read.column == column; })) {
+      reads.push_back({.column = column, .type = ref.GetReturnType()});
+    }
+    return;
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) { CollectReads(child, reads); });
+}
+
 }  // namespace
 
-void EncodeConstraintKeys(duckdb::DataChunk& chunk,
-                          std::span<const ColumnId> column_ids,
-                          const catalog::ConstraintKey& key,
-                          duckdb::Vector& keys) {
-  const auto count = chunk.size();
-  duckdb::vector<duckdb::LogicalType> types;
-  duckdb::vector<duckdb::OrderModifiers> modifiers;
-  std::vector<duckdb::idx_t> slots;
-  types.reserve(key.columns.size());
-  slots.reserve(key.columns.size());
-  for (const auto column : key.columns) {
-    const auto slot = absl::c_find(column_ids, column) - column_ids.begin();
-    SDB_ASSERT(static_cast<size_t>(slot) < column_ids.size());
-    slots.push_back(static_cast<duckdb::idx_t>(slot));
-    types.push_back(chunk.data[slot].GetType());
-    modifiers.push_back(kKeyOrder);
+ConstraintKeyEncoder::ConstraintKeyEncoder(duckdb::ClientContext& context,
+                                           duckdb::idx_t table_id,
+                                           const catalog::ConstraintKey& key)
+  : _context{&context}, _table_id{table_id}, _key{key} {
+  _expressions.resize(key.expressions.size());
+  for (size_t i = 0; i != key.expressions.size(); ++i) {
+    if (!key.expressions[i].empty()) {
+      _expressions[i] = DeserializeBoundExpression(key.expressions[i], context);
+    }
   }
+}
+
+std::vector<KeyRead> ConstraintKeyEncoder::ExpressionReads() const {
+  std::vector<KeyRead> reads;
+  for (const auto& expr : _expressions) {
+    if (expr) {
+      CollectReads(*expr, reads);
+    }
+  }
+  return reads;
+}
+
+void ConstraintKeyEncoder::Encode(duckdb::DataChunk& chunk,
+                                  std::span<const ColumnId> column_ids,
+                                  duckdb::Vector& keys) const {
+  const auto count = chunk.size();
+  const auto parts = _key.columns.size();
+  std::vector<duckdb::Vector> evaluated;
+  evaluated.reserve(_expressions.size());
+  std::vector<duckdb::Vector*> values;
+  values.reserve(parts);
+  duckdb::vector<duckdb::LogicalType> types;
+  types.reserve(parts);
+  for (size_t i = 0; i != parts; ++i) {
+    if (i < _expressions.size() && _expressions[i]) {
+      values.push_back(&evaluated.emplace_back(EvaluateExprOverChunk(
+        *_expressions[i], chunk, _table_id, column_ids, *_context)));
+    } else {
+      const auto slot =
+        absl::c_find(column_ids, _key.columns[i]) - column_ids.begin();
+      SDB_ASSERT(static_cast<size_t>(slot) < column_ids.size());
+      values.push_back(&chunk.data[slot]);
+    }
+    types.push_back(values.back()->GetType());
+  }
+  const duckdb::vector<duckdb::OrderModifiers> modifiers(parts, kKeyOrder);
   duckdb::DataChunk input;
-  if (key.types.empty()) {
+  if (_key.types.empty()) {
     input.InitializeEmpty(types);
-    for (size_t i = 0; i != slots.size(); ++i) {
-      input.data[i].Reference(chunk.data[slots[i]]);
+    for (size_t i = 0; i != parts; ++i) {
+      input.data[i].Reference(*values[i]);
     }
   } else {
     input.Initialize(
       duckdb::Allocator::DefaultAllocator(),
-      duckdb::vector<duckdb::LogicalType>{key.types.begin(), key.types.end()},
+      duckdb::vector<duckdb::LogicalType>{_key.types.begin(), _key.types.end()},
       count);
-    for (size_t i = 0; i != slots.size(); ++i) {
-      if (types[i] == key.types[i]) {
-        input.data[i].Reference(chunk.data[slots[i]]);
+    for (size_t i = 0; i != parts; ++i) {
+      if (types[i] == _key.types[i]) {
+        input.data[i].Reference(*values[i]);
       } else {
-        duckdb::VectorOperations::DefaultCast(chunk.data[slots[i]],
-                                              input.data[i], count);
+        duckdb::VectorOperations::DefaultCast(*values[i], input.data[i], count);
       }
     }
   }

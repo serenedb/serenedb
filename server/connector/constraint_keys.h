@@ -22,9 +22,12 @@
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/planner/expression.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
@@ -35,12 +38,29 @@ namespace sdb::connector {
 inline constexpr irs::DictRef kConstraintKeyDict{
   .layout = irs::DictLayout::String, .member = irs::DictMember::Strings};
 
-// Writes the key of every row of `chunk`, whose columns are `column_ids`, into
-// `keys` (BLOB): null where any key column is null.
-void EncodeConstraintKeys(duckdb::DataChunk& chunk,
-                          std::span<const ColumnId> column_ids,
-                          const catalog::ConstraintKey& key,
-                          duckdb::Vector& keys);
+struct KeyRead {
+  ColumnId column = 0;
+  duckdb::LogicalType type;
+};
+
+class ConstraintKeyEncoder {
+ public:
+  ConstraintKeyEncoder(duckdb::ClientContext& context, duckdb::idx_t table_id,
+                       const catalog::ConstraintKey& key);
+
+  const catalog::ConstraintKey& Key() const noexcept { return _key; }
+
+  std::vector<KeyRead> ExpressionReads() const;
+
+  void Encode(duckdb::DataChunk& chunk, std::span<const ColumnId> column_ids,
+              duckdb::Vector& keys) const;
+
+ private:
+  duckdb::ClientContext* _context;
+  duckdb::idx_t _table_id;
+  catalog::ConstraintKey _key;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
+};
 
 // The key's values as PostgreSQL shows them in a DETAIL: `(a, b)=(1, x)`.
 std::string ConstraintKeyText(std::string_view key,

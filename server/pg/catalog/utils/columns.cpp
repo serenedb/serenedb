@@ -254,6 +254,15 @@ const duckdb::TableCatalogEntry& SiblingTable(
   return entry->Cast<duckdb::TableCatalogEntry>();
 }
 
+const duckdb::TableCatalogEntry& TriggerTable(
+  duckdb::CatalogTransaction transaction,
+  const duckdb::TriggerCatalogEntry& trigger) {
+  auto& owner = trigger.catalog.Cast<catalog::BaseCatalog>();
+  auto entry = owner.LookupOid(transaction, owner.Oids().SetOwner(trigger.oid));
+  SDB_ASSERT(entry && entry->type == duckdb::CatalogType::TABLE_ENTRY);
+  return entry->Cast<duckdb::TableCatalogEntry>();
+}
+
 const duckdb::TableCatalogEntry& ReferencedTable(
   duckdb::CatalogTransaction transaction,
   const duckdb::TableCatalogEntry& table,

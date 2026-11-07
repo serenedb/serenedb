@@ -337,8 +337,7 @@ ObjectIdentity IdentifyTrigger(const Session& session, uint64_t oid) {
     return Missing("trigger");
   }
   const auto& trigger = entry->Cast<duckdb::TriggerCatalogEntry>();
-  const auto& table =
-    SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
+  const auto& table = TriggerTable(*session.transaction, trigger);
   const auto [schema, table_name] = NameOf(*session.transaction, table);
   const auto& name = trigger.name.GetIdentifierName();
   return ObjectIdentity{
@@ -584,6 +583,9 @@ std::string DescribeObject(duckdb::ClientContext& context,
     case TOKENIZER_ENTRY:
       return absl::StrCat("text search dictionary ",
                           entry.name.GetIdentifierName());
+    case TRIGGER_ENTRY:
+      classid = kPgTriggerTable;
+      break;
     case FOREIGN_SERVER_ENTRY:
       return absl::StrCat("server ", entry.name.GetIdentifierName());
     default:
@@ -597,9 +599,19 @@ std::string DescribeObject(duckdb::ClientContext& context,
   if (identity && identity->description) {
     return std::move(*identity->description);
   }
-  return absl::StrCat(
-    absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)), " ",
-    entry.name.GetIdentifierName());
+  auto described =
+    absl::StrCat(absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)),
+                 " ", entry.name.GetIdentifierName());
+  if (column > 0 && entry.type == TABLE_ENTRY) {
+    const auto& columns = entry.Cast<duckdb::TableCatalogEntry>().GetColumns();
+    const duckdb::LogicalIndex index{static_cast<duckdb::idx_t>(column - 1)};
+    if (index.index < columns.LogicalColumnCount()) {
+      return absl::StrCat("column ",
+                          columns.GetColumn(index).Name().GetIdentifierName(),
+                          " of ", described);
+    }
+  }
+  return described;
 }
 
 void RegisterObjectAddressFunctions(duckdb::ExtensionLoader& loader) {

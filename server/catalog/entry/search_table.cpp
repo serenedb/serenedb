@@ -99,6 +99,27 @@ using WithOptions =
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>;
 using Constraints = duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>;
 
+void RefreshTypeNames(duckdb::CatalogTransaction transaction,
+                      duckdb::Catalog& catalog,
+                      duckdb::LogicalDependencyList& dependencies) {
+  const duckdb::IdentifierEquality same_name{catalog.IsCaseSensitive()};
+  duckdb::LogicalDependencyList current;
+  for (auto dependency : dependencies.Set()) {
+    if (dependency.oid &&
+        dependency.entry.type == duckdb::CatalogType::TYPE_ENTRY &&
+        (dependency.catalog.empty() ||
+         same_name(dependency.catalog, catalog.GetName()))) {
+      if (auto subject = catalog.Cast<BaseCatalog>().LookupOid(
+            transaction, dependency.oid)) {
+        dependency.entry.name = subject->name;
+        dependency.entry.schema_path = subject->ParentSchemaPath(transaction);
+      }
+    }
+    current.AddDependency(dependency);
+  }
+  dependencies = std::move(current);
+}
+
 duckdb::optional_ptr<const duckdb::ConstantExpression> FindConstant(
   const WithOptions& options, std::string_view key) {
   const auto it = options.find(key);
@@ -496,6 +517,16 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
 
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
+  if (absl::c_any_of(info->dependencies.Set(),
+                     [](const duckdb::LogicalDependency& dependency) {
+                       return dependency.oid &&
+                              dependency.entry.type ==
+                                duckdb::CatalogType::TYPE_ENTRY;
+                     })) {
+    const CommittedView view;
+    RefreshTypeNames(view.Transaction(catalog.GetDatabase()), catalog,
+                     info->dependencies);
+  }
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
   for (auto& [name, value] : ExplicitOptions()) {
     options.insert_or_assign(name, OptionConstant(value));
@@ -735,22 +766,43 @@ bool ConstraintUsesColumn(duckdb::ClientContext& context,
   }
 }
 
+bool DependsOn(const duckdb::ColumnList& columns,
+               const duckdb::ColumnDefinition& generated,
+               const duckdb::ColumnDefinition& column) {
+  if (!generated.Generated() || generated.Logical() == column.Logical()) {
+    return false;
+  }
+  const duckdb::IdentifierEquality same_name{columns.IsCaseSensitive()};
+  duckdb::vector<std::string> dependencies;
+  generated.GetListOfDependencies(dependencies);
+  return absl::c_any_of(dependencies, [&](const std::string& dependency) {
+    return same_name(duckdb::Identifier{dependency}, column.Name());
+  });
+}
+
 duckdb::optional_ptr<const duckdb::ColumnDefinition> GeneratedDependent(
   const duckdb::ColumnList& columns, const duckdb::ColumnDefinition& column) {
-  const duckdb::IdentifierEquality same_name{columns.IsCaseSensitive()};
   for (const auto& generated : columns.Logical()) {
-    if (!generated.Generated() || generated.Logical() == column.Logical()) {
-      continue;
-    }
-    duckdb::vector<std::string> dependencies;
-    generated.GetListOfDependencies(dependencies);
-    if (absl::c_any_of(dependencies, [&](const std::string& dependency) {
-          return same_name(duckdb::Identifier{dependency}, column.Name());
-        })) {
+    if (DependsOn(columns, generated, column)) {
       return &generated;
     }
   }
   return nullptr;
+}
+
+std::vector<duckdb::LogicalIndex> WithGeneratedDependents(
+  const duckdb::ColumnList& columns, duckdb::LogicalIndex column) {
+  std::vector<duckdb::LogicalIndex> result{column};
+  for (size_t i = 0; i != result.size(); ++i) {
+    const auto& source = columns.GetColumn(result[i]);
+    for (const auto& generated : columns.Logical()) {
+      if (!absl::c_linear_search(result, generated.Logical()) &&
+          DependsOn(columns, generated, source)) {
+        result.push_back(generated.Logical());
+      }
+    }
+  }
+  return result;
 }
 
 bool ReferencesColumn(const duckdb::ParsedExpression& expression,
@@ -846,11 +898,12 @@ void RequireRetypable(duckdb::ClientContext& context,
   }
 }
 
-duckdb::ColumnList ColumnsWithout(const duckdb::ColumnList& columns,
-                                  duckdb::LogicalIndex dropped) {
+duckdb::ColumnList ColumnsWithout(
+  const duckdb::ColumnList& columns,
+  std::span<const duckdb::LogicalIndex> dropped) {
   duckdb::ColumnList result{false, columns.IsCaseSensitive()};
   for (const auto& column : columns.Logical()) {
-    if (column.Logical() != dropped) {
+    if (!absl::c_linear_search(dropped, column.Logical())) {
       result.AddColumn(column.Copy());
     }
   }
@@ -858,10 +911,13 @@ duckdb::ColumnList ColumnsWithout(const duckdb::ColumnList& columns,
 }
 
 duckdb::unique_ptr<duckdb::Constraint> ShiftedAfterDrop(
-  const duckdb::Constraint& constraint, duckdb::LogicalIndex dropped) {
+  const duckdb::Constraint& constraint,
+  std::span<const duckdb::LogicalIndex> dropped) {
   const auto shift = [&](duckdb::LogicalIndex index) {
-    return index.index > dropped.index ? duckdb::LogicalIndex{index.index - 1}
-                                       : index;
+    return duckdb::LogicalIndex{
+      index.index -
+      static_cast<duckdb::idx_t>(absl::c_count_if(
+        dropped, [&](duckdb::LogicalIndex gone) { return gone < index; }))};
   };
   auto copy = constraint.Copy();
   if (copy->type == duckdb::ConstraintType::NOT_NULL) {
@@ -876,24 +932,26 @@ duckdb::unique_ptr<duckdb::Constraint> ShiftedAfterDrop(
   return copy;
 }
 
-Constraints ConstraintsAfterDrop(duckdb::ClientContext& context,
-                                 const duckdb::TableCatalogEntry& table,
-                                 duckdb::LogicalIndex dropped) {
+Constraints ConstraintsAfterDrop(
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& table,
+  std::span<const duckdb::LogicalIndex> dropped) {
   Constraints result;
   for (const auto& constraint : table.GetConstraints()) {
-    if (!ConstraintUsesColumn(context, table, *constraint, dropped)) {
+    const auto used = absl::c_find_if(dropped, [&](duckdb::LogicalIndex gone) {
+      return ConstraintUsesColumn(context, table, *constraint, gone);
+    });
+    if (used == dropped.end()) {
       result.push_back(ShiftedAfterDrop(*constraint, dropped));
     } else if (constraint->type == duckdb::ConstraintType::UNIQUE) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-        ERR_MSG(
-          "Cannot drop column ",
-          table.GetColumns().GetColumn(dropped).Name().GetIdentifierName(),
-          " because there is a ",
-          constraint->Cast<duckdb::UniqueConstraint>().IsPrimaryKey()
-            ? "PRIMARY KEY"
-            : "UNIQUE",
-          " constraint that depends on it"));
+        ERR_MSG("Cannot drop column ",
+                table.GetColumns().GetColumn(*used).Name().GetIdentifierName(),
+                " because there is a ",
+                constraint->Cast<duckdb::UniqueConstraint>().IsPrimaryKey()
+                  ? "PRIMARY KEY"
+                  : "UNIQUE",
+                " constraint that depends on it"));
     }
   }
   return result;
@@ -973,12 +1031,13 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
   duckdb::unique_ptr<duckdb::CreateTableInfo> definition,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>* bound_defaults)
   const {
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  RefreshTypeNames(transaction, catalog, definition->dependencies);
   auto binder = duckdb::Binder::CreateBinder(context);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> unused_defaults;
   auto bound = binder->BindCreateTableInfo(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
-  const auto transaction = catalog.GetCatalogTransaction(context);
   for (const auto& dependency : dependencies.Set()) {
     if (!dependency.owned_by) {
       continue;
@@ -1336,24 +1395,32 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterAddColumn(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropColumn(
   duckdb::ClientContext& context, duckdb::RemoveColumnInfo& info) {
-  const auto dropped =
+  const auto removed =
     GetColumnIndex(info.removed_column, info.if_column_exists);
-  if (!dropped.IsValid()) {
+  if (!removed.IsValid()) {
     return nullptr;
   }
-  if (GeneratedDependent(_columns, _columns.GetColumn(dropped))) {
+  const auto dropped = WithGeneratedDependents(_columns, removed);
+  if (dropped.size() > 1 && !info.cascade) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
                     ERR_MSG("Cannot drop column: column is a dependency of 1 "
                             "or more generated column(s)"));
   }
   std::vector<duckdb::QualifiedName> indexes;
   if (!IsReplay(info)) {
-    ForEachIndexOn(context, *this, _columns.GetColumn(dropped),
-                   [&](const duckdb::IndexCatalogEntry& index) {
-                     indexes.emplace_back(catalog.GetName(),
-                                          ParentSchema(context).name,
-                                          index.name);
-                   });
+    DropColumnReaders(catalog.GetCatalogTransaction(context), *this, dropped,
+                      info.cascade);
+    for (const auto column : dropped) {
+      ForEachIndexOn(context, *this, _columns.GetColumn(column),
+                     [&](const duckdb::IndexCatalogEntry& index) {
+                       duckdb::QualifiedName name{catalog.GetName(),
+                                                  ParentSchema(context).name,
+                                                  index.name};
+                       if (!absl::c_linear_search(indexes, name)) {
+                         indexes.push_back(std::move(name));
+                       }
+                     });
+    }
   }
   for (const auto& index : indexes) {
     duckdb::DropInfo drop;
@@ -1361,23 +1428,16 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropColumn(
     drop.SetQualifiedName(index);
     catalog.DropEntry(context, drop);
   }
+  std::vector<duckdb::Identifier> cleared;
   if (!IsReplay(info)) {
-    const auto transaction = catalog.GetCatalogTransaction(context);
-    const auto column = _columns.GetColumn(dropped).CatalogOid();
-    for (auto& owned : OwnedEntries(transaction, *this)) {
-      auto& entry = owned.get();
-      if (entry.type != duckdb::CatalogType::SEQUENCE_ENTRY) {
-        continue;
-      }
-      const auto owner =
-        entry.Cast<duckdb::SequenceCatalogEntry>().owner_column;
-      if (column && owner.IsValid() && owner.GetIndex() == column) {
-        entry.ParentSchema(transaction).Cast<Schema>().Drop(transaction, entry);
-      }
-    }
+    cleared = DropOwnedSequences(catalog.GetCatalogTransaction(context), *this,
+                                 dropped, info.cascade);
   }
   auto definition = Definition();
   definition->columns = ColumnsWithout(_columns, dropped);
+  for (const auto& name : cleared) {
+    definition->columns.GetColumnMutable(name).SetDefaultValue(nullptr);
+  }
   definition->constraints = ConstraintsAfterDrop(context, *this, dropped);
   return ChangeColumns(
     context, info, Altered(context, info, std::move(definition)),

@@ -41,7 +41,15 @@ INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(101, 200) s(i);
 
 
 statement ok
+CHECKPOINT;
+
+
+statement ok
 INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(201, 300) s(i);
+
+
+statement ok
+CHECKPOINT;
 
 
 statement ok

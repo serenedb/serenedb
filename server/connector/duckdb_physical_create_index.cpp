@@ -528,26 +528,20 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     }
     table.AdoptAsWritten(context);
     gstate.build_claim.Finish();
-    if (gstate.progress) {
-      gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
-    }
   }
-  if (!gstate.index_storage) {
-    return duckdb::SinkFinalizeType::READY;
-  }
-
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
   }
-
-  auto& inverted_storage = *gstate.index_storage;
-  SDB_IF_FAILURE("commit_before_manifest_publish") {
+  if (gstate.index_storage) {
+    auto& inverted_storage = *gstate.index_storage;
+    SDB_IF_FAILURE("commit_before_manifest_publish") {
+      inverted_storage.Commit();
+    }
+    if (gstate.file_manifest) {
+      inverted_storage.SetFileManifest(gstate.file_manifest);
+    }
     inverted_storage.Commit();
   }
-  if (gstate.file_manifest) {
-    inverted_storage.SetFileManifest(gstate.file_manifest);
-  }
-  inverted_storage.Commit();
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 
   if (gstate.progress) {

@@ -443,11 +443,8 @@ void DispatchCompact(duckdb::ClientContext& context,
   }
 
   if (progress) {
-    int64_t total = 0;
-    for (const auto& step : steps) {
-      total += step.storage ? 1 : 0;
-    }
-    pg::ProgressMetrics::Set(progress->items_total, total);
+    pg::ProgressMetrics::Set(progress->items_total,
+                             static_cast<int64_t>(steps.size()));
     progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
   for (auto& step : steps) {
@@ -455,10 +452,6 @@ void DispatchCompact(duckdb::ClientContext& context,
     if (step.storage) {
       CompactInvertedStorage(*step.storage, *step.field_options, context,
                              progress);
-      if (progress) {
-        pg::ProgressMetrics::Add(progress->items_processed, 1);
-        SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
-      }
     } else if (const auto& search = step.search_data) {
       const auto status = search->VacuumCompact(
         context, GetIntSetting(context, "sdb_compact_target_segments"));
@@ -468,6 +461,10 @@ void DispatchCompact(duckdb::ClientContext& context,
                         ERR_MSG("failed to compact search table '", step.name,
                                 "': ", status.message()));
       }
+    }
+    if (progress) {
+      pg::ProgressMetrics::Add(progress->items_processed, 1);
+      SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
     }
   }
 }

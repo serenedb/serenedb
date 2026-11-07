@@ -1,6 +1,6 @@
 control substitution on
 
-# Instance-wide VACUUM scopes: REFRESH_ALL / COMPACT_ALL.
+# Instance-wide VACUUM scopes: COMPACT_ALL.
 # These walk every database, so they need their own serened instance -- under
 # the shared sqllogic runner they would touch other tests' per-test databases.
 # Per-scope variants and the error paths are covered in
@@ -38,20 +38,12 @@ statement ok
 CREATE INDEX notes_idx ON s1.notes USING inverted(id, body en);
 
 
-# REFRESH_ALL publishes pending writes across every database + schema at once.
 statement ok
 INSERT INTO public.docs VALUES (1, 'alpha across schemas');
 
 
 statement ok
 INSERT INTO s1.notes VALUES (1, 'alpha across schemas');
-
-
-query
-SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
-----
-count
-0
 
 
 query

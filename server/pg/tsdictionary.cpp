@@ -817,7 +817,11 @@ irs::analysis::TokenizerConfig BuildStage(duckdb::ClientContext& context,
 void CompileTokenizer(duckdb::ClientContext& context,
                       duckdb::CreateTokenizerInfo& info) {
   CheckWithClause(info.options);
-  auto [cfg, definition] = CompileTSDictionarySpec(context, info.definition);
+  auto [cfg, definition, deps] =
+    CompileTSDictionarySpec(context, info.definition);
+  for (auto* dep : deps) {
+    info.dependencies.AddDependency(*dep);
+  }
   auto features = ParseFeatures(info.options, TypeNameOf(cfg));
 
   auto test_analyzer = irs::analysis::CreateTokenizer(

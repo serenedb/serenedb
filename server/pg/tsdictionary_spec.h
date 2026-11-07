@@ -22,12 +22,14 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "pg/options_parser.h"
 #include "pg/tsdictionary.h"
 
 namespace duckdb {
 
+class CatalogEntry;
 class ClientContext;
 
 }  // namespace duckdb
@@ -36,6 +38,7 @@ namespace sdb::pg {
 struct CompiledTSDictionary {
   irs::analysis::TokenizerConfig config;
   std::string definition;
+  std::vector<duckdb::CatalogEntry*> dependencies;
 };
 
 CompiledTSDictionary CompileTSDictionarySpec(duckdb::ClientContext& context,

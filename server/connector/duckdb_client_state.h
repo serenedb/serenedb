@@ -25,8 +25,8 @@
 #include <duckdb/main/client_context_state.hpp>
 #include <functional>
 #include <iresearch/utils/pg/sql_error.hpp>
+#include <iresearch/utils/serializer.hpp>
 #include <memory>
-#include <string>
 #include <string_view>
 #include <vector>
 
@@ -156,7 +156,14 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
 
 using NoticeSink = std::function<void(irs::pg::SqlErrorData&)>;
 
-NoticeSink LogNotices(std::string prefix);
+void LogNotice(std::string_view what, std::string_view name,
+               const irs::pg::SqlErrorData& notice);
+
+template<irs::utils::detail::FixedString What>
+NoticeSink LogNotices(std::string_view name) {
+  return
+    [name](irs::pg::SqlErrorData& notice) { LogNotice(What, name, notice); };
+}
 
 struct SystemSession {
   std::string_view user;

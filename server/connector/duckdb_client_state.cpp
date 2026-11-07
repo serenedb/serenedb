@@ -396,13 +396,12 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
   search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 }
 
-NoticeSink LogNotices(std::string prefix) {
-  return [prefix = std::move(prefix)](irs::pg::SqlErrorData& notice) {
-    SDB_IF_FAILURE("notice_sink_fails") {
-      THROW_SQL_ERROR(ERR_MSG("injected notice sink failure"));
-    }
-    SDB_WARN(GENERAL, prefix, notice.errmsg);
-  };
+void LogNotice(std::string_view what, std::string_view name,
+               const irs::pg::SqlErrorData& notice) {
+  SDB_IF_FAILURE("notice_sink_fails") {
+    THROW_SQL_ERROR(ERR_MSG("injected notice sink failure"));
+  }
+  SDB_WARN(GENERAL, what, " \"", name, "\": ", notice.errmsg);
 }
 
 SystemConnection::SystemConnection(const SystemSession& session,

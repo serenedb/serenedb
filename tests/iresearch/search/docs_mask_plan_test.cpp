@@ -171,6 +171,7 @@ std::vector<irs::ScoreDoc> ScoreHits(const irs::DirectoryReader& reader,
       irs::top::MakeRoot(*queries[i], {.scorer = scorer,
                                        .fetcher = fetcher,
                                        .prune = prune,
+                                       .bounds = true,
                                        .k = static_cast<uint32_t>(k)});
     if (plan) {
       plan->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);

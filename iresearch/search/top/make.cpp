@@ -111,7 +111,7 @@ Root::ptr Family::Make(const VariadicPhraseQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const TokenPhraseQuery& query, const Context& ctx) {
-  if (ctx.prune) {
+  if (PruneByBounds(ctx)) {
     if (auto pruned = MakeTokenPhrasePruned(query, ctx)) {
       return pruned;
     }
@@ -121,7 +121,7 @@ Root::ptr Family::Make(const TokenPhraseQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
-  if (ctx.prune && query.State().cookie.docs_count != 1) {
+  if (PruneByBounds(ctx) && query.State().cookie.docs_count != 1) {
     const irs::detail::PostingClause posting{
       .state = query.State(),
       .boost = query.Boost(),
@@ -135,7 +135,7 @@ Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
-  if (ctx.prune) {
+  if (PruneByBounds(ctx)) {
     const auto& state = query.State();
     const auto* const field = state.Reader();
     const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;

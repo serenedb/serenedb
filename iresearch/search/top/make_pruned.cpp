@@ -43,7 +43,7 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
   const std::span exclude_filters = query.Queries(Occur::MustNot);
   const auto min_match = query.MinShouldMatch();
   const bool optional = !should.empty() || !should_filters.empty();
-  if (!ctx.prune) {
+  if (!PruneByBounds(ctx)) {
     if (optional || !must_filters.empty() ||
         !irs::detail::DenseConjunction(
           must, static_cast<doc_id_t>(segment.docs_count()))) {

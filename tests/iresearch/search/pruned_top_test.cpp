@@ -267,8 +267,8 @@ class PrunedTopTest : public tests::IndexTestBase {
   }
 
   std::vector<irs::ScoreDoc> Top(const irs::Filter& filter, size_t k,
-                                 doc_id_t span, bool prune, bool reuse,
-                                 uint64_t& total) {
+                                 doc_id_t span, bool prune, bool bounds,
+                                 bool reuse, uint64_t& total) {
     const auto queries = Prepare(filter);
     std::vector<irs::ScoreDoc> hits(k);
     std::atomic<irs::score_t> threshold{
@@ -281,6 +281,7 @@ class PrunedTopTest : public tests::IndexTestBase {
         return queries[0]->PlanTop({.scorer = _scorer,
                                     .fetcher = fetcher,
                                     .prune = prune,
+                                    .bounds = bounds,
                                     .k = static_cast<uint32_t>(k)});
       };
       irs::ColumnArgsFetcher shared;
@@ -376,16 +377,18 @@ class PrunedTopTest : public tests::IndexTestBase {
     }
     absl::c_sort(ranked, std::greater<>{});
     for (const size_t k : {size_t{1}, size_t{10}, size_t{100}, size_t{1000}}) {
-      for (const auto [span, prune, reuse] :
-           {std::tuple{doc_id_t{kDocs}, true, false},
-            std::tuple{doc_id_t{9973}, true, false},
-            std::tuple{doc_id_t{9973}, true, true},
-            std::tuple{doc_id_t{kDocs}, false, false},
-            std::tuple{doc_id_t{9973}, false, false}}) {
+      for (const auto [span, prune, bounds, reuse] :
+           {std::tuple{doc_id_t{kDocs}, true, true, false},
+            std::tuple{doc_id_t{9973}, true, true, false},
+            std::tuple{doc_id_t{9973}, true, true, true},
+            std::tuple{doc_id_t{kDocs}, true, false, false},
+            std::tuple{doc_id_t{9973}, true, false, true},
+            std::tuple{doc_id_t{kDocs}, false, false, false},
+            std::tuple{doc_id_t{9973}, false, false, false}}) {
         SCOPED_TRACE(absl::StrCat("k ", k, " span ", span, " prune ", prune,
-                                  " reuse ", reuse));
+                                  " bounds ", bounds, " reuse ", reuse));
         uint64_t total = 0;
-        const auto hits = Top(filter, k, span, prune, reuse, total);
+        const auto hits = Top(filter, k, span, prune, bounds, reuse, total);
         if (!prune) {
           ASSERT_EQ(matches.size(), total);
         }

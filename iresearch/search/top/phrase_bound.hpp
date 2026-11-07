@@ -35,7 +35,8 @@ namespace irs::top {
 class PhraseBound {
  public:
   PhraseBound(const SubReader& segment, const TermReader& field,
-              const irs::detail::ScoreArgs& args) {
+              const irs::detail::ScoreArgs& args, bool stored)
+    : _stored{stored} {
     SDB_ASSERT(args.scorer != nullptr);
     if (auto source = args.scorer->PrepareScoreBoundSource()) {
       _func = irs::detail::PrepareScore(args, segment, field.meta(), *source);
@@ -80,7 +81,7 @@ class PhraseBound {
 
   template<typename Slots>
   const BlockIndex* Index(Slots& slots) {
-    auto* const leaf = _source ? slots.BoundLeaf() : nullptr;
+    auto* const leaf = _source && _stored ? slots.BoundLeaf() : nullptr;
     return leaf ? leaf->Blocks() : nullptr;
   }
 
@@ -98,6 +99,7 @@ class PhraseBound {
   ScoreFunction _func;
   ScoreBoundSource::ptr _source;
   uint32_t _block = 0;
+  bool _stored;
 };
 
 }  // namespace irs::top

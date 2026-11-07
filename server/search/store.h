@@ -293,6 +293,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
     return _writer->ArmCompactionFloor();
   }
+  void AwaitMerges(duckdb::ClientContext& context);
   Tick ReplaceSegments(std::span<const irs::SubReader* const> replaced,
                        std::vector<irs::IndexWriter::Replacement> replacements);
 
@@ -418,6 +419,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::unique_ptr<Table> _table;
   bool _on_disk = false;
   std::atomic<bool> _cooling_scheduled{false};
+  std::atomic<uint32_t> _merges{0};
   struct ReplayedRows {
     irs::doc_id_t first = 0;
     duckdb::unique_ptr<duckdb::DataChunk> chunk;

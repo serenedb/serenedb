@@ -22,8 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/time/clock.h>
-#include <absl/time/time.h>
 
 #include <algorithm>
 #include <duckdb/common/allocator.hpp>
@@ -66,10 +64,6 @@
 
 namespace sdb::connector {
 namespace {
-
-// How long to back off when the floor cannot be armed because a compaction is
-// mid-flight. Compactions finish, so this only paces the retry.
-constexpr absl::Duration kArmRetry = absl::Milliseconds(50);
 
 struct RowSource {
   std::vector<irs::ColumnstoreProjection> projections;
@@ -367,14 +361,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     if (floor.Held()) {
       break;
     }
-    if (context.IsInterrupted()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
-                      ERR_MSG("canceled while waiting for compaction on "
-                              "search table ",
-                              target.table_id));
-    }
     SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_retry");
-    absl::SleepFor(kArmRetry);
+    shard.AwaitMerges(context);
   }
 
   // Groups by byte budget: peak disk is ~2x one group, and each publish is

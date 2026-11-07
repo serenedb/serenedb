@@ -1,0 +1,108 @@
+control substitution on
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE vbm (id INT, v INT)
+WITH (compaction_interval = 0, compaction_max_segments = 2);
+
+
+statement ok
+INSERT INTO vbm SELECT i, i FROM range(0, 10) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO vbm SELECT i, i FROM range(10, 20) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO vbm SELECT i, i FROM range(20, 30) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO vbm SELECT i, i FROM range(30, 40) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM vbm;
+----
+segments
+4
+
+
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish';
+
+
+statement ok
+ALTER TABLE vbm SET (compaction_interval = 10);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_compact_before_publish:parked';
+
+
+statement ok
+ALTER TABLE vbm SET (compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = 'search_compaction_before_selection';
+
+
+connection vacuum
+statement async ok
+VACUUM (COMPACT_TABLE) vbm;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_compaction_before_selection:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_compaction_before_selection:release';
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(DISTINCT rowid >> 32) AS segments FROM vbm;
+----
+segments
+3
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish:release';
+
+
+wait
+
+
+connection default
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n, sum(v) AS s FROM vbm;
+----
+segments	n	s
+1	40	780

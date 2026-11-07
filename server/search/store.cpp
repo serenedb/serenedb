@@ -558,6 +558,12 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                               const irs::AnnBuildEnv* env)
   -> yaclib::Future<absl::Status> {
   empty_compaction = false;
+  _merges.fetch_add(1, std::memory_order_relaxed);
+  absl::Cleanup counted = [this] {
+    if (_merges.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+      duckdb::ClientContext::Notify();
+    }
+  };
   SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
   if (_table) {
     if (!IsCurrentConfig(field_options)) {
@@ -572,6 +578,7 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
         empty_compaction = true;
         co_return absl::OkStatus();
       }
+      SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
       std::vector<uint64_t> ids;
       ids.reserve(merged.claim.candidates.size());
       for (const auto* candidate : merged.claim.candidates) {
@@ -661,6 +668,7 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
     return !context.IsInterrupted();
   };
   const auto target = std::max<uint32_t>(1, target_segments);
+  GetSearchEngine().Maintenance().Enter(context).reset();
   CoolAll();
   const ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env = slot.AnnEnv();
@@ -681,13 +689,20 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
     absl::Status status;
     bool merged = false;
     for (const auto& names : buckets) {
+      bool contended = false;
       const irs::CompactionPolicy bucket =
-        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
-                 const irs::CompactingSegments& busy) {
+        [&names, &contended](irs::Compaction& candidates,
+                             const irs::IndexReader& reader,
+                             const irs::CompactingSegments& busy) {
           for (size_t i = 0; i < reader.size(); ++i) {
             const auto& segment = reader[i];
             const auto& name = segment.Meta().name;
-            if (!busy.contains(name) && absl::c_linear_search(names, name)) {
+            if (!absl::c_linear_search(names, name)) {
+              continue;
+            }
+            if (busy.contains(name)) {
+              contended = true;
+            } else {
               candidates.emplace_back(&segment);
             }
           }
@@ -705,16 +720,24 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
       context.InterruptCheck();
       status.Update(res);
       merged = merged || !empty;
+      if (contended) {
+        AwaitMerges(context);
+        merged = true;
+      }
     }
     if (!status.ok()) {
       return status;
     }
-    SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
     if (!merged) {
       break;
     }
   }
   return CleanupUnsafe().res;
+}
+
+void Store::AwaitMerges(duckdb::ClientContext& context) {
+  absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+  context.Await([this] { return _merges.load() == 0; });
 }
 
 StoreStats Store::GetStats() const {

@@ -235,13 +235,22 @@ void CompactInvertedStorage(search::Store& inverted,
 
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
+    bool contended = false;
+    const irs::CompactionPolicy policy =
+      [&contended](irs::Compaction& candidates, const irs::IndexReader& reader,
+                   const irs::CompactingSegments& busy) {
+        for (size_t i = 0; i < reader.size() && !contended; ++i) {
+          contended = busy.contains(reader[i].Meta().name);
+        }
+        kPolicy(candidates, reader, busy);
+      };
     // The merge encodes against the index definition the step captured, which
     // the step holds for the whole call.
     absl::Status res;
     do {
       res = irs::GetBlocking(
               inverted.CompactUnsafeAsync(
-                search::GetSearchEngine().Maintenance().Enter(context), kPolicy,
+                search::GetSearchEngine().Maintenance().Enter(context), policy,
                 tick, empty_compaction, &field_options, env_ptr))
               .res;
     } while (absl::IsUnavailable(res));
@@ -250,6 +259,10 @@ void CompactInvertedStorage(search::Store& inverted,
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("compact_index: compaction failed: ", res.message()));
+    }
+    if (contended) {
+      inverted.AwaitMerges(context);
+      continue;
     }
     if (empty_compaction) {
       break;

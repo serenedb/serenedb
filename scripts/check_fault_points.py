@@ -74,6 +74,7 @@ TESTNET_LITERAL = re.compile(
 # '{name}'`), so the SET literal itself carries no name; the names live in
 # module constants by convention: <SOMETHING>_FAULT = "name".
 PY_FAULT_CONST = re.compile(r'FAULT\w*\s*=\s*"([^"]+)"')
+CPP_NAME_CONST = re.compile(r'constexpr\s+std::string_view\s+(\w+)\s*=\s*"([^"]+)"')
 
 # faults.test is the test of the fault FRAMEWORK itself; its names (some1, some2,
 # some3) are synthetic and intentionally have no source definition.
@@ -180,7 +181,8 @@ def main():
         text = read(path)
         has_set = "sdb_faults" in text
         has_lit = "FAIL" in text or "Fail" in text
-        if not has_set and not has_lit:
+        has_points = "FaultPoints::" in text
+        if not has_set and not has_lit and not has_points:
             continue
         normalized = rel(path)
         is_recovery = normalized.startswith(RECOVERY_DIR + "/")
@@ -207,6 +209,10 @@ def main():
         if path.endswith(".py") and (has_set or has_lit):
             for m in PY_FAULT_CONST.finditer(text):
                 exercised.add(m.group(1))
+        if has_points:
+            for m in CPP_NAME_CONST.finditer(text):
+                if re.search(rf"FaultPoints::\w+\(\s*{m.group(1)}\b", text):
+                    exercised.add(m.group(2))
 
     # ----- check #2: test -> source -----
     for name, loc in sorted(test_faults.items()):

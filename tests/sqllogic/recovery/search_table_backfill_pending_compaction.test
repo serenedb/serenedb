@@ -15,7 +15,15 @@ INSERT INTO bpc SELECT i, i FROM range(0, 10) r(i);
 
 
 statement ok
+CHECKPOINT;
+
+
+statement ok
 INSERT INTO bpc SELECT i, i FROM range(10, 20) r(i);
+
+
+statement ok
+CHECKPOINT;
 
 
 statement ok
@@ -23,11 +31,19 @@ INSERT INTO bpc SELECT i, i FROM range(20, 30) r(i);
 
 
 statement ok
+CHECKPOINT;
+
+
+statement ok
 INSERT INTO bpc SELECT i, i FROM range(30, 40) r(i);
 
 
 statement ok
-SET sdb_faults = 'pause_irs_compaction_registered';
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish';
 
 
 statement ok
@@ -35,7 +51,7 @@ ALTER TABLE bpc SET (compaction_interval = 10);
 
 
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_irs_compaction_registered:parked';
+SET sdb_faults = '-pause_search_compact_before_publish:parked';
 
 
 statement ok
@@ -58,7 +74,7 @@ SET sdb_faults = '-pause_search_backfill_floor_retry:parked';
 
 connection default
 statement ok
-SET sdb_faults = 'pause_irs_compaction_registered:release';
+SET sdb_faults = 'pause_search_compact_before_publish:release';
 
 
 connection default

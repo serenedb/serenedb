@@ -50,6 +50,7 @@ class PrunedPhrase : public Root {
   static constexpr uint32_t kWindow = 64;
   static constexpr uint32_t kMaxInterval = 64;
   static constexpr uint32_t kPassShare = 2;
+  static constexpr uint32_t kLeastFreqCap = 256;
 
  public:
   template<typename... Args>
@@ -157,6 +158,10 @@ class PrunedPhrase : public Root {
   doc_id_t Bound(doc_id_t doc, doc_id_t end, LoserScoreCollector& collector) {
     auto fetched = doc_limits::invalid();
     const auto admit = [&](doc_id_t candidate, uint32_t bound) {
+      if (bound < LeastFreq(collector.ScoreThreshold())) {
+        ++_seen;
+        return false;
+      }
       if (fetched != candidate) {
         fetched = candidate;
         _fetcher.Fetch(candidate);
@@ -178,7 +183,7 @@ class PrunedPhrase : public Root {
     for (; doc < end && _seen < kWindow; doc = next()) {
       ++_seen;
       const auto bound = _slots.FreqBound();
-      if (bound == 0) {
+      if (bound < LeastFreq(collector.ScoreThreshold())) {
         continue;
       }
       _freqs[0] = bound;
@@ -207,6 +212,26 @@ class PrunedPhrase : public Root {
     }
   }
 
+  IRS_FORCE_INLINE uint32_t LeastFreq(score_t threshold) {
+    if (threshold >= _least_score) [[unlikely]] {
+      RaiseLeastFreq(threshold);
+    }
+    return _least_freq;
+  }
+
+  IRS_NO_INLINE void RaiseLeastFreq(score_t threshold) {
+    if (_bound.Bounded()) {
+      for (; _least_freq != kLeastFreqCap; ++_least_freq) {
+        _least_score =
+          _bound.ScoreOf({.freq = _least_freq, .norm = _least_freq});
+        if (_least_score > threshold) {
+          return;
+        }
+      }
+    }
+    _least_score = std::numeric_limits<score_t>::max();
+  }
+
   void FlushBatch(LoserScoreCollector& collector) {
     if (_batch != 0) {
       FetchAndScore(_fetcher, _score, _docs, _scores, _batch);
@@ -231,6 +256,8 @@ class PrunedPhrase : public Root {
   uint32_t _passed = 0;
   uint32_t _interval = 1;
   uint32_t _skip = 0;
+  uint32_t _least_freq = 1;
+  score_t _least_score = std::numeric_limits<score_t>::lowest();
   [[no_unique_address]] Admit<Table> _admit;
 };
 

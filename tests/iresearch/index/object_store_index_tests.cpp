@@ -99,7 +99,19 @@ irs::ObjectStoreRequests Open(const std::string& root, uint64_t live_docs) {
 TEST(ObjectStoreIndexTest, a_single_block_field_prefetches_nothing) {
   auto& store = tests::ObjectStore();
   const auto root = Root();
-  WriteSegments(tests::IndexDir{Db(), root}, 3);
+  {
+    const tests::IndexDir dir{Db(), root};
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
+    for (size_t segment = 0; segment != 3; ++segment) {
+      tests::JsonDocGenerator gen{TestBase::resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory};
+      for (size_t doc = 0; doc != 8; ++doc) {
+        ASSERT_TRUE(tests::Insert(*writer, *gen.next()));
+      }
+      ASSERT_TRUE(writer->RefreshCommit());
+    }
+  }
   const tests::IndexDir restarted{Db(), root};
   const auto reader =
     tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
@@ -113,13 +125,11 @@ TEST(ObjectStoreIndexTest, a_single_block_field_prefetches_nothing) {
   for (const auto& segment : reader) {
     EXPECT_FALSE(filter.Prefetch(segment));
   }
-  size_t found = 0;
   for (const auto& segment : reader) {
     const auto* terms = segment.field(tests::FieldIdFor("name"));
     ASSERT_NE(nullptr, terms);
-    found += terms->Lookup(term).docs_count;
+    EXPECT_EQ(1, terms->Lookup(term).docs_count);
   }
-  EXPECT_EQ(1, found);
   EXPECT_EQ(0, store.Requests().get);
 }
 

@@ -197,6 +197,11 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
     });
   };
   context = connection.conn->context;
+  absl::Cleanup rollback = [&] {
+    if (context->transaction.HasActiveTransaction()) {
+      context->transaction.Rollback(nullptr);
+    }
+  };
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));
   if (!job.schema->parent) {

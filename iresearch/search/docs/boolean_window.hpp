@@ -37,30 +37,21 @@
 namespace irs::docs {
 
 template<typename Lead, typename Others, typename Optional, typename Excludes>
-class BooleanWindow : public Root {
+class BooleanWindow : public Root,
+                      detail::WindowClauses<Lead, Others, Optional, Excludes> {
+  using Clauses = detail::WindowClauses<Lead, Others, Optional, Excludes>;
+  using Clauses::_lead;
+  using Clauses::_optional;
+  using Clauses::FillClauses;
+  using Clauses::KeepBatch;
+  using Clauses::kLead;
+  using Clauses::kOptional;
+
  public:
-  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
-  static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
-  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
-  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr bool kBatches = kLead && detail::kBatchLead<Lead>;
   static_assert(kLead != kOptional);
-  static_assert(kLead || !kOthers);
 
-  template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
-           typename ExcludesArgs>
-  BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
-                OthersArgs&& others, OptionalArgs&& optional,
-                ExcludesArgs&& excludes)
-    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
-      _optional{
-        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
-      _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
-
-  BooleanWindow(BooleanWindow&&) = delete;
-  BooleanWindow& operator=(BooleanWindow&&) = delete;
+  using Clauses::Clauses;
 
   uint32_t Run(doc_id_t begin, doc_id_t end, doc_id_t* IRS_RESTRICT out) final {
     _emit.SkipTo(begin);
@@ -103,7 +94,8 @@ class BooleanWindow : public Root {
         if (_lead.Sparse()) {
           const auto rest = _lead.Rest(doc_limits::eof());
           _at = 0;
-          _size = Sift(rest.data(), static_cast<uint32_t>(rest.size()));
+          _size = KeepBatch(rest.data(), static_cast<uint32_t>(rest.size()),
+                            _found.data());
           _min = rest.back() + 1;
           continue;
         }
@@ -111,8 +103,7 @@ class BooleanWindow : public Root {
       SDB_ASSERT(_min <= doc_limits::eof() - detail::kWindowDocs);
       const doc_id_t max = _min + detail::kWindowDocs;
       auto* const words = _mask.data();
-      const auto next = detail::FillClauses(_lead, _others, _optional,
-                                            _excludes, _min, max, words);
+      const auto next = FillClauses(_min, max, words);
       _emit.Opened(_min, max, words);
       if (doc_limits::eof(next)) {
         _spent = true;
@@ -123,15 +114,6 @@ class BooleanWindow : public Root {
   }
 
  private:
-  uint32_t Sift(const doc_id_t* in, uint32_t n) {
-    auto* const out = _found.data();
-    if constexpr (kOthers) {
-      n = _others.Keep(in, n, out);
-      in = out;
-    }
-    return detail::DropExcluded(_excludes, in, n, out);
-  }
-
   Emit _emit;
   detail::Scratch _mask{};
   [[no_unique_address]] utils::Need<
@@ -139,10 +121,6 @@ class BooleanWindow : public Root {
     SlackBuf<doc_id_t, doc_limits::kBlockSize, doc_limits::kDocsSlack>> _found;
   uint32_t _at = 0;
   uint32_t _size = 0;
-  [[no_unique_address]] Lead _lead;
-  [[no_unique_address]] Others _others;
-  [[no_unique_address]] Optional _optional;
-  [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = doc_limits::min();
   bool _spent = false;
 };

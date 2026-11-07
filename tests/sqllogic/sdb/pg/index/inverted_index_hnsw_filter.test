@@ -22,7 +22,7 @@ EXPLAIN SELECT pk FROM hnsw_f_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: hnsw_f_idx                 │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[8]) │
 │ Top: 2                            │
 │ Projections: pk                   │
@@ -90,7 +90,7 @@ EXPLAIN SELECT pk FROM hnsw_f_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: hnsw_f_idx                   │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Row Filter:                         │
 │ (label = 'even') OR (label = 'odd') │
 │ Score: l2_distance(emb, FLOAT[8])   │

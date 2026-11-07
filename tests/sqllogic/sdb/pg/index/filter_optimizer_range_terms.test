@@ -17,7 +17,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_between('alpha', 'alpha', true, 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_rng_idx    │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
@@ -33,7 +33,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_between('alpha', 'alpha', true, 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──╮
 │ Index: fo_rng_idx │
-│ Lookup: table     │
+│ Lookup: search    │
 │ Index Filter:     │
 │ ╭─ Empty ─╮       │
 │ ╰─────────╯       │
@@ -47,7 +47,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_between('alpha', 'gamma', true, 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: fo_rng_idx           │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Range ─────────────────╮ │
 │ │ Field: s(string)        │ │
@@ -63,7 +63,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_between(2, 2, true, true);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_rng_idx     │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Term ────────────╮ │
 │ │ Field: n(numeric) │ │
@@ -79,7 +79,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_between(2, 2, true, false);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──╮
 │ Index: fo_rng_idx │
-│ Lookup: table     │
+│ Lookup: search    │
 │ Index Filter:     │
 │ ╭─ Empty ─╮       │
 │ ╰─────────╯       │
@@ -93,7 +93,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_between(2, 4, true, true);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_rng_idx     │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
@@ -109,7 +109,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s IN ('alpha');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_rng_idx    │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
@@ -125,7 +125,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s IN ('alpha', 'beta');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: fo_rng_idx           │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Or ────────────────────╮ │
 │ ╰────────────┬────────────╯ │
@@ -143,7 +143,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_gt('alpha') AND s @@ ts_lt('gamm
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: fo_rng_idx         │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Index Filter:             │
 │ ╭─ Range ───────────────╮ │
 │ │ Field: s(string)      │ │
@@ -159,7 +159,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_gt(1) AND n @@ ts_lt(4);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_rng_idx     │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
@@ -175,7 +175,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_ge('beta') AND s @@ ts_le('beta'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_rng_idx    │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
@@ -191,7 +191,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_gt('beta') AND s @@ ts_le('beta'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──╮
 │ Index: fo_rng_idx │
-│ Lookup: table     │
+│ Lookup: search    │
 │ Index Filter:     │
 │ ╭─ Empty ─╮       │
 │ ╰─────────╯       │
@@ -205,7 +205,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_ge(3) AND n @@ ts_le(3);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_rng_idx     │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Term ────────────╮ │
 │ │ Field: n(numeric) │ │
@@ -221,7 +221,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_gt('alpha') AND n @@ ts_lt(4);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: fo_rng_idx                           │
-│ Lookup: table                               │
+│ Lookup: search                              │
 │ Index Filter:                               │
 │ ╭─ And ────────────╮                        │
 │ ╰─────────┬────────╯                        │
@@ -240,7 +240,7 @@ EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_gt(1) AND n @@ ts_lt(4) AND s @@
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: fo_rng_idx                           │
-│ Lookup: table                               │
+│ Lookup: search                              │
 │ Index Filter:                               │
 │ ╭─ And ────────────╮                        │
 │ ╰─────────┬────────╯                        │
@@ -279,7 +279,7 @@ EXPLAIN SELECT id FROM fo_rng_mt_idx WHERE s @@ ts_gt('alpha') AND s @@ ts_lt('g
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_rng_mt_idx                       │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ And ────────────╮                       │
 │ ╰─────────┬────────╯                       │
@@ -328,7 +328,7 @@ EXPLAIN SELECT id FROM fo_rng_mix_idx WHERE k @@ ts_gt('alpha') AND k @@ ts_lt('
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
 │ Index: fo_rng_mix_idx                                                 │
-│ Lookup: table                                                         │
+│ Lookup: search                                                        │
 │ Index Filter:                                                         │
 │ ╭─ And ─────────────────╮                                             │
 │ ╰───────────┬───────────╯                                             │

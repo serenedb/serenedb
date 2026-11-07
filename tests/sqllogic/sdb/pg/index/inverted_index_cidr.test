@@ -47,7 +47,7 @@ EXPLAIN SELECT pk FROM cidr_idx WHERE net = '10.0.0.0/8';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: cidr_idx       │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Term ────────────╮ │
 │ │ Field: net(cidr)  │ │
@@ -63,7 +63,7 @@ EXPLAIN SELECT pk FROM cidr_idx WHERE net >>= '10.0.0.0/2';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: cidr_idx                         │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Starts With Any ───────────────────╮ │
 │ │ Field: net(cidr)                    │ │
@@ -79,7 +79,7 @@ EXPLAIN SELECT pk FROM cidr_idx WHERE net < '10.0.0.5/8'::INET;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────╮
 │ Index: cidr_idx                                                           │
-│ Lookup: table                                                             │
+│ Lookup: search                                                            │
 │ Index Filter:                                                             │
 │ ╭─ Or ────────────────────────────╮                                       │
 │ ╰────────────────┬────────────────╯                                       │

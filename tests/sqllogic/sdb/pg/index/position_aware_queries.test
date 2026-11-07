@@ -34,7 +34,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ plainto_tsquery('red car');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
 │ Index: pq_idx                                             │
-│ Lookup: table                                             │
+│ Lookup: search                                            │
 │ Index Filter:                                             │
 │ ╭─ And ───────────────╮                                   │
 │ ╰──────────┬──────────╯                                   │
@@ -67,7 +67,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ 'red car';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: pq_idx                           │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Or ────────────────────────────────╮ │
 │ ╰──────────────────┬──────────────────╯ │
@@ -97,7 +97,7 @@ EXPLAIN SELECT id, BM25(pq_idx.tableoid) FROM pq_idx WHERE body @@ 'red car';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
 │ Index: pq_idx                                             │
-│ Lookup: table                                             │
+│ Lookup: search                                            │
 │ Index Filter:                                             │
 │ ╭─ Or ────────────────╮                                   │
 │ ╰──────────┬──────────╯                                   │
@@ -132,7 +132,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ ts_phrase('red car');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: pq_idx                                            │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Phrase ─────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                  │ │
@@ -159,7 +159,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('red-car');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: pq_idx                                            │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Phrase ─────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                  │ │
@@ -186,7 +186,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('red car');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
 │ Index: pq_idx                                             │
-│ Lookup: table                                             │
+│ Lookup: search                                            │
 │ Index Filter:                                             │
 │ ╭─ And ───────────────╮                                   │
 │ ╰──────────┬──────────╯                                   │
@@ -219,7 +219,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('car');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────╮
 │ Index: pq_idx                    │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Or ─────────────────────────╮ │
 │ │ Merge: max                   │ │
@@ -250,7 +250,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ websearch_to_tsquery('"red car"');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: pq_idx                                            │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Phrase ─────────────────────────────────────────────╮ │
 │ │ Field: body(string)                                  │ │
@@ -277,7 +277,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ ts_all(ts_tokenize(['red car']));
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
 │ Index: pq_idx                                             │
-│ Lookup: table                                             │
+│ Lookup: search                                            │
 │ Index Filter:                                             │
 │ ╭─ And ───────────────╮                                   │
 │ ╰──────────┬──────────╯                                   │
@@ -310,7 +310,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ ts_any(ts_tokenize(['red', 'car']), 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────╮
 │ Index: pq_idx                                             │
-│ Lookup: table                                             │
+│ Lookup: search                                            │
 │ Index Filter:                                             │
 │ ╭─ And ───────────────╮                                   │
 │ ╰──────────┬──────────╯                                   │
@@ -343,7 +343,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ to_tsquery('red car');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: pq_idx                           │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Or ────────────────────────────────╮ │
 │ ╰──────────────────┬──────────────────╯ │
@@ -373,7 +373,7 @@ EXPLAIN SELECT id FROM pq_idx WHERE body @@ to_tsquery('car');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────╮
 │ Index: pq_idx                    │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Or ─────────────────────────╮ │
 │ ╰───────────────┬──────────────╯ │
@@ -403,7 +403,7 @@ EXPLAIN SELECT id, BM25(pq_idx.tableoid) FROM pq_idx WHERE body @@ to_tsquery('c
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: pq_idx                          │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ─────────────────────────╮       │
 │ │ Merge: max                   │       │

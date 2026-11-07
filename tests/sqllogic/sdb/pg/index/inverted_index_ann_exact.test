@@ -25,7 +25,7 @@ EXPLAIN SELECT pk FROM ax_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: ax_idx                       │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: l2_distance(emb, FLOAT[8])   │
 │ Exact:                              │
 │ brute force over the stored vectors │

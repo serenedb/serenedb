@@ -114,7 +114,7 @@ EXPLAIN SELECT pk FROM m_vec_ivf_st
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: m_vec_ivf_st               │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
 │ Projections: pk                   │
@@ -128,7 +128,7 @@ EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: m_vec_ivf_expr_ns          │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
 │ Projections: pk                   │
@@ -142,7 +142,7 @@ EXPLAIN SELECT pk FROM m_vec_ivf_st
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────╮
 │ Index: m_vec_ivf_st │
-│ Lookup: table       │
+│ Lookup: search      │
 │ Index Filter:       │
 │ ╭─ Vector Range ─╮  │
 │ │ Field: emb     │  │
@@ -160,7 +160,7 @@ EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: m_vec_ivf_expr_ns │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Vector Range ─╮       │
 │ │ Field: emb     │       │

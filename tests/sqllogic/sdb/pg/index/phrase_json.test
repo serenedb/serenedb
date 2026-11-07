@@ -305,7 +305,7 @@ EXPLAIN SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick brow
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: pj_json_idx                                       │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ And ───────────────────────────╮                      │
 │ ╰────────────────┬────────────────╯                      │
@@ -331,7 +331,7 @@ WHERE (doc->'title') @@ ts_phrase('quick brown fox') OR (doc->'title') @@ ts_phr
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: pj_json_idx                                                                                     │
-│ Lookup: table                                                                                          │
+│ Lookup: search                                                                                         │
 │ Index Filter:                                                                                          │
 │ ╭─ Or ─────────────────────────────────────────────────╮                                               │
 │ ╰───────────────────────────┬──────────────────────────╯                                               │

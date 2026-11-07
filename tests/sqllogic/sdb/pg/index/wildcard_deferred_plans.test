@@ -78,7 +78,7 @@ EXPLAIN SELECT id FROM wdm_kw2_idx WHERE msg @@ ts_like('user-%-abc')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: wdm_kw2_idx                      │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Wildcard NGram ────────────────────╮ │
 │ │ Field: msg(string)                  │ │
@@ -114,7 +114,7 @@ EXPLAIN SELECT id FROM wdm_kw4_idx WHERE msg @@ ts_like('%abc%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: wdm_kw4_idx           │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Wildcard NGram ─────────╮ │
 │ │ Field: msg(string)       │ │
@@ -140,7 +140,7 @@ EXPLAIN SELECT id FROM wdm_words_pos_idx WHERE msg @@ ts_like('user-%-abc')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: wdm_words_pos_idx                │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Wildcard NGram ────────────────────╮ │
 │ │ Field: msg(string)                  │ │
@@ -202,7 +202,7 @@ QUERY PLAN
 ╰─────────────────────────────────┬────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────┴────────────────────────────────╮
 │ Index: wdm_score_idx                                             │
-│ Lookup: table                                                    │
+│ Lookup: search                                                   │
 │ Index Filter:                                                    │
 │ ╭─ And ───────────────╮                                          │
 │ ╰──────────┬──────────╯                                          │
@@ -235,7 +235,7 @@ EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('user-%-abc')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: wdm_kw3_idx                      │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Wildcard NGram ────────────────────╮ │
 │ │ Field: msg(string)                  │ │
@@ -264,7 +264,7 @@ EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('%abc%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: wdm_kw3_idx           │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Wildcard NGram ─────────╮ │
 │ │ Field: msg(string)       │ │
@@ -293,7 +293,7 @@ EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('ab%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: wdm_kw3_idx        │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Index Filter:             │
 │ ╭─ Wildcard NGram ──────╮ │
 │ │ Field: msg(string)    │ │
@@ -322,7 +322,7 @@ EXPLAIN SELECT id FROM wdm_kw3_pos_idx WHERE msg @@ ts_like('%abc%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: wdm_kw3_pos_idx       │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Wildcard NGram ─────────╮ │
 │ │ Field: msg(string)       │ │
@@ -342,7 +342,7 @@ EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg LIKE 'admin\_%' ESCAPE '\'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: wdm_kw3_idx            │
-│ Lookup: table                 │
+│ Lookup: search                │
 │ Index Filter:                 │
 │ ╭─ Wildcard NGram ──────────╮ │
 │ │ Field: msg(string)        │ │
@@ -371,7 +371,7 @@ EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_regexp('user-[0-9]+-.*')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: wdm_kw3_idx                                                                                                                                 │
-│ Lookup: table                                                                                                                                      │
+│ Lookup: search                                                                                                                                     │
 │ Index Filter:                                                                                                                                      │
 │ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: msg(string)                                                                                                                             │ │
@@ -402,7 +402,7 @@ EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('user-%') AND x > 20
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: wdm_kw3_idx           │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Wildcard NGram ─────────╮ │
 │ │ Field: msg(string)       │ │
@@ -432,7 +432,7 @@ EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('user-%') OR id = 7
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
 │ Index: wdm_kw3_idx                                   │
-│ Lookup: table                                        │
+│ Lookup: search                                       │
 │ Index Filter:                                        │
 │ ╭─ Or ───────────────╮                               │
 │ ╰──────────┬─────────╯                               │
@@ -455,7 +455,7 @@ EXPLAIN SELECT id FROM wdm_words_idx WHERE msg @@ ts_like('user-%-abc')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: wdm_words_idx                    │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Wildcard NGram ────────────────────╮ │
 │ │ Field: msg(string)                  │ │
@@ -484,7 +484,7 @@ EXPLAIN SELECT id FROM wdm_tags_idx WHERE tags @@ ts_like('user-%-abc')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: wdm_tags_idx                     │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Wildcard NGram ────────────────────╮ │
 │ │ Field: tags                         │ │

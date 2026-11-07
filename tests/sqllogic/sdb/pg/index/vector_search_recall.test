@@ -45,7 +45,7 @@ EXPLAIN SELECT id FROM vecs_idx ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: vecs_idx                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[8]) │
 │ Top: 10                           │
 │ Projections: id                   │
@@ -71,7 +71,7 @@ EXPLAIN SELECT id FROM vecs_idx WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: vecs_idx                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[8]) │
 │ Top: 10                           │
 │ Projections: id                   │

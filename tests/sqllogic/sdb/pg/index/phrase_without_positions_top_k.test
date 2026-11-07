@@ -27,7 +27,7 @@ ORDER BY BM25(ptk_text_idx.tableoid) DESC LIMIT 5
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
 │ Index: ptk_text_idx                       │
-│ Lookup: table                             │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Phrase ──────────────────────────────╮ │
 │ │ Field: body(string)                   │ │

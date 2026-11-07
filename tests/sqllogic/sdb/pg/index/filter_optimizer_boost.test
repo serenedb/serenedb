@@ -41,7 +41,7 @@ WHERE (w @@ 'alpha')::boost(2.0) OR (w @@ 'alpha')::boost(3.0);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_bst_idx    │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: w(string) │ │
@@ -60,7 +60,7 @@ WHERE (w @@ 'alpha')::boost(2.0) OR (w @@ 'alpha')::boost(3.0);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_bst_idx                      │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ───────────╮                   │
 │ │ Field: w(string) │                   │

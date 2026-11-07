@@ -160,7 +160,7 @@ EXPLAIN SELECT id FROM beast_idx WHERE v @@ ts_like('b%')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: beast_idx         │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Wildcard NGram ─────╮ │
 │ │ Field: v(string)     │ │

@@ -48,7 +48,7 @@ QUERY PLAN
 ╰──────────┬─────────╯
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: hnsw_r_idx  │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Vector Range ─╮ │
 │ │ Field: emb     │ │

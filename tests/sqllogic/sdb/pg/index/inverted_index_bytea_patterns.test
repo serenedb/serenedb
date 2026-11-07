@@ -247,7 +247,7 @@ WHERE v @@ ts_regexp('mr.beast', 'posix') OR v @@ ts_regexp('b.ea.st') OR v @@ t
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: bp_kw_idx                             │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Automaton ──────────────────────────────╮ │
 │ │ Field: v(string)                         │ │

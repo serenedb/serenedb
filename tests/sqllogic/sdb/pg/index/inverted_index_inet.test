@@ -65,7 +65,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip = '10.1.2.3';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────╮
 │ Index: inet_idx     │
-│ Lookup: table       │
+│ Lookup: search      │
 │ Index Filter:       │
 │ ╭─ Term ──────────╮ │
 │ │ Field: ip(inet) │ │
@@ -81,7 +81,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip IN ('10.1.2.3', '2001:db8:1::5');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: inet_idx                     │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Index Filter:                       │
 │ ╭─ Or ────────────────────────────╮ │
 │ ╰────────────────┬────────────────╯ │
@@ -99,7 +99,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip < '10.1.0.0';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────────────────╮
 │ Index: inet_idx                                                                                   │
-│ Lookup: table                                                                                     │
+│ Lookup: search                                                                                    │
 │ Index Filter:                                                                                     │
 │ ╭─ Or ────────────────╮                                                                           │
 │ ╰──────────┬──────────╯                                                                           │
@@ -118,7 +118,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip BETWEEN '10.1.0.0' AND '10.2.255.255';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────╮
 │ Index: inet_idx                                                              │
-│ Lookup: table                                                                │
+│ Lookup: search                                                               │
 │ Index Filter:                                                                │
 │ ╭─ Bool ──────────────────────────────╮                                      │
 │ ╰──────────────────┬──────────────────╯                                      │
@@ -139,7 +139,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip BETWEEN '10.1.0.0/16' AND '10.2.255.255
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: inet_idx                         │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Range ─────────────────────────────╮ │
 │ │ Field: ip(inet)                     │ │
@@ -155,7 +155,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip BETWEEN '10.1.0.0' AND '10.2.255.254';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: inet_idx                                                                                                                                     │
-│ Lookup: table                                                                                                                                       │
+│ Lookup: search                                                                                                                                      │
 │ Index Filter:                                                                                                                                       │
 │ ╭─ Bool ──────────────╮                                                                                                                             │
 │ ╰──────────┬──────────╯                                                                                                                             │
@@ -179,7 +179,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip BETWEEN '255.0.0.0/8' AND '0:ffff:ffff:
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: inet_idx                │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Or ───────────────────────╮ │
 │ ╰──────────────┬─────────────╯ │
@@ -197,7 +197,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip <<= '10.1.0.0/16';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: inet_idx        │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Term ─────────────╮ │
 │ │ Field: ip(inet)    │ │
@@ -213,7 +213,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip <<= '10.0.0.0/12';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────╮
 │ Index: inet_idx                                                  │
-│ Lookup: table                                                    │
+│ Lookup: search                                                   │
 │ Index Filter:                                                    │
 │ ╭─ Bool ───────────────────────────────╮                         │
 │ ╰───────────────────┬──────────────────╯                         │
@@ -234,7 +234,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip <<= '10.1.2.0/28';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: inet_idx                       │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Range ───────────────────────────╮ │
 │ │ Field: ip(inet)                   │ │
@@ -250,7 +250,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip >>= '10.0.0.0/2';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: inet_idx                         │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Starts With Any ───────────────────╮ │
 │ │ Field: ip(inet)                     │ │
@@ -266,7 +266,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE NOT (ip <<= '10.0.0.0/8');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────╮
 │ Index: inet_idx                                                  │
-│ Lookup: table                                                    │
+│ Lookup: search                                                   │
 │ Index Filter:                                                    │
 │ ╭─ Not ───────────╮                                              │
 │ ╰────────┬────────╯                                              │
@@ -856,7 +856,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip << '10.0.0.0/8';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────╮
 │ Index: inet_idx                                                     │
-│ Lookup: table                                                       │
+│ Lookup: search                                                      │
 │ Index Filter:                                                       │
 │ ╭─ Bool ─────────────╮                                              │
 │ ╰──────────┬─────────╯                                              │
@@ -878,7 +878,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip >> '10.0.0.0/2';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: inet_idx                         │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Starts With Any ───────────────────╮ │
 │ │ Field: ip(inet)                     │ │
@@ -894,7 +894,7 @@ EXPLAIN SELECT pk FROM inet_idx WHERE ip && '10.1.0.0/16';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────╮
 │ Index: inet_idx                                                     │
-│ Lookup: table                                                       │
+│ Lookup: search                                                      │
 │ Index Filter:                                                       │
 │ ╭─ Or ────────────────╮                                             │
 │ ╰──────────┬──────────╯                                             │
@@ -1127,7 +1127,7 @@ EXPLAIN SELECT pk FROM inet_expr_idx WHERE network(ip) = '10.1.2.0/24';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: inet_expr_idx   │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Term ─────────────╮ │
 │ │ Field: network(ip) │ │
@@ -1277,7 +1277,7 @@ EXPLAIN SELECT pk FROM inet_cidr_expr_idx WHERE ip::CIDR = '10.1.2.0/24';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: inet_cidr_expr_idx   │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────────╮ │
 │ │ Field: CAST(ip AS cidr) │ │

@@ -36,7 +36,7 @@ EXPLAIN SELECT id FROM fo_score_idx WHERE s = 'alpha';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_score_idx  │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: s(string) │ │
@@ -52,7 +52,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE s = 'alph
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ───────────╮                   │
 │ │ Field: s(string) │                   │
@@ -70,7 +70,7 @@ EXPLAIN SELECT id FROM fo_score_idx WHERE s = 'alpha' OR n @@ ts_between(NULL, N
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────╮
 │ Index: fo_score_idx │
-│ Lookup: table       │
+│ Lookup: search      │
 │ Index Filter:       │
 │ ╭─ All ──╮          │
 │ ╰────────╯          │
@@ -84,7 +84,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE s = 'alph
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ─────────────╮                   │
 │ ╰─────────┬────────╯                   │
@@ -105,7 +105,7 @@ EXPLAIN SELECT id FROM fo_score_idx WHERE n @@ ts_between(NULL, NULL, true, true
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────╮
 │ Index: fo_score_idx │
-│ Lookup: table       │
+│ Lookup: search      │
 │ Index Filter:       │
 │ ╭─ All ──╮          │
 │ ╰────────╯          │
@@ -119,7 +119,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE n @@ ts_b
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ All ──╮                             │
 │ ╰────────╯                             │
@@ -135,7 +135,7 @@ EXPLAIN SELECT id FROM fo_score_ng_idx WHERE g @@ ts_ngram('analytical', 0.01);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────╮
 │ Index: fo_score_ng_idx                                                                  │
-│ Lookup: table                                                                           │
+│ Lookup: search                                                                          │
 │ Index Filter:                                                                           │
 │ ╭─ Or ────────────────────────────────────────────────────────────────────────────────╮ │
 │ ╰──────────────────────────────────────────┬──────────────────────────────────────────╯ │
@@ -154,7 +154,7 @@ EXPLAIN SELECT id, BM25(fo_score_ng_idx.tableoid) FROM fo_score_ng_idx WHERE g @
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────╮
 │ Index: fo_score_ng_idx                        │
-│ Lookup: table                                 │
+│ Lookup: search                                │
 │ Index Filter:                                 │
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
@@ -173,7 +173,7 @@ EXPLAIN SELECT id FROM fo_score_ng_idx WHERE g @@ ts_ngram('analytical', 1.0);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────╮
 │ Index: fo_score_ng_idx                        │
-│ Lookup: table                                 │
+│ Lookup: search                                │
 │ Index Filter:                                 │
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
@@ -191,7 +191,7 @@ EXPLAIN SELECT id, BM25(fo_score_ng_idx.tableoid) FROM fo_score_ng_idx WHERE g @
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────╮
 │ Index: fo_score_ng_idx                        │
-│ Lookup: table                                 │
+│ Lookup: search                                │
 │ Index Filter:                                 │
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
@@ -210,7 +210,7 @@ EXPLAIN SELECT id FROM fo_score_idx WHERE s = 'alpha' OR s = 'gamma';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: fo_score_idx          │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Or ─────────────────────╮ │
 │ ╰─────────────┬────────────╯ │
@@ -228,7 +228,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE s = 'alph
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ─────────────────────╮           │
 │ ╰─────────────┬────────────╯           │
@@ -248,7 +248,7 @@ EXPLAIN SELECT id FROM fo_score_idx WHERE t @@ ts_phrase('alpha') AND NOT (t @@ 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_score_idx                        │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Bool ───────────╮                       │
 │ ╰─────────┬────────╯                       │
@@ -269,7 +269,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE t @@ ts_p
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_score_idx                        │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Bool ───────────╮                       │
 │ ╰─────────┬────────╯                       │
@@ -291,7 +291,7 @@ EXPLAIN SELECT id FROM fo_score_idx WHERE n @@ ts_gt(1) AND n @@ ts_lt(4);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_score_idx   │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
@@ -307,7 +307,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE n @@ ts_g
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Granular Range ──╮                  │
 │ │ Field: n(numeric) │                  │
@@ -326,7 +326,7 @@ EXPLAIN SELECT id FROM fo_score_idx WHERE t @@ ts_all([ts_phrase('alpha'), ts_be
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_score_idx  │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
@@ -342,7 +342,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE t @@ ts_a
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ And ────────────╮                   │
 │ ╰─────────┬────────╯                   │
@@ -363,7 +363,7 @@ EXPLAIN SELECT id FROM fo_score_idx WHERE n @@ ts_all([ts_gt(1), ts_lt(4)]);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: fo_score_idx   │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Index Filter:         │
 │ ╭─ Granular Range ──╮ │
 │ │ Field: n(numeric) │ │
@@ -379,7 +379,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE n @@ ts_a
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_score_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Granular Range ──╮                  │
 │ │ Field: n(numeric) │                  │
@@ -399,7 +399,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: fo_score_idx                          │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ And ─────────────╮                        │
 │ ╰─────────┬─────────╯                        │
@@ -421,7 +421,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────╮
 │ Index: fo_score_idx                           │
-│ Lookup: table                                 │
+│ Lookup: search                                │
 │ Index Filter:                                 │
 │ ╭─ And ──────────────╮                        │
 │ ╰──────────┬─────────╯                        │
@@ -443,7 +443,7 @@ EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────╮
 │ Index: fo_score_idx                                               │
-│ Lookup: table                                                     │
+│ Lookup: search                                                    │
 │ Index Filter:                                                     │
 │ ╭─ And ────────────╮                                              │
 │ ╰─────────┬────────╯                                              │

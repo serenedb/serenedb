@@ -3018,7 +3018,7 @@ EXPLAIN SELECT id FROM rx_idx WHERE v @@ ts_regexp('foo.*ba[rz]')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: rx_idx                                │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Wildcard NGram ─────────────────────────╮ │
 │ │ Field: v(string)                         │ │

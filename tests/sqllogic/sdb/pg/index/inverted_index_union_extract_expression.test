@@ -64,7 +64,7 @@ EXPLAIN SELECT id FROM union_ext_str_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: union_ext_str_idx                   │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Term ─────────────────────────────────╮ │
 │ │ Field: union_extract(u, 'str')(string) │ │

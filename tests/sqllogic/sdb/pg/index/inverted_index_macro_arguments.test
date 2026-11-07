@@ -953,7 +953,7 @@ QUERY PLAN
 ╰──────────┬─────────╯
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: stamped_idx │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Projections: plain │
 │ ~1 row             │
 ╰────────────────────╯

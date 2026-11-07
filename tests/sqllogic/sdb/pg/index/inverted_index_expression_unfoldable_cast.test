@@ -76,15 +76,15 @@ query
 EXPLAIN SELECT id, CASE WHEN n > 1000 THEN CAST(30 AS TINYINT) ELSE 0 END AS v FROM iuc_keys_idx ORDER BY id
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────────────────────────────────────────────╮
-│ Order By: id ASC                                                   │
-│ ~2 rows                                                            │
-╰──────────────────────────────────┬─────────────────────────────────╯
-╭─ IRESEARCH_SCAN ─────────────────┴─────────────────────────────────╮
-│ Index: iuc_keys_idx                                                │
-│ Lookup: table                                                      │
-│ Projections:                                                       │
-│ id (l),                                                            │
-│ CASE  WHEN ((n > 1000)) THEN (CAST(30 AS tinyint)) ELSE 0 END (i)  │
-│ ~2 rows                                                            │
-╰────────────────────────────────────────────────────────────────────╯
+╭─ ORDER_BY ─────────────────────────────────────────────────────╮
+│ Order By: id ASC                                               │
+│ ~2 rows                                                        │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────┴───────────────────────────────╮
+│ Index: iuc_keys_idx                                            │
+│ Lookup: search                                                 │
+│ Projections:                                                   │
+│ id,                                                            │
+│ CASE  WHEN ((n > 1000)) THEN (CAST(30 AS tinyint)) ELSE 0 END  │
+│ ~2 rows                                                        │
+╰────────────────────────────────────────────────────────────────╯

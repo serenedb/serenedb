@@ -23,7 +23,10 @@
 #include <duckdb.hpp>
 #include <duckdb/common/mutex.hpp>
 #include <duckdb/main/client_context_state.hpp>
+#include <functional>
+#include <iresearch/utils/pg/sql_error.hpp>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -151,14 +154,29 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database);
 
+using NoticeSink = std::function<void(irs::pg::SqlErrorData&)>;
+
+NoticeSink LogNotices(std::string prefix);
+
+struct SystemSession {
+  std::string_view user;
+  std::string_view system_user;
+  duckdb::idx_t role = 0;
+  std::string_view database;
+  duckdb::idx_t database_id = 0;
+  int32_t backend_pid = 0;
+};
+
 struct SystemConnection {
+  explicit SystemConnection(const SystemSession& session, NoticeSink sink);
+  SystemConnection(const SystemConnection&) = delete;
+  SystemConnection& operator=(const SystemConnection&) = delete;
+  ~SystemConnection();
+
   duckdb::unique_ptr<duckdb::Connection> conn;
   std::shared_ptr<ConnectionContext> ctx;
   pg::ProgressRegistration progress;
+  NoticeSink sink;
 };
-
-SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
-                                      std::string_view database,
-                                      duckdb::idx_t database_id);
 
 }  // namespace sdb::connector

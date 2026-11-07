@@ -151,6 +151,10 @@ void SyncSession::FinishJobs() {
     this->_txn_state->Rollback();
     _in_txn = false;
   }
+  if (this->_connection_ctx) {
+    this->_connection_ctx->ConsumeNotices(connector::LogNotices(
+      absl::StrCat("subscription \"", _target.subscription_name, "\": ")));
+  }
   _jobs_closed.store(true, std::memory_order_seq_cst);
   if (const auto job = _job.exchange(Job::None, std::memory_order_seq_cst);
       job != Job::None) {

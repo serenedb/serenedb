@@ -388,9 +388,15 @@ void SubscriptionEngine::Disable(std::string_view database,
   if (!attached) {
     return;
   }
-  auto system = connector::MakeSystemConnection(
-    irs::StaticStrings::kDefaultUser, pg::kRootUser, database, attached->oid);
+  connector::SystemConnection system{
+    {.user = irs::StaticStrings::kDefaultUser,
+     .role = pg::kRootUser,
+     .database = database,
+     .database_id = attached->oid},
+    connector::LogNotices(
+      absl::StrCat("disabling subscription with OID ", subscription, ": "))};
   auto& context = *system.conn->context;
+  connector::SetDefaultSearchPath(context, database);
   context.RunFunctionInTransaction([&] {
     auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
     const auto transaction = catalog.GetCatalogTransaction(context);

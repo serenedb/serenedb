@@ -21,6 +21,7 @@
 #include "connector/duckdb_client_state.h"
 
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
@@ -40,6 +41,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -385,19 +387,29 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
   search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 }
 
-SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
-                                      std::string_view database,
-                                      duckdb::idx_t database_id) {
-  SystemConnection system{.conn =
-                            irs::DuckDBEngine::Instance().CreateConnection()};
-  auto& context = *system.conn->context;
-  system.ctx = std::make_shared<ConnectionContext>(
-    context, user, std::string_view{}, role, database, database_id, nullptr, 0,
-    nullptr);
-  system.progress = pg::ProgressRegistration{
-    SereneDBClientState::Register(context, system.ctx, false).progress_source};
-  SetDefaultSearchPath(context, database);
-  return system;
+NoticeSink LogNotices(std::string prefix) {
+  return [prefix = std::move(prefix)](irs::pg::SqlErrorData& notice) {
+    SDB_WARN(GENERAL, prefix, notice.errmsg);
+  };
+}
+
+SystemConnection::SystemConnection(const SystemSession& session,
+                                   NoticeSink sink)
+  : conn{irs::DuckDBEngine::Instance().CreateConnection()},
+    ctx{std::make_shared<ConnectionContext>(
+      *conn->context, session.user, session.system_user, session.role,
+      session.database, session.database_id, nullptr, session.backend_pid,
+      nullptr)},
+    progress{SereneDBClientState::Register(*conn->context, ctx, false)
+               .progress_source},
+    sink{std::move(sink)} {}
+
+SystemConnection::~SystemConnection() {
+  auto& transaction = conn->context->transaction;
+  if (transaction.HasActiveTransaction()) {
+    transaction.Rollback(nullptr);
+  }
+  ctx->ConsumeNotices(sink);
 }
 
 }  // namespace sdb::connector

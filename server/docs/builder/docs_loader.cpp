@@ -246,21 +246,15 @@ class Loader {
  public:
   Loader(std::string_view database, duckdb::idx_t database_id,
          std::span<const Doc> docs)
-    : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, irs::StaticStrings::kDefaultUser, std::string_view{},
-        pg::kRootUser, database, database_id, nullptr, 0, nullptr)},
-      _progress{
-        connector::SereneDBClientState::Register(*_conn->context, _ctx, false)
-          .progress_source},
+    : _system{{.user = irs::StaticStrings::kDefaultUser,
+               .role = pg::kRootUser,
+               .database = database,
+               .database_id = database_id},
+              [](irs::pg::SqlErrorData& notice) {
+                SDB_INFO(STARTUP, "embedded docs: ", notice.errmsg);
+              }},
       _docs{docs} {
-    connector::SetDefaultSearchPath(*_conn->context, database);
-  }
-
-  ~Loader() {
-    _ctx->ConsumeNotices([](auto& notice) {
-      SDB_INFO(STARTUP, "embedded docs: ", notice.errmsg);
-    });
+    connector::SetDefaultSearchPath(*_system.conn->context, database);
   }
 
   std::vector<IndexBlob> Build() {
@@ -275,8 +269,10 @@ class Loader {
         !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kObjectsTable))) {
       return {};
     }
-    auto image = ExportImage(*_conn->context, _ctx->GetDatabase(), "docs");
-    auto objects = ExportImage(*_conn->context, _ctx->GetDatabase(), "objects");
+    auto image =
+      ExportImage(*_system.conn->context, _system.ctx->GetDatabase(), "docs");
+    auto objects = ExportImage(*_system.conn->context,
+                               _system.ctx->GetDatabase(), "objects");
     if (image.empty() || objects.empty()) {
       return {};
     }
@@ -285,7 +281,7 @@ class Loader {
   }
 
   bool Run(const std::string& sql) {
-    auto result = _conn->Query(sql);
+    auto result = _system.conn->Query(sql);
     if (!result->HasError()) {
       return true;
     }
@@ -307,7 +303,7 @@ class Loader {
       }
       sql.push_back(')');
     }
-    auto prepared = _conn->Prepare(sql);
+    auto prepared = _system.conn->Prepare(sql);
     if (prepared->HasError()) {
       SDB_WARN(GENERAL,
                "embedded docs: prepare insert failed: ", prepared->GetError());
@@ -347,9 +343,7 @@ class Loader {
     return true;
   }
 
-  duckdb::unique_ptr<duckdb::Connection> _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
-  pg::ProgressRegistration _progress;
+  connector::SystemConnection _system;
   std::span<const Doc> _docs;
 };
 

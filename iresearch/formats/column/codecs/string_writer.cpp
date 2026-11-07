@@ -52,6 +52,7 @@ using text::BlobEncoder;
 using text::Config;
 using text::DedupScratch;
 using text::FsstChainEncoder;
+using text::FsstPlusEncoder;
 using text::kDriftMinFraction;
 using text::Profile;
 using text::Segment;
@@ -128,6 +129,10 @@ class SegmentWriter {
         if (retune) {
           if (auto& fsst =
                 std::get<std::optional<FsstChainEncoder>>(_encoders)) {
+            fsst->Retrain();
+          }
+          if (auto& fsst =
+                std::get<std::optional<FsstPlusEncoder>>(_encoders)) {
             fsst->Retrain();
           }
         }
@@ -252,7 +257,7 @@ class SegmentWriter {
   };
 
   static bool Cheap(ByteCodec leaf, uint8_t level) noexcept {
-    return leaf == ByteCodec::Fsst ||
+    return Sorted(leaf) ||
            (leaf == ByteCodec::Lz4 && EffectiveLevel<Lz4>(level) <= 1);
   }
 
@@ -268,7 +273,7 @@ class SegmentWriter {
     }
     auto layout = retune ? FrameLayout::FirstFrame : tuned_layout;
     std::optional<uint64_t> bytes;
-    if (retune && leaf != ByteCodec::Fsst) {
+    if (retune && !Sorted(leaf)) {
       SDB_ASSERT(ladder.size() <= kMaxRungs);
       uint64_t prices[kMaxRungs];
       uint64_t lowest = std::numeric_limits<uint64_t>::max();
@@ -374,8 +379,7 @@ class SegmentWriter {
     }
     Measure(config.choice.shape);
     const auto bytes = With(config, [&](auto& enc) -> uint64_t {
-      if constexpr (std::remove_reference_t<decltype(enc)>::kCodec ==
-                    ByteCodec::Fsst) {
+      if constexpr (Sorted(std::remove_reference_t<decltype(enc)>::kCodec)) {
         SDB_UNREACHABLE();
       } else {
         return enc.Price(_profile, config.level, config.layout, _begin);
@@ -471,6 +475,8 @@ class SegmentWriter {
         return f(Get<BlobEncoder<Zxc>>());
       case ByteCodec::Fsst:
         return f(Get<FsstChainEncoder>());
+      case ByteCodec::FsstPlus:
+        return f(Get<FsstPlusEncoder>());
     }
     SDB_UNREACHABLE();
   }
@@ -479,7 +485,7 @@ class SegmentWriter {
   Encoder& Get() {
     auto& slot = std::get<std::optional<Encoder>>(_encoders);
     if (!slot) {
-      if constexpr (std::is_same_v<Encoder, FsstChainEncoder>) {
+      if constexpr (Sorted(Encoder::kCodec)) {
         slot.emplace(_tuning, _params.segment_target);
       } else {
         slot.emplace(_tuning);
@@ -507,7 +513,7 @@ class SegmentWriter {
   SegmentBuilder _builder;
   std::tuple<std::optional<BlobEncoder<Lz4>>, std::optional<BlobEncoder<Lz4Hc>>,
              std::optional<BlobEncoder<Zstd>>, std::optional<BlobEncoder<Zxc>>,
-             std::optional<FsstChainEncoder>>
+             std::optional<FsstChainEncoder>, std::optional<FsstPlusEncoder>>
     _encoders;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;

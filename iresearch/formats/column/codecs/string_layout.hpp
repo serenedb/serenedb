@@ -185,10 +185,12 @@ struct Header {
         h.length_width <= 32 && h.lcp_width <= 32 &&
         (h.flags == FrameDictionary::None ||
          (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
-          h.codec != ByteCodec::Fsst) ||
+          !Sorted(h.codec)) ||
          (h.flags == FrameDictionary::Local && h.symtab_size != 0 &&
           h.dictionary_size != 0 && h.dictionary_size <= kMaxDictionaryBytes &&
-          h.codec != ByteCodec::Fsst)) &&
+          !Sorted(h.codec))) &&
+        (h.codec != ByteCodec::FsstPlus ||
+         h.symtab_size >= uint64_t{h.dictionary_size} + sizeof(uint32_t)) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
         h.off_frames >= kHeaderSize &&
         h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=

@@ -1,0 +1,350 @@
+control substitution on
+
+statement ok
+CREATE TABLE slr (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER, b BOOLEAN)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 4096);
+
+
+statement ok
+CREATE TABLE slr_d (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER, b BOOLEAN);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO slr_d SELECT i, i // 4096, i % 7, CASE WHEN i // 4096 = 5 THEN true WHEN i % 2 = 0 THEN NULL ELSE false END FROM range(262144) t(i);
+
+
+statement ok
+INSERT INTO slr SELECT * FROM slr_d ORDER BY id;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slr;
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
+FROM sdb_metrics WHERE relation_id = 'slr'::regclass;
+----
+segments	docs
+1	262144
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_one.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slr WHERE k = 7;
+----
+n	s
+4096	12285
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_four.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slr WHERE k BETWEEN 10 AND 13;
+----
+n	s
+16384	49158
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_all.json'
+
+
+query
+SELECT count(*) AS n FROM slr WHERE v = 3;
+----
+n
+37449
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_none.json'
+
+
+query
+SELECT count(*) AS n FROM slr WHERE k > 10 AND k < 11;
+----
+n
+0
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_bool.json'
+
+
+query
+SELECT count(*) AS n FROM slr WHERE b;
+----
+n
+4096
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_one.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_four.json');
+----
+row_groups_scanned
+4
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_all.json');
+----
+row_groups_scanned
+64
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_none.json');
+----
+row_groups_scanned
+0
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_bool.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
+       (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
+       (SELECT max(id) || ':' || min(id) FROM slr WHERE k = 40 AND v = 3) = (SELECT max(id) || ':' || min(id) FROM slr_d WHERE k = 40 AND v = 3) AS c;
+----
+a	b	c
+t	t	t
+
+
+query
+SELECT id FROM slr WHERE k = 20 ORDER BY id DESC LIMIT 3;
+----
+id
+86015
+86014
+86013
+
+
+statement ok
+SET sdb_scan_split = 'always'
+
+
+query
+SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
+       (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
+       (SELECT max(id) || ':' || min(id) FROM slr WHERE k = 40 AND v = 3) = (SELECT max(id) || ':' || min(id) FROM slr_d WHERE k = 40 AND v = 3) AS c;
+----
+a	b	c
+t	t	t
+
+
+query
+SELECT id FROM slr WHERE k = 20 ORDER BY id DESC LIMIT 3;
+----
+id
+86015
+86014
+86013
+
+
+statement ok
+SET sdb_scan_split = 'never'
+
+
+query
+SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
+       (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
+       (SELECT max(id) || ':' || min(id) FROM slr WHERE k = 40 AND v = 3) = (SELECT max(id) || ':' || min(id) FROM slr_d WHERE k = 40 AND v = 3) AS c;
+----
+a	b	c
+t	t	t
+
+
+statement ok
+RESET sdb_scan_split
+
+
+statement ok
+SET threads = 1
+
+
+query
+SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
+       (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
+       (SELECT max(id) || ':' || min(id) FROM slr WHERE k = 40 AND v = 3) = (SELECT max(id) || ':' || min(id) FROM slr_d WHERE k = 40 AND v = 3) AS c;
+----
+a	b	c
+t	t	t
+
+
+statement ok
+INSERT INTO slr SELECT i, 1000 + (i - 262144) // 4096, i % 7, NULL FROM range(262144, 524288) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slr;
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
+FROM sdb_metrics WHERE relation_id = 'slr'::regclass;
+----
+segments	docs
+2	524288
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_dead.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slr WHERE k = 7;
+----
+n	s
+4096	12285
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_dead.json');
+----
+row_groups_scanned
+1
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP TABLE slr;
+
+
+statement ok
+DROP TABLE slr_d;
+
+
+statement ok
+CREATE TABLE slp (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO slp SELECT i, i // 2048, i % 7 FROM range(1310720) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slp;
+
+
+statement ok
+INSERT INTO slp SELECT i, i // 2048, i % 7 FROM range(1310720, 2621440) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slp;
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
+FROM sdb_metrics WHERE relation_id = 'slp'::regclass;
+----
+segments	docs
+2	2621440
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slp_two.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slp WHERE k BETWEEN 600 AND 700;
+----
+n	s
+206848	620541
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slp_two.json');
+----
+row_groups_scanned
+101
+
+
+query
+SELECT id FROM slp WHERE k BETWEEN 600 AND 700 ORDER BY id DESC LIMIT 3;
+----
+id
+1435647
+1435646
+1435645
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP TABLE slp;

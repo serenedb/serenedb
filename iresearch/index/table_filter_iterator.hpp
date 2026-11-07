@@ -365,4 +365,12 @@ struct ColFilterClassification {
   std::vector<ColFilterSpec> active;
 };
 
+inline bool ZoneDead(duckdb::FilterPropagateResult verdict) noexcept {
+  return verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
+         verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL;
+}
+
+const ColumnReader* FilteredColumn(const ColumnReader& column,
+                                   const ColFilterSpec& spec);
+
 }  // namespace irs

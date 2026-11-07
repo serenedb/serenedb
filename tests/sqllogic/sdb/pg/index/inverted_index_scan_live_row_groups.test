@@ -1,0 +1,169 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ilr_words AS split_text(case := 'lower') WITH (frequency, norm);
+
+
+statement ok
+CREATE TABLE ilr (id INTEGER PRIMARY KEY, k INTEGER, body TEXT, tags VARCHAR[], v VARIANT);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO ilr SELECT i, i // 2048, 'quick brown fox n' || (i % 5), ['t' || (i % 4)],
+  CASE WHEN i % 2 = 0 THEN {'a': i % 5}::VARIANT ELSE (i % 5)::VARIANT END
+FROM range(20480) t(i) ORDER BY i;
+
+
+statement ok
+CREATE INDEX ilr_idx ON ilr USING inverted (id, body ilr_words) INCLUDE (k, body, tags, v)
+  WITH (row_group_size = 2048);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ilr;
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/ilr_phrase_k.json'
+
+
+query
+SELECT count(*) AS n FROM ilr_idx WHERE body @@ ts_phrase('quick brown') AND k = 3;
+----
+n
+2048
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/ilr_phrase.json'
+
+
+query
+SELECT count(*) AS n FROM ilr_idx WHERE body @@ ts_phrase('quick brown');
+----
+n
+20480
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/ilr_variant_k.json'
+
+
+query
+SELECT count(*) AS n FROM ilr_idx WHERE v.a = 2 AND k = 3;
+----
+n
+204
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/ilr_list_k.json'
+
+
+query
+SELECT count(*) AS n FROM ilr_idx WHERE len(tags) = 1 AND k = 3;
+----
+n
+2048
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/ilr_prefix_k.json'
+
+
+query
+SELECT count(*) AS n FROM ilr_idx WHERE body @@ ts_starts_with('n') AND k = 4;
+----
+n
+2048
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/ilr_score_k.json'
+
+
+query
+SELECT count(*) AS n FROM (SELECT BM25(ilr_idx.tableoid) AS score FROM ilr_idx WHERE body @@ 'fox' AND k = 3) s WHERE score > 0;
+----
+n
+2048
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/ilr_phrase_k.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/ilr_phrase.json');
+----
+row_groups_scanned
+10
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/ilr_variant_k.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/ilr_list_k.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/ilr_prefix_k.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/ilr_score_k.json');
+----
+row_groups_scanned
+1
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP INDEX ilr_idx;
+
+
+statement ok
+DROP TABLE ilr;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ilr_words;

@@ -35,6 +35,7 @@
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
+#include "iresearch/search/filters/field_target.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -394,30 +395,24 @@ LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
 
 Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
                              const ByEditDistanceOptions& opts, score_t boost) {
+  const FieldTarget target{.id = id, .dict = dict, .boost = boost};
   return ExecuteLevenshtein(
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
     opts.term, [] -> Filter::ptr { return std::make_unique<Empty>(); },
     [&] -> Filter::ptr {
-      auto filter = std::make_unique<ByTerm>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      auto& target = filter->mutable_options()->term;
-      target.reserve(opts.prefix.size() + opts.term.size());
-      target += opts.prefix;
-      target += opts.term;
-      filter->SetBoost(boost);
+      auto filter = target.Make<ByTerm>();
+      auto& term = filter->mutable_options()->term;
+      term.reserve(opts.prefix.size() + opts.term.size());
+      term += opts.prefix;
+      term += opts.term;
       return filter;
     },
     [&](const ParametricDescription& d, const bytes_view prefix,
         const bytes_view term) -> Filter::ptr {
-      LevenshteinAutomatonOptions lowered{
+      auto filter = target.Make<LevenshteinAutomatonFilter>();
+      *filter->mutable_options() = LevenshteinAutomatonOptions{
         d,      opts.provider, opts.with_transpositions,
         prefix, term,          opts.max_terms};
-      auto filter = std::make_unique<LevenshteinAutomatonFilter>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      *filter->mutable_options() = std::move(lowered);
-      filter->SetBoost(boost);
       return filter;
     });
 }

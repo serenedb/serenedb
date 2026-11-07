@@ -61,10 +61,19 @@ struct LeafShape {
   bool enc = false;
   bool delta = false;
   bool holes = false;
+  bool docs = true;
   LeafReads reads = LeafReads::Grows;
 };
 
 inline constexpr LeafShape kFillShape{.cursor = true, .holes = true};
+
+inline constexpr LeafShape kBatchShape{.docs = false};
+
+inline constexpr LeafShape kScoredBatchShape{
+  .scored = true,
+  .freqs = true,
+  .docs = false,
+};
 
 inline constexpr LeafShape kCountShape{
   .delta = true,
@@ -618,7 +627,7 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<Shape.holes, HoleBuf> _holes;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
-  DocsBuf _docs;
+  [[no_unique_address]] utils::Need<Shape.docs, DocsBuf> _docs;
   IndexInput::ptr _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();

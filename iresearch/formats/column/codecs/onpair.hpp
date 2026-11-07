@@ -103,7 +103,8 @@ class OnPairCodec {
 
   void Train(std::span<const std::string_view> entries, uint64_t raw);
 
-  void Encode(std::string_view entry, std::vector<uint16_t>& codes) const;
+  void Encode(std::span<const std::string_view> entries,
+              std::span<uint16_t> codes, std::span<uint32_t> counts) const;
 
   void Export(std::string& side) const;
 
@@ -127,7 +128,6 @@ class OnPairCodec {
   void Reset();
   uint32_t Insert(std::string_view token);
   Match Longest(std::string_view rest) const;
-  Match Sorted(std::string_view rest) const;
   void Finalize();
 
   absl::flat_hash_map<std::string, uint32_t> _ids;

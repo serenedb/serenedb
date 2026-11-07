@@ -302,34 +302,90 @@ OnPairCodec::Key OnPairCodec::KeyOf(std::string_view bytes) noexcept {
          absl::big_endian::Load64(buf + 8);
 }
 
-OnPairCodec::Match OnPairCodec::Sorted(std::string_view rest) const {
-  const auto key = KeyOf(rest);
-  const auto prefix = static_cast<uint32_t>(key >> 112);
-  uint32_t lo = _firsts[prefix] == 0 ? 0 : _firsts[prefix] - 1;
-  uint32_t n = _firsts[prefix + 1] - lo;
-  while (n > 1) {
-    const auto half = n / 2;
-    lo = _keys[lo + half] <= key ? lo + half : lo;
-    n -= half;
+void OnPairCodec::Encode(std::span<const std::string_view> entries,
+                         std::span<uint16_t> codes,
+                         std::span<uint32_t> counts) const {
+  struct Lane {
+    const char* rest;
+    size_t left;
+    uint16_t* out;
+    uint16_t* begin;
+    size_t entry;
+  };
+  constexpr size_t kLanes = 4;
+  std::array<Lane, kLanes> lanes{};
+  size_t next = 0;
+  uint64_t offset = 0;
+  const auto take = [&](Lane& lane) {
+    while (next < entries.size()) {
+      const auto entry = entries[next];
+      auto* out = codes.data() + offset;
+      offset += entry.size();
+      if (entry.empty()) {
+        counts[next++] = 0;
+        continue;
+      }
+      lane = {entry.data(), entry.size(), out, out, next++};
+      return true;
+    }
+    return false;
+  };
+  size_t active = 0;
+  while (active < kLanes && take(lanes[active])) {
+    ++active;
   }
-  const auto diff = _keys[lo] ^ key;
-  const auto common = diff == 0
-                        ? kOnPairMaxToken
-                        : static_cast<size_t>(std::countl_zero(diff) / 8);
-  const auto& chain = _chains[lo];
-  const auto fits = chain.lens & ((1u << std::min(common, rest.size())) - 1);
-  const auto len = static_cast<uint32_t>(std::bit_width(fits));
-  return {chain.ids[len - 1], len};
-}
-
-void OnPairCodec::Encode(std::string_view entry,
-                         std::vector<uint16_t>& codes) const {
-  size_t pos = 0;
-  while (pos < entry.size()) {
-    const auto m =
-      Sorted(entry.substr(pos, std::min<size_t>(entry.size() - pos, 16)));
-    codes.push_back(static_cast<uint16_t>(m.id));
-    pos += m.len;
+  const auto* keys = _keys.data();
+  std::array<Key, kLanes> key{};
+  std::array<uint32_t, kLanes> lo{};
+  std::array<uint32_t, kLanes> n{};
+  while (active != 0) {
+    uint32_t widest = 1;
+    for (size_t k = 0; k < kLanes; ++k) {
+      if (k >= active) {
+        lo[k] = 0;
+        n[k] = 1;
+        continue;
+      }
+      const auto& lane = lanes[k];
+      key[k] = KeyOf({lane.rest, std::min(lane.left, kOnPairMaxToken)});
+      const auto prefix = static_cast<uint32_t>(key[k] >> 112);
+      lo[k] = _firsts[prefix] == 0 ? 0 : _firsts[prefix] - 1;
+      n[k] = _firsts[prefix + 1] - lo[k];
+      widest = std::max(widest, n[k]);
+    }
+    while (widest > 1) {
+      for (size_t k = 0; k < kLanes; ++k) {
+        const auto half = n[k] / 2;
+        lo[k] = keys[lo[k] + half] <= key[k] ? lo[k] + half : lo[k];
+        n[k] -= half;
+      }
+      widest -= widest / 2;
+    }
+    for (size_t k = 0; k < active;) {
+      auto& lane = lanes[k];
+      const auto diff = keys[lo[k]] ^ key[k];
+      const auto common = diff == 0
+                            ? kOnPairMaxToken
+                            : static_cast<size_t>(std::countl_zero(diff) / 8);
+      const auto& chain = _chains[lo[k]];
+      const auto fits =
+        chain.lens & ((1u << std::min(common, lane.left)) - 1);
+      const auto len = static_cast<uint32_t>(std::bit_width(fits));
+      *lane.out++ = chain.ids[len - 1];
+      lane.rest += len;
+      lane.left -= len;
+      if (lane.left == 0) {
+        counts[lane.entry] = static_cast<uint32_t>(lane.out - lane.begin);
+        if (!take(lane)) {
+          --active;
+          lane = lanes[active];
+          lo[k] = lo[active];
+          key[k] = key[active];
+          continue;
+        }
+      }
+      ++k;
+    }
   }
 }
 

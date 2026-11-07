@@ -59,7 +59,9 @@ class OnPairEncoder {
   std::string& Data() noexcept { return _data; }
 
  private:
-  void Pack(size_t first, size_t end);
+  void Pack(std::span<const std::string_view> entries,
+            std::span<const uint32_t> lengths, size_t first, size_t end,
+            uint64_t region);
 
   RatioHistory* _history;
   uint32_t _target;

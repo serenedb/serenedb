@@ -31,16 +31,22 @@ EncodedFrames OnPairEncoder::Finish(const SegmentBuilder& rows,
   const auto entries = rows.Entries();
   const auto first_entry = rows.FirstEntry();
   _codec.Train(entries, rows.Raw());
-  _codes.clear();
+  uint64_t total = 0;
+  for (const auto entry : entries) {
+    total += entry.size();
+  }
+  _codes.resize(total);
+  _codec.Encode(entries, _codes, lengths);
   _frames.clear();
   _data.clear();
   uint32_t max_codes = 0;
   uint64_t frame_raw = 0;
   size_t frame_first = 0;
-  size_t frame_code = 0;
-  const auto close = [&](size_t end_code) {
+  uint64_t frame_region = 0;
+  uint64_t region = 0;
+  const auto close = [&](size_t end) {
     const auto at = _data.size();
-    Pack(frame_code, end_code);
+    Pack(entries, lengths, frame_first, end, frame_region);
     _frames.emplace_back(static_cast<uint32_t>(frame_first + first_entry),
                          static_cast<uint32_t>(frame_raw),
                          static_cast<uint32_t>(at),
@@ -48,19 +54,17 @@ EncodedFrames OnPairEncoder::Finish(const SegmentBuilder& rows,
   };
   for (size_t i = 0; i < entries.size(); ++i) {
     if (frame_raw != 0 && frame_raw + entries[i].size() > kFsstFrameRawBytes) {
-      close(_codes.size());
+      close(i);
       frame_raw = 0;
       frame_first = i;
-      frame_code = _codes.size();
+      frame_region = region;
     }
-    const auto before = _codes.size();
-    _codec.Encode(entries[i], _codes);
-    lengths[i] = static_cast<uint32_t>(_codes.size() - before);
     max_codes = std::max(max_codes, lengths[i]);
     frame_raw += entries[i].size();
+    region += entries[i].size();
   }
   if (!entries.empty()) {
-    close(_codes.size());
+    close(entries.size());
   }
   _codec.Export(_side);
   RecordRatio(_history[static_cast<size_t>(_shape)], rows.Raw(),
@@ -73,18 +77,24 @@ EncodedFrames OnPairEncoder::Finish(const SegmentBuilder& rows,
   };
 }
 
-void OnPairEncoder::Pack(size_t first, size_t end) {
+void OnPairEncoder::Pack(std::span<const std::string_view> entries,
+                         std::span<const uint32_t> lengths, size_t first,
+                         size_t end, uint64_t region) {
   const auto bits = _codec.Bits();
   uint64_t acc = 0;
   uint32_t fill = 0;
-  for (auto i = first; i < end; ++i) {
-    acc |= uint64_t{_codes[i]} << fill;
-    fill += bits;
-    while (fill >= 8) {
-      _data.push_back(static_cast<char>(acc & 0xFF));
-      acc >>= 8;
-      fill -= 8;
+  for (auto e = first; e < end; ++e) {
+    const auto* codes = _codes.data() + region;
+    for (uint32_t c = 0; c < lengths[e]; ++c) {
+      acc |= uint64_t{codes[c]} << fill;
+      fill += bits;
+      while (fill >= 8) {
+        _data.push_back(static_cast<char>(acc & 0xFF));
+        acc >>= 8;
+        fill -= 8;
+      }
     }
+    region += entries[e].size();
   }
   if (fill != 0) {
     _data.push_back(static_cast<char>(acc & 0xFF));

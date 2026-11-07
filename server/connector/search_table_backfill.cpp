@@ -55,12 +55,14 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/transaction.h"
 #include "connector/full_scanner.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "query/config_variable_names.h"
 #include "search/store.h"
+#include "search/writes.h"
 
 namespace sdb::connector {
 namespace {
@@ -251,10 +253,10 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
 };
 
 // Rewrites one group of stale segments into fresh ones and swaps them in.
-void RebuildGroup(duckdb::ClientContext& context,
-                  const SearchBackfillTarget& target,
-                  std::span<const irs::SubReader* const> group,
-                  pg::ProgressMetrics* progress) {
+search::Tick RebuildGroup(duckdb::ClientContext& context,
+                          const SearchBackfillTarget& target,
+                          std::span<const irs::SubReader* const> group,
+                          pg::ProgressMetrics* progress) {
   auto& shard = *target.shard;
   const auto slice_count = std::max<size_t>(
     1, std::min<size_t>(group.size(),
@@ -308,8 +310,9 @@ void RebuildGroup(duckdb::ClientContext& context,
   for (const auto& slice : slices) {
     AppendReplacements(*slice, adopted);
   }
+  search::Tick published = 0;
   try {
-    shard.ReplaceSegments(group, std::move(adopted));
+    published = shard.ReplaceSegments(group, std::move(adopted));
   } catch (const irs::SqlException& e) {
     THROW_SQL_ERROR(
       ERR_CODE(e.error().errcode),
@@ -326,6 +329,7 @@ void RebuildGroup(duckdb::ClientContext& context,
   abort_all();
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
   shard.CoolAll();
+  return published;
 }
 
 }  // namespace
@@ -378,6 +382,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // limit" -- one group, one swap, the whole table's worth of peak disk.
   const bool unlimited = target.group_bytes == 0;
   bool counted = false;
+  search::Tick rebuilt = 0;
   // One group per pass, and the reader that named it dies with the pass: it
   // references every segment it can see, so holding it across groups would
   // keep the ones already swapped out unreclaimable and make the budget above
@@ -408,11 +413,35 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                                static_cast<int64_t>(live));
       counted = true;
     }
-    RebuildGroup(context, target, group, progress);
+    rebuilt = RebuildGroup(context, target, group, progress);
     SDB_IF_FAILURE("crash_after_search_backfill_group") {
       SDB_IMMEDIATE_ABORT();
     }
   }
+  RewriteOwnRows(context, target);
+  if (!target.added.empty()) {
+    auto& connection = ConnectionContext::Get(context);
+    auto& transaction = connection.Transaction();
+    transaction.SearchTxn().Rebuilt(
+      target.shard, rebuilt,
+      connection.IsStableSnapshot() &&
+        shard.GetTable().LastWrite() > transaction.Snapshot());
+  }
+}
+
+void RewriteOwnRows(duckdb::ClientContext& context,
+                    const SearchBackfillTarget& target) {
+  auto* writes = ConnectionContext::Get(context).Transaction().SearchWrites();
+  if (!writes) {
+    return;
+  }
+  RowSource source;
+  InitRowSource(context, target, source);
+  writes->RewriteOwn(
+    context, target.shard, *target.catalog,
+    [&](const irs::SubReader& sub, SearchSinkInsertBaseImpl& sink) {
+      FeedSegment(context, sub, source, sink, target);
+    });
 }
 
 }  // namespace sdb::connector

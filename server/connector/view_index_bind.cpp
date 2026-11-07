@@ -49,7 +49,6 @@
 #include "pg/types/logical.h"
 #include "query/config_variable_names.h"
 #include "search/store.h"
-#include "search/writes.h"
 
 namespace sdb::connector {
 namespace {
@@ -285,16 +284,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("only inverted indexes are supported on a table"));
   }
-  auto* writes = catalog::SessionOf(context, table.catalog).SearchWrites();
-  if (!IndexNameTaken(context, *info, table) && writes &&
-      writes->HasWritesFor(table.oid)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG("CREATE INDEX cannot run in a transaction that has already "
-              "written to \"",
-              table.name.GetIdentifierName(), "\""));
-  }
-
   auto& dependencies = info->dependencies;
   auto& catalog = table.ParentCatalog();
   duckdb::catalog_entry_callback_t lookup_callback =

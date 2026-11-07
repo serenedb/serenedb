@@ -522,11 +522,11 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   if (gstate.search_backfill) {
     SDB_ASSERT(gstate.search_backfill->shard->BuildInFlight());
     RunSearchTableBackfill(context, *gstate.search_backfill, gstate.progress);
+    const auto& table = _relation.Cast<catalog::SearchTableEntry>();
     if (gstate.unique_key) {
-      search::VerifyUniqueKey(
-        gstate.search_backfill->shard->View(search::kAllApplied, {}),
-        *gstate.unique_key);
+      search::VerifyUniqueKey(table.RowsWithOwn(context), *gstate.unique_key);
     }
+    table.AdoptAsWritten(context);
     gstate.build_claim.Finish();
     if (gstate.progress) {
       gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);

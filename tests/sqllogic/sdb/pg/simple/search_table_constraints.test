@@ -106,13 +106,13 @@ INSERT INTO sc_alter (id, b, n) VALUES (1, 'x', 1), (2, NULL, -2);
 statement error
 ALTER TABLE sc_alter ALTER COLUMN b SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: sc_alter.b
+db error: ERROR: column "b" of relation "sc_alter" contains null values
 
 
 statement error
 ALTER TABLE sc_alter ADD CONSTRAINT sc_alter_n CHECK (n > 0);
 ----
-db error: ERROR: CHECK constraint failed on table "sc_alter" with expression CHECK((n > 0))
+db error: ERROR: check constraint "sc_alter_n" of relation "sc_alter" is violated by some row
 
 
 statement ok
@@ -207,10 +207,8 @@ statement ok
 INSERT INTO sc_alter (id, b, n) VALUES (6, 'w', 6);
 
 
-statement error
+statement ok
 ALTER TABLE sc_alter ALTER COLUMN n SET NOT NULL;
-----
-db error: ERROR: ALTER TABLE cannot run in a transaction that has already written to "sc_alter"
 
 
 statement ok
@@ -260,7 +258,7 @@ INSERT INTO sc_rle VALUES (1, NULL), (2, 2), (3, 3);
 statement error
 ALTER TABLE sc_rle ALTER COLUMN n SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: sc_rle.n
+db error: ERROR: column "n" of relation "sc_rle" contains null values
 
 
 statement ok
@@ -281,7 +279,7 @@ connection s2
 statement async error
 ALTER TABLE sc_race ALTER COLUMN b SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: sc_race.b
+db error: ERROR: column "b" of relation "sc_race" contains null values
 
 
 connection s1

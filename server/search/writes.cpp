@@ -227,31 +227,40 @@ std::optional<std::string> FindDuplicate(
   return found;
 }
 
-irs::DocumentMaskBuilder TakeRowRemovals(
-  std::vector<std::shared_ptr<const irs::DocRemoval>>& removals,
-  uint64_t rows_id) {
-  irs::DocumentMaskBuilder taken;
+void TakeRemovals(std::vector<std::shared_ptr<const irs::DocRemoval>>& removals,
+                  absl::FunctionRef<bool(uint64_t segment)> taken,
+                  absl::FunctionRef<void(const irs::DocumentMask& docs)> take) {
   for (auto& removal : removals) {
     if (absl::c_none_of(removal->groups, [&](const auto& group) {
-          return group.segment == rows_id;
+          return taken(group.segment);
         })) {
       continue;
     }
     auto rest = std::make_shared<irs::DocRemoval>();
     for (const auto& group : removal->groups) {
-      if (group.segment == rows_id) {
-        taken.Merge(group.docs);
+      if (taken(group.segment)) {
+        take(group.docs);
         continue;
       }
       rest->groups.push_back(
         {.segment = group.segment,
          .docs = irs::DocumentMaskBuilder{group.docs}.Finish(
-           irs::DocumentMaskBuilder::kCanonical)});
+           irs::DocumentMaskBuilder::kCanonical),
+         .maps = group.maps});
     }
     removal = std::move(rest);
   }
   std::erase_if(removals,
                 [](const auto& removal) { return removal->groups.empty(); });
+}
+
+irs::DocumentMaskBuilder TakeRowRemovals(
+  std::vector<std::shared_ptr<const irs::DocRemoval>>& removals,
+  uint64_t rows_id) {
+  irs::DocumentMaskBuilder taken;
+  TakeRemovals(
+    removals, [&](uint64_t segment) { return segment == rows_id; },
+    [&](const irs::DocumentMask& docs) { taken.Merge(docs); });
   return taken;
 }
 
@@ -336,23 +345,11 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
 
 }  // namespace
 
-bool Writes::HasWritesFor(duckdb::idx_t store_id) {
-  absl::MutexLock lock{&_mutex};
+const WriterGenerations::Writer* Writes::Registration(
+  duckdb::idx_t store_id) const {
+  absl::ReaderMutexLock lock{&_mutex};
   const auto it = _writes.find(store_id);
-  if (it == _writes.end()) {
-    return false;
-  }
-  {
-    const auto& w = it->second;
-    absl::MutexLock entry{&w.mutex};
-    if (!w.changes.Empty() || !w.own_segments.empty() ||
-        !w.transactions.empty() || w.hot || !w.log.empty() ||
-        w.truncate_claim || w.dropping || w.prepared || w.removed_rows) {
-      return true;
-    }
-  }
-  _writes.erase(it);
-  return false;
+  return it == _writes.end() ? nullptr : &it->second.registration;
 }
 
 StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
@@ -364,23 +361,42 @@ StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
   return w;
 }
 
+void Writes::Adopt(StoreWrites& w, const catalog::SearchTableEntry& table) {
+  w.keys = table.KeySpecs();
+  for (const auto& key : w.store->Config()->constraint_keys) {
+    if (absl::c_none_of(w.keys, [&](const KeySpec& spec) {
+          return spec.key.field == key.field;
+        })) {
+      if (auto spec = IndexKeySpec(table, key, Latest(table))) {
+        w.keys.push_back(std::move(*spec));
+      }
+    }
+  }
+  w.table = &table;
+}
+
+void Writes::AdoptTable(const std::shared_ptr<Store>& store,
+                        const catalog::SearchTableEntry& table) {
+  StoreWrites* w = nullptr;
+  {
+    absl::ReaderMutexLock lock{&_mutex};
+    if (const auto it = _writes.find(store->GetId()); it != _writes.end()) {
+      w = &it->second;
+    }
+  }
+  if (w) {
+    absl::MutexLock lock{&w->mutex};
+    Adopt(*w, table);
+  }
+}
+
 void Writes::RegisterWriter(const std::shared_ptr<Store>& store,
                             const catalog::SearchTableEntry& table) {
   auto& w = EnsureStoreWrites(store);
   absl::MutexLock lock{&w.mutex};
   if (w.table != &table) {
-    w.keys = table.KeySpecs();
-    for (const auto& key : store->Config()->constraint_keys) {
-      if (absl::c_none_of(w.keys, [&](const KeySpec& spec) {
-            return spec.key.field == key.field;
-          })) {
-        if (auto spec = IndexKeySpec(table, key, Latest(table))) {
-          w.keys.push_back(std::move(*spec));
-        }
-      }
-    }
+    Adopt(w, table);
   }
-  w.table = &table;
   const auto refuse = [&](std::string_view activity) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
@@ -426,6 +442,75 @@ void Writes::AddInlineRows(duckdb::ClientContext& context,
   if (w.changes.BufferedBytes() > flush_above) {
     FlushRows(context, w);
   }
+}
+
+void Writes::RewriteOwn(
+  duckdb::ClientContext& context, const std::shared_ptr<Store>& store,
+  duckdb::Catalog& catalog,
+  absl::FunctionRef<void(const irs::SubReader&,
+                         connector::SearchSinkInsertBaseImpl&)>
+    feed) {
+  StoreWrites* found = nullptr;
+  {
+    absl::ReaderMutexLock lock{&_mutex};
+    if (const auto it = _writes.find(store->GetId()); it != _writes.end()) {
+      found = &it->second;
+    }
+  }
+  if (!found) {
+    return;
+  }
+  auto& w = *found;
+  {
+    absl::MutexLock lock{&w.mutex};
+    if (!w.changes.HasBufferedRows() && w.own_segments.empty()) {
+      return;
+    }
+    std::vector<uint64_t> own{OwnRowsId(w.rows_generation)};
+    for (const auto& segment : w.own_segments) {
+      own.push_back(segment.reader->Id());
+    }
+    const auto reader = store->View(kAllApplied, OwnOf(w));
+    auto trx = std::make_unique<irs::IndexWriter::Transaction>(
+      store->GetTransaction(/*exclusive_segment=*/true));
+    {
+      const auto sink =
+        connector::MakeSearchTableInsertSink(*trx, *store, catalog, context);
+      for (const auto& sub : reader) {
+        if (absl::c_linear_search(
+              own,
+              irs::utils::downCast<irs::SegmentReader>(sub).GetImpl()->Id())) {
+          feed(sub, *sink);
+        }
+      }
+    }
+    w.own_segments = store->OpenFlushed(trx->FlushAndFsync());
+    w.transactions.clear();
+    w.transactions.push_back(std::move(trx));
+    w.own_maps.clear();
+    TakeRemovals(
+      w.changes.removals,
+      [&](uint64_t segment) { return absl::c_linear_search(own, segment); },
+      [](const irs::DocumentMask&) {});
+    w.changes.ClearBufferedRows();
+    w.changes.column_ids.clear();
+    ++w.rows_generation;
+    w.checked_segments = 0;
+    w.buffered_keys.Clear();
+    w.keyed_rows = 0;
+  }
+  ResetReader(store->GetDatabaseId(), store->GetId());
+}
+
+void Writes::Rebuilt(const std::shared_ptr<Store>& store, Tick tick,
+                     bool newer) {
+  {
+    auto& w = EnsureStoreWrites(store);
+    absl::MutexLock lock{&w.mutex};
+    w.rebuilt = std::max(w.rebuilt, tick);
+    w.rebuilt_newer = w.rebuilt_newer || newer;
+  }
+  ResetReader(store->GetDatabaseId(), store->GetId());
 }
 
 std::shared_ptr<irs::DirectoryReader> Writes::PinnedReader(
@@ -846,7 +931,11 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
 std::shared_ptr<const TableState> Writes::VerifyAllReferences(
   const catalog::SearchTableEntry& table, const KeySpec& spec) {
   const auto* parent = ReferencedTable(table, spec, Latest(table));
-  const auto reader = table.Storage()->View(kAllApplied, {});
+  const auto own = _writes.find(table.Storage()->GetId());
+  const auto reader =
+    own == _writes.end()
+      ? table.Storage()->View(kAllApplied, {})
+      : table.Storage()->View(kAllApplied, OwnOf(own->second));
   std::vector<KeyProbe::Segment> segments;
   for (const auto& segment : reader) {
     segments.push_back({.sub = &segment});
@@ -1027,10 +1116,13 @@ irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
     return store.View(snapshot, {});
   }
   absl::MutexLock lock{&w->mutex};
+  if (w->rebuilt_newer) {
+    ThrowConcurrentUpdate();
+  }
   if (indexed && w->changes.HasBufferedRows()) {
     FlushRows(context, *w);
   }
-  return store.View(snapshot, OwnOf(*w));
+  return store.View(std::max(snapshot, w->rebuilt), OwnOf(*w));
 }
 
 void Writes::NoteConflicts(Tick snapshot) {

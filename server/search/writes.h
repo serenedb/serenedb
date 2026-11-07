@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
@@ -39,6 +40,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/search_sink_writer.hpp"
 #include "search/search_table_changes.h"
 #include "search/store.h"
 #include "search/table.h"
@@ -57,6 +59,8 @@ struct StoreWrites {
   std::vector<OwnSegment> own_segments;
   std::vector<irs::DocMap> own_maps;
   uint64_t rows_generation = 0;
+  Tick rebuilt = 0;
+  bool rebuilt_newer = false;
   std::shared_ptr<HotContext> hot;
   uint64_t hot_id = 0;
   irs::doc_id_t hot_first = 0;
@@ -119,11 +123,18 @@ class Writes {
   void RegisterWriter(const std::shared_ptr<Store>& store,
                       const catalog::SearchTableEntry& table);
 
-  // Whether this transaction has already written to `store_id`. CREATE INDEX
-  // refuses to run in such a transaction: the rebuild would wait for writers
-  // that predate its config swap, and this one cannot finish until the
-  // statement it is running does.
-  bool HasWritesFor(duckdb::idx_t store_id);
+  const WriterGenerations::Writer* Registration(duckdb::idx_t store_id) const;
+
+  void AdoptTable(const std::shared_ptr<Store>& store,
+                  const catalog::SearchTableEntry& table);
+
+  void RewriteOwn(duckdb::ClientContext& context,
+                  const std::shared_ptr<Store>& store, duckdb::Catalog& catalog,
+                  absl::FunctionRef<void(const irs::SubReader&,
+                                         connector::SearchSinkInsertBaseImpl&)>
+                    feed);
+
+  void Rebuilt(const std::shared_ptr<Store>& store, Tick tick, bool newer);
 
   void AddOwnSegments(
     const std::shared_ptr<Store>& store,
@@ -218,6 +229,7 @@ class Writes {
 
  private:
   StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
+  void Adopt(StoreWrites& w, const catalog::SearchTableEntry& table);
   void Flush(duckdb::ClientContext& context, StoreWrites& w);
   StoreWrites* Related(const Store& store, StoreWrites& w);
   // The catalog as it is now, with this transaction's own changes.

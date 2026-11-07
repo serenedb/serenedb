@@ -1706,6 +1706,7 @@ CREATE VIEW fvw AS SELECT id, sev AS SeverityText, body AS Body FROM fvw_base
 
 statement ok
 CREATE INDEX fvw_idx ON fvw USING inverted((split_by_non_alpha(Body, case := 'lower')) fvw_kw, SeverityText fvw_kw)
+    INCLUDE (SeverityText)
     WITH (compaction_interval = 0)
 
 query TI
@@ -1823,19 +1824,29 @@ query
 EXPLAIN SELECT array_agg(DISTINCT SeverityText) FROM fvw_idx
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ─────╮
-│ Aggregates: array_agg(#0) │
-│ ~1 row                    │
-╰─────────────┬─────────────╯
-╭─ HASH_GROUP_BY ───────────╮
-│ Groups: #0                │
-│ ~2 rows                   │
-╰─────────────┬─────────────╯
-╭─ IRESEARCH_SCAN ──────────╮
-│ Index: fvw_idx            │
-│ Projections: severitytext │
-│ ~4 rows                   │
-╰───────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ──────────────────╮
+│ Aggregates: array_agg(#0)              │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections:                           │
+│ __internal_decompress_string(#0)       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ HASH_GROUP_BY ────┴───────────────────╮
+│ Groups: #0                             │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections:                           │
+│ __internal_compress_string_ubigint(#0) │
+│ ~4 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: fvw_idx                         │
+│ Projections: severitytext              │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
 
 # Explicit ts_dict_agg reads the dictionary terms directly (no NULL element).
 query T

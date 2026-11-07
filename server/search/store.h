@@ -293,7 +293,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
     return _writer->ArmCompactionFloor();
   }
-  void ReplaceSegments(std::span<const irs::SubReader* const> replaced,
+  Tick ReplaceSegments(std::span<const irs::SubReader* const> replaced,
                        std::vector<irs::IndexWriter::Replacement> replacements);
 
   void ReplayHotRows(duckdb::Catalog& catalog,

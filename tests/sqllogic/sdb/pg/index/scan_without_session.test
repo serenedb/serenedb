@@ -101,7 +101,7 @@ CREATE VIEW sws_t_view AS SELECT id, tag FROM sws_t;
 
 
 statement ok
-CREATE INDEX sws_t_view_idx ON sws_t_view USING inverted (id, tag);
+CREATE INDEX sws_t_view_idx ON sws_t_view USING inverted (id, tag) INCLUDE (id);
 
 
 query

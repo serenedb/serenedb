@@ -189,6 +189,7 @@ class ConnectionContext final : public duckdb::ClientContext {
     return transaction.GetIsolationLevel();
   }
   bool IsExplicitTransaction() const { return !transaction.IsAutoCommit(); }
+  bool IsStableSnapshot() const;
 
   uint64_t CatalogEpoch() const noexcept { return _catalog_epoch; }
 
@@ -261,7 +262,6 @@ class ConnectionContext final : public duckdb::ClientContext {
     std::optional<duckdb::Value> commit_restore;
   };
 
-  bool IsStableSnapshot() const;
   void RefreshCatalogEpoch() noexcept;
   void EndTransaction() noexcept;
 

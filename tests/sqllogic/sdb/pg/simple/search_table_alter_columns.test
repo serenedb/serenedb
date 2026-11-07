@@ -205,7 +205,7 @@ id	c
 statement error
 ALTER TABLE sac ALTER COLUMN n TYPE INT USING CASE WHEN n = 3 THEN NULL ELSE n END;
 ----
-db error: ERROR: NOT NULL constraint failed: sac.n
+db error: ERROR: column "n" of relation "sac" contains null values
 
 
 statement error
@@ -393,6 +393,175 @@ id	w
 3	5
 4	6
 5	7
+
+
+statement ok
+CREATE TABLE sac_iso (id INT);
+
+
+statement ok
+INSERT INTO sac_iso VALUES (1);
+
+
+connection s1
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection s1
+query
+SELECT count(*) FROM sac_iso;
+----
+count
+1
+
+
+connection s2
+statement ok
+INSERT INTO sac_iso VALUES (2);
+
+
+connection s1
+statement ok
+ALTER TABLE sac_iso ADD COLUMN w INT DEFAULT 5;
+
+
+connection s1
+statement error
+SELECT id, w FROM sac_iso ORDER BY id;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+INSERT INTO sac_iso VALUES (3);
+
+
+connection s1
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+connection s1
+statement async ok
+ALTER TABLE sac_iso ADD COLUMN w INT DEFAULT 5;
+
+
+connection s2
+statement ok
+COMMIT;
+
+
+wait
+
+
+connection s1
+query
+SELECT id, w FROM sac_iso ORDER BY id;
+----
+id	w
+1	5
+2	5
+3	5
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s1
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection s1
+query
+SELECT count(*) FROM sac_iso;
+----
+count
+3
+
+
+connection s2
+statement ok
+INSERT INTO sac_iso VALUES (4, 6);
+
+
+connection s1
+statement ok
+CREATE INDEX sac_iso_w ON sac_iso USING inverted (w);
+
+
+connection s1
+query
+SELECT id, w FROM sac_iso ORDER BY id;
+----
+id	w
+1	5
+2	5
+3	5
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE sac_del (id INT, v INT);
+
+
+statement ok
+INSERT INTO sac_del VALUES (1, 1), (2, 2), (3, 3);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) FROM sac_del;
+----
+count
+3
+
+
+connection s2
+statement ok
+ALTER TABLE sac_del ADD COLUMN c INT DEFAULT 7;
+
+
+connection s1
+statement ok
+DELETE FROM sac_del WHERE id = 3;
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT id, c FROM sac_del ORDER BY id;
+----
+id	c
+1	7
+2	7
 
 
 statement ok

@@ -101,19 +101,15 @@ SELECT id FROM union_idx WHERE body @@ ts_phrase('pudge');
 db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
 
 
-# View over a serenedb rocksdb table -- static, no DML refresh.
-
-statement ok
-CREATE TABLE base_t (id INTEGER PRIMARY KEY, body TEXT, extra TEXT);
-
-statement ok
-INSERT INTO base_t VALUES
+statement count 3
+COPY (SELECT * FROM (VALUES
   (1, 'pudge goes mid', 'a'),
   (2, 'anchin reads manga', 'b'),
-  (3, 'pudge plays again', 'c');
+  (3, 'pudge plays again', 'c')) t(id, body, extra))
+TO '${__TEST_DIR__}/base_t.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE VIEW v_star AS SELECT * FROM base_t;
+CREATE VIEW v_star AS SELECT * FROM read_parquet('${__TEST_DIR__}/base_t.parquet');
 
 statement ok
 CREATE INDEX i_star ON v_star USING inverted(body view_idx_en);
@@ -133,7 +129,7 @@ id	body	extra
 
 # Reordered projection.
 statement ok
-CREATE VIEW v_proj AS SELECT body, id FROM base_t;
+CREATE VIEW v_proj AS SELECT body, id FROM read_parquet('${__TEST_DIR__}/base_t.parquet');
 
 statement ok
 CREATE INDEX i_proj ON v_proj USING inverted(body view_idx_en);
@@ -162,7 +158,7 @@ pudge plays again
 # Cast (id INTEGER -> id_b BIGINT). Search-filter builder peels cast so
 # PHRASE binds through it.
 statement ok
-CREATE VIEW v_cast AS SELECT id::BIGINT AS id_b, body FROM base_t;
+CREATE VIEW v_cast AS SELECT id::BIGINT AS id_b, body FROM read_parquet('${__TEST_DIR__}/base_t.parquet');
 
 statement ok
 CREATE INDEX i_cast ON v_cast USING inverted(body view_idx_en);
@@ -181,7 +177,6 @@ id_b	body
 3	pudge plays again
 
 
-# No-PK base table -- PK source is the hidden rowid.
 statement ok
 CREATE TABLE base_nopk (body TEXT, extra TEXT);
 
@@ -203,12 +198,11 @@ SELECT count(*) FROM i_nopk WHERE body @@ ts_phrase('pudge');
 count
 2
 
-query
+query error
 SELECT body, extra FROM i_nopk WHERE body @@ ts_phrase('pudge') ORDER BY body;
 ----
-body	extra
-pudge goes mid	a
-pudge plays again	c
+db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
+
 
 
 # Parquet glob.

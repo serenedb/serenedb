@@ -70,11 +70,6 @@ id
 1
 3
 
-# A build has to wait out the write transactions that predate the index config
-# it publishes, so it cannot run in a transaction that is itself one of them --
-# that transaction only ends after the statement waiting on it does. Refused up
-# front rather than left to deadlock. Uses a fresh empty table, so the refusal
-# is about the transaction and not the row count.
 statement ok
 CREATE TABLE selfwrite (id BIGINT, tag TEXT);
 
@@ -84,17 +79,18 @@ BEGIN;
 statement ok
 INSERT INTO selfwrite VALUES (1, 'red');
 
-statement error
+statement ok
 CREATE INDEX selfwrite_idx ON selfwrite USING inverted (tag);
-----
-db error: ERROR: CREATE INDEX cannot run in a transaction that has already written to "selfwrite"
 
+query
+SELECT id FROM selfwrite_idx WHERE tag = 'red';
+----
+id
+1
 
 statement ok
 ROLLBACK;
 
-# Not a blanket ban on transactions: one that has not written to the table is
-# fine.
 statement ok
 BEGIN;
 

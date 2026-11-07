@@ -22,7 +22,8 @@ statement ok
 CREATE VIEW v_docs AS SELECT id, body, category FROM docs;
 
 statement ok
-CREATE INDEX v_docs_idx ON v_docs USING inverted (id, body en, category);
+CREATE INDEX v_docs_idx ON v_docs USING inverted (id, body en, category)
+    INCLUDE (id, body, category);
 
 # DOCS_TEST: example_001
 

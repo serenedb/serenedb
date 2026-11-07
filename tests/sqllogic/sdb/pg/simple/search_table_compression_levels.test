@@ -13,6 +13,10 @@ CREATE TABLE lvl_columns (a INTEGER PRIMARY KEY,
                           fsst_col TEXT USING COMPRESSION fsst,
                           dfsstp TEXT USING COMPRESSION dict_fsst_plus,
                           fsstp_col TEXT USING COMPRESSION fsst_plus,
+                          donpair TEXT USING COMPRESSION dict_onpair,
+                          onpair_col TEXT USING COMPRESSION onpair,
+                          dfsst12 TEXT USING COMPRESSION dict_fsst12,
+                          fsst12_col TEXT USING COMPRESSION fsst12,
                           auto_col TEXT,
                           zstd_3 TEXT USING COMPRESSION zstd(compression_level = 3),
                           zstd_22 TEXT USING COMPRESSION zstd(compression_level = 22),
@@ -27,6 +31,10 @@ INSERT INTO lvl_columns SELECT a,
   CASE WHEN a % 7 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END,
   'https://example.org/items/' || lpad((a // 50)::VARCHAR, 6, '0'),
   CASE WHEN a % 11 = 0 THEN NULL ELSE 'row-' || lpad(a::VARCHAR, 8, '0') END,
+  'https://example.org/pages/' || lpad((a // 40)::VARCHAR, 6, '0'),
+  CASE WHEN a % 13 = 0 THEN NULL ELSE 'item-' || lpad(a::VARCHAR, 8, '0') END,
+  'https://example.org/pages/' || lpad((a // 40)::VARCHAR, 6, '0'),
+  CASE WHEN a % 13 = 0 THEN NULL ELSE 'item-' || lpad(a::VARCHAR, 8, '0') END,
   CASE WHEN a % 5 = 0 THEN NULL ELSE 'v' || (a % 31) END,
   repeat('t' || a, 6), CASE WHEN a % 9 = 0 THEN NULL ELSE repeat('u' || a, 6) END, 'n' || a
   FROM range(20000) t(a);
@@ -42,16 +50,20 @@ GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
 dfsst	DICT_FSST
+dfsst12	DICT_FSST12
 dfsstp	DICT_FSST_PLUS
 dlz4_6	DICT_LZ4
 dlz4_tbl	DICT_LZ4
+donpair	DICT_ONPAIR
 dzstd_1	DICT_ZSTD
 dzstd_22	DICT_ZSTD
 dzxc_4	DICT_ZXC
+fsst12_col	FSST12
 fsst_col	FSST
 fsstp_col	FSST_PLUS
 lz4_1	LZ4
 lz4_12	LZ4
+onpair_col	ONPAIR
 zstd_22	ZSTD
 zstd_3	ZSTD
 zstd_tbl	ZSTD
@@ -73,6 +85,10 @@ WHERE lz4_1 IS DISTINCT FROM repeat('p' || a, 8)
    OR fsst_col IS DISTINCT FROM (CASE WHEN a % 7 = 0 THEN NULL ELSE 'key-' || lpad(a::VARCHAR, 8, '0') END)
    OR dfsstp IS DISTINCT FROM 'https://example.org/items/' || lpad((a // 50)::VARCHAR, 6, '0')
    OR fsstp_col IS DISTINCT FROM (CASE WHEN a % 11 = 0 THEN NULL ELSE 'row-' || lpad(a::VARCHAR, 8, '0') END)
+   OR donpair IS DISTINCT FROM 'https://example.org/pages/' || lpad((a // 40)::VARCHAR, 6, '0')
+   OR onpair_col IS DISTINCT FROM (CASE WHEN a % 13 = 0 THEN NULL ELSE 'item-' || lpad(a::VARCHAR, 8, '0') END)
+   OR dfsst12 IS DISTINCT FROM 'https://example.org/pages/' || lpad((a // 40)::VARCHAR, 6, '0')
+   OR fsst12_col IS DISTINCT FROM (CASE WHEN a % 13 = 0 THEN NULL ELSE 'item-' || lpad(a::VARCHAR, 8, '0') END)
    OR auto_col IS DISTINCT FROM (CASE WHEN a % 5 = 0 THEN NULL ELSE 'v' || (a % 31) END)
    OR zstd_3 IS DISTINCT FROM repeat('t' || a, 6)
    OR zstd_22 IS DISTINCT FROM (CASE WHEN a % 9 = 0 THEN NULL ELSE repeat('u' || a, 6) END)
@@ -100,6 +116,18 @@ SELECT count(*) FROM lvl_columns WHERE dfsstp = 'https://example.org/items/00000
 ----
 count
 46
+
+query
+SELECT count(*) FROM lvl_columns WHERE donpair = 'https://example.org/pages/000002' AND onpair_col LIKE 'item-000001%';
+----
+count
+18
+
+query
+SELECT count(*) FROM lvl_columns WHERE dfsst12 = 'https://example.org/pages/000003' AND fsst12_col LIKE 'item-0000%';
+----
+count
+37
 
 statement ok
 DROP TABLE lvl_columns;
@@ -242,6 +270,30 @@ statement error
 CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst_plus(compression_level = 1)) WITH (storage = 'search');
 ----
 db error: ERROR: Column "v": compression 'fsst_plus' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_onpair(compression_level = 2)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'dict_onpair' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION onpair(compression_level = 1)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'onpair' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst12(compression_level = 2)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'dict_fsst12' takes no compression_level
+
+
+statement error
+CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION fsst12(compression_level = 1)) WITH (storage = 'search');
+----
+db error: ERROR: Column "v": compression 'fsst12' takes no compression_level
 
 
 statement error

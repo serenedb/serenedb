@@ -39,7 +39,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/numeric.hpp"
-#include "iresearch/formats/column/codecs/string_writer.hpp"
+#include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/misc.hpp"

@@ -44,7 +44,7 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
 #include <iresearch/formats/column/codecs/registry.hpp>
-#include <iresearch/formats/column/codecs/string_writer.hpp>
+#include <iresearch/formats/column/codecs/string_tuning.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>

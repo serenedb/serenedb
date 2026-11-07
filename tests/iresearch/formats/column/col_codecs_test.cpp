@@ -51,16 +51,18 @@
 #include <functional>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/fsst.hpp>
+#include <iresearch/formats/column/codecs/onpair.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/codecs/string_scan.hpp>
-#include <iresearch/formats/column/codecs/string_writer.hpp>
+#include <iresearch/formats/column/codecs/string_seal.hpp>
 #include <iresearch/formats/column/codecs/zstd.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/immutable_payloads.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
+#include <iresearch/formats/column/list_ingest.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -409,6 +411,10 @@ const std::vector<LevelArm>& EveryCodec() {
     {duckdb::CompressionType::COMPRESSION_FSST, {0}},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS, {0}},
     {duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, {0}},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, {0}},
+    {duckdb::CompressionType::COMPRESSION_COL_ONPAIR, {0}},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, {0}},
+    {duckdb::CompressionType::COMPRESSION_COL_FSST12, {0}},
     {duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, {0}},
     {duckdb::CompressionType::COMPRESSION_ZSTD, {0, 1, 22}},
     {duckdb::CompressionType::COMPRESSION_AUTO, {0}},
@@ -454,6 +460,14 @@ TEST_F(ColCodecsTest, DictFsstSortedKeys) {
             8192, value);
   RoundTrip(duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, {}, 30000, 8192,
             value);
+  RoundTrip(duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, {}, 30000,
+            8192, value);
+  RoundTrip(duckdb::CompressionType::COMPRESSION_COL_ONPAIR, {}, 30000, 8192,
+            value);
+  RoundTrip(duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, {}, 30000,
+            8192, value);
+  RoundTrip(duckdb::CompressionType::COMPRESSION_COL_FSST12, {}, 30000, 8192,
+            value);
 }
 
 TEST_F(ColCodecsTest, PlainFsstRowOrder) {
@@ -492,13 +506,17 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
     s.resize(length);
     strings.emplace_back(std::move(s));
   }
-  const std::vector<std::string_view> views{strings.begin(), strings.end()};
+  std::vector<duckdb::string_t> values;
+  for (const auto& s : strings) {
+    values.emplace_back(s.data(), static_cast<uint32_t>(s.size()));
+  }
+  const std::vector<uint32_t> skip(values.size(), 0);
 
   irs::codecs::FsstEncoder encoder;
   std::string batch;
   std::vector<uint32_t> lengths;
-  encoder.Encode(views, batch, lengths);
-  ASSERT_EQ(views.size(), lengths.size());
+  encoder.Encode(values, skip, batch, lengths);
+  ASSERT_EQ(values.size(), lengths.size());
 
   irs::codecs::FsstDecoder decoder;
   ASSERT_TRUE(decoder.Import(encoder.SymbolTable()));
@@ -506,17 +524,17 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   std::vector<uint32_t> single_lengths;
   std::string decoded;
   size_t offset = 0;
-  for (size_t i = 0; i < views.size(); ++i) {
+  for (size_t i = 0; i < values.size(); ++i) {
     const std::string_view encoded{batch.data() + offset, lengths[i]};
     offset += lengths[i];
-    encoder.Encode(std::span<const std::string_view>{&views[i], 1}, single,
+    encoder.Encode(std::span{&values[i], 1}, std::span{&skip[i], 1}, single,
                    single_lengths);
     ASSERT_EQ(encoded, single)
-      << "string " << i << ", " << views[i].size() << " bytes";
-    decoded.resize(views[i].size() + 8);
+      << "string " << i << ", " << strings[i].size() << " bytes";
+    decoded.resize(strings[i].size() + 8);
     const auto size = decoder.Decode(encoded.data(), encoded.size(),
                                      decoded.data(), decoded.size());
-    ASSERT_EQ(views[i], std::string_view(decoded.data(), size));
+    ASSERT_EQ(strings[i], std::string_view(decoded.data(), size));
   }
   EXPECT_EQ(batch.size(), offset);
 }
@@ -592,6 +610,8 @@ TEST_F(ColCodecsTest, PlainSparseGatherThenScan) {
   for (const auto codec : {duckdb::CompressionType::COMPRESSION_LZ4,
                            duckdb::CompressionType::COMPRESSION_FSST,
                            duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS,
+                           duckdb::CompressionType::COMPRESSION_COL_ONPAIR,
+                           duckdb::CompressionType::COMPRESSION_COL_FSST12,
                            duckdb::CompressionType::COMPRESSION_ZXC}) {
     irs::MemoryDirectory dir{};
     Write(dir, codec, {.segment_target = 64 * 1024}, 6000, 2048,
@@ -1002,6 +1022,22 @@ std::vector<std::unique_ptr<duckdb::Vector>> Chunks(uint64_t rows,
   return chunks;
 }
 
+std::vector<irs::WriteChunk> WriteChunks(
+  const std::vector<std::unique_ptr<duckdb::Vector>>& chunks) {
+  std::vector<irs::WriteChunk> out;
+  for (const auto& c : chunks) {
+    out.push_back(irs::RefChunk(*c, c->size()));
+  }
+  return out;
+}
+
+void Accumulate(irs::codecs::StringAccumulator& acc,
+                const std::vector<std::unique_ptr<duckdb::Vector>>& chunks) {
+  for (const auto& c : chunks) {
+    acc.Add(*c);
+  }
+}
+
 const Value kWordSoup = [](uint64_t g) -> std::optional<std::string> {
   static constexpr std::string_view kWords[] = {
     "event",  "completed", "for",   "user",    "on",      "host",
@@ -1039,29 +1075,35 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
   const irs::codecs::StringChoice choices[] = {
     {Shape::Dedup, ByteCodec::Fsst},     {Shape::Dedup, ByteCodec::Lz4},
     {Shape::Dedup, ByteCodec::Zstd},     {Shape::Dedup, ByteCodec::Zxc},
-    {Shape::Dedup, ByteCodec::FsstPlus}, {Shape::Plain, ByteCodec::Fsst},
+    {Shape::Dedup, ByteCodec::FsstPlus}, {Shape::Dedup, ByteCodec::OnPair},
+    {Shape::Dedup, ByteCodec::Fsst12},   {Shape::Plain, ByteCodec::Fsst},
     {Shape::Plain, ByteCodec::Lz4},      {Shape::Plain, ByteCodec::Zstd},
     {Shape::Plain, ByteCodec::Zxc},      {Shape::Plain, ByteCodec::FsstPlus},
+    {Shape::Plain, ByteCodec::OnPair},   {Shape::Plain, ByteCodec::Fsst12},
   };
   const auto chunks = Chunks(20000, kWordSoup);
+  irs::codecs::StringAccumulator acc;
+  Accumulate(acc, chunks);
+  const auto write_chunks = WriteChunks(chunks);
   for (const auto choice : choices) {
-    irs::codecs::StringAccumulator acc{choice.shape == Shape::Dedup};
-    for (const auto& c : chunks) {
-      acc.Add(*c);
-    }
     irs::codecs::StringTuning tuning;
     uint64_t segments = 0;
     uint64_t rows = 0;
-    const auto outcome = irs::codecs::SealSegments(
-      acc, &choice, irs::ColCodecParams{.segment_target = 16 * 1024},
-      duckdb::LogicalType::VARCHAR, tuning,
-      [&](irs::codecs::StringChoice sealed, duckdb::BaseStatistics,
-          uint64_t count, std::span<const std::string_view>) {
-        EXPECT_EQ(sealed.shape, choice.shape);
-        EXPECT_EQ(sealed.leaf, choice.leaf);
-        ++segments;
-        rows += count;
-      });
+    const irs::ColCodecParams params{.segment_target = 16 * 1024};
+    const auto sink = [&](irs::codecs::StringChoice sealed,
+                          duckdb::BaseStatistics, uint64_t count,
+                          std::span<const std::string_view>) {
+      EXPECT_EQ(sealed.shape, choice.shape);
+      EXPECT_EQ(sealed.leaf, choice.leaf);
+      ++segments;
+      rows += count;
+    };
+    const auto outcome =
+      choice.shape == Shape::Dedup
+        ? irs::codecs::SealSegments(acc, &choice, params,
+                                    duckdb::LogicalType::VARCHAR, tuning, sink)
+        : irs::codecs::SealSegments(write_chunks, choice, params,
+                                    duckdb::LogicalType::VARCHAR, tuning, sink);
     EXPECT_TRUE(outcome.sealed);
     EXPECT_EQ(outcome.all_dedup, choice.shape == Shape::Dedup);
     EXPECT_GT(segments, 1u);
@@ -1082,10 +1124,8 @@ TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
     return "status-" + std::to_string(g % 4);
   };
   const auto chunks = Chunks(60000, value);
-  irs::codecs::StringAccumulator acc{true};
-  for (const auto& c : chunks) {
-    acc.Add(*c);
-  }
+  irs::codecs::StringAccumulator acc;
+  Accumulate(acc, chunks);
   irs::codecs::StringTuning tuning;
   std::vector<Shape> shapes;
   const auto outcome = irs::codecs::SealSegments(
@@ -1334,6 +1374,10 @@ TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
         case CompressionType::COMPRESSION_COL_DICT_FSST:
         case CompressionType::COMPRESSION_COL_FSST_PLUS:
         case CompressionType::COMPRESSION_COL_DICT_FSST_PLUS:
+        case CompressionType::COMPRESSION_COL_ONPAIR:
+        case CompressionType::COMPRESSION_COL_DICT_ONPAIR:
+        case CompressionType::COMPRESSION_COL_FSST12:
+        case CompressionType::COMPRESSION_COL_DICT_FSST12:
           EXPECT_EQ(level, "0") << label;
           break;
         default:
@@ -1377,10 +1421,8 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   constexpr uint64_t kRowGroup = 1024;
   const auto seal = [](const Chunked& chunks,
                        irs::codecs::StringTuning& tuning) {
-    irs::codecs::StringAccumulator acc{true};
-    for (const auto& c : chunks) {
-      acc.Add(*c);
-    }
+    irs::codecs::StringAccumulator acc;
+    Accumulate(acc, chunks);
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
@@ -1832,7 +1874,9 @@ TEST_F(ColCodecsTest, SortedDictionaryFiltersMatchTheValues) {
   constexpr uint64_t kRows = 30000;
   for (const auto codec :
        {duckdb::CompressionType::COMPRESSION_DICT_FSST,
-        duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS}) {
+        duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS,
+        duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR,
+        duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12}) {
     SCOPED_TRACE(duckdb::CompressionTypeToString(codec));
     irs::MemoryDirectory dir{};
     Write(dir, codec, {}, kRows, 8192, value);
@@ -2362,6 +2406,10 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {duckdb::CompressionType::COMPRESSION_COL_ZSTD, "ZSTD"},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS, "DICT_FSST_PLUS"},
     {duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, "FSST_PLUS"},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, "DICT_ONPAIR"},
+    {duckdb::CompressionType::COMPRESSION_COL_ONPAIR, "ONPAIR"},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, "DICT_FSST12"},
+    {duckdb::CompressionType::COMPRESSION_COL_FSST12, "FSST12"},
   };
   EXPECT_EQ(
     static_cast<size_t>(duckdb::CompressionType::COMPRESSION_SERENEDB_COUNT) -
@@ -2398,6 +2446,10 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {"zstd", duckdb::CompressionType::COMPRESSION_ZSTD},
     {"dict_fsst_plus", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS},
     {"fsst_plus", duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS},
+    {"dict_onpair", duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR},
+    {"onpair", duckdb::CompressionType::COMPRESSION_COL_ONPAIR},
+    {"dict_fsst12", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12},
+    {"fsst12", duckdb::CompressionType::COMPRESSION_COL_FSST12},
   };
   for (const auto& [name, type] : parsed) {
     SCOPED_TRACE(name);
@@ -2709,6 +2761,173 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
   }
 }
 
+TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
+  struct Case {
+    std::string_view name;
+    void (*corrupt)(irs::codecs::Header&, duckdb::data_ptr_t);
+    const char* error;
+  };
+  const Case cases[] = {
+    {"code width",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       block[h.off_symtab] = 17;
+     },
+     "corrupted symbol table"},
+    {"token count",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       duckdb::Store<uint32_t>(0, block + h.off_symtab + sizeof(uint32_t));
+     },
+     "corrupted symbol table"},
+    {"token lengths",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       block[h.off_symtab + irs::codecs::kOnPairSideHeader] ^= 0x0F;
+     },
+     "corrupted symbol table"},
+  };
+  const Value values = [](uint64_t g) -> std::optional<std::string> {
+    return "https://example.org/users/" + std::to_string(g % 5000) + "/profile";
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    const auto path =
+      test_dir() / ("col_codecs_corrupt_onpair_" + std::string{c.name});
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      irs::MMapDirectory dir{path};
+      Write(dir, duckdb::CompressionType::COMPRESSION_COL_ONPAIR, {}, 20000,
+            DEFAULT_ROW_GROUP_SIZE, values);
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      offset = col->DataBlocks().front().file_offset;
+      size = col->DataBlocks().front().byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_LE(offset + size, bytes.size());
+    auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+    auto h = irs::codecs::Header::Parse(block, size);
+    ASSERT_EQ(h.codec, irs::codecs::ByteCodec::OnPair);
+    c.corrupt(h, block);
+    duckdb::Store(h, block);
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    irs::MMapDirectory dir{path};
+    const auto scan = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+    };
+    const auto fetch = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      const auto* col = r.Column(kField);
+      irs::ColumnReader::PointReader cursor{r, *col};
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+      cursor.FetchRow(7, out, 0);
+    };
+#ifdef SDB_DEV
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(scan(), c.error);
+    EXPECT_DEATH(fetch(), c.error);
+#else
+    EXPECT_ANY_THROW(scan());
+    EXPECT_ANY_THROW(fetch());
+#endif
+  }
+}
+
+TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
+  struct Case {
+    std::string_view name;
+    void (*corrupt)(irs::codecs::Header&, duckdb::data_ptr_t);
+  };
+  const Case cases[] = {
+    {"version",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       duckdb::Store<uint64_t>(0, block + h.off_symtab);
+     }},
+    {"symbol count",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       duckdb::Store<uint16_t>(0xFFFF, block + h.off_symtab + 8);
+     }},
+    {"symbol length",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       block[h.off_symtab + 24] = 9;
+     }},
+  };
+  const Value values = [](uint64_t g) -> std::optional<std::string> {
+    return "https://example.org/users/" + std::to_string(g % 5000) + "/profile";
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    const auto path =
+      test_dir() / ("col_codecs_corrupt_fsst12_" + std::string{c.name});
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      irs::MMapDirectory dir{path};
+      Write(dir, duckdb::CompressionType::COMPRESSION_COL_FSST12, {}, 20000,
+            DEFAULT_ROW_GROUP_SIZE, values);
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      offset = col->DataBlocks().front().file_offset;
+      size = col->DataBlocks().front().byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_LE(offset + size, bytes.size());
+    auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+    auto h = irs::codecs::Header::Parse(block, size);
+    ASSERT_EQ(h.codec, irs::codecs::ByteCodec::Fsst12);
+    ASSERT_GT(h.symtab_size, 24u);
+    c.corrupt(h, block);
+    duckdb::Store(h, block);
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    irs::MMapDirectory dir{path};
+    const auto scan = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+    };
+    const auto fetch = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      const auto* col = r.Column(kField);
+      irs::ColumnReader::PointReader cursor{r, *col};
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+      cursor.FetchRow(7, out, 0);
+    };
+#ifdef SDB_DEV
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(scan(), "corrupted symbol table");
+    EXPECT_DEATH(fetch(), "corrupted symbol table");
+#else
+    EXPECT_ANY_THROW(scan());
+    EXPECT_ANY_THROW(fetch());
+#endif
+  }
+}
+
 TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
   struct Case {
     std::string_view name;
@@ -2941,10 +3160,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   using irs::codecs::Shape;
   const auto seal = [](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
                        irs::codecs::StringTuning& tuning) {
-    irs::codecs::StringAccumulator acc{true};
-    for (const auto& c : in) {
-      acc.Add(*c);
-    }
+    irs::codecs::StringAccumulator acc;
+    Accumulate(acc, in);
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
@@ -3035,17 +3252,14 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
     }
     return Pseudo(g, 400);
   };
-  const auto chunks = Chunks(kRows, value);
-  irs::codecs::StringAccumulator acc{false};
-  for (const auto& c : chunks) {
-    acc.Add(*c);
-  }
+  const auto vectors = Chunks(kRows, value);
+  const auto chunks = WriteChunks(vectors);
   irs::codecs::StringTuning tuning;
   std::vector<uint64_t> sizes;
   const irs::codecs::StringChoice fsst{irs::codecs::Shape::Plain,
                                        irs::codecs::ByteCodec::Fsst};
   const auto outcome = irs::codecs::SealSegments(
-    acc, &fsst, irs::ColCodecParams{.segment_target = kTarget},
+    chunks, fsst, irs::ColCodecParams{.segment_target = kTarget},
     duckdb::LogicalType::VARCHAR, tuning,
     [&](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
         std::span<const std::string_view> parts) {

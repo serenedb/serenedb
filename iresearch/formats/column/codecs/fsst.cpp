@@ -130,41 +130,6 @@ encoded bytes:
 Sections start at 8-byte boundaries.
 */
 
-/*
-FSST+ segments (fsst_plus, dict_fsst_plus) keep the layout above, with entries
-grouped instead of front-coded: a group of neighbouring entries stores the
-FSST codes they share once, and each entry stores the rest of its codes.
-+------------------------------------------------------+
-|                    Entry lengths                     |
-|   +----------------------------------------------+   |
-|   |   bitpacked encoded length[entry_count]      |   |
-|   +----------------------------------------------+   |
-|   length of each entry's codes after its group's     |
-|   shared codes                                       |
-+------------------------------------------------------+
-|                    Entry groups                      |
-|   +----------------------------------------------+   |
-|   |   bitpacked group[entry_count]               |   |
-|   +----------------------------------------------+   |
-|   1-based group of each entry, 0 for none            |
-+------------------------------------------------------+
-|                     Symbol table                     |
-|   +----------------------------------------------+   |
-|   |   FSST symbol table, dictionary_size bytes   |   |
-|   |   uint32 group_count                         |   |
-|   |   uint32 shared_end[group_count]             |   |
-|   |   shared codes of every group                |   |
-|   +----------------------------------------------+   |
-|   group g's shared codes end at shared_end[g - 1]    |
-+------------------------------------------------------+
-|                         Data                         |
-|   +----------------------------------------------+   |
-|   |   each entry's codes after its group's       |   |
-|   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
-+------------------------------------------------------+
-*/
-
 namespace irs::codecs {
 
 const duckdb::CompressionFunction& FsstFunction() {
@@ -181,27 +146,15 @@ const duckdb::CompressionFunction& DictFsstFunction() {
   return kFunction;
 }
 
-const duckdb::CompressionFunction& FsstPlusFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::FsstPlusLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS);
-  return kFunction;
-}
-
-const duckdb::CompressionFunction& DictFsstPlusFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::FsstPlusLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS);
-  return kFunction;
-}
-
 void FsstEncoder::Reset() noexcept {
   _encoder.reset();
   _table_size = 0;
 }
 
-void FsstEncoder::Encode(std::span<const std::string_view> strings,
-                         std::string& out, std::vector<uint32_t>& lengths) {
+void FsstEncoder::Encode(std::span<const duckdb::string_t> strings,
+                         std::span<const uint32_t> skip, std::string& out,
+                         std::vector<uint32_t>& lengths) {
+  SDB_ASSERT(skip.size() == strings.size());
   const size_t n = strings.size();
   if (n == 0) {
     out.clear();
@@ -212,10 +165,10 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
   _in_ptrs.resize(n);
   size_t total = 0;
   for (size_t i = 0; i < n; ++i) {
-    _in_lengths[i] = strings[i].size();
-    _in_ptrs[i] =
-      reinterpret_cast<unsigned char*>(const_cast<char*>(strings[i].data()));
-    total += strings[i].size();
+    _in_lengths[i] = strings[i].GetSize() - skip[i];
+    _in_ptrs[i] = reinterpret_cast<unsigned char*>(
+      const_cast<char*>(strings[i].GetData() + skip[i]));
+    total += _in_lengths[i];
   }
   if (!_encoder) {
     _encoder.reset(

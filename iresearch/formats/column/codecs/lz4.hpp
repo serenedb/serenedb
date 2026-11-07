@@ -54,6 +54,7 @@ struct Lz4 {
     explicit Compressor(uint8_t level);
 
     bool Train(std::string_view frames, std::span<const size_t> sizes);
+    bool Adopt(std::string_view dictionary);
     void Use(std::string_view raw);
     void Clear() noexcept {
       _dictionary.clear();
@@ -66,6 +67,7 @@ struct Lz4 {
 
    private:
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
+    bool Pack();
     void Attach();
 
     std::unique_ptr<LZ4_stream_t> _work;
@@ -113,6 +115,7 @@ struct Lz4Hc {
     explicit Compressor(uint8_t level);
 
     bool Train(std::string_view frames, std::span<const size_t> sizes);
+    bool Adopt(std::string_view dictionary);
     void Use(std::string_view raw);
     void Clear() noexcept {
       _dictionary.clear();
@@ -125,6 +128,7 @@ struct Lz4Hc {
 
    private:
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
+    bool Pack();
     void Attach();
 
     int _level;

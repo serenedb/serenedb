@@ -36,9 +36,9 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
-#include "iresearch/formats/column/codecs/string_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -47,14 +47,6 @@ namespace irs::codecs::text {
 
 inline constexpr uint64_t kEstimateEvery = 64;
 inline constexpr uint64_t kEstimateSteps = 16;
-inline constexpr uint64_t kDriftMinFraction = 4;
-
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
-                    const NumericTuning& tuning) noexcept;
-
-void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
-            uint64_t lcps_bytes, uint64_t codes_bytes,
-            uint64_t symtab_bytes) noexcept;
 
 class DedupScratch {
  public:
@@ -112,72 +104,80 @@ struct Segment {
   uint64_t Size() const noexcept { return head.size() + data.size(); }
 };
 
-struct Profile {
-  Shape shape = Shape::Dedup;
-  uint64_t rows = 0;
-  uint64_t runs = 0;
-  uint64_t raw = 0;
-  uint32_t max_len = 0;
-  std::vector<std::string_view> entries;
-};
-
-struct EncodedFrames {
-  ByteCodec codec = ByteCodec::Lz4;
-  std::span<const FrameMeta> frames;
-  uint32_t max_length = 0;
-  std::span<uint32_t> lcps;
-  uint32_t max_lcp = 0;
-  std::string_view symtab;
-  uint32_t dictionary_size = 0;
-  FrameDictionary flags = FrameDictionary::None;
-};
-
 class SegmentBuilder {
  public:
-  explicit SegmentBuilder(const StringAccumulator& acc,
-                          const duckdb::LogicalType& type, DedupScratch& dedup,
+  explicit SegmentBuilder(const duckdb::LogicalType& type, DedupScratch& dedup,
                           NumericTuning& codes_tuning)
-    : _acc{acc},
-      _stats{type},
-      _type{type},
-      _dedup{dedup},
-      _codes_tuning{codes_tuning} {}
+    : _stats{type}, _type{type}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
 
   template<typename Leaf>
-  void Begin(Leaf& leaf, const Config& config, uint64_t begin) {
+  void Begin(Leaf& leaf, const Config& config, uint64_t begin,
+             size_t distinct) {
     _shape = config.choice.shape;
     _level = config.level;
     _layout = config.layout;
     _next = begin;
+    _estimated_raw = _raw;
     if (_shape == Shape::Dedup) {
-      _dedup.Begin(_acc.entries.size());
+      _dedup.Begin(distinct);
     }
     leaf.Begin(_shape, _level, _layout);
   }
 
   template<typename Leaf>
-  uint64_t Cut(Leaf& leaf, uint32_t target) {
-    const uint64_t step = target / kEstimateSteps;
-    const uint64_t end = _acc.codes.size();
-    uint64_t estimated_raw = _raw;
-    while (_next < end) {
-      AddRow(leaf, _next++);
-      if (_rows % kEstimateEvery != 0 && _raw - estimated_raw < step) {
-        continue;
-      }
-      estimated_raw = _raw;
-      if (Estimate() + leaf.Estimate(*this) >= target) {
-        break;
-      }
+  IRS_FORCE_INLINE void AddValue(Leaf& leaf, const duckdb::string_t* value) {
+    SDB_ASSERT(_shape == Shape::Plain);
+    ++_next;
+    if (value) {
+      _input += value->GetSize();
+      _stats.Update(*value);
+      AppendEntry(leaf, *value);
+    } else {
+      _stats.SetHasNull();
+      ++_nulls;
+      AppendEntry(leaf, duckdb::string_t{});
     }
-    return _next;
+    ++_rows;
   }
 
   template<typename Leaf>
-  void AddUntil(Leaf& leaf, uint64_t end) {
-    while (_next < end) {
-      AddRow(leaf, _next++);
+  IRS_FORCE_INLINE void AddCode(
+    Leaf& leaf, uint32_t code,
+    std::span<const duckdb::string_t* const> values) {
+    if (_shape == Shape::Plain) {
+      AddValue(leaf, code == 0 ? nullptr : values[code - 1]);
+      return;
     }
+    ++_next;
+    if (code == 0) {
+      _stats.SetHasNull();
+      ++_nulls;
+      PushCode(0);
+      ++_rows;
+      return;
+    }
+    const auto& value = *values[code - 1];
+    _input += value.GetSize();
+    const auto [local, fresh] =
+      _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);
+    if (fresh) {
+      _stats.Update(value);
+      AppendEntry(leaf, value);
+    } else {
+      _stats.UpdateRepeated(value);
+    }
+    PushCode(local);
+    ++_rows;
+  }
+
+  template<typename Leaf>
+  IRS_FORCE_INLINE bool Full(Leaf& leaf, uint32_t target) {
+    if (_rows % kEstimateEvery != 0 &&
+        _raw - _estimated_raw < target / kEstimateSteps) {
+      return false;
+    }
+    _estimated_raw = _raw;
+    return Estimate() + leaf.Estimate(View()) >= target;
   }
 
   template<typename Leaf>
@@ -192,71 +192,40 @@ class SegmentBuilder {
       duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount()),
       0);
     const auto frames = leaf.Finish(
-      *this, std::span{_lengths}.subspan(FirstEntry(), _entries.size()));
+      View(), std::span{_lengths}.subspan(FirstEntry(), _entries.size()));
     WriteSegment(frames, leaf.Data(), out);
   }
 
+ private:
   uint32_t FirstEntry() const noexcept {
     return _shape == Shape::Dedup ? 1 : 0;
   }
 
   size_t EntryCount() const noexcept { return _entries.size() + FirstEntry(); }
 
-  std::span<const std::string_view> Entries() const noexcept {
-    return _entries;
+  SegmentEntries View() const noexcept {
+    return {
+      .entries = _entries,
+      .first_entry = FirstEntry(),
+      .raw = _raw,
+      .max_len = _max_len,
+      .first_row = _next - _rows,
+      .row_count = _rows,
+    };
   }
 
-  uint64_t Raw() const noexcept { return _raw; }
-
-  uint32_t MaxLen() const noexcept { return _max_len; }
-
- private:
   struct SortKey {
     uint64_t prefix;
     uint32_t entry;
   };
 
   template<typename Leaf>
-  IRS_FORCE_INLINE void AddRow(Leaf& leaf, uint64_t row) {
-    const auto code = _acc.codes[row];
-    if (code == 0) {
-      _stats.SetHasNull();
-      ++_nulls;
-      if (_shape == Shape::Dedup) {
-        PushCode(0);
-      } else {
-        AppendEntry(leaf, {});
-      }
-      ++_rows;
-      return;
-    }
-    const auto sv = _acc.entries[code - 1];
-    _input += sv.size();
-    const duckdb::string_t value{sv.data(), static_cast<uint32_t>(sv.size())};
-    if (_shape == Shape::Plain) {
-      _stats.Update(value);
-      AppendEntry(leaf, sv);
-      ++_rows;
-      return;
-    }
-    const auto [local, fresh] =
-      _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);
-    if (fresh) {
-      _stats.Update(value);
-      AppendEntry(leaf, sv);
-    } else {
-      _stats.UpdateRepeated(value);
-    }
-    PushCode(local);
-    ++_rows;
-  }
-
-  template<typename Leaf>
-  IRS_FORCE_INLINE void AppendEntry(Leaf& leaf, std::string_view sv) {
-    _entries.emplace_back(sv);
-    _max_len = std::max<uint32_t>(_max_len, static_cast<uint32_t>(sv.size()));
-    _raw += sv.size();
-    leaf.Append(sv, static_cast<uint32_t>(EntryCount()) - 1);
+  IRS_FORCE_INLINE void AppendEntry(Leaf& leaf, const duckdb::string_t& value) {
+    _entries.emplace_back(value);
+    const auto size = value.GetSize();
+    _max_len = std::max<uint32_t>(_max_len, size);
+    _raw += size;
+    leaf.Append(value, static_cast<uint32_t>(EntryCount()) - 1);
   }
 
   IRS_FORCE_INLINE void PushCode(uint32_t code) {
@@ -272,7 +241,6 @@ class SegmentBuilder {
   void WriteSegment(const EncodedFrames& frames, std::string& data,
                     Segment& out);
 
-  const StringAccumulator& _acc;
   duckdb::StatsWriter<duckdb::string_t> _stats;
   const duckdb::LogicalType& _type;
   DedupScratch& _dedup;
@@ -282,19 +250,20 @@ class SegmentBuilder {
   FrameLayout _layout = FrameLayout::FirstFrame;
   uint64_t _next = 0;
 
-  std::vector<std::string_view> _entries;
+  std::vector<duckdb::string_t> _entries;
   ScratchVector<uint32_t> _codes;
   uint64_t _rows = 0;
   uint64_t _runs = 0;
   uint32_t _last_code = 0;
   uint64_t _raw = 0;
+  uint64_t _estimated_raw = 0;
   uint32_t _max_len = 0;
   uint64_t _nulls = 0;
   uint64_t _input = 0;
 
   std::vector<SortKey> _order;
   std::vector<uint32_t> _remap;
-  std::vector<std::string_view> _sorted;
+  std::vector<duckdb::string_t> _sorted;
   std::vector<uint32_t> _lengths;
 };
 

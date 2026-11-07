@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/types/string_type.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -31,6 +32,8 @@
 #include <vector>
 
 namespace irs::codecs {
+
+inline constexpr size_t kFsstMaxExpansion = 8;
 
 struct FsstFree {
   void operator()(duckdb_fsst_encoder_t* encoder) const noexcept {
@@ -40,7 +43,8 @@ struct FsstFree {
 
 class FsstEncoder {
  public:
-  void Encode(std::span<const std::string_view> strings, std::string& out,
+  void Encode(std::span<const duckdb::string_t> strings,
+              std::span<const uint32_t> skip, std::string& out,
               std::vector<uint32_t>& lengths);
 
   std::string_view SymbolTable() const noexcept {

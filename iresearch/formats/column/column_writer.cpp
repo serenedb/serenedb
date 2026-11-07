@@ -49,7 +49,7 @@
 
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/string_writer.hpp"
+#include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -284,25 +284,31 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
     return CompressData(type, chunks, forced_method, meta.data);
   }
   const auto* named = codecs::ChoiceOf(forced_method);
-  codecs::StringAccumulator acc{!named || named->shape == codecs::Shape::Dedup};
   if (!meta.write_string_tuning) {
     meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
   }
   auto& tuning = *meta.write_string_tuning;
+  auto& blocks = WriteCtx().Blocks();
+  const auto sink = [&](codecs::StringChoice choice,
+                        duckdb::BaseStatistics stats, uint64_t rows,
+                        std::span<const std::string_view> parts) {
+    const auto& codec = *codecs::GetCodec(db, codecs::TypeOf(choice),
+                                          duckdb::PhysicalType::VARCHAR);
+    CaptureBlock(db, codec, std::move(stats), rows, parts, blocks, meta.data);
+  };
+  if (named && named->shape == codecs::Shape::Plain) {
+    return codecs::SealSegments(chunks, *named, _codec_params, type, tuning,
+                                sink)
+      .all_dedup;
+  }
+  codecs::StringAccumulator acc;
   acc.Reserve(row_count, tuning.last_distinct);
   for (auto& c : chunks) {
     acc.Add(c.data);
   }
-  tuning.last_distinct = acc.entries.size();
-  auto& blocks = WriteCtx().Blocks();
-  const auto outcome = codecs::SealSegments(
-    acc, named, _codec_params, type, tuning,
-    [&](codecs::StringChoice choice, duckdb::BaseStatistics stats,
-        uint64_t rows, std::span<const std::string_view> parts) {
-      const auto& codec = *codecs::GetCodec(db, codecs::TypeOf(choice),
-                                            duckdb::PhysicalType::VARCHAR);
-      CaptureBlock(db, codec, std::move(stats), rows, parts, blocks, meta.data);
-    });
+  tuning.last_distinct = acc.values.size();
+  const auto outcome =
+    codecs::SealSegments(acc, named, _codec_params, type, tuning, sink);
   if (outcome.sealed) {
     return outcome.all_dedup;
   }

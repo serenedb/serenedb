@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
-#include <absl/strings/match.h>
 
 #include <algorithm>
 #include <cstring>
@@ -38,33 +37,25 @@ namespace {
 using duckdb::BitpackingPrimitives;
 using duckdb::string_t;
 
-uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
+uint64_t PrefixKey(const string_t& value, size_t skip) noexcept {
   char buf[8] = {};
-  if (sv.size() > skip) {
-    std::memcpy(buf, sv.data() + skip,
-                std::min<size_t>(sv.size() - skip, sizeof buf));
+  const size_t size = value.GetSize();
+  if (size > skip) {
+    std::memcpy(buf, value.GetData() + skip,
+                std::min<size_t>(size - skip, sizeof buf));
   }
   return absl::big_endian::Load64(buf);
 }
 
+bool Less(const string_t& a, const string_t& b) noexcept {
+  const size_t a_size = a.GetSize();
+  const size_t b_size = b.GetSize();
+  const int cmp =
+    std::memcmp(a.GetData(), b.GetData(), std::min(a_size, b_size));
+  return cmp < 0 || (cmp == 0 && a_size < b_size);
+}
+
 }  // namespace
-
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
-                    const NumericTuning& tuning) noexcept {
-  return shape == Shape::Dedup ? EstimateCodes(tuning, rows, entries, runs) : 0;
-}
-
-void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
-            uint64_t lcps_bytes, uint64_t codes_bytes,
-            uint64_t symtab_bytes) noexcept {
-  h.off_frames = kHeaderSize;
-  h.off_lengths =
-    duckdb::AlignValue<uint64_t, 8>(kHeaderSize + frames * kFrameMetaSize);
-  h.off_lcps = duckdb::AlignValue<uint64_t, 8>(h.off_lengths + lengths_bytes);
-  h.off_codes = duckdb::AlignValue<uint64_t, 8>(h.off_lcps + lcps_bytes);
-  h.off_symtab = duckdb::AlignValue<uint64_t, 8>(h.off_codes + codes_bytes);
-  h.off_data = duckdb::AlignValue<uint64_t, 8>(h.off_symtab + symtab_bytes);
-}
 
 uint64_t SegmentBuilder::Estimate() const noexcept {
   return kHeaderSize + Packed(EntryCount(), _max_len) +
@@ -73,10 +64,9 @@ uint64_t SegmentBuilder::Estimate() const noexcept {
 
 void SegmentBuilder::SortEntries() {
   const auto n = static_cast<uint32_t>(_entries.size());
-  size_t common = _entries.empty() ? 0 : _entries[0].size();
+  uint32_t common = _entries.empty() ? 0 : _entries[0].GetSize();
   for (uint32_t i = 1; i < n && common != 0; ++i) {
-    common = std::min(
-      common, absl::FindLongestCommonPrefix(_entries[0], _entries[i]).size());
+    common = std::min(common, CommonPrefix(_entries[0], _entries[i]));
   }
   _order.resize(n);
   for (uint32_t i = 0; i < n; ++i) {
@@ -86,7 +76,7 @@ void SegmentBuilder::SortEntries() {
     if (a.prefix != b.prefix) {
       return a.prefix < b.prefix;
     }
-    return _entries[a.entry] < _entries[b.entry];
+    return Less(_entries[a.entry], _entries[b.entry]);
   });
   _remap.assign(n + 1, 0);
   _sorted.resize(n);

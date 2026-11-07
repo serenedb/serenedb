@@ -1,15 +1,24 @@
 target_sources(
     iresearch
     PRIVATE
+        column/codecs/calibration.cpp
         column/codecs/fsst.cpp
+        column/codecs/fsst12.cpp
+        column/codecs/fsst12_chain_encoder.cpp
         column/codecs/fsst_chain_encoder.cpp
+        column/codecs/fsst_plus.cpp
+        column/codecs/fsst_plus_encoder.cpp
+        column/codecs/leaf_encoder.cpp
         column/codecs/lz4.cpp
         column/codecs/numeric.cpp
+        column/codecs/onpair.cpp
+        column/codecs/onpair_encoder.cpp
         column/codecs/registry.cpp
         column/codecs/segment_builder.cpp
         column/codecs/segment_dictionary.cpp
+        column/codecs/segment_encoder.cpp
         column/codecs/string_scan.cpp
-        column/codecs/string_writer.cpp
+        column/codecs/string_seal.cpp
         column/codecs/zstd.cpp
         column/codecs/zxc.cpp
         column/col_file_writer.cpp

@@ -72,8 +72,17 @@ Lz4::Compressor::Compressor(uint8_t)
 
 bool Lz4::Compressor::Train(std::string_view frames,
                             std::span<const size_t> sizes) {
-  _stored.clear();
   TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
+  return Pack();
+}
+
+bool Lz4::Compressor::Adopt(std::string_view dictionary) {
+  _dictionary.assign(dictionary);
+  return Pack();
+}
+
+bool Lz4::Compressor::Pack() {
+  _stored.clear();
   if (_dictionary.empty()) {
     return false;
   }
@@ -134,8 +143,17 @@ Lz4Hc::Compressor::Compressor(uint8_t level)
 
 bool Lz4Hc::Compressor::Train(std::string_view frames,
                               std::span<const size_t> sizes) {
-  _stored.clear();
   TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
+  return Pack();
+}
+
+bool Lz4Hc::Compressor::Adopt(std::string_view dictionary) {
+  _dictionary.assign(dictionary);
+  return Pack();
+}
+
+bool Lz4Hc::Compressor::Pack() {
+  _stored.clear();
   if (_dictionary.empty()) {
     return false;
   }

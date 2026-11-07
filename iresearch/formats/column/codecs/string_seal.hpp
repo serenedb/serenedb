@@ -21,54 +21,26 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/hash/hash.h>
 
+#include <array>
+#include <bit>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
-#include <memory>
-#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/numeric.hpp"
+#include "iresearch/formats/column/codecs/string_tuning.hpp"
+#include "iresearch/formats/column/list_ingest.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs {
-
-struct RatioHistory {
-  uint64_t raw = 0;
-  uint64_t comp = 0;
-};
-
-constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
-  if (hist.raw != 0) {
-    return static_cast<double>(hist.comp) / static_cast<double>(hist.raw);
-  }
-  return empty;
-}
-
-enum class FrameLayout : uint8_t {
-  FirstFrame = 0,
-  Wide = 1,
-  Local = 2,
-};
-
-struct StringTuning {
-  std::optional<StringChoice> choice;
-  double bytes_per_input = 0;
-  bool levels_tuned = false;
-  CalibrationClock clock;
-  uint64_t last_distinct = 0;
-  uint8_t level[kByteCodecCount]{};
-  FrameLayout layout[kByteCodecCount]{};
-  RatioHistory history[kByteCodecCount][2]{};
-  NumericTuning codes;
-};
 
 struct SealOutcome {
   bool sealed = false;
@@ -77,20 +49,63 @@ struct SealOutcome {
 
 class StringAccumulator {
  public:
-  explicit StringAccumulator(bool dedup) noexcept : _dedup{dedup} {}
+  StringAccumulator() = default;
+  StringAccumulator(const StringAccumulator&) = delete;
+  StringAccumulator& operator=(const StringAccumulator&) = delete;
 
   void Reserve(uint64_t rows, uint64_t distinct);
   void Add(const duckdb::Vector& input);
 
+  uint64_t Rows() const noexcept { return codes.size(); }
+
   uint64_t null_count = 0;
-  std::vector<std::string_view> entries;
+  std::vector<const duckdb::string_t*> values;
   ScratchVector<uint32_t> codes;
 
  private:
-  containers::FlatHashMap<std::string_view, uint32_t> _map;
-  bool _dedup;
+  using Values = std::vector<const duckdb::string_t*>;
+
+  struct Hash {
+    using is_transparent = void;
+
+    size_t operator()(const duckdb::string_t& value) const noexcept {
+      if (value.IsInlined()) {
+        return absl::HashOf(std::bit_cast<std::array<uint64_t, 2>>(value));
+      }
+      return absl::HashOf(std::string_view{value.GetData(), value.GetSize()});
+    }
+
+    size_t operator()(uint32_t code) const noexcept {
+      return (*this)(*(*values)[code - 1]);
+    }
+
+    const Values* values;
+  };
+
+  struct Eq {
+    using is_transparent = void;
+
+    bool operator()(uint32_t lhs, uint32_t rhs) const noexcept {
+      return lhs == rhs;
+    }
+
+    bool operator()(uint32_t code,
+                    const duckdb::string_t& value) const noexcept {
+      return *(*values)[code - 1] == value;
+    }
+
+    bool operator()(const duckdb::string_t& value,
+                    uint32_t code) const noexcept {
+      return *(*values)[code - 1] == value;
+    }
+
+    const Values* values;
+  };
+
+  containers::FlatHashSet<uint32_t, Hash, Eq> _distinct{0, Hash{&values},
+                                                        Eq{&values}};
   uint32_t _last_code = 0;
-  duckdb::string_t _last;
+  const duckdb::string_t* _last = nullptr;
 };
 
 using SegmentSink = absl::FunctionRef<void(
@@ -99,6 +114,12 @@ using SegmentSink = absl::FunctionRef<void(
 
 SealOutcome SealSegments(const StringAccumulator& acc,
                          const StringChoice* named,
+                         const ColCodecParams& params,
+                         const duckdb::LogicalType& type, StringTuning& tuning,
+                         SegmentSink sink);
+
+SealOutcome SealSegments(std::span<const WriteChunk> chunks,
+                         const StringChoice& named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          SegmentSink sink);

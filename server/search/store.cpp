@@ -238,9 +238,9 @@ void Store::Open() {
     manifest = [this] { return GetFileManifest(); };
   }
 
-  auto [writer, stamp] =
-    _durability.OpenWriter(*_dir, Path(), opened.on_disk, _is_new,
-                           std::move(writer_options), std::move(manifest));
+  auto [writer, stamp] = _durability.OpenWriter(
+    *_dir, Path(), opened.on_disk, _is_new, !IsSearchTable(),
+    std::move(writer_options), std::move(manifest));
   _writer = std::move(writer);
   SetFileManifest(std::move(stamp.manifest));
   if (IsSearchTable()) {

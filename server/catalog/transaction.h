@@ -48,6 +48,7 @@
 #include "catalog/log.h"
 #include "search/store.h"
 #include "search/writes.h"
+#include "utils/drain_gate.h"
 
 namespace sdb::catalog {
 
@@ -196,6 +197,10 @@ class Transactions final {
   absl::Status TruncateLog(
     bool switch_chunk,
     duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT);
+  [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
+    duckdb::ClientContext& context) {
+    return _checkpoints.Close(context);
+  }
 
   duckdb::transaction_t Begin();
   duckdb::transaction_t Advance(duckdb::transaction_t snapshot);
@@ -251,6 +256,7 @@ class Transactions final {
   std::atomic<bool> _truncating{false};
   std::atomic<bool> _preparing_spare{false};
   absl::Mutex _truncate_mutex;
+  utils::DrainGate _checkpoints;
 };
 
 class CommittedView final {

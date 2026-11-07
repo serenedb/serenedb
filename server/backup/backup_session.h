@@ -77,6 +77,7 @@ class BackupSession final {
 
   absl::Mutex _mutex;
   bool _active ABSL_GUARDED_BY(_mutex) = false;
+  utils::DrainGate::Closed _checkpoints ABSL_GUARDED_BY(_mutex);
   utils::DrainGate::Closed _maintenance ABSL_GUARDED_BY(_mutex);
   std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> _pins
     ABSL_GUARDED_BY(_mutex);

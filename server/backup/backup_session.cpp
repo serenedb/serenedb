@@ -127,6 +127,8 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
     catalog::RemoveTree(backup_dir);
   };
 
+  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
+  auto checkpoints = catalog::Transactions::Get().CloseCheckpoints(context);
   catalog::DeferRemovals();
   absl::Cleanup resume_removals = [] { catalog::ResumeRemovals(); };
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
@@ -141,6 +143,7 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
   std::move(remove_backup_dir).Cancel();
 
   // Noexcept committing of backup start
+  _checkpoints = std::move(checkpoints);
   _maintenance = std::move(maintenance);
   _pins = std::move(pins);
   _backup_dir = std::move(backup_dir);
@@ -181,6 +184,7 @@ void BackupSession::End() noexcept {
 
 void BackupSession::Stop() noexcept {
   _maintenance.reset();
+  _checkpoints.reset();
   catalog::ResumeRemovals();
   _pins.clear();
   catalog::RemoveTree(_backup_dir);

@@ -288,6 +288,10 @@ statement ok
 INSERT INTO sdl_oids SELECT 'sdl_db', oid FROM pg_database WHERE datname = 'sdl_db';
 
 
+statement ok
+CHECKPOINT sdl_db;
+
+
 query
 SELECT count(*) > 0 AS stored FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
 WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM sdl_oids WHERE name = 'sdl_db') || '/%';

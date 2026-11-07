@@ -440,6 +440,11 @@ absl::Status Transactions::TruncateLog(bool switch_chunk,
   if (!_log || _replaying != 0) {
     return absl::OkStatus();
   }
+  const auto pass = _checkpoints.TryEnter();
+  if (!pass) {
+    return absl::FailedPreconditionError(
+      "cannot checkpoint while a backup is in progress");
+  }
   absl::MutexLock round{&_truncate_mutex};
   Lsn target = 0;
   {

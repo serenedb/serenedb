@@ -73,14 +73,6 @@ INSERT INTO bcw_plain VALUES (1);
 
 
 connection default
-query ok retry 40 backoff 250ms
-SELECT count(*) AS committed FROM bcw_plain;
-----
-committed
-1
-
-
-connection default
 query
 SELECT count(*) AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
 ----
@@ -94,6 +86,14 @@ SET sdb_faults = 'pause_search_commit_before_irs:release';
 
 
 wait
+
+
+connection default
+query
+SELECT count(*) AS committed FROM bcw_plain;
+----
+committed
+1
 
 
 statement ok

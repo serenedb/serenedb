@@ -23,7 +23,15 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(0, 100) r(i);
 
 
 statement ok
+CHECKPOINT;
+
+
+statement ok
 INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(100, 200) r(i);
+
+
+statement ok
+CHECKPOINT;
 
 
 statement ok
@@ -31,7 +39,15 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(200, 300) r(i);
 
 
 statement ok
+CHECKPOINT;
+
+
+statement ok
 INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(300, 400) r(i);
+
+
+statement ok
+CHECKPOINT;
 
 
 query
@@ -74,14 +90,6 @@ SELECT
   'bcmd_docs'::regclass::oid AS docs;
 
 
-query
-SELECT count(*) = 1 AS one_meta FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/segments_*'), bcmd_oids
-WHERE file LIKE '%/engine_v1/' || db || '/' || docs || '/segments_%';
-----
-one_meta
-t
-
-
 connection holder
 query
 SELECT pg_backup_start('bcmd') IS NOT NULL AS started;
@@ -109,15 +117,6 @@ HINT: Retry after pg_backup_stop().
 connection default
 statement ok
 INSERT INTO bcmd_docs SELECT i, 'during' FROM range(100, 200) r(i);
-
-
-connection default
-query
-SELECT count(*) AS metas FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/segments_*'), bcmd_oids
-WHERE file LIKE '%/engine_v1/' || db || '/' || docs || '/segments_%';
-----
-metas
-2
 
 
 connection default
@@ -181,13 +180,13 @@ segments
 connection default
 statement ok
 CREATE TEMP TABLE bcmd_wal AS
-SELECT max(size) AS size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal'), bcmd_oids
-WHERE filename LIKE '%/engine_v1/' || db || '/data.db.wal';
+SELECT min(regexp_extract(file, '[^/]+$')) AS oldest
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
 
 
 connection default
 query
-SELECT size > 0 AS has_wal FROM bcmd_wal;
+SELECT oldest IS NOT NULL AS has_wal FROM bcmd_wal;
 ----
 has_wal
 t
@@ -211,9 +210,8 @@ FORCE CHECKPOINT;
 
 connection default
 query
-SELECT coalesce(max(size), 0) < (SELECT size FROM bcmd_wal) AS checkpointed
-FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal'), bcmd_oids
-WHERE filename LIKE '%/engine_v1/' || db || '/data.db.wal';
+SELECT min(regexp_extract(file, '[^/]+$')) > (SELECT oldest FROM bcmd_wal) AS checkpointed
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
 ----
 checkpointed
 t

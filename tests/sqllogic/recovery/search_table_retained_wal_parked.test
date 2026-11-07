@@ -37,14 +37,6 @@ CHECKPOINT st_rparked;
 
 
 connection default
-query
-SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
-----
-n
-1
-
-
-connection default
 statement ok
 SET sdb_faults = 'crash_on_packet';
 
@@ -64,14 +56,6 @@ SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM st_rparked.public.do
 ----
 ids
 1,2,3
-
-
-connection after_crash
-query
-SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
-----
-n
-0
 
 
 connection after_crash

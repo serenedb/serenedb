@@ -76,7 +76,7 @@ IndexDurability::IndexDurability(duckdb::idx_t db_id, std::string name)
 
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
 IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
-                            bool on_disk, bool is_new,
+                            bool on_disk, bool is_new, bool keeps_meta,
                             irs::IndexWriterOptions options,
                             ManifestSource manifest) {
   _path = std::move(path);
@@ -94,7 +94,9 @@ IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
   if (!on_disk || is_new) {
     auto writer =
       irs::IndexWriter::Make(dir, irs::OpenMode::kOmCreate, std::move(options));
-    writer->RefreshCommit();
+    if (keeps_meta) {
+      writer->RefreshCommit();
+    }
     return {std::move(writer), std::move(stamp)};
   }
   RemovePendingSave(dir);

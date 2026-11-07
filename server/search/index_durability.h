@@ -53,7 +53,8 @@ class IndexDurability {
 
   std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp> OpenWriter(
     irs::Directory& dir, std::filesystem::path path, bool on_disk, bool is_new,
-    irs::IndexWriterOptions options, ManifestSource manifest = nullptr);
+    bool keeps_meta, irs::IndexWriterOptions options,
+    ManifestSource manifest = nullptr);
 
   void Commit(irs::IndexWriter& writer,
               const irs::ProgressReportCallback& progress);

@@ -22,21 +22,6 @@ INSERT INTO order_docs VALUES (-1, 'm6');
 
 
 statement ok
-SET sdb_faults = 'search_commit_prepared';
-
-
-connection writer
-statement async ok
-INSERT INTO order_docs VALUES (-2, 'm5');
-
-
-connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-search_commit_prepared:parked';
-
-
-connection default
-statement ok
 SET sdb_faults = 'pause_search_cooling';
 
 
@@ -50,6 +35,21 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_cooling:parked';
 
 
+connection default
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+
+connection writer
+statement async ok
+INSERT INTO order_docs VALUES (-2, 'm5');
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+
 connection other
 statement ok
 INSERT INTO order_docs VALUES (-3, 'm4');
@@ -61,7 +61,11 @@ SET sdb_faults = 'search_commit_prepared:release';
 
 
 connection writer
-wait
+query
+SELECT count(*) AS n FROM order_docs WHERE id < 0;
+----
+n
+3
 
 
 connection default

@@ -264,6 +264,25 @@ bool Intersects(const irs::DocumentMask& docs, const irs::DocumentMask* now,
   return conflict;
 }
 
+bool Conflicting(const TableState& state, uint64_t id,
+                 const irs::DocumentMask& docs, Tick snapshot) {
+  const auto* unit = FindUnit(state, id);
+  if (!unit) {
+    return false;
+  }
+  if (Intersects(docs, LatestDeletes(*unit), DeletesAt(*unit, snapshot))) {
+    return true;
+  }
+  if (unit->replaced_at == 0) {
+    return false;
+  }
+  return absl::c_any_of(unit->maps, [&](const irs::DocMap& map) {
+    irs::DocumentMaskBuilder moved;
+    return irs::MapDocs(map, docs, moved) &&
+           Conflicting(state, map.target, std::move(moved).Finish(), snapshot);
+  });
+}
+
 }  // namespace
 
 irs::doc_id_t HotDocs(const irs::IndexWriter::Transaction& trx) noexcept {
@@ -592,9 +611,7 @@ void ThrowConcurrentUpdate() {
 bool Table::Conflicts(Tick snapshot, const irs::DocRemoval& removal) const {
   const auto state = State();
   return absl::c_any_of(removal.groups, [&](const auto& group) {
-    const auto* unit = FindUnit(*state, group.segment);
-    return unit && Intersects(group.docs, LatestDeletes(*unit),
-                              DeletesAt(*unit, snapshot));
+    return Conflicting(*state, group.segment, group.docs, snapshot);
   });
 }
 

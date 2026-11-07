@@ -1070,25 +1070,19 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       it->keys.clear();
       it->checked = 0;
       it->complete = true;
-      for (const auto& removal : w.changes.removals) {
-        for (const auto& group : removal->groups) {
-          std::shared_ptr<const irs::SegmentReaderImpl> reader;
-          if (const auto* unit = now.Find(group.segment)) {
-            reader = w.store->GetTable().UnitReader(*unit->unit);
-          } else if (const auto own = absl::c_find_if(
-                       w.own_segments,
-                       [&](const OwnSegment& segment) {
-                         return segment.reader->Id() == group.segment;
-                       });
-                     own != w.own_segments.end()) {
-            reader = own->reader;
-          }
-          if (reader) {
-            ForEachRowKey(
-              context, *spec, *reader, group.docs,
-              [&](std::string_view key) { it->keys.emplace_back(key); });
-          }
+      const auto collect = [&](const irs::SubReader& reader,
+                               const irs::DocumentMaskBuilder* removed) {
+        if (removed) {
+          ForEachRowKey(
+            context, *spec, reader, irs::DocumentMaskBuilder{*removed}.Finish(),
+            [&](std::string_view key) { it->keys.emplace_back(key); });
         }
+      };
+      for (const auto& unit : now.Units()) {
+        collect(*w.store->GetTable().UnitReader(*unit.unit), unit.removed);
+      }
+      for (const auto& segment : w.own_segments) {
+        collect(*segment.reader, now.Removed(segment.reader->Id()));
       }
       for (auto& child : w.related_checked) {
         child.second.reset();
@@ -1230,10 +1224,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context,
     auto& table = w.store->GetTable();
     for (auto& removal : w.changes.removals) {
       table.CheckConflicts(snapshot, *removal);
-      if (auto resolved = table.Resolve(removal); resolved != removal) {
-        table.CheckConflicts(snapshot, *resolved);
-        removal = std::move(resolved);
-      }
+      removal = table.Resolve(removal);
       if (!removal->groups.empty()) {
         w.log.push_back(LogRemoval(*removal));
       }

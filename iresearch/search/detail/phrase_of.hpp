@@ -144,16 +144,8 @@ Result Build(PhraseKind<M>, const Query& query, uint64_t, F&& f) {
   return BuildPhrase<M, Scored>(query, std::forward<F>(f));
 }
 
-template<PhraseMatch M>
-std::optional<score_t> ConstantOf(PhraseKind<M>, const FixedPhraseQuery& query,
-                                  const ScoreArgs& args) {
-  return ConstantOf(query.Segment(), *query.state.reader, args,
-                    M == PhraseMatch::Slop);
-}
-
-template<PhraseMatch M>
-std::optional<score_t> ConstantOf(PhraseKind<M>,
-                                  const VariadicPhraseQuery& query,
+template<PhraseMatch M, typename Query>
+std::optional<score_t> ConstantOf(PhraseKind<M>, const Query& query,
                                   const ScoreArgs& args) {
   return ConstantOf(query.Segment(), *query.state.reader, args,
                     M == PhraseMatch::Slop || !query.state.boosts.empty());

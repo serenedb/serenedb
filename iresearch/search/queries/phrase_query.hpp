@@ -98,40 +98,25 @@ class PhraseQuery : public QueryBuilder {
   bool has_intervals;
 };
 
-class FixedPhraseQuery
-  : public QueryBuilderImpl<FixedPhraseQuery, PhraseQuery> {
+template<bool Fixed>
+class PhraseQueryOf
+  : public QueryBuilderImpl<PhraseQueryOf<Fixed>, PhraseQuery> {
+  using Base = QueryBuilderImpl<PhraseQueryOf, PhraseQuery>;
+
  public:
-  FixedPhraseQuery(const SubReader& segment, PhraseState&& state,
-                   Positions&& positions, score_t boost,
-                   PosAttr::value_t slop = 0) noexcept
-    : QueryBuilderImpl{segment, std::move(state), std::move(positions), boost,
-                       slop} {
-    SDB_ASSERT(this->state.Fixed());
+  PhraseQueryOf(const SubReader& segment, PhraseState&& state,
+                PhraseQuery::Positions&& positions, score_t boost,
+                PosAttr::value_t slop = 0) noexcept
+    : Base{segment, std::move(state), std::move(positions), boost, slop} {
+    SDB_ASSERT(this->state.Fixed() == Fixed);
   }
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
-    visitor.Visit(*this, state, boost * this->boost);
+    visitor.Visit(*this, this->state, boost * this->boost);
   }
 };
 
 extern template class QueryBuilderImpl<FixedPhraseQuery, PhraseQuery>;
-
-class VariadicPhraseQuery
-  : public QueryBuilderImpl<VariadicPhraseQuery, PhraseQuery> {
- public:
-  VariadicPhraseQuery(const SubReader& segment, PhraseState&& state,
-                      Positions&& positions, score_t boost,
-                      PosAttr::value_t slop = 0) noexcept
-    : QueryBuilderImpl{segment, std::move(state), std::move(positions), boost,
-                       slop} {
-    SDB_ASSERT(!this->state.Fixed());
-  }
-
-  void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
-    visitor.Visit(*this, state, boost * this->boost);
-  }
-};
-
 extern template class QueryBuilderImpl<VariadicPhraseQuery, PhraseQuery>;
 
 }  // namespace irs

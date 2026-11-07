@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/codecs/fsst12_chain_encoder.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/match.h>
 
 #include <algorithm>
 #include <duckdb/common/bitpacking.hpp>
@@ -39,36 +38,33 @@ EncodedFrames Fsst12ChainEncoder::Finish(const SegmentEntries& rows,
                                          std::span<uint32_t> lengths) {
   const auto entries = rows.entries;
   const auto first_entry = rows.first_entry;
-  _suffixes.clear();
   _lcp_stream.assign(first_entry, 0);
   _frames.clear();
   uint32_t max_lcp = 0;
-  std::string_view prev;
   uint64_t frame_raw = 0;
   uint64_t frame_first = 0;
   for (size_t i = 0; i < entries.size(); ++i) {
-    const std::string_view sv{entries[i].GetData(), entries[i].GetSize()};
-    if (frame_raw != 0 && frame_raw + sv.size() > kFsstFrameRawBytes) {
+    const auto& entry = entries[i];
+    const auto size = entry.GetSize();
+    if (frame_raw != 0 && frame_raw + size > kFsstFrameRawBytes) {
       _frames.emplace_back(static_cast<uint32_t>(frame_first),
                            static_cast<uint32_t>(frame_raw), 0, 0);
       frame_raw = 0;
       frame_first = i;
     }
-    const uint32_t lcp =
-      (i - frame_first) % kChainRestart == 0
-        ? 0
-        : static_cast<uint32_t>(absl::FindLongestCommonPrefix(prev, sv).size());
+    const uint32_t lcp = (i - frame_first) % kChainRestart == 0
+                           ? 0
+                           : CommonPrefix(entries[i - 1], entry);
     _lcp_stream.emplace_back(lcp);
     max_lcp = std::max(max_lcp, lcp);
-    _suffixes.emplace_back(sv.substr(lcp));
-    frame_raw += sv.size();
-    prev = sv;
+    frame_raw += size;
   }
   if (!entries.empty()) {
     _frames.emplace_back(static_cast<uint32_t>(frame_first),
                          static_cast<uint32_t>(frame_raw), 0, 0);
   }
-  _codec.Encode(_suffixes, _data, _entry_lengths);
+  _codec.Encode(entries, std::span{_lcp_stream}.subspan(first_entry), _data,
+                _entry_lengths);
   size_t off = 0;
   uint32_t max_enc = 0;
   for (size_t f = 0; f < _frames.size(); ++f) {

@@ -20,12 +20,13 @@
 
 #pragma once
 
+#include <absl/strings/match.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types/string_type.hpp>
 #include <span>
 #include <string_view>
-#include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
@@ -49,6 +50,14 @@ inline size_t EntryCount(const SegmentEntries& rows) noexcept {
   return rows.entries.size() + rows.first_entry;
 }
 
+inline uint32_t CommonPrefix(const duckdb::string_t& a,
+                             const duckdb::string_t& b) noexcept {
+  return static_cast<uint32_t>(
+    absl::FindLongestCommonPrefix({a.GetData(), a.GetSize()},
+                                  {b.GetData(), b.GetSize()})
+      .size());
+}
+
 struct EncodedFrames {
   ByteCodec codec = ByteCodec::Lz4;
   std::span<const FrameMeta> frames;
@@ -66,8 +75,14 @@ struct Profile {
   uint64_t runs = 0;
   uint64_t raw = 0;
   uint32_t max_len = 0;
-  std::vector<duckdb::string_t> entries;
+  std::span<const duckdb::string_t> values;
+  std::span<const uint32_t> codes;
 };
+
+inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
+  const auto code = p.codes[i];
+  return code == 0 ? duckdb::string_t{} : p.values[code - 1];
+}
 
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
                     const NumericTuning& tuning) noexcept;

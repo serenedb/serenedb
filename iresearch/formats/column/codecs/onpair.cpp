@@ -171,20 +171,21 @@ uint32_t OnPairCodec::Insert(std::string_view token) {
   return it->second;
 }
 
-OnPairCodec::Match OnPairCodec::Longest(std::string_view rest) const {
-  if (rest.size() > 1) {
+OnPairCodec::Match OnPairCodec::Longest(const char* rest, size_t left) const {
+  if (left > 1) {
     uint32_t lengths = (*_lengths)[static_cast<uint8_t>(rest[0]) |
                                    (static_cast<uint8_t>(rest[1]) << 8)] &
-                       ((1u << std::min<size_t>(rest.size(), 16)) - 1);
+                       ((1u << std::min<size_t>(left, kOnPairMaxToken)) - 1);
     while (lengths > 1) {
       const auto len = static_cast<uint32_t>(std::bit_width(lengths));
-      if (const auto it = _ids.find(rest.substr(0, len)); it != _ids.end()) {
+      if (const auto it = _ids.find(std::string_view{rest, len});
+          it != _ids.end()) {
         return {it->second, len};
       }
       lengths &= ~(1u << (len - 1));
     }
   }
-  return {_ids.find(rest.substr(0, 1))->second, 1};
+  return {_ids.find(std::string_view{rest, 1})->second, 1};
 }
 
 void OnPairCodec::Train(std::span<const duckdb::string_t> entries,
@@ -200,19 +201,20 @@ void OnPairCodec::Train(std::span<const duckdb::string_t> entries,
   bool stop = false;
   for (uint64_t start = 0; start < stride && !stop; ++start) {
     for (uint64_t i = start; i < entries.size() && !stop; i += stride) {
-      const std::string_view row{entries[i].GetData(), entries[i].GetSize()};
-      if (row.empty()) {
+      const auto& row = entries[i];
+      const size_t size = row.GetSize();
+      if (size == 0) {
         continue;
       }
-      auto prev = Longest(row.substr(0, std::min<size_t>(row.size(), 16)));
+      const char* data = row.GetData();
+      auto prev = Longest(data, size);
       size_t pos = prev.len;
       if (ctrl.Scan(prev.len)) {
         stop = true;
         break;
       }
-      while (pos < row.size()) {
-        const auto cur =
-          Longest(row.substr(pos, std::min<size_t>(row.size() - pos, 16)));
+      while (pos < size) {
+        const auto cur = Longest(data + pos, size - pos);
         if (ctrl.Scan(cur.len)) {
           stop = true;
           break;
@@ -223,7 +225,7 @@ void OnPairCodec::Train(std::span<const duckdb::string_t> entries,
           auto& count = _pairs[key];
           count = count == kMaxThreshold ? count : count + 1;
           if (count >= ctrl.Threshold()) {
-            const auto id = Insert(row.substr(pos - prev.len, pair_len));
+            const auto id = Insert({data + pos - prev.len, pair_len});
             if (_tokens.size() == cap) {
               stop = true;
               break;

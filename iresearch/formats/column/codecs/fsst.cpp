@@ -151,42 +151,24 @@ void FsstEncoder::Reset() noexcept {
   _table_size = 0;
 }
 
-void FsstEncoder::Encode(std::span<const std::string_view> strings,
-                         std::string& out, std::vector<uint32_t>& lengths) {
-  const size_t n = strings.size();
-  _in_lengths.resize(n);
-  _in_ptrs.resize(n);
-  size_t total = 0;
-  for (size_t i = 0; i < n; ++i) {
-    _in_lengths[i] = strings[i].size();
-    _in_ptrs[i] =
-      reinterpret_cast<unsigned char*>(const_cast<char*>(strings[i].data()));
-    total += strings[i].size();
-  }
-  Compress(n, total, out, lengths);
-}
-
 void FsstEncoder::Encode(std::span<const duckdb::string_t> strings,
-                         std::string& out, std::vector<uint32_t>& lengths) {
+                         std::span<const uint32_t> skip, std::string& out,
+                         std::vector<uint32_t>& lengths) {
+  SDB_ASSERT(skip.size() == strings.size());
   const size_t n = strings.size();
-  _in_lengths.resize(n);
-  _in_ptrs.resize(n);
-  size_t total = 0;
-  for (size_t i = 0; i < n; ++i) {
-    _in_lengths[i] = strings[i].GetSize();
-    _in_ptrs[i] =
-      reinterpret_cast<unsigned char*>(const_cast<char*>(strings[i].GetData()));
-    total += _in_lengths[i];
-  }
-  Compress(n, total, out, lengths);
-}
-
-void FsstEncoder::Compress(size_t n, size_t total, std::string& out,
-                           std::vector<uint32_t>& lengths) {
   if (n == 0) {
     out.clear();
     lengths.clear();
     return;
+  }
+  _in_lengths.resize(n);
+  _in_ptrs.resize(n);
+  size_t total = 0;
+  for (size_t i = 0; i < n; ++i) {
+    _in_lengths[i] = strings[i].GetSize() - skip[i];
+    _in_ptrs[i] = reinterpret_cast<unsigned char*>(
+      const_cast<char*>(strings[i].GetData() + skip[i]));
+    total += _in_lengths[i];
   }
   if (!_encoder) {
     _encoder.reset(

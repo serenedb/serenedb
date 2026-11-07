@@ -71,10 +71,12 @@ class StringAccumulator {
     const duckdb::string_t* _entries;
   };
 
-  void Reserve(uint64_t rows, uint64_t distinct);
+  void Reserve(uint64_t rows, const analysis::dict::ClassSizes& distinct);
   void Add(const duckdb::Vector& input);
 
   uint64_t Rows() const noexcept { return codes.size(); }
+
+  analysis::dict::ClassSizes Distinct() const noexcept { return _map.Sizes(); }
 
   Cursor At(uint64_t row) const noexcept { return {*this, row}; }
 

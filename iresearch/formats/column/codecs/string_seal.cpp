@@ -20,9 +20,12 @@
 
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <duckdb/common/types/string_type.hpp>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/calibration.hpp"
@@ -40,11 +43,23 @@ uint64_t PlainStorageBytes(const text::Segment& seg) noexcept {
 
 }  // namespace
 
-void StringAccumulator::Reserve(uint64_t rows, uint64_t distinct) {
+static_assert(std::is_same_v<decltype(StringTuning::last_distinct),
+                             analysis::dict::ClassSizes>);
+
+void StringAccumulator::Reserve(uint64_t rows,
+                                const analysis::dict::ClassSizes& distinct) {
   codes.reserve(rows);
-  const auto expected = distinct == 0 ? rows : std::min(rows, distinct);
-  entries.reserve(expected);
-  _map.Reserve(expected);
+  const uint64_t expected = absl::c_accumulate(distinct, uint64_t{0});
+  if (expected == 0) {
+    entries.reserve(rows);
+    _map.Reserve(rows);
+    return;
+  }
+  analysis::dict::ClassSizes sizes;
+  absl::c_transform(distinct, sizes.begin(),
+                    [&](size_t n) { return std::min<size_t>(n, rows); });
+  entries.reserve(std::min(rows, expected));
+  _map.Reserve(sizes);
 }
 
 void StringAccumulator::Add(const duckdb::Vector& input) {

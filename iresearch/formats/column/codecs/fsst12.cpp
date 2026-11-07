@@ -47,8 +47,10 @@ void Fsst12Encoder::Reset() noexcept {
   _table_size = 0;
 }
 
-void Fsst12Encoder::Encode(std::span<const std::string_view> strings,
-                           std::string& out, std::vector<uint32_t>& lengths) {
+void Fsst12Encoder::Encode(std::span<const duckdb::string_t> strings,
+                           std::span<const uint32_t> skip, std::string& out,
+                           std::vector<uint32_t>& lengths) {
+  SDB_ASSERT(skip.size() == strings.size());
   const size_t n = strings.size();
   if (n == 0) {
     out.clear();
@@ -59,9 +61,10 @@ void Fsst12Encoder::Encode(std::span<const std::string_view> strings,
   _in_ptrs.resize(n);
   size_t total = 0;
   for (size_t i = 0; i < n; ++i) {
-    _in_lengths[i] = strings[i].size();
-    _in_ptrs[i] = reinterpret_cast<const unsigned char*>(strings[i].data());
-    total += strings[i].size();
+    _in_lengths[i] = strings[i].GetSize() - skip[i];
+    _in_ptrs[i] =
+      reinterpret_cast<const unsigned char*>(strings[i].GetData() + skip[i]);
+    total += _in_lengths[i];
   }
   if (!_encoder) {
     _encoder.reset(

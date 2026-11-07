@@ -152,8 +152,8 @@ class BlobEncoder {
   uint64_t Price(const Profile& p, uint8_t level, FrameLayout layout,
                  uint64_t begin) {
     Configure(level, layout);
-    for (uint64_t i = 0; i < p.entries.size(); ++i) {
-      Add(i, p.entries[i].GetSize());
+    for (uint64_t i = 0; i < p.codes.size(); ++i) {
+      Add(i, EntryOf(p, i).GetSize());
     }
     Close();
     uint64_t data = 0;
@@ -161,15 +161,12 @@ class BlobEncoder {
       const bool whole =
         _layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames;
       if (whole) {
-        _frame.clear();
-        for (const auto& entry : p.entries) {
-          _frame.append(entry.GetData(), entry.GetSize());
-        }
+        Assemble(p, 0, p.codes.size());
         Sizes();
         _trained = Train(begin, p.rows, p.shape);
       }
       const auto frame = [&](size_t i) {
-        return whole ? Slice(i) : Assemble(p.entries, _spans[i]);
+        return whole ? Slice(i) : Assemble(p, _spans[i].first, _spans[i].end);
       };
       if (_trained) {
         data += _codec->Stored().size();
@@ -193,11 +190,10 @@ class BlobEncoder {
       hist.raw += p.raw;
       hist.comp += data;
     }
-    const auto entry_count =
-      p.entries.size() + (p.shape == Shape::Dedup ? 1 : 0);
+    const auto entry_count = p.codes.size() + (p.shape == Shape::Dedup ? 1 : 0);
     Header h;
     LayOut(h, _spans.size(), Packed(entry_count, p.max_len), 0,
-           CodesBytes(p.shape, p.rows, p.entries.size(), p.runs, _tuning.codes),
+           CodesBytes(p.shape, p.rows, p.codes.size(), p.runs, _tuning.codes),
            0);
     return h.off_data + data;
   }
@@ -319,11 +315,11 @@ class BlobEncoder {
                                            _spans[i].raw);
   }
 
-  std::string_view Assemble(std::span<const duckdb::string_t> entries,
-                            const Span& span) {
+  std::string_view Assemble(const Profile& p, size_t first, size_t end) {
     _frame.clear();
-    for (auto k = span.first; k < span.end; ++k) {
-      _frame.append(entries[k].GetData(), entries[k].GetSize());
+    for (auto k = first; k < end; ++k) {
+      const auto entry = EntryOf(p, k);
+      _frame.append(entry.GetData(), entry.GetSize());
     }
     return _frame;
   }

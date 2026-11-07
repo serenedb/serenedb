@@ -23,7 +23,6 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
@@ -64,7 +63,6 @@ class FsstChainEncoder {
   std::vector<FrameMeta> _frames;
   std::string _data;
   std::vector<uint32_t> _entry_lengths;
-  std::vector<std::string_view> _suffixes;
   std::vector<uint32_t> _lcp_stream;
 };
 

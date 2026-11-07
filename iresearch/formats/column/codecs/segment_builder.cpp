@@ -22,13 +22,11 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
-#include <absl/strings/match.h>
 
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/helper.hpp>
-#include <duckdb/common/operator/comparison_operators.hpp>
 #include <limits>
 
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -49,10 +47,14 @@ uint64_t PrefixKey(const string_t& value, size_t skip) noexcept {
   return absl::big_endian::Load64(buf);
 }
 
-size_t CommonPrefix(const string_t& a, const string_t& b) noexcept {
-  return absl::FindLongestCommonPrefix({a.GetData(), a.GetSize()},
-                                       {b.GetData(), b.GetSize()})
-    .size();
+bool LessAfter(const string_t& a, const string_t& b, size_t equal) noexcept {
+  const size_t a_size = a.GetSize();
+  const size_t b_size = b.GetSize();
+  const size_t size = std::min(a_size, b_size);
+  const size_t skip = std::min(equal, size);
+  const int cmp =
+    std::memcmp(a.GetData() + skip, b.GetData() + skip, size - skip);
+  return cmp < 0 || (cmp == 0 && a_size < b_size);
 }
 
 }  // namespace
@@ -64,7 +66,7 @@ uint64_t SegmentBuilder::Estimate() const noexcept {
 
 void SegmentBuilder::SortEntries() {
   const auto n = static_cast<uint32_t>(_entries.size());
-  size_t common = _entries.empty() ? 0 : _entries[0].GetSize();
+  uint32_t common = _entries.empty() ? 0 : _entries[0].GetSize();
   for (uint32_t i = 1; i < n && common != 0; ++i) {
     common = std::min(common, CommonPrefix(_entries[0], _entries[i]));
   }
@@ -76,7 +78,8 @@ void SegmentBuilder::SortEntries() {
     if (a.prefix != b.prefix) {
       return a.prefix < b.prefix;
     }
-    return duckdb::LessThan::Operation(_entries[a.entry], _entries[b.entry]);
+    return LessAfter(_entries[a.entry], _entries[b.entry],
+                     common + sizeof(uint64_t));
   });
   _remap.assign(n + 1, 0);
   _sorted.resize(n);

@@ -88,8 +88,6 @@ class SegmentEncoder {
   const Profile& Measure(const StringAccumulator& acc, Shape shape,
                          uint64_t begin, uint64_t end);
 
-  void Append(const duckdb::string_t& value);
-
   Segment* Acquire();
 
   const ColCodecParams& _params;
@@ -101,6 +99,7 @@ class SegmentEncoder {
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;
   Profile _profile;
+  std::vector<uint32_t> _profile_codes;
   uint64_t _profile_begin = 0;
   uint64_t _profile_end = 0;
   bool _measured = false;

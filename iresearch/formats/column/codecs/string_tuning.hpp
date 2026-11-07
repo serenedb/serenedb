@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -51,7 +53,7 @@ struct StringTuning {
   double bytes_per_input = 0;
   bool levels_tuned = false;
   CalibrationClock clock;
-  uint64_t last_distinct = 0;
+  std::array<size_t, 3> last_distinct{};
   uint8_t level[kByteCodecCount]{};
   FrameLayout layout[kByteCodecCount]{};
   RatioHistory history[kByteCodecCount][2]{};

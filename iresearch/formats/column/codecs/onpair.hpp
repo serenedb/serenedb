@@ -128,7 +128,7 @@ class OnPairCodec {
 
   void Reset();
   uint32_t Insert(std::string_view token);
-  Match Longest(std::string_view rest) const;
+  Match Longest(const char* rest, size_t left) const;
   void Finalize();
 
   absl::flat_hash_map<std::string, uint32_t> _ids;

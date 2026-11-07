@@ -303,7 +303,7 @@ void PointLookup(benchmark::State& state, Corpus corpus, size_t arm) {
 
 struct FsstFrames {
   std::vector<std::string> strings;
-  std::vector<std::string_view> views;
+  std::vector<duckdb::string_t> views;
   std::string encoded;
   std::vector<uint32_t> lengths;
   irs::codecs::FsstEncoder encoder;
@@ -318,9 +318,10 @@ struct FsstFrames {
       raw += strings.back().size();
     }
     for (const auto& s : strings) {
-      views.emplace_back(s);
+      views.emplace_back(s.data(), static_cast<uint32_t>(s.size()));
     }
-    encoder.Encode(views, encoded, lengths);
+    const std::vector<uint32_t> skip(views.size(), 0);
+    encoder.Encode(views, skip, encoded, lengths);
     decoder.Import(encoder.SymbolTable());
   }
 };

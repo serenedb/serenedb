@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/types/string_type.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -42,7 +43,8 @@ struct Fsst12Free {
 
 class Fsst12Encoder {
  public:
-  void Encode(std::span<const std::string_view> strings, std::string& out,
+  void Encode(std::span<const duckdb::string_t> strings,
+              std::span<const uint32_t> skip, std::string& out,
               std::vector<uint32_t>& lengths);
 
   std::string_view SymbolTable() const noexcept {

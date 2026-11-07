@@ -506,13 +506,17 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
     s.resize(length);
     strings.emplace_back(std::move(s));
   }
-  const std::vector<std::string_view> views{strings.begin(), strings.end()};
+  std::vector<duckdb::string_t> values;
+  for (const auto& s : strings) {
+    values.emplace_back(s.data(), static_cast<uint32_t>(s.size()));
+  }
+  const std::vector<uint32_t> skip(values.size(), 0);
 
   irs::codecs::FsstEncoder encoder;
   std::string batch;
   std::vector<uint32_t> lengths;
-  encoder.Encode(views, batch, lengths);
-  ASSERT_EQ(views.size(), lengths.size());
+  encoder.Encode(values, skip, batch, lengths);
+  ASSERT_EQ(values.size(), lengths.size());
 
   irs::codecs::FsstDecoder decoder;
   ASSERT_TRUE(decoder.Import(encoder.SymbolTable()));
@@ -520,17 +524,17 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   std::vector<uint32_t> single_lengths;
   std::string decoded;
   size_t offset = 0;
-  for (size_t i = 0; i < views.size(); ++i) {
+  for (size_t i = 0; i < values.size(); ++i) {
     const std::string_view encoded{batch.data() + offset, lengths[i]};
     offset += lengths[i];
-    encoder.Encode(std::span<const std::string_view>{&views[i], 1}, single,
+    encoder.Encode(std::span{&values[i], 1}, std::span{&skip[i], 1}, single,
                    single_lengths);
     ASSERT_EQ(encoded, single)
-      << "string " << i << ", " << views[i].size() << " bytes";
-    decoded.resize(views[i].size() + 8);
+      << "string " << i << ", " << strings[i].size() << " bytes";
+    decoded.resize(strings[i].size() + 8);
     const auto size = decoder.Decode(encoded.data(), encoded.size(),
                                      decoded.data(), decoded.size());
-    ASSERT_EQ(views[i], std::string_view(decoded.data(), size));
+    ASSERT_EQ(strings[i], std::string_view(decoded.data(), size));
   }
   EXPECT_EQ(batch.size(), offset);
 }

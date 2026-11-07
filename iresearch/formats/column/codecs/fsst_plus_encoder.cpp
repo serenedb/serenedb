@@ -56,14 +56,14 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
   const auto entries = rows.entries;
   const auto first_entry = rows.first_entry;
   const auto n = entries.size();
-  _codec.Encode(entries, _encoded, _encoded_lengths);
+  _shared.assign(n, 0);
+  _codec.Encode(entries, _shared, _encoded, _encoded_lengths);
   _codes.resize(n);
   uint64_t at = 0;
   for (size_t i = 0; i < n; ++i) {
     _codes[i] = std::string_view{_encoded}.substr(at, _encoded_lengths[i]);
     at += _encoded_lengths[i];
   }
-  _shared.assign(n, 0);
   _ids.assign(first_entry + n, 0);
   _ends.clear();
   _prefixes.clear();

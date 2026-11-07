@@ -146,15 +146,22 @@ const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,
   p.runs = 0;
   p.raw = 0;
   p.max_len = 0;
-  p.entries.clear();
+  p.values = acc.entries;
+  const auto add = [&](uint32_t code) {
+    const auto size = static_cast<uint32_t>(acc.entries[code - 1].GetSize());
+    p.raw += size;
+    p.max_len = std::max(p.max_len, size);
+  };
   if (shape == Shape::Plain) {
-    auto cursor = acc.At(begin);
-    for (auto row = begin; row < end; ++row) {
-      const auto* value = cursor.Value();
-      Append(value ? *value : duckdb::string_t{"", 0});
+    p.codes = std::span{acc.codes}.subspan(begin, end - begin);
+    for (const auto code : p.codes) {
+      if (code != 0) {
+        add(code);
+      }
     }
     return p;
   }
+  _profile_codes.clear();
   _dedup.Begin(acc.entries.size());
   uint32_t last = 0;
   for (auto row = begin; row < end; ++row) {
@@ -162,10 +169,11 @@ const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,
     uint32_t local = 0;
     if (code != 0) {
       const auto mapped =
-        _dedup.Local(code, static_cast<uint32_t>(p.entries.size()) + 1);
+        _dedup.Local(code, static_cast<uint32_t>(_profile_codes.size()) + 1);
       local = mapped.local;
       if (mapped.fresh) {
-        Append(acc.entries[code - 1]);
+        _profile_codes.push_back(code);
+        add(code);
       }
     }
     if (row == begin || local != last) {
@@ -173,14 +181,8 @@ const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,
     }
     last = local;
   }
+  p.codes = _profile_codes;
   return p;
-}
-
-void SegmentEncoder::Append(const duckdb::string_t& value) {
-  _profile.entries.push_back(value);
-  const auto size = value.GetSize();
-  _profile.raw += size;
-  _profile.max_len = std::max<uint32_t>(_profile.max_len, size);
 }
 
 Segment* SegmentEncoder::Acquire() {

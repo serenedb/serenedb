@@ -103,6 +103,7 @@ inline bool IsInvertedIndex(const duckdb::IndexCatalogEntry& entry) {
 // schema's text search dictionaries first, so a dictionary of either name
 // shadows the built-in; the parenthesised form always selects the built-in.
 inline constexpr std::string_view kIncludedKind = "included";
+inline constexpr std::string_view kPlainKind = "plain";
 inline constexpr std::string_view kIVFKind = "ivf";
 inline constexpr std::string_view kHNSWKind = "hnsw";
 

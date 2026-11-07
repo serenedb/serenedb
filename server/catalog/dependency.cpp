@@ -1168,6 +1168,28 @@ duckdb::idx_t ReferencedTableOid(const duckdb::TableCatalogEntry& table,
   return 0;
 }
 
+bool ReferencedByForeignKey(duckdb::CatalogTransaction transaction,
+                            const duckdb::TableCatalogEntry& table) {
+  bool referenced = false;
+  table.catalog.Cast<BaseCatalog>().Oids().ForEachDependent(
+    transaction, table.oid, [&](duckdb::CatalogEntry& member) {
+      if (referenced || member.type != duckdb::CatalogType::TABLE_ENTRY ||
+          member.oid == table.oid) {
+        return;
+      }
+      const auto& referencing = member.Cast<duckdb::TableCatalogEntry>();
+      referenced = absl::c_any_of(
+        referencing.GetConstraints(), [&](const auto& constraint) {
+          return constraint->type == duckdb::ConstraintType::FOREIGN_KEY &&
+                 ReferencedTableOid(
+                   referencing,
+                   constraint->template Cast<duckdb::ForeignKeyConstraint>()) ==
+                   table.oid;
+        });
+    });
+  return referenced;
+}
+
 void FollowColumnRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& table,
                         const duckdb::Identifier& old_column,

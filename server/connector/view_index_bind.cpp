@@ -43,6 +43,7 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/file_manifest.h"
+#include "connector/inverted_index_bind.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
@@ -271,17 +272,18 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
 duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   catalog::SearchTableEntry& table,
-  duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan, bool plain) {
   auto& context = binder.context;
   auto info = TakeInfo(stmt);
   if (info->index_type != catalog::kInvertedIndexTypeName) {
+    if (!duckdb::DBConfig::GetConfig(context).GetIndexTypes().FindByName(
+          info->index_type)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("access method \"", info->index_type, "\" does not exist"));
+    }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("only inverted indexes are supported on a table"));
-  }
-  if (info->where_clause) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("partial indexes are not supported on a search-backed table"));
   }
   const auto* writes =
     catalog::SessionOf(context, table.catalog).SearchWrites();
@@ -308,6 +310,29 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   expressions.reserve(info->expressions.size());
   for (auto& expr : info->expressions) {
     expressions.emplace_back(index_binder.BindKey(expr));
+  }
+  if (plain) {
+    info->column_opclasses.resize(expressions.size());
+    info->column_opclass_options.resize(expressions.size());
+    for (size_t i = 0; i < expressions.size(); ++i) {
+      if (info->column_opclasses[i].empty() &&
+          !TermDictIndexable(expressions[i]->GetReturnType())) {
+        info->column_opclasses[i] = catalog::kPlainKind;
+        info->column_opclass_options[i].emplace();
+      }
+    }
+  }
+  if (info->where_clause) {
+    if (info->constraint_type == duckdb::IndexConstraintType::UNIQUE) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("partial unique indexes are not supported on a table"));
+    }
+    duckdb::IndexBinder where_binder(binder, context, &table, info.get());
+    where_binder.target_type = duckdb::LogicalType::BOOLEAN;
+    where_binder.SetCatalogLookupCallback(lookup_callback);
+    auto where_copy = info->where_clause->Copy();
+    where_binder.BindKey(where_copy);
   }
 
   auto& get = plan->Cast<duckdb::LogicalGet>();

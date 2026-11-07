@@ -376,9 +376,6 @@ indexname
 ix_jobs_label
 
 
-# --- An index on a column after the dropped one is duckdb's storage limit: the
-# --- index would have to renumber its columns. The drop is refused whole.
-
 statement ok
 CREATE TYPE vedernikoff_clickclack_types.priority AS ENUM ('low','high');
 
@@ -395,23 +392,6 @@ statement ok
 CREATE INDEX ix_later_label ON vedernikoff_clickclack_data.later(label);
 
 
-statement error
-DROP TYPE vedernikoff_clickclack_types.priority CASCADE;
-----
-db error: ERROR: Cannot drop this column: an index depends on a column after it!
-
-
-query
-SELECT count(*) AS n FROM duckdb_types() WHERE schema_name = 'vedernikoff_clickclack_types' AND type_name = 'priority';
-----
-n
-1
-
-
-statement ok
-DROP INDEX vedernikoff_clickclack_data.ix_later_label;
-
-
 statement ok
 DROP TYPE vedernikoff_clickclack_types.priority CASCADE;
 
@@ -423,6 +403,14 @@ SELECT column_name FROM information_schema.columns
 column_name
 id
 label
+
+
+query
+SELECT indexname FROM pg_indexes
+  WHERE schemaname = 'vedernikoff_clickclack_data' AND tablename = 'later' ORDER BY indexname;
+----
+indexname
+ix_later_label
 
 
 statement ok

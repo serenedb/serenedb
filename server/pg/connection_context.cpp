@@ -53,6 +53,7 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "connector/functions/ai/common.h"
+#include "connector/iresearch_replacement_scan.h"
 #include "pg/catalog/oids.h"
 #include "server/utils/app_server.h"
 
@@ -544,6 +545,7 @@ void ConnectionContext::OnTransactionRollback(duckdb::MetaTransaction&) {
 
 void ConnectionContext::OnBoundPlan(duckdb::Binder& binder,
                                     duckdb::LogicalOperator& plan) {
+  connector::FilterPartialIndexScans(*this, plan);
   auth::EnforcePlan(*this, *this, binder, plan);
 }
 

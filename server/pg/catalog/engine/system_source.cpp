@@ -29,7 +29,9 @@
 #include <iresearch/utils/assert.hpp>
 #include <limits>
 
+#include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/dependency.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/oids.h"
@@ -316,7 +318,9 @@ bool SystemScan::Triggered(const duckdb::TableCatalogEntry& table) const {
     bool triggered = false;
     member.ScanTriggers(Transaction(),
                         [&](duckdb::CatalogEntry&) { triggered = true; });
-    return triggered;
+    return triggered ||
+           (catalog::IsSereneDB(member.catalog) &&
+            catalog::ReferencedByForeignKey(Transaction(), member));
   };
   if (!_walked) {
     return any(table);

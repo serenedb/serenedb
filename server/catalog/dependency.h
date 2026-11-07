@@ -85,6 +85,9 @@ void FollowReferences(duckdb::CatalogTransaction transaction,
 duckdb::idx_t ReferencedTableOid(const duckdb::TableCatalogEntry& table,
                                  const duckdb::ForeignKeyConstraint& fk);
 
+bool ReferencedByForeignKey(duckdb::CatalogTransaction transaction,
+                            const duckdb::TableCatalogEntry& table);
+
 void FollowColumnRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& table,
                         const duckdb::Identifier& old_column,

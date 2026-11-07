@@ -165,7 +165,8 @@ INSERT INTO uq_col VALUES (1, 'y')
 statement error
 INSERT INTO uq_col VALUES (2, 'y')
 ----
-db error: ERROR: Duplicate key "k: y" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "uq_col_k"
+DETAIL: Key (k)=(y) already exists.
 
 
 statement ok

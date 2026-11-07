@@ -260,4 +260,3 @@ INSERT INTO uq_struct VALUES (4, {'a': 3});
 ----
 db error: ERROR: duplicate key value violates unique constraint "uq_struct_k_key"
 DETAIL: Key (k)=({'a': 3}) already exists.
-

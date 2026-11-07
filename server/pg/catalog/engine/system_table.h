@@ -989,7 +989,8 @@ class SystemScan {
   const SystemIndex* Choose(std::span<const SystemIndex> indexes,
                             size_t name_probes) const;
   std::string_view NamePrefix(std::span<const SystemIndex> indexes) const;
-  duckdb::optional_ptr<duckdb::CatalogEntry> FindOwner(duckdb::idx_t oid) const {
+  duckdb::optional_ptr<duckdb::CatalogEntry> FindOwner(
+    duckdb::idx_t oid) const {
     return _database.LookupOwner(Transaction(), oid);
   }
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(

@@ -38,8 +38,8 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
-#include "catalog/transaction.h"
 #include "catalog/entry/subscription.h"
+#include "catalog/transaction.h"
 #include "network/pg/wire_frames.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
@@ -354,9 +354,9 @@ catalog::SereneDBCatalog& SyncSession::Catalog() const {
 
 catalog::SubscriptionCatalogEntry* SyncSession::VisibleSubscription() const {
   auto& catalog = Catalog();
-  auto entry = catalog.LookupOid(
-    catalog.GetCatalogTransaction(*this->_conn->context),
-    _target.subscription_oid);
+  auto entry =
+    catalog.LookupOid(catalog.GetCatalogTransaction(*this->_conn->context),
+                      _target.subscription_oid);
   if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
     return nullptr;
   }

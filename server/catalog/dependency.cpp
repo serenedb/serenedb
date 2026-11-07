@@ -648,16 +648,14 @@ void Rewrite(duckdb::CatalogTransaction transaction, const Edge& edge,
   auto& dependent = *edge.dependent;
   if (dependent.type == duckdb::CatalogType::INDEX_ENTRY &&
       edge.part == Part::Whole) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot rename ",
-              absl::AsciiStrToLower(
-                duckdb::CatalogTypeToString(edge.subject->type)),
-              " \"",
-              edge.subject->name.GetIdentifierName(),
-              "\" because other objects depend on it"),
-      ERR_DETAIL("index \"", dependent.name.GetIdentifierName(),
-                 "\" depends on it by name"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    ERR_MSG("cannot rename ",
+                            absl::AsciiStrToLower(
+                              duckdb::CatalogTypeToString(edge.subject->type)),
+                            " \"", edge.subject->name.GetIdentifierName(),
+                            "\" because other objects depend on it"),
+                    ERR_DETAIL("index \"", dependent.name.GetIdentifierName(),
+                               "\" depends on it by name"));
   }
   Rewriter rewriter{transaction, dependent,  *edge.subject,
                     kind,        new_schema, new_name};

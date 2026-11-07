@@ -41,9 +41,10 @@
 #include "search/table.h"
 
 namespace sdb::catalog {
-class SearchTableEntry;
-}  // namespace sdb::catalog
 
+class SearchTableEntry;
+
+}  // namespace sdb::catalog
 namespace sdb::search {
 
 enum class KeyKind : uint8_t {

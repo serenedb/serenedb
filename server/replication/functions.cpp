@@ -157,9 +157,9 @@ std::optional<Origin> FindOrigin(duckdb::ClientContext& context,
     return std::nullopt;
   }
   auto& cluster = catalog::ClusterOf(context);
-  auto entry = cluster.Set(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
-                 .Get(cluster.GetCatalogTransaction(context),
-                      duckdb::Identifier{name});
+  auto entry =
+    cluster.Set(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
+      .Get(cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
   if (!entry) {
     return std::nullopt;
   }

@@ -193,15 +193,15 @@ class HttpSession final
       }
       const auto& role = login.role;
 
-      _conn = MakeConnection(
-        irs::DuckDBEngine::Instance().instance(),
-        {.user = user,
-         .role = role,
-         .database = dbname,
-         .database_id = database_id,
-         .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
-         .cancel_registry = _cancel,
-         .client_backend = true});
+      _conn =
+        MakeConnection(irs::DuckDBEngine::Instance().instance(),
+                       {.user = user,
+                        .role = role,
+                        .database = dbname,
+                        .database_id = database_id,
+                        .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
+                        .cancel_registry = _cancel,
+                        .client_backend = true});
       _conn->context->SetSchedulerAccount(_task->Account());
       _connection_ctx = &ConnectionContext::Get(*_conn->context);
       _cancel_token->role.store(role, std::memory_order_relaxed);

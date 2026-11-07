@@ -429,7 +429,8 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
                                           duckdb::CreateStatement& stmt,
                                           duckdb::CatalogEntry& table) {
   auto& info = stmt.info->Cast<duckdb::CreateIndexInfo>();
-  if (info.index_type == "ART" || absl::EqualsIgnoreCase(info.index_type, "btree")) {
+  if (info.index_type == "ART" ||
+      absl::EqualsIgnoreCase(info.index_type, "btree")) {
     info.index_type = kInvertedIndexTypeName;
   }
   const bool inverted = info.index_type == kInvertedIndexTypeName;

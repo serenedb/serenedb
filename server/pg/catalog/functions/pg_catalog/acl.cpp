@@ -681,8 +681,8 @@ struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
     SDB_ASSERT(session.database);
-    if (const auto entry = session.database->Servers().Get(
-          *session.transaction, Identifier{name})) {
+    if (const auto entry = session.database->Servers().Get(*session.transaction,
+                                                           Identifier{name})) {
       return entry->oid;
     }
     ThrowUndefinedObject("server", name);

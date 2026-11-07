@@ -613,7 +613,8 @@ duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
     duckdb::IndexInfo info{
       .is_unique = true, .is_primary = false, .is_foreign = false};
     for (const auto& column : _columns.Physical()) {
-      if (absl::c_linear_search(key.columns, connector::TableColumnId(column))) {
+      if (absl::c_linear_search(key.columns,
+                                connector::TableColumnId(column))) {
         info.column_set.insert(column.Physical().index);
       }
     }
@@ -1171,8 +1172,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AddKeyConstraint(
         !HasNotNull(GetConstraints(),
                     added->Cast<duckdb::NotNullConstraint>().index)) {
       altered->VerifyExistingRows(
-        context, duckdb::BoundNotNullConstraint{altered->_columns.LogicalToPhysical(
-                   added->Cast<duckdb::NotNullConstraint>().index)});
+        context,
+        duckdb::BoundNotNullConstraint{altered->_columns.LogicalToPhysical(
+          added->Cast<duckdb::NotNullConstraint>().index)});
     }
   }
   altered->Backfill(context, 0, nullptr);
@@ -1211,8 +1213,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropConstraint(
       if (!info.cascade) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-          ERR_MSG("cannot drop constraint ", info.constraint_name,
-                  " on table ", name.GetIdentifierName(),
+          ERR_MSG("cannot drop constraint ", info.constraint_name, " on table ",
+                  name.GetIdentifierName(),
                   " because other objects depend on it"),
           ERR_DETAIL("constraint ", child.spec->constraint, " on table ",
                      child.table->name.GetIdentifierName(),
@@ -1315,7 +1317,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropColumn(
       if (entry.type != duckdb::CatalogType::SEQUENCE_ENTRY) {
         continue;
       }
-      const auto owner = entry.Cast<duckdb::SequenceCatalogEntry>().owner_column;
+      const auto owner =
+        entry.Cast<duckdb::SequenceCatalogEntry>().owner_column;
       if (column && owner.IsValid() && owner.GetIndex() == column) {
         entry.ParentSchema(transaction).Cast<Schema>().Drop(transaction, entry);
       }

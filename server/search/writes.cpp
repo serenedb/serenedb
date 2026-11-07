@@ -100,7 +100,6 @@ const KeySpec* UniqueSpec(const StoreWrites& w, irs::field_id field) {
   return it == w.keys.end() ? nullptr : &*it;
 }
 
-
 // Visits the keys under unique key `spec` of rows `docs` of `segment`.
 void ForEachRowKey(duckdb::ClientContext& context, const KeySpec& spec,
                    const irs::SubReader& segment, const irs::DocumentMask& docs,
@@ -111,12 +110,11 @@ void ForEachRowKey(duckdb::ClientContext& context, const KeySpec& spec,
   }
   std::vector<irs::ColumnstoreProjection> projections;
   for (size_t i = 0; i != spec.key.columns.size(); ++i) {
-    projections.push_back(
-      {.output_slot = i, .column_id = spec.key.columns[i]});
+    projections.push_back({.output_slot = i, .column_id = spec.key.columns[i]});
   }
   irs::ColFilterStateCache filter_states;
-  connector::FullScanner scanner{*columns, projections, {}, &context,
-                                 filter_states};
+  connector::FullScanner scanner{
+    *columns, projections, {}, &context, filter_states};
   duckdb::DataChunk chunk;
   chunk.Initialize(
     duckdb::Allocator::Get(context),
@@ -445,12 +443,14 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
         &segment);
     }
     for (const auto& spec : specs) {
-      auto& keys = removed.emplace_back(
-        StoreWrites::RemovedKeys{.field = spec.key.field});
+      auto& keys =
+        removed.emplace_back(StoreWrites::RemovedKeys{.field = spec.key.field});
       for (const auto& group : removal->groups) {
-        if (const auto it = segments.find(group.segment); it != segments.end()) {
-          ForEachRowKey(context, spec, *it->second, group.docs,
-                        [&](std::string_view key) { keys.keys.emplace_back(key); });
+        if (const auto it = segments.find(group.segment);
+            it != segments.end()) {
+          ForEachRowKey(
+            context, spec, *it->second, group.docs,
+            [&](std::string_view key) { keys.keys.emplace_back(key); });
         }
       }
     }
@@ -604,10 +604,12 @@ class TableRows {
  public:
   TableRows(const Store& store, const StoreWrites* own)
     : _own{own},
-      _live{store.GetTable().State(),
-            own ? std::span<const std::shared_ptr<const irs::DocRemoval>>{
-                    own->changes.removals}
-                : std::span<const std::shared_ptr<const irs::DocRemoval>>{}} {}
+      _live{
+        store.GetTable().State(),
+        own
+          ? std::span<const std::shared_ptr<const irs::DocRemoval>>{own->changes
+                                                                      .removals}
+          : std::span<const std::shared_ptr<const irs::DocRemoval>>{}} {}
 
   const LiveUnits& Live() const noexcept { return _live; }
 
@@ -662,8 +664,7 @@ StoreWrites* Writes::Related(const Store& store, StoreWrites& w) {
 
 void Writes::CheckReferences(StoreWrites& w, const KeySpec& spec,
                              std::span<const std::string> keys) {
-  const auto* parent =
-    ReferencedTable(*w.table, spec, Latest(*w.table));
+  const auto* parent = ReferencedTable(*w.table, spec, Latest(*w.table));
   if (!parent || spec.referenced_field == 0) {
     ThrowMissingReference(*w.table, spec, keys.front());
   }
@@ -799,10 +800,11 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
       existing.Add(OwnSegmentSource(w.own_segments[i], live));
     }
     if (w.keyed_rows != 0) {
-      existing.Add(KeyProbe::Hot{.unit = rows_id,
-                                 .keys = &w.buffered_keys,
-                                 .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
-                                 .masks = {.removed = live.Removed(rows_id)}});
+      existing.Add(
+        KeyProbe::Hot{.unit = rows_id,
+                      .keys = &w.buffered_keys,
+                      .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
+                      .masks = {.removed = live.Removed(rows_id)}});
     }
     auto& keys = fresh[spec];
     absl::c_sort(keys);
@@ -950,8 +952,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
             ERR_DETAIL("Table \"", child.table->name.GetIdentifierName(),
                        "\" references \"", w.table->name.GetIdentifierName(),
                        "\"."),
-            ERR_HINT("Truncate table \"",
-                     child.table->name.GetIdentifierName(),
+            ERR_HINT("Truncate table \"", child.table->name.GetIdentifierName(),
                      "\" at the same time, or use TRUNCATE ... CASCADE."));
         }
       }
@@ -1025,7 +1026,8 @@ void Writes::NoteConflicts(Tick snapshot) {
   for (const auto& [store_id, w] : _writes) {
     absl::ReaderMutexLock lock{&w.mutex};
     for (const auto& removal : w.changes.removals) {
-      _conflict = _conflict || w.store->GetTable().Conflicts(snapshot, *removal);
+      _conflict =
+        _conflict || w.store->GetTable().Conflicts(snapshot, *removal);
     }
   }
 }
@@ -1073,8 +1075,9 @@ void Writes::PrepareCommit(duckdb::ClientContext& context, Tick snapshot) {
                 chunk, changes.column_ids, key,
                 static_cast<irs::doc_id_t>(irs::doc_limits::min() + first),
                 [&](std::string_view value, irs::doc_id_t doc) {
-                  w.hot_keys.push_back(
-                    {.field = key.field, .key = std::string{value}, .doc = doc});
+                  w.hot_keys.push_back({.field = key.field,
+                                        .key = std::string{value},
+                                        .doc = doc});
                 });
             }
             connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,

@@ -64,8 +64,8 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
-#include "catalog/transaction.h"
 #include "catalog/entry/subscription.h"
+#include "catalog/transaction.h"
 #include "network/asio_awaitable.h"
 #include "network/pg/wire_frames.h"
 #include "network/server.h"

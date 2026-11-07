@@ -26,8 +26,8 @@
 
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/create_sort_key.hpp>
 #include <iresearch/utils/assert.hpp>
 
@@ -63,10 +63,10 @@ void EncodeConstraintKeys(duckdb::DataChunk& chunk,
       input.data[i].Reference(chunk.data[slots[i]]);
     }
   } else {
-    input.Initialize(duckdb::Allocator::DefaultAllocator(),
-                     duckdb::vector<duckdb::LogicalType>{key.types.begin(),
-                                                         key.types.end()},
-                     count);
+    input.Initialize(
+      duckdb::Allocator::DefaultAllocator(),
+      duckdb::vector<duckdb::LogicalType>{key.types.begin(), key.types.end()},
+      count);
     for (size_t i = 0; i != slots.size(); ++i) {
       if (types[i] == key.types[i]) {
         input.data[i].Reference(chunk.data[slots[i]]);

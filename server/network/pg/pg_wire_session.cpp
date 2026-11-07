@@ -478,17 +478,17 @@ bool PgWireSession<Kind>::SetupConnection() {
   const auto role = login.role;
   const bool superuser = login.superuser;
 
-  _conn = MakeConnection(
-    irs::DuckDBEngine::Instance().instance(),
-    {.user = user,
-     .system_user = _system_user,
-     .role = role,
-     .database = DatabaseName(),
-     .database_id = database_id,
-     .send_buffer = &this->_send,
-     .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
-     .cancel_registry = _cancel,
-     .client_backend = true});
+  _conn =
+    MakeConnection(irs::DuckDBEngine::Instance().instance(),
+                   {.user = user,
+                    .system_user = _system_user,
+                    .role = role,
+                    .database = DatabaseName(),
+                    .database_id = database_id,
+                    .send_buffer = &this->_send,
+                    .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
+                    .cancel_registry = _cancel,
+                    .client_backend = true});
   _conn->context->SetSchedulerAccount(this->_task->Account());
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = &ConnectionContext::Get(*_conn->context);
@@ -2028,9 +2028,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     payload.remove_prefix(sizeof(uint32_t));
     param_oids.push_back(oid);
     if (oid != 0 && oid != sdb::pg::kUnknown && !IsNumericOid(oid)) {
-      type_hints.emplace(
-        absl::StrCat(i + 1),
-        sdb::pg::Oid2Type(oid, *_connection_ctx));
+      type_hints.emplace(absl::StrCat(i + 1),
+                         sdb::pg::Oid2Type(oid, *_connection_ctx));
     }
   }
 
@@ -2407,8 +2406,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
     return;
   }
-  WriteRowDescription(this->_send, *_connection_ctx,
-                      prepared.GetTypes(), prepared.GetNames(), {});
+  WriteRowDescription(this->_send, *_connection_ctx, prepared.GetTypes(),
+                      prepared.GetNames(), {});
 }
 
 template<SocketKind Kind>
@@ -2433,9 +2432,8 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
   // The client now knows this portal's shape, so rows from this plan are no
   // longer ones it would decode against a descriptor it never saw.
   portal.stmt->MarkDescribed(prepared);
-  WriteRowDescription(this->_send, *_connection_ctx,
-                      prepared.GetTypes(), prepared.GetNames(),
-                      portal.bind_info.output_formats);
+  WriteRowDescription(this->_send, *_connection_ctx, prepared.GetTypes(),
+                      prepared.GetNames(), portal.bind_info.output_formats);
 }
 
 template<SocketKind Kind>

@@ -145,16 +145,15 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
               duckdb::CatalogType::SEQUENCE_ENTRY,
               duckdb::CatalogType::MACRO_ENTRY, duckdb::CatalogType::TYPE_ENTRY,
               duckdb::CatalogType::TOKENIZER_ENTRY}) {
-          schema.Set(type).Scan(
-            transaction, [&](duckdb::CatalogEntry& entry) {
-              state.rows.push_back(
-                {.schema = schema.name.GetIdentifierName(),
-                 .entry_type = duckdb::CatalogTypeToString(entry.type),
-                 .name = entry.name.GetIdentifierName(),
-                 .entry_oid = entry.oid,
-                 .visible = true});
-              members.push_back(&entry);
-            });
+          schema.Set(type).Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+            state.rows.push_back(
+              {.schema = schema.name.GetIdentifierName(),
+               .entry_type = duckdb::CatalogTypeToString(entry.type),
+               .name = entry.name.GetIdentifierName(),
+               .entry_oid = entry.oid,
+               .visible = true});
+            members.push_back(&entry);
+          });
         }
       }
       for (auto* member : members) {
@@ -171,15 +170,14 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
       }
       // Foreign servers are database children, so their set hangs off the
       // catalog and has no schema name to report.
-      catalog.Servers().Scan(
-        transaction, [&](duckdb::CatalogEntry& entry) {
-          state.rows.push_back(
-            {.schema = {},
-             .entry_type = duckdb::CatalogTypeToString(entry.type),
-             .name = entry.name.GetIdentifierName(),
-             .entry_oid = entry.oid,
-             .visible = true});
-        });
+      catalog.Servers().Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+        state.rows.push_back(
+          {.schema = {},
+           .entry_type = duckdb::CatalogTypeToString(entry.type),
+           .name = entry.name.GetIdentifierName(),
+           .entry_oid = entry.oid,
+           .visible = true});
+      });
     }
     // The two cluster-global sets belong to no database at all, so they are
     // reported whichever one the session is in, with no schema name.

@@ -86,9 +86,8 @@ Session MakeSession(duckdb::ClientContext* context) {
   auto& temporary =
     duckdb::ClientData::Get(*context).temporary_objects->GetCatalog();
   const auto transaction = temporary.GetCatalogTransaction(*context);
-  auto schema =
-    temporary.GetSchema(transaction, *temporary.GetDefaultSchema(),
-                        duckdb::OnEntryNotFound::RETURN_NULL);
+  auto schema = temporary.GetSchema(transaction, *temporary.GetDefaultSchema(),
+                                    duckdb::OnEntryNotFound::RETURN_NULL);
   SDB_ASSERT(schema);
   for (const auto type : kRelationSets) {
     schema->Cast<catalog::Schema>().Set(type).Scan(

@@ -65,14 +65,12 @@ catalog::SereneDBCatalog& CatalogOf(ConnectionContext& conn_ctx) {
 }
 
 std::string DatabaseOf(ConnectionContext& conn_ctx) {
-  return duckdb::DatabaseManager::GetDefaultDatabase(
-           conn_ctx)
+  return duckdb::DatabaseManager::GetDefaultDatabase(conn_ctx)
     .GetIdentifierName();
 }
 
 bool IsSuperuser(ConnectionContext& conn_ctx) {
-  return auth::ClosureFor(&conn_ctx, conn_ctx.GetRoleId())
-    ->is_superuser;
+  return auth::ClosureFor(&conn_ctx, conn_ctx.GetRoleId())->is_superuser;
 }
 
 void PreventInTransactionBlock(ConnectionContext& conn_ctx,
@@ -655,10 +653,10 @@ void SyncAfterCommit(ConnectionContext& conn_ctx, duckdb::idx_t oid,
                      bool restart = false) {
   catalog::SessionOf(conn_ctx, CatalogOf(conn_ctx))
     .DeferToCommit([database = DatabaseOf(conn_ctx), oid, restart] {
-    if (auto* engine = replication::SubscriptionEngine::gInstance) {
-      engine->Sync(database, oid, restart);
-    }
-  });
+      if (auto* engine = replication::SubscriptionEngine::gInstance) {
+        engine->Sync(database, oid, restart);
+      }
+    });
 }
 
 void Replace(ConnectionContext& conn_ctx, catalog::SereneDBCatalog& catalog,
@@ -666,8 +664,7 @@ void Replace(ConnectionContext& conn_ctx, catalog::SereneDBCatalog& catalog,
              duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> definition) {
   duckdb::ReplaceDefinitionInfo alter{std::move(definition)};
   alter.SetQualifiedName(duckdb::QualifiedName(subscription.name));
-  catalog.Alter(catalog.GetCatalogTransaction(conn_ctx),
-                alter);
+  catalog.Alter(catalog.GetCatalogTransaction(conn_ctx), alter);
 }
 
 duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> DefinitionOf(

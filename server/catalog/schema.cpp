@@ -723,11 +723,11 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
   auto type = info.GetCatalogType();
   const auto& entry_name = info.GetQualifiedName().Name();
   if (info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION &&
-      info.Cast<duckdb::AlterScalarFunctionInfo>()
-          .alter_scalar_function_type ==
+      info.Cast<duckdb::AlterScalarFunctionInfo>().alter_scalar_function_type ==
         duckdb::AlterScalarFunctionType::RENAME_SCALAR_FUNCTION &&
       !Set(type).Get(transaction, entry_name) &&
-      Set(duckdb::CatalogType::TABLE_MACRO_ENTRY).Get(transaction, entry_name)) {
+      Set(duckdb::CatalogType::TABLE_MACRO_ENTRY)
+        .Get(transaction, entry_name)) {
     type = duckdb::CatalogType::TABLE_MACRO_ENTRY;
   }
   auto& set = Set(type);
@@ -761,9 +761,9 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
   }
   if (type == duckdb::CatalogType::VIEW_ENTRY &&
       entry->type != duckdb::CatalogType::VIEW_ENTRY) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", entry->name.GetIdentifierName(),
-                            "\" is not a view"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a view"));
   }
   DeclareModified(transaction, catalog,
                   duckdb::DatabaseModificationType::ALTER_TABLE);

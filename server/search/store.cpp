@@ -900,6 +900,12 @@ void Store::MergeIndexConfig(
 
 void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name,
                         TableChange change) {
+  if (Dropped()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+      ERR_MSG("could not serialize access due to concurrent update of \"", name,
+              "\""));
+  }
   auto& session = ConnectionContext::Get(context).Transaction();
   if (change == TableChange::Schema && session.SearchTxn().HasWritesFor(_id)) {
     THROW_SQL_ERROR(

@@ -410,7 +410,7 @@ connection w2
 statement error
 INSERT INTO coinr_t_ww VALUES (2);
 ----
-db error: ERROR: Failed to commit: Attempting to modify table "coinr_t_ww" but another transaction has no changes this table
+db error: ERROR: Attempting to write to table coinr_t_ww but another transaction is dropping it
 
 
 connection w1
@@ -1448,7 +1448,8 @@ INSERT INTO coinr_pk (id) VALUES (1);
 statement error
 INSERT INTO coinr_pk (id) VALUES (1);
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "coinr_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 # The old table's indexes go with it, which frees their names.
@@ -1480,7 +1481,7 @@ query
 SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
 ----
 index_name	is_unique	sql
-coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr(b);
+coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr USING inverted (b);
 
 
 # The serial column of a replaced table draws from a new sequence of its own,
@@ -2003,9 +2004,9 @@ connection after_replay
 statement error
 DROP VIEW coinr_v_inner;
 ----
-db error: ERROR: Cannot drop entry "coinr_v_inner" because there are entries that depend on it.
-view "coinr_v_outer" depends on view "coinr_v_inner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view coinr_v_inner because other objects depend on it
+DETAIL: view coinr_v_outer depends on view coinr_v_inner
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_replay
@@ -2453,9 +2454,9 @@ connection after_replay
 statement error
 DROP TABLE coinr_dep_b;
 ----
-db error: ERROR: Cannot drop entry "coinr_dep_b" because there are entries that depend on it.
-view "coinr_dep_v" depends on table "coinr_dep_b".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coinr_dep_b because other objects depend on it
+DETAIL: view coinr_dep_v depends on table coinr_dep_b
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_replay
@@ -2467,7 +2468,8 @@ connection after_replay
 statement error
 INSERT INTO coinr_pk (id) VALUES (1);
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "coinr_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_replay
@@ -2497,7 +2499,7 @@ query
 SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
 ----
 index_name	is_unique	sql
-coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr(b);
+coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr USING inverted (b);
 
 
 connection after_replay
@@ -3272,13 +3274,9 @@ s	m
 60	11
 
 
-# A plain CHECKPOINT does not run over the open replaces, so it cannot write
-# them either.
 connection after_after_commit
-statement error
+statement ok
 CHECKPOINT;
-----
-db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
 
 
 skipif pg-wire-extended
@@ -3422,9 +3420,9 @@ connection after_checkpoint
 statement error
 DROP VIEW coinr_v_inner;
 ----
-db error: ERROR: Cannot drop entry "coinr_v_inner" because there are entries that depend on it.
-view "coinr_v_outer" depends on view "coinr_v_inner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view coinr_v_inner because other objects depend on it
+DETAIL: view coinr_v_outer depends on view coinr_v_inner
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_checkpoint

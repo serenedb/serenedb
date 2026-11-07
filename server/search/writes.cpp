@@ -283,7 +283,7 @@ void ForEachLiveChunk(duckdb::ColumnDataCollection& rows,
 }
 
 std::string_view ClaimActivity(Store::Exclusive kind) {
-  return kind == Store::Exclusive::Drop ? "dropping" : "truncating";
+  return kind == Store::Exclusive::Drop ? "is dropping" : "is truncating";
 }
 
 OwnWrites OwnOf(const StoreWrites& w) {
@@ -385,8 +385,11 @@ void Writes::RegisterWriter(const std::shared_ptr<Store>& store,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
       ERR_MSG("Attempting to write to table ", table.name.GetIdentifierName(),
-              " but another transaction is ", activity, " it"));
+              " but another transaction ", activity, " it"));
   };
+  if (!w.dropping && store->Dropped()) {
+    refuse("dropped");
+  }
   if (!w.dropping && store->ExclusiveClaim() == Store::Exclusive::Drop) {
     refuse(ClaimActivity(Store::Exclusive::Drop));
   }

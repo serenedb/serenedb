@@ -55,7 +55,7 @@ Create an index on an expression — e.g., the sum of columns `j` and `k` from t
 
 ## Inverted Indexes
 
-Adding `USING inverted` creates an [inverted index](../../indexes/inverted/index.md) for full-text, [vector](../../indexes/inverted/vector-search.md) and [geospatial](../../indexes/inverted/geospatial-search.md) search. It has its own grammar — column dictionaries, feature flags, `INCLUDE` columns and index options. See [CREATE INDEX … USING inverted](./inverted.md) for the full syntax reference.
+An index on a table is an [inverted index](../../indexes/inverted/index.md), with or without `USING inverted`, and serves full-text, [vector](../../indexes/inverted/vector-search.md) and [geospatial](../../indexes/inverted/geospatial-search.md) search as well as equality and range lookups. Its grammar adds column dictionaries, feature flags, `INCLUDE` columns and index options. See [CREATE INDEX … USING inverted](./inverted.md) for the full syntax reference.
 
 ## `DROP INDEX`
 

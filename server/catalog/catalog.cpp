@@ -509,9 +509,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   if (!IsSearchTable(table)) {
     RefuseTable(table);
   }
+  const bool plain = stmt.info->Cast<duckdb::CreateIndexInfo>().index_type !=
+                     kInvertedIndexTypeName;
   BindIndexDefinition(binder, stmt, table);
   return connector::BindCreateIndexOnSearchTable(
-    binder, stmt, table.Cast<SearchTableEntry>(), std::move(plan));
+    binder, stmt, table.Cast<SearchTableEntry>(), std::move(plan), plain);
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator>

@@ -70,4 +70,4 @@ query
 SELECT indexdef FROM pg_indexes WHERE indexname = 'genre_idx';
 ----
 indexdef
-CREATE INDEX genre_idx ON public.films USING secondary (genre, year)
+CREATE INDEX genre_idx ON public.films USING inverted (genre, year)

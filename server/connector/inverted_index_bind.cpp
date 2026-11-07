@@ -803,32 +803,13 @@ void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
 void ValidateTermDictKey(std::string_view label,
                          const duckdb::LogicalType& type,
                          std::string_view opclass) {
-  const auto kind = type.id();
-  const auto unsupported = [&]() -> void {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                    ERR_MSG("Column '", label, "' has unsupported type ",
-                            type.ToString(), " and can not be indexed"));
-  };
-
-  if (kind == duckdb::LogicalTypeId::LIST ||
-      kind == duckdb::LogicalTypeId::ARRAY) {
-    const auto child = (kind == duckdb::LogicalTypeId::LIST
-                          ? duckdb::ListType::GetChildType(type)
-                          : duckdb::ArrayType::GetChildType(type))
-                         .id();
-    if (child == duckdb::LogicalTypeId::GEOMETRY ||
-        !term_dict::IsIndexable(child)) {
-      unsupported();
-    }
+  if (TermDictIndexable(type) ||
+      (type.id() == duckdb::LogicalTypeId::GEOMETRY && !opclass.empty())) {
     return;
   }
-
-  if (!term_dict::IsIndexable(kind)) {
-    unsupported();
-  }
-  if (kind == duckdb::LogicalTypeId::GEOMETRY && opclass.empty()) {
-    unsupported();
-  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                  ERR_MSG("Column '", label, "' has unsupported type ",
+                          type.ToString(), " and can not be indexed"));
 }
 
 void ValidateIncludedKey(std::string_view label,
@@ -989,7 +970,8 @@ struct KeyOpclass {
     return IsBuiltin(catalog::kIVFKind) || IsBuiltin(catalog::kHNSWKind);
   }
   bool IsTokenizer() const noexcept {
-    return !IsAnn() && !IsBuiltin(catalog::kIncludedKind);
+    return !IsAnn() && !IsBuiltin(catalog::kIncludedKind) &&
+           !IsBuiltin(catalog::kPlainKind);
   }
 };
 
@@ -1005,6 +987,9 @@ void ValidateInvertedIndexKey(std::string_view label,
   }
   if (opclass.IsBuiltin(catalog::kIncludedKind)) {
     ValidateIncludedKey(label, type);
+    return;
+  }
+  if (opclass.IsBuiltin(catalog::kPlainKind)) {
     return;
   }
   if (opclass.HasParentheses()) {
@@ -1030,6 +1015,18 @@ void ValidateInvertedIndexKey(std::string_view label,
 }
 
 }  // namespace
+
+bool TermDictIndexable(const duckdb::LogicalType& type) {
+  using enum duckdb::LogicalTypeId;
+  if (type.id() == LIST || type.id() == ARRAY) {
+    const auto child =
+      (type.id() == LIST ? duckdb::ListType::GetChildType(type)
+                         : duckdb::ArrayType::GetChildType(type))
+        .id();
+    return child != GEOMETRY && term_dict::IsIndexable(child);
+  }
+  return type.id() != GEOMETRY && term_dict::IsIndexable(type);
+}
 
 // An opclass names a dictionary of the index's own schema first -- the index
 // and its dictionary are created together and that schema need not be on the
@@ -1074,7 +1071,8 @@ void ApplyOpclassToEntry(
     ApplyHNSWOpclass(label, value_type, opclass.options, entry);
     return;
   }
-  if (opclass.IsBuiltin(catalog::kIncludedKind)) {
+  if (opclass.IsBuiltin(catalog::kIncludedKind) ||
+      opclass.IsBuiltin(catalog::kPlainKind)) {
     ApplyIncludedOpclass(context, label, value_type, opclass.options, entry);
     entry.store_values = true;
     return;

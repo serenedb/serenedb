@@ -354,7 +354,8 @@ IndexShape ShapeOf(const Session& session,
     IndexElement element;
     element.attribute = IndexAttribute(*index.parsed_expressions[i]);
     element.definition = element.attribute;
-    if (!opclass.empty() && (!included || has_options)) {
+    if (!opclass.empty() && opclass != catalog::kPlainKind &&
+        (!included || has_options)) {
       absl::StrAppend(&element.definition, " ", OpclassName(opclass));
     }
     if (has_options) {

@@ -24,11 +24,23 @@ INSERT INTO cn SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(1,
 statement ok
 INSERT INTO cn_topk SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(1, 200) s(i);
 
+query
+SELECT (SELECT count(*) FROM cn) AS cn, (SELECT count(*) FROM cn_topk) AS cn_topk;
+----
+cn	cn_topk
+200	200
+
 statement ok
 INSERT INTO cn SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(201, 400) s(i);
 
 statement ok
 INSERT INTO cn_topk SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(201, 400) s(i);
+
+query
+SELECT (SELECT count(*) FROM cn) AS cn, (SELECT count(*) FROM cn_topk) AS cn_topk;
+----
+cn	cn_topk
+400	400
 
 query
 SELECT c.relname, m.value FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id

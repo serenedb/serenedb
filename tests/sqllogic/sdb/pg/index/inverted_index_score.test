@@ -354,6 +354,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: docs_idx                                         │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
 │ │ Field: body(string) │                                 │
@@ -377,7 +378,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -402,7 +403,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -485,7 +486,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -626,7 +627,7 @@ db error: ERROR: No function matches the given name and argument types 'bm25(BIG
 
 # Error: BM25(docs.tableoid) with plain table in FROM (no inverted index scan)
 query error
-SELECT id, BM25(docs.tableoid) FROM docs WHERE id > 0;
+SELECT id, BM25(docs.tableoid) FROM docs;
 ----
 db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
@@ -643,7 +644,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -687,7 +688,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │  │ Index: docs_idx                        │
-│ Lookup: table                          │  │ Lookup: table                          │
+│ Lookup: search                         │  │ Lookup: search                         │
 │ Index Filter:                          │  │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
@@ -740,7 +741,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -772,7 +773,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -804,7 +805,7 @@ EXPLAIN SELECT * FROM docs_idx;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: docs_idx    │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Projections: id,   │
 │              body  │
 │ ~36 rows           │
@@ -908,7 +909,7 @@ QUERY PLAN
                      ├───────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ────────╮
 │ Index: docs_idx                        │  │ Index: docs2_idx        │
-│ Lookup: table                          │  │ Lookup: table           │
+│ Lookup: search                         │  │ Lookup: search          │
 │ Index Filter:                          │  │ Index Filter:           │
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │                │  │ │ Field: body(string) │ │
@@ -955,13 +956,13 @@ QUERY PLAN
 │ Conditions: id = id                    │
 │ ~7 rows                                │
 ╰────────────────────┬───────────────────╯
-                     ├──────────────────────────────────╮
-╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Index: docs_idx                        │  │ Table: meta           │
-│ Lookup: table                          │  │ Type: Sequential Scan │
-│ Index Filter:                          │  │ Projections: id, tag  │
-│ ╭─ Term ──────────────╮                │  │ ~3 rows               │
-│ │ Field: body(string) │                │  ╰───────────────────────╯
+                     ├────────────────────────────────╮
+╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ──╮
+│ Index: docs_idx                        │  │ Table: meta       │
+│ Lookup: search                         │  │ Projections: id,  │
+│ Index Filter:                          │  │              tag  │
+│ ╭─ Term ──────────────╮                │  │ ~3 rows           │
+│ │ Field: body(string) │                │  ╰───────────────────╯
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
 │ Score: bm25(k1=1.2, b=0.75)            │
@@ -1048,10 +1049,10 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ Limit: 2                               │  │ Limit: 2                               │
 │ Index: docs_idx                        │  │ Index: docs_idx                        │  │ ~2 rows                                │  │ ~2 rows                                │
-│ Lookup: table                          │  │ Lookup: table                          │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
+│ Lookup: search                         │  │ Lookup: search                         │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
 │ Index Filter:                          │  │ Index Filter:                          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │  │ Index: docs_idx                        │  │ Index: docs_idx                        │
-│ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: table                          │  │ Lookup: table                          │
+│ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: search                         │  │ Lookup: search                         │
 │ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Index Filter:                          │  │ Index Filter:                          │
 │ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │  │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │  │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
@@ -1103,10 +1104,10 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ Limit: 2                               │  │ Limit: 2                               │
 │ Index: docs_idx                        │  │ Index: docs_idx                        │  │ ~2 rows                                │  │ ~2 rows                                │
-│ Lookup: table                          │  │ Lookup: table                          │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
+│ Lookup: search                         │  │ Lookup: search                         │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
 │ Index Filter:                          │  │ Index Filter:                          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │  │ Index: docs_idx                        │  │ Index: docs_idx                        │
-│ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: table                          │  │ Lookup: table                          │
+│ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: search                         │  │ Lookup: search                         │
 │ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Index Filter:                          │  │ Index Filter:                          │
 │ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │  │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
 │ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │  │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
@@ -2042,7 +2043,7 @@ WHERE (body @@ 'fox')::score('bm25(1.2, 0.75)')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────╮
 │ Index: score_idx                                               │
-│ Lookup: table                                                  │
+│ Lookup: search                                                 │
 │ Index Filter:                                                  │
 │ ╭─ Or ───────────────────────────────────────────────────────╮ │
 │ ╰──────────────────────────────┬─────────────────────────────╯ │
@@ -2065,7 +2066,7 @@ WHERE (body @@ 'fox')::score(NULL) OR (body @@ 'cat')::score(NULL);
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: score_idx                       │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ───────────────────────────────╮ │
 │ ╰──────────────────┬─────────────────╯ │
@@ -2089,7 +2090,7 @@ WHERE (body @@ 'fox')::score('bm25(1.2, 0.75)')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────╮
 │ Index: score_idx                                               │
-│ Lookup: table                                                  │
+│ Lookup: search                                                 │
 │ Index Filter:                                                  │
 │ ╭─ Or ───────────────────────────────────────────────────────╮ │
 │ ╰──────────────────────────────┬─────────────────────────────╯ │
@@ -2386,7 +2387,7 @@ WHERE (body @@ 'fox' OR body @@ 'cat')::merge('max');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: score_idx         │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Or ─────────────────╮ │
 │ │ Merge: max           │ │
@@ -2408,7 +2409,7 @@ WHERE (body @@ 'fox' OR id = 2)::merge('max');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────╮
 │ Index: score_idx                                │
-│ Lookup: table                                   │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ Or ───────────────╮                          │
 │ │ Merge: max         │                          │
@@ -2430,7 +2431,7 @@ EXPLAIN SELECT id FROM score_idx WHERE body @@ 'fox' OR id = 2;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────╮
 │ Index: score_idx                                │
-│ Lookup: table                                   │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ Or ───────────────╮                          │
 │ ╰──────────┬─────────╯                          │
@@ -2574,7 +2575,7 @@ WHERE ((body @@ 'fox' OR body @@ 'cat')::merge('max') OR body @@ 'dog');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: score_idx                │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Index Filter:                   │
 │ ╭─ Or ────────────────────────╮ │
 │ ╰──────────────┬──────────────╯ │
@@ -2594,7 +2595,7 @@ WHERE ((body @@ 'fox' OR body @@ 'cat')::merge('max') OR body @@ 'dog');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: score_idx                                  │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Or ────────────────╮                           │
 │ ╰──────────┬──────────╯                           │
@@ -2621,7 +2622,7 @@ WHERE ((body @@ 'fox' OR body @@ 'cat') OR body @@ 'dog')::merge('max');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: score_idx                │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Index Filter:                   │
 │ ╭─ Or ────────────────────────╮ │
 │ │ Merge: max                  │ │
@@ -2644,7 +2645,7 @@ WHERE ((body @@ 'fox')::score('constant(10)') OR body @@ 'cat')::merge('max');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: score_idx                      │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Or ──────────────────────────────╮ │
 │ │ Merge: max                        │ │
@@ -2666,7 +2667,7 @@ WHERE (body @@ 'fox' OR body @@ 'cat')::boost(2.0)::merge('max');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: score_idx         │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Or ─────────────────╮ │
 │ │ Merge: max           │ │
@@ -2758,7 +2759,7 @@ WHERE (body @@ ts_phrase('fox dog'))::score('constant(42)');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: score_idx                            │
-│ Lookup: table                               │
+│ Lookup: search                              │
 │ Index Filter:                               │
 │ ╭─ Phrase ────────────────────────────────╮ │
 │ │ Field: body(string)                     │ │
@@ -2779,7 +2780,7 @@ WHERE (body @@ ts_phrase('fox dog')::slop(2))::score('constant(7)');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: score_idx                            │
-│ Lookup: table                               │
+│ Lookup: search                              │
 │ Index Filter:                               │
 │ ╭─ Phrase ────────────────────────────────╮ │
 │ │ Field: body(string)                     │ │

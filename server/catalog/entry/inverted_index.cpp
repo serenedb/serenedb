@@ -609,12 +609,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
         reindex_interval =
           connector::ValidateSetting(context, node.key(), node.mapped());
       }
-      for (const auto& [name, value] : options) {
+      for (const auto name : connector::SortedOptionNames(options)) {
         RequireAlterableOption(name);
         if (_search_table) {
           RequireSearchTableIndexOption(name);
         }
-        new_options[name] = connector::ValidateSetting(context, name, value);
+        new_options[name] =
+          connector::ValidateSetting(context, name, options.find(name)->second);
       }
       break;
     }
@@ -627,8 +628,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
           duckdb::Identifier{kReindexIntervalSetting},
           reindex_interval.emplace());
       }
-      for (const auto& identifier : options) {
-        const auto& name = identifier.GetIdentifierName();
+      for (const auto name : connector::SortedOptionNames(options)) {
         RequireAlterableOption(name);
         if (_search_table) {
           RequireSearchTableIndexOption(name);
@@ -637,7 +637,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
         if (const auto it = reset.values.find(name); it != reset.values.end()) {
           value = it->second;
         } else {
-          context.TryGetCurrentSetting(identifier, value);
+          context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
           reset.values.emplace(name, value);
         }
       }

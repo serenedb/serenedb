@@ -295,12 +295,26 @@ void BuildRowFilters(ScanGlobalState& state, const ScanBindData& bind_data) {
   }
 }
 
+void AddDualFilter(ScanGlobalState& state, std::span<const ColumnId> columns,
+                   std::span<const duckdb::LogicalType> types,
+                   const duckdb::TableFilter& filter) {
+  auto& cf = state.dual_filters.emplace_back();
+  if (columns.size() == 1) {
+    cf.field = columns.front();
+    BindExpressionFilter(cf, filter, types.front());
+    return;
+  }
+  cf.filter = &filter;
+  cf.row_fields.assign(columns.begin(), columns.end());
+  cf.row_types.assign(types.begin(), types.end());
+  cf.field = cf.row_fields.front();
+  cf.type = cf.row_types.front();
+}
+
 void BuildDualFilters(ScanGlobalState& state,
                       std::span<const RowFilter> duals) {
   for (const auto& dual : duals) {
-    auto& cf = state.dual_filters.emplace_back();
-    cf.field = dual.columns.front();
-    BindExpressionFilter(cf, *dual.filter, dual.types.front());
+    AddDualFilter(state, dual.columns, dual.types, *dual.filter);
   }
 }
 
@@ -449,9 +463,7 @@ void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
   for (auto& dual : built.dual_filters) {
     const auto& owned =
       state.deferred_filters.emplace_back(std::move(dual.filter));
-    auto& cf = state.dual_filters.emplace_back();
-    cf.field = dual.column;
-    BindExpressionFilter(cf, *owned, std::move(dual.type));
+    AddDualFilter(state, dual.columns, dual.types, *owned);
   }
   state.deferred_checks = std::move(built.checks);
   AddDeferredChecks(state, state.deferred_checks);

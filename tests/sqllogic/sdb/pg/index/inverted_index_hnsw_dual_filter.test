@@ -22,24 +22,23 @@ EXPLAIN SELECT pk FROM hd WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
   ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────╮
-│ Index: hd                          │
-│ Lookup: search                     │
-│ Index Filter:                      │
-│ ╭─ And ──────╮                     │
-│ ╰──────┬─────╯                     │
-│        ├─────────────────╮         │
-│ ╭─ Terms ────╮  ╭─ Terms ┴───────╮ │
-│ │ Field: cat │  │ Field: tag     │ │
-│ │ Values: 4  │  │ Values: 'even' │ │
-│ ╰────────────╯  ╰────────────────╯ │
-│ Column Filter: num < 2000          │
-│ Index or Column Filter: cat = 4    │
-│ Score: l2_distance(emb, FLOAT[8])  │
-│ Top: 4                             │
-│ Projections: pk                    │
-│ ~120 rows                          │
-╰────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────────╮
+│ Table: hd                                       │
+│ Index Filter:                                   │
+│ ╭─ And ───────────────╮                         │
+│ ╰──────────┬──────────╯                         │
+│            ├────────────────────────╮           │
+│ ╭─ Terms ──┴──────────╮  ╭─ Terms ──┴─────────╮ │
+│ │ Field: cat(numeric) │  │ Field: tag(string) │ │
+│ │ Values: 4           │  │ Values: 'even'     │ │
+│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ Column Filter: num < 2000                       │
+│ Index or Column Filter: cat = 4                 │
+│ Score: l2_distance(emb, FLOAT[8])               │
+│ Top: 4                                          │
+│ Projections: pk                                 │
+│ ~120 rows                                       │
+╰─────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM hd WHERE cat = 3 AND extra = 5
@@ -47,13 +46,12 @@ EXPLAIN SELECT pk FROM hd WHERE cat = 3 AND extra = 5
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: hd                         │
-│ Lookup: search                    │
+│ Table: hd                         │
 │ Index Filter:                     │
-│ ╭─ Term ─────╮                    │
-│ │ Field: cat │                    │
-│ │ Value: 3   │                    │
-│ ╰────────────╯                    │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: cat(numeric) │           │
+│ │ Value: 3            │           │
+│ ╰─────────────────────╯           │
 │ Column Filter: extra = 5          │
 │ Index or Column Filter: cat = 3   │
 │ Score: l2_distance(emb, FLOAT[8]) │

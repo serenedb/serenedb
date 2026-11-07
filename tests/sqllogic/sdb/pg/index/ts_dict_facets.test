@@ -85,6 +85,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
+│ Lookup: search                            │
 │ TsDict: cat                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$cat,              │
@@ -110,6 +111,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: ft_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~3 rows                                  │
@@ -145,6 +147,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
+│ Lookup: search                            │
 │ TsDict: cat                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$cat,              │
@@ -181,6 +184,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
+│ Lookup: search                            │
 │ TsDict: cat                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$cat,              │
@@ -213,6 +217,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Starts With ──────╮                    │
 │ │ Field: cat(string) │                    │
@@ -254,6 +259,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: ft_idx                                                                       │
+│ Lookup: search                                                                      │
 │ TsDict: cat                                                                         │
 │ Projections:                                                                        │
 │ sdb_inverted_index_term$cat, sdb_inverted_index_term_count$cat                      │
@@ -276,6 +282,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
+│ Lookup: search                            │
 │ TsDict: cat                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$cat,              │
@@ -311,6 +318,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
+│ Lookup: search                            │
 │ TsDict: opt                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$opt,              │
@@ -337,6 +345,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: ft_idx                            │
+│ Lookup: search                           │
 │ TsDict: opt                              │
 │ Projections: sdb_inverted_index_term$opt │
 │ ~3 rows                                  │
@@ -362,7 +371,7 @@ QUERY PLAN
 ╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: ft_idx         │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Projections: opt      │
 │ ~6 rows               │
 ╰───────────────────────╯
@@ -384,7 +393,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: ft_idx            │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ───────────╮     │
 │ │ Field: opt(null) │     │
@@ -414,7 +423,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: ft_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: cat, id      │
 │ ~6 rows                   │
 ╰───────────────────────────╯
@@ -437,7 +446,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: ft_idx            │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Projections: cat         │
 │ Column Filter: id < 3    │
 │ ~1 row                   │
@@ -596,7 +605,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: ftx_idx           │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Projections: descr       │
 │ ~3 rows                  │
 ╰──────────────────────────╯
@@ -650,6 +659,7 @@ QUERY PLAN
 ╰───────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ──┴──────────────────╮
 │ Index: ffw_idx                       │
+│ Lookup: search                       │
 │ Index Filter:                        │
 │ ╭─ Starts With ───────╮              │
 │ │ Field: body(string) │              │
@@ -686,6 +696,7 @@ QUERY PLAN
 ╰───────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ──┴──────────────────╮
 │ Index: ffw_idx                       │
+│ Lookup: search                       │
 │ Index Filter:                        │
 │ ╭─ Term ───────────────╮             │
 │ │ Field: scope(string) │             │
@@ -727,6 +738,7 @@ QUERY PLAN
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: ffw_idx                                    │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ Bool ──────────────╮                           │
 │ ╰──────────┬──────────╯                           │
@@ -756,7 +768,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: ffw_idx           │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Projections: scope       │
 │ Column Filter: id < 3    │
 │ ~1 row                   │
@@ -812,6 +824,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: fnw_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -840,6 +853,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: fnw_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -871,7 +885,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: fnw_idx           │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ─────────────╮   │
 │ │ Field: opt(string) │   │
@@ -934,6 +948,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: gsf_idx                                                                      │
+│ Lookup: search                                                                      │
 │ TsDict: brand, color                                                                │
 │ Projections:                                                                        │
 │ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand,                 │
@@ -979,6 +994,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: gsf_idx                                                                      │
+│ Lookup: search                                                                      │
 │ Index Filter:                                                                       │
 │ ╭─ Starts With ───────╮                                                             │
 │ │ Field: body(string) │                                                             │
@@ -1042,6 +1058,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: gsf_idx                                                                      │
+│ Lookup: search                                                                      │
 │ Index Filter:                                                                       │
 │ ╭─ Bool ──────────────╮                                                             │
 │ ╰──────────┬──────────╯                                                             │
@@ -1090,6 +1107,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: gsf_idx                                                                      │
+│ Lookup: search                                                                      │
 │ Index Filter:                                                                       │
 │ ╭─ Not ────────────────╮                                                            │
 │ ╰───────────┬──────────╯                                                            │
@@ -1138,7 +1156,7 @@ QUERY PLAN
                     ├─────────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
 │ Index: gsf_idx                        │  ╰──────────────┬──────────────╯
-│ Lookup: table                         │                 ├────────────────────────────────╮
+│ Lookup: search                        │                 ├────────────────────────────────╮
 │ Projections: brand, color             │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
 │ Column Filter: id < 3                 │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
 │ ~1 row                                │  │              NULL::VARCHAR, │  │              #0, #1         │
@@ -1187,7 +1205,7 @@ QUERY PLAN
                     ├─────────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
 │ Index: gsf_idx                        │  ╰──────────────┬──────────────╯
-│ Lookup: table                         │                 ├────────────────────────────────┬────────────────────────────────╮
+│ Lookup: search                        │                 ├────────────────────────────────┬────────────────────────────────╮
 │ Projections: brand, color             │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
 │ ~5 rows                               │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │  │ Projections: NULL::VARCHAR, │
 ╰───────────────────────────────────────╯  │              NULL::VARCHAR, │  │              #0, #1         │  │              NULL::VARCHAR, │
@@ -1231,7 +1249,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gsf_idx           │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Projections: brand,      │
 │              color       │
 │ ~5 rows                  │
@@ -1264,7 +1282,7 @@ QUERY PLAN
                     ├─────────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
 │ Index: gsf_idx                        │  ╰──────────────┬──────────────╯
-│ Lookup: table                         │                 ├────────────────────────────────╮
+│ Lookup: search                        │                 ├────────────────────────────────╮
 │ Projections: brand, color             │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
 │ ~5 rows                               │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
 ╰───────────────────────────────────────╯  │              NULL::VARCHAR, │  │              #0, #1, 1      │
@@ -1333,6 +1351,7 @@ QUERY PLAN
 ╰─────────────────────────────────────────┬─────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────────────┴─────────────────────────────────────────╮
 │ Index: gsn_idx                                                                    │
+│ Lookup: search                                                                    │
 │ TsDict: brand, opt                                                                │
 │ Projections:                                                                      │
 │ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand,               │
@@ -1384,6 +1403,7 @@ QUERY PLAN
 ╰────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Index: fex_idx                                  │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ Term ──────────────────────────────────────╮ │
 │ │ Field:                                      │ │
@@ -1427,6 +1447,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: fex_idx                            │
+│ Lookup: search                            │
 │ TsDict: lower(cat)                        │
 │ Projections:                              │
 │ sdb_inverted_index_term$lower(cat),       │
@@ -1474,6 +1495,7 @@ QUERY PLAN
 ╰────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Index: fes_idx                                  │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ Term ──────────────────────────────────────╮ │
 │ │ Field:                                      │ │
@@ -1534,6 +1556,7 @@ QUERY PLAN
 ╰─────────────────────────────────────────────┬────────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────────────────┴────────────────────────────────────────────╮
 │ Index: fexs_idx                                                                          │
+│ Lookup: search                                                                           │
 │ TsDict: lower(cat), brand                                                                │
 │ Projections:                                                                             │
 │ sdb_inverted_index_term$lower(cat), sdb_inverted_index_term_count$lower(cat),            │
@@ -1575,7 +1598,7 @@ QUERY PLAN
                     ├─────────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮  ╭─ UNION ──────┴──────────────╮
 │ Index: ftwo_idx                       │  ╰──────────────┬──────────────╯
-│ Lookup: table                         │                 ├────────────────────────────────╮
+│ Lookup: search                        │                 ├────────────────────────────────╮
 │ Projections: a, b                     │  ╭─ PROJECTION ─┴──────────────╮  ╭─ PROJECTION ─┴──────────────╮
 │ ~2 rows                               │  │ Projections: #0,            │  │ Projections: NULL::VARCHAR, │
 ╰───────────────────────────────────────╯  │              NULL::VARCHAR, │  │              #0, #1         │
@@ -1647,6 +1670,7 @@ QUERY PLAN
 ╰─────────────────────────────────────────┬─────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────────────┴─────────────────────────────────────────╮
 │ Index: gsnw_idx                                                                   │
+│ Lookup: search                                                                    │
 │ Index Filter:                                                                     │
 │ ╭─ Term ──────────────╮                                                           │
 │ │ Field: body(string) │                                                           │
@@ -1858,6 +1882,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: fconst_idx                         │
+│ Lookup: search                            │
 │ TsDict: cat                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$cat,              │
@@ -1889,6 +1914,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: fconst_idx                         │
+│ Lookup: search                            │
 │ TsDict: cat                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$cat,              │
@@ -1966,6 +1992,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────┬─────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────────────┴─────────────────────────────────────────╮
 │ Index: fgs_idx                                                                     │
+│ Lookup: search                                                                     │
 │ TsDict: cat, region                                                                │
 │ Projections:                                                                       │
 │ sdb_inverted_index_term$cat, sdb_inverted_index_term_count$cat,                    │

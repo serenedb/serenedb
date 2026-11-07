@@ -376,7 +376,7 @@ EXPLAIN SELECT id FROM prim_types_idx WHERE (content->'val') IS NULL;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: prim_types_idx                 │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Term ────────────────────────────╮ │
 │ │ Field: ("content" -> 'val')(null) │ │
@@ -466,7 +466,7 @@ EXPLAIN SELECT id FROM num_str_split_idx WHERE (content->'val')::double = 42;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: num_str_split_idx                 │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
 │ │ Field: ("content" -> 'val')(numeric) │ │
@@ -489,7 +489,7 @@ EXPLAIN SELECT id FROM num_str_split_idx WHERE (content->'val')::bool = true;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: num_str_split_idx              │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Term ────────────────────────────╮ │
 │ │ Field: ("content" -> 'val')(bool) │ │
@@ -511,20 +511,14 @@ query
 EXPLAIN SELECT id FROM num_str_split_idx WHERE content->>'val' = '42';
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────╮
-│ Projections: #1                        │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ FILTER ───────────┴───────────────────╮
-│ Expression: (content ->> 'val') = '42' │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: num_str_split_idx               │
-│ Lookup: table                          │
-│ Projections: content, id               │
-│ ~4 rows                                │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: num_str_split_idx       │
+│ Lookup: search                 │
+│ Projections: id                │
+│ Column Filter:                 │
+│ (content ->> 'val') = '42'     │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 query
 SELECT id FROM num_str_split_idx WHERE content->>'val' = 'true' ORDER BY id;
@@ -538,20 +532,14 @@ query
 EXPLAIN SELECT id FROM num_str_split_idx WHERE content->>'val' = 'true';
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────╮
-│ Projections: #1                          │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ FILTER ────────────┴────────────────────╮
-│ Expression: (content ->> 'val') = 'true' │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ IRESEARCH_SCAN ────┴────────────────────╮
-│ Index: num_str_split_idx                 │
-│ Lookup: table                            │
-│ Projections: content, id                 │
-│ ~4 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: num_str_split_idx       │
+│ Lookup: search                 │
+│ Projections: id                │
+│ Column Filter:                 │
+│ (content ->> 'val') = 'true'   │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 # Same JSON path indexed once, but two tokenizers are in flight at the
 # same time: the user-configured keyword tokenizer for string

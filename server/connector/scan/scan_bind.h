@@ -320,12 +320,18 @@ struct DeferredColumnFilter {
   duckdb::unique_ptr<duckdb::TableFilter> filter;
 };
 
+struct DeferredRowFilter {
+  std::vector<ColumnId> columns;
+  std::vector<duckdb::LogicalType> types;
+  duckdb::unique_ptr<duckdb::TableFilter> filter;
+};
+
 struct DeferredBuild {
   std::shared_ptr<const irs::Filter> filter;
   std::shared_ptr<const irs::Filter> index_only;
   std::vector<std::shared_ptr<irs::Scorer>> scorers;
   std::vector<DeferredColumnFilter> column_filters;
-  std::vector<DeferredColumnFilter> dual_filters;
+  std::vector<DeferredRowFilter> dual_filters;
   std::vector<DeferredCheck> checks;
 };
 

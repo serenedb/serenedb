@@ -40,8 +40,7 @@ QUERY PLAN
 │ ~1 row                    │
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
-│ Index: stk                │
-│ Lookup: search            │
+│ Table: stk                │
 │ Output: row-count only    │
 │ Column Filter: x >= 20000 │
 │ ~4,800 rows               │
@@ -173,20 +172,12 @@ x
 8001
 
 
-# MERGE INTO and INSERT ... ON CONFLICT (lowered to MergeInto) are rejected
-# cleanly instead of corrupting the index through the store mirror.
-statement error
+statement ok
 MERGE INTO stk USING (SELECT 1::BIGINT AS pk) src ON stk.pk = src.pk
   WHEN MATCHED THEN UPDATE SET x = 0;
-----
-db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on search-backed tables
 
-
-statement error
+statement ok
 INSERT INTO stk VALUES (1, 1, 'dup', 1) ON CONFLICT (pk) DO NOTHING;
-----
-db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on search-backed tables
-
 
 # Deletes: masked rows vanish from filtered scans, counts and top-k.
 statement ok

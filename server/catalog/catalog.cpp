@@ -69,6 +69,7 @@
 #include "connector/view_index_bind.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/oids.h"
+#include "query/config.h"
 #include "search/store.h"
 
 namespace sdb::catalog {
@@ -434,17 +435,16 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     info.index_type = kInvertedIndexTypeName;
   }
   const bool inverted = info.index_type == kInvertedIndexTypeName;
-  const auto unknown =
-    absl::c_find_if_not(info.options, [&](const auto& option) {
-      return inverted && IsKnownInvertedIndexOption(option.first);
-    });
-  if (unknown != info.options.end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("unrecognized parameter \"", unknown->first, "\""));
+  const auto names = connector::SortedOptionNames(info.options);
+  for (const auto name : names) {
+    if (!inverted || !IsKnownInvertedIndexOption(name)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("unrecognized parameter \"", name, "\""));
+    }
   }
   const bool search_table = IsSearchTable(table);
   if (search_table) {
-    for (const auto& [name, value] : info.options) {
+    for (const auto name : names) {
       RequireSearchTableIndexOption(name);
     }
   }
@@ -537,13 +537,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
-  const auto& options = info.Base().options;
-  auto unknown = absl::c_find_if(options, [](const auto& option) {
-    return !absl::c_contains(kSearchTableOptions, option.first);
-  });
-  if (unknown != options.end()) {
-    return duckdb::ErrorData{
-      duckdb::BinderException("unrecognized parameter \"%s\"", unknown->first)};
+  for (const auto name : connector::SortedOptionNames(info.Base().options)) {
+    if (!absl::c_contains(kSearchTableOptions, name)) {
+      return duckdb::ErrorData{duckdb::BinderException(
+        "unrecognized parameter \"%s\"", std::string{name})};
+    }
   }
   return {};
 }

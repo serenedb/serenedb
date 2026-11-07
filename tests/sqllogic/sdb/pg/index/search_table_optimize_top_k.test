@@ -22,8 +22,7 @@ EXPLAIN SELECT id FROM st_topk WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_t
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
-│ Index: st_topk              │
-│ Lookup: search              │
+│ Table: st_topk              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -94,8 +93,7 @@ EXPLAIN SELECT id FROM st_plain WHERE body @@ ts_phrase('fox') ORDER BY BM25(st_
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
-│ Index: st_plain             │
-│ Lookup: search              │
+│ Table: st_plain             │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -115,7 +113,7 @@ statement error
 CREATE INDEX st_empty_topk ON st_empty USING inverted (body st_topk_en) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ----
 db error: ERROR: optimize_top_k is a table option
-HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = ...).
 
 
 statement error

@@ -189,21 +189,12 @@ void RequireAlterableOption(std::string_view name) {
                   ERR_MSG("unrecognized parameter \"", name, "\""));
 }
 
-void RequireAlterableOptions(std::vector<std::string_view> names) {
-  absl::c_sort(names);
-  for (const auto name : names) {
-    RequireAlterableOption(name);
-  }
-}
-
 void SetOptions(duckdb::ClientContext& context, WithOptions& options,
                 const duckdb::SetTableOptionsInfo& info) {
-  std::vector<std::string_view> names;
-  for (const auto& [name, expr] : info.table_options) {
-    names.push_back(name);
-  }
-  RequireAlterableOptions(std::move(names));
-  for (const auto& [name, expr] : info.table_options) {
+  const auto names = connector::SortedOptionNames(info.table_options);
+  absl::c_for_each(names, RequireAlterableOption);
+  for (const auto name : names) {
+    const auto& expr = info.table_options.find(name)->second;
     if (!expr ||
         expr->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
       THROW_SQL_ERROR(
@@ -218,18 +209,14 @@ void SetOptions(duckdb::ClientContext& context, WithOptions& options,
 
 void ResetOptions(duckdb::ClientContext& context, WithOptions& options,
                   duckdb::ResetTableOptionsInfo& info) {
-  std::vector<std::string_view> names;
-  for (const auto& identifier : info.table_options) {
-    names.push_back(identifier.GetIdentifierName());
-  }
-  RequireAlterableOptions(std::move(names));
-  for (const auto& identifier : info.table_options) {
-    const auto& name = identifier.GetIdentifierName();
+  const auto names = connector::SortedOptionNames(info.table_options);
+  absl::c_for_each(names, RequireAlterableOption);
+  for (const auto name : names) {
     duckdb::Value value;
     if (const auto it = info.values.find(name); it != info.values.end()) {
       value = it->second;
     } else {
-      context.TryGetCurrentSetting(identifier, value);
+      context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
       info.values.emplace(name, value);
     }
     options[name] = OptionConstant(value);

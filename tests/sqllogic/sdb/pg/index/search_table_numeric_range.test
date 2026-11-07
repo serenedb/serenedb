@@ -67,11 +67,10 @@ QUERY PLAN
 │ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
-│ Index: snr               │
-│ Lookup: search           │
+│ Table: snr               │
 │ Index Filter:            │
 │ ╭─ Granular Range ─────╮ │
-│ │ Field: num           │ │
+│ │ Field: num(numeric)  │ │
 │ │ Range: >=100, <=1899 │ │
 │ ╰──────────────────────╯ │
 │ Output: row-count only   │
@@ -88,24 +87,23 @@ query
 EXPLAIN SELECT sum(pk) FROM snr WHERE num <= 1500 AND tag = 'odd';
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ───────────────────╮
-│ Aggregates: sum_no_overflow(#0)         │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ IRESEARCH_SCAN ───┴────────────────────╮
-│ Index: snr                              │
-│ Lookup: search                          │
-│ Index Filter:                           │
-│ ╭─ And ─────────╮                       │
-│ ╰───────┬───────╯                       │
-│         ├────────────────────╮          │
-│ ╭─ Terms ───────╮  ╭─ Granular Range ─╮ │
-│ │ Field: tag    │  │ Field: num       │ │
-│ │ Values: 'odd' │  │ Range: <=1500    │ │
-│ ╰───────────────╯  ╰──────────────────╯ │
-│ Projections: pk                         │
-│ ~400 rows                               │
-╰─────────────────────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ───────────────────────────╮
+│ Aggregates: sum_no_overflow(#0)                 │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Table: snr                                      │
+│ Index Filter:                                   │
+│ ╭─ And ──────────────╮                          │
+│ ╰──────────┬─────────╯                          │
+│            ├───────────────────────╮            │
+│ ╭─ Terms ──┴─────────╮  ╭─ Granular Range ────╮ │
+│ │ Field: tag(string) │  │ Field: num(numeric) │ │
+│ │ Values: 'odd'      │  │ Range: <=1500       │ │
+│ ╰────────────────────╯  ╰─────────────────────╯ │
+│ Projections: pk                                 │
+│ ~400 rows                                       │
+╰─────────────────────────────────────────────────╯
 
 statement ok
 PREPARE snr_wide(INTEGER, INTEGER) AS
@@ -126,8 +124,7 @@ EXPLAIN SELECT pk FROM snr WHERE num <= 1500
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: snr                        │
-│ Lookup: search                    │
+│ Table: snr                        │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
 │ Projections: pk                   │
@@ -150,8 +147,7 @@ EXPLAIN SELECT pk FROM snr WHERE num <= 1000
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: snr                        │
-│ Lookup: search                    │
+│ Table: snr                        │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
 │ Projections: pk                   │
@@ -174,13 +170,12 @@ EXPLAIN SELECT pk FROM snr WHERE num <= 40
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: snr                        │
-│ Lookup: search                    │
+│ Table: snr                        │
 │ Index Filter:                     │
-│ ╭─ Granular Range ─╮              │
-│ │ Field: num       │              │
-│ │ Range: <=40      │              │
-│ ╰──────────────────╯              │
+│ ╭─ Granular Range ────╮           │
+│ │ Field: num(numeric) │           │
+│ │ Range: <=40         │           │
+│ ╰─────────────────────╯           │
 │ Index or Column Filter: num <= 40 │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
@@ -203,11 +198,10 @@ EXPLAIN SELECT pk FROM snr WHERE num >= 1200 AND num <= 1240
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: snr                        │
-│ Lookup: search                    │
+│ Table: snr                        │
 │ Index Filter:                     │
 │ ╭─ Granular Range ──────╮         │
-│ │ Field: num            │         │
+│ │ Field: num(numeric)   │         │
 │ │ Range: >=1200, <=1240 │         │
 │ ╰───────────────────────╯         │
 │ Index or Column Filter:           │
@@ -232,22 +226,23 @@ EXPLAIN SELECT pk FROM snr WHERE tag = 'even' OR num > 1500
   ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────╮
-│ Index: snr                               │
-│ Lookup: search                           │
-│ Index Filter:                            │
-│ ╭─ Or ───────────╮                       │
-│ ╰────────┬───────╯                       │
-│          ├────────────────────╮          │
-│ ╭─ Terms ┴───────╮  ╭─ Granular Range ─╮ │
-│ │ Field: tag     │  │ Field: num       │ │
-│ │ Values: 'even' │  │ Range: >1500     │ │
-│ ╰────────────────╯  ╰──────────────────╯ │
-│ Score: l2_distance(emb, FLOAT[2])        │
-│ Top: 3                                   │
-│ Projections: pk                          │
-│ ~400 rows                                │
-╰──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────────╮
+│ Table: snr                                      │
+│ Index Filter:                                   │
+│ ╭─ Or ───────────────╮                          │
+│ ╰──────────┬─────────╯                          │
+│            ├───────────────────────╮            │
+│ ╭─ Terms ──┴─────────╮  ╭─ Granular Range ────╮ │
+│ │ Field: tag(string) │  │ Field: num(numeric) │ │
+│ │ Values: 'even'     │  │ Range: >1500        │ │
+│ ╰────────────────────╯  ╰─────────────────────╯ │
+│ Index or Column Filter:                         │
+│ (tag = 'even') OR (num > 1500)                  │
+│ Score: l2_distance(emb, FLOAT[2])               │
+│ Top: 3                                          │
+│ Projections: pk                                 │
+│ ~400 rows                                       │
+╰─────────────────────────────────────────────────╯
 
 query
 SELECT pk FROM snr WHERE num < 10 OR num > 1500
@@ -263,24 +258,23 @@ EXPLAIN SELECT pk FROM snr WHERE num < 10 OR num > 1500
   ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────────╮
-│ Index: snr                                 │
-│ Lookup: search                             │
-│ Index Filter:                              │
-│ ╭─ Or ─────────────╮                       │
-│ ╰─────────┬────────╯                       │
-│           ├─────────────────────╮          │
-│ ╭─ Granular Range ─╮  ╭─ Granular Range ─╮ │
-│ │ Field: num       │  │ Field: num       │ │
-│ │ Range: <10       │  │ Range: >1500     │ │
-│ ╰──────────────────╯  ╰──────────────────╯ │
-│ Index or Column Filter:                    │
-│ (num < 10) OR (num > 1500)                 │
-│ Score: l2_distance(emb, FLOAT[2])          │
-│ Top: 3                                     │
-│ Projections: pk                            │
-│ ~400 rows                                  │
-╰────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Table: snr                                       │
+│ Index Filter:                                    │
+│ ╭─ Or ────────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Granular Range ────╮  ╭─ Granular Range ────╮ │
+│ │ Field: num(numeric) │  │ Field: num(numeric) │ │
+│ │ Range: <10          │  │ Range: >1500        │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Index or Column Filter:                          │
+│ (num < 10) OR (num > 1500)                       │
+│ Score: l2_distance(emb, FLOAT[2])                │
+│ Top: 3                                           │
+│ Projections: pk                                  │
+│ ~400 rows                                        │
+╰──────────────────────────────────────────────────╯
 
 query
 SELECT count(*) FROM snr WHERE tag = 'even' OR num > 1500;
@@ -315,13 +309,12 @@ EXPLAIN SELECT pk FROM snr_f WHERE val <= 20.0
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: snr_f                      │
-│ Lookup: search                    │
+│ Table: snr_f                      │
 │ Index Filter:                     │
-│ ╭─ Granular Range ─╮              │
-│ │ Field: val       │              │
-│ │ Range: <=20      │              │
-│ ╰──────────────────╯              │
+│ ╭─ Granular Range ────╮           │
+│ │ Field: val(numeric) │           │
+│ │ Range: <=20         │           │
+│ ╰─────────────────────╯           │
 │ Index or Column Filter: val <= 20 │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
@@ -344,8 +337,7 @@ EXPLAIN SELECT pk FROM snr_f WHERE val <= 750.0
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: snr_f                      │
-│ Lookup: search                    │
+│ Table: snr_f                      │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
 │ Projections: pk                   │
@@ -446,13 +438,12 @@ EXPLAIN SELECT pk FROM snr_n WHERE num <= 1500
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
-│ Index: snr_n                        │
-│ Lookup: search                      │
+│ Table: snr_n                        │
 │ Index Filter:                       │
-│ ╭─ Granular Range ─╮                │
-│ │ Field: num       │                │
-│ │ Range: <=1500    │                │
-│ ╰──────────────────╯                │
+│ ╭─ Granular Range ────╮             │
+│ │ Field: num(numeric) │             │
+│ │ Range: <=1500       │             │
+│ ╰─────────────────────╯             │
 │ Index or Column Filter: num <= 1500 │
 │ Score: l2_distance(emb, FLOAT[2])   │
 │ Top: 3                              │
@@ -472,13 +463,12 @@ EXPLAIN SELECT pk FROM snr_n WHERE num <= 40
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: snr_n                      │
-│ Lookup: search                    │
+│ Table: snr_n                      │
 │ Index Filter:                     │
-│ ╭─ Granular Range ─╮              │
-│ │ Field: num       │              │
-│ │ Range: <=40      │              │
-│ ╰──────────────────╯              │
+│ ╭─ Granular Range ────╮           │
+│ │ Field: num(numeric) │           │
+│ │ Range: <=40         │           │
+│ ╰─────────────────────╯           │
 │ Index or Column Filter: num <= 40 │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │

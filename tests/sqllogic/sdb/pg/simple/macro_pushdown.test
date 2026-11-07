@@ -20,9 +20,8 @@ query
 EXPLAIN SELECT a FROM mp WHERE mp_between(a + 1, 5, 10)
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────╮
 │ Table: mp                          │
-│ Type: Sequential Scan              │
 │ Projections: a                     │
 │ Column Filter: (a > 4) AND (a < 9) │
 │ ~200 rows                          │
@@ -32,9 +31,8 @@ query
 EXPLAIN SELECT a FROM mp WHERE a + 1 > 5 AND a + 1 < 10
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────╮
 │ Table: mp                          │
-│ Type: Sequential Scan              │
 │ Projections: a                     │
 │ Column Filter: (a > 4) AND (a < 9) │
 │ ~200 rows                          │
@@ -53,9 +51,8 @@ query
 EXPLAIN SELECT a FROM mp WHERE mp_fbetween(a + 1, 5, 10)
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────╮
 │ Table: mp                          │
-│ Type: Sequential Scan              │
 │ Projections: a                     │
 │ Column Filter: (a > 4) AND (a < 9) │
 │ ~200 rows                          │
@@ -79,9 +76,8 @@ QUERY PLAN
 │ invoke(lambda 0_macro_argument_0_0: ((0_macro_argument_0_0 > 5) AND (0_macro_argument_0_0 < 10)), (a + CAST((random() * 0) AS BIGINT))) │
 │ ~200 rows                                                                                                                               │
 ╰────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────╯
-╭─ SEQ_SCAN ─────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────╮
 │ Table: mp                                                                                                                               │
-│ Type: Sequential Scan                                                                                                                   │
 │ Projections: a                                                                                                                          │
 │ ~1,000 rows                                                                                                                             │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -103,9 +99,8 @@ QUERY PLAN
 │ Expression: (a <= 4) OR (a >= 999) │
 │ ~200 rows                          │
 ╰──────────────────┬─────────────────╯
-╭─ SEQ_SCAN ───────┴─────────────────╮
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
 │ Table: mp                          │
-│ Type: Sequential Scan              │
 │ Projections: a                     │
 │ Column Filter:                     │
 │ optional: ((a <= 4) OR (a >= 999)) │
@@ -127,9 +122,8 @@ query
 EXPLAIN SELECT a FROM mp WHERE mp_between(a + 1, 5, 10) OR mp_between(a, 990, 1000)
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ──────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ────────────────────────────────────╮
 │ Table: mp                                           │
-│ Type: Sequential Scan                               │
 │ Projections: a                                      │
 │ Column Filter:                                      │
 │ ((a > 4) AND (a < 9)) OR ((a > 990) AND (a < 1000)) │
@@ -167,13 +161,12 @@ QUERY PLAN
 │ Conditions: (a + 1) = b  │
 │ ~1,000 rows              │
 ╰─────────────┬────────────╯
-              ├───────────────────────────╮
-╭─ SEQ_SCAN ──┴────────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Table: mp                │  │ Table: mp             │
-│ Type: Sequential Scan    │  │ Type: Sequential Scan │
-│ Projections: a           │  │ Projections: b        │
-│ ~1,000 rows              │  │ ~1,000 rows           │
-╰──────────────────────────╯  ╰───────────────────────╯
+              ├─────────────────────────╮
+╭─ IRESEARCH_SCAN ─────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Table: mp                │  │ Table: mp        │
+│ Projections: a           │  │ Projections: b   │
+│ ~1,000 rows              │  │ ~1,000 rows      │
+╰──────────────────────────╯  ╰──────────────────╯
 
 query
 SELECT count(*) AS c FROM mp p JOIN mp q ON mp_eq(p.a + 1, q.b)
@@ -195,13 +188,12 @@ QUERY PLAN
 │             true         │
 │ ~1,000 rows              │
 ╰─────────────┬────────────╯
-              ├───────────────────────────╮
-╭─ SEQ_SCAN ──┴────────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Table: mp                │  │ Table: mp             │
-│ Type: Sequential Scan    │  │ Type: Sequential Scan │
-│ Projections: a           │  │ Projections: b        │
-│ ~1,000 rows              │  │ ~1,000 rows           │
-╰──────────────────────────╯  ╰───────────────────────╯
+              ├─────────────────────────╮
+╭─ IRESEARCH_SCAN ─────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Table: mp                │  │ Table: mp        │
+│ Projections: a           │  │ Projections: b   │
+│ ~1,000 rows              │  │ ~1,000 rows      │
+╰──────────────────────────╯  ╰──────────────────╯
 
 query
 SELECT count(*) AS c FROM mp p LEFT JOIN mp q ON mp_eq(p.a + 1, q.b)
@@ -223,13 +215,12 @@ QUERY PLAN
 │             a < (b + 10)  │
 │ ~10,000 rows              │
 ╰─────────────┬─────────────╯
-              ├────────────────────────────╮
-╭─ SEQ_SCAN ──┴─────────────╮  ╭─ SEQ_SCAN ┴───────────╮
-│ Table: mp                 │  │ Table: mp             │
-│ Type: Sequential Scan     │  │ Type: Sequential Scan │
-│ Projections: a            │  │ Projections: b        │
-│ ~1,000 rows               │  │ ~1,000 rows           │
-╰───────────────────────────╯  ╰───────────────────────╯
+              ├──────────────────────────╮
+╭─ IRESEARCH_SCAN ──────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Table: mp                 │  │ Table: mp        │
+│ Projections: a            │  │ Projections: b   │
+│ ~1,000 rows               │  │ ~1,000 rows      │
+╰───────────────────────────╯  ╰──────────────────╯
 
 query
 SELECT count(*) AS c FROM mp p LEFT JOIN mp q ON mp_fbetween(p.a, q.b, q.b + 10)
@@ -248,12 +239,11 @@ query
 EXPLAIN SELECT a FROM mp WHERE mp_between(mp_sq(b + 1), 0, 100)
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ────────────╮
-│ Table: mp             │
-│ Type: Sequential Scan │
-│ Projections: a        │
-│ ~1,000 rows           │
-╰───────────────────────╯
+╭─ IRESEARCH_SCAN ─╮
+│ Table: mp        │
+│ Projections: a   │
+│ ~1,000 rows      │
+╰──────────────────╯
 
 query
 SELECT count(*) AS c FROM mp WHERE mp_between(mp_sq(b + 1), 0, 100)

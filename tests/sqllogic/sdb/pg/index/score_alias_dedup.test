@@ -42,7 +42,7 @@ EXPLAIN SELECT kostya, bm25(vedernikoff_alias_idx.tableoid) AS s1, bm25(vedernik
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: vedernikoff_alias_idx           │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
@@ -101,7 +101,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
@@ -158,7 +158,7 @@ EXPLAIN SELECT kostya, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d1, clickclac
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: deadinside_alias_idx              │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Score: l2_distance(clickclack, FLOAT[3]) │
 │ Top: 2                                   │
 │ Projections: kostya,                     │
@@ -260,7 +260,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
@@ -286,22 +286,23 @@ query
 EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ───────────────────────────────╮
-│ Top: 2                                │
-│ Order By: kostya ASC                  │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ──┴───────────────────╮
-│ Index: vedernikoff_alias_idx          │
-│ Lookup: table                         │
-│ Index Filter:                         │
-│ ╭─ Term ─────────────────╮            │
-│ │ Field: abramov(string) │            │
-│ │ Value: clickclack      │            │
-│ ╰────────────────────────╯            │
-│ Column Filter:                        │
-│ optional: Dynamic Filter (kostya < ?) │
-│ Score: bm25(k1=1.2, b=0.75)           │
-│ Projections: kostya                   │
-│ ~1 row                                │
-╰───────────────────────────────────────╯
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: kostya ASC, #1 DESC          │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: vedernikoff_alias_idx           │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ─────────────────╮             │
+│ │ Field: abramov(string) │             │
+│ │ Value: clickclack      │             │
+│ ╰────────────────────────╯             │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (kostya <= ?) │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: kostya,                   │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯

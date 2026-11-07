@@ -43,12 +43,11 @@ QUERY PLAN
                    ├────────────────────────────────╮
 ╭─ TOP_N ──────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
 │ Top: 6                             │  │ Index: ljs           │
-│ Order By: k ASC, id ASC            │  │ Lookup: search       │
-│ ~6 rows                            │  │ Projections: payload │
-╰──────────────────┬─────────────────╯  │ ~6 rows              │
-╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╰──────────────────────╯
-│ Index: ljs                         │
-│ Lookup: search                     │
+│ Order By: k ASC, id ASC            │  │ Projections: payload │
+│ ~6 rows                            │  │ ~6 rows              │
+╰──────────────────┬─────────────────╯  ╰──────────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Table: ljs                         │
 │ Projections: id, k, rowid          │
 │ Column Filter:                     │
 │ contains(url, 'google'),           │
@@ -160,17 +159,16 @@ statement ok
 DELETE FROM ljd WHERE id < 3000 AND id % 14 = 0;
 
 query
-SELECT count(DISTINCT iresearch_pk >> 32) AS segments, count(*) AS n FROM ljd_idx;
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM ljd;
 ----
 segments	n
 3	8785
 
-statement error
-SELECT rowid FROM ljd_idx LIMIT 1;
+query
+SELECT (SELECT rowid FROM ljd_idx WHERE id = 7) = (SELECT rowid FROM ljd WHERE id = 7) AS same;
 ----
-db error: ERROR: cannot open relation "ljd_idx"
-DETAIL: This operation is not supported for indexes.
-
+same
+t
 
 statement error
 UPDATE ljd_idx SET note = 'x' WHERE id = 7;
@@ -194,20 +192,15 @@ QUERY PLAN
 │ Key: rowid                        │
 │ ~6 rows                           │
 ╰─────────────────┬─────────────────╯
-                  ├─────────────────────────────────────────────╮
-╭─ LOOKUP_JOIN ───┴─────────────────╮                 ╭─ INDEX_SOURCE ────╮
-│ Key: iresearch_pk                 │                 │ Lookup: table     │
-│ ~6 rows                           │                 │ Projections: note │
-╰─────────────────┬─────────────────╯                 │ ~6 rows           │
-                  ├────────────────────────────────╮  ╰───────────────────╯
-╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
-│ Top: 6                            │  │ Index: ljd_idx       │
-│ Order By: k ASC, id ASC           │  │ Projections: payload │
-│ ~6 rows                           │  │ ~6 rows              │
-╰─────────────────┬─────────────────╯  ╰──────────────────────╯
-╭─ IRESEARCH_SCAN ┴─────────────────╮
-│ Index: ljd_idx                    │
-│ Lookup: table                     │
+                  ├────────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ──────╮
+│ Top: 6                            │  │ Index: ljd_idx        │
+│ Order By: k ASC, id ASC           │  │ Lookup: search        │
+│ ~6 rows                           │  │ Projections: payload, │
+╰─────────────────┬─────────────────╯  │              note     │
+╭─ IRESEARCH_SCAN ┴─────────────────╮  │ ~6 rows               │
+│ Index: ljd_idx                    │  ╰───────────────────────╯
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Term ──────────────╮           │
 │ │ Field: body(string) │           │
@@ -215,8 +208,7 @@ QUERY PLAN
 │ ╰─────────────────────╯           │
 │ Column Filter:                    │
 │ optional: Dynamic Filter (k <= ?) │
-│ Projections: id (l), k (i),       │
-│              iresearch_pk, pk     │
+│ Projections: id, k, rowid         │
 │ ~1,757 rows                       │
 ╰───────────────────────────────────╯
 
@@ -259,7 +251,7 @@ statement ok
 VACUUM (COMPACT_TABLE) ljd;
 
 query
-SELECT count(DISTINCT iresearch_pk >> 32) AS segments, count(*) AS n FROM ljd_idx;
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM ljd;
 ----
 segments	n
 1	8785

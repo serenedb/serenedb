@@ -39,7 +39,7 @@ EXPLAIN SELECT a FROM sentences_idx WHERE b @@ 'fox';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: sentences_idx │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: b(string) │ │
@@ -62,17 +62,18 @@ LIMIT 1;
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: iresearch_pk                                       │
+│ Key: rowid                                              │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
                              ├───────────────────────────────────────────╮
 ╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
 │ Top: 1                                                  │  │ Index: sentences_idx │
-│ Order By: #0 ASC                                        │  │ Lookup: table        │
+│ Order By: #0 ASC                                        │  │ Lookup: search       │
 │ ~1 row                                                  │  │ Projections: b, a    │
 ╰────────────────────────────┬────────────────────────────╯  │ ~1 row               │
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  ╰──────────────────────╯
 │ Index: sentences_idx                                    │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ Term ───────────╮                                    │
 │ │ Field: b(string) │                                    │
@@ -81,7 +82,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~1 row                                                  │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -511,7 +512,7 @@ EXPLAIN SELECT id FROM notes_idx WHERE body @@ ts_phrase('quick brown fox');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: notes_idx                                         │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ And ───────────────────────────╮                      │
 │ ╰────────────────┬────────────────╯                      │

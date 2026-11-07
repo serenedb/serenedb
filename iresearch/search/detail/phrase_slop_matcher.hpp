@@ -65,6 +65,15 @@ struct GroupPair {
   uint32_t b;
 };
 
+template<typename Parent>
+uint32_t FindGroup(Parent&& parent, uint32_t x) noexcept {
+  while (parent(x) != x) {
+    parent(x) = parent(parent(x));
+    x = parent(x);
+  }
+  return x;
+}
+
 template<typename Group>
 void BuildGroupPairs(size_t n, Group&& group, std::vector<GroupPair>& out) {
   out.clear();

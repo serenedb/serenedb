@@ -103,11 +103,8 @@ void LayoutSlop(CompiledPhrase& phrase) {
   std::vector<uint32_t> groups(n);
   absl::c_iota(groups, uint32_t{0});
   const auto find = [&](uint32_t x) {
-    while (groups[x] != x) {
-      groups[x] = groups[groups[x]];
-      x = groups[x];
-    }
-    return x;
+    return detail::slop::FindGroup(
+      [&](uint32_t i) -> uint32_t& { return groups[i]; }, x);
   };
   phrase.accept.ForEachMapped([&](const CompiledPhrase::Accept& entry) {
     const auto root = find(entry.slots.front());

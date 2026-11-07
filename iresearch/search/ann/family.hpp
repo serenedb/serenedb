@@ -55,15 +55,13 @@ class Walk : public Root {
       _docs[batch] = doc;
       _node.FetchScoreArgs(batch);
       if (++batch == kScoreBlock) {
-        _fetcher.FetchScoreBlock(std::span<const doc_id_t, kScoreBlock>{_docs});
-        _score.ScoreBlock(_scores);
+        FetchAndScore(_fetcher, _score, _docs, _scores, kScoreBlock);
         Stage(collector, kScoreBlock);
         batch = 0;
       }
     }
     if (batch != 0) {
-      _fetcher.Fetch(std::span<const doc_id_t>{_docs, batch});
-      _score.Score(_scores, batch);
+      FetchAndScore(_fetcher, _score, _docs, _scores, batch);
       Stage(collector, batch);
     }
     if (_staged != 0) {

@@ -47,15 +47,9 @@ class All : public Root {
     for (uint32_t i = 0; i != n; ++i) {
       out[i] = min + i;
     }
-    uint32_t offset = 0;
-    for (; offset + kScoreBlock <= n; offset += kScoreBlock) {
-      _fetcher.FetchScoreBlock(
-        std::span<const doc_id_t, kScoreBlock>{out + offset, kScoreBlock});
-      _score.ScoreBlock(scores + offset);
-    }
-    if (offset != n) {
-      _fetcher.Fetch(std::span<const doc_id_t>{out + offset, n - offset});
-      _score.Score(scores + offset, static_cast<scores_size_t>(n - offset));
+    for (uint32_t offset = 0; offset < n; offset += kScoreBlock) {
+      FetchAndScore(_fetcher, _score, out + offset, scores + offset,
+                    std::min<uint32_t>(n - offset, kScoreBlock));
     }
     return n;
   }

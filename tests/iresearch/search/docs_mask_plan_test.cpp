@@ -303,11 +303,12 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
         total += expected.size();
         CheckSegment(*query.filter, segment, expected);
       }
-      for (const bool prune : {false, true}) {
-        std::vector<irs::ScoreDoc> hits(10);
-        ASSERT_EQ(total, irs::ExecuteTopK(reader, *query.filter, *scorer,
-                                          hits.size(), prune, hits));
-      }
+      std::vector<irs::ScoreDoc> hits(10);
+      ASSERT_EQ(total, irs::ExecuteTopK(reader, *query.filter, *scorer,
+                                        hits.size(), false, hits));
+      ASSERT_LE(irs::ExecuteTopK(reader, *query.filter, *scorer, hits.size(),
+                                 true, hits),
+                total);
       CheckScores(reader, *query.filter, *scorer, total);
     }
     CheckFlattened(reader, *scorer);

@@ -295,12 +295,8 @@ irs::DirectoryReader Store::BuildSnapshot() {
 }
 
 void Store::CoolAll() {
-  if (!_table) {
-    return;
-  }
-  if (auto status = CoolRetired(kNoLsn); !status.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("search table ", _id, ": ", status.message()));
+  if (_table) {
+    CoolRetired(kNoLsn);
   }
 }
 
@@ -343,11 +339,7 @@ void Store::ScheduleCooling() {
         return;
       }
       store->_cooling_scheduled.store(false, std::memory_order_release);
-      size_t cooled = 0;
-      if (const auto status = store->Cool(false, cooled); !status.ok()) {
-        SDB_WARN(SEARCH, "cooling of search table ", store->GetId(),
-                 " failed: ", status.message());
-      }
+      store->Cool(false);
     })
     .Detach();
 }
@@ -408,53 +400,42 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot) {
   hot->Trx().Abort();
 }
 
-absl::Status Store::Cool(bool all, size_t& cooled) {
-  cooled = 0;
+void Store::Cool(bool all) {
   if (!_table) {
-    return absl::OkStatus();
+    return;
   }
   const auto taken = _table->TakeCoolable(all ? 0 : _segment_memory_max, all);
-  for (size_t i = 0; i < taken.size(); ++i) {
+  for (const auto& hot : taken) {
     try {
-      CoolOne(taken[i]);
-      ++cooled;
+      CoolOne(hot);
     } catch (const std::exception& e) {
-      for (size_t j = i + 1; j < taken.size(); ++j) {
-        _table->ReleaseHot(taken[j], true);
-      }
-      return absl::InternalError(
-        absl::StrCat("cooling search table ", _id,
-                     " failed: ", duckdb::ErrorData{e}.RawMessage()));
+      SDB_FATAL(SEARCH, "search table ", _id,
+                ": could not write the rows it holds in memory: ",
+                duckdb::ErrorData{e}.RawMessage());
     }
   }
-  if (cooled != 0) {
+  if (!taken.empty()) {
     NudgeCompaction();
   }
-  return absl::OkStatus();
 }
 
-absl::Status Store::CoolRetired(Lsn before) {
+void Store::CoolRetired(Lsn before) {
   _table->Retire(before);
   for (;;) {
-    size_t cooled = 0;
-    if (auto status = Cool(before == kNoLsn, cooled); !status.ok()) {
-      return status;
-    }
+    Cool(before == kNoLsn);
     if (!_table->HasRetiredHot()) {
-      return absl::OkStatus();
+      return;
     }
     _table->AwaitRetiredReleased();
   }
 }
 
-absl::Status Store::Cover(Lsn target) {
+void Store::Cover(Lsn target) {
   EnsureOpen();
   if (!_table || _in_memory || _table->NeededFrom() >= target) {
-    return absl::OkStatus();
+    return;
   }
-  if (auto status = CoolRetired(target); !status.ok()) {
-    return status;
-  }
+  CoolRetired(target);
   catalog::Transactions::Get().CommitState(
     [&] {
       duckdb::vector<std::string> entries;
@@ -462,7 +443,6 @@ absl::Status Store::Cover(Lsn target) {
       return catalog::SearchRecord(_db_id, _id, entries);
     },
     [&](Lsn lsn) { _table->StateLogged(lsn); });
-  return absl::OkStatus();
 }
 
 void Store::PublishSnapshot() {

@@ -11,14 +11,17 @@ INSERT INTO cif_t VALUES (1, 'first'), (2, 'second');
 
 
 statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
 SET sdb_faults = 'IndexWriter::Flush';
 
 
 statement error
-CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value)
-  WITH (compaction_interval = 0);
+CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value);
 ----
-db error: ERROR: failed to flush index 'cif_idx': intentional debug error
+db error: ERROR: intentional debug error
 
 
 statement ok

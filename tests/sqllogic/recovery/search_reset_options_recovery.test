@@ -19,6 +19,14 @@ WITH (compaction_interval = 100);
 
 
 statement ok
+CREATE TABLE rso_old_plain (id INT, body TEXT) WITH (compaction_interval = 100);
+
+
+statement ok
+CREATE INDEX rso_old_idx ON rso_old_plain USING inverted (id);
+
+
+statement ok
 SET compaction_interval = 0;
 
 
@@ -27,11 +35,7 @@ ALTER TABLE rso_t RESET (compaction_interval);
 
 
 statement ok
-ALTER INDEX rso_idx RESET (compaction_interval);
-
-
-statement ok
-CREATE INDEX rso_old_idx ON rso_plain USING inverted (id);
+ALTER TABLE rso_plain RESET (compaction_interval);
 
 
 statement ok
@@ -43,7 +47,7 @@ ALTER TABLE rso_old RESET (compaction_interval);
 
 
 statement ok
-ALTER INDEX rso_old_idx RESET (compaction_interval);
+ALTER TABLE rso_old_plain RESET (compaction_interval);
 
 
 statement ok
@@ -52,12 +56,12 @@ RESET sdb_faults;
 
 query
 SELECT relname, list_filter(reloptions, lambda x: x LIKE 'compaction_interval=%') AS opts
-FROM pg_class WHERE relname IN ('rso_t', 'rso_idx', 'rso_old', 'rso_old_idx') ORDER BY relname;
+FROM pg_class WHERE relname IN ('rso_t', 'rso_plain', 'rso_old', 'rso_old_plain') ORDER BY relname;
 ----
 relname	opts
-rso_idx	{compaction_interval=0}
 rso_old	{compaction_interval=0}
-rso_old_idx	{compaction_interval=0}
+rso_old_plain	{compaction_interval=0}
+rso_plain	{compaction_interval=0}
 rso_t	{compaction_interval=0}
 
 
@@ -72,10 +76,10 @@ SELECT 1;
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT relname, list_filter(reloptions, lambda x: x LIKE 'compaction_interval=%') AS opts
-FROM pg_class WHERE relname IN ('rso_t', 'rso_idx', 'rso_old', 'rso_old_idx') ORDER BY relname;
+FROM pg_class WHERE relname IN ('rso_t', 'rso_plain', 'rso_old', 'rso_old_plain') ORDER BY relname;
 ----
 relname	opts
-rso_idx	{compaction_interval=0}
-rso_old	{compaction_interval=1000}
-rso_old_idx	{compaction_interval=1000}
+rso_old	NULL
+rso_old_plain	NULL
+rso_plain	{compaction_interval=0}
 rso_t	{compaction_interval=0}

@@ -92,22 +92,16 @@ n
 2
 
 
-# ---------------------------------------------------------------------------
-# Rolled-back ALTER INDEX ... SET (...). The persisted options are the entry;
-# the rollback has to take the option back without taking the index with it.
-# ---------------------------------------------------------------------------
-
 statement ok
-ALTER INDEX ixiv_idx SET (segment_docs_max = 555);
+ALTER TABLE ixiv_t SET (compaction_interval = 555);
 
 
 query
-SELECT regexp_extract(array_to_string(reloptions, ','),
-                      'segment_docs_max=[0-9]*') AS opt
-FROM pg_class WHERE relname = 'ixiv_idx';
+SELECT list_contains(reloptions, 'compaction_interval=555') AS opt
+FROM pg_class WHERE relname = 'ixiv_t';
 ----
 opt
-segment_docs_max=555
+t
 
 
 statement ok
@@ -115,7 +109,7 @@ BEGIN;
 
 
 statement ok
-ALTER INDEX ixiv_idx SET (segment_docs_max = 4242);
+ALTER TABLE ixiv_t SET (compaction_interval = 4242);
 
 
 statement ok
@@ -123,12 +117,11 @@ ROLLBACK;
 
 
 query
-SELECT regexp_extract(array_to_string(reloptions, ','),
-                      'segment_docs_max=[0-9]*') AS opt
-FROM pg_class WHERE relname = 'ixiv_idx';
+SELECT list_contains(reloptions, 'compaction_interval=555') AS opt
+FROM pg_class WHERE relname = 'ixiv_t';
 ----
 opt
-segment_docs_max=555
+t
 
 
 query

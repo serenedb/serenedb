@@ -1168,7 +1168,18 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropNotNull(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterAddConstraint(
   duckdb::ClientContext& context, duckdb::AddConstraintInfo& info) {
-  switch (info.constraint->type) {
+  auto& oids = catalog.GetDatabase().GetDatabaseManager();
+  auto& constraint = *info.constraint;
+  if (!constraint.oid) {
+    constraint.oid = oids.NextOid();
+  }
+  if (constraint.type == duckdb::ConstraintType::UNIQUE) {
+    auto& unique = constraint.Cast<duckdb::UniqueConstraint>();
+    if (!unique.index_oid) {
+      unique.index_oid = oids.NextOid();
+    }
+  }
+  switch (constraint.type) {
     case duckdb::ConstraintType::CHECK:
       return AddVerifiedConstraint(context, info, *info.constraint);
     case duckdb::ConstraintType::UNIQUE:

@@ -443,9 +443,7 @@ absl::Status Transactions::TruncateLog(bool switch_chunk,
     return absl::OkStatus();
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_log_truncate_before_cover");
-  if (auto status = search::CoverLog(target); !status.ok()) {
-    return status;
-  }
+  search::CoverLog(target);
   SDB_IF_FAILURE("crash_before_log_truncate") { SDB_IMMEDIATE_ABORT(); }
   _log->Sync(target);
   if (abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_TRUNCATE ||

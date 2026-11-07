@@ -9,13 +9,13 @@ INSERT INTO acsl VALUES (1), (2)
 statement error
 ALTER TABLE acsl ADD COLUMN id serial PRIMARY KEY
 ----
-db error: ERROR: Cannot create index with outstanding updates
+db error: ERROR: ALTER TABLE cannot run in a transaction that has already written to "acsl"
 
 
 statement error
 ALTER TABLE acsl ADD COLUMN u bigserial UNIQUE
 ----
-db error: ERROR: Cannot create index with outstanding updates
+db error: ERROR: ALTER TABLE cannot run in a transaction that has already written to "acsl"
 
 
 query

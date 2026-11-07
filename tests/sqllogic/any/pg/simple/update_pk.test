@@ -51,8 +51,7 @@ QUERY PLAN
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
-│ Index: single_pk       │
-│ Lookup: search         │
+│ Table: single_pk       │
 │ Index Filter:          │
 │ ╭─ Term ────────────╮  │
 │ │ Field: a(numeric) │  │

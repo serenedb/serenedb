@@ -188,7 +188,7 @@ CREATE INDEX lr_x ON lr USING inverted (body)
 statement error
 CREATE OR REPLACE INDEX lr_x ON lr USING inverted ((body::INT))
 ----
-db error: ERROR: Could not convert string 'x500' to INT32 when casting from source column body
+db error: ERROR: Could not convert string 'x500' to INT32
 
 
 statement ok

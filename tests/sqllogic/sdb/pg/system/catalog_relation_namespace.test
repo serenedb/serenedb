@@ -65,13 +65,13 @@ db error: ERROR: Existing object "crn_i" is of type Index, trying to replace wit
 statement error
 ALTER TABLE crn_t RENAME TO crn_s
 ----
-db error: ERROR: Could not rename "crn_t" to "crn_s": another entry with this name already exists!
+db error: ERROR: Sequence with name "crn_s" already exists!
 
 
 statement error
 ALTER INDEX crn_i RENAME TO crn_t
 ----
-db error: ERROR: Could not rename "crn_i" to "crn_t": another entry with this name already exists!
+db error: ERROR: Table with name "crn_t" already exists!
 
 
 query
@@ -120,7 +120,7 @@ connection s2
 statement error
 CREATE INDEX crn_x ON crn_t(a)
 ----
-db error: ERROR: Table with name "crn_x" already exists!
+db error: ERROR: Index with name "crn_x" already exists!
 
 
 # A rolled back holder frees the name.

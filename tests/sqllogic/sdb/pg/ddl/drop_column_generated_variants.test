@@ -13,7 +13,8 @@ ALTER TABLE dcgv_s1 DROP COLUMN b;
 statement error
 INSERT INTO dcgv_s1 (a) VALUES (1);
 ----
-db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "dcgv_s1_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 query
@@ -39,7 +40,8 @@ ALTER TABLE dcgv_s2 DROP COLUMN c;
 statement error
 INSERT INTO dcgv_s2 (a, b) VALUES (2, 100);
 ----
-db error: ERROR: Duplicate key "b: 100" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "dcgv_s2_b_key"
+DETAIL: Key (b)=(100) already exists.
 
 
 statement ok

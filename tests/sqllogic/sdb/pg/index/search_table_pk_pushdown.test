@@ -129,8 +129,7 @@ EXPLAIN SELECT pk, x FROM te WHERE pk = 5;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
-│ Index: te              │
-│ Lookup: search         │
+│ Table: te              │
 │ Index Filter:          │
 │ ╭─ Term ─────────────╮ │
 │ │ Field: pk(numeric) │ │
@@ -145,8 +144,7 @@ EXPLAIN SELECT pk, x FROM te WHERE x = 50;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
-│ Index: te             │
-│ Lookup: search        │
+│ Table: te             │
 │ Projections: pk, x    │
 │ Column Filter: x = 50 │
 │ ~1 row                │
@@ -170,8 +168,7 @@ EXPLAIN SELECT a, b, s FROM tec WHERE a = 3 AND b = 300;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
-│ Index: tec                                   │
-│ Lookup: search                               │
+│ Table: tec                                   │
 │ Index Filter:                                │
 │ ╭─ And ─────────────╮                        │
 │ ╰─────────┬─────────╯                        │
@@ -190,8 +187,7 @@ EXPLAIN SELECT a, b, s FROM tec WHERE a = 3;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────╮
-│ Index: tec            │
-│ Lookup: search        │
+│ Table: tec            │
 │ Index Filter:         │
 │ ╭─ Term ────────────╮ │
 │ │ Field: a(numeric) │ │
@@ -208,8 +204,7 @@ EXPLAIN SELECT a, b FROM tec WHERE a = 3 AND s = 't3';
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
-│ Index: tec              │
-│ Lookup: search          │
+│ Table: tec              │
 │ Index Filter:           │
 │ ╭─ Term ────────────╮   │
 │ │ Field: a(numeric) │   │
@@ -235,8 +230,7 @@ EXPLAIN SELECT a, b, s FROM tec WHERE a = 3 OR b = 300;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
-│ Index: tec                                   │
-│ Lookup: search                               │
+│ Table: tec                                   │
 │ Index Filter:                                │
 │ ╭─ Or ──────────────╮                        │
 │ ╰─────────┬─────────╯                        │
@@ -264,8 +258,7 @@ QUERY PLAN
 │ ~2 rows                           │
 ╰─────────────────┬─────────────────╯
 ╭─ IRESEARCH_SCAN ┴─────────────────╮
-│ Index: tec                        │
-│ Lookup: search                    │
+│ Table: tec                        │
 │ Projections: a, s, b              │
 │ ~10 rows                          │
 ╰───────────────────────────────────╯

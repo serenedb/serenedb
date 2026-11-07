@@ -184,13 +184,15 @@ parents	the code	it's a view
 statement error
 INSERT INTO eik.parent (id, code, c) VALUES (3, 'a', 1);
 ----
-db error: ERROR: Duplicate key "code: a" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "parent_code_key"
+DETAIL: Key (code)=(a) already exists.
 
 
 statement error
 INSERT INTO eik.child (parent_id, body) VALUES (99, 'orphan');
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+db error: ERROR: insert or update on table "child" violates foreign key constraint "child_parent_id_fkey"
+DETAIL: Key (parent_id)=(99) is not present in table "parent".
 
 
 statement ok

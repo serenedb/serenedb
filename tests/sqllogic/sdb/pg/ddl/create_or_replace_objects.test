@@ -259,7 +259,9 @@ CREATE TABLE coro_fk (id INT REFERENCES coro_pk (id));
 statement error
 CREATE OR REPLACE TABLE coro_pk (id INT PRIMARY KEY, z INT);
 ----
-db error: ERROR: Could not drop the table because this table is main key table of the table "coro_fk"
+db error: ERROR: cannot drop table coro_pk because other objects depend on it
+DETAIL: constraint coro_fk_id_fkey on table coro_fk depends on table coro_pk
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -479,7 +481,8 @@ INSERT INTO coro_ctas VALUES (1);
 statement error
 INSERT INTO coro_ctas VALUES (1);
 ----
-db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "coro_ctas_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 statement ok
@@ -1430,7 +1433,7 @@ connection s2
 statement error
 INSERT INTO coro_mc VALUES (3, 'c');
 ----
-db error: ERROR: Failed to commit: Attempting to modify table "coro_mc" but another transaction has no changes this table
+db error: ERROR: Attempting to write to table coro_mc but another transaction is dropping it
 
 
 connection s1
@@ -1539,7 +1542,7 @@ connection s2
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: Transaction conflict: attempting to insert into table "coro_mc" but it has been dropped by a different transaction
+db error: ERROR: Attempting to write to table coro_mc but another transaction dropped it
 
 
 connection s2
@@ -1575,7 +1578,7 @@ connection s2
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: Transaction conflict: attempting to insert into table "coro_mc" but it has been dropped by a different transaction
+db error: ERROR: Attempting to write to table coro_mc but another transaction dropped it
 
 
 connection s2
@@ -1602,21 +1605,21 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE coro_mc (second INT);
 ----
-db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+db error: ERROR: search <slt:ignore>
 
 
 connection s2
 statement error
 DROP TABLE coro_mc;
 ----
-db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+db error: ERROR: search <slt:ignore>
 
 
 connection s2
 statement error
 ALTER TABLE coro_mc ADD COLUMN extra INT;
 ----
-db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+db error: ERROR: search <slt:ignore>
 
 
 connection s1
@@ -2669,7 +2672,8 @@ CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
 statement error
 INSERT INTO coro_ix VALUES (1, 'dup');
 ----
-db error: ERROR: Duplicate key "id: 1" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "coro_ix_art"
+DETAIL: Key (id)=(1) already exists.
 
 
 statement ok
@@ -2940,7 +2944,8 @@ INSERT INTO coro_ixt VALUES (1, 'c');
 statement error
 INSERT INTO coro_ixt VALUES (3, 'a');
 ----
-db error: ERROR: Duplicate key "body: a" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "coro_ixt_u"
+DETAIL: Key (body)=(a) already exists.
 
 
 statement ok
@@ -3015,7 +3020,8 @@ INSERT INTO coro_ixm VALUES (1, 10, 300);
 statement error
 INSERT INTO coro_ixm VALUES (5, 50, 100);
 ----
-db error: ERROR: Duplicate key "c: 100" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "coro_ixm_2"
+DETAIL: Key (c)=(100) already exists.
 
 
 statement ok
@@ -4446,7 +4452,7 @@ CREATE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k1', SECRET 'coro_s1', REGION 'cor
 statement error
 CREATE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k2', SECRET 'coro_s2', SCOPE 's3://coro-objects-bucket');
 ----
-db error: ERROR: Temporary secret with name "coro_sec" already exists!
+db error: ERROR: secret "coro_sec" already exists
 
 
 statement ok

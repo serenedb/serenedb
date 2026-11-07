@@ -33,14 +33,13 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
   using Base::_base;
   using Base::_doc;
   using Base::_docs;
-  using Base::_fetcher;
   using Base::_freqs;
+  using Base::_last;
   using Base::_lazy;
   using Base::_leaf;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
   using Base::_len;
-  using Base::_max_in_leaf;
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_score;
@@ -67,7 +66,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
       _left_in_leaf = 0;
       _doc = doc_limits::min() + meta.doc_delta;
-      _max_in_leaf = _doc;
+      _last = _doc;
     }
   }
 
@@ -91,7 +90,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
       ReadLeaf(_doc);
     }
     for (;;) {
-      if (_left_in_leaf != 0 && target <= _max_in_leaf) {
+      if (_left_in_leaf != 0 && target <= _last) {
         return _doc = TakeFrom(target);
       }
       _left_in_leaf = 0;
@@ -125,7 +124,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
         ScoreLeaf();
       }
       const auto* const scores = Scores() + (begin - std::cbegin(_docs));
-      if (_max_in_leaf >= max) {
+      if (_last >= max) {
         const auto* const it = detail::AddUntil<ScoreMergeType::Sum, false>(
           begin, end, scores, min, max, nullptr, mask, window);
         _left_in_leaf = static_cast<uint32_t>(end - it) - 1;
@@ -139,7 +138,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
         _doc = doc_limits::eof();
         return;
       }
-      ReadLeaf(_max_in_leaf);
+      ReadLeaf(_last);
       begin = end - _len;
     }
   }
@@ -165,7 +164,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     uint32_t out = 0;
     uint32_t hits = 0;
     const auto flush = [&] {
-      FetchAndScore(*_fetcher, _score, docs, scores, hits);
+      FetchAndScore(*_score.fetcher, _score.score, docs, scores, hits);
       detail::MergeHits(required, docs, slots, scores, hits, cand_docs,
                         cand_scores, out);
       hits = 0;
@@ -203,11 +202,11 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
       return;
     }
     _masked = true;
-    _masked_max = _needs_reposition ? doc_limits::invalid() : _max_in_leaf;
+    _masked_max = _needs_reposition ? doc_limits::invalid() : _last;
     _lazy = nullptr;
     _leaf.Reset({.bitset = nullptr,
                  .words = 0,
-                 .max = _max_in_leaf,
+                 .max = _last,
                  .kind = block_io::FillLeaf::Kind::Docs},
                 nullptr, _len);
   }
@@ -220,14 +219,14 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     if (_needs_reposition) {
       return;
     }
-    if (target > _max_in_leaf) {
+    if (target > _last) {
       _lazy = nullptr;
       _left_in_leaf = 0;
-      _doc = _max_in_leaf;
+      _doc = _last;
       return;
     }
     const auto len = _leaf.Len();
-    if (_max_in_leaf != _masked_max) {
+    if (_last != _masked_max) {
       _leaf.Materialize(_base, std::end(_docs) - len);
       DecodeLazyFreqs();
       _len = len;
@@ -238,19 +237,10 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
   }
 
   IRS_FORCE_INLINE doc_id_t TakeFrom(doc_id_t target) noexcept {
-    if (_len == doc_limits::kBlockSize) [[likely]] {
-      const auto* const it =
-        BranchlessLowerBound<doc_limits::kBlockSize>(std::begin(_docs), target);
-      _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - it) - 1;
-      return *it;
-    }
-    for (;;) {
-      const auto doc = *(std::end(_docs) - _left_in_leaf);
-      --_left_in_leaf;
-      if (target <= doc) {
-        return doc;
-      }
-    }
+    const auto* const it =
+      FirstNotBelow(std::end(_docs) - _left_in_leaf, target);
+    _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - it) - 1;
+    return *it;
   }
 
   doc_id_t _masked_max = doc_limits::invalid();

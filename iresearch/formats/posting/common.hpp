@@ -164,6 +164,12 @@ class GrowingHint {
     _window = kFirst;
   }
 
+  void Arm(const PostingMeta& meta) noexcept {
+    if (const auto extent = DocExtent(meta); extent != 0) {
+      Arm(meta.doc_start, meta.doc_start + extent);
+    }
+  }
+
   template<typename Input>
   IRS_FORCE_INLINE void Advance(const Input& in, uint64_t at) noexcept {
     if (at > _last) {

@@ -42,6 +42,7 @@
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -74,6 +75,8 @@ inline constexpr LeafShape kScoredBatchShape{
   .freqs = true,
   .docs = false,
 };
+
+inline constexpr LeafShape kPosShape{.freqs = true, .delta = true};
 
 inline constexpr LeafShape kCountShape{
   .delta = true,
@@ -267,29 +270,12 @@ class PostingLeaf {
     return Scores() + (doc - std::cbegin(_docs));
   }
 
-  IRS_FORCE_INLINE static const doc_id_t* Behind(const doc_id_t* begin,
-                                                 const doc_id_t* end,
-                                                 doc_id_t min) noexcept {
-    while (begin != end && *begin < min) {
-      ++begin;
-    }
-    return begin;
-  }
-
   IRS_FORCE_INLINE const UnalignedWord* StableBitset(
     const block_io::FillLeaf& leaf) noexcept {
-    if constexpr (InputType::kVolatileAlways) {
-      return leaf.bitset;
-    } else {
-      if (!leaf.IsBitset()) {
-        return leaf.bitset;
-      }
-      SDB_ASSERT(leaf.words <=
-                 _docs.size() * sizeof(doc_id_t) / sizeof(uint64_t));
-      std::memcpy(_docs.begin(), leaf.bitset,
-                  size_t{leaf.words} * sizeof(uint64_t));
-      return reinterpret_cast<const UnalignedWord*>(_docs.begin());
-    }
+    SDB_ASSERT(!leaf.IsBitset() || leaf.words <= _docs.size() *
+                                                   sizeof(doc_id_t) /
+                                                   sizeof(uint64_t));
+    return block_io::StableBitset<InputType>(leaf, _docs.begin());
   }
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
@@ -299,9 +285,7 @@ class PostingLeaf {
     if constexpr (Shape.reads == LeafReads::Whole) {
       PrefetchDocs(in, meta);
     } else if constexpr (Shape.reads == LeafReads::Grows) {
-      if (const auto extent = DocExtent(meta); extent != 0) {
-        _hint.Arm(meta.doc_start, meta.doc_start + extent);
-      }
+      _hint.Arm(meta);
     }
     if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
@@ -500,16 +484,14 @@ class PostingLeaf {
   }
 
   doc_id_t Scan(doc_id_t target) {
-    for (auto left = _left_in_leaf; left != 0; --left) {
-      const auto doc = *(std::end(_docs) - left);
-      if (target <= doc) {
-        _left_in_leaf = left - 1;
-        return _doc = doc;
-      }
+    const auto* const end = std::cend(_docs);
+    const auto* const it = ScanNotBelow(end - _left_in_leaf, end, target);
+    if (it == end) {
+      _left_in_leaf = 0;
+      return _doc = doc_limits::eof();
     }
-
-    _left_in_leaf = 0;
-    return _doc = doc_limits::eof();
+    _left_in_leaf = static_cast<uint32_t>(end - it) - 1;
+    return _doc = *it;
   }
 
   template<typename Read>

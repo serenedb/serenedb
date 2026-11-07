@@ -26,6 +26,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -43,7 +44,6 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
-  using Base::Behind;
   using Base::kBlock;
   using Base::ReadLeafBelow;
   using Base::ScoresAt;
@@ -94,7 +94,7 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
     }
     const auto* const end = std::cend(_docs);
     if (_left_in_leaf != 0) {
-      const auto* const begin = Behind(end - _left_in_leaf, end, min);
+      const auto* const begin = ScanNotBelow(end - _left_in_leaf, end, min);
       const auto* const it = this->template ScoreMasked<MergeType>(
         begin, end, min, max, mask, window);
       _left_in_leaf = static_cast<uint32_t>(end - it);
@@ -112,7 +112,7 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
         continue;
       }
       const auto* const it = this->template ScoreMasked<MergeType>(
-        Behind(end - len, end, min), end, min, max, mask, window);
+        ScanNotBelow(end - len, end, min), end, min, max, mask, window);
       if (it != end) {
         _left_in_leaf = static_cast<uint32_t>(end - it);
         return _doc = *it;
@@ -132,7 +132,7 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
     const auto* const end = std::cend(_docs);
 
     if (_left_in_leaf != 0) {
-      const auto* const begin = Behind(end - _left_in_leaf, end, min);
+      const auto* const begin = ScanNotBelow(end - _left_in_leaf, end, min);
       if (begin == end) {
         _left_in_leaf = 0;
       } else if (_last >= max) {
@@ -157,7 +157,7 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
         continue;
       }
 
-      const auto* const begin = Behind(end - len, end, min);
+      const auto* const begin = ScanNotBelow(end - len, end, min);
       if (_last < max) {
         AddWhole<MergeType, kCounts>(begin, end, ScoresAt(begin), min, counts,
                                      mask, window);

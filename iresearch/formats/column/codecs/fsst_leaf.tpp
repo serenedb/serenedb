@@ -73,9 +73,9 @@ uint64_t DecodeSuffix(const Decoder& fsst, const char* in, uint64_t enc,
 }
 
 template<typename Decoder, typename Visit>
-ChainEnd WalkChain(const Decoder& fsst, const char* in,
-                   PackedReader& lengths, PackedReader& lcps, uint32_t first,
-                   uint32_t end, uint64_t enc_off, uint64_t enc_end, char* out,
+ChainEnd WalkChain(const Decoder& fsst, const char* in, PackedReader& lengths,
+                   PackedReader& lcps, uint32_t first, uint32_t end,
+                   uint64_t enc_off, uint64_t enc_end, char* out,
                    uint64_t capacity, Visit&& visit) {
   uint64_t off = 0;
   uint64_t prev_off = 0;
@@ -102,10 +102,10 @@ ChainEnd WalkChain(const Decoder& fsst, const char* in,
 }
 
 template<typename Decoder, typename Visit>
-uint32_t WalkInPlace(const Decoder& fsst, const char* in,
-                     PackedReader& lengths, PackedReader& lcps, uint32_t first,
-                     uint32_t end, uint64_t enc_off, uint64_t enc_end,
-                     std::string& buf, Visit&& visit) {
+uint32_t WalkInPlace(const Decoder& fsst, const char* in, PackedReader& lengths,
+                     PackedReader& lcps, uint32_t first, uint32_t end,
+                     uint64_t enc_off, uint64_t enc_end, std::string& buf,
+                     Visit&& visit) {
   uint64_t len = 0;
   for (auto e = first; e < end; ++e) {
     const uint64_t lcp = e == first ? 0 : lcps.At(e);

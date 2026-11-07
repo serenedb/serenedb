@@ -368,8 +368,7 @@ void OnPairCodec::Encode(std::span<const std::string_view> entries,
                             ? kOnPairMaxToken
                             : static_cast<size_t>(std::countl_zero(diff) / 8);
       const auto& chain = _chains[lo[k]];
-      const auto fits =
-        chain.lens & ((1u << std::min(common, lane.left)) - 1);
+      const auto fits = chain.lens & ((1u << std::min(common, lane.left)) - 1);
       const auto len = static_cast<uint32_t>(std::bit_width(fits));
       *lane.out++ = chain.ids[len - 1];
       lane.rest += len;

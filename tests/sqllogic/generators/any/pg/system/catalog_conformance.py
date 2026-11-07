@@ -731,6 +731,13 @@ RELATIONS = {
     "public.plain_seq": "sequence",
 }
 DESCENDING = {"public.orders_amount_desc_idx"}
+PLAIN_INDEXES = {"app.all_types_varchar_idx": "app.all_types", "public.customers_name_email_idx": "public.customers",
+                 "public.order_items_sku_idx": "public.order_items", "public.orders_amount_desc_idx": "public.orders",
+                 "public.orders_customer_idx": "public.orders"}
+
+
+def plain_indexes(table=None):
+    return quoted(sorted(index.split(".")[1] for index, owner in PLAIN_INDEXES.items() if table in (None, owner)))
 DIFFERING_COLUMNS = {
     "app.address": (("city",), ("typmod",)),
     "app.all_types": (("c_char", "c_numeric_plain", "c_varchar"), ("typmod", "numeric")),
@@ -764,9 +771,10 @@ for relation, kind in RELATIONS.items():
     if kind == "index":
         selected += [] if relation in DESCENDING else indexdefs(relation)
         selected.append(f"pg_catalog.pg_get_indexdef('{relation}'::regclass, 1, true) AS indexdef_column")
-    check("SELECT " + ",\n  ".join(selected))
+    plain = relation in PLAIN_INDEXES and relation not in DESCENDING
+    check("SELECT " + ",\n  ".join(selected), *(("index_am",) if plain else ()))
     if relation in DESCENDING:
-        check("SELECT " + ",\n  ".join(indexdefs(relation)), "index_desc")
+        check("SELECT " + ",\n  ".join(indexdefs(relation)), "index_desc", "index_am")
     if kind == "view":
         check(f"""SELECT {spaced(f"pg_catalog.pg_get_viewdef('{relation}'::regclass)", "viewdef")},
   {spaced(f"pg_catalog.pg_get_viewdef('{relation}'::regclass, true)", "viewdef_pretty")},
@@ -992,7 +1000,8 @@ check(f'''SELECT q.c1 AS indexname, q.c2 AS array_agg, q.c3 AS indisunique, q.c4
   replace(q.c6, 'secondary', 'btree') AS amname, q.c7 AS exprdef, q.c8 AS attoptions FROM (
 {DJANGO_INDEXES}
 ) q(c1, c2, c3, c4, c5, c6, c7, c8)
-ORDER BY q.c1::text COLLATE "C"''')
+WHERE q.c1 @NOT IN {plain_indexes("public.orders")}
+ORDER BY q.c1::text COLLATE "C"''', "index_am")
 check(f'''SELECT q.c1 AS indexname, q.c5 AS array_agg FROM (
 {DJANGO_INDEXES}
 ) q(c1, c2, c3, c4, c5, c6, c7, c8)
@@ -1038,12 +1047,12 @@ SELECT ns.nspname, t.oid, t.typname, t.typtype, t.typnotnull, t.elemtypoid FROM 
 ) q
 WHERE q.typname @NOT IN ('_geometry', '_union', '_variant', 'geometry', 'union', 'variant')
 ORDER BY q.typname::text COLLATE "C"''', "duckdb_types")
-check('''SELECT q.schemaname, q.tablename, q.indexname, q.tablespace,
+check(f'''SELECT q.schemaname, q.tablename, q.indexname, q.tablespace,
   replace(q.indexdef, ' USING secondary ', ' USING btree ') AS indexdef FROM (
 SELECT schemaname, tablename, indexname, tablespace, indexdef FROM pg_indexes WHERE schemaname IN ('public', 'app')
 ) q
-WHERE q.indexname @NOT IN ('orders_amount_desc_idx')
-ORDER BY q.indexname::text COLLATE "C"''', "index_desc")
+WHERE q.indexname @NOT IN {plain_indexes()}
+ORDER BY q.indexname::text COLLATE "C"''', "index_desc", "index_am")
 check("""SELECT q.setting FROM (
 select setting from pg_catalog.pg_settings where name='standard_conforming_strings'
 ) q""")
@@ -1277,8 +1286,8 @@ check('''SELECT q.relname, q.indisunique, array_to_string((q.indkey)::int2[], ' 
   q.comment, q.indisvalid, replace(q.pg_get_indexdef, ' USING secondary ', ' USING btree ') AS pg_get_indexdef FROM (
 SELECT distinct i.relname, d.indisunique, d.indkey, pg_get_indexdef(d.indexrelid), t.oid, pg_catalog.obj_description(i.oid, 'pg_class') AS comment, d.indisvalid FROM pg_class t INNER JOIN pg_index d ON t.oid = d.indrelid INNER JOIN pg_class i ON d.indexrelid = i.oid LEFT JOIN pg_namespace n ON n.oid = t.relnamespace WHERE i.relkind IN ('i', 'I') AND d.indisprimary = 'f' AND t.relname = 'orders' AND n.nspname = ANY (current_schemas(false)) ORDER BY i.relname
 ) q
-WHERE q.relname @NOT IN ('orders_amount_desc_idx')
-ORDER BY q.relname::text COLLATE "C"''', "index_desc")
+WHERE q.relname @NOT IN ('orders_amount_desc_idx', 'orders_customer_idx')
+ORDER BY q.relname::text COLLATE "C"''', "index_desc", "index_am")
 check('''SELECT q.oid::regtype::text AS oid, q.typname, q.typelem::regtype::text AS typelem, q.typdelim,
   (q.typinput)::text AS typinput, q.rngsubtype, q.typtype, q.typbasetype FROM (
 SELECT t.oid, t.typname, t.typelem, t.typdelim, t.typinput, r.rngsubtype, t.typtype, t.typbasetype FROM pg_type as t LEFT JOIN pg_range as r ON oid = rngtypid WHERE t.typname IN ('int2', 'int4', 'int8', 'oid', 'float4', 'float8', 'numeric', 'bool', 'timestamp', 'timestamptz') OR t.typtype IN ('r', 'e', 'd') OR t.typinput = 'array_in(cstring,oid,integer)'::regprocedure OR t.typelem != 0
@@ -1376,8 +1385,8 @@ check(f'''SELECT q.indrelid::regclass::text AS indrelid, q.relname_index, q.indi
   array_to_string((q.indoption)::int2[], ' ') AS indoption FROM (
 {SQLALCHEMY_INDEXES}
 ) q
-WHERE q.relname_index @NOT IN ('orders_amount_desc_idx')
-ORDER BY q.relname_index::text COLLATE "C"''', "index_desc")
+WHERE q.relname_index @NOT IN {plain_indexes("public.orders")}
+ORDER BY q.relname_index::text COLLATE "C"''', "index_desc", "index_am")
 check("""SELECT q.conrelid::regclass::text AS conrelid, q.cols, q.conname, q.description FROM (
 SELECT attr.conrelid, array_agg(CAST(attr.attname AS TEXT) ORDER BY attr.ord) AS cols, attr.conname, min(attr.description) AS description FROM (SELECT con.conrelid AS conrelid, con.conname AS conname, con.conindid AS conindid, con.description AS description, con.ord AS ord, pg_catalog.pg_attribute.attname AS attname FROM pg_catalog.pg_attribute JOIN (SELECT pg_catalog.pg_constraint.conrelid AS conrelid, pg_catalog.pg_constraint.conname AS conname, pg_catalog.pg_constraint.conindid AS conindid, unnest(pg_catalog.pg_constraint.conkey) AS attnum, generate_subscripts(pg_catalog.pg_constraint.conkey, 1) AS ord, pg_catalog.pg_description.description AS description FROM pg_catalog.pg_constraint LEFT OUTER JOIN pg_catalog.pg_description ON pg_catalog.pg_description.objoid = pg_catalog.pg_constraint.oid WHERE pg_catalog.pg_constraint.contype = 'p' AND pg_catalog.pg_constraint.conrelid IN ('public.order_items'::regclass::oid)) AS con ON pg_catalog.pg_attribute.attnum = con.attnum AND pg_catalog.pg_attribute.attrelid = con.conrelid WHERE con.conrelid IN ('public.order_items'::regclass::oid)) AS attr GROUP BY attr.conrelid, attr.conname ORDER BY attr.conrelid, attr.conname
 ) q""")
@@ -1628,15 +1637,15 @@ for relation, differing, causes in (
               *causes)
         check(psql_columns(relation, "q.attname, q.pg_get_expr", "\nWHERE q.attname @NOT IN ('id', 'ordered_on', 'status', 'ticket')"),
               "deparse")
-        check(psql_indexes(relation, "\nWHERE q.relname @NOT IN ('orders_amount_desc_idx')"), "index_desc")
+        check(psql_indexes(relation, f"\nWHERE q.relname @NOT IN {plain_indexes(relation)}"), "index_desc", "index_am")
     else:
         check(psql_columns(relation, PSQL_COLUMNS, f"\nWHERE q.attname @NOT IN {differing}"), *causes)
-        check(psql_indexes(relation))
+        check(psql_indexes(relation, f"\nWHERE q.relname @NOT IN {plain_indexes(relation)}"), "index_am")
     if relation in ("public.order_items", "public.orders"):
         check(psql_checks(relation), "deparse")
     psql_table_tail(relation, references=relation != "app.all_types")
 check(psql_lookup("orders_customer_idx", "public"))
-check(psql_relation("public.orders_customer_idx"))
+check(psql_relation("public.orders_customer_idx"), "index_am")
 check("""SELECT q.attname, q.format_type, q.is_key, q.indexdef FROM (
 SELECT a.attname,
   pg_catalog.format_type(a.atttypid, a.atttypmod),
@@ -1657,7 +1666,7 @@ i.indnullsnotdistinct,
 FROM pg_catalog.pg_index i, pg_catalog.pg_class c, pg_catalog.pg_class c2, pg_catalog.pg_am a
 WHERE i.indexrelid = c.oid AND c.oid = 'public.orders_customer_idx'::regclass AND c.relam = a.oid
 AND i.indrelid = c2.oid
-) q""")
+) q""", "index_am")
 check(psql_lookup("ticket_seq", "app"))
 check(psql_relation("app.ticket_seq"))
 check("""SELECT q."Type", q."Start", q."Minimum", q."Maximum", q."Increment", q."Cycles?", q."Cache" FROM (
@@ -1795,7 +1804,7 @@ check(psql_columns("public.customers", PSQL_COLUMNS.replace(" q.pg_get_expr,", "
       "typmod")
 check(psql_columns("public.customers", "q.attname, q.pg_get_expr", "\nWHERE q.attname @NOT IN ('id', 'mood')",
                    PSQL_TABLE_EXTRAS), "deparse")
-check(psql_indexes("public.customers"))
+check(psql_indexes("public.customers", f"\nWHERE q.relname @NOT IN {plain_indexes('public.customers')}"), "index_am")
 psql_table_tail("public.customers")
 check(psql_lookup("order_totals", "app"))
 check(psql_relation("app.order_totals", verbose=True))
@@ -1959,7 +1968,7 @@ ORDER BY q."name"::text COLLATE "C"''', "pgonly")
 asyncpg_check("'app.mood'::regtype::oid, 'app.address'::regtype::oid, 'pgonly.positive_int'::regtype::oid, 1007", "",
               "pgonly")
 
-pgonly("DROP SERVER conf_srv", "Foreign Server with name conf_srv does not exist!")
+pgonly("DROP SERVER conf_srv", 'server "conf_srv" does not exist')
 pgonly("DROP FOREIGN DATA WRAPPER conf_fdw", 'syntax error at or near "FOREIGN"')
 for sql in ("DROP SCHEMA pgonly CASCADE", "DROP VIEW app.order_totals", "DROP VIEW active_customers",
             "DROP TABLE app.child_tab", "DROP TABLE app.unique_tab", "DROP TABLE app.json_tab", "DROP TABLE app.all_types",

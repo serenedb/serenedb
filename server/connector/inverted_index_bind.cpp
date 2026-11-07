@@ -1218,6 +1218,7 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
   InvertedIndexFields entries;
   irs::containers::FlatHashMap<std::string, irs::field_id> expression_fields;
   irs::containers::FlatHashMap<connector::ColumnId, irs::field_id> term_fields;
+  irs::containers::FlatHashMap<irs::field_id, size_t> field_keys;
   auto& db_manager = duckdb::DatabaseManager::Get(context);
 
   for (size_t i = 0; i < count; ++i) {
@@ -1277,6 +1278,15 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     }
 
     ValidateInvertedIndexKey(label, value_type, opclass);
+
+    if (const auto [it, first] = field_keys.try_emplace(record.field_id, i);
+        !first &&
+        entry.column_opclasses[it->second] == entry.column_opclasses[i] &&
+        entry.column_opclass_options[it->second] ==
+          entry.column_opclass_options[i]) {
+      keys.emplace_back(std::move(record));
+      continue;
+    }
 
     // A built-in is only a built-in in the parenthesised form, so a bare name
     // is looked up as a dictionary first and may shadow one.

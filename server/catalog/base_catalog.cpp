@@ -276,6 +276,12 @@ void BaseCatalog::DropSchema(duckdb::ClientContext& context,
 void BaseCatalog::AlterSchemaEntry(duckdb::CatalogTransaction transaction,
                                    duckdb::SchemaCatalogEntry& schema,
                                    duckdb::AlterInfo& info) {
+  if (schema.internal && !info.allow_internal) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("Cannot alter entry \"", schema.name.GetIdentifierName(),
+              "\" because it is an internal system entry"));
+  }
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::ALTER_TABLE);
   auto& set = SchemaSet(transaction, schema);

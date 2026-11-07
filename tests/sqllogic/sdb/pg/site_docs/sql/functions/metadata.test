@@ -240,12 +240,12 @@ profiling_coverage	SELECT
 query
 SELECT DISTINCT schema_name
 FROM sdb_schemas()
-WHERE schema_name IN ('main', 'pg_catalog')
+WHERE schema_name IN ('public', 'pg_catalog')
 ORDER BY schema_name;
 ----
 schema_name
-main
 pg_catalog
+public
 
 # DOCS_TEST: example_021
 

@@ -41,6 +41,7 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "connector/column_id.h"
 #include "connector/optimizer/iresearch_plan.h"
@@ -654,21 +655,43 @@ void ScanSerialize(duckdb::Serializer& serializer,
                    const duckdb::optional_ptr<duckdb::FunctionData> bind_data,
                    const duckdb::BoundTableFunction&) {
   const auto& bind = bind_data->Cast<ScanBindData>();
-  serializer.WriteProperty(100, "relation", std::string{bind.RelationName()});
-  duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> summary;
-  bind.AppendSummary(summary);
-  duckdb::vector<std::string> entries;
-  entries.reserve(summary.size());
-  for (const auto& [key, value] : summary) {
-    entries.push_back(absl::StrCat(key, ": ", value.ToString()));
+  if (bind.HasPushdowns()) {
+    throw duckdb::NotImplementedException(
+      "iresearch_scan serialization of pushed-down search not implemented");
   }
-  serializer.WriteProperty(101, "summary", entries);
+  const auto& relation = bind.relation;
+  const duckdb::InCatalogEntry& entry =
+    relation.inverted_index
+      ? static_cast<const duckdb::InCatalogEntry&>(*relation.inverted_index)
+      : *relation.table_entry;
+  serializer.WriteProperty(100, "relation", std::string{bind.RelationName()});
+  serializer.WriteProperty(101, "catalog", entry.catalog.GetName());
+  serializer.WriteProperty(102, "oid", entry.oid);
+  serializer.WriteProperty(103, "kind",
+                           std::string{magic_enum::enum_name(relation.kind)});
+  serializer.WriteList(104, "columns", bind.columns.ids.size(),
+                       [&](auto& list, duckdb::idx_t i) {
+                         list.WriteElement(bind.columns.ids[i]);
+                       });
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> ScanDeserialize(
-  duckdb::Deserializer&, duckdb::BoundTableFunction&) {
-  throw duckdb::NotImplementedException(
-    "iresearch_scan deserialization not implemented");
+  duckdb::Deserializer& deserializer, duckdb::BoundTableFunction&) {
+  deserializer.ReadProperty<std::string>(100, "relation");
+  const auto catalog =
+    deserializer.ReadProperty<duckdb::Identifier>(101, "catalog");
+  const auto oid = deserializer.ReadProperty<duckdb::idx_t>(102, "oid");
+  const auto kind = magic_enum::enum_cast<ScanEntryKind>(
+    deserializer.ReadProperty<std::string>(103, "kind"));
+  std::vector<ColumnId> columns;
+  deserializer.ReadList(104, "columns", [&](auto& list, duckdb::idx_t) {
+    columns.push_back(list.template ReadElement<ColumnId>());
+  });
+  SDB_ASSERT(kind);
+  auto bind =
+    RebindScan(deserializer.Get<duckdb::ClientContext&>(), catalog, oid, *kind);
+  SDB_ASSERT(bind->columns.ids == columns);
+  return bind;
 }
 
 }  // namespace

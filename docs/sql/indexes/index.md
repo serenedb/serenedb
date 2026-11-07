@@ -9,9 +9,17 @@ import RailroadSource from './diagram.js';
 
 import DocCallout from "@site/src/components/DocCallout";
 
-An index in SereneDB is an [inverted index](./inverted/index.md). It serves equality and range lookups, full-text search, [vector / ANN search](./inverted/vector-search.md) and [geospatial search](./inverted/geospatial-search.md), on tables and on views.
+An index in SereneDB is an [inverted index](./inverted/index.md), on a table or on a view.
 
 `PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` constraints are enforced by the table itself and need no index. `CREATE UNIQUE INDEX` adds a unique key the same way.
+
+## Index Types
+
+| Index | Created | Purpose |
+|---|---|---|
+| [Inverted Index](./inverted/index.md) | With `CREATE INDEX` or `CREATE UNIQUE INDEX`, with or without `USING inverted` | Equality and range lookups, full-text search, [vector / ANN search](./inverted/vector-search.md) and [geospatial search](./inverted/geospatial-search.md) |
+
+The catalog lists the keys of `PRIMARY KEY` and `UNIQUE` constraints as indexes with the `secondary` access method.
 
 ## Persistence
 

@@ -51,6 +51,7 @@
 #include <magic_enum/magic_enum.hpp>
 #include <ranges>
 
+#include "catalog/base_catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/optimizer/iresearch_plan.h"
@@ -275,6 +276,61 @@ std::unique_ptr<AnnFilter> MakeAnnFilter(
   return f;
 }
 
+duckdb::unique_ptr<ScanBindData> BindIndexScan(
+  duckdb::ClientContext& context, const catalog::InvertedIndexEntry& entry) {
+  auto host = entry.GetRelation(entry.catalog.GetCatalogTransaction(context));
+  if (!host) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+      ERR_MSG("relation \"", entry.GetTableName().GetIdentifierName(),
+              "\" does not exist"));
+  }
+  auto& relation = *host;
+  const auto* search_table =
+    dynamic_cast<const catalog::SearchTableEntry*>(&relation);
+  auto data =
+    relation.type == duckdb::CatalogType::VIEW_ENTRY
+      ? MakeViewScanBindData(context, relation.Cast<duckdb::ViewCatalogEntry>(),
+                             entry.options)
+      : MakeTableScanBindData(relation.Cast<duckdb::TableCatalogEntry>(),
+                              search_table ? ScanEntryKind::SearchTableIndex
+                                           : ScanEntryKind::InvertedIndex,
+                              search_table ? "search" : "table");
+  data->relation.inverted_index = &entry;
+  if (search_table) {
+    AcquireSnapshot(*data, context, SearchTableSnapshot(*search_table));
+  } else {
+    AcquireSnapshot(
+      *data, context,
+      [oid = entry.oid, storage = entry.Storage()](
+        duckdb::ClientContext& ctx) -> search::StoreSnapshotPtr {
+        return ConnectionContext::Get(ctx).Transaction().EnsureSearchSnapshot(
+          oid, storage);
+      });
+  }
+  data->relation.inverted_config = entry.Config();
+  data->relation.row_group_size =
+    search_table ? search_table->Storage()->Config()->row_group_size
+                 : entry.Config()->row_group_size;
+  data->score.prune = search_table ? search_table->Storage()->TopKScorer()
+                                   : entry.Config()->top_k_scorer;
+  return data;
+}
+
+duckdb::unique_ptr<ScanBindData> BindSearchTable(
+  duckdb::ClientContext& context, catalog::SearchTableEntry& entry) {
+  const auto& store = entry.Storage();
+  auto data =
+    MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
+  AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
+  data->score.prune = store->TopKScorer();
+  data->relation.inverted_config =
+    PinnedSearchTable(context, entry.catalog.GetOid(), entry.oid, store).config;
+  data->relation.row_group_size =
+    data->relation.inverted_config->row_group_size;
+  return data;
+}
+
 }  // namespace
 
 double SegmentBeamShare(double k, size_t segments) noexcept {
@@ -338,6 +394,17 @@ bool ScanBindData::Equals(const duckdb::FunctionData& other) const {
     return view->id == o.view->id;
   }
   return relation.table_entry.get() == o.relation.table_entry.get();
+}
+
+bool ScanBindData::HasPushdowns() const noexcept {
+  return search.filter || search.index_only || !search.duals.empty() ||
+         !search.deferred.empty() || !search.filter_scorers.empty() ||
+         !search.row_filters.empty() || score.text || score.vector ||
+         score.HasTopK() || score.top_offset_expr || score.top_offset != 0 ||
+         score.top_n_consumed || score.order ||
+         score.static_floor != std::numeric_limits<float>::lowest() ||
+         scan_order || offsets.Active() || ts_dict.Active() ||
+         plan_cache.deferred;
 }
 
 bool ScanBindData::ReadsParametersAtExecution() const {
@@ -475,48 +542,31 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     input.binder->GetStatementProperties().RegisterDBRead(
       index->ParentCatalog(), context);
   }
-  const auto& entry = irs::utils::downCast<catalog::InvertedIndexEntry>(*index);
-  auto host = index->GetRelation(index->catalog.GetCatalogTransaction(context));
-  if (!host) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-      ERR_MSG("relation \"", index->GetTableName().GetIdentifierName(),
-              "\" does not exist"));
-  }
-  auto& relation = *host;
-  const auto* search_table =
-    dynamic_cast<const catalog::SearchTableEntry*>(&relation);
-  auto data =
-    relation.type == duckdb::CatalogType::VIEW_ENTRY
-      ? MakeViewScanBindData(context, relation.Cast<duckdb::ViewCatalogEntry>(),
-                             entry.options)
-      : MakeTableScanBindData(relation.Cast<duckdb::TableCatalogEntry>(),
-                              search_table ? ScanEntryKind::SearchTableIndex
-                                           : ScanEntryKind::InvertedIndex,
-                              search_table ? "search" : "table");
-  data->relation.inverted_index = &entry;
-  if (search_table) {
-    AcquireSnapshot(*data, context, SearchTableSnapshot(*search_table));
-  } else {
-    AcquireSnapshot(
-      *data, context,
-      [oid = entry.oid, storage = entry.Storage()](
-        duckdb::ClientContext& ctx) -> search::StoreSnapshotPtr {
-        return ConnectionContext::Get(ctx).Transaction().EnsureSearchSnapshot(
-          oid, storage);
-      });
-  }
-  data->relation.inverted_config = entry.Config();
-  data->relation.row_group_size =
-    search_table ? search_table->Storage()->Config()->row_group_size
-                 : entry.Config()->row_group_size;
-  data->score.prune = search_table ? search_table->Storage()->TopKScorer()
-                                   : entry.Config()->top_k_scorer;
+  auto data = BindIndexScan(
+    context, irs::utils::downCast<catalog::InvertedIndexEntry>(*index));
   data->IterateColumns([&](ColumnId id, const duckdb::LogicalType& type) {
     return_types.emplace_back(type);
     names.emplace_back(data->ColumnNameById(id));
   });
   return data;
+}
+
+duckdb::unique_ptr<ScanBindData> RebindScan(duckdb::ClientContext& context,
+                                            const duckdb::Identifier& catalog,
+                                            duckdb::idx_t oid,
+                                            ScanEntryKind kind) {
+  auto& base =
+    duckdb::Catalog::GetCatalog(context, catalog).Cast<catalog::BaseCatalog>();
+  auto entry = base.LookupOid(base.GetCatalogTransaction(context), oid);
+  if (!entry) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation with OID ", oid, " does not exist"));
+  }
+  if (kind == ScanEntryKind::SearchTable) {
+    return BindSearchTable(context, entry->Cast<catalog::SearchTableEntry>());
+  }
+  return BindIndexScan(
+    context, irs::utils::downCast<catalog::InvertedIndexEntry>(*entry));
 }
 
 duckdb::TableFunction BindSearchTableScan(
@@ -525,16 +575,7 @@ duckdb::TableFunction BindSearchTableScan(
   SDB_IF_FAILURE("connector::ScanBind") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  const auto& store = entry.Storage();
-  auto data =
-    MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
-  AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
-  data->score.prune = store->TopKScorer();
-  data->relation.inverted_config =
-    PinnedSearchTable(context, entry.catalog.GetOid(), entry.oid, store).config;
-  data->relation.row_group_size =
-    data->relation.inverted_config->row_group_size;
-  bind_data = std::move(data);
+  bind_data = BindSearchTable(context, entry);
   return CreateIResearchScanFunction();
 }
 

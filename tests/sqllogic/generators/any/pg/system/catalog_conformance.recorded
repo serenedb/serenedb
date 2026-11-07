@@ -4054,18 +4054,18 @@ f46822a3f898cf02
 58407dd24c13ad7a
 	index_name	amname
 	app.all_types_pkey	secondary
-	app.all_types_varchar_idx	secondary
+	app.all_types_varchar_idx	inverted
 	app.child_tab_pkey	secondary
 	app.json_tab_pkey	secondary
 	app.unique_tab_code_key	secondary
 	app.unique_tab_pkey	secondary
 	customers_email_key	secondary
-	customers_name_email_idx	secondary
+	customers_name_email_idx	inverted
 	customers_pkey	secondary
 	order_items_pkey	secondary
-	order_items_sku_idx	secondary
-	orders_amount_desc_idx	secondary
-	orders_customer_idx	secondary
+	order_items_sku_idx	inverted
+	orders_amount_desc_idx	inverted
+	orders_customer_idx	inverted
 	orders_pkey	secondary
 5a67312f13e2f4c9
 	pg_class	pg_class_qualified	by_oid	pg_type	pg_namespace	pg_proc	pg_attribute	pg_constraint	pg_description	to_regclass	to_regclass_missing
@@ -4139,9 +4139,12 @@ f4d7fe66f42d0cec
 439daab04f91a415
 	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
 	app.all_types_pkey	t	app.all_types_pkey	f	NULL	NULL	CREATE UNIQUE INDEX all_types_pkey ON app.all_types USING btree (c_int8)	CREATE UNIQUE INDEX all_types_pkey ON app.all_types USING btree (c_int8)	c_int8
-bcfae11b78c1db9b
+fb43c14ff14c296a
 	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
 	app.all_types_varchar_idx	t	app.all_types_varchar_idx	f	NULL	NULL	CREATE INDEX all_types_varchar_idx ON app.all_types USING btree (c_varchar)	CREATE INDEX all_types_varchar_idx ON app.all_types USING btree (c_varchar)	c_varchar
+fe7f8b2507684271
+	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
+	app.all_types_varchar_idx	t	app.all_types_varchar_idx	f	NULL	NULL	CREATE INDEX all_types_varchar_idx ON app.all_types USING inverted (c_varchar)	CREATE INDEX all_types_varchar_idx ON app.all_types USING inverted (c_varchar)	c_varchar
 d0739183c0558261
 	regclass	same_oid	to_regclass	visible	description	any_description	reader_select	own_insert
 	app.child_tab	t	app.child_tab	f	NULL	NULL	f	t
@@ -4199,9 +4202,12 @@ daafe2103b1a297d
 3fbbedc72a4f8e18
 	regclass	same_oid	to_regclass	visible	description	any_description	reader_select	own_insert
 	customers_id_seq	t	customers_id_seq	t	NULL	NULL	f	t
-b2beeeee55839206
+17698f6588d491a6
 	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
 	customers_name_email_idx	t	customers_name_email_idx	t	NULL	NULL	CREATE UNIQUE INDEX customers_name_email_idx ON public.customers USING btree (name, email)	CREATE UNIQUE INDEX customers_name_email_idx ON customers USING btree (name, email)	name
+61b01f0e3db150d9
+	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
+	customers_name_email_idx	t	customers_name_email_idx	t	NULL	NULL	CREATE UNIQUE INDEX customers_name_email_idx ON public.customers USING inverted (name, email)	CREATE UNIQUE INDEX customers_name_email_idx ON customers USING inverted (name, email)	name
 e7e53f452f223a87
 	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
 	customers_pkey	t	customers_pkey	t	NULL	NULL	CREATE UNIQUE INDEX customers_pkey ON public.customers USING btree (id)	CREATE UNIQUE INDEX customers_pkey ON customers USING btree (id)	id
@@ -4211,9 +4217,12 @@ e7e53f452f223a87
 a06112497b2fff7c
 	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
 	order_items_pkey	t	order_items_pkey	t	NULL	NULL	CREATE UNIQUE INDEX order_items_pkey ON public.order_items USING btree (order_id, line)	CREATE UNIQUE INDEX order_items_pkey ON order_items USING btree (order_id, line)	order_id
-53dacca152feba77
+06a33072c0091029
 	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
 	order_items_sku_idx	t	order_items_sku_idx	t	NULL	NULL	CREATE INDEX order_items_sku_idx ON public.order_items USING btree (sku)	CREATE INDEX order_items_sku_idx ON order_items USING btree (sku)	sku
+e2eec04f76b40299
+	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
+	order_items_sku_idx	t	order_items_sku_idx	t	NULL	NULL	CREATE INDEX order_items_sku_idx ON public.order_items USING inverted (sku)	CREATE INDEX order_items_sku_idx ON order_items USING inverted (sku)	sku
 e7d3060d4131e104
 	regclass	same_oid	to_regclass	visible	description	any_description	reader_select	own_insert
 	orders	t	orders	t	NULL	NULL	t	t
@@ -4225,10 +4234,13 @@ e42d739853455c2f
 	CREATE INDEX orders_amount_desc_idx ON public.orders USING btree (amount DESC)	CREATE INDEX orders_amount_desc_idx ON orders USING btree (amount DESC)
 e80024db72ff9f90
 	indexdef	indexdef_pretty
-	CREATE INDEX orders_amount_desc_idx ON public.orders USING btree (amount)	CREATE INDEX orders_amount_desc_idx ON orders USING btree (amount)
-4a8ba3e2b7043be6
+	CREATE INDEX orders_amount_desc_idx ON public.orders USING inverted (amount)	CREATE INDEX orders_amount_desc_idx ON orders USING inverted (amount)
+d64b5f6a3ba87f6e
 	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
 	orders_customer_idx	t	orders_customer_idx	t	Orders by customer	Orders by customer	CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id)	CREATE INDEX orders_customer_idx ON orders USING btree (customer_id)	customer_id
+c4de209448055177
+	regclass	same_oid	to_regclass	visible	description	any_description	indexdef	indexdef_pretty	indexdef_column
+	orders_customer_idx	t	orders_customer_idx	t	Orders by customer	Orders by customer	CREATE INDEX orders_customer_idx ON public.orders USING inverted (customer_id)	CREATE INDEX orders_customer_idx ON orders USING inverted (customer_id)	customer_id
 210b113153ac29fc
 	regclass	same_oid	to_regclass	visible	description	any_description	reader_select	own_insert
 	orders_id_seq	t	orders_id_seq	t	NULL	NULL	f	t
@@ -4720,11 +4732,17 @@ f457f9de35bce6b8	error	db error: ERROR: column "name" must appear in the GROUP B
 	order_items_sku_not_null	{sku}	n	NULL	NULL
 1006f1043dbd9593
 	id	customer_id	amount	status	note	ordered_on	ticket
-1f841e61f8116dda
+427a27dbacccd9e4
+	indexname	array_agg	indisunique	indisprimary	amname	exprdef	attoptions
+	orders_pkey	{id}	t	t	btree	NULL	NULL
+fc480be076e62413
 	indexname	array_agg	indisunique	indisprimary	amname	exprdef	attoptions
 	orders_amount_desc_idx	{amount}	f	f	btree	NULL	NULL
 	orders_customer_idx	{customer_id}	f	f	btree	NULL	NULL
-	orders_pkey	{id}	t	t	btree	NULL	NULL
+473bed53927fb269
+	indexname	array_agg	indisunique	indisprimary	amname	exprdef	attoptions
+	orders_amount_desc_idx	{amount}	f	f	inverted	NULL	NULL
+	orders_customer_idx	{customer_id}	f	f	inverted	NULL	NULL
 3998e4248a5ce27d
 	indexname	array_agg
 	orders_amount_desc_idx	{DESC}
@@ -5003,27 +5021,31 @@ f3ced4ecb51949e7
 	pg_catalog	geometry	geometry	b	f	NULL
 	pg_catalog	"union"	union	b	f	NULL
 	pg_catalog	variant	variant	b	f	NULL
-1c7e42022eabefed
+0cc1f5aef310e439
 	schemaname	tablename	indexname	tablespace	indexdef
 	app	all_types	all_types_pkey	NULL	CREATE UNIQUE INDEX all_types_pkey ON app.all_types USING btree (c_int8)
-	app	all_types	all_types_varchar_idx	NULL	CREATE INDEX all_types_varchar_idx ON app.all_types USING btree (c_varchar)
 	app	child_tab	child_tab_pkey	NULL	CREATE UNIQUE INDEX child_tab_pkey ON app.child_tab USING btree (id)
 	public	customers	customers_email_key	NULL	CREATE UNIQUE INDEX customers_email_key ON public.customers USING btree (email)
-	public	customers	customers_name_email_idx	NULL	CREATE UNIQUE INDEX customers_name_email_idx ON public.customers USING btree (name, email)
 	public	customers	customers_pkey	NULL	CREATE UNIQUE INDEX customers_pkey ON public.customers USING btree (id)
 	app	json_tab	json_tab_pkey	NULL	CREATE UNIQUE INDEX json_tab_pkey ON app.json_tab USING btree (id)
 	public	order_items	order_items_pkey	NULL	CREATE UNIQUE INDEX order_items_pkey ON public.order_items USING btree (order_id, line)
-	public	order_items	order_items_sku_idx	NULL	CREATE INDEX order_items_sku_idx ON public.order_items USING btree (sku)
-	public	orders	orders_customer_idx	NULL	CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id)
 	public	orders	orders_pkey	NULL	CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)
 	app	unique_tab	unique_tab_code_key	NULL	CREATE UNIQUE INDEX unique_tab_code_key ON app.unique_tab USING btree (code)
 	app	unique_tab	unique_tab_pkey	NULL	CREATE UNIQUE INDEX unique_tab_pkey ON app.unique_tab USING btree (id)
-6a7a61a75ac9afb2
+c4a9c8b1fcbd1c50
 	schemaname	tablename	indexname	tablespace	indexdef
+	app	all_types	all_types_varchar_idx	NULL	CREATE INDEX all_types_varchar_idx ON app.all_types USING btree (c_varchar)
+	public	customers	customers_name_email_idx	NULL	CREATE UNIQUE INDEX customers_name_email_idx ON public.customers USING btree (name, email)
+	public	order_items	order_items_sku_idx	NULL	CREATE INDEX order_items_sku_idx ON public.order_items USING btree (sku)
 	public	orders	orders_amount_desc_idx	NULL	CREATE INDEX orders_amount_desc_idx ON public.orders USING btree (amount DESC)
-f5d8aecfc75bd0b4
+	public	orders	orders_customer_idx	NULL	CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id)
+5bd3774ca8758738
 	schemaname	tablename	indexname	tablespace	indexdef
-	public	orders	orders_amount_desc_idx	NULL	CREATE INDEX orders_amount_desc_idx ON public.orders USING btree (amount)
+	app	all_types	all_types_varchar_idx	NULL	CREATE INDEX all_types_varchar_idx ON app.all_types USING inverted (c_varchar)
+	public	customers	customers_name_email_idx	NULL	CREATE UNIQUE INDEX customers_name_email_idx ON public.customers USING inverted (name, email)
+	public	order_items	order_items_sku_idx	NULL	CREATE INDEX order_items_sku_idx ON public.order_items USING inverted (sku)
+	public	orders	orders_amount_desc_idx	NULL	CREATE INDEX orders_amount_desc_idx ON public.orders USING inverted (amount)
+	public	orders	orders_customer_idx	NULL	CREATE INDEX orders_customer_idx ON public.orders USING inverted (customer_id)
 d32d7af86836b417
 	setting
 	on
@@ -5580,15 +5602,16 @@ bdcf488ca8a62376
 a520b2b0d99f8830
 	to_table	column	primary_key	name	on_update	on_delete	valid	deferrable	deferred	conkey	confkey	conrelid	confrelid
 	orders	order_id	id	order_items_order_id_fkey	a	a	t	f	f	{1}	{1}	order_items	orders
-336aa1e5731d70cc
+90ec540a97dcc39d
 	relname	indisunique	indkey	oid	comment	indisvalid	pg_get_indexdef
-	orders_customer_idx	f	2	orders	Orders by customer	t	CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id)
-86214a5078d78b05
+36ecaa2ff60863e2
 	relname	indisunique	indkey	oid	comment	indisvalid	pg_get_indexdef
 	orders_amount_desc_idx	f	3	orders	NULL	t	CREATE INDEX orders_amount_desc_idx ON public.orders USING btree (amount DESC)
-aec30524bfd80651
+	orders_customer_idx	f	2	orders	Orders by customer	t	CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id)
+be387b093b4df3df
 	relname	indisunique	indkey	oid	comment	indisvalid	pg_get_indexdef
-	orders_amount_desc_idx	f	3	orders	NULL	t	CREATE INDEX orders_amount_desc_idx ON public.orders USING btree (amount)
+	orders_amount_desc_idx	f	3	orders	NULL	t	CREATE INDEX orders_amount_desc_idx ON public.orders USING inverted (amount)
+	orders_customer_idx	f	2	orders	Orders by customer	t	CREATE INDEX orders_customer_idx ON public.orders USING inverted (customer_id)
 4caae9d03d4946ef
 	oid	typname	typelem	typdelim	typinput	rngsubtype	typtype	typbasetype
 	information_schema._pg_foreign_data_wrappers[]	__pg_foreign_data_wrappers	information_schema._pg_foreign_data_wrappers	,	array_in	NULL	b	0
@@ -6040,15 +6063,16 @@ ea4cc1e9489a3644
 	relname	conname	anon_1	nspname	description
 	order_items	order_items_order_id_fkey	FOREIGN KEY (order_id) REFERENCES orders(id)	public	NULL
 	orders	orders_customer_id_fkey	FOREIGN KEY (customer_id) REFERENCES customers(id)	public	NULL
-852be1af9b487102
+21f77e9c72378b79
 	indrelid	relname_index	indisunique	has_constraint	reloptions	amname	filter_definition	indnkeyatts	indnullsnotdistinct	indoption
-	orders	orders_customer_idx	f	f	NULL	btree	NULL	1	f	0
-9a50a0182a4f8295
+00b170f1072d369c
 	indrelid	relname_index	indisunique	has_constraint	reloptions	amname	filter_definition	indnkeyatts	indnullsnotdistinct	indoption
 	orders	orders_amount_desc_idx	f	f	NULL	btree	NULL	1	f	3
-ef4d1ac2e750c258
+	orders	orders_customer_idx	f	f	NULL	btree	NULL	1	f	0
+8ebf436441792f25
 	indrelid	relname_index	indisunique	has_constraint	reloptions	amname	filter_definition	indnkeyatts	indnullsnotdistinct	indoption
-	orders	orders_amount_desc_idx	f	f	NULL	btree	NULL	1	f	0
+	orders	orders_amount_desc_idx	f	f	NULL	inverted	NULL	1	f	0
+	orders	orders_customer_idx	f	f	NULL	inverted	NULL	1	f	0
 b4354af16e5894e1
 	conrelid	cols	conname	description
 	order_items	{order_id,line}	order_items_pkey	NULL
@@ -6148,10 +6172,15 @@ c7e9f8bd611dea30
 	c_numeric_plain	numeric(38,10)	NULL	f	NULL	(empty)	(empty)
 	c_text	text	'x'	t	NULL	(empty)	(empty)
 	c_varchar	text	NULL	f	NULL	(empty)	(empty)
-f689f3e3165bb6d6
+7f3a21b79d2003b3
 	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
 	all_types_pkey	t	t	f	t	CREATE UNIQUE INDEX all_types_pkey ON app.all_types USING btree (c_int8)	PRIMARY KEY (c_int8)	p	f	f	f	0
+0608d4d2bb1ae24a
+	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
 	all_types_varchar_idx	f	f	f	t	CREATE INDEX all_types_varchar_idx ON app.all_types USING btree (c_varchar)	NULL	NULL	NULL	NULL	f	0
+9e90dc388220296e
+	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
+	all_types_varchar_idx	f	f	f	t	CREATE INDEX all_types_varchar_idx ON app.all_types USING inverted (c_varchar)	NULL	NULL	NULL	NULL	f	0
 5014b2131a42d1c8
 	polname	polpermissive	array_to_string	pg_get_expr	pg_get_expr	cmd
 165f1d715888a7ab
@@ -6184,11 +6213,16 @@ bea46f3598397560
 	email	text	NULL	t	NULL	(empty)	(empty)
 	id	integer	nextval('customers_id_seq')	t	NULL	(empty)	(empty)
 	mood	app.mood	'ok'	f	NULL	(empty)	(empty)
-ced4303d1b1af41b
+4ea9fa7c5608bccd
 	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
 	customers_email_key	f	t	f	t	CREATE UNIQUE INDEX customers_email_key ON customers USING btree (email)	UNIQUE (email)	u	f	f	f	0
-	customers_name_email_idx	f	t	f	t	CREATE UNIQUE INDEX customers_name_email_idx ON customers USING btree (name, email)	NULL	NULL	NULL	NULL	f	0
 	customers_pkey	t	t	f	t	CREATE UNIQUE INDEX customers_pkey ON customers USING btree (id)	PRIMARY KEY (id)	p	f	f	f	0
+e7b058449682c7bf
+	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
+	customers_name_email_idx	f	t	f	t	CREATE UNIQUE INDEX customers_name_email_idx ON customers USING btree (name, email)	NULL	NULL	NULL	NULL	f	0
+b3d7f5714d0d8433
+	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
+	customers_name_email_idx	f	t	f	t	CREATE UNIQUE INDEX customers_name_email_idx ON customers USING inverted (name, email)	NULL	NULL	NULL	NULL	f	0
 42d26f8564b77114
 	sametable	conname	condef	ontable
 0b64dc6c6add2480
@@ -6224,10 +6258,15 @@ c303ec6f7a661b85
 ff019a8e6ec230d1
 	attname	format_type	pg_get_expr	attnotnull	attcollation	attidentity	attgenerated
 	sku	text	NULL	t	NULL	(empty)	(empty)
-4cd783e7c657406b
+0d348d4662b85b6c
 	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
 	order_items_pkey	t	t	f	t	CREATE UNIQUE INDEX order_items_pkey ON order_items USING btree (order_id, line)	PRIMARY KEY (order_id, line)	p	f	f	f	0
+7995048d98b48607
+	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
 	order_items_sku_idx	f	f	f	t	CREATE INDEX order_items_sku_idx ON order_items USING btree (sku)	NULL	NULL	NULL	NULL	f	0
+a0d05f8abce4b9c0
+	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
+	order_items_sku_idx	f	f	f	t	CREATE INDEX order_items_sku_idx ON order_items USING inverted (sku)	NULL	NULL	NULL	NULL	f	0
 325d12799507bcc0
 	conname	pg_get_constraintdef
 	order_items_qty_check	CHECK (qty > 0)
@@ -6288,16 +6327,17 @@ bbf4d4e22bde0dcc
 	ordered_on	current_date
 	status	'new'
 	ticket	nextval('app.ticket_seq')
-e5d35c49b25c1b4d
+bc87004ad2ecedd7
 	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
-	orders_customer_idx	f	f	f	t	CREATE INDEX orders_customer_idx ON orders USING btree (customer_id)	NULL	NULL	NULL	NULL	f	0
 	orders_pkey	t	t	f	t	CREATE UNIQUE INDEX orders_pkey ON orders USING btree (id)	PRIMARY KEY (id)	p	f	f	f	0
-5f2ba39667df8bf8
+500ba4730f380d3b
 	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
 	orders_amount_desc_idx	f	f	f	t	CREATE INDEX orders_amount_desc_idx ON orders USING btree (amount DESC)	NULL	NULL	NULL	NULL	f	0
-473fb0d49a3bafae
+	orders_customer_idx	f	f	f	t	CREATE INDEX orders_customer_idx ON orders USING btree (customer_id)	NULL	NULL	NULL	NULL	f	0
+aa1fdba63623f82b
 	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
-	orders_amount_desc_idx	f	f	f	t	CREATE INDEX orders_amount_desc_idx ON orders USING btree (amount)	NULL	NULL	NULL	NULL	f	0
+	orders_amount_desc_idx	f	f	f	t	CREATE INDEX orders_amount_desc_idx ON orders USING inverted (amount)	NULL	NULL	NULL	NULL	f	0
+	orders_customer_idx	f	f	f	t	CREATE INDEX orders_customer_idx ON orders USING inverted (customer_id)	NULL	NULL	NULL	NULL	f	0
 e6f276ccbdf68453
 	conname	pg_get_constraintdef
 	orders_amount_check	CHECK (amount >= 0::numeric)
@@ -6327,15 +6367,21 @@ aa63af825418361b
 2dc97640529cb088
 	oid	nspname	relname
 	orders_customer_idx	public	orders_customer_idx
-aaf2bde369005a17
+74823a19706ca502
 	relchecks	relkind	relhasindex	relhasrules	relhastriggers	relrowsecurity	relforcerowsecurity	relhasoids	relispartition	?column?	reltablespace	reloftype	relpersistence	relreplident	amname
 	0	i	f	f	f	f	f	f	f	(empty)	0	(empty)	p	n	btree
+854f4bdda6ae012d
+	relchecks	relkind	relhasindex	relhasrules	relhastriggers	relrowsecurity	relforcerowsecurity	relhasoids	relispartition	?column?	reltablespace	reloftype	relpersistence	relreplident	amname
+	0	i	f	f	f	f	f	f	f	(empty)	0	(empty)	p	n	inverted
 3c5a3a627471eb9f
 	attname	format_type	is_key	indexdef
 	customer_id	integer	yes	customer_id
-24116cf3fe333e9a
+868f58862c82196f
 	indisunique	indisprimary	indisclustered	indisvalid	condeferrable	condeferred	indisreplident	indnullsnotdistinct	amname	relname	pg_get_expr
 	f	f	f	t	f	f	f	f	btree	orders	NULL
+c72a2bf984b876d7
+	indisunique	indisprimary	indisclustered	indisvalid	condeferrable	condeferred	indisreplident	indnullsnotdistinct	amname	relname	pg_get_expr
+	f	f	f	t	f	f	f	f	inverted	orders	NULL
 cbc059675f8bfd8d
 	oid	nspname	relname
 	app.ticket_seq	app	ticket_seq
@@ -6413,11 +6459,16 @@ e2bbe9f8e33fa756
 	attname	pg_get_expr
 	id	nextval('customers_id_seq')
 	mood	'ok'
-ced4303d1b1af41b.2
+4ea9fa7c5608bccd.2
 	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
 	customers_email_key	f	t	f	t	CREATE UNIQUE INDEX customers_email_key ON customers USING btree (email)	UNIQUE (email)	u	f	f	f	0
-	customers_name_email_idx	f	t	f	t	CREATE UNIQUE INDEX customers_name_email_idx ON customers USING btree (name, email)	NULL	NULL	NULL	NULL	f	0
 	customers_pkey	t	t	f	t	CREATE UNIQUE INDEX customers_pkey ON customers USING btree (id)	PRIMARY KEY (id)	p	f	f	f	0
+e7b058449682c7bf.2
+	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
+	customers_name_email_idx	f	t	f	t	CREATE UNIQUE INDEX customers_name_email_idx ON customers USING btree (name, email)	NULL	NULL	NULL	NULL	f	0
+b3d7f5714d0d8433.2
+	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
+	customers_name_email_idx	f	t	f	t	CREATE UNIQUE INDEX customers_name_email_idx ON customers USING inverted (name, email)	NULL	NULL	NULL	NULL	f	0
 42d26f8564b77114.2
 	sametable	conname	condef	ontable
 0b64dc6c6add2480.2

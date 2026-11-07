@@ -264,6 +264,7 @@ struct ScanBindData final : duckdb::FunctionData {
     return IsMatchAll() && search.deferred.empty() &&
            search.row_filters.empty() && !score.HasTopK() && !ts_dict.Active();
   }
+  bool HasPushdowns() const noexcept;
 
   using ColumnVisitor =
     std::function<void(ColumnId, const duckdb::LogicalType&)>;
@@ -297,6 +298,11 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
 duckdb::TableFunction BindSearchTableScan(
   duckdb::ClientContext& context, catalog::SearchTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
+
+duckdb::unique_ptr<ScanBindData> RebindScan(duckdb::ClientContext& context,
+                                            const duckdb::Identifier& catalog,
+                                            duckdb::idx_t oid,
+                                            ScanEntryKind kind);
 
 bool LooksUpByPk(const ScanBindData& bind);
 

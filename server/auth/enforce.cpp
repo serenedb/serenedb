@@ -141,13 +141,13 @@ std::string KindName(CatalogType type) {
                           entry.name.GetIdentifierName()));
 }
 
-void RequireUserSchema(duckdb::idx_t schema, const duckdb::Identifier& name) {
-  if (const auto* system =
-        pg::FindSystemObject(pg::kSystemNamespaces, schema)) {
+void RequireUserSchema(const duckdb::SchemaCatalogEntry& schema,
+                       const duckdb::Identifier& name) {
+  if (schema.internal && catalog::IsSereneDB(schema.catalog)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to create \"", system->name, ".",
-              name.GetIdentifierName(), "\""),
+      ERR_MSG("permission denied to create \"", schema.name.GetIdentifierName(),
+              ".", name.GetIdentifierName(), "\""),
       ERR_DETAIL("System catalog modifications are currently disallowed."));
   }
 }
@@ -475,7 +475,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
-        RequireUserSchema(create.schema.oid, info.GetQualifiedName().Name());
+        RequireUserSchema(create.schema, info.GetQualifiedName().Name());
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
@@ -495,7 +495,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_JOB:
       case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
-        RequireUserSchema(create.schema->oid,
+        RequireUserSchema(*create.schema,
                           create.info->GetQualifiedName().Name());
         Stamp(*create.info, DefaultObjType(op.type), create.schema,
               OwnerFor(*create.info));
@@ -533,7 +533,7 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
-        RequireUserSchema(create.schema->oid,
+        RequireUserSchema(*create.schema,
                           create.info->GetQualifiedName().Name());
         Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
         if (_enforce) {
@@ -604,7 +604,7 @@ class Enforcer {
             if (auto target = duckdb::Catalog::GetSchema(
                   _context, info.GetQualifiedName().Catalog(), *new_schema,
                   duckdb::OnEntryNotFound::RETURN_NULL)) {
-              RequireUserSchema(target->oid, info.GetQualifiedName().Name());
+              RequireUserSchema(*target, info.GetQualifiedName().Name());
             }
           }
           if (_enforce) {

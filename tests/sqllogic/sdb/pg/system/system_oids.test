@@ -177,28 +177,28 @@ abs(integer)
 
 
 query
-SELECT count(*) FROM duckdb_functions() WHERE database_name = 'system' AND (function_oid < 131072 OR function_oid >= 262144);
+SELECT count(*) FROM duckdb_functions() WHERE internal AND function_oid >= 262144;
 ----
 count
 0
 
 
 query
-SELECT count(*) > 1000 AS has_builtins FROM duckdb_functions() WHERE database_name = 'system';
+SELECT count(*) > 1000 AS has_builtins FROM duckdb_functions() WHERE internal;
 ----
 has_builtins
 t
 
 
 query
-SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'system' AND (oid < 131072 OR oid >= 262144);
+SELECT count(*) FROM duckdb_schemas() WHERE internal AND oid >= 262144;
 ----
 count
 0
 
 
 query
-SELECT count(*) FROM duckdb_views() WHERE database_name = 'system' AND (view_oid < 131072 OR view_oid >= 262144);
+SELECT count(*) FROM duckdb_views() WHERE internal AND view_oid >= 262144;
 ----
 count
 0

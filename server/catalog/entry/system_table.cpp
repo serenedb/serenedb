@@ -80,6 +80,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeMacro(
   }
   auto copy = function->Copy();
   auto& macro_info = copy->Cast<duckdb::CreateMacroInfo>();
+  macro_info.oid = function->oid;
   if (kind == duckdb::MacroType::SCALAR_MACRO) {
     return duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema,
                                                               macro_info);

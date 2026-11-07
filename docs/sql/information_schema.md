@@ -65,7 +65,7 @@ The view that describes the catalog information for columns is `information_sche
 | Column | Description | Type | Example |
 |:--|:---|:-|:-|
 | `table_catalog` | Name of the database containing the table (always the current database). | `VARCHAR` | `'my_db'` |
-| `table_schema` | Name of the schema containing the table. | `VARCHAR` | `'main'` |
+| `table_schema` | Name of the schema containing the table. | `VARCHAR` | `'public'` |
 | `table_name` | Name of the table. | `VARCHAR` | `'widgets'` |
 | `column_name` | Name of the column. | `VARCHAR` | `'price'` |
 | `ordinal_position` | Ordinal position of the column within the table (count starts at 1). | `INTEGER` | `5` |
@@ -85,11 +85,11 @@ This view describes all columns in the current database that are used by some co
 | Column | Description | Type | Example |
 |--------|-------------|------|---------|
 | `table_catalog` | Name of the database that contains the table that contains the column that is used by some constraint (always the current database) |`VARCHAR`| `'my_db'` |
-| `table_schema` | Name of the schema that contains the table that contains the column that is used by some constraint |`VARCHAR`| `'main'` |
+| `table_schema` | Name of the schema that contains the table that contains the column that is used by some constraint |`VARCHAR`| `'public'` |
 | `table_name` | Name of the table that contains the column that is used by some constraint |`VARCHAR`| `'widgets'` |
 | `column_name` | Name of the column that is used by some constraint |`VARCHAR`| `'price'` |
 | `constraint_catalog` | Name of the database that contains the constraint (always the current database) |`VARCHAR`| `'my_db'` |
-| `constraint_schema` | Name of the schema that contains the constraint |`VARCHAR`| `'main'` |
+| `constraint_schema` | Name of the schema that contains the constraint |`VARCHAR`| `'public'` |
 | `constraint_name` | Name of the constraint |`VARCHAR`| `'exam_id_students_id_fkey'` |
 
 ### `key_column_usage`: Key Column Usage
@@ -97,10 +97,10 @@ This view describes all columns in the current database that are used by some co
 | Column | Description | Type | Example |
 |--------|-------------|------|---------|
 | `constraint_catalog` | Name of the database that contains the constraint (always the current database). | `VARCHAR` | `'my_db'` |
-| `constraint_schema` | Name of the schema that contains the constraint. | `VARCHAR` | `'main'` |
+| `constraint_schema` | Name of the schema that contains the constraint. | `VARCHAR` | `'public'` |
 | `constraint_name` | Name of the constraint. | `VARCHAR` | `'exams_exam_id_fkey'` |
 | `table_catalog` | Name of the database that contains the table that contains the column that is restricted by this constraint (always the current database). | `VARCHAR` | `'my_db'` |
-| `table_schema` | Name of the schema that contains the table that contains the column that is restricted by this constraint. | `VARCHAR` | `'main'` |
+| `table_schema` | Name of the schema that contains the table that contains the column that is restricted by this constraint. | `VARCHAR` | `'public'` |
 | `table_name` | Name of the table that contains the column that is restricted by this constraint. | `VARCHAR` | `'exams'` |
 | `column_name` | Name of the column that is restricted by this constraint. | `VARCHAR` | `'exam_id'` |
 | `ordinal_position` | Ordinal position of the column within the constraint key (count starts at 1). | `INTEGER` | `1` |
@@ -114,7 +114,7 @@ This view describes all columns in the current database that are used by some co
 | `constraint_schema` | Name of the schema containing the constraint. | `VARCHAR` | `main` |
 | `constraint_name` | Name of the constraint. | `VARCHAR` | `exam_id_students_id_fkey` |
 | `unique_constraint_catalog` | Name of the database that contains the unique or primary key constraint that the foreign key constraint references. | `VARCHAR` | `'my_db'` |
-| `unique_constraint_schema` | Name of the schema that contains the unique or primary key constraint that the foreign key constraint references. | `VARCHAR` | `'main'` |
+| `unique_constraint_schema` | Name of the schema that contains the unique or primary key constraint that the foreign key constraint references. | `VARCHAR` | `'public'` |
 | `unique_constraint_name` | Name of the unique or primary key constraint that the foreign key constraint references. | `VARCHAR` | `'students_id_pkey'` |
 | `match_option` | Match option of the foreign key constraint. Always `NONE`. | `VARCHAR` | `NONE` |
 | `update_rule` | Update rule of the foreign key constraint. Always `NO ACTION`. | `VARCHAR` | `NO ACTION` |
@@ -127,7 +127,7 @@ The top level catalog view is `information_schema.schemata`. It lists the catalo
 | Column | Description | Type | Example |
 |:--|:---|:-|:-|
 | `catalog_name` | Name of the database that the schema is contained in. | `VARCHAR` | `'my_db'` |
-| `schema_name` | Name of the schema. | `VARCHAR` | `'main'` |
+| `schema_name` | Name of the schema. | `VARCHAR` | `'public'` |
 | `schema_owner` | Name of the owner of the schema. Not yet implemented. | `VARCHAR` | `'serenedb'` |
 | `default_character_set_catalog` | Applies to a feature not available in SereneDB. | `VARCHAR` | `NULL` |
 | `default_character_set_schema` | Applies to a feature not available in SereneDB. | `VARCHAR` | `NULL` |
@@ -141,7 +141,7 @@ The view that describes the catalog information for tables and views is `informa
 | Column | Description | Type | Example |
 |:--|:---|:-|:-|
 | `table_catalog` | The catalog the table or view belongs to. | `VARCHAR` | `'my_db'` |
-| `table_schema` | The schema the table or view belongs to. | `VARCHAR` | `'main'` |
+| `table_schema` | The schema the table or view belongs to. | `VARCHAR` | `'public'` |
 | `table_name` | The name of the table or view. | `VARCHAR` | `'widgets'` |
 | `table_type` | The type of table. One of: `BASE TABLE`, `LOCAL TEMPORARY`, `VIEW`. | `VARCHAR` | `'BASE TABLE'` |
 | `self_referencing_column_name` | Applies to a feature not available in SereneDB. | `VARCHAR` | `NULL` |
@@ -158,10 +158,10 @@ The view that describes the catalog information for tables and views is `informa
 | Column | Description | Type | Example |
 |--------|-------------|------|---------|
 | `constraint_catalog` | Name of the database that contains the constraint (always the current database). | `VARCHAR` | `'my_db'` |
-| `constraint_schema` | Name of the schema that contains the constraint. | `VARCHAR` | `'main'` |
+| `constraint_schema` | Name of the schema that contains the constraint. | `VARCHAR` | `'public'` |
 | `constraint_name` | Name of the constraint. | `VARCHAR` | `'exams_exam_id_fkey'` |
 | `table_catalog` | Name of the database that contains the table (always the current database). | `VARCHAR` | `'my_db'` |
-| `table_schema` | Name of the schema that contains the table. | `VARCHAR` | `'main'` |
+| `table_schema` | Name of the schema that contains the table. | `VARCHAR` | `'public'` |
 | `table_name` | Name of the table. | `VARCHAR` | `'exams'` |
 | `constraint_type` | Type of the constraint: `CHECK`, `FOREIGN KEY`, `PRIMARY KEY`, or `UNIQUE`. | `VARCHAR` | `'FOREIGN KEY'` |
 | `is_deferrable` | `YES` if the constraint is deferrable, `NO` if not. | `VARCHAR` | `'NO'` |

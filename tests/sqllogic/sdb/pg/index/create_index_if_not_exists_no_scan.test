@@ -188,10 +188,8 @@ QUERY PLAN
 ╰─────────────────────╯
 
 
-statement error
+statement ok
 CREATE INDEX IF NOT EXISTS cinx_s_inv ON cinx_s (i);
-----
-db error: ERROR: only inverted indexes are supported on a table
 
 
 statement error

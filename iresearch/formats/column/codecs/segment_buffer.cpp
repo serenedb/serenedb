@@ -20,9 +20,10 @@
 
 #include "iresearch/formats/column/codecs/segment_buffer.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <algorithm>
 #include <cstring>
-#include <duckdb/common/enums/memory_tag.hpp>
 
 namespace irs::codecs::text {
 namespace {
@@ -32,13 +33,17 @@ constexpr size_t kMinCapacity = 64 * 1024;
 }  // namespace
 
 void SegmentBuffer::Grow(size_t need) {
-  const auto capacity = std::max({need, 2 * _capacity, kMinCapacity});
-  auto handle =
-    _buffers->Allocate(duckdb::MemoryTag::IN_MEMORY_TABLE, capacity, true);
+  const size_t capacity = std::max({need, 2 * _capacity, kMinCapacity});
+  _buffers->ReserveMemory(capacity - _capacity);
+  absl::Cleanup release = [&] {
+    _buffers->FreeReservedMemory(capacity - _capacity);
+  };
+  auto data = std::make_unique_for_overwrite<char[]>(capacity);
+  std::move(release).Cancel();
   if (_size != 0) {
-    std::memcpy(handle.GetDataMutable(), _handle.Ptr(), _size);
+    std::memcpy(data.get(), _data.get(), _size);
   }
-  _handle = std::move(handle);
+  _data = std::move(data);
   _capacity = capacity;
 }
 

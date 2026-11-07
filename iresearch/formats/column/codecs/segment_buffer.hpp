@@ -21,8 +21,8 @@
 #pragma once
 
 #include <cstddef>
-#include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <memory>
 #include <string_view>
 #include <type_traits>
 
@@ -35,16 +35,17 @@ class SegmentBuffer {
   explicit SegmentBuffer(duckdb::BufferManager& buffers) noexcept
     : _buffers{&buffers} {}
 
+  SegmentBuffer(const SegmentBuffer&) = delete;
+  SegmentBuffer& operator=(const SegmentBuffer&) = delete;
+
+  ~SegmentBuffer() { _buffers->FreeReservedMemory(_capacity); }
+
   template<typename Self>
   auto* Data(this Self& self) noexcept {
     if constexpr (std::is_const_v<Self>) {
-      return self._capacity == 0
-               ? nullptr
-               : reinterpret_cast<const char*>(self._handle.Ptr());
+      return static_cast<const char*>(self._data.get());
     } else {
-      return self._capacity == 0
-               ? nullptr
-               : reinterpret_cast<char*>(self._handle.GetDataMutable());
+      return self._data.get();
     }
   }
 
@@ -75,7 +76,7 @@ class SegmentBuffer {
   void Grow(size_t need);
 
   duckdb::BufferManager* _buffers;
-  duckdb::BufferHandle _handle;
+  std::unique_ptr<char[]> _data;
   size_t _capacity = 0;
   size_t _size = 0;
 };

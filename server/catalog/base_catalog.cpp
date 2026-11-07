@@ -160,7 +160,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::CreateSchema(
   DeclareModified(transaction, *this);
   if (info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT) {
     if (auto existing = _schemas.Get(transaction, name)) {
-      existing->Cast<Schema>().Clear(transaction);
+      DropDependents(transaction, *existing, false);
       _schemas.Drop(transaction, name);
     }
   }

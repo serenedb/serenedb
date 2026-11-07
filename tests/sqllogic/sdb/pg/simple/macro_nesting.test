@@ -288,7 +288,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 statement ok
-CREATE MACRO mn_qual(x) AS system.main.abs(x) + system.main.abs(x)
+CREATE MACRO mn_qual(x) AS pg_catalog.abs(x) + pg_catalog.abs(x)
 
 query
 SELECT mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(mn_qual(i - 1)))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1

@@ -271,7 +271,9 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo(
     duckdb::CatalogTransaction transaction) const final;
   std::string ToSQL() const final {
-    return duckdb::IndexCatalogEntry::GetInfo()->ToString();
+    auto info = duckdb::IndexCatalogEntry::GetInfo();
+    info->StripCatalogQualification();
+    return info->ToString();
   }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(

@@ -180,9 +180,9 @@ CREATE VIEW coro_dep_v AS SELECT id FROM coro_dep;
 statement error
 CREATE OR REPLACE TABLE coro_dep (x INT);
 ----
-db error: ERROR: Cannot drop entry "coro_dep" because there are entries that depend on it.
-view "coro_dep_v" depends on table "coro_dep".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coro_dep because other objects depend on it
+DETAIL: view coro_dep_v depends on table coro_dep
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # The refused replace left the table and its dependent as they were.
@@ -213,9 +213,9 @@ CREATE MACRO coro_dep_tm() AS TABLE SELECT * FROM coro_dep;
 statement error
 CREATE OR REPLACE TABLE coro_dep AS SELECT 1 AS x;
 ----
-db error: ERROR: Cannot drop entry "coro_dep" because there are entries that depend on it.
-table macro function "coro_dep_tm" depends on table "coro_dep".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coro_dep because other objects depend on it
+DETAIL: function coro_dep_tm() depends on table coro_dep
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 query
@@ -385,9 +385,9 @@ CREATE TRIGGER coro_src_trg AFTER INSERT ON coro_src FOR EACH STATEMENT
 statement error
 CREATE OR REPLACE TABLE coro_sink (x INT);
 ----
-db error: ERROR: Cannot drop entry "coro_sink" because there are entries that depend on it.
-trigger "coro_src_trg" on table "coro_src" depends on table "coro_sink".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coro_sink because other objects depend on it
+DETAIL: trigger coro_src_trg depends on table coro_sink
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement count 1
@@ -1233,9 +1233,9 @@ CREATE OR REPLACE MACRO coro_tx_m(x) AS x;
 statement error
 CREATE OR REPLACE TABLE coro_tx (q INT);
 ----
-db error: ERROR: Cannot drop entry "coro_tx" because there are entries that depend on it.
-view "coro_tx_v" depends on table "coro_tx".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coro_tx because other objects depend on it
+DETAIL: view coro_tx_v depends on table coro_tx
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement error
@@ -1506,7 +1506,7 @@ connection s1
 statement error
 INSERT INTO coro_mc VALUES (3, 'c');
 ----
-db error: ERROR: Transaction conflict: attempting to insert into table "coro_mc" but it has been dropped by a different transaction
+db error: ERROR: Attempting to write to table coro_mc but another transaction dropped it
 
 
 connection s1
@@ -1820,15 +1820,16 @@ CREATE OR REPLACE TABLE coro_od (b INT);
 
 
 connection s2
-statement ok
+statement error
 CREATE INDEX coro_od_idx ON coro_od (a);
+----
+db error: ERROR: search table "coro_od" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1
-statement error
+statement ok
 COMMIT;
-----
-db error: ERROR: Failed to commit: Could not commit DROP of "coro_od" because a dependency was created after the transaction started
 
 
 query
@@ -1836,11 +1837,14 @@ SELECT c.column_name, i.indexname FROM information_schema.columns c, pg_indexes 
 WHERE c.table_name = 'coro_od' AND i.tablename = 'coro_od';
 ----
 column_name	indexname
-a	coro_od_idx
 
 
 statement ok
-DROP INDEX coro_od_idx;
+CREATE OR REPLACE TABLE coro_od (a INT);
+
+
+statement count 1
+INSERT INTO coro_od VALUES (1);
 
 
 # The same for a column default that starts drawing from the old sequence.
@@ -2014,7 +2018,7 @@ connection s1
 statement error
 CREATE INDEX coro_od_idx ON coro_od (b);
 ----
-db error: ERROR: Transaction conflict: cannot add an index to a table that has been altered or dropped
+db error: ERROR: could not serialize access due to concurrent update of "coro_od"
 
 
 connection s1
@@ -2662,7 +2666,7 @@ query
 SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
 ----
 indexdef
-CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (id, body)
+CREATE INDEX coro_ix_art ON public.coro_ix USING inverted (id, body)
 
 
 statement ok
@@ -2687,14 +2691,15 @@ INSERT INTO coro_ix VALUES (1, 'dup');
 statement error
 CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
 ----
-db error: ERROR: Data contains duplicates on indexed column(s)
+db error: ERROR: could not create unique index "coro_ix_art"
+DETAIL: Key (id)=(1) is duplicated.
 
 
 query
 SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
 ----
 indexdef
-CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (id)
+CREATE INDEX coro_ix_art ON public.coro_ix USING inverted (id)
 
 
 statement count 1
@@ -2761,7 +2766,7 @@ query
 SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
 ----
 indexdef
-CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (id)
+CREATE INDEX coro_ix_art ON public.coro_ix USING inverted (id)
 
 
 statement count 2
@@ -2887,7 +2892,7 @@ query
 SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
 ----
 indexdef
-CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (body)
+CREATE INDEX coro_ix_art ON public.coro_ix USING inverted (body)
 
 
 # The replacement may be on another table: the old index leaves its table, and
@@ -3908,9 +3913,9 @@ CREATE TABLE coro_seq_t (id INT DEFAULT nextval('coro_seq'), v TEXT);
 statement error
 CREATE OR REPLACE SEQUENCE coro_seq START 1;
 ----
-db error: ERROR: Cannot drop entry "coro_seq" because there are entries that depend on it.
-table "coro_seq_t" depends on sequence "coro_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence coro_seq because other objects depend on it
+DETAIL: default value for column id of table coro_seq_t depends on sequence coro_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement count 1
@@ -3936,9 +3941,9 @@ CREATE MACRO coro_seq_next() AS nextval('coro_seq');
 statement error
 CREATE OR REPLACE SEQUENCE coro_seq START 1;
 ----
-db error: ERROR: Cannot drop entry "coro_seq" because there are entries that depend on it.
-macro function "coro_seq_next" depends on sequence "coro_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence coro_seq because other objects depend on it
+DETAIL: function coro_seq_next() depends on sequence coro_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 query
@@ -3968,9 +3973,9 @@ INSERT INTO coro_seq_ser (v) VALUES ('a');
 statement error
 CREATE OR REPLACE SEQUENCE coro_seq_ser_id_seq START 100;
 ----
-db error: ERROR: Cannot drop entry "coro_seq_ser_id_seq" because there are entries that depend on it.
-table "coro_seq_ser" depends on sequence "coro_seq_ser_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence coro_seq_ser_id_seq because other objects depend on it
+DETAIL: default value for column id of table coro_seq_ser depends on sequence coro_seq_ser_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement count 1
@@ -4192,9 +4197,9 @@ INSERT INTO coro_mood_t VALUES ('happy');
 statement error
 CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y');
 ----
-db error: ERROR: Cannot drop entry "coro_mood" because there are entries that depend on it.
-table "coro_mood_t" depends on type "coro_mood".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type coro_mood because other objects depend on it
+DETAIL: column m of table coro_mood_t depends on type coro_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 query
@@ -4222,9 +4227,9 @@ CREATE VIEW coro_mood_v AS SELECT 'ok'::coro_mood AS m;
 statement error
 CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y');
 ----
-db error: ERROR: Cannot drop entry "coro_mood" because there are entries that depend on it.
-view "coro_mood_v" depends on type "coro_mood".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type coro_mood because other objects depend on it
+DETAIL: view coro_mood_v depends on type coro_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 query
@@ -4245,9 +4250,9 @@ CREATE MACRO coro_mood_f(x) AS CAST(x AS coro_mood);
 statement error
 CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y');
 ----
-db error: ERROR: Cannot drop entry "coro_mood" because there are entries that depend on it.
-macro function "coro_mood_f" depends on type "coro_mood".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type coro_mood because other objects depend on it
+DETAIL: function coro_mood_f(unknown) depends on type coro_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -4261,9 +4266,9 @@ CREATE TYPE coro_mood_wrap AS STRUCT(m coro_mood);
 statement error
 CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y');
 ----
-db error: ERROR: Cannot drop entry "coro_mood" because there are entries that depend on it.
-type "coro_mood_wrap" depends on type "coro_mood".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type coro_mood because other objects depend on it
+DETAIL: type coro_mood_wrap depends on type coro_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -4991,9 +4996,9 @@ INSERT INTO coro_sch.coro_in_sch VALUES (1);
 statement error
 CREATE OR REPLACE SCHEMA coro_sch;
 ----
-db error: ERROR: Cannot drop entry "coro_sch" because there are entries that depend on it.
-table "coro_in_sch" depends on schema "coro_sch".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop schema coro_sch because other objects depend on it
+DETAIL: table coro_sch.coro_in_sch depends on schema coro_sch
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 query

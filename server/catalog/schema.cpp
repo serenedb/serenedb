@@ -260,6 +260,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Schema::Add(
       return nullptr;
     }
     if (old) {
+      if (type != duckdb::CatalogType::SCHEMA_ENTRY &&
+          entry->Cast<duckdb::StandardEntry>().dependencies.Contains(*old)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+          ERR_MSG("CREATE OR REPLACE is not allowed to depend on itself"));
+      }
       if (old->type != type) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
@@ -363,8 +369,6 @@ bool Schema::Inherits(const Inherited& inherited,
     return type == duckdb::CatalogType::TYPE_ENTRY;
   }
   switch (type) {
-    case duckdb::CatalogType::TABLE_ENTRY:
-    case duckdb::CatalogType::VIEW_ENTRY:
     case duckdb::CatalogType::INDEX_ENTRY:
     case duckdb::CatalogType::SEQUENCE_ENTRY:
     case duckdb::CatalogType::SCHEMA_ENTRY:
@@ -981,33 +985,8 @@ void Schema::ScanTree(duckdb::CatalogTransaction transaction,
 
 duckdb::optional_ptr<duckdb::CatalogEntry> Schema::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
-  if (info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT) {
-    if (auto existing = _sets->schemas.Get(transaction, info.SchemaName())) {
-      existing->Cast<Schema>().Clear(transaction);
-    }
-  }
   return Add(transaction, duckdb::make_uniq<Schema>(catalog, info, this),
              info.on_conflict);
-}
-
-void Schema::Clear(duckdb::CatalogTransaction transaction) {
-  for (auto* set :
-       {&_sets->schemas, &_sets->indexes, &_sets->tables, &_sets->sequences,
-        &_sets->types, &_sets->functions, &_sets->table_functions,
-        &_sets->tokenizers, &_sets->jobs}) {
-    std::vector<duckdb::reference<duckdb::CatalogEntry>> entries;
-    set->Scan(transaction, [&](duckdb::CatalogEntry& entry) {
-      if (!entry.internal) {
-        entries.emplace_back(entry);
-      }
-    });
-    for (auto& entry : entries) {
-      if (entry.get().type == duckdb::CatalogType::SCHEMA_ENTRY) {
-        entry.get().Cast<Schema>().Clear(transaction);
-      }
-      Drop(transaction, entry);
-    }
-  }
 }
 
 }  // namespace sdb::catalog

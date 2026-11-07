@@ -128,8 +128,6 @@ class Schema final : public duckdb::SchemaCatalogEntry {
   void Drop(duckdb::CatalogTransaction transaction,
             duckdb::CatalogEntry& entry);
 
-  void Clear(duckdb::CatalogTransaction transaction);
-
   void CreateDefaults(duckdb::CatalogTransaction transaction);
 
   void Inherit(Schema& builtins, bool types_only) {

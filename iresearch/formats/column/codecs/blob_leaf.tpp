@@ -39,7 +39,6 @@
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -48,82 +47,91 @@
 namespace irs::codecs::text {
 
 template<typename Codec>
-inline constexpr bool kTakesTrained =
-  requires(typename Codec::Decompressor& d, const TrainedDictionary& t) {
-    d.Decompress(nullptr, 0, nullptr, 0, t);
-  };
+class FrameInflater {
+ public:
+  void Reset() noexcept {
+    if (_decoder) {
+      _decoder->Clear();
+    }
+    _ready = false;
+    _loaded = 0;
+  }
+
+  std::string_view Inflate(const Header& h, duckdb::const_data_ptr_t base,
+                           const FrameMeta& m, uint32_t f, char* dst,
+                           size_t want) {
+    const auto* data = reinterpret_cast<const char*>(base + h.off_data);
+    if (!_decoder) {
+      _decoder.emplace();
+    }
+    if (!_ready) {
+      Prepare(h, base, data);
+      _ready = true;
+    }
+    if (h.flags == FrameDictionary::FirstFrame && f == 0) {
+      return _decoder->Dictionary();
+    }
+    return _decoder->Inflate(data + m.comp_off, m.comp_len, dst, want,
+                             m.raw_len);
+  }
+
+  uint64_t Loaded() const noexcept { return _loaded; }
+
+ private:
+  void Prepare(const Header& h, duckdb::const_data_ptr_t base,
+               const char* data) {
+    if (h.flags == FrameDictionary::Local) {
+      SDB_ENSURE(
+        _decoder->Load(
+          {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size},
+          h.dictionary_size),
+        "col codec: corrupted dictionary");
+      _loaded += h.dictionary_size;
+    } else if (h.flags == FrameDictionary::FirstFrame) {
+      const auto f0 = duckdb::Load<FrameMeta>(base + h.off_frames);
+      SDB_ENSURE(
+        static_cast<uint64_t>(f0.comp_off) + f0.comp_len <= h.data_size,
+        "col codec: corrupted frame table");
+      SDB_ENSURE(
+        _decoder->LoadFrame(data + f0.comp_off, f0.comp_len, f0.raw_len),
+        "col codec: corrupted frame");
+      _loaded += f0.raw_len;
+    }
+  }
+
+  std::optional<typename Codec::Decompressor> _decoder;
+  bool _ready = false;
+  uint64_t _loaded = 0;
+};
 
 template<typename Codec>
 struct BlobScan {
   template<typename Frames>
-  BlobScan(duckdb::ColumnSegment& segment, const Frames& s)
-    : trained{Trainable(Codec::kCodec) ? TrainedOf(segment, s.header)
-                                       : nullptr} {}
+  BlobScan(duckdb::ColumnSegment&, const Frames&) {}
 
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
-    std::string_view dictionary;
-    if (f != 0 && s.header.flags == FrameDictionary::FirstFrame) {
-      if (!s.decoded[0]) {
-        s.DecodeFrame(0);
-      }
-      dictionary = s.FirstFrame();
-    }
-    Inflate(s, f, out, dictionary);
+    Inflate(s, f, out);
     Entries(s, f, [&](uint32_t e, uint64_t off, uint32_t len) {
       s.values[e] = duckdb::string_t{out + off, len};
     });
   }
 
   template<typename Frames>
-  void Stream(Frames& s, uint32_t f, char* out, std::string_view dictionary,
-              uint32_t* ends) {
-    Inflate(s, f, out, dictionary);
-    if (ends) {
-      Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
-        *ends++ = static_cast<uint32_t>(off + len);
-      });
-    }
+  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
+    Inflate(s, f, out);
+    Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
+      *ends++ = static_cast<uint32_t>(off + len);
+    });
   }
 
   template<typename Frames>
-  void Inflate(const Frames& s, uint32_t f, char* out,
-               std::string_view dictionary) {
-    if constexpr (Trainable(Codec::kCodec)) {
-      if (trained) {
-        InflateTrained(s, f, out);
-        return;
-      }
-    }
-    char* staging = out;
-    if (f >= Codec::kFirstWindowed && !dictionary.empty()) {
-      staging = Window(s, dictionary);
-      dictionary = {staging - dictionary.size(), dictionary.size()};
-    }
-    Decompress(s, f, out, staging, dictionary);
-  }
-
-  template<typename Frames>
-  void InflateTrained(const Frames& s, uint32_t f, char* out) {
-    if constexpr (kTakesTrained<Codec>) {
-      Decompress(s, f, out, out, *trained);
-    } else {
-      const auto bytes = trained->Bytes();
-      char* staging = Window(s, bytes);
-      Decompress(s, f, out, staging,
-                 std::string_view{staging - bytes.size(), bytes.size()});
-    }
-  }
-
-  template<typename Frames>
-  void Decompress(const Frames& s, uint32_t f, char* out, char* staging,
-                  const auto& dictionary) {
+  void Inflate(const Frames& s, uint32_t f, char* out) {
     const auto& m = s.frames[f];
-    SDB_ENSURE(decoder.Decompress(s.Data() + m.comp_off, m.comp_len, staging,
-                                  m.raw_len, dictionary),
-               "col codec: corrupted frame");
-    if (staging != out) {
-      std::memcpy(out, staging, m.raw_len);
+    const auto got = inflater.Inflate(s.header, s.base, m, f, out, m.raw_len);
+    SDB_ENSURE(got.size() == m.raw_len, "col codec: corrupted frame");
+    if (got.data() != out) {
+      std::memcpy(out, got.data(), m.raw_len);
     }
   }
 
@@ -141,40 +149,26 @@ struct BlobScan {
     SDB_ENSURE(off == m.raw_len, "col codec: corrupted entry lengths");
   }
 
-  template<typename Frames>
-  char* Window(const Frames& s, std::string_view dictionary) {
-    if (!window) {
-      uint32_t largest = 0;
-      for (const auto& m : s.frames) {
-        largest = std::max(largest, m.raw_len);
-      }
-      window = duckdb::make_unsafe_uniq_array_uninitialized<char>(
-        dictionary.size() + largest);
-      std::memcpy(window.get(), dictionary.data(), dictionary.size());
-    }
-    return window.get() + dictionary.size();
-  }
-
   uint64_t HeapBytes() const noexcept { return 0; }
 
-  const TrainedDictionary* trained;
-  typename Codec::Decompressor decoder;
-  duckdb::unsafe_unique_array<char> window;
+  FrameInflater<Codec> inflater;
 };
 
 template<typename Codec>
 struct BlobFetch {
   void Reset(const Header&, duckdb::data_ptr_t) noexcept {
     frame = kNoFrame;
-    dictionary_ready = false;
     decoded_total = 0;
+    inflater.Reset();
   }
 
   uint64_t Walked() const noexcept { return 0; }
 
-  uint64_t DecodedBytes() const noexcept { return decoded_total; }
+  uint64_t DecodedBytes() const noexcept {
+    return decoded_total + inflater.Loaded();
+  }
 
-  IRS_FORCE_INLINE void Emit(duckdb::ColumnSegment& segment, const Header& h,
+  IRS_FORCE_INLINE void Emit(duckdb::ColumnSegment&, const Header& h,
                              duckdb::data_ptr_t base, PackedReader& lengths,
                              uint32_t lo, const FrameMeta& f, uint32_t entry,
                              duckdb::Vector& result, duckdb::idx_t result_idx,
@@ -191,7 +185,7 @@ struct BlobFetch {
     const auto len = offsets[k + 1] - offset;
     const size_t want = offset + len;
     if (decoded < want) {
-      Inflate(segment, h, base, lo, f, want, batched);
+      Inflate(h, base, lo, f, want, batched);
     }
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
     out[result_idx] =
@@ -199,9 +193,8 @@ struct BlobFetch {
   }
 
   void Open(uint32_t lo, const FrameMeta& f, bool batched) {
-    if (capacity < f.raw_len) {
-      capacity = std::max<size_t>(f.raw_len, 1);
-      raw = duckdb::make_unsafe_uniq_array_uninitialized<char>(capacity);
+    if (raw.size() < f.raw_len) {
+      raw.resize_and_overwrite(f.raw_len, [](char*, size_t n) { return n; });
     }
     frame = lo;
     first_entry = f.first_entry;
@@ -229,88 +222,17 @@ struct BlobFetch {
     known = need;
   }
 
-  void Inflate(duckdb::ColumnSegment& segment, const Header& h,
-               duckdb::const_data_ptr_t base, uint32_t lo, const FrameMeta& f,
-               size_t want, bool batched) {
+  void Inflate(const Header& h, duckdb::const_data_ptr_t base, uint32_t lo,
+               const FrameMeta& f, size_t want, bool batched) {
     if (!batched && (hits > 1 || dense)) {
       want = f.raw_len;
     }
-    bool with_dictionary = h.flags == FrameDictionary::FirstFrame && lo != 0;
-    const TrainedDictionary* trained = nullptr;
-    if constexpr (Trainable(Codec::kCodec)) {
-      trained = TrainedOf(segment, h);
-    }
     SDB_ENSURE(static_cast<uint64_t>(f.comp_off) + f.comp_len <= h.data_size,
                "col codec: corrupted frame table");
-    if (!decoder) {
-      decoder.emplace();
-    }
-    auto& d = *decoder;
-    if (trained && !kTakesTrained<Codec>) {
-      if (trained_loaded != trained->Id()) {
-        const auto bytes = trained->Bytes();
-        const size_t need = bytes.size() + f.raw_len;
-        if (dictionary_capacity < need) {
-          dictionary_capacity = need;
-          dictionary = duckdb::make_unsafe_uniq_array_uninitialized<char>(
-            dictionary_capacity);
-        }
-        std::memcpy(dictionary.get(), bytes.data(), bytes.size());
-        dictionary_size = static_cast<uint32_t>(bytes.size());
-        trained_loaded = trained->Id();
-      }
-      with_dictionary = true;
-    } else if (with_dictionary && !dictionary_ready) {
-      trained_loaded = 0;
-      const auto f0 = duckdb::Load<FrameMeta>(base + h.off_frames);
-      SDB_ENSURE(
-        static_cast<uint64_t>(f0.comp_off) + f0.comp_len <= h.data_size,
-        "col codec: corrupted frame table");
-      const size_t need = static_cast<size_t>(f0.raw_len) + f.raw_len;
-      if (dictionary_capacity < need) {
-        dictionary_capacity = std::max<size_t>(need, 1);
-        dictionary = duckdb::make_unsafe_uniq_array_uninitialized<char>(
-          dictionary_capacity);
-      }
-      SDB_ENSURE(d.Decompress(reinterpret_cast<const char*>(base + h.off_data) +
-                                f0.comp_off,
-                              f0.comp_len, dictionary.get(), f0.raw_len),
-                 "col codec: corrupted frame");
-      dictionary_size = f0.raw_len;
-      dictionary_ready = true;
-      decoded_total += f0.raw_len;
-    }
-    if (with_dictionary && dictionary_capacity < dictionary_size + f.raw_len) {
-      dictionary_capacity = dictionary_size + f.raw_len;
-      auto grown =
-        duckdb::make_unsafe_uniq_array_uninitialized<char>(dictionary_capacity);
-      std::memcpy(grown.get(), dictionary.get(), dictionary_size);
-      dictionary = std::move(grown);
-    }
-    auto* dst =
-      with_dictionary ? dictionary.get() + dictionary_size : raw.get();
-    frame_data = dst;
-    const auto* src =
-      reinterpret_cast<const char*>(base + h.off_data) + f.comp_off;
-    const auto inflate = [&](const auto& prefix) -> size_t {
-      if (want == f.raw_len) {
-        return d.Decompress(src, f.comp_len, dst, f.raw_len, prefix) ? f.raw_len
-                                                                     : 0;
-      }
-      return d.DecompressPrefix(src, f.comp_len, dst, want, f.raw_len, prefix);
-    };
-    const auto got = [&] {
-      if constexpr (kTakesTrained<Codec>) {
-        if (trained) {
-          return inflate(*trained);
-        }
-      }
-      return inflate(with_dictionary
-                       ? std::string_view{dictionary.get(), dictionary_size}
-                       : std::string_view{});
-    }();
-    SDB_ENSURE(got >= want, "col codec: corrupted frame");
-    decoded = std::min<size_t>(got, f.raw_len);
+    const auto got = inflater.Inflate(h, base, f, lo, raw.data(), want);
+    SDB_ENSURE(got.size() >= want, "col codec: corrupted frame");
+    frame_data = got.data();
+    decoded = std::min<size_t>(got.size(), f.raw_len);
     decoded_total += decoded;
   }
 
@@ -320,17 +242,11 @@ struct BlobFetch {
   uint32_t hits = 0;
   bool dense = false;
   size_t decoded = 0;
-  size_t capacity = 0;
-  duckdb::unsafe_unique_array<char> raw;
+  std::string raw;
   std::vector<uint32_t> offsets;
-  bool dictionary_ready = false;
-  size_t dictionary_capacity = 0;
-  uint32_t dictionary_size = 0;
-  duckdb::unsafe_unique_array<char> dictionary;
-  uint64_t trained_loaded = 0;
   const char* frame_data = nullptr;
   uint64_t decoded_total = 0;
-  std::optional<typename Codec::Decompressor> decoder;
+  FrameInflater<Codec> inflater;
 };
 
 template<typename Codec>

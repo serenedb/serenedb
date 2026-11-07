@@ -117,12 +117,12 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
     .row_count = static_cast<uint32_t>(_rows),
     .entry_count = static_cast<uint32_t>(entry_count),
     .frame_count = static_cast<uint32_t>(frames.frames.size()),
+    .dictionary_size = frames.dictionary_size,
     .symtab_size = static_cast<uint32_t>(frames.symtab.size()),
     .data_size = static_cast<uint32_t>(data.size()),
     .lcp_width =
       BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp),
     .flags = frames.flags,
-    .dictionary = frames.dictionary,
     .raw_bytes = _raw,
   };
   const auto codes =

@@ -32,7 +32,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/list_ingest.hpp"

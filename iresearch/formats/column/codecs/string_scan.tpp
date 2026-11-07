@@ -164,14 +164,7 @@ struct EntryFrames {
     char* out = frame->data.get();
     duckdb::StringVector::AddAuxiliaryData(
       dictionary->data, duckdb::make_uniq<FrameReference>(std::move(frame)));
-    if (f == 0) {
-      first = out;
-    }
     return out;
-  }
-
-  std::string_view FirstFrame() const noexcept {
-    return {heap ? heap : first, frames[0].raw_len};
   }
 
   IRS_FORCE_INLINE void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
@@ -232,7 +225,6 @@ struct EntryFrames {
   duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
   string_t* values = nullptr;
   char* heap = nullptr;
-  char* first = nullptr;
   std::vector<FrameMeta> frames;
   std::vector<uint64_t> frame_off;
   std::vector<uint8_t> decoded;

@@ -44,7 +44,7 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
 #include <iresearch/formats/column/codecs/registry.hpp>
-#include <iresearch/formats/column/codecs/trained_dictionary.hpp>
+#include <iresearch/formats/column/codecs/string_writer.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
@@ -1367,52 +1367,6 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
   irs::ColumnReader::PointReader reader{r, col};
   ASSERT_TRUE(reader.FetchRow(kRows - 1, out, 0));
   EXPECT_TRUE(absl::c_any_of(prefetched, covers_block));
-}
-
-TEST_F(ColumnReaderTest, TrainedDictionariesArePrefetchedBeforeTheyLoad) {
-  constexpr uint64_t kRows = 120000;
-  constexpr irs::field_id kS = 1;
-  irs::MemoryDirectory mem;
-  {
-    irs::ColWriter w{mem, "seg", Db(), irs::WriteTier::Merge};
-    auto& cw = w.OpenColumn(
-      kS, duckdb::LogicalType::VARCHAR,
-      {.row_group_size = 16384,
-       .compression = duckdb::CompressionType::COMPRESSION_DICT_LZ4,
-       .codec_params = {.compression_level = 3}});
-    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
-      const auto take =
-        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
-      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
-      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
-      for (duckdb::idx_t k = 0; k < take; ++k) {
-        const auto g = pos + k;
-        ds[k] = duckdb::StringVector::AddString(
-          vs,
-          absl::StrCat("https://shop", g % 997, ".example.org/catalog/",
-                       (g * 7919) % 100003, "/item?id=", g, "&ref=", g % 13));
-      }
-      duckdb::FlatVector::SetSize(vs, take);
-      cw.Append(vs, take);
-    }
-    ASSERT_TRUE(w.Commit(0));
-  }
-
-  std::vector<PrefetchRange> prefetched;
-  PrefetchRecordingDirectory dir{mem, prefetched};
-  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
-  const auto& col = *r.Column(kS);
-  ASSERT_FALSE(col.DictionaryMetas().empty());
-  irs::ReadContext ctx{r, true};
-  prefetched.clear();
-  ASSERT_TRUE(col.Dictionaries(ctx));
-  const auto prefetched_whole = [&](const irs::ColumnDictionaryMeta& d) {
-    return absl::c_any_of(prefetched, [&](const PrefetchRange& p) {
-      return p.offset <= d.file_offset &&
-             d.file_offset + d.byte_size <= p.offset + p.size;
-    });
-  };
-  EXPECT_TRUE(absl::c_all_of(col.DictionaryMetas(), prefetched_whole));
 }
 
 TEST_F(ColumnReaderTest, SameColumnsGiveTheSameFileSize) {
@@ -3584,13 +3538,6 @@ TEST_F(ColumnReaderTest, FooterBlockRangesThatWrapAreRejected) {
     });
 }
 
-TEST_F(ColumnReaderTest, FooterDictionaryRangesThatWrapAreRejected) {
-  OpenWithCorruptedFooter(
-    Db(), "dictionary on column id 1 out of range", [](irs::ColumnMeta& meta) {
-      meta.dictionaries.emplace_back(std::numeric_limits<uint64_t>::max(), 2);
-    });
-}
-
 TEST_F(ColumnReaderTest, ListsTurningRepetitiveAreDeduplicatedAgain) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   irs::MemoryDirectory dir{};
@@ -3704,48 +3651,40 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
-size_t TrainedDictionaries(const irs::ColumnMeta& meta) {
-  size_t trained = meta.dictionaries.size();
+uint32_t LargestCalibrationGap(const irs::ColumnMeta& meta) {
+  uint32_t gap =
+    meta.write_string_tuning ? meta.write_string_tuning->clock.gap : 0;
   for (const auto& child : meta.children) {
-    trained += TrainedDictionaries(child);
+    gap = std::max(gap, LargestCalibrationGap(child));
   }
-  return trained;
+  return gap;
 }
 
 TEST_F(ColumnReaderTest, VariantRowGroupsKeepTheirStringTuning) {
   SetShreddingSize(Db(), -1);
   irs::MemoryDirectory dir{};
   std::vector<duckdb::Value> expected;
-  WriteVariantViaSql(
-    Db(), dir, "vtune", /*id=*/31,
-    "SELECT ('https://shop' || (i % 997) || '.example.org/catalog/' || "
-    "((i * 7919) % 100003) || '/item?id=' || i)::VARIANT FROM range(120000) "
-    "t(i)",
-    /*rg_size=*/16384, expected);
-  std::vector<irs::ColumnMeta> metas;
   {
-    auto in = dir.open(irs::FileName("vtune"), irs::IOAdvice::SEQUENTIAL);
-    ASSERT_NE(in, nullptr);
-    irs::format_utils::ReadFooter(
-      *in, "vtune", [&](duckdb::BinaryDeserializer& footer, uint64_t) {
-        footer.Set<duckdb::DatabaseInstance&>(Db());
-        footer.ReadOptionalList(
-          irs::kColFieldColumns, "columns",
-          [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-            list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-              metas.emplace_back(irs::DeserializeColumnMeta(obj));
-            });
-          });
-      });
+    irs::ColWriter w{dir, "vtune", Db(), irs::WriteTier::Merge};
+    auto& cw = w.OpenColumn(/*id=*/31, duckdb::LogicalType::VARIANT(),
+                            {.row_group_size = 16384});
+    duckdb::Connection con{Db()};
+    auto result = con.Query(
+      "SELECT ('https://shop' || (i % 997) || '.example.org/catalog/' || "
+      "((i * 7919) % 100003) || '/item?id=' || i)::VARIANT FROM range(120000) "
+      "t(i)");
+    ASSERT_FALSE(result->HasError()) << result->GetError();
+    while (auto chunk = result->Fetch()) {
+      cw.Append(chunk->data[0], chunk->size());
+      for (duckdb::idx_t k = 0; k < chunk->size(); ++k) {
+        expected.emplace_back(chunk->GetValue(0, k));
+      }
+    }
+    const auto& rgs = cw.Meta().variant_rgs;
+    ASSERT_GT(rgs.size(), 2u);
+    EXPECT_GT(LargestCalibrationGap(*rgs.back().unshredded), 1u);
+    ASSERT_TRUE(w.Commit(0));
   }
-  ASSERT_EQ(metas.size(), 1u);
-  const auto& rgs = metas.front().variant_rgs;
-  ASSERT_GT(rgs.size(), 2u);
-  size_t later = 0;
-  for (size_t i = 1; i < rgs.size(); ++i) {
-    later += TrainedDictionaries(*rgs[i].unshredded);
-  }
-  EXPECT_GT(later, 0u);
   irs::ColReader r{dir, "vtune", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(31);
   ASSERT_NE(col, nullptr);

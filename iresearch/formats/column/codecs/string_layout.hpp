@@ -35,7 +35,7 @@ namespace irs::codecs {
 enum class FrameDictionary : uint8_t {
   None = 0,
   FirstFrame = 1,
-  Trained = 2,
+  Local = 2,
 };
 
 inline constexpr uint8_t kSegmentVersion = 1;
@@ -45,6 +45,7 @@ inline constexpr size_t kFsstFrameRawBytes = 16 * 1024;
 inline constexpr size_t kFrameDictionaryBytes = 32 * 1024;
 inline constexpr size_t kDictionaryFrameBytes = 16 * 1024;
 inline constexpr size_t kZstdDictionaryFrameBytes = 32 * 1024;
+inline constexpr size_t kMaxDictionaryBytes = 64 * 1024;
 inline constexpr uint32_t kChainRestart = 16;
 inline constexpr duckdb::idx_t kGroup =
   duckdb::BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
@@ -59,7 +60,7 @@ kDefaultColSegmentTarget encoded bytes:
 |   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
 |   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags, trained dictionary id      |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -74,14 +75,22 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   one entry per row, empty for a NULL row            |
 +------------------------------------------------------+
+|                      Dictionary                      |
+|   +----------------------------------------------+   |
+|   |   packed bytes[dictionary_size]              |   |
+|   +----------------------------------------------+   |
+|   trained on the frames of this segment and          |
+|   packed by the leaf (lz4 for zstd, whose unpacking  |
+|   is slower), or as is when that is not smaller:     |
+|   symtab_size bytes; empty unless flags is Local     |
++------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
 |   |   leaf frames of the concatenated entries    |   |
 |   +----------------------------------------------+   |
-|   frame 0 is the dictionary of the later             |
+|   each frame compressed with the Dictionary;         |
+|   or frame 0 is the dictionary of the later          |
 |   frames; or frames without a dictionary;            |
-|   or frames compressed with the column's             |
-|   trained dictionary, stored once per column;        |
 |   the leaf's file gives the frame sizes              |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
@@ -97,7 +106,7 @@ kDefaultColSegmentTarget encoded bytes:
 |   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
 |   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags, trained dictionary id      |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -119,6 +128,15 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   row -> entry, code 0 is NULL                       |
 +------------------------------------------------------+
+|                      Dictionary                      |
+|   +----------------------------------------------+   |
+|   |   packed bytes[dictionary_size]              |   |
+|   +----------------------------------------------+   |
+|   trained on the frames of this segment and          |
+|   packed by the leaf (lz4 for zstd, whose unpacking  |
+|   is slower), or as is when that is not smaller:     |
+|   symtab_size bytes; empty unless flags is Local     |
++------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
 |   |   leaf frames of the concatenated entries    |   |
@@ -139,7 +157,7 @@ struct Header {
   uint32_t row_count = 0;
   uint32_t entry_count = 0;
   uint32_t frame_count = 0;
-  uint32_t reserved2 = 0;
+  uint32_t dictionary_size = 0;
   uint32_t off_frames = 0;
   uint32_t off_lengths = 0;
   uint32_t off_lcps = 0;
@@ -151,7 +169,7 @@ struct Header {
   uint32_t data_size = 0;
   uint8_t lcp_width = 0;
   FrameDictionary flags = FrameDictionary::None;
-  uint16_t dictionary = 0;
+  uint16_t reserved4 = 0;
   uint64_t raw_bytes = 0;
 
   static Header Parse(duckdb::const_data_ptr_t p, duckdb::idx_t segment_size) {
@@ -168,8 +186,9 @@ struct Header {
         (h.flags == FrameDictionary::None ||
          (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
           h.codec != ByteCodec::Fsst) ||
-         (h.flags == FrameDictionary::Trained && Trainable(h.codec))) &&
-        (h.flags == FrameDictionary::Trained) == (h.dictionary != 0) &&
+         (h.flags == FrameDictionary::Local && h.symtab_size != 0 &&
+          h.dictionary_size != 0 && h.dictionary_size <= kMaxDictionaryBytes &&
+          h.codec != ByteCodec::Fsst)) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
         h.off_frames >= kHeaderSize &&
         h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
@@ -198,7 +217,7 @@ static_assert(offsetof(Header, reserved1) == 6);
 static_assert(offsetof(Header, row_count) == 8);
 static_assert(offsetof(Header, entry_count) == 12);
 static_assert(offsetof(Header, frame_count) == 16);
-static_assert(offsetof(Header, reserved2) == 20);
+static_assert(offsetof(Header, dictionary_size) == 20);
 static_assert(offsetof(Header, off_frames) == 24);
 static_assert(offsetof(Header, off_lengths) == 28);
 static_assert(offsetof(Header, off_lcps) == 32);
@@ -210,7 +229,7 @@ static_assert(offsetof(Header, off_data) == 52);
 static_assert(offsetof(Header, data_size) == 56);
 static_assert(offsetof(Header, lcp_width) == 60);
 static_assert(offsetof(Header, flags) == 61);
-static_assert(offsetof(Header, dictionary) == 62);
+static_assert(offsetof(Header, reserved4) == 62);
 static_assert(offsetof(Header, raw_bytes) == 64);
 
 }  // namespace irs::codecs

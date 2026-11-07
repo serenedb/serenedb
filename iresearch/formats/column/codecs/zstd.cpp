@@ -24,8 +24,12 @@
 
 #include <zstd.h>
 
+#include <algorithm>
+#include <utility>
+
 #include "iresearch/formats/column/codecs/blob_leaf.tpp"
 #include "iresearch/formats/column/codecs/dictionary_scan.tpp"
+#include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
@@ -34,9 +38,9 @@
 
 /*
 zstd frames in Data (string_layout.hpp draws the segments): frame 0 holds up
-to 32 KiB and is the dictionary of the later frames of up to 32 KiB; or
-64 KiB frames without a dictionary; or 16 KiB frames compressed with the
-column's trained dictionary, stored once per column.
+to 32 KiB and is the dictionary of the later frames of up to 32 KiB; or the
+same frames, each compressed with the segment's trained dictionary; or
+64 KiB frames without a dictionary.
 */
 
 namespace irs::codecs {
@@ -55,68 +59,111 @@ const duckdb::CompressionFunction& DictZstdFunction() {
   return kFunction;
 }
 
-namespace {
-
-std::unique_ptr<ZSTD_CDict, ZstdFree> NewDictionary(std::string_view bytes,
-                                                    ZSTD_dictContentType_e type,
-                                                    uint8_t level,
-                                                    size_t frame) {
-  std::unique_ptr<ZSTD_CDict, ZstdFree> dictionary{ZSTD_createCDict_advanced(
-    bytes.data(), bytes.size(), ZSTD_dlm_byRef, type,
-    ZSTD_getCParams(EffectiveLevel<Zstd>(level), frame, bytes.size()),
-    ZSTD_defaultCMem)};
-  SDB_ENSURE(dictionary, "zstd: cannot create a compression dictionary");
-  return dictionary;
-}
-
-}  // namespace
-
-Zstd::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
-  : _dictionary{NewDictionary(bytes, ZSTD_dct_rawContent, level,
-                              kZstdDictionaryFrameBytes)} {}
-
-Zstd::Dictionary::Dictionary(uint8_t level, const TrainedDictionary& dictionary)
-  : _dictionary{NewDictionary(dictionary.Bytes(), ZSTD_dct_auto, level,
-                              kTrainedFrameBytes)} {}
-
 Zstd::Compressor::Compressor(uint8_t level)
   : _level{EffectiveLevel<Zstd>(level)}, _ctx{ZSTD_createCCtx()} {
   SDB_ENSURE(_ctx, "zstd: cannot create a compression context");
+}
+
+bool Zstd::Compressor::Train(std::string_view frames,
+                             std::span<const size_t> sizes) {
+  _stored.clear();
+  TrainDictionary(frames, sizes, kDictionaryCap, _dictionary);
+  if (_dictionary.empty()) {
+    return false;
+  }
+  PackDictionary(_dictionary, Lz4::Bound(_dictionary.size()), _stored,
+                 [](const char* src, size_t size, char* dst, size_t capacity) {
+                   return static_cast<size_t>(std::max(
+                     0, LZ4_compress_default(src, dst, static_cast<int>(size),
+                                             static_cast<int>(capacity))));
+                 });
+  Attach();
+  return true;
+}
+
+void Zstd::Compressor::Use(std::string_view raw) {
+  _dictionary.assign(raw);
+  _stored.clear();
+  Attach();
+}
+
+void Zstd::Compressor::Attach() {
+  _attached.reset(ZSTD_createCDict_advanced(
+    _dictionary.data(), _dictionary.size(), ZSTD_dlm_byRef, ZSTD_dct_rawContent,
+    ZSTD_getCParams(_level, kZstdDictionaryFrameBytes, _dictionary.size()),
+    ZSTD_defaultCMem));
+  SDB_ENSURE(_attached, "zstd: cannot create a compression dictionary");
+}
+
+size_t Zstd::Compressor::Compress(const char* src, size_t size, char* dst,
+                                  size_t capacity) {
+  if (_dictionary.empty()) {
+    return Plain(src, size, dst, capacity);
+  }
+  const auto n = ZSTD_compress_usingCDict(_ctx.get(), dst, capacity, src, size,
+                                          _attached.get());
+  SDB_ENSURE(!ZSTD_isError(n),
+             "zstd compression failed: ", ZSTD_getErrorName(n));
+  return n;
+}
+
+size_t Zstd::Compressor::Plain(const char* src, size_t size, char* dst,
+                               size_t capacity) {
+  const auto n =
+    ZSTD_compressCCtx(_ctx.get(), dst, capacity, src, size, _level);
+  SDB_ENSURE(!ZSTD_isError(n),
+             "zstd compression failed: ", ZSTD_getErrorName(n));
+  return n;
 }
 
 Zstd::Decompressor::Decompressor() : _ctx{ZSTD_createDCtx()} {
   SDB_ENSURE(_ctx, "zstd: cannot create a decompression context");
 }
 
-size_t Zstd::Compressor::Compress(const char* src, size_t size, char* dst,
-                                  size_t capacity,
-                                  const Dictionary* dictionary) {
-  const auto n =
-    dictionary
-      ? ZSTD_compress_usingCDict(_ctx.get(), dst, capacity, src, size,
-                                 dictionary->Get())
-      : ZSTD_compressCCtx(_ctx.get(), dst, capacity, src, size, _level);
-  SDB_ENSURE(!ZSTD_isError(n),
-             "zstd compression failed: ", ZSTD_getErrorName(n));
-  return n;
+bool Zstd::Decompressor::Decompress(const char* src, size_t size, char* dst,
+                                    size_t raw_size) {
+  return Run(src, size, dst, raw_size, nullptr);
 }
 
-bool Zstd::Decompressor::Decompress(const char* src, size_t size, char* dst,
-                                    size_t raw_size,
-                                    std::string_view dictionary) {
-  if (dictionary.empty()) {
-    return Run(src, size, dst, raw_size, nullptr);
+bool Zstd::Decompressor::Load(std::string_view stored, size_t size) {
+  return FillDictionary(_window, _dictionary, size, [&](char* buf) {
+    return UnpackDictionary(stored, buf, size, Lz4::Decompressor::Decompress);
+  });
+}
+
+bool Zstd::Decompressor::LoadFrame(const char* src, size_t size,
+                                   size_t raw_size) {
+  return FillDictionary(_window, _dictionary, raw_size, [&](char* buf) {
+    return Decompress(src, size, buf, raw_size);
+  });
+}
+
+std::string_view Zstd::Decompressor::Inflate(const char* src, size_t size,
+                                             char* dst, size_t,
+                                             size_t raw_size) {
+  if (_dictionary == 0) {
+    return Decompress(src, size, dst, raw_size)
+             ? std::string_view{dst, raw_size}
+             : std::string_view{};
   }
-  if (dictionary.data() != _raw_bytes.data() ||
-      dictionary.size() != _raw_bytes.size()) {
-    _raw_bytes = {};
-    _raw.reset(ZSTD_createDDict_advanced(dictionary.data(), dictionary.size(),
-                                         ZSTD_dlm_byRef, ZSTD_dct_rawContent,
-                                         ZSTD_defaultCMem));
-    SDB_ENSURE(_raw, "zstd: cannot create a decompression dictionary");
-    _raw_bytes = dictionary;
+  auto* out = FrameAfterDictionary(_window, _dictionary, raw_size);
+  return Run(src, size, out, raw_size, Attached())
+           ? std::string_view{out, raw_size}
+           : std::string_view{};
+}
+
+const ZSTD_DDict* Zstd::Decompressor::Attached() {
+  const auto dictionary = Dictionary();
+  if (dictionary.data() != _attached_bytes.data() ||
+      dictionary.size() != _attached_bytes.size()) {
+    _attached_bytes = {};
+    _attached.reset(ZSTD_createDDict_advanced(
+      dictionary.data(), dictionary.size(), ZSTD_dlm_byRef, ZSTD_dct_rawContent,
+      ZSTD_defaultCMem));
+    SDB_ENSURE(_attached, "zstd: cannot create a decompression dictionary");
+    _attached_bytes = dictionary;
   }
-  return Run(src, size, dst, raw_size, _raw.get());
+  return _attached.get();
 }
 
 bool Zstd::Decompressor::Run(const char* src, size_t size, char* dst,

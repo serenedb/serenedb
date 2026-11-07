@@ -295,14 +295,6 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   }
   tuning.last_distinct = acc.entries.size();
   auto& blocks = WriteCtx().Blocks();
-  if (auto dictionary =
-        codecs::TrainDictionary(acc, named, _codec_params, tuning)) {
-    const auto bytes = dictionary->Bytes();
-    meta.dictionaries.push_back(
-      {.file_offset = blocks.Append(bytes), .byte_size = bytes.size()});
-    codecs::Adopt(tuning, std::move(dictionary),
-                  static_cast<uint16_t>(meta.dictionaries.size()));
-  }
   const auto outcome = codecs::SealSegments(
     acc, named, _codec_params, type, tuning,
     [&](codecs::StringChoice choice, duckdb::BaseStatistics stats,

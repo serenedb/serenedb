@@ -70,12 +70,6 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
   for (const auto& m : meta.validity) {
     CheckBlockRange(m, meta.id, footer_offset);
   }
-  for (const auto& d : meta.dictionaries) {
-    SDB_ENSURE(
-      d.byte_size != 0 && InRange(d.file_offset, d.byte_size, footer_offset),
-      ".col reader: dictionary on column id ", meta.id,
-      " out of range (offset ", d.file_offset, ", size ", d.byte_size, ")");
-  }
   for (const auto& c : meta.children) {
     CheckColumnMetaRanges(c, footer_offset);
   }

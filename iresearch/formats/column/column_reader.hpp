@@ -94,11 +94,6 @@ struct ColumnBlockMeta {
   const duckdb::CompressionFunction* codec = nullptr;
 };
 
-struct ColumnDictionaryMeta {
-  uint64_t file_offset = 0;
-  uint64_t byte_size = 0;
-};
-
 struct ListPart {
   uint64_t row = 0;
   uint64_t code = 0;
@@ -120,7 +115,6 @@ struct ColumnMeta {
   std::vector<ColumnBlockMeta> validity;
   std::vector<ColumnMeta> children;
   std::vector<VariantRgMeta> variant_rgs;
-  std::vector<ColumnDictionaryMeta> dictionaries;
   std::vector<ListPart> list_parts;
   duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
   uint64_t write_list_running = 0;
@@ -222,10 +216,6 @@ class ColumnReader {
   const duckdb::HyperLogLog* HyperLogLog() const noexcept {
     return _hyperloglog.get();
   }
-  std::span<const ColumnDictionaryMeta> DictionaryMetas() const noexcept {
-    return _dictionary_metas;
-  }
-  const codecs::TrainedDictionaries* Dictionaries(ReadContext& ctx) const;
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
     return *_stats;
@@ -450,9 +440,6 @@ class ColumnReader {
   uint64_t _array_size = 0;
   duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
-  std::vector<ColumnDictionaryMeta> _dictionary_metas;
-  mutable OnceFlag _dictionaries_loaded;
-  mutable codecs::TrainedDictionaries _dictionaries;
 
  private:
   void CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,

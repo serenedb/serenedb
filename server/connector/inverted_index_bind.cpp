@@ -1040,8 +1040,16 @@ duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassTokenizer(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
                             duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!dict || &dict->ParentCatalog() != &schema.ParentCatalog()) {
+  if (!dict) {
     return nullptr;
+  }
+  if (&dict->ParentCatalog() != &schema.ParentCatalog()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cross-database references are not implemented: \"",
+              dict->ParentCatalog().GetName().GetIdentifierName(), ".",
+              dict->ParentSchema(context).name.GetIdentifierName(), ".",
+              dict->name.GetIdentifierName(), "\""));
   }
   return &dict->Cast<TokenizerCatalogEntry>();
 }

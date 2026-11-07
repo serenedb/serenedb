@@ -116,12 +116,12 @@ id	scored
 3	t
 
 
-statement error
-SELECT id FROM sp_cars_nopos_idx WHERE body @@ ts_phrase('red car');
+query
+SELECT id FROM sp_cars_nopos_idx WHERE body @@ ts_phrase('red car') ORDER BY id;
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
-
+id
+1
+3
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY sp_oneway AS

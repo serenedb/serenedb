@@ -356,10 +356,9 @@ int64_t LiveTuples(const Session& session, int64_t oid) {
   }
   auto& table = entry->Cast<duckdb::TableCatalogEntry>();
   if (catalog::IsSearchTable(table)) {
-    return static_cast<int64_t>(table.Cast<catalog::SearchTableEntry>()
-                                  .Storage()
-                                  ->GetStats()
-                                  .numLiveDocs);
+    const auto stats =
+      table.Cast<catalog::SearchTableEntry>().Storage()->GetStats();
+    return static_cast<int64_t>(stats.numLiveDocs + stats.numBufferedDocs);
   }
   SDB_ASSERT(table.IsDuckTable());
   return static_cast<int64_t>(table.GetStorage().GetTotalRows());

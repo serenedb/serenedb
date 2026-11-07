@@ -501,12 +501,13 @@ irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
 
 StoreStats Table::Stats(Tick snapshot) const {
   const auto state = State();
-  auto stats = StoreStats::FromReader(Build(*state, snapshot, {}, Scope::Cold));
+  const auto cold = Build(*state, snapshot, {}, Scope::Cold);
+  auto stats = StoreStats::FromReader(cold);
+  stats.numBufferedDocs =
+    Build(*state, snapshot, {}, Scope::All).live_docs_count() -
+    cold.live_docs_count();
   for (const auto& unit : state->units) {
-    const auto visible = VisibleEnd(*unit, snapshot);
-    if (unit->hot) {
-      stats.numBufferedDocs += visible;
-    } else if (visible != 0) {
+    if (!unit->hot && VisibleEnd(*unit, snapshot) != 0) {
       stats.numFiles += unit->segment.meta.files.size();
     }
   }

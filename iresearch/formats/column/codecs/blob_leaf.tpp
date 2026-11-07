@@ -180,9 +180,8 @@ struct BlobFetch {
   }
 
   void Open(uint32_t lo, const FrameMeta& f, bool batched) {
-    if (capacity < f.raw_len) {
-      capacity = std::max<size_t>(f.raw_len, 1);
-      raw = duckdb::make_unsafe_uniq_array_uninitialized<char>(capacity);
+    if (raw.size() < f.raw_len) {
+      raw.resize_and_overwrite(f.raw_len, [](char*, size_t n) { return n; });
     }
     frame = lo;
     first_entry = f.first_entry;
@@ -217,7 +216,7 @@ struct BlobFetch {
     }
     SDB_ENSURE(static_cast<uint64_t>(f.comp_off) + f.comp_len <= h.data_size,
                "col codec: corrupted frame table");
-    const auto got = inflater.Inflate(h, base, f, lo, raw.get(), want);
+    const auto got = inflater.Inflate(h, base, f, lo, raw.data(), want);
     SDB_ENSURE(got.size() >= want, "col codec: corrupted frame");
     frame_data = got.data();
     decoded = std::min<size_t>(got.size(), f.raw_len);
@@ -230,8 +229,7 @@ struct BlobFetch {
   uint32_t hits = 0;
   bool dense = false;
   size_t decoded = 0;
-  size_t capacity = 0;
-  duckdb::unsafe_unique_array<char> raw;
+  std::string raw;
   std::vector<uint32_t> offsets;
   const char* frame_data = nullptr;
   uint64_t decoded_total = 0;

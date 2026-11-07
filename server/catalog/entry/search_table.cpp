@@ -511,7 +511,7 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
   // iresearch cannot edit a document in place, so every update rewrites the
   // whole row.
   update.update_is_del_and_insert = true;
-  update.update_column_count = 0;
+  update.update_column_count = update.columns.size();
   duckdb::LogicalUpdate::BindAllColumns(*this, get, proj, update);
 }
 

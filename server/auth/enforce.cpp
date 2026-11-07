@@ -322,34 +322,60 @@ class Enforcer {
     }
   }
 
+  void CollectProjectionReads(
+    const duckdb::LogicalProjection& projection,
+    const duckdb::TableCatalogEntry& table,
+    std::span<const duckdb::PhysicalIndex> columns,
+    std::span<duckdb::unique_ptr<duckdb::Expression>> expressions) {
+    auto& positions = _projection_reads[projection.table_index.index];
+    for (duckdb::idx_t i = 0; i < expressions.size(); ++i) {
+      auto collect = [&](duckdb::Expression& expr) {
+        if (expr.GetExpressionType() !=
+            duckdb::ExpressionType::BOUND_COLUMN_REF) {
+          return;
+        }
+        const auto& binding =
+          expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
+        if (binding.table_index.index != projection.table_index.index) {
+          return;
+        }
+        const auto position = binding.column_index.GetIndex();
+        if (i < columns.size() &&
+            IsPassthrough(projection, position, table, columns[i])) {
+          return;
+        }
+        positions.insert(position);
+      };
+      if (expressions[i]) {
+        duckdb::ExpressionIterator::EnumerateExpression(expressions[i],
+                                                        collect);
+      }
+    }
+  }
+
   void Check(duckdb::LogicalOperator& op) {
-    if (op.type == LogicalOperatorType::LOGICAL_UPDATE &&
-        !op.children.empty() &&
+    if (!op.children.empty() &&
         op.children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
-      auto& update = op.Cast<duckdb::LogicalUpdate>();
       const auto& projection =
         op.children[0]->Cast<duckdb::LogicalProjection>();
-      auto& positions = _projection_reads[projection.table_index.index];
-      for (duckdb::idx_t i = 0; i < update.expressions.size(); ++i) {
-        auto collect = [&](duckdb::Expression& expr) {
-          if (expr.GetExpressionType() !=
-              duckdb::ExpressionType::BOUND_COLUMN_REF) {
-            return;
+      if (op.type == LogicalOperatorType::LOGICAL_UPDATE) {
+        auto& update = op.Cast<duckdb::LogicalUpdate>();
+        CollectProjectionReads(projection, update.table, update.columns,
+                               update.expressions);
+      } else if (op.type == LogicalOperatorType::LOGICAL_MERGE_INTO) {
+        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
+        for (auto& [condition, actions] : merge.actions) {
+          for (auto& action : actions) {
+            CollectProjectionReads(projection, merge.table, {},
+                                   {&action->condition, 1});
+            CollectProjectionReads(
+              projection, merge.table,
+              action->action_type == duckdb::MergeActionType::MERGE_UPDATE
+                ? std::span<const duckdb::PhysicalIndex>{action->columns}
+                : std::span<const duckdb::PhysicalIndex>{},
+              action->expressions);
           }
-          const auto& binding =
-            expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
-          if (binding.table_index.index != projection.table_index.index) {
-            return;
-          }
-          const auto position = binding.column_index.GetIndex();
-          if (IsPassthrough(projection, position, update.table,
-                            update.columns[i])) {
-            return;
-          }
-          positions.insert(position);
-        };
-        duckdb::ExpressionIterator::EnumerateExpression(update.expressions[i],
-                                                        collect);
+        }
       }
     }
     auto visit = [&](duckdb::Expression& expr) {
@@ -817,14 +843,27 @@ class Enforcer {
   }
 
   void CheckUpdate(duckdb::LogicalUpdate& update) {
-    auto& table = update.table;
-    if (update.update_is_del_and_insert) {
-      RequireTablePrivilege(table, AclMode::Update);
-      return;
+    CheckUpdateColumns(update.table, update.columns,
+                       update.update_is_del_and_insert,
+                       update.update_column_count);
+  }
+
+  void CheckUpdateColumns(const duckdb::TableCatalogEntry& table,
+                          std::span<const duckdb::PhysicalIndex> columns,
+                          bool del_and_insert, duckdb::idx_t set_columns) {
+    if (del_and_insert) {
+      if (set_columns == 0) {
+        RequireTablePrivilege(table, AclMode::Update);
+        return;
+      }
+      columns = columns.first(set_columns);
     }
     std::vector<std::span<const duckdb::AclItem>> acls;
-    for (const auto index : update.columns) {
-      acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
+    for (const auto index : columns) {
+      const auto& column = table.GetColumns().GetColumn(index);
+      if (!column.Generated()) {
+        acls.emplace_back(column.Acl());
+      }
     }
     if (!_caller_closure.CanColumns(table.permissions, AclMode::Update, acls)) {
       Denied(table);
@@ -836,7 +875,9 @@ class Enforcer {
       for (const auto& action : actions) {
         switch (action->action_type) {
           case duckdb::MergeActionType::MERGE_UPDATE:
-            RequireTablePrivilege(merge.table, AclMode::Update);
+            CheckUpdateColumns(merge.table, action->columns,
+                               action->update_is_del_and_insert,
+                               action->update_column_count);
             break;
           case duckdb::MergeActionType::MERGE_DELETE:
             RequireTablePrivilege(merge.table, AclMode::Delete);

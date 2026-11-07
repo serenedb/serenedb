@@ -55,7 +55,7 @@
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/codecs/string_scan.hpp>
-#include <iresearch/formats/column/codecs/string_writer.hpp>
+#include <iresearch/formats/column/codecs/string_seal.hpp>
 #include <iresearch/formats/column/codecs/zstd.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>

@@ -39,7 +39,7 @@
 #include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
-#include "iresearch/formats/column/codecs/string_writer.hpp"
+#include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/shared.hpp"

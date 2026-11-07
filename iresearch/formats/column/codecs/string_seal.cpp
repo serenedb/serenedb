@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/string_writer.hpp"
+#include "iresearch/formats/column/codecs/string_seal.hpp"
 
 #include <algorithm>
 #include <duckdb/common/types/string_type.hpp>

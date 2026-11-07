@@ -35,7 +35,7 @@
 #include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_dictionary.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
-#include "iresearch/formats/column/codecs/string_writer.hpp"
+#include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {

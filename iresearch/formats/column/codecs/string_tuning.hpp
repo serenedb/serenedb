@@ -20,23 +20,11 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <cstdint>
-#include <duckdb/common/types.hpp>
-#include <duckdb/common/types/vector.hpp>
-#include <duckdb/storage/statistics/base_statistics.hpp>
-#include <memory>
 #include <optional>
-#include <span>
-#include <string_view>
-#include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
-#include "iresearch/index/column_info.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs {
 
@@ -69,38 +57,5 @@ struct StringTuning {
   RatioHistory history[kByteCodecCount][2]{};
   NumericTuning codes;
 };
-
-struct SealOutcome {
-  bool sealed = false;
-  bool all_dedup = true;
-};
-
-class StringAccumulator {
- public:
-  explicit StringAccumulator(bool dedup) noexcept : _dedup{dedup} {}
-
-  void Reserve(uint64_t rows, uint64_t distinct);
-  void Add(const duckdb::Vector& input);
-
-  uint64_t null_count = 0;
-  std::vector<std::string_view> entries;
-  ScratchVector<uint32_t> codes;
-
- private:
-  containers::FlatHashMap<std::string_view, uint32_t> _map;
-  bool _dedup;
-  uint32_t _last_code = 0;
-  duckdb::string_t _last;
-};
-
-using SegmentSink = absl::FunctionRef<void(
-  StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
-  std::span<const std::string_view> parts)>;
-
-SealOutcome SealSegments(const StringAccumulator& acc,
-                         const StringChoice* named,
-                         const ColCodecParams& params,
-                         const duckdb::LogicalType& type, StringTuning& tuning,
-                         SegmentSink sink);
 
 }  // namespace irs::codecs

@@ -18,7 +18,7 @@ target_sources(
         column/codecs/segment_dictionary.cpp
         column/codecs/segment_encoder.cpp
         column/codecs/string_scan.cpp
-        column/codecs/string_writer.cpp
+        column/codecs/string_seal.cpp
         column/codecs/zstd.cpp
         column/codecs/zxc.cpp
         column/col_file_writer.cpp

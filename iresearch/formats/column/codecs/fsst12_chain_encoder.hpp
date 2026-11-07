@@ -30,7 +30,7 @@
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/fsst12.hpp"
 #include "iresearch/formats/column/codecs/leaf_encoder.hpp"
-#include "iresearch/formats/column/codecs/string_writer.hpp"
+#include "iresearch/formats/column/codecs/string_tuning.hpp"
 
 namespace irs::codecs::text {
 

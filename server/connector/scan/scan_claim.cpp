@@ -693,17 +693,20 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       if (!ordered && !g.col_filters.empty() && threads > 1 &&
           work.rg_count > threads) {
         ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
-        SDB_ASSERT(!cls.segment_dead);
-        LivePass pass{.work = &work,
-                      .col_reader = sub.GetColReader(),
-                      .specs = cls.active,
-                      .context = &context,
-                      .rows = docs,
-                      .rg_size = g.rg_size};
-        SDB_ASSERT(pass.col_reader);
-        if (SampleRuledOut(pass, states)) {
-          pass.live.reset(work.rg_count);
-          passes.push_back(std::move(pass));
+        if (cls.segment_dead) {
+          work.claims = {{}, {.rg = work.rg_count}};
+        } else {
+          LivePass pass{.work = &work,
+                        .col_reader = sub.GetColReader(),
+                        .specs = cls.active,
+                        .context = &context,
+                        .rows = docs,
+                        .rg_size = g.rg_size};
+          SDB_ASSERT(pass.col_reader);
+          if (SampleRuledOut(pass, states)) {
+            pass.live.reset(work.rg_count);
+            passes.push_back(std::move(pass));
+          }
         }
       }
     }

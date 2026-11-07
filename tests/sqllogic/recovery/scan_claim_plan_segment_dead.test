@@ -1,0 +1,91 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE cpd (id BIGINT PRIMARY KEY, k INTEGER)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO cpd SELECT i, i // 2048 FROM range(20480) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpd;
+
+
+statement ok
+INSERT INTO cpd SELECT i, 1000 + (i - 20480) // 2048 FROM range(20480, 40960) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpd;
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
+FROM sdb_metrics WHERE relation_id = 'cpd'::regclass;
+----
+segments	docs
+2	40960
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET sdb_faults = 'classify_segments_keep_dead';
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/cpd_dead.json'
+
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM cpd WHERE k = 3;
+----
+n	s
+2048	14679040
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM cpd WHERE k = 1005;
+----
+n	s
+2048	65010688
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/cpd_dead.json');
+----
+row_groups_scanned
+1
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP TABLE cpd;

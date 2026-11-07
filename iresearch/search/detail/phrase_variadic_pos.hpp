@@ -310,30 +310,3 @@ class PhraseVariadicPos {
 };
 
 }  // namespace irs::detail
-namespace irs {
-
-template<typename Leaf, bool HasBoost>
-struct TermPositionTraits<
-  std::pair<detail::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>> {
-  using T =
-    std::pair<detail::PhraseVariadicPositions<Leaf, HasBoost>*, TermInterval>;
-  using PositionImpl = detail::PhraseVariadicPositions<Leaf, HasBoost>;
-
-  static PosAttr::value_t Position(T& pos) noexcept {
-    return pos.first->value();
-  }
-
-  static const TermInterval& Interval(const T& pos) noexcept {
-    return pos.second;
-  }
-
-  static void ResetPos(const T& pos) { pos.first->reset(); }
-
-  static const OffsAttr& Offsets(const T& pos) noexcept {
-    return pos.first->Offsets();
-  }
-
-  static score_t Boost(const T& pos) noexcept { return pos.first->Boost(); }
-};
-
-}  // namespace irs

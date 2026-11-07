@@ -48,7 +48,7 @@ class FsstChainEncoder {
 
   void Retrain() noexcept { _codec.Reset(); }
 
-  void Append(std::string_view, uint32_t) noexcept {}
+  void Append(const duckdb::string_t&, uint32_t) noexcept {}
 
   uint64_t Estimate(const SegmentEntries& rows) const noexcept;
 

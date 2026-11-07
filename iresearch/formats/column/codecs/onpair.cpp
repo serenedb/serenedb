@@ -187,7 +187,7 @@ OnPairCodec::Match OnPairCodec::Longest(std::string_view rest) const {
   return {_ids.find(rest.substr(0, 1))->second, 1};
 }
 
-void OnPairCodec::Train(std::span<const std::string_view> entries,
+void OnPairCodec::Train(std::span<const duckdb::string_t> entries,
                         uint64_t raw) {
   Reset();
   const uint32_t cap = uint32_t{1} << kOnPairDictionaryBits;
@@ -200,7 +200,7 @@ void OnPairCodec::Train(std::span<const std::string_view> entries,
   bool stop = false;
   for (uint64_t start = 0; start < stride && !stop; ++start) {
     for (uint64_t i = start; i < entries.size() && !stop; i += stride) {
-      const auto row = entries[i];
+      const std::string_view row{entries[i].GetData(), entries[i].GetSize()};
       if (row.empty()) {
         continue;
       }
@@ -302,7 +302,7 @@ OnPairCodec::Key OnPairCodec::KeyOf(std::string_view bytes) noexcept {
          absl::big_endian::Load64(buf + 8);
 }
 
-void OnPairCodec::Encode(std::span<const std::string_view> entries,
+void OnPairCodec::Encode(std::span<const duckdb::string_t> entries,
                          std::span<uint16_t> codes,
                          std::span<uint32_t> counts) const {
   struct Lane {
@@ -318,14 +318,15 @@ void OnPairCodec::Encode(std::span<const std::string_view> entries,
   uint64_t offset = 0;
   const auto take = [&](Lane& lane) {
     while (next < entries.size()) {
-      const auto entry = entries[next];
+      const auto& entry = entries[next];
+      const auto size = entry.GetSize();
       auto* out = codes.data() + offset;
-      offset += entry.size();
-      if (entry.empty()) {
+      offset += size;
+      if (size == 0) {
         counts[next++] = 0;
         continue;
       }
-      lane = {entry.data(), entry.size(), out, out, next++};
+      lane = {entry.GetData(), size, out, out, next++};
       return true;
     }
     return false;

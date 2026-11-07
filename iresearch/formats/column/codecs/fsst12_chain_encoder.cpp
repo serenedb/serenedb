@@ -47,7 +47,7 @@ EncodedFrames Fsst12ChainEncoder::Finish(const SegmentEntries& rows,
   uint64_t frame_raw = 0;
   uint64_t frame_first = 0;
   for (size_t i = 0; i < entries.size(); ++i) {
-    const auto sv = entries[i];
+    const std::string_view sv{entries[i].GetData(), entries[i].GetSize()};
     if (frame_raw != 0 && frame_raw + sv.size() > kFsstFrameRawBytes) {
       _frames.emplace_back(static_cast<uint32_t>(frame_first),
                            static_cast<uint32_t>(frame_raw), 0, 0);

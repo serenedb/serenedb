@@ -95,11 +95,12 @@ class BlobEncoder {
     _frames.clear();
   }
 
-  void Append(std::string_view sv, uint32_t entry) {
-    if (Add(entry, sv.size())) {
+  void Append(const duckdb::string_t& value, uint32_t entry) {
+    const auto size = value.GetSize();
+    if (Add(entry, size)) {
       Closed();
     }
-    _frame.append(sv);
+    _frame.append(value.GetData(), size);
   }
 
   uint64_t Estimate(const SegmentEntries& rows) const noexcept {
@@ -131,9 +132,8 @@ class BlobEncoder {
       CompressRest();
     }
     Count();
-    absl::c_transform(rows.entries, lengths.begin(), [](std::string_view e) {
-      return static_cast<uint32_t>(e.size());
-    });
+    absl::c_transform(rows.entries, lengths.begin(),
+                      [](const duckdb::string_t& e) { return e.GetSize(); });
     const auto flags = Flags();
     const bool local = flags == FrameDictionary::Local;
     return {
@@ -153,7 +153,7 @@ class BlobEncoder {
                  uint64_t begin) {
     Configure(level, layout);
     for (uint64_t i = 0; i < p.entries.size(); ++i) {
-      Add(i, p.entries[i].size());
+      Add(i, p.entries[i].GetSize());
     }
     Close();
     uint64_t data = 0;
@@ -162,8 +162,8 @@ class BlobEncoder {
         _layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames;
       if (whole) {
         _frame.clear();
-        for (const auto entry : p.entries) {
-          _frame.append(entry);
+        for (const auto& entry : p.entries) {
+          _frame.append(entry.GetData(), entry.GetSize());
         }
         Sizes();
         _trained = Train(begin, p.rows, p.shape);
@@ -319,11 +319,11 @@ class BlobEncoder {
                                            _spans[i].raw);
   }
 
-  std::string_view Assemble(std::span<const std::string_view> entries,
+  std::string_view Assemble(std::span<const duckdb::string_t> entries,
                             const Span& span) {
     _frame.clear();
     for (auto k = span.first; k < span.end; ++k) {
-      _frame.append(entries[k]);
+      _frame.append(entries[k].GetData(), entries[k].GetSize());
     }
     return _frame;
   }

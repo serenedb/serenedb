@@ -81,7 +81,8 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
                          static_cast<uint32_t>(end - frame_off));
   };
   for (size_t i = 0; i < n; ++i) {
-    if (frame_raw != 0 && frame_raw + entries[i].size() > kFsstFrameRawBytes) {
+    const auto size = entries[i].GetSize();
+    if (frame_raw != 0 && frame_raw + size > kFsstFrameRawBytes) {
       close(_data.size());
       frame_raw = 0;
       frame_first = i;
@@ -91,7 +92,7 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
     _data.append(suffix);
     lengths[i] = static_cast<uint32_t>(suffix.size());
     max_length = std::max(max_length, lengths[i]);
-    frame_raw += entries[i].size();
+    frame_raw += size;
   }
   if (n != 0) {
     close(_data.size());

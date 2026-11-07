@@ -25,6 +25,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/types/string_type.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -101,9 +102,9 @@ class OnPairCodec {
  public:
   OnPairCodec();
 
-  void Train(std::span<const std::string_view> entries, uint64_t raw);
+  void Train(std::span<const duckdb::string_t> entries, uint64_t raw);
 
-  void Encode(std::span<const std::string_view> entries,
+  void Encode(std::span<const duckdb::string_t> entries,
               std::span<uint16_t> codes, std::span<uint32_t> counts) const;
 
   void Export(std::string& side) const;

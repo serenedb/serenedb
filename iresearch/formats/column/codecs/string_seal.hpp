@@ -25,15 +25,18 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
 
+#include "iresearch/analysis/text/dict/string_table.hpp"
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
+#include "iresearch/formats/column/list_ingest.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs {
@@ -45,20 +48,69 @@ struct SealOutcome {
 
 class StringAccumulator {
  public:
-  explicit StringAccumulator(bool dedup) noexcept : _dedup{dedup} {}
+  class Cursor {
+   public:
+    static constexpr bool kCodes = true;
+
+    Cursor(const StringAccumulator& acc, uint64_t row) noexcept
+      : _codes{acc.codes.data() + row}, _entries{acc.entries.data()} {}
+
+    uint32_t Code() noexcept { return *_codes++; }
+
+    const duckdb::string_t& Entry(uint32_t code) const noexcept {
+      return _entries[code - 1];
+    }
+
+    const duckdb::string_t* Value() noexcept {
+      const auto code = Code();
+      return code == 0 ? nullptr : &Entry(code);
+    }
+
+   private:
+    const uint32_t* _codes;
+    const duckdb::string_t* _entries;
+  };
 
   void Reserve(uint64_t rows, uint64_t distinct);
   void Add(const duckdb::Vector& input);
 
+  uint64_t Rows() const noexcept { return codes.size(); }
+
+  Cursor At(uint64_t row) const noexcept { return {*this, row}; }
+
   uint64_t null_count = 0;
-  std::vector<std::string_view> entries;
+  std::vector<duckdb::string_t> entries;
   ScratchVector<uint32_t> codes;
 
  private:
-  containers::FlatHashMap<std::string_view, uint32_t> _map;
-  bool _dedup;
+  analysis::dict::StringMap<std::string_view, uint32_t> _map;
   uint32_t _last_code = 0;
   duckdb::string_t _last;
+};
+
+class ChunkCursor {
+ public:
+  static constexpr bool kCodes = false;
+
+  explicit ChunkCursor(std::span<const WriteChunk> chunks) noexcept
+    : _chunks{chunks} {}
+
+  const duckdb::string_t* Value() {
+    while (_index == _count) {
+      Enter();
+    }
+    const auto entry = (*_values)[_index++];
+    return entry.IsValid() ? &entry.GetValueUnsafe() : nullptr;
+  }
+
+ private:
+  void Enter();
+
+  std::span<const WriteChunk> _chunks;
+  size_t _next_chunk = 0;
+  std::optional<duckdb::VectorIterator<duckdb::string_t>> _values;
+  uint64_t _count = 0;
+  uint64_t _index = 0;
 };
 
 using SegmentSink = absl::FunctionRef<void(
@@ -67,6 +119,12 @@ using SegmentSink = absl::FunctionRef<void(
 
 SealOutcome SealSegments(const StringAccumulator& acc,
                          const StringChoice* named,
+                         const ColCodecParams& params,
+                         const duckdb::LogicalType& type, StringTuning& tuning,
+                         SegmentSink sink);
+
+SealOutcome SealSegments(std::span<const WriteChunk> chunks,
+                         const StringChoice& named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          SegmentSink sink);

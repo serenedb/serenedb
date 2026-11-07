@@ -107,34 +107,30 @@ struct Segment {
 
 class SegmentBuilder {
  public:
-  explicit SegmentBuilder(const StringAccumulator& acc,
-                          const duckdb::LogicalType& type, DedupScratch& dedup,
+  explicit SegmentBuilder(const duckdb::LogicalType& type, DedupScratch& dedup,
                           NumericTuning& codes_tuning)
-    : _acc{acc},
-      _stats{type},
-      _type{type},
-      _dedup{dedup},
-      _codes_tuning{codes_tuning} {}
+    : _stats{type}, _type{type}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
 
   template<typename Leaf>
-  void Begin(Leaf& leaf, const Config& config, uint64_t begin) {
+  void Begin(Leaf& leaf, const Config& config, uint64_t begin,
+             size_t distinct) {
     _shape = config.choice.shape;
     _level = config.level;
     _layout = config.layout;
     _next = begin;
     if (_shape == Shape::Dedup) {
-      _dedup.Begin(_acc.entries.size());
+      _dedup.Begin(distinct);
     }
     leaf.Begin(_shape, _level, _layout);
   }
 
-  template<typename Leaf>
-  uint64_t Cut(Leaf& leaf, uint32_t target) {
+  template<typename Leaf, typename Cursor>
+  uint64_t Cut(Leaf& leaf, Cursor& cursor, uint64_t end, uint32_t target) {
     const uint64_t step = target / kEstimateSteps;
-    const uint64_t end = _acc.codes.size();
     uint64_t estimated_raw = _raw;
     while (_next < end) {
-      AddRow(leaf, _next++);
+      AddRow(leaf, cursor);
+      ++_next;
       if (_rows % kEstimateEvery != 0 && _raw - estimated_raw < step) {
         continue;
       }
@@ -146,10 +142,11 @@ class SegmentBuilder {
     return _next;
   }
 
-  template<typename Leaf>
-  void AddUntil(Leaf& leaf, uint64_t end) {
+  template<typename Leaf, typename Cursor>
+  void AddUntil(Leaf& leaf, Cursor& cursor, uint64_t end) {
     while (_next < end) {
-      AddRow(leaf, _next++);
+      AddRow(leaf, cursor);
+      ++_next;
     }
   }
 
@@ -192,47 +189,54 @@ class SegmentBuilder {
     uint32_t entry;
   };
 
-  template<typename Leaf>
-  IRS_FORCE_INLINE void AddRow(Leaf& leaf, uint64_t row) {
-    const auto code = _acc.codes[row];
-    if (code == 0) {
-      _stats.SetHasNull();
-      ++_nulls;
-      if (_shape == Shape::Dedup) {
-        PushCode(0);
+  template<typename Leaf, typename Cursor>
+  IRS_FORCE_INLINE void AddRow(Leaf& leaf, Cursor& cursor) {
+    if (_shape == Shape::Plain) {
+      if (const auto* value = cursor.Value()) {
+        _input += value->GetSize();
+        _stats.Update(*value);
+        AppendEntry(leaf, *value);
       } else {
-        AppendEntry(leaf, {});
+        _stats.SetHasNull();
+        ++_nulls;
+        AppendEntry(leaf, duckdb::string_t{"", 0});
       }
       ++_rows;
       return;
     }
-    const auto sv = _acc.entries[code - 1];
-    _input += sv.size();
-    const duckdb::string_t value{sv.data(), static_cast<uint32_t>(sv.size())};
-    if (_shape == Shape::Plain) {
-      _stats.Update(value);
-      AppendEntry(leaf, sv);
+    if constexpr (Cursor::kCodes) {
+      const auto code = cursor.Code();
+      if (code == 0) {
+        _stats.SetHasNull();
+        ++_nulls;
+        PushCode(0);
+        ++_rows;
+        return;
+      }
+      const auto& value = cursor.Entry(code);
+      _input += value.GetSize();
+      const auto [local, fresh] =
+        _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);
+      if (fresh) {
+        _stats.Update(value);
+        AppendEntry(leaf, value);
+      } else {
+        _stats.UpdateRepeated(value);
+      }
+      PushCode(local);
       ++_rows;
-      return;
-    }
-    const auto [local, fresh] =
-      _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);
-    if (fresh) {
-      _stats.Update(value);
-      AppendEntry(leaf, sv);
     } else {
-      _stats.UpdateRepeated(value);
+      SDB_UNREACHABLE();
     }
-    PushCode(local);
-    ++_rows;
   }
 
   template<typename Leaf>
-  IRS_FORCE_INLINE void AppendEntry(Leaf& leaf, std::string_view sv) {
-    _entries.emplace_back(sv);
-    _max_len = std::max<uint32_t>(_max_len, static_cast<uint32_t>(sv.size()));
-    _raw += sv.size();
-    leaf.Append(sv, static_cast<uint32_t>(EntryCount()) - 1);
+  IRS_FORCE_INLINE void AppendEntry(Leaf& leaf, const duckdb::string_t& value) {
+    _entries.emplace_back(value);
+    const auto size = value.GetSize();
+    _max_len = std::max<uint32_t>(_max_len, size);
+    _raw += size;
+    leaf.Append(value, static_cast<uint32_t>(EntryCount()) - 1);
   }
 
   IRS_FORCE_INLINE void PushCode(uint32_t code) {
@@ -248,7 +252,6 @@ class SegmentBuilder {
   void WriteSegment(const EncodedFrames& frames, std::string& data,
                     Segment& out);
 
-  const StringAccumulator& _acc;
   duckdb::StatsWriter<duckdb::string_t> _stats;
   const duckdb::LogicalType& _type;
   DedupScratch& _dedup;
@@ -258,7 +261,7 @@ class SegmentBuilder {
   FrameLayout _layout = FrameLayout::FirstFrame;
   uint64_t _next = 0;
 
-  std::vector<std::string_view> _entries;
+  std::vector<duckdb::string_t> _entries;
   ScratchVector<uint32_t> _codes;
   uint64_t _rows = 0;
   uint64_t _runs = 0;
@@ -270,7 +273,7 @@ class SegmentBuilder {
 
   std::vector<SortKey> _order;
   std::vector<uint32_t> _remap;
-  std::vector<std::string_view> _sorted;
+  std::vector<duckdb::string_t> _sorted;
   std::vector<uint32_t> _lengths;
 };
 

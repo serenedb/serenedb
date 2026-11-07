@@ -32,8 +32,8 @@ EncodedFrames OnPairEncoder::Finish(const SegmentEntries& rows,
   const auto first_entry = rows.first_entry;
   _codec.Train(entries, rows.raw);
   uint64_t total = 0;
-  for (const auto entry : entries) {
-    total += entry.size();
+  for (const auto& entry : entries) {
+    total += entry.GetSize();
   }
   _codes.resize(total);
   _codec.Encode(entries, _codes, lengths);
@@ -53,15 +53,16 @@ EncodedFrames OnPairEncoder::Finish(const SegmentEntries& rows,
                          static_cast<uint32_t>(_data.size() - at));
   };
   for (size_t i = 0; i < entries.size(); ++i) {
-    if (frame_raw != 0 && frame_raw + entries[i].size() > kFsstFrameRawBytes) {
+    const auto size = entries[i].GetSize();
+    if (frame_raw != 0 && frame_raw + size > kFsstFrameRawBytes) {
       close(i);
       frame_raw = 0;
       frame_first = i;
       frame_region = region;
     }
     max_codes = std::max(max_codes, lengths[i]);
-    frame_raw += entries[i].size();
-    region += entries[i].size();
+    frame_raw += size;
+    region += size;
   }
   if (!entries.empty()) {
     close(entries.size());
@@ -77,7 +78,7 @@ EncodedFrames OnPairEncoder::Finish(const SegmentEntries& rows,
   };
 }
 
-void OnPairEncoder::Pack(std::span<const std::string_view> entries,
+void OnPairEncoder::Pack(std::span<const duckdb::string_t> entries,
                          std::span<const uint32_t> lengths, size_t first,
                          size_t end, uint64_t region) {
   const auto bits = _codec.Bits();
@@ -94,7 +95,7 @@ void OnPairEncoder::Pack(std::span<const std::string_view> entries,
         fill -= 8;
       }
     }
-    region += entries[e].size();
+    region += entries[e].GetSize();
   }
   if (fill != 0) {
     _data.push_back(static_cast<char>(acc & 0xFF));

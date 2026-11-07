@@ -48,7 +48,7 @@ class FsstPlusEncoder {
 
   void Retrain() noexcept { _codec.Reset(); }
 
-  void Append(std::string_view, uint32_t) noexcept {}
+  void Append(const duckdb::string_t&, uint32_t) noexcept {}
 
   uint64_t Estimate(const SegmentEntries& rows) const noexcept {
     return EstimateEntries(rows, _history[static_cast<size_t>(_shape)]);

@@ -94,14 +94,19 @@ bool PlainWins(const Segment& dedup, uint64_t plain) noexcept {
 
 }  // namespace
 
+Config NamedConfig(const StringChoice& named,
+                   const ColCodecParams& params) noexcept {
+  return {
+    .choice = named,
+    .level = params.compression_level,
+    .layout = params.tier == WriteTier::Flush ? FrameLayout::FirstFrame
+                                              : FrameLayout::Local,
+  };
+}
+
 Config Calibration::CutConfig() const noexcept {
   if (_named) {
-    return {
-      .choice = *_named,
-      .level = _params.compression_level,
-      .layout = _params.tier == WriteTier::Flush ? FrameLayout::FirstFrame
-                                                 : FrameLayout::Local,
-    };
+    return NamedConfig(*_named, _params);
   }
   if (_tuning.choice) {
     const auto leaf = Index(_tuning.choice->leaf);
@@ -112,7 +117,7 @@ Config Calibration::CutConfig() const noexcept {
     };
   }
   const bool repeats =
-    Repeats(_acc.entries.size(), _acc.codes.size() - _acc.null_count);
+    Repeats(_acc.entries.size(), _acc.Rows() - _acc.null_count);
   return {
     .choice = {repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
     .level = kLz4Fast,
@@ -269,7 +274,7 @@ uint64_t Calibration::PriceOf(Config config) {
   if (const auto* seg = Cached(config)) {
     return seg->Size();
   }
-  const auto bytes = _encoder.Price(config, _begin, _end);
+  const auto bytes = _encoder.Price(config, _acc, _begin, _end);
   if (bytes < _smallest.bytes) {
     _smallest = {.config = config, .bytes = bytes};
   }
@@ -298,7 +303,7 @@ Segment* Calibration::Trial(Config config) {
   if (auto* seg = Cached(config)) {
     return seg;
   }
-  auto* seg = _encoder.Encode(config, _begin, _end);
+  auto* seg = _encoder.Encode(config, _acc, _begin, _end);
   _live.push_back(seg);
   return seg;
 }

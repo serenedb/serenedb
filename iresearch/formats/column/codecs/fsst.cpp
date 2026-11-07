@@ -154,11 +154,6 @@ void FsstEncoder::Reset() noexcept {
 void FsstEncoder::Encode(std::span<const std::string_view> strings,
                          std::string& out, std::vector<uint32_t>& lengths) {
   const size_t n = strings.size();
-  if (n == 0) {
-    out.clear();
-    lengths.clear();
-    return;
-  }
   _in_lengths.resize(n);
   _in_ptrs.resize(n);
   size_t total = 0;
@@ -167,6 +162,31 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
     _in_ptrs[i] =
       reinterpret_cast<unsigned char*>(const_cast<char*>(strings[i].data()));
     total += strings[i].size();
+  }
+  Compress(n, total, out, lengths);
+}
+
+void FsstEncoder::Encode(std::span<const duckdb::string_t> strings,
+                         std::string& out, std::vector<uint32_t>& lengths) {
+  const size_t n = strings.size();
+  _in_lengths.resize(n);
+  _in_ptrs.resize(n);
+  size_t total = 0;
+  for (size_t i = 0; i < n; ++i) {
+    _in_lengths[i] = strings[i].GetSize();
+    _in_ptrs[i] =
+      reinterpret_cast<unsigned char*>(const_cast<char*>(strings[i].GetData()));
+    total += _in_lengths[i];
+  }
+  Compress(n, total, out, lengths);
+}
+
+void FsstEncoder::Compress(size_t n, size_t total, std::string& out,
+                           std::vector<uint32_t>& lengths) {
+  if (n == 0) {
+    out.clear();
+    lengths.clear();
+    return;
   }
   if (!_encoder) {
     _encoder.reset(

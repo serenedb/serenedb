@@ -42,13 +42,9 @@ uint64_t PlainStorageBytes(const text::Segment& seg) noexcept {
 
 void StringAccumulator::Reserve(uint64_t rows, uint64_t distinct) {
   codes.reserve(rows);
-  if (!_dedup) {
-    entries.reserve(rows);
-    return;
-  }
   const auto expected = distinct == 0 ? rows : std::min(rows, distinct);
   entries.reserve(expected);
-  _map.reserve(expected);
+  _map.Reserve(expected);
 }
 
 void StringAccumulator::Add(const duckdb::Vector& input) {
@@ -63,25 +59,25 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       continue;
     }
     const auto& value = entry.GetValue();
-    const std::string_view sv{value.GetData(), value.GetSize()};
-    if (_dedup && _last_code != 0 && value == _last) {
+    if (_last_code != 0 && value == _last) {
       code = _last_code;
       continue;
     }
-    const auto next = static_cast<uint32_t>(entries.size() + 1);
-    if (_dedup) {
-      const auto [it, inserted] = _map.try_emplace(sv, next);
-      _last = value;
-      _last_code = it->second;
-      code = it->second;
-      if (!inserted) {
-        continue;
-      }
-    } else {
-      code = next;
+    auto& mapped = _map[value];
+    if (mapped == 0) {
+      entries.push_back(value);
+      mapped = static_cast<uint32_t>(entries.size());
     }
-    entries.emplace_back(sv);
+    _last = value;
+    _last_code = mapped;
+    code = mapped;
   }
+}
+
+void ChunkCursor::Enter() {
+  _values.emplace(_chunks[_next_chunk++].data);
+  _count = _values->size();
+  _index = 0;
 }
 
 SealOutcome SealSegments(const StringAccumulator& acc,
@@ -89,19 +85,19 @@ SealOutcome SealSegments(const StringAccumulator& acc,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          SegmentSink sink) {
-  text::SegmentEncoder encoder{acc, params, type, tuning};
+  text::SegmentEncoder encoder{params, type, tuning};
   text::Calibration calibration{acc, named, params, tuning, encoder};
   SealOutcome outcome{.sealed = true};
   uint64_t row = 0;
   bool first = true;
   const bool due = !named && (!tuning.choice || tuning.clock.Due());
-  while (row < acc.codes.size()) {
-    auto* seg = encoder.Cut(calibration.CutConfig(), row);
+  while (row < acc.Rows()) {
+    auto* seg = encoder.Cut(calibration.CutConfig(), acc, row);
     const auto end = seg->begin + seg->rows;
     if (!named) {
       const bool scheduled = first && due;
-      const bool drift = !scheduled && calibration.Drifted(
-                                         *seg, first || end < acc.codes.size());
+      const bool drift =
+        !scheduled && calibration.Drifted(*seg, first || end < acc.Rows());
       const bool retune = drift && !first;
       if (retune) {
         encoder.Retrain();
@@ -121,6 +117,31 @@ SealOutcome SealSegments(const StringAccumulator& acc,
     encoder.Release(seg);
     row = end;
     first = false;
+  }
+  return outcome;
+}
+
+SealOutcome SealSegments(std::span<const WriteChunk> chunks,
+                         const StringChoice& named,
+                         const ColCodecParams& params,
+                         const duckdb::LogicalType& type, StringTuning& tuning,
+                         SegmentSink sink) {
+  uint64_t rows = 0;
+  for (const auto& chunk : chunks) {
+    rows += chunk.data.size();
+  }
+  text::SegmentEncoder encoder{params, type, tuning};
+  const auto config = text::NamedConfig(named, params);
+  ChunkCursor cursor{chunks};
+  SealOutcome outcome{.sealed = true};
+  for (uint64_t row = 0; row < rows;) {
+    auto* seg = encoder.Cut(config, cursor, row, rows);
+    row = seg->begin + seg->rows;
+    outcome.all_dedup =
+      outcome.all_dedup && seg->config.choice.shape == Shape::Dedup;
+    const std::string_view parts[] = {seg->head, seg->data};
+    sink(seg->config.choice, std::move(*seg->stats), seg->rows, parts);
+    encoder.Release(seg);
   }
   return outcome;
 }

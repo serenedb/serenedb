@@ -36,6 +36,9 @@ struct LeafPlan {
   std::span<const uint8_t> ladder;
 };
 
+Config NamedConfig(const StringChoice& named,
+                   const ColCodecParams& params) noexcept;
+
 class Calibration {
  public:
   Calibration(const StringAccumulator& acc, const StringChoice* named,

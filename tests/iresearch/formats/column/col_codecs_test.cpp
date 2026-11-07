@@ -62,6 +62,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/immutable_payloads.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
+#include <iresearch/formats/column/list_ingest.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -1017,6 +1018,24 @@ std::vector<std::unique_ptr<duckdb::Vector>> Chunks(uint64_t rows,
   return chunks;
 }
 
+std::vector<irs::WriteChunk> WriteChunks(
+  const std::vector<std::unique_ptr<duckdb::Vector>>& chunks) {
+  std::vector<irs::WriteChunk> out;
+  for (const auto& c : chunks) {
+    out.push_back(irs::RefChunk(*c, c->size()));
+  }
+  return out;
+}
+
+irs::codecs::StringAccumulator Accumulate(
+  const std::vector<std::unique_ptr<duckdb::Vector>>& chunks) {
+  irs::codecs::StringAccumulator acc;
+  for (const auto& c : chunks) {
+    acc.Add(*c);
+  }
+  return acc;
+}
+
 const Value kWordSoup = [](uint64_t g) -> std::optional<std::string> {
   static constexpr std::string_view kWords[] = {
     "event",  "completed", "for",   "user",    "on",      "host",
@@ -1061,24 +1080,27 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     {Shape::Plain, ByteCodec::OnPair},   {Shape::Plain, ByteCodec::Fsst12},
   };
   const auto chunks = Chunks(20000, kWordSoup);
+  const auto acc = Accumulate(chunks);
+  const auto write_chunks = WriteChunks(chunks);
   for (const auto choice : choices) {
-    irs::codecs::StringAccumulator acc{choice.shape == Shape::Dedup};
-    for (const auto& c : chunks) {
-      acc.Add(*c);
-    }
     irs::codecs::StringTuning tuning;
     uint64_t segments = 0;
     uint64_t rows = 0;
-    const auto outcome = irs::codecs::SealSegments(
-      acc, &choice, irs::ColCodecParams{.segment_target = 16 * 1024},
-      duckdb::LogicalType::VARCHAR, tuning,
-      [&](irs::codecs::StringChoice sealed, duckdb::BaseStatistics,
-          uint64_t count, std::span<const std::string_view>) {
-        EXPECT_EQ(sealed.shape, choice.shape);
-        EXPECT_EQ(sealed.leaf, choice.leaf);
-        ++segments;
-        rows += count;
-      });
+    const irs::ColCodecParams params{.segment_target = 16 * 1024};
+    const auto sink = [&](irs::codecs::StringChoice sealed,
+                          duckdb::BaseStatistics, uint64_t count,
+                          std::span<const std::string_view>) {
+      EXPECT_EQ(sealed.shape, choice.shape);
+      EXPECT_EQ(sealed.leaf, choice.leaf);
+      ++segments;
+      rows += count;
+    };
+    const auto outcome =
+      choice.shape == Shape::Dedup
+        ? irs::codecs::SealSegments(acc, &choice, params,
+                                    duckdb::LogicalType::VARCHAR, tuning, sink)
+        : irs::codecs::SealSegments(write_chunks, choice, params,
+                                    duckdb::LogicalType::VARCHAR, tuning, sink);
     EXPECT_TRUE(outcome.sealed);
     EXPECT_EQ(outcome.all_dedup, choice.shape == Shape::Dedup);
     EXPECT_GT(segments, 1u);
@@ -1099,10 +1121,7 @@ TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
     return "status-" + std::to_string(g % 4);
   };
   const auto chunks = Chunks(60000, value);
-  irs::codecs::StringAccumulator acc{true};
-  for (const auto& c : chunks) {
-    acc.Add(*c);
-  }
+  const auto acc = Accumulate(chunks);
   irs::codecs::StringTuning tuning;
   std::vector<Shape> shapes;
   const auto outcome = irs::codecs::SealSegments(
@@ -1398,10 +1417,7 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   constexpr uint64_t kRowGroup = 1024;
   const auto seal = [](const Chunked& chunks,
                        irs::codecs::StringTuning& tuning) {
-    irs::codecs::StringAccumulator acc{true};
-    for (const auto& c : chunks) {
-      acc.Add(*c);
-    }
+    const auto acc = Accumulate(chunks);
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
@@ -3094,10 +3110,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   using irs::codecs::Shape;
   const auto seal = [](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
                        irs::codecs::StringTuning& tuning) {
-    irs::codecs::StringAccumulator acc{true};
-    for (const auto& c : in) {
-      acc.Add(*c);
-    }
+    const auto acc = Accumulate(in);
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
@@ -3188,17 +3201,14 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
     }
     return Pseudo(g, 400);
   };
-  const auto chunks = Chunks(kRows, value);
-  irs::codecs::StringAccumulator acc{false};
-  for (const auto& c : chunks) {
-    acc.Add(*c);
-  }
+  const auto vectors = Chunks(kRows, value);
+  const auto chunks = WriteChunks(vectors);
   irs::codecs::StringTuning tuning;
   std::vector<uint64_t> sizes;
   const irs::codecs::StringChoice fsst{irs::codecs::Shape::Plain,
                                        irs::codecs::ByteCodec::Fsst};
   const auto outcome = irs::codecs::SealSegments(
-    acc, &fsst, irs::ColCodecParams{.segment_target = kTarget},
+    chunks, fsst, irs::ColCodecParams{.segment_target = kTarget},
     duckdb::LogicalType::VARCHAR, tuning,
     [&](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
         std::span<const std::string_view> parts) {

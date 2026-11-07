@@ -28,6 +28,7 @@
 #include <cstring>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/helper.hpp>
+#include <duckdb/common/operator/comparison_operators.hpp>
 #include <limits>
 
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -38,13 +39,20 @@ namespace {
 using duckdb::BitpackingPrimitives;
 using duckdb::string_t;
 
-uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
+uint64_t PrefixKey(const string_t& value, size_t skip) noexcept {
   char buf[8] = {};
-  if (sv.size() > skip) {
-    std::memcpy(buf, sv.data() + skip,
-                std::min<size_t>(sv.size() - skip, sizeof buf));
+  const size_t size = value.GetSize();
+  if (size > skip) {
+    std::memcpy(buf, value.GetData() + skip,
+                std::min<size_t>(size - skip, sizeof buf));
   }
   return absl::big_endian::Load64(buf);
+}
+
+size_t CommonPrefix(const string_t& a, const string_t& b) noexcept {
+  return absl::FindLongestCommonPrefix({a.GetData(), a.GetSize()},
+                                       {b.GetData(), b.GetSize()})
+    .size();
 }
 
 }  // namespace
@@ -56,10 +64,9 @@ uint64_t SegmentBuilder::Estimate() const noexcept {
 
 void SegmentBuilder::SortEntries() {
   const auto n = static_cast<uint32_t>(_entries.size());
-  size_t common = _entries.empty() ? 0 : _entries[0].size();
+  size_t common = _entries.empty() ? 0 : _entries[0].GetSize();
   for (uint32_t i = 1; i < n && common != 0; ++i) {
-    common = std::min(
-      common, absl::FindLongestCommonPrefix(_entries[0], _entries[i]).size());
+    common = std::min(common, CommonPrefix(_entries[0], _entries[i]));
   }
   _order.resize(n);
   for (uint32_t i = 0; i < n; ++i) {
@@ -69,7 +76,7 @@ void SegmentBuilder::SortEntries() {
     if (a.prefix != b.prefix) {
       return a.prefix < b.prefix;
     }
-    return _entries[a.entry] < _entries[b.entry];
+    return duckdb::LessThan::Operation(_entries[a.entry], _entries[b.entry]);
   });
   _remap.assign(n + 1, 0);
   _sorted.resize(n);

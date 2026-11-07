@@ -43,18 +43,21 @@ namespace irs::codecs::text {
 
 class SegmentEncoder {
  public:
-  SegmentEncoder(const StringAccumulator& acc, const ColCodecParams& params,
-                 const duckdb::LogicalType& type, StringTuning& tuning)
-    : _acc{acc},
-      _params{params},
-      _tuning{tuning},
-      _builder{acc, type, _dedup, tuning.codes} {}
+  SegmentEncoder(const ColCodecParams& params, const duckdb::LogicalType& type,
+                 StringTuning& tuning)
+    : _params{params}, _tuning{tuning}, _builder{type, _dedup, tuning.codes} {}
 
-  Segment* Cut(const Config& config, uint64_t begin);
+  Segment* Cut(const Config& config, const StringAccumulator& acc,
+               uint64_t begin);
 
-  Segment* Encode(const Config& config, uint64_t begin, uint64_t end);
+  Segment* Cut(const Config& config, ChunkCursor& cursor, uint64_t begin,
+               uint64_t end);
 
-  uint64_t Price(const Config& config, uint64_t begin, uint64_t end);
+  Segment* Encode(const Config& config, const StringAccumulator& acc,
+                  uint64_t begin, uint64_t end);
+
+  uint64_t Price(const Config& config, const StringAccumulator& acc,
+                 uint64_t begin, uint64_t end);
 
   void Retrain() noexcept;
 
@@ -78,13 +81,17 @@ class SegmentEncoder {
   template<typename Encoder>
   Encoder& Get(std::optional<Encoder>& slot);
 
-  const Profile& Measure(Shape shape, uint64_t begin, uint64_t end);
+  template<typename Cursor>
+  Segment* CutWith(const Config& config, Cursor& cursor, uint64_t begin,
+                   uint64_t end, size_t distinct);
 
-  void Append(std::string_view sv);
+  const Profile& Measure(const StringAccumulator& acc, Shape shape,
+                         uint64_t begin, uint64_t end);
+
+  void Append(const duckdb::string_t& value);
 
   Segment* Acquire();
 
-  const StringAccumulator& _acc;
   const ColCodecParams& _params;
   StringTuning& _tuning;
   DedupScratch _dedup;

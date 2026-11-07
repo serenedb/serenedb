@@ -48,7 +48,7 @@ class OnPairEncoder {
 
   void Retrain() noexcept {}
 
-  void Append(std::string_view, uint32_t) noexcept {}
+  void Append(const duckdb::string_t&, uint32_t) noexcept {}
 
   uint64_t Estimate(const SegmentEntries& rows) const noexcept {
     return EstimateEntries(rows, _history[static_cast<size_t>(_shape)]);
@@ -59,7 +59,7 @@ class OnPairEncoder {
   std::string& Data() noexcept { return _data; }
 
  private:
-  void Pack(std::span<const std::string_view> entries,
+  void Pack(std::span<const duckdb::string_t> entries,
             std::span<const uint32_t> lengths, size_t first, size_t end,
             uint64_t region);
 

@@ -73,30 +73,47 @@ Encoder& SegmentEncoder::Get(std::optional<Encoder>& slot) {
   return *slot;
 }
 
-Segment* SegmentEncoder::Cut(const Config& config, uint64_t begin) {
+template<typename Cursor>
+Segment* SegmentEncoder::CutWith(const Config& config, Cursor& cursor,
+                                 uint64_t begin, uint64_t end,
+                                 size_t distinct) {
   auto* seg = Acquire();
   With(config, [&](auto& enc) {
-    _builder.Begin(enc, config, begin);
-    _builder.Cut(enc, _params.segment_target);
+    _builder.Begin(enc, config, begin, distinct);
+    _builder.Cut(enc, cursor, end, _params.segment_target);
     _builder.Finish(enc, *seg);
   });
   return seg;
 }
 
-Segment* SegmentEncoder::Encode(const Config& config, uint64_t begin,
+Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
+                             uint64_t begin) {
+  auto cursor = acc.At(begin);
+  return CutWith(config, cursor, begin, acc.Rows(), acc.entries.size());
+}
+
+Segment* SegmentEncoder::Cut(const Config& config, ChunkCursor& cursor,
+                             uint64_t begin, uint64_t end) {
+  return CutWith(config, cursor, begin, end, 0);
+}
+
+Segment* SegmentEncoder::Encode(const Config& config,
+                                const StringAccumulator& acc, uint64_t begin,
                                 uint64_t end) {
   auto* seg = Acquire();
+  auto cursor = acc.At(begin);
   With(config, [&](auto& enc) {
-    _builder.Begin(enc, config, begin);
-    _builder.AddUntil(enc, end);
+    _builder.Begin(enc, config, begin, acc.entries.size());
+    _builder.AddUntil(enc, cursor, end);
     _builder.Finish(enc, *seg);
   });
   return seg;
 }
 
-uint64_t SegmentEncoder::Price(const Config& config, uint64_t begin,
+uint64_t SegmentEncoder::Price(const Config& config,
+                               const StringAccumulator& acc, uint64_t begin,
                                uint64_t end) {
-  const auto& profile = Measure(config.choice.shape, begin, end);
+  const auto& profile = Measure(acc, config.choice.shape, begin, end);
   return With(config, [&](auto& enc) -> uint64_t {
     if constexpr (Sorted(std::remove_reference_t<decltype(enc)>::kCodec)) {
       SDB_UNREACHABLE();
@@ -113,7 +130,8 @@ void SegmentEncoder::Retrain() noexcept {
   RetrainEncoder(_encoders.fsst12);
 }
 
-const Profile& SegmentEncoder::Measure(Shape shape, uint64_t begin,
+const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,
+                                       Shape shape, uint64_t begin,
                                        uint64_t end) {
   auto& p = _profile;
   if (_measured && p.shape == shape && _profile_begin == begin &&
@@ -130,23 +148,24 @@ const Profile& SegmentEncoder::Measure(Shape shape, uint64_t begin,
   p.max_len = 0;
   p.entries.clear();
   if (shape == Shape::Plain) {
+    auto cursor = acc.At(begin);
     for (auto row = begin; row < end; ++row) {
-      const auto code = _acc.codes[row];
-      Append(code == 0 ? std::string_view{} : _acc.entries[code - 1]);
+      const auto* value = cursor.Value();
+      Append(value ? *value : duckdb::string_t{"", 0});
     }
     return p;
   }
-  _dedup.Begin(_acc.entries.size());
+  _dedup.Begin(acc.entries.size());
   uint32_t last = 0;
   for (auto row = begin; row < end; ++row) {
-    const auto code = _acc.codes[row];
+    const auto code = acc.codes[row];
     uint32_t local = 0;
     if (code != 0) {
       const auto mapped =
         _dedup.Local(code, static_cast<uint32_t>(p.entries.size()) + 1);
       local = mapped.local;
       if (mapped.fresh) {
-        Append(_acc.entries[code - 1]);
+        Append(acc.entries[code - 1]);
       }
     }
     if (row == begin || local != last) {
@@ -157,11 +176,11 @@ const Profile& SegmentEncoder::Measure(Shape shape, uint64_t begin,
   return p;
 }
 
-void SegmentEncoder::Append(std::string_view sv) {
-  _profile.entries.push_back(sv);
-  _profile.raw += sv.size();
-  _profile.max_len =
-    std::max<uint32_t>(_profile.max_len, static_cast<uint32_t>(sv.size()));
+void SegmentEncoder::Append(const duckdb::string_t& value) {
+  _profile.entries.push_back(value);
+  const auto size = value.GetSize();
+  _profile.raw += size;
+  _profile.max_len = std::max<uint32_t>(_profile.max_len, size);
 }
 
 Segment* SegmentEncoder::Acquire() {

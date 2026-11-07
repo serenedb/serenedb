@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/types/string_type.hpp>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -36,7 +37,7 @@ namespace irs::codecs::text {
 inline constexpr uint64_t kDriftMinFraction = 4;
 
 struct SegmentEntries {
-  std::span<const std::string_view> entries;
+  std::span<const duckdb::string_t> entries;
   uint32_t first_entry = 0;
   uint64_t raw = 0;
   uint32_t max_len = 0;
@@ -65,7 +66,7 @@ struct Profile {
   uint64_t runs = 0;
   uint64_t raw = 0;
   uint32_t max_len = 0;
-  std::vector<std::string_view> entries;
+  std::vector<duckdb::string_t> entries;
 };
 
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,

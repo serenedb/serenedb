@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/types/string_type.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -44,6 +45,8 @@ class FsstEncoder {
  public:
   void Encode(std::span<const std::string_view> strings, std::string& out,
               std::vector<uint32_t>& lengths);
+  void Encode(std::span<const duckdb::string_t> strings, std::string& out,
+              std::vector<uint32_t>& lengths);
 
   std::string_view SymbolTable() const noexcept {
     return {reinterpret_cast<const char*>(_table), _table_size};
@@ -52,6 +55,9 @@ class FsstEncoder {
   void Reset() noexcept;
 
  private:
+  void Compress(size_t n, size_t total, std::string& out,
+                std::vector<uint32_t>& lengths);
+
   std::unique_ptr<duckdb_fsst_encoder_t, FsstFree> _encoder;
   unsigned char _table[sizeof(duckdb_fsst_decoder_t)];
   size_t _table_size = 0;

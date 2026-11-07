@@ -994,20 +994,13 @@ query
 EXPLAIN SELECT id FROM geo_data_g_idx WHERE geo <-> 'POINT(37.616 55.704)' < 0.01
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────────╮
-│ Projections: #1                                    │
-│ ~1 row                                             │
-╰──────────────────────────┬─────────────────────────╯
-╭─ FILTER ─────────────────┴─────────────────────────╮
-│ Expression:                                        │
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: geo_data_g_idx                              │
+│ Lookup: search                                     │
+│ Projections: id                                    │
+│ Column Filter:                                     │
 │ (geo <-> 'POINT (37.616 55.704)'::GEOMETRY) < 0.01 │
 │ ~1 row                                             │
-╰──────────────────────────┬─────────────────────────╯
-╭─ IRESEARCH_SCAN ─────────┴─────────────────────────╮
-│ Index: geo_data_g_idx                              │
-│ Lookup: table                                      │
-│ Projections: geo, id                               │
-│ ~7 rows                                            │
 ╰────────────────────────────────────────────────────╯
 
 
@@ -1051,7 +1044,7 @@ QUERY PLAN
 ╰────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Index: places_idx                               │
-│ Lookup: table                                   │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ And ───────────────╮                         │
 │ ╰──────────┬──────────╯                         │
@@ -1094,7 +1087,7 @@ QUERY PLAN
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
 │ Index: places_idx                                        │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ And ────────────────────────╮                         │
 │ ╰───────────────┬──────────────╯                         │
@@ -1524,7 +1517,7 @@ WHERE (ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────╮
 │ Index: places_idx                                                       │
-│ Lookup: table                                                           │
+│ Lookup: search                                                          │
 │ Index Filter:                                                           │
 │ ╭─ And ───────────────╮                                                 │
 │ ╰──────────┬──────────╯                                                 │

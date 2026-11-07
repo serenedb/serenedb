@@ -230,6 +230,7 @@ QUERY PLAN
 ╰──────────────┬──────────────╯
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: vedernikoff_idx      │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ And ───────────────────╮ │
 │ ╰────────────┬────────────╯ │
@@ -298,39 +299,30 @@ query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: biksalen_memes │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ────╮
+╰────────┬───────╯
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: biksalen_memes │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ────╮
+╰────────┬───────╯
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: biksalen_memes │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ────╮
+╰────────┬───────╯
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
 
 
 statement ok
@@ -344,15 +336,12 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ EXTENSION ───────────────╮
-│ 1 row                 0µs │
-╰─────────────┒┎────────────╯
-╭─ TABLE_SCAN ┚┖────────────╮
-│ Table: biksalen_memes     │
-│ Type: Sequential Scan     │
-│ Row Groups Scanned: 1 / 1 │
-│ 3 rows                0µs │
-╰───────────────────────────╯
+╭─ EXTENSION ────╮
+│ 1 row      0µs │
+╰────────┬───────╯
+╭─ EMPTY_RESULT ─╮
+│ 0 rows     0µs │
+╰────────────────╯
 
 
 # EXPLAIN ANALYZE must actually create the index

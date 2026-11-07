@@ -55,7 +55,7 @@ EXPLAIN SELECT id FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ ╰─────────────┬────────────╯             │
@@ -102,11 +102,15 @@ id
 3
 5
 
-statement error
-SELECT id FROM pwp_bare_idx WHERE tableoid @@ to_tsquery('body:"quick brown"')
+query
+SELECT id FROM pwp_bare_idx WHERE tableoid @@ to_tsquery('body:"quick brown"') ORDER BY id
 ----
-db error: ERROR: to_tsquery on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or search for single words.
+id
+1
+2
+5
+7
+8
 
 
 query
@@ -116,7 +120,7 @@ WHERE body @@ 'quick' AND body @@ ts_phrase('quick brown')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ ╰─────────────┬────────────╯             │
@@ -153,7 +157,7 @@ WHERE body @@ ts_phrase('quick brown') AND body @@ ts_phrase('brown fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────╮
 │ Index: pwp_text_idx                                                              │
-│ Lookup: table                                                                    │
+│ Lookup: search                                                                   │
 │ Index Filter:                                                                    │
 │ ╭─ And ───────────────────────────╮                                              │
 │ ╰────────────────┬────────────────╯                                              │
@@ -191,7 +195,7 @@ ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Phrase ─────────────────────────────╮ │
 │ │ Field: body(string)                  │ │
@@ -223,7 +227,7 @@ ORDER BY constant(pwp_text_idx.tableoid, 2.0) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ │ Merge: max               │             │
@@ -273,7 +277,7 @@ ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────╮
 │ Index: pwp_text_idx                                   │
-│ Lookup: table                                         │
+│ Lookup: search                                        │
 │ Index Filter:                                         │
 │ ╭─ And ───────────────╮                               │
 │ ╰──────────┬──────────╯                               │
@@ -328,7 +332,7 @@ ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: pwp_text_idx                               │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ And ─────────────────────────────────────────╮ │
 │ ╰───────────────────────┬───────────────────────╯ │
@@ -397,7 +401,7 @@ ORDER BY constant(pwp_text_idx.tableoid, 2.0) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ │ Merge: max               │             │
@@ -460,7 +464,7 @@ WHERE body @@ ts_phrase('quick brown') OR body @@ ts_phrase('lazy dog')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────╮
 │ Index: pwp_text_idx                                                                    │
-│ Lookup: table                                                                          │
+│ Lookup: search                                                                         │
 │ Index Filter:                                                                          │
 │ ╭─ Or ─────────────────────────────────╮                                               │
 │ ╰───────────────────┬──────────────────╯                                               │
@@ -482,7 +486,7 @@ WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br') ## 'fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────╮
 │ Index: pwp_text_idx                                     │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ And ──────────────────╮                              │
 │ ╰────────────┬───────────╯                              │
@@ -608,7 +612,7 @@ EXPLAIN SELECT id FROM pwp_text_idx WHERE body @@ to_tsquery('"quick fo*"~2')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: pwp_text_idx                              │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -704,10 +708,7 @@ SELECT id FROM pwp_bare_idx WHERE body @@ websearch_to_tsquery('quick-brown') OR
 id
 1
 2
-3
-4
 5
-6
 7
 8
 
@@ -926,7 +927,7 @@ EXPLAIN SELECT id FROM pwp_expr_lower WHERE lower(body) @@ ts_phrase('brown fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: pwp_expr_lower                  │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ And ──────────────────────╮         │
 │ ╰──────────────┬─────────────╯         │
@@ -981,7 +982,7 @@ EXPLAIN SELECT id FROM pwp_expr_concat WHERE lower(title || ' ' || body) @@ ts_p
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: pwp_expr_concat                                   │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ And ───────────────────────────────────╮              │
 │ ╰────────────────────┬────────────────────╯              │
@@ -1088,18 +1089,25 @@ count
 statement ok
 DROP TABLE pwp_segments
 
-statement error
-SELECT id FROM pwp_bare_idx WHERE body @@ ts_phrase('quick brown')
+query
+SELECT id FROM pwp_bare_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
+id
+1
+2
+5
+7
+8
 
-
-statement error
-SELECT id FROM pwp_bare_idx WHERE body @@ to_tsquery('"quick brown"')
+query
+SELECT id FROM pwp_bare_idx WHERE body @@ to_tsquery('"quick brown"') ORDER BY id
 ----
-db error: ERROR: to_tsquery on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or search for single words.
+id
+1
+2
+5
+7
+8
 
 
 query
@@ -1303,7 +1311,7 @@ EXPLAIN SELECT id FROM pwp_cars_idx WHERE body @@ to_tsquery('"red aut*"~2')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: pwp_cars_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Phrase ───────────────────────────╮ │
 │ │ Field: body(string)                │ │
@@ -1349,7 +1357,7 @@ EXPLAIN SELECT id FROM pwp_shingled_idx WHERE body @@ ts_phrase('quick brown fox
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────╮
 │ Index: pwp_shingled_idx                                                            │
-│ Lookup: table                                                                      │
+│ Lookup: search                                                                     │
 │ Index Filter:                                                                      │
 │ ╭─ And ──────────────────────────────╮                                             │
 │ ╰──────────────────┬─────────────────╯                                             │
@@ -1734,7 +1742,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: pwp_score_idx                                    │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ And ───────────────╮                                 │
 │ ╰──────────┬──────────╯                                 │

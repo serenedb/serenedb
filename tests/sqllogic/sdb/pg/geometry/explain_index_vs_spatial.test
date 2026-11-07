@@ -54,14 +54,25 @@ query
 EXPLAIN SELECT id FROM places WHERE ST_Intersects(geo, 'POLYGON((37 55,38 55,38 56,37 56,37 55))'::GEOMETRY('OGC:CRS84'));
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ─────────────────────────────────────────────────────────────────────────────────╮
-│ Table: places                                                                              │
-│ Type: Sequential Scan                                                                      │
-│ Projections: id                                                                            │
-│ Column Filter:                                                                             │
-│ ST_Intersects(geo, 'POLYGON ((37 55, 38 55, 38 56, 37 56, 37 55))'::GEOMETRY('OGC:CRS84')) │
-│ ~1 row                                                                                     │
-╰────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Table: places            │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: Intersects     │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: Intersects       │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 # --- 2. FROM the index, indexed column, constant shape: index serves it ---
 #
@@ -74,7 +85,7 @@ EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects(geo, 'POLYGON((37 55,38 55
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: places_idx        │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -104,7 +115,7 @@ EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects('POLYGON((37 55,38 55,38 5
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: places_idx        │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -134,7 +145,7 @@ EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects(geo, 'POLYGON((37 55,38 55
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: places_idx        │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -173,9 +184,8 @@ QUERY PLAN
 ╰───────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮
 │ Index: places_idx                     │
-│ Lookup: table                         │
-│ Projections: geo (i), other (l),      │
-│              id (l)                   │
+│ Lookup: search                        │
+│ Projections: geo, other, id           │
 │ ~2 rows                               │
 ╰───────────────────────────────────────╯
 
@@ -188,18 +198,11 @@ query
 EXPLAIN SELECT id FROM places_idx WHERE ST_Intersects(other, 'POLYGON((37 55,38 55,38 56,37 56,37 55))'::GEOMETRY('OGC:CRS84'));
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────╮
-│ Projections: #1                                                                              │
-│ ~1 row                                                                                       │
-╰───────────────────────────────────────────────┬──────────────────────────────────────────────╯
-╭─ FILTER ──────────────────────────────────────┴──────────────────────────────────────────────╮
-│ Expression:                                                                                  │
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────╮
+│ Index: places_idx                                                                            │
+│ Lookup: search                                                                               │
+│ Projections: id                                                                              │
+│ Column Filter:                                                                               │
 │ ST_Intersects(other, 'POLYGON ((37 55, 38 55, 38 56, 37 56, 37 55))'::GEOMETRY('OGC:CRS84')) │
 │ ~1 row                                                                                       │
-╰───────────────────────────────────────────────┬──────────────────────────────────────────────╯
-╭─ IRESEARCH_SCAN ──────────────────────────────┴──────────────────────────────────────────────╮
-│ Index: places_idx                                                                            │
-│ Lookup: table                                                                                │
-│ Projections: other, id                                                                       │
-│ ~2 rows                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯

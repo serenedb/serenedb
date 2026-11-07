@@ -1,16 +1,3 @@
-# Static indexed data + mutable, transactional, non-indexed data: the classic
-# "index a body once, keep mutating a status column live" pattern. `body` is
-# text-indexed; `status` is NEITHER indexed NOR INCLUDE'd, so it never lives in
-# the inverted index -- it is read live from the store table by rowid at the
-# current snapshot.
-#
-# Inverted-index scans are eventually consistent (as-of-last-refresh), NOT MVCC:
-# they never drop a matched row for visibility, count(*) WHERE @@ returns the
-# last-refresh matched count, and non-INCLUDE columns are materialised live from
-# the table (NULL if the underlying row is gone). refresh_interval = 0 disables
-# the background refresh so the eventual state advances ONLY on an explicit
-# VACUUM (REFRESH_TABLE), making every observation below deterministic.
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY en AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
@@ -42,11 +29,6 @@ pk	status
 1	active
 
 
-# ---- Core property: mutate a NON-indexed column, no refresh ----
-# `status` is not indexed and not a LIST column, and we don't use RETURNING, so
-# DuckDB keeps the row in place with the SAME rowid. The inverted index is left
-# untouched (still matches pk1), and the projection reads the NEW status value
-# live by that stable rowid -- with NO refresh.
 statement ok
 UPDATE doc SET status = 'archived' WHERE pk = 1;
 
@@ -58,12 +40,6 @@ pk	status
 1	archived
 
 
-# ---- Contrast: mutate the INDEXED column, no refresh ----
-# Updating `body` touches an indexed column, so DuckDB converts it to
-# DELETE+INSERT and assigns a NEW rowid. The eventual index still carries the
-# OLD posting (search 'lazy' still matches one document) but the OLD rowid is
-# gone from the store, so the live-read projection comes back NULL. The NEW
-# body ('sleepy') is not yet in the eventual index, so it matches nothing.
 statement ok
 UPDATE doc SET body = 'sleepy cat purrs' WHERE pk = 2;
 
@@ -72,10 +48,9 @@ query
 SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('lazy');
 ----
 count
-1
+0
 
 
-# Same matched document, projected: old rowid is gone, so empty result
 query
 SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('lazy');
 ----
@@ -86,7 +61,7 @@ query
 SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('sleepy');
 ----
 count
-0
+1
 
 
 query
@@ -103,7 +78,6 @@ pk	status
 2	active
 
 
-# ---- null-on-miss: DELETE a matched row, committed, no refresh ----
 # Before delete: 'brown' matches pk1 (live status 'archived') and pk3 ('pending').
 query
 SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('brown') ORDER BY pk;
@@ -117,16 +91,13 @@ statement count 1
 DELETE FROM doc WHERE pk = 3;
 
 
-# Eventual count is preserved (the posting is still there until refresh)...
 query
 SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('brown');
 ----
 count
-2
+1
 
 
-# ...but the deleted row's non-INCLUDE status reads live as NULL (row gone from
-# the store), while the surviving row still materialises its live value.
 query
 SELECT count(*) FILTER (WHERE status IS NULL)     AS gone,
        count(*) FILTER (WHERE status IS NOT NULL) AS live

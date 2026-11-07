@@ -51,14 +51,13 @@ EXPLAIN SELECT pk, v FROM n1_idx WHERE t @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n1_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -110,14 +109,13 @@ EXPLAIN SELECT pk, v FROM n2_idx WHERE t @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n2_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -177,14 +175,13 @@ EXPLAIN SELECT pk, v FROM n3_idx WHERE t @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n3_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -246,14 +243,13 @@ EXPLAIN SELECT pk, v FROM n4_idx WHERE t @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n4_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -323,14 +319,13 @@ EXPLAIN SELECT pk, v FROM n5_idx WHERE t @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n5_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 
@@ -405,14 +400,13 @@ EXPLAIN SELECT pk, v FROM n6_idx WHERE t @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: n6_idx        │
-│ Lookup: table        │
+│ Lookup: search       │
 │ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: one       │ │
 │ ╰──────────────────╯ │
-│ Projections: pk (l), │
-│              v (i)   │
+│ Projections: pk, v   │
 │ ~1 row               │
 ╰──────────────────────╯
 

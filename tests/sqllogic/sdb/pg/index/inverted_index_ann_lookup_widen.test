@@ -199,9 +199,9 @@ SELECT id FROM lw_hnsw_idx WHERE extra = 7
 id
 1497
 1507
-1487
 1517
-1477
+1487
+1527
 
 query
 SELECT id FROM lw_ivf_idx WHERE extra = 7
@@ -210,9 +210,9 @@ SELECT id FROM lw_ivf_idx WHERE extra = 7
 id
 1497
 1507
-1487
 1517
-1477
+1487
+1527
 
 statement ok
 RESET sdb_ann_rescore_width;

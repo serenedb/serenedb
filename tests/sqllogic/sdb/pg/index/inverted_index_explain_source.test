@@ -35,6 +35,7 @@ EXPLAIN SELECT pk, body FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: src_inc_only_idx  │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: notes(string) │ │
@@ -55,7 +56,7 @@ EXPLAIN SELECT notes FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: src_inc_only_idx  │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: notes(string) │ │
@@ -75,14 +76,13 @@ EXPLAIN SELECT pk, notes FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: src_inc_only_idx  │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: notes(string) │ │
 │ │ Value: one           │ │
 │ ╰──────────────────────╯ │
-│ Projections: pk (i),     │
-│              notes (l)   │
+│ Projections: pk, notes   │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -110,6 +110,7 @@ EXPLAIN SELECT emb FROM src_ivf_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: src_ivf_only_idx           │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
 │ Projections: emb                  │
@@ -125,10 +126,10 @@ EXPLAIN SELECT id, emb FROM src_ivf_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::F
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: src_ivf_only_idx           │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
-│ Projections: id (l), emb (i)      │
+│ Projections: id, emb              │
 │ ~2 rows                           │
 ╰───────────────────────────────────╯
 
@@ -155,10 +156,10 @@ EXPLAIN SELECT emb, label FROM src_ivf_mixed_idx ORDER BY emb <-> [1.0, 0.0, 0.0
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: src_ivf_mixed_idx          │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
-│ Projections: emb (i), label (l)   │
+│ Projections: emb, label           │
 │ ~2 rows                           │
 ╰───────────────────────────────────╯
 

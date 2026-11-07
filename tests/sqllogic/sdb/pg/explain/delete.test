@@ -6,9 +6,8 @@ query
 EXPLAIN select * from t;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ────────────╮
+╭─ IRESEARCH_SCAN ──────╮
 │ Table: t              │
-│ Type: Sequential Scan │
 │ Projections: column1, │
 │              column2  │
 │ ~0 rows               │
@@ -19,20 +18,26 @@ query
 EXPLAIN delete from t where column2 = 42;
 ----
 QUERY PLAN
-╭─ DELETE ───────╮
-╰────────┬───────╯
-╭─ EMPTY_RESULT ─╮
-╰────────────────╯
+╭─ DELETE ────────────────────╮
+│ Table: t                    │
+│ Row Ids: ASSUME_UNIQUE      │
+╰──────────────┬──────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Table: t                    │
+│ Column Filter: column2 = 42 │
+│ ~0 rows                     │
+╰─────────────────────────────╯
 
 
 query
 EXPLAIN delete from t;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: t              │
-│ Type: Sequential Scan │
-│ ~0 rows               │
-╰───────────────────────╯
+╭─ DELETE ───────────────╮
+│ Table: t               │
+│ Row Ids: ASSUME_UNIQUE │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: t               │
+│ ~0 rows                │
+╰────────────────────────╯

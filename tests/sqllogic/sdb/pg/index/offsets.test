@@ -67,7 +67,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: offsets_test_idx          │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Term ──────────────╮          │
 │ │ Field: body(string) │          │
@@ -322,7 +322,7 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯  ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴─────────────────╮  ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: offsets_test_idx           │  │ Index: offsets_test_idx          │
-│ Lookup: table                     │  │ Lookup: table                    │
+│ Lookup: search                    │  │ Lookup: search                   │
 │ Index Filter:                     │  │ Index Filter:                    │
 │ ╭─ Term ──────────────╮           │  │ ╭─ Term ──────────────╮          │
 │ │ Field: body(string) │           │  │ │ Field: body(string) │          │
@@ -414,13 +414,13 @@ db error: ERROR: ts_offsets(): column 'id' not found in index
 query error
 SELECT ts_offsets(body) FROM offsets_test;
 ----
-db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
+db error: ERROR: ts_offsets() requires an inverted index scan in the same sub-query
 
 
 query error
 SELECT ts_offsets(body) FROM offsets_test;
 ----
-db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
+db error: ERROR: ts_offsets() requires an inverted index scan in the same sub-query
 
 
 # Extract a context window around the first search hit using byte offsets.
@@ -595,7 +595,7 @@ QUERY PLAN
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
 │ Index: offsets_test_idx                                  │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ Term ──────────────╮                                  │
 │ │ Field: body(string) │                                  │
@@ -628,7 +628,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: offsets_test_idx          │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Term ──────────────╮          │
 │ │ Field: body(string) │          │

@@ -7,7 +7,7 @@ CREATE DATABASE dlc_db;
 
 statement ok
 CREATE TABLE dlc_db.public.st(id BIGINT PRIMARY KEY, v INTEGER)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -129,7 +129,7 @@ SET sdb_faults = 'crash_before_catalog_commit';
 connection after_table_drop
 statement error connection closed
 CREATE TABLE dlc_db.public.lost(id BIGINT PRIMARY KEY, v INTEGER)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 connection after_lost_create
@@ -203,7 +203,7 @@ CREATE DATABASE dlc_db2;
 connection dropper
 statement ok
 CREATE TABLE dlc_db2.public.st(id BIGINT PRIMARY KEY, v INTEGER)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 connection dropper

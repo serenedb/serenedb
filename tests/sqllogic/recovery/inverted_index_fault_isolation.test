@@ -29,12 +29,11 @@ CREATE TABLE doc (
   label VARCHAR,
   tag INTEGER,
   ext_only VARCHAR
-)
+) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX doc_idx ON doc USING inverted(pk, body en) INCLUDE (label, tag)
-  WITH (compaction_interval = 0)
 
 
 statement ok

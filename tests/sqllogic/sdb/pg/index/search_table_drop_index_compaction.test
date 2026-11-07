@@ -5,7 +5,7 @@ CREATE TEXT SEARCH DICTIONARY dic_norms AS
 
 statement ok
 CREATE TABLE notes (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX notes_body_idx ON notes USING inverted (body dic_norms);
@@ -85,7 +85,7 @@ id
 # merge keeps its fields, norms included, until that transaction ends.
 statement ok
 CREATE TABLE held (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX held_idx ON held USING inverted (body dic_norms);

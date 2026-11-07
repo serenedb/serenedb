@@ -55,7 +55,7 @@ CREATE INDEX sdl_t_inv ON sdl_t USING inverted (body);
 
 
 statement ok
-CREATE TABLE sdl_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE sdl_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -115,7 +115,7 @@ CREATE INDEX sdl_keep_inv ON sdl_t USING inverted (body);
 
 
 statement ok
-CREATE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -189,7 +189,7 @@ CREATE INDEX sdl_rb_inv ON sdl_t USING inverted (body);
 
 
 statement ok
-CREATE TABLE sdl_rb_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE sdl_rb_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -201,7 +201,7 @@ CREATE OR REPLACE INDEX sdl_keep_inv ON sdl_t USING inverted (id, body);
 
 
 statement ok
-CREATE OR REPLACE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -235,7 +235,7 @@ CREATE INDEX sdl_keep_inv ON public.sdl_t USING inverted (body)
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TABLE IF NOT EXISTS sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS sdl_keep_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -274,7 +274,7 @@ CREATE INDEX t_inv ON sdl_db.public.t USING inverted (body);
 
 
 statement ok
-CREATE TABLE sdl_db.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE sdl_db.public.s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok

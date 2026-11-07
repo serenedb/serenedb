@@ -12,7 +12,7 @@ control substitution on
 # goes back to 0 while it waits.
 
 statement ok
-CREATE TABLE cq (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE cq (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);

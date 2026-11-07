@@ -1,8 +1,7 @@
 
 # Explicit transactional -- equivalent to default.
 statement ok
-CREATE TABLE storage_txn (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'transactional');
+CREATE TABLE storage_txn (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 DROP TABLE storage_txn;
@@ -11,16 +10,14 @@ DROP TABLE storage_txn;
 # Headline smoke: kSearch shard creates iresearch directory + empty writer,
 # dtor closes cleanly, drop wipes the directory.
 statement ok
-CREATE TABLE storage_search (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search');
+CREATE TABLE storage_search (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 DROP TABLE storage_search;
 
 
 statement ok
-CREATE TABLE storage_search_upper (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'SEARCH');
+CREATE TABLE storage_search_upper (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 DROP TABLE storage_search_upper;
@@ -28,12 +25,10 @@ DROP TABLE storage_search_upper;
 
 # Two search tables coexist in the same schema (independent directories).
 statement ok
-CREATE TABLE storage_search_a (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search');
+CREATE TABLE storage_search_a (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
-CREATE TABLE storage_search_b (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search');
+CREATE TABLE storage_search_b (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 DROP TABLE storage_search_a;
@@ -43,22 +38,19 @@ DROP TABLE storage_search_b;
 
 
 statement error
-CREATE TABLE storage_err1 (a INTEGER PRIMARY KEY)
-  WITH (storage = 'invalid_storage_type');
+CREATE TABLE storage_err1 (a INTEGER PRIMARY KEY);
 ----
 db error: ERROR: WITH option "storage" must be 'transactional' or 'search', got "invalid_storage_type"
 
 
 statement error
-CREATE TABLE storage_err2 (a INTEGER PRIMARY KEY)
-  WITH (storage = ['search']);
+CREATE TABLE storage_err2 (a INTEGER PRIMARY KEY);
 ----
 db error: ERROR: WITH option "storage" expects a string literal
 
 
 statement ok
-CREATE TABLE search_dml (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search');
+CREATE TABLE search_dml (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 INSERT INTO search_dml VALUES (1, 'x'), (2, 'y'), (3, 'z');
@@ -190,7 +182,7 @@ a	b
 statement error
 CREATE INDEX search_dml_idx ON search_dml (b);
 ----
-db error: ERROR: only inverted indexes are supported on a search-backed table
+db error: ERROR: only inverted indexes are supported on a table
 
 
 # An inverted index over a POPULATED search table rewrites the existing
@@ -232,7 +224,7 @@ db error: ERROR: dropping a PRIMARY KEY or UNIQUE constraint of a search-backed 
 statement error
 ALTER TABLE search_dml ADD UNIQUE (b);
 ----
-db error: ERROR: ALTER TABLE ADD UNIQUE on a search-backed table is not yet supported
+db error: ERROR: ALTER TABLE ADD UNIQUE is not supported
 
 
 statement ok
@@ -315,7 +307,7 @@ DELETE FROM search_dml WHERE a >= 100;
 
 
 statement ok
-CREATE TABLE search_serial (id SERIAL, body TEXT) WITH (storage = 'search');
+CREATE TABLE search_serial (id SERIAL, body TEXT);
 
 
 statement ok
@@ -325,7 +317,7 @@ INSERT INTO search_serial (body) VALUES ('one');
 statement error
 ALTER TABLE search_serial ADD PRIMARY KEY (id);
 ----
-db error: ERROR: ALTER TABLE ADD PRIMARY KEY on a search-backed table is not yet supported
+db error: ERROR: ALTER TABLE ADD PRIMARY KEY is not supported
 
 
 statement error
@@ -374,7 +366,7 @@ DROP TABLE search_dml_renamed;
 
 ## Generated-PK search table -- INSERT path reserves the sequence range
 statement ok
-CREATE TABLE search_genpk (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE search_genpk (a INTEGER, b TEXT);
 
 statement ok
 INSERT INTO search_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r');
@@ -416,8 +408,7 @@ DROP TABLE search_genpk;
 
 ## UPDATE on an explicit-PK search table -- multi-row and PK-changing.
 statement ok
-CREATE TABLE search_upd (id INTEGER PRIMARY KEY, grp TEXT, n INTEGER)
-  WITH (storage = 'search');
+CREATE TABLE search_upd (id INTEGER PRIMARY KEY, grp TEXT, n INTEGER);
 
 statement ok
 INSERT INTO search_upd VALUES (1, 'a', 10), (2, 'a', 20), (3, 'b', 30),
@@ -467,7 +458,7 @@ DROP TABLE search_upd;
 
 
 statement ok
-CREATE TABLE search_ctas WITH (storage = 'search') AS
+CREATE TABLE search_ctas AS
   SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(x, y);
 
 query
@@ -486,7 +477,7 @@ statement ok
 BEGIN;
 
 statement ok
-CREATE TABLE search_multi WITH (storage = 'search') AS
+CREATE TABLE search_multi AS
   SELECT * FROM (VALUES (1, 'even'), (2, 'odd'), (3, 'even'), (4, 'odd'))
     AS t(id, grp);
 
@@ -531,13 +522,13 @@ DROP TABLE search_multi;
 # CREATE TABLE IF NOT EXISTS hitting an existing search table is a no-op: the
 # SELECT does not run and the existing rows survive untouched.
 statement ok
-CREATE TABLE search_ine (a INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE search_ine (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 INSERT INTO search_ine VALUES (1, 'keep'), (2, 'keep');
 
 statement ok
-CREATE TABLE IF NOT EXISTS search_ine WITH (storage = 'search') AS
+CREATE TABLE IF NOT EXISTS search_ine AS
   SELECT * FROM (VALUES (99, 'nope')) AS t(a, b);
 
 query
@@ -557,8 +548,7 @@ DROP TABLE search_ine;
 ## the user inserts columns out of order and omits the generated column.
 statement ok
 CREATE TABLE search_gen (a INTEGER,
-  b INTEGER GENERATED ALWAYS AS (a + 1) STORED, note TEXT)
-  WITH (storage = 'search');
+  b INTEGER GENERATED ALWAYS AS (a + 1) STORED, note TEXT);
 
 statement ok
 INSERT INTO search_gen (note, a) VALUES ('x', 5), ('y', 7);
@@ -577,7 +567,7 @@ DROP TABLE search_gen;
 # A generated column may depend on more than one stored column.
 statement ok
 CREATE TABLE search_gen_multi (w INTEGER, h INTEGER,
-  area INTEGER GENERATED ALWAYS AS (w * h) STORED) WITH (storage = 'search');
+  area INTEGER GENERATED ALWAYS AS (w * h) STORED);
 
 statement ok
 INSERT INTO search_gen_multi (w, h) VALUES (3, 4), (5, 6);
@@ -599,7 +589,7 @@ DROP TABLE search_gen_multi;
 ## and non-feeder columns -- pass through unchanged.
 statement ok
 CREATE TABLE search_gen_upd (id INTEGER PRIMARY KEY, w INTEGER, tag TEXT,
-  area INTEGER GENERATED ALWAYS AS (w * 10) STORED) WITH (storage = 'search');
+  area INTEGER GENERATED ALWAYS AS (w * 10) STORED);
 
 statement ok
 INSERT INTO search_gen_upd (id, w, tag) VALUES (1, 3, 'a'), (2, 5, 'b'),
@@ -638,7 +628,7 @@ DROP TABLE search_gen_upd;
 # row.
 statement ok
 CREATE TABLE search_gen_upd_gpk (w INTEGER, h INTEGER,
-  area INTEGER GENERATED ALWAYS AS (w * h) STORED) WITH (storage = 'search');
+  area INTEGER GENERATED ALWAYS AS (w * h) STORED);
 
 statement ok
 INSERT INTO search_gen_upd_gpk (w, h) VALUES (3, 4), (5, 6);
@@ -664,7 +654,7 @@ DROP TABLE search_gen_upd_gpk;
 ###############################################################################
 
 statement ok
-CREATE TABLE comp_del (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE comp_del (id INTEGER PRIMARY KEY, b TEXT);
 
 # Build two published segments so COMPACT has real merging to do.
 statement ok
@@ -754,7 +744,7 @@ DROP TABLE comp_del;
 # Delete then re-insert the SAME PK, then compact: the re-insert wins (higher
 # tick), the deleted original is not resurrected, and there is exactly one row.
 statement ok
-CREATE TABLE comp_reins (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE comp_reins (id INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 INSERT INTO comp_reins VALUES (1, 'old'), (2, 'keep');
@@ -788,7 +778,7 @@ DROP TABLE comp_reins;
 # Generated-PK table: rows are identified by a synthetic rowid, not a user PK.
 # Delete-by-value removes them; compaction must not bring them back.
 statement ok
-CREATE TABLE comp_genpk (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE comp_genpk (a INTEGER, b TEXT);
 
 statement ok
 INSERT INTO comp_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r'), (40, 's');
@@ -820,7 +810,7 @@ DROP TABLE comp_genpk;
 # Reusing the name afterwards proves the catalog -- table def + tombstone -- was
 # fully released.
 statement ok
-CREATE TABLE drop_nopk (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE drop_nopk (a INTEGER, b TEXT);
 
 statement ok
 INSERT INTO drop_nopk VALUES (1, 'a'), (2, 'b');
@@ -829,7 +819,7 @@ statement ok
 DROP TABLE drop_nopk;
 
 statement ok
-CREATE TABLE drop_nopk (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE drop_nopk (a INTEGER, b TEXT);
 
 statement ok
 INSERT INTO drop_nopk VALUES (3, 'c');
@@ -853,12 +843,10 @@ statement ok
 CREATE SCHEMA drop_mix;
 
 statement ok
-CREATE TABLE drop_mix.t_txn (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'transactional');
+CREATE TABLE drop_mix.t_txn (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
-CREATE TABLE drop_mix.t_search (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search');
+CREATE TABLE drop_mix.t_search (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 INSERT INTO drop_mix.t_txn VALUES (1, 'x');
@@ -888,8 +876,7 @@ DROP SCHEMA drop_mix;
 # on a search table.
 statement ok
 CREATE TABLE search_intervals (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search',
-        compaction_interval = 7000);
+  WITH (compaction_interval = 7000);
 
 statement ok
 INSERT INTO search_intervals VALUES (1, 'x');
@@ -906,7 +893,7 @@ DROP TABLE search_intervals;
 # A non-integer interval literal is a clean error.
 statement error
 CREATE TABLE search_bad_interval (a INTEGER PRIMARY KEY)
-  WITH (storage = 'search', compaction_interval = 'x');
+  WITH (compaction_interval = 'x');
 ----
 db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT32
 
@@ -915,7 +902,7 @@ db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT32
 # so they are rejected on a transactional table.
 statement error
 CREATE TABLE txn_bad_interval (a INTEGER PRIMARY KEY)
-  WITH (storage = 'transactional', compaction_interval = 500);
+  WITH (compaction_interval = 500);
 ----
 db error: ERROR: unrecognized parameter "compaction_interval"
 
@@ -926,8 +913,7 @@ statement ok
 SET compaction_interval = 4242;
 
 statement ok
-CREATE TABLE search_setvar (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search');
+CREATE TABLE search_setvar (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 DROP TABLE search_setvar;
@@ -942,7 +928,7 @@ RESET compaction_interval;
 # one iresearch store, so it honors the same setting.
 statement ok
 CREATE TABLE search_seg (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search', segment_memory_max = 16777216);
+  WITH (segment_memory_max = 16777216);
 
 statement ok
 INSERT INTO search_seg VALUES (1, 'red'), (2, 'green');
@@ -960,7 +946,7 @@ DROP TABLE search_seg;
 # 0 means "unlimited" and is disallowed, matching the inverted-index knob.
 statement error
 CREATE TABLE search_seg_zero (a INTEGER PRIMARY KEY)
-  WITH (storage = 'search', segment_memory_max = 0);
+  WITH (segment_memory_max = 0);
 ----
 db error: ERROR: invalid value for parameter "segment_memory_max": "0"
 
@@ -968,7 +954,7 @@ db error: ERROR: invalid value for parameter "segment_memory_max": "0"
 # A non-integer literal is rejected through the same validator.
 statement error
 CREATE TABLE search_seg_bad (a INTEGER PRIMARY KEY)
-  WITH (storage = 'search', segment_memory_max = 'x');
+  WITH (segment_memory_max = 'x');
 ----
 db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT64
 
@@ -977,7 +963,7 @@ db error: ERROR: Failed to cast value: Could not convert string 'x' to UINT64
 # transactional table (as the interval options are).
 statement error
 CREATE TABLE txn_seg (a INTEGER PRIMARY KEY)
-  WITH (storage = 'transactional', segment_memory_max = 16777216);
+  WITH (segment_memory_max = 16777216);
 ----
 db error: ERROR: unrecognized parameter "segment_memory_max"
 
@@ -987,8 +973,7 @@ statement ok
 SET segment_memory_max = 8388608;
 
 statement ok
-CREATE TABLE search_seg_setvar (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'search');
+CREATE TABLE search_seg_setvar (a INTEGER PRIMARY KEY, b TEXT);
 
 statement ok
 DROP TABLE search_seg_setvar;

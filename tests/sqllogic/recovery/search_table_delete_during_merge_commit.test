@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE mc (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE mc (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 
 statement ok

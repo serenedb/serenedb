@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE rr (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE rr (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO rr SELECT i, 'a' || i FROM generate_series(0, 299999) g(i);
@@ -86,7 +86,7 @@ statement ok
 DROP TABLE rr;
 
 statement ok
-CREATE TABLE rc (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE rc (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO rc SELECT i, 'a' || i FROM generate_series(0, 99999) g(i);

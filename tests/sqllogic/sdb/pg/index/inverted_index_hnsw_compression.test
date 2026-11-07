@@ -8,7 +8,7 @@ CREATE MACRO hc_vec(i) AS
 
 statement ok
 CREATE TABLE hc_auto (id INTEGER PRIMARY KEY, emb FLOAT[64])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX hc_auto_idx ON hc_auto
@@ -16,7 +16,7 @@ CREATE INDEX hc_auto_idx ON hc_auto
 
 statement ok
 CREATE TABLE hc_raw (id INTEGER PRIMARY KEY, emb FLOAT[64])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX hc_raw_idx ON hc_raw

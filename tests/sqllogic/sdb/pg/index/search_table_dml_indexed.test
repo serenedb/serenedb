@@ -5,7 +5,7 @@
 
 statement ok
 CREATE TABLE dml_t (id BIGINT PRIMARY KEY, n BIGINT, r TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX dml_t_r ON dml_t USING inverted (r);
@@ -95,7 +95,7 @@ after_truncate
 # multi-file reader's file_index.
 statement ok
 CREATE TABLE dml_p2 (a INT, b TEXT, id BIGINT PRIMARY KEY)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO dml_p2 VALUES (1, 'x', 100), (2, 'y', 200);
@@ -115,7 +115,7 @@ a	b	id
 # Composite key with an index on a non-key column.
 statement ok
 CREATE TABLE dml_c (a INT, b INT, r TEXT, PRIMARY KEY (a, b))
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX dml_c_r ON dml_c USING inverted (r);
@@ -139,7 +139,7 @@ a	b	r
 # No primary key, with an index: rows are addressed by their rowid.
 statement ok
 CREATE TABLE dml_g (r TEXT, n INT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX dml_g_r ON dml_g USING inverted (r);

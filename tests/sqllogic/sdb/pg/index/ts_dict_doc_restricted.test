@@ -169,11 +169,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY drkw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TABLE drf(id INTEGER PRIMARY KEY, body VARCHAR NOT NULL, scope VARCHAR NOT NULL)
+CREATE TABLE drf(id INTEGER PRIMARY KEY, body VARCHAR NOT NULL, scope VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX drf_idx ON drf USING inverted(body drtx, scope drkw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO drf VALUES

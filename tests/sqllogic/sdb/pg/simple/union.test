@@ -135,8 +135,7 @@ id	u
 # A search table stores every column in the iresearch columnstore, so a UNION
 # column round-trips through the struct-backed column reader/writer.
 statement ok
-CREATE TABLE union_search(id INTEGER PRIMARY KEY, u UNION(num INTEGER, str VARCHAR))
-  WITH (storage = 'search');
+CREATE TABLE union_search(id INTEGER PRIMARY KEY, u UNION(num INTEGER, str VARCHAR));
 
 
 statement count 4

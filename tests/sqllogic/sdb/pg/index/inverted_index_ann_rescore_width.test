@@ -29,7 +29,7 @@ sdb_ann_rescore_width
 
 statement ok
 CREATE TABLE rw (pk INTEGER PRIMARY KEY, emb FLOAT[8])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rw_hnsw ON rw
@@ -37,7 +37,7 @@ CREATE INDEX rw_hnsw ON rw
 
 statement ok
 CREATE TABLE rwi (pk INTEGER PRIMARY KEY, emb FLOAT[8])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rwi_ivf ON rwi

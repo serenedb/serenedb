@@ -12,21 +12,19 @@ CREATE TEXT SEARCH DICTIONARY rs_dict AS
 
 
 statement ok
-CREATE TABLE rs(id INTEGER, body TEXT);
+CREATE TABLE rs(id INTEGER, body TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX rs_idx ON rs USING inverted(id, body rs_dict)
-  WITH (compaction_interval = 0);
+CREATE INDEX rs_idx ON rs USING inverted(id, body rs_dict);
 
 
 statement ok
-CREATE TABLE rt(id INTEGER, body TEXT);
+CREATE TABLE rt(id INTEGER, body TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX rt_idx ON rt USING inverted(id, body rs_dict)
-  WITH (compaction_interval = 0);
+CREATE INDEX rt_idx ON rt USING inverted(id, body rs_dict);
 
 
 statement ok

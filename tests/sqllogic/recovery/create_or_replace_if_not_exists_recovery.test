@@ -948,7 +948,7 @@ hello,world
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TABLE coinr_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st (id INT, body TEXT);
 
 
 statement ok
@@ -960,7 +960,7 @@ BEGIN;
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st (id INT, body TEXT, extra INT);
 
 
 statement ok
@@ -984,7 +984,7 @@ INSERT INTO coinr_st VALUES (12, 'new twelve', 120);
 
 
 statement ok
-CREATE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 statement ok
@@ -996,7 +996,7 @@ BEGIN;
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 statement ok
@@ -1008,7 +1008,7 @@ ROLLBACK;
 
 
 statement ok
-CREATE TABLE coinr_st_ine (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_ine (id INT, body TEXT);
 
 
 statement ok
@@ -1016,7 +1016,7 @@ INSERT INTO coinr_st_ine VALUES (1, 'kept');
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS coinr_st_ine (x INT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_st_ine (x INT);
 
 
 # A plain table replaced by a search table, and the other way round.
@@ -1029,7 +1029,7 @@ INSERT INTO coinr_st_to_search VALUES (1, 'plain');
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st_to_search (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_to_search (id INT, body TEXT);
 
 
 statement ok
@@ -1037,7 +1037,7 @@ INSERT INTO coinr_st_to_search VALUES (2, 'searchable');
 
 
 statement ok
-CREATE TABLE coinr_st_to_plain (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_to_plain (id INT, body TEXT);
 
 
 statement ok
@@ -1126,7 +1126,7 @@ CREATE INDEX IF NOT EXISTS coinr_fr_idx ON coinr_fr_trt (a);
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS coinr_fr_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_fr_st (id INT, body TEXT);
 
 
 statement ok
@@ -1773,7 +1773,7 @@ CREATE TRIGGER coinr_trg_open AFTER DELETE ON coinr_trt_open FOR EACH ROW
 
 
 statement ok
-CREATE TABLE coinr_st_open (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_open (id INT, body TEXT);
 
 
 statement ok
@@ -1831,7 +1831,7 @@ CREATE OR REPLACE TRIGGER coinr_trg_open AFTER DELETE ON coinr_trt_open FOR EACH
 
 connection w_open
 statement ok
-CREATE OR REPLACE TABLE coinr_st_open (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_open (id INT, body TEXT);
 
 
 connection w_open
@@ -2700,7 +2700,7 @@ CREATE OR REPLACE FUNCTION coinr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 9'
 
 connection after_replay
 statement ok
-CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 connection after_replay
@@ -2809,7 +2809,7 @@ DELETE FROM coinr_audit;
 
 connection after_before_commit
 statement ok
-CREATE TABLE coinr_ac_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_ac_st (id INT, body TEXT);
 
 
 connection after_before_commit
@@ -2834,7 +2834,7 @@ CREATE OR REPLACE MACRO coinr_ac_new(x) AS x * 11;
 
 connection after_before_commit
 statement ok
-CREATE OR REPLACE TABLE coinr_ac_st (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_ac_st (id INT, body TEXT, extra INT);
 
 
 connection after_before_commit
@@ -3127,7 +3127,7 @@ CREATE TRIGGER IF NOT EXISTS coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH RO
 
 connection after_after_commit
 statement ok
-CREATE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_after_commit
@@ -3137,7 +3137,7 @@ INSERT INTO coinr_c_st VALUES (1, 'old one');
 
 connection after_after_commit
 statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_after_commit
@@ -3147,7 +3147,7 @@ INSERT INTO coinr_c_st VALUES (20, 'checkpoint twenty'), (21, 'checkpoint twenty
 
 connection after_after_commit
 statement ok
-CREATE TABLE IF NOT EXISTS coinr_c_st (x INT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_c_st (x INT);
 
 
 connection after_after_commit
@@ -3256,7 +3256,7 @@ CREATE OR REPLACE TRIGGER coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
 
 connection ckpt_open
 statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection ckpt_open
@@ -3641,7 +3641,7 @@ COMMIT;
 
 connection after_checkpoint
 statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_checkpoint

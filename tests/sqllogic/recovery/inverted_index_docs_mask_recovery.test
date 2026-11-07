@@ -6,11 +6,10 @@ CREATE TEXT SEARCH DICTIONARY dmf_dict AS
     WITH (frequency, position);
 
 statement ok
-CREATE TABLE dmf(id INTEGER PRIMARY KEY, grp INTEGER, txt TEXT);
+CREATE TABLE dmf(id INTEGER PRIMARY KEY, grp INTEGER, txt TEXT) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX dmf_idx ON dmf USING inverted(id, grp, txt dmf_dict)
-  WITH (compaction_interval = 0);
+CREATE INDEX dmf_idx ON dmf USING inverted(id, grp, txt dmf_dict);
 
 statement ok
 INSERT INTO dmf

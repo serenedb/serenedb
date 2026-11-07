@@ -210,7 +210,7 @@ DROP SEQUENCE tango_seq_small;
 
 
 statement ok
-CREATE TABLE tango_seq_search (txt text) WITH (storage = 'search');
+CREATE TABLE tango_seq_search (txt text);
 
 
 query

@@ -538,10 +538,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
   const auto& options = info.Base().options;
-  const bool search = ReadStorageEngine(options) == TableEngine::Search;
-  auto unknown = absl::c_find_if(options, [search](const auto& option) {
-    return option.first != kStorageOption &&
-           !(search && absl::c_contains(kSearchTableOptions, option.first));
+  auto unknown = absl::c_find_if(options, [](const auto& option) {
+    return !absl::c_contains(kSearchTableOptions, option.first);
   });
   if (unknown != options.end()) {
     return duckdb::ErrorData{

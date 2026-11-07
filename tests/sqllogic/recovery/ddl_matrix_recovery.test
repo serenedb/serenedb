@@ -53,11 +53,11 @@ CREATE TABLE dm.ser (id SERIAL PRIMARY KEY, v TEXT);
 
 
 statement ok
-CREATE TABLE dm.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dm.st (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
-CREATE TABLE dm.st_inv (a INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE dm.st_inv (a INT, body TEXT);
 
 
 statement ok

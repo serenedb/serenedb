@@ -10,11 +10,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY sag_en AS split_text(case := 'lower')
 
 statement ok
-CREATE TABLE sag (id INTEGER PRIMARY KEY, n BIGINT, d DATE, cat VARCHAR, body VARCHAR, s VARCHAR)
+CREATE TABLE sag (id INTEGER PRIMARY KEY, n BIGINT, d DATE, cat VARCHAR, body VARCHAR, s VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX sag_idx ON sag USING inverted(cat sag_kw, body sag_en, s) INCLUDE (n, d)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO sag SELECT i, i * 3 - 50, DATE '2024-01-01' + i, 'category-shared-prefix-' || (i % 7),
@@ -260,7 +259,7 @@ DEALLOCATE sag_p
 
 statement ok
 CREATE TABLE sag_st (id BIGINT PRIMARY KEY, n BIGINT, cat VARCHAR, body TEXT)
-    WITH (storage = 'search', compaction_interval = 0)
+    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO sag_st SELECT i, i * 2, 'category-shared-prefix-' || (i % 5), 'w' || i
@@ -514,7 +513,7 @@ SELECT a, b FROM sag_g_idx ORDER BY b LIMIT 3 OFFSET 50
 a	b
 
 statement ok
-CREATE TABLE sag_nul (id BIGINT PRIMARY KEY, n BIGINT) WITH (storage = 'search', compaction_interval = 0)
+CREATE TABLE sag_nul (id BIGINT PRIMARY KEY, n BIGINT) WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO sag_nul SELECT i, NULL FROM generate_series(1, 100) g(i)

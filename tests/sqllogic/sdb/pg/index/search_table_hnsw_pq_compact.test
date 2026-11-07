@@ -5,7 +5,7 @@ CREATE MACRO pqc_vec(i) AS
 
 statement ok
 CREATE TABLE pqc_l2 (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX pqc_l2_idx ON pqc_l2
@@ -13,7 +13,7 @@ CREATE INDEX pqc_l2_idx ON pqc_l2
 
 statement ok
 CREATE TABLE pqc_ip (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX pqc_ip_idx ON pqc_ip

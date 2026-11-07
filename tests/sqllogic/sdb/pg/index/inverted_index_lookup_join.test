@@ -724,7 +724,7 @@ id	title
 
 statement ok
 CREATE TABLE lj_hits (id INTEGER PRIMARY KEY, url VARCHAR, event_time INTEGER, c1 VARCHAR, c2 BIGINT, c3 VARCHAR)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO lj_hits

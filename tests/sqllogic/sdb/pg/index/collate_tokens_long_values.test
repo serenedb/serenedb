@@ -10,12 +10,11 @@ CREATE TEXT SEARCH DICTIONARY lv_coll AS collate_tokens('en')
 
 
 statement ok
-CREATE TABLE lv(id INTEGER PRIMARY KEY, body VARCHAR)
+CREATE TABLE lv(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX lv_idx ON lv USING inverted(body lv_coll)
-    WITH (compaction_interval = 0)
 
 
 statement ok

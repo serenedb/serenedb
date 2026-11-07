@@ -4,7 +4,7 @@
 # between the two, which is where the second pass earns its keep.
 
 statement ok
-CREATE TABLE pk_race(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
+CREATE TABLE pk_race(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
@@ -55,7 +55,7 @@ i	t
 # back would undo somebody's delete.
 
 statement ok
-CREATE TABLE pk_gone(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
+CREATE TABLE pk_gone(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
@@ -103,7 +103,7 @@ i	t
 # rather than as a duplicate key.
 
 statement ok
-CREATE TABLE pk_both(i INTEGER PRIMARY KEY, n INTEGER) WITH (storage = 'search');
+CREATE TABLE pk_both(i INTEGER PRIMARY KEY, n INTEGER);
 
 
 statement ok

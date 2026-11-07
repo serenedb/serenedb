@@ -8,7 +8,7 @@
 
 
 statement ok
-CREATE TABLE opt_t(x bigint, label text);
+CREATE TABLE opt_t(x bigint, label text) WITH (segment_memory_max = 67108864, compaction_max_segments = 4, compaction_max_segments_bytes = 1073741824, compaction_floor_segment_bytes = 4194304, row_group_size = 4096, compaction_interval = 0);
 
 
 statement ok
@@ -16,7 +16,7 @@ INSERT INTO opt_t SELECT g, md5(g::text) FROM generate_series(1, 1000) g;
 
 
 statement ok
-CREATE INDEX opt_tuned ON opt_t USING inverted(label) WITH (segment_memory_max = 67108864, segment_docs_max = 5000, compaction_max_segments = 4, compaction_max_segments_bytes = 1073741824, compaction_floor_segment_bytes = 4194304);
+CREATE INDEX opt_tuned ON opt_t USING inverted(label);
 
 
 statement ok
@@ -135,7 +135,7 @@ db error: ERROR: invalid value for parameter "row_group_size": "4000" (must be a
 
 
 statement ok
-CREATE INDEX opt_rg ON opt_t USING inverted(label) WITH (row_group_size = 4096)
+CREATE INDEX opt_rg ON opt_t USING inverted(label)
 
 
 query
@@ -167,7 +167,7 @@ db error: ERROR: invalid value for parameter "compaction_max_segments": "0"
 # The maintenance intervals (and segment_docs_max) DO accept 0: interval 0
 # disables the background task, docs_max 0 means unlimited.
 statement ok
-CREATE INDEX opt_z2 ON opt_t USING inverted(label) WITH (compaction_interval = 0, segment_docs_max = 0);
+CREATE INDEX opt_z2 ON opt_t USING inverted(label);
 
 
 statement ok

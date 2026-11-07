@@ -3,7 +3,7 @@ CREATE TEXT SEARCH DICTIONARY wfb_kw AS keyword()
 
 
 statement ok
-CREATE TABLE wfb (id INT, f VARCHAR, g VARCHAR) WITH (storage = 'search')
+CREATE TABLE wfb (id INT, f VARCHAR, g VARCHAR)
 
 
 statement ok

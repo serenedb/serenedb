@@ -13,7 +13,7 @@ statement ok
 CREATE INDEX jc_idx ON jc USING inverted (id, (doc->'v') jc_kw);
 
 statement ok
-CREATE TABLE jcs (id INTEGER PRIMARY KEY, doc JSON) WITH (storage = 'search');
+CREATE TABLE jcs (id INTEGER PRIMARY KEY, doc JSON);
 
 statement ok
 CREATE INDEX jcs_idx ON jcs USING inverted (id, (doc->'v') jc_kw);

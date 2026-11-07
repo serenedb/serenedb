@@ -19,11 +19,10 @@ CREATE TEXT SEARCH DICTIONARY del_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE dd(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+CREATE TABLE dd(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX dd_idx ON dd USING inverted(cat del_kw, body del_tx)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO dd VALUES
@@ -211,11 +210,10 @@ cats
 
 # A fully-deleted table exposes no terms.
 statement ok
-CREATE TABLE dd2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+CREATE TABLE dd2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX dd2_idx ON dd2 USING inverted(cat del_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO dd2 VALUES (1, 'a'), (2, 'b'), (3, 'c')

@@ -65,7 +65,7 @@ my_logs_pkey
 # DOCS_TEST: example_006
 
 statement ok
-CREATE TABLE my_events (id INTEGER PRIMARY KEY, msg VARCHAR) WITH (storage = 'search');
+CREATE TABLE my_events (id INTEGER PRIMARY KEY, msg VARCHAR);
 
 # DOCS_TEST_BODY
 
@@ -91,15 +91,15 @@ ALTER INDEX logs_idx RESET (compaction_interval);
 statement error
 CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (compaction_interval = 0);
 ----
-db error: ERROR: compaction_interval is a table option on a search-backed table
+db error: ERROR: compaction_interval is a table option
 HINT: Change it with ALTER TABLE ... SET (compaction_interval = ...).
 
 
 statement error
 CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (row_group_size = 4096);
 ----
-db error: ERROR: row_group_size is a table option on a search-backed table
-HINT: Set it in CREATE TABLE ... WITH (storage = 'search', row_group_size = ...).
+db error: ERROR: row_group_size is a table option
+HINT: Set it in CREATE TABLE ... WITH (row_group_size = ...).
 
 
 # DOCS_TEST: sdb_metrics

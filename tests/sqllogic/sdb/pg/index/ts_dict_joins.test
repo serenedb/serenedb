@@ -14,21 +14,19 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY jkw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TABLE ja(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+CREATE TABLE ja(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ja_idx ON ja USING inverted(cat jkw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ja VALUES (1, 'apple'), (2, 'banana'), (3, 'apple')
 
 statement ok
-CREATE TABLE jb(id INTEGER PRIMARY KEY, kind VARCHAR NOT NULL)
+CREATE TABLE jb(id INTEGER PRIMARY KEY, kind VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX jb_idx ON jb USING inverted(kind jkw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO jb VALUES (1, 'apple'), (2, 'cherry')

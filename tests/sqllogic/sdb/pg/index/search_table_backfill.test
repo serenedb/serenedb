@@ -27,7 +27,7 @@ CREATE TEXT SEARCH DICTIONARY bf_en AS
 
 statement ok
 CREATE TABLE bf (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bf VALUES
@@ -85,7 +85,7 @@ id	tag	body
 
 statement ok
 CREATE TABLE bf_first (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX bf_first_tag_idx ON bf_first USING inverted (tag);
@@ -146,7 +146,7 @@ id	tag	body
 
 statement ok
 CREATE TABLE bf_two (id BIGINT PRIMARY KEY, txt TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bf_two VALUES (1, 'hello world'), (2, 'quick brown fox');
@@ -211,7 +211,7 @@ id
 
 statement ok
 CREATE TABLE bf_groups (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 # One published segment per row: compaction is off, so these stay separate and
 # the build has several groups to walk.
@@ -263,7 +263,7 @@ id	tag
 # swap. Same final index as the 1-byte run above, from the opposite extreme.
 statement ok
 CREATE TABLE bf_onegroup (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bf_onegroup VALUES (1, 'v1');
@@ -300,7 +300,7 @@ id	tag
 
 statement ok
 CREATE TABLE bf_masked (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bf_masked SELECT i, 't' || (i % 3) FROM generate_series(1, 10000) g(i);
@@ -361,7 +361,7 @@ DROP TABLE bf_masked;
 
 statement ok
 CREATE TABLE bf_split (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0,
+  WITH (compaction_interval = 0,
         segment_memory_max = 2097152);
 
 statement ok

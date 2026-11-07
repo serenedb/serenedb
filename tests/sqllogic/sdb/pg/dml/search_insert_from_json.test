@@ -17,7 +17,7 @@ COPY (SELECT i,
 TO '${__TEST_DIR__}/sij.jsonl' (FORMAT json);
 
 statement ok
-CREATE TABLE sij_t (i BIGINT, s TEXT) WITH (storage = 'search');
+CREATE TABLE sij_t (i BIGINT, s TEXT);
 
 statement count 6000
 INSERT INTO sij_t SELECT i, s FROM read_json('${__TEST_DIR__}/sij.jsonl', columns={i: 'BIGINT', s: 'VARCHAR'});

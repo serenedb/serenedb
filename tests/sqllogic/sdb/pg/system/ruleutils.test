@@ -106,7 +106,7 @@ t_ab_check	CHECK (((a > 0) AND (b IS NOT NULL)))
 
 
 statement ok
-CREATE TABLE rs.docs (id integer, body text, emb FLOAT[3], j JSON, tag text);
+CREATE TABLE rs.docs (id integer, body text, emb FLOAT[3], j JSON, tag text) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -114,7 +114,7 @@ CREATE TEXT SEARCH DICTIONARY rs.docs_text AS split_text(case := 'lower') WITH (
 
 
 statement ok
-CREATE INDEX docs_idx ON rs.docs USING inverted (id, body rs.docs_text, emb ivf (metric = 'l2'), lower(tag)) INCLUDE (j) WITH (compaction_interval = 0) WHERE id > 0;
+CREATE INDEX docs_idx ON rs.docs USING inverted (id, body rs.docs_text, emb ivf (metric = 'l2'), lower(tag)) INCLUDE (j) WHERE id > 0;
 
 
 query

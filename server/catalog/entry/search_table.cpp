@@ -94,8 +94,6 @@
 namespace sdb::catalog {
 namespace {
 
-constexpr std::string_view kEngineSearch = "search";
-
 using WithOptions =
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>;
 using Constraints = duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>;
@@ -127,14 +125,27 @@ duckdb::unique_ptr<duckdb::ConstantExpression> OptionConstant(
   return duckdb::ConstantExpression::String(value.ToString());
 }
 
-void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
+duckdb::Value BuiltinSetting(const duckdb::DatabaseInstance& db,
+                             std::string_view name) {
+  duckdb::ExtensionOption extension;
+  [[maybe_unused]] const auto found =
+    duckdb::DBConfig::GetConfig(db).user_settings.TryGetExtensionOption(
+      duckdb::Identifier{name}, extension);
+  SDB_ASSERT(found);
+  return extension.default_value;
+}
+
+void BindOptions(duckdb::ClientContext& context, WithOptions& options,
+                 bool session_defaults) {
   for (const auto name : kSearchTableSettings) {
     duckdb::Value value;
     if (const auto constant = FindConstant(options, name)) {
       value = connector::ValidateSetting(context, name,
                                          constant->GetLiteral().ToValue());
-    } else {
+    } else if (session_defaults) {
       context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
+    } else {
+      value = BuiltinSetting(*context.db, name);
     }
     options.insert_or_assign(name, OptionConstant(value));
   }
@@ -165,25 +176,23 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
   return result;
 }
 
-void RequireAlterableOption(std::string_view name, TableEngine engine) {
-  if (engine == TableEngine::Search) {
-    if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
-      return;
-    }
-    if (absl::c_contains(kSearchTableOptions, name)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("option \"", name, "\" cannot be changed with ALTER TABLE"));
-    }
+void RequireAlterableOption(std::string_view name) {
+  if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+    return;
+  }
+  if (absl::c_contains(kSearchTableOptions, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("option \"", name, "\" cannot be changed with ALTER TABLE"));
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                   ERR_MSG("unrecognized parameter \"", name, "\""));
 }
 
 void SetOptions(duckdb::ClientContext& context, WithOptions& options,
-                const duckdb::SetTableOptionsInfo& info, TableEngine engine) {
+                const duckdb::SetTableOptionsInfo& info) {
   for (const auto& [name, expr] : info.table_options) {
-    RequireAlterableOption(name, engine);
+    RequireAlterableOption(name);
     if (!expr ||
         expr->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
       THROW_SQL_ERROR(
@@ -197,10 +206,10 @@ void SetOptions(duckdb::ClientContext& context, WithOptions& options,
 }
 
 void ResetOptions(duckdb::ClientContext& context, WithOptions& options,
-                  duckdb::ResetTableOptionsInfo& info, TableEngine engine) {
+                  duckdb::ResetTableOptionsInfo& info) {
   for (const auto& identifier : info.table_options) {
     const auto& name = identifier.GetIdentifierName();
-    RequireAlterableOption(name, engine);
+    RequireAlterableOption(name);
     duckdb::Value value;
     if (const auto it = info.values.find(name); it != info.values.end()) {
       value = it->second;
@@ -228,50 +237,22 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
 
 }  // namespace
 
-TableEngine ReadStorageEngine(const WithOptions& options) {
-  if (!options.contains(kStorageOption)) {
-    return TableEngine::Transactional;
-  }
-  const auto value = FindConstant(options, kStorageOption);
-  if (!value) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("WITH option \"", kStorageOption, "\" expects a string literal"));
-  }
-  const auto engine = value->GetLiteral()
-                        .ToValue()
-                        .DefaultCastAs(duckdb::LogicalType::VARCHAR)
-                        .GetValue<std::string>();
-  if (absl::EqualsIgnoreCase(engine, "transactional")) {
-    return TableEngine::Transactional;
-  }
-  if (absl::EqualsIgnoreCase(engine, kEngineSearch)) {
-    return TableEngine::Search;
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-    ERR_MSG("WITH option \"", kStorageOption,
-            "\" must be 'transactional' or 'search', got \"", engine, "\""));
-}
-
 void RequireSearchTableIndexOption(std::string_view name) {
   if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(name, " is a table option on a search-backed table"),
+      ERR_MSG(name, " is a table option"),
       ERR_HINT("Change it with ALTER TABLE ... SET (", name, " = ...)."));
   }
-  if (absl::c_contains(kSearchTableSettings, name)) {
+  if (absl::c_contains(kSearchTableOptions, name)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(name, " is a table option on a search-backed table"),
-      ERR_HINT("Set it in CREATE TABLE ... WITH (storage = 'search', ", name,
-               " = ...)."));
+      ERR_MSG(name, " is a table option"),
+      ERR_HINT("Set it in CREATE TABLE ... WITH (", name, " = ...)."));
   }
   if (name == kSegmentDocsMaxSetting) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(name, " does not apply to an index on a search-backed table"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(name, " does not apply to an index on a table"));
   }
 }
 
@@ -310,17 +291,8 @@ SearchTableEntry::SearchTableEntry(
     }
   }
   auto& base = info.Base();
-  _engine = ReadStorageEngine(base.options);
-  if (_engine == TableEngine::Search) {
-    if (base.oid == 0) {
-      BindOptions(*transaction.context, base.options);
-    }
-    _options = ResolveOptions(base.options);
-  } else {
-    WithOptions settings;
-    BindOptions(*transaction.context, settings);
-    _options = ResolveOptions(settings);
-  }
+  BindOptions(*transaction.context, base.options, base.oid == 0);
+  _options = ResolveOptions(base.options);
   const bool fresh = !_storage;
   if (fresh) {
     _storage = std::make_shared<search::Store>(
@@ -526,18 +498,25 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
 
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
-  if (_engine != TableEngine::Search) {
-    return info;
-  }
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
-  options.insert_or_assign(kStorageOption,
-                           OptionConstant(duckdb::Value{kEngineSearch}));
-  for (const auto name : kSearchTableOptions) {
-    if (const auto value = Option(name); !value.IsNull()) {
-      options.insert_or_assign(name, OptionConstant(value));
-    }
+  for (auto& [name, value] : ExplicitOptions()) {
+    options.insert_or_assign(name, OptionConstant(value));
   }
   return info;
+}
+
+std::vector<TableOption> SearchTableEntry::ExplicitOptions() const {
+  const auto& db = catalog.GetDatabase();
+  std::vector<TableOption> explicit_options;
+  for (const auto name : kSearchTableOptions) {
+    auto value = Option(name);
+    if (value.IsNull() || (absl::c_contains(kSearchTableSettings, name) &&
+                           value == BuiltinSetting(db, name))) {
+      continue;
+    }
+    explicit_options.push_back({.name = name, .value = std::move(value)});
+  }
+  return explicit_options;
 }
 
 duckdb::Value SearchTableEntry::Option(std::string_view name) const {
@@ -647,9 +626,8 @@ namespace {
     default:
       break;
   }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-    ERR_MSG(change, " on a search-backed table is not yet supported"));
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG(change, " is not supported"));
 }
 
 [[noreturn]] void ThrowUndefinedConstraint(std::string_view constraint,
@@ -1361,10 +1339,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   auto definition = Definition();
   if (info.alter_table_type == duckdb::AlterTableType::SET_TABLE_OPTIONS) {
     SetOptions(context, definition->options,
-               info.Cast<duckdb::SetTableOptionsInfo>(), _engine);
+               info.Cast<duckdb::SetTableOptionsInfo>());
   } else {
     ResetOptions(context, definition->options,
-                 info.Cast<duckdb::ResetTableOptionsInfo>(), _engine);
+                 info.Cast<duckdb::ResetTableOptionsInfo>());
   }
   auto altered = Altered(context, info, std::move(definition));
   SessionOf(context, catalog)

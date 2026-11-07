@@ -38,7 +38,7 @@ CREATE MACRO lx_stale_segments(rel) AS (
 
 statement ok
 CREATE TABLE lxs (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1, 1000) s(i);

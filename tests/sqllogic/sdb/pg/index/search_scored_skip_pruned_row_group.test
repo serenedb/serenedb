@@ -9,7 +9,7 @@ CREATE TEXT SEARCH DICTIONARY sspr_dict AS split_text_csv(' ')
 
 statement ok
 CREATE TABLE sspr_t (id INT PRIMARY KEY, body TEXT, g INT)
-WITH (storage = 'search', compaction_interval = 0,
+WITH (compaction_interval = 0,
       row_group_size = 2048)
 
 
@@ -60,7 +60,7 @@ DROP TABLE sspr_t
 
 statement ok
 CREATE TABLE sspr_sparse (id INT PRIMARY KEY, body TEXT, g INT)
-WITH (storage = 'search', compaction_interval = 0,
+WITH (compaction_interval = 0,
       row_group_size = 2048)
 
 

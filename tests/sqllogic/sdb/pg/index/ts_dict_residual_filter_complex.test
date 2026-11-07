@@ -32,7 +32,7 @@ CREATE TEXT SEARCH DICTIONARY ctx AS
 statement ok
 CREATE TABLE cev(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
                  svc VARCHAR NOT NULL, amount INTEGER, ts TIMESTAMP,
-                 flag BOOLEAN, body VARCHAR NOT NULL)
+                 flag BOOLEAN, body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO cev VALUES
@@ -48,7 +48,6 @@ INSERT INTO cev VALUES
 statement ok
 CREATE INDEX cev_idx ON cev USING inverted(sev ckw, body ctx)
     INCLUDE (svc, amount, ts, flag)
-    WITH (compaction_interval = 0)
 
 statement ok
 CREATE VIEW cvw AS

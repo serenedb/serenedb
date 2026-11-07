@@ -1,6 +1,5 @@
 statement ok
-CREATE TABLE pk_dup(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search');
+CREATE TABLE pk_dup(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
@@ -106,8 +105,7 @@ i	t
 # other.
 statement ok
 CREATE TABLE pk_bool(tenant_id INTEGER, is_active BOOLEAN, note TEXT,
-                     PRIMARY KEY (tenant_id, is_active))
-  WITH (storage = 'search');
+                     PRIMARY KEY (tenant_id, is_active));
 
 
 statement ok
@@ -229,7 +227,7 @@ i	t
 # Without a declared key nothing is certified, and repeated values are rows
 # like any other.
 statement ok
-CREATE TABLE pk_none(i INTEGER, t TEXT) WITH (storage = 'search');
+CREATE TABLE pk_none(i INTEGER, t TEXT);
 
 
 statement ok

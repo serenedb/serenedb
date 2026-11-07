@@ -6,7 +6,7 @@
 
 statement ok
 CREATE TABLE nv (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT, d TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 
 # Segment 1: x NULL on every 3rd row, s NULL on every 5th, d low-cardinality

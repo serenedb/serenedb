@@ -524,7 +524,7 @@ void Store::Commit(const irs::ProgressReportCallback& progress) {
   SDB_ASSERT(_writer && !_table);
   SDB_IF_FAILURE("Search::FailOnCommit") {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("inverted index ", _id, ": debug failure point"));
+                    ERR_MSG("debug failure point"));
   }
   _durability.Commit(*_writer, progress);
   PublishSnapshot();
@@ -904,8 +904,8 @@ void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name,
   if (change == TableChange::Schema && session.SearchTxn().HasWritesFor(_id)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG("ALTER TABLE on a search-backed table cannot run in a "
-              "transaction that has already written to \"",
+      ERR_MSG("ALTER TABLE cannot run in a transaction that has already "
+              "written to \"",
               name, "\""));
   }
   session.ClaimSearchLayout(shared_from_this(), name, change);

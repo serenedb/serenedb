@@ -745,10 +745,10 @@ DROP TABLE babsky_tx;
 
 
 statement ok
-CREATE TABLE ri_serial (id SERIAL, v TEXT) WITH (storage = 'search');
+CREATE TABLE ri_serial (id SERIAL, v TEXT);
 
 statement ok
-CREATE TABLE ri_generated (v TEXT) WITH (storage = 'search');
+CREATE TABLE ri_generated (v TEXT);
 
 statement ok
 INSERT INTO ri_serial (v) VALUES ('a'), ('b');

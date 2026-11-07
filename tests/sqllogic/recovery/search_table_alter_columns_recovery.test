@@ -2,7 +2,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE sacr (id INT, a INT, b TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -51,7 +51,7 @@ INSERT INTO sacr VALUES (6, 'six', 600, 'y');
 
 statement ok
 CREATE TABLE sacs (id SERIAL, v INT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -121,7 +121,7 @@ t
 connection restarted
 statement ok
 CREATE TABLE sacm (id INT, v INT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 connection restarted

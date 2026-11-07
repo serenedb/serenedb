@@ -27,7 +27,7 @@ CREATE TEXT SEARCH DICTIONARY en_topk_del AS
 
 
 statement ok
-CREATE TABLE topk_del (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE topk_del (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement count 8
@@ -43,8 +43,7 @@ INSERT INTO topk_del VALUES
 
 
 statement ok
-CREATE INDEX topk_del_idx ON topk_del USING inverted(id, body en_topk_del)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX topk_del_idx ON topk_del USING inverted(id, body en_topk_del);
 
 
 # Before any delete: the pruning iterator runs, nothing wraps it.

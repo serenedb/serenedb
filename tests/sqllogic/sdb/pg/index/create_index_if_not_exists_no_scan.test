@@ -7,7 +7,7 @@ INSERT INTO cinx_t SELECT s.i, 'doc ' || s.i FROM range(5000) s(i);
 
 
 statement ok
-CREATE TABLE cinx_s(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
+CREATE TABLE cinx_s(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
@@ -191,7 +191,7 @@ QUERY PLAN
 statement error
 CREATE INDEX IF NOT EXISTS cinx_s_inv ON cinx_s (i);
 ----
-db error: ERROR: only inverted indexes are supported on a search-backed table
+db error: ERROR: only inverted indexes are supported on a table
 
 
 statement error

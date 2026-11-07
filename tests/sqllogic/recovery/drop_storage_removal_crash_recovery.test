@@ -10,7 +10,7 @@ control substitution on
 
 
 statement ok
-CREATE TABLE dsr_keep (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_keep (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -45,7 +45,7 @@ CREATE MACRO dsr_database_leftover(object) AS (
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TABLE dsr_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -215,7 +215,7 @@ CREATE DATABASE dsr_db;
 
 connection after_index
 statement ok
-CREATE TABLE dsr_db.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_db.public.s (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_index
@@ -293,7 +293,7 @@ id	body
 
 connection after_database
 statement ok
-CREATE TABLE dsr_r (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_r (id INT, body TEXT);
 
 
 connection after_database
@@ -319,7 +319,7 @@ BEGIN;
 
 connection after_database
 statement ok
-CREATE OR REPLACE TABLE dsr_r (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE dsr_r (id INT, body TEXT, extra INT);
 
 
 connection after_database
@@ -387,7 +387,7 @@ id	body
 
 connection after_replace
 statement ok
-CREATE TABLE dsr_si (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_si (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_replace
@@ -712,7 +712,7 @@ CREATE INDEX t_inv ON dsr_all.public.t USING inverted (body);
 
 connection after_table_with_index
 statement ok
-CREATE TABLE dsr_all.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE dsr_all.public.s (id INT PRIMARY KEY, body TEXT);
 
 
 connection after_table_with_index

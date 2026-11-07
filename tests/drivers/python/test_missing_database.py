@@ -88,8 +88,7 @@ def test_missing_database_file(tmp_path: Path) -> None:
             conn.execute("CREATE TABLE lost.public.t(a INTEGER)")
             conn.execute("INSERT INTO lost.public.t VALUES (1)")
             conn.execute("CREATE INDEX t_inv ON lost.public.t USING inverted (a)")
-            conn.execute("CREATE TABLE lost.public.s(a INTEGER PRIMARY KEY, b TEXT) "
-                         "WITH (storage = 'search')")
+            conn.execute("CREATE TABLE lost.public.s(a INTEGER PRIMARY KEY, b TEXT) ")
             conn.execute("INSERT INTO lost.public.s VALUES (1, 'x')")
             oid = conn.execute(
                 "SELECT oid FROM pg_database WHERE datname = 'lost'"
@@ -187,8 +186,7 @@ def test_missing_storage_directory(tmp_path: Path) -> None:
         assert server.wait_ready(), server.output()
         with server.connect() as conn:
             conn.execute(
-                "CREATE TABLE docs(id BIGINT PRIMARY KEY, body TEXT) "
-                "WITH (storage = 'search')")
+                "CREATE TABLE docs(id BIGINT PRIMARY KEY, body TEXT) ")
             conn.execute("INSERT INTO docs VALUES (1, 'kept')")
         storage = _search_table_dir(server, datadir, "postgres", "docs")
     finally:
@@ -216,8 +214,7 @@ def test_missing_database_directory(tmp_path: Path) -> None:
         with server.connect() as conn:
             conn.execute("CREATE DATABASE gone")
             conn.execute(
-                "CREATE TABLE gone.public.docs(id BIGINT PRIMARY KEY, v INT) "
-                "WITH (storage = 'search')")
+                "CREATE TABLE gone.public.docs(id BIGINT PRIMARY KEY, v INT) ")
             conn.execute("INSERT INTO gone.public.docs VALUES (1, 1)")
         storage = _search_table_dir(server, datadir, "gone", "docs")
     finally:

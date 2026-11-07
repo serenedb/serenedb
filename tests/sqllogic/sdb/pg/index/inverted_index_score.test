@@ -10,7 +10,7 @@ SET disabled_optimizers = 'compressed_materialization,late_materialization';
 
 
 statement ok
-CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -32,8 +32,7 @@ CREATE TEXT SEARCH DICTIONARY en AS
 
 
 statement ok
-CREATE INDEX docs_idx ON docs USING inverted(id, body en)
-  WITH (compaction_interval = 0);
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
 
 
 # BM25 scores are non-negative; verify they are returned and > 0
@@ -814,7 +813,7 @@ QUERY PLAN
 
 # --- Multi-table join tests ---
 statement ok
-CREATE TABLE docs2 (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs2 (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -822,8 +821,7 @@ INSERT INTO docs2 VALUES (2, 'the swift fox'), (4, 'a clever fox'), (6, 'the laz
 
 
 statement ok
-CREATE INDEX docs2_idx ON docs2 USING inverted(id, body en)
-  WITH (compaction_interval = 0);
+CREATE INDEX docs2_idx ON docs2 USING inverted(id, body en);
 
 
 statement ok
@@ -1146,12 +1144,11 @@ DROP TABLE docs;
 
 # Large dataset: more docs than velox batch size (1024) exercise multi-batch path
 statement ok
-CREATE TABLE bigdocs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE bigdocs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX bigdocs_idx ON bigdocs USING inverted(id, body en)
-  WITH (compaction_interval = 0);
+CREATE INDEX bigdocs_idx ON bigdocs USING inverted(id, body en);
 
 
 statement ok
@@ -1198,7 +1195,7 @@ DROP TABLE bigdocs;
 
 
 statement ok
-CREATE TABLE boost_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE boost_docs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -1208,8 +1205,7 @@ CREATE TEXT SEARCH DICTIONARY boost_en AS
 
 
 statement ok
-CREATE INDEX boost_docs_idx ON boost_docs USING inverted(id, body boost_en)
-  WITH (compaction_interval = 0);
+CREATE INDEX boost_docs_idx ON boost_docs USING inverted(id, body boost_en);
 
 
 statement count 1
@@ -1252,7 +1248,7 @@ DROP TABLE boost_docs;
 # ============================================================================
 
 statement ok
-CREATE TABLE sql_boost_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE sql_boost_docs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -1262,8 +1258,7 @@ CREATE TEXT SEARCH DICTIONARY sql_boost_en AS
 
 
 statement ok
-CREATE INDEX sql_boost_idx ON sql_boost_docs USING inverted(id, body sql_boost_en)
-  WITH (compaction_interval = 0);
+CREATE INDEX sql_boost_idx ON sql_boost_docs USING inverted(id, body sql_boost_en);
 
 
 statement count 1
@@ -1366,7 +1361,7 @@ DROP TABLE sql_boost_docs;
 # ============================================================================
 
 statement ok
-CREATE TABLE prefix_docs (id INTEGER PRIMARY KEY, sku VARCHAR);
+CREATE TABLE prefix_docs (id INTEGER PRIMARY KEY, sku VARCHAR) WITH (compaction_interval = 0);
 
 
 # Default (identity) analyzer on `sku` -- exact-match semantics for
@@ -1374,8 +1369,7 @@ CREATE TABLE prefix_docs (id INTEGER PRIMARY KEY, sku VARCHAR);
 # verify row inclusion for this section; SQL-boost rank semantics
 # are covered separately below using the analyzed-body setup.
 statement ok
-CREATE INDEX prefix_idx ON prefix_docs USING inverted(id, sku)
-  WITH (compaction_interval = 0);
+CREATE INDEX prefix_idx ON prefix_docs USING inverted(id, sku);
 
 
 statement count 1
@@ -1472,12 +1466,11 @@ DROP TABLE prefix_docs;
 # ============================================================================
 
 statement ok
-CREATE TABLE idf_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE idf_docs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX idf_idx ON idf_docs USING inverted(id, body en)
-  WITH (compaction_interval = 0);
+CREATE INDEX idf_idx ON idf_docs USING inverted(id, body en);
 
 
 statement ok
@@ -1548,12 +1541,11 @@ DROP TABLE idf_docs;
 # idf() scores it all the same.
 
 statement ok
-CREATE TABLE idf_kw (id INTEGER PRIMARY KEY, tag VARCHAR);
+CREATE TABLE idf_kw (id INTEGER PRIMARY KEY, tag VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX idf_kw_idx ON idf_kw USING inverted(id, tag)
-  WITH (compaction_interval = 0);
+CREATE INDEX idf_kw_idx ON idf_kw USING inverted(id, tag);
 
 
 statement ok
@@ -1576,12 +1568,11 @@ DROP TABLE idf_kw;
 # idf() is also accepted as an index's optimize_top_k scorer.
 
 statement ok
-CREATE TABLE idf_tk (id INTEGER PRIMARY KEY, tag VARCHAR);
+CREATE TABLE idf_tk (id INTEGER PRIMARY KEY, tag VARCHAR) WITH (compaction_interval = 0, optimize_top_k = 'idf()');
 
 
 statement ok
-CREATE INDEX idf_tk_idx ON idf_tk USING inverted(id, tag)
-  WITH (compaction_interval = 0, optimize_top_k = 'idf()');
+CREATE INDEX idf_tk_idx ON idf_tk USING inverted(id, tag);
 
 
 statement ok
@@ -1608,12 +1599,11 @@ DROP TABLE idf_tk;
 # ============================================================================
 
 statement ok
-CREATE TABLE bm1_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE bm1_docs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX bm1_idx ON bm1_docs USING inverted(id, body en)
-  WITH (compaction_interval = 0);
+CREATE INDEX bm1_idx ON bm1_docs USING inverted(id, body en);
 
 
 statement ok
@@ -1676,12 +1666,11 @@ DROP TABLE bm1_docs;
 # default BM25 has no frequency to work with and scores 0.
 
 statement ok
-CREATE TABLE bm1_kw (id INTEGER PRIMARY KEY, tag VARCHAR);
+CREATE TABLE bm1_kw (id INTEGER PRIMARY KEY, tag VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX bm1_kw_idx ON bm1_kw USING inverted(id, tag)
-  WITH (compaction_interval = 0);
+CREATE INDEX bm1_kw_idx ON bm1_kw USING inverted(id, tag);
 
 
 statement ok
@@ -1724,12 +1713,11 @@ DROP TABLE bm1_kw;
 # ============================================================================
 
 statement ok
-CREATE TABLE score_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE score_docs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX score_idx ON score_docs USING inverted(id, body en)
-  WITH (compaction_interval = 0);
+CREATE INDEX score_idx ON score_docs USING inverted(id, body en);
 
 
 statement ok
@@ -2150,12 +2138,11 @@ id	score
 
 
 statement ok
-CREATE TABLE score_kw (id INTEGER PRIMARY KEY, tag VARCHAR);
+CREATE TABLE score_kw (id INTEGER PRIMARY KEY, tag VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX score_kw_idx ON score_kw USING inverted(id, tag)
-  WITH (compaction_interval = 0);
+CREATE INDEX score_kw_idx ON score_kw USING inverted(id, tag);
 
 
 statement ok
@@ -2902,7 +2889,7 @@ SET disabled_optimizers = '';
 
 
 statement ok
-CREATE TABLE score_vec(id INTEGER PRIMARY KEY, body VARCHAR, emb FLOAT[3]);
+CREATE TABLE score_vec(id INTEGER PRIMARY KEY, body VARCHAR, emb FLOAT[3]) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -2910,8 +2897,7 @@ INSERT INTO score_vec VALUES (1, 'quick brown fox', '[1,0,0]'), (2, 'lazy dog fo
 
 
 statement ok
-CREATE INDEX score_vec_idx ON score_vec USING inverted(id, body en, emb)
-  WITH (compaction_interval = 0);
+CREATE INDEX score_vec_idx ON score_vec USING inverted(id, body en, emb);
 
 
 query error ::score\(\.\.\.\) used on a predicate the inverted index could not claim
@@ -2944,12 +2930,11 @@ CREATE TEXT SEARCH DICTIONARY score_plain_dict AS split_text(case := 'lower');
 
 
 statement ok
-CREATE TABLE score_plain (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE score_plain (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX score_plain_idx ON score_plain USING inverted (id, body score_plain_dict)
-  WITH (compaction_interval = 0);
+CREATE INDEX score_plain_idx ON score_plain USING inverted (id, body score_plain_dict);
 
 
 statement ok

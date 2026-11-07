@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE mt_s (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 100)
+WITH (compaction_interval = 100)
 
 
 statement ok
@@ -10,21 +10,21 @@ CREATE INDEX mt_s_idx ON mt_s USING inverted(body)
 statement error
 CREATE INDEX mt_s_bad ON mt_s USING inverted(body) WITH (compaction_interval = 0)
 ----
-db error: ERROR: compaction_interval is a table option on a search-backed table
+db error: ERROR: compaction_interval is a table option
 HINT: Change it with ALTER TABLE ... SET (compaction_interval = ...).
 
 
 statement error
 CREATE INDEX mt_s_bad ON mt_s USING inverted(body) WITH (segment_memory_max = 1048576)
 ----
-db error: ERROR: segment_memory_max is a table option on a search-backed table
-HINT: Set it in CREATE TABLE ... WITH (storage = 'search', segment_memory_max = ...).
+db error: ERROR: segment_memory_max is a table option
+HINT: Set it in CREATE TABLE ... WITH (segment_memory_max = ...).
 
 
 statement error
 CREATE INDEX mt_s_bad ON mt_s USING inverted(body) WITH (segment_docs_max = 5)
 ----
-db error: ERROR: segment_docs_max does not apply to an index on a search-backed table
+db error: ERROR: segment_docs_max does not apply to an index on a table
 
 
 query
@@ -37,14 +37,14 @@ NULL
 statement error
 ALTER INDEX mt_s_idx SET (compaction_max_segments = 5)
 ----
-db error: ERROR: compaction_max_segments is a table option on a search-backed table
+db error: ERROR: compaction_max_segments is a table option
 HINT: Change it with ALTER TABLE ... SET (compaction_max_segments = ...).
 
 
 statement error
 ALTER INDEX mt_s_idx RESET (compaction_interval)
 ----
-db error: ERROR: compaction_interval is a table option on a search-backed table
+db error: ERROR: compaction_interval is a table option
 HINT: Change it with ALTER TABLE ... SET (compaction_interval = ...).
 
 
@@ -251,11 +251,11 @@ count	sum
 
 
 statement ok
-CREATE TABLE mt_t (id INT, body TEXT)
+CREATE TABLE mt_t (id INT, body TEXT) WITH (compaction_interval = 100)
 
 
 statement ok
-CREATE INDEX mt_t_idx ON mt_t USING inverted(body) WITH (compaction_interval = 100)
+CREATE INDEX mt_t_idx ON mt_t USING inverted(body)
 
 
 statement error

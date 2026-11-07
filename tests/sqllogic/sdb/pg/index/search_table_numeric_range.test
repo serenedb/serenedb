@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE snr (pk INTEGER PRIMARY KEY, num INTEGER, tag VARCHAR, emb FLOAT[2])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX snr_idx ON snr
@@ -290,7 +290,7 @@ count
 
 statement ok
 CREATE TABLE snr_f (pk INTEGER PRIMARY KEY, val DOUBLE, emb FLOAT[2])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX snr_f_idx ON snr_f
@@ -361,7 +361,7 @@ count
 
 statement ok
 CREATE TABLE snr_t (pk INTEGER PRIMARY KEY, d DATE, ts TIMESTAMP, w DOUBLE,
-  emb FLOAT[2]) WITH (storage = 'search', compaction_interval = 0);
+  emb FLOAT[2]) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX snr_t_idx ON snr_t
@@ -422,7 +422,7 @@ pk
 
 statement ok
 CREATE TABLE snr_n (pk INTEGER PRIMARY KEY, num INTEGER, emb FLOAT[2])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX snr_n_idx ON snr_n

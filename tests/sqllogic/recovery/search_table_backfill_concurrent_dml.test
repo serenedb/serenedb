@@ -32,7 +32,7 @@ RESET sdb_faults;
 # itself.
 statement ok
 CREATE TABLE bfc (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -146,7 +146,7 @@ DROP TABLE bfc;
 # runs on a table with a declared PRIMARY KEY.
 statement ok
 CREATE TABLE bfd (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -281,7 +281,7 @@ CREATE TEXT SEARCH DICTIONARY bfe_dict AS
 
 statement ok
 CREATE TABLE bfe (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok

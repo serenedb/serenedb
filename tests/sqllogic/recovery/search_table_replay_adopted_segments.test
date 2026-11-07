@@ -11,19 +11,19 @@ SET GLOBAL debug_skip_checkpoint_on_commit = true;
 
 statement ok
 CREATE TABLE ras1 (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras2 (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras3 (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE ras4 (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO ras1 VALUES (1, 'a'), (2, 'b');

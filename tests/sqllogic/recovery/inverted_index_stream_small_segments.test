@@ -18,12 +18,11 @@ CREATE TEXT SEARCH DICTIONARY sc_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE sc (id INT PRIMARY KEY, body TEXT, g INT, tag TEXT)
+CREATE TABLE sc (id INT PRIMARY KEY, body TEXT, g INT, tag TEXT) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX sc_idx ON sc USING inverted (id, body sc_en) INCLUDE (g, tag)
-  WITH (compaction_interval = 0)
 
 
 # Four refreshes of unequal size seal four segments of unequal size.

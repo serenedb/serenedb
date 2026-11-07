@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tbl (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 10);
+  WITH (compaction_interval = 10);
 
 statement ok
 INSERT INTO tbl SELECT i, 'a' || i FROM range(1, 1001) t(i);

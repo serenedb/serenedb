@@ -1,7 +1,7 @@
 control substitution on
 
 statement ok
-CREATE TABLE sc_nn (id INT, b TEXT NOT NULL) WITH (storage = 'search');
+CREATE TABLE sc_nn (id INT, b TEXT NOT NULL);
 
 
 statement ok
@@ -63,7 +63,7 @@ id
 
 
 statement ok
-CREATE TABLE sc_ck (a INT, CONSTRAINT sc_ck_pos CHECK (a > 0)) WITH (storage = 'search');
+CREATE TABLE sc_ck (a INT, CONSTRAINT sc_ck_pos CHECK (a > 0));
 
 
 statement ok
@@ -96,8 +96,7 @@ NULL
 
 
 statement ok
-CREATE TABLE sc_alter (id INT PRIMARY KEY, b TEXT, n INT)
-WITH (storage = 'search');
+CREATE TABLE sc_alter (id INT PRIMARY KEY, b TEXT, n INT);
 
 
 statement ok
@@ -183,8 +182,7 @@ db error: ERROR: column "id" is in a primary key
 
 
 statement ok
-CREATE TABLE sc_gen (n INT, g INT GENERATED ALWAYS AS (n + 1) VIRTUAL)
-WITH (storage = 'search');
+CREATE TABLE sc_gen (n INT, g INT GENERATED ALWAYS AS (n + 1) VIRTUAL);
 
 
 statement error
@@ -212,7 +210,7 @@ INSERT INTO sc_alter (id, b, n) VALUES (6, 'w', 6);
 statement error
 ALTER TABLE sc_alter ALTER COLUMN n SET NOT NULL;
 ----
-db error: ERROR: ALTER TABLE on a search-backed table cannot run in a transaction that has already written to "sc_alter"
+db error: ERROR: ALTER TABLE cannot run in a transaction that has already written to "sc_alter"
 
 
 statement ok
@@ -252,7 +250,7 @@ id	b	n
 
 
 statement ok
-CREATE TABLE sc_rle (id INT, n INT) WITH (storage = 'search');
+CREATE TABLE sc_rle (id INT, n INT);
 
 
 statement ok
@@ -266,7 +264,7 @@ db error: ERROR: NOT NULL constraint failed: sc_rle.n
 
 
 statement ok
-CREATE TABLE sc_race (id INT, b TEXT) WITH (storage = 'search');
+CREATE TABLE sc_race (id INT, b TEXT);
 
 
 connection s1

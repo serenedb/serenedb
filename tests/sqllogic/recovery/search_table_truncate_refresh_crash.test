@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE trc (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO trc VALUES (1, 'a'), (2, 'b');

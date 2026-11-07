@@ -13,7 +13,7 @@ CREATE TEXT SEARCH DICTIONARY norm_en AS
 
 statement ok
 CREATE TABLE nb (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX nb_idx ON nb USING inverted (body norm_en);

@@ -8,7 +8,7 @@ SET GLOBAL checkpoint_threshold = '1MB';
 
 statement ok
 CREATE TABLE wbuf(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 RESET sdb_faults;
@@ -43,7 +43,7 @@ n	lo	hi	d
 
 statement ok
 CREATE TABLE wmulti(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 BEGIN;
@@ -92,7 +92,7 @@ DROP TABLE wmulti;
 
 statement ok
 CREATE TABLE wtrunc(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wtrunc SELECT i, 'seed' || i || repeat('x', 200) FROM range(3000) t(i);
@@ -140,7 +140,7 @@ DROP TABLE wtrunc;
 
 statement ok
 CREATE TABLE wupd(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wupd SELECT i, 'seed' || i || repeat('x', 200) FROM range(8000) t(i);
@@ -172,7 +172,7 @@ DROP TABLE wupd;
 # The UPDATE crosses, with the INSERT's rows buffered ahead of it.
 statement ok
 CREATE TABLE wmixa(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wmixa SELECT i, 'seed' || i || repeat('x', 200) FROM range(6000) t(i);
@@ -206,7 +206,7 @@ DROP TABLE wmixa;
 # The INSERT crosses, with the UPDATE's remove/replace pair buffered ahead.
 statement ok
 CREATE TABLE wmixb(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wmixb SELECT i, 'seed' || i || repeat('x', 200) FROM range(2000) t(i);

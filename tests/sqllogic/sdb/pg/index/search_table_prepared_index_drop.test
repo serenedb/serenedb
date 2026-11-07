@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE spd (id BIGINT, body TEXT) WITH (storage = 'search');
+CREATE TABLE spd (id BIGINT, body TEXT);
 
 statement ok
 CREATE TABLE spd_other (a INTEGER);

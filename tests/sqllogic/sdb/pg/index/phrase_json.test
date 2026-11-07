@@ -440,7 +440,7 @@ id
 
 statement ok
 CREATE TABLE pj_search (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX pj_search_idx ON pj_search USING inverted (

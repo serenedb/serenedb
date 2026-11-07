@@ -12,7 +12,7 @@ CREATE TEXT SEARCH DICTIONARY lk_dict AS
 
 
 statement ok
-CREATE TABLE lk (id INTEGER, body VARCHAR, tags VARCHAR[], doc JSON)
+CREATE TABLE lk (id INTEGER, body VARCHAR, tags VARCHAR[], doc JSON) WITH (compaction_interval = 0)
 
 
 statement ok
@@ -33,7 +33,6 @@ CREATE INDEX lk_idx ON lk USING inverted (
   (list_sort(tags)) included(),
   (json_keys(doc)) included(),
   (list_aggr(tags, 'string_agg', ',')) included())
-  WITH (compaction_interval = 0)
 
 
 statement ok
@@ -145,7 +144,7 @@ db error: ERROR: Index keys cannot contain expressions with side effects. Functi
 
 statement ok
 CREATE TABLE ls (id INTEGER, body VARCHAR, tags VARCHAR[], doc JSON)
-  WITH (storage = 'search', compaction_interval = 0)
+  WITH (compaction_interval = 0)
 
 
 statement ok

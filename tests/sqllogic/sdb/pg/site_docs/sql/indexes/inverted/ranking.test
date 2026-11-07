@@ -6,7 +6,7 @@ CREATE TABLE movies (
     title VARCHAR,
     description VARCHAR,
     genre VARCHAR
-);
+) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
 INSERT INTO movies VALUES
@@ -22,8 +22,7 @@ CREATE TEXT SEARCH DICTIONARY ranking_dict AS
 
 statement ok
 CREATE INDEX movies_idx ON movies
-    USING inverted (id, title ranking_dict, description ranking_dict, genre)
-    WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+    USING inverted (id, title ranking_dict, description ranking_dict, genre);
 
 # DOCS_TEST_BODY
 

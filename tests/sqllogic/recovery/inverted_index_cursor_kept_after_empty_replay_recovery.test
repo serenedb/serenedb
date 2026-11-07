@@ -1,11 +1,11 @@
 control substitution on
 
 statement ok
-CREATE TABLE vjling_ward (id INTEGER, b TEXT);
+CREATE TABLE vjling_ward (id INTEGER, b TEXT) WITH (compaction_interval = 100);
 
 
 statement ok
-CREATE INDEX vjling_ward_b ON vjling_ward USING inverted (b) WITH (compaction_interval = 100);
+CREATE INDEX vjling_ward_b ON vjling_ward USING inverted (b);
 
 
 statement ok

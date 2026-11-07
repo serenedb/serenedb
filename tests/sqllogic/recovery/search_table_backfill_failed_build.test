@@ -11,7 +11,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bff (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok

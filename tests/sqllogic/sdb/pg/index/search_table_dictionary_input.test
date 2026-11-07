@@ -20,14 +20,14 @@ COPY stdi_src TO '${__TEST_DIR__}/stdi.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 
 
 statement ok
 CREATE TABLE stdi_dict (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX stdi_dict_idx ON stdi_dict USING inverted (i, body stdi_en, tag);
 
 statement ok
 CREATE TABLE stdi_flat (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX stdi_flat_idx ON stdi_flat USING inverted (i, body stdi_en, tag);
@@ -86,14 +86,14 @@ dict_rows	flat_rows
 
 statement ok
 CREATE TABLE stdi_sparse (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX stdi_sparse_idx ON stdi_sparse USING inverted (i, body stdi_en, tag);
 
 statement ok
 CREATE TABLE stdi_sparse_flat (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX stdi_sparse_flat_idx ON stdi_sparse_flat USING inverted (i, body stdi_en, tag);
@@ -132,14 +132,14 @@ sparse_rows	sparse_tags	flat_tags
 
 statement ok
 CREATE TABLE stdi_const (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX stdi_const_idx ON stdi_const USING inverted (i, body stdi_en, tag);
 
 statement ok
 CREATE TABLE stdi_const_flat (i BIGINT PRIMARY KEY, body TEXT, tag TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX stdi_const_flat_idx ON stdi_const_flat USING inverted (i, body stdi_en, tag);

@@ -583,25 +583,6 @@ std::shared_ptr<const irs::DocRemoval> Table::Resolve(
   return resolved;
 }
 
-std::shared_ptr<const irs::DocRemoval> Table::VisibleRemoval(
-  Tick snapshot) const {
-  const auto state = State();
-  auto removal = std::make_shared<irs::DocRemoval>();
-  for (const auto& unit : state->units) {
-    const auto visible = VisibleEnd(*unit, snapshot);
-    if (visible == 0) {
-      continue;
-    }
-    irs::DocumentMaskBuilder docs;
-    docs.AddRange(irs::doc_limits::min(),
-                  static_cast<irs::doc_id_t>(irs::doc_limits::min() + visible));
-    removal->groups.push_back(
-      {.segment = unit->id,
-       .docs = std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical)});
-  }
-  return removal;
-}
-
 void ThrowConcurrentUpdate() {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),

@@ -51,7 +51,7 @@ statement ok
 CREATE INDEX gdm_p_idx ON gdm_p USING inverted (id, geo gdm_geopoint)
 
 statement ok
-CREATE TABLE gdm_s (id INTEGER, geo JSON) WITH (storage = 'search')
+CREATE TABLE gdm_s (id INTEGER, geo JSON)
 
 statement ok
 CREATE INDEX gdm_s_idx ON gdm_s USING inverted (id, geo gdm_shape)

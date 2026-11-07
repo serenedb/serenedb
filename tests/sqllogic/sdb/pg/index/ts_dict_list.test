@@ -14,12 +14,11 @@ CREATE TEXT SEARCH DICTIONARY ldl_kw AS keyword() WITH (frequency)
 
 
 statement ok
-CREATE TABLE ldl(id INTEGER PRIMARY KEY, tags VARCHAR[], pair VARCHAR[2], plain VARCHAR)
+CREATE TABLE ldl(id INTEGER PRIMARY KEY, tags VARCHAR[], pair VARCHAR[2], plain VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX ldl_idx ON ldl USING inverted(id, tags ldl_kw, pair, plain)
-    WITH (compaction_interval = 0)
 
 
 statement ok

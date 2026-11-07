@@ -3,12 +3,11 @@ hash-threshold 100
 statement ok
 CREATE TABLE ef (pk INTEGER PRIMARY KEY, txt VARCHAR,
   meta STRUCT(cat INTEGER, name VARCHAR, inner_s STRUCT(k INTEGER)),
-  v VARIANT)
+  v VARIANT) WITH (row_group_size = 2048)
 
 
 statement ok
 CREATE INDEX ef_idx ON ef USING inverted(pk, txt) INCLUDE (meta, v)
-  WITH (row_group_size = 2048)
 
 
 statement ok

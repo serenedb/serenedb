@@ -1,27 +1,26 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE gc_active (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE gc_active (a INTEGER, b TEXT);
 
 statement ok
 RESET sdb_faults;
 
 # Idle table: written + published once, then never touched again.
 statement ok
-CREATE TABLE gc_idle (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE gc_idle (a INTEGER, b TEXT);
 
 statement ok
 INSERT INTO gc_idle VALUES (100, 'idle');
 
 statement ok
-CREATE TABLE gc_fresh (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE gc_fresh (a INTEGER, b TEXT);
 
 # Table with explicit (non-default) maintenance intervals: recovery must read
 # the persisted intervals back off the deserialized catalog Table (no context).
 statement ok
 CREATE TABLE gc_tuned (a INTEGER, b TEXT)
-  WITH (storage = 'search',
-        compaction_interval = 6000);
+  WITH (compaction_interval = 6000);
 
 statement ok
 INSERT INTO gc_tuned VALUES (42, 'tuned');

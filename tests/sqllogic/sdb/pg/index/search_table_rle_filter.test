@@ -7,7 +7,7 @@
 
 statement ok
 CREATE TABLE srlef (pk BIGINT PRIMARY KEY, r BIGINT, n BIGINT, s TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 
 statement ok

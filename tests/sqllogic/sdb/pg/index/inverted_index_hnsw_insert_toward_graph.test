@@ -1,18 +1,16 @@
 statement ok
-CREATE TABLE ht_sq8 (id INTEGER PRIMARY KEY, extra INTEGER, emb FLOAT[8]);
+CREATE TABLE ht_sq8 (id INTEGER PRIMARY KEY, extra INTEGER, emb FLOAT[8]) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ht_sq8_idx ON ht_sq8
-  USING inverted(id, emb hnsw (metric = 'l2', quant = 'sq8'))
-  WITH (compaction_interval = 0);
+  USING inverted(id, emb hnsw (metric = 'l2', quant = 'sq8'));
 
 statement ok
-CREATE TABLE ht_none (id INTEGER PRIMARY KEY, extra INTEGER, emb FLOAT[8]);
+CREATE TABLE ht_none (id INTEGER PRIMARY KEY, extra INTEGER, emb FLOAT[8]) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ht_none_idx ON ht_none
-  USING inverted(id, emb hnsw (metric = 'l2', quant = 'none'))
-  WITH (compaction_interval = 0);
+  USING inverted(id, emb hnsw (metric = 'l2', quant = 'none'));
 
 statement ok
 INSERT INTO ht_sq8 SELECT i, i % 10, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]

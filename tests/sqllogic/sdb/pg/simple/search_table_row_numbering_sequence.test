@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE strn (id INT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE strn (id INT) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -71,7 +71,7 @@ CREATE SEQUENCE strn_other.strn_far_pk_seq;
 
 
 statement ok
-CREATE TABLE strn_far (id INT, n BIGINT DEFAULT nextval('strn_other.strn_far_pk_seq')) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE strn_far (id INT, n BIGINT DEFAULT nextval('strn_other.strn_far_pk_seq')) WITH (compaction_interval = 0);
 
 
 statement ok

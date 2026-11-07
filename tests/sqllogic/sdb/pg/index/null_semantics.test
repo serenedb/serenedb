@@ -21,11 +21,10 @@ CREATE TEXT SEARCH DICTIONARY ns_tx AS
 
 statement ok
 CREATE TABLE ns(id INTEGER PRIMARY KEY, scope VARCHAR, body VARCHAR,
-                pad VARCHAR NOT NULL)
+                pad VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ns_idx ON ns USING inverted(scope ns_kw, body ns_tx, pad ns_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ns VALUES
@@ -535,11 +534,10 @@ QUERY PLAN
 # ---- Negated strict disjunction over an indexed EXPRESSION collects the
 # expression's own null marker (raw itself is not indexed; lower(raw) is).
 statement ok
-CREATE TABLE nse(id INTEGER PRIMARY KEY, raw VARCHAR)
+CREATE TABLE nse(id INTEGER PRIMARY KEY, raw VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX nse_idx ON nse USING inverted(id, (lower(raw)) ns_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO nse VALUES (1, 'A'), (2, NULL), (3, 'C')
@@ -585,11 +583,10 @@ QUERY PLAN
 # seed-12345 distribution; the drop needs this doc layout.
 statement ok
 CREATE TABLE nsx(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
-                 pad VARCHAR NOT NULL)
+                 pad VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX nsx_idx ON nsx USING inverted(id, kw ns_kw, num, pad ns_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO nsx VALUES
@@ -667,11 +664,10 @@ id
 # in BitsetDocIterator::advance). Corpus is the fuzz seed-7 layout.
 statement ok
 CREATE TABLE nsx7(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
-                  pad VARCHAR NOT NULL)
+                  pad VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX nsx7_idx ON nsx7 USING inverted(id, kw ns_kw, num, pad ns_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO nsx7 VALUES

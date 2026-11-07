@@ -4,17 +4,15 @@ CREATE TEXT SEARCH DICTIONARY tto_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE tto (id INT PRIMARY KEY, body TEXT)
+CREATE TABLE tto (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')
 
 
 statement ok
 CREATE INDEX tto_idx ON tto USING inverted (id, body tto_en)
-  WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX tto_wand ON tto USING inverted (id, body tto_en)
-  WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')
 
 
 statement ok

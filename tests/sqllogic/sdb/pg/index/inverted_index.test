@@ -1220,7 +1220,7 @@ db error: ERROR: Column 'emb' is listed more than once with a vector opclass; th
 
 
 statement ok
-CREATE TABLE dup_ann_search (id INTEGER PRIMARY KEY, emb FLOAT[3]) WITH (storage = 'search');
+CREATE TABLE dup_ann_search (id INTEGER PRIMARY KEY, emb FLOAT[3]);
 
 
 statement error

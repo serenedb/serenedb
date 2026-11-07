@@ -21,7 +21,7 @@ CREATE TEXT SEARCH DICTIONARY atx AS
 
 statement ok
 CREATE TABLE abase(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL,
-                   svc VARCHAR NOT NULL, body VARCHAR NOT NULL)
+                   svc VARCHAR NOT NULL, body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO abase VALUES
@@ -33,7 +33,7 @@ INSERT INTO abase VALUES
 
 statement ok
 CREATE INDEX abase_idx ON abase USING inverted(brand akw, body atx)
-    INCLUDE (svc) WITH (compaction_interval = 0)
+    INCLUDE (svc)
 
 # ===========================================================================
 # Covered-column residual: scalar aggregates decline to a document scan

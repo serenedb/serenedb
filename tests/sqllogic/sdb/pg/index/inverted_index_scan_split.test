@@ -10,17 +10,15 @@ CREATE TEXT SEARCH DICTIONARY sp_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE sp (id INT PRIMARY KEY, body TEXT, g INT)
+CREATE TABLE sp (id INT PRIMARY KEY, body TEXT, g INT) WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')
 
 
 statement ok
 CREATE INDEX sp_idx ON sp USING inverted (id, body sp_en) INCLUDE (g)
-  WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX sp_wand ON sp USING inverted (id, body sp_en)
-  WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')
 
 
 statement ok

@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE pq (id BIGINT, grp INT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pq (id BIGINT, grp INT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 SET threads = 1;
@@ -47,7 +47,7 @@ n	gone
 9601	0
 
 statement ok
-CREATE TABLE pq2 (id BIGINT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pq2 (id BIGINT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pq2 SELECT i FROM generate_series(0, 2999) g(i);

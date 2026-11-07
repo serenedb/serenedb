@@ -46,8 +46,7 @@ statement ok
 CREATE MACRO dup0(a) AS a || a;
 
 statement ok
-CREATE TABLE docs (id BIGINT, s VARCHAR, v VARCHAR[], l STRUCT(a VARCHAR, b VARCHAR, t VARCHAR[])[])
-  WITH (storage = 'search');
+CREATE TABLE docs (id BIGINT, s VARCHAR, v VARCHAR[], l STRUCT(a VARCHAR, b VARCHAR, t VARCHAR[])[]);
 
 statement ok
 CREATE INDEX docs_idx ON docs USING inverted (id,
@@ -838,7 +837,7 @@ QUERY PLAN
 # A shared argument that the optimizer rewrites, a || chain or a cast of a
 # constant, matches too, also where the body uses it inside its own lambda.
 statement ok
-CREATE TABLE rewritten (id BIGINT, s VARCHAR) WITH (storage = 'search');
+CREATE TABLE rewritten (id BIGINT, s VARCHAR);
 
 statement ok
 CREATE INDEX rewritten_idx ON rewritten USING inverted (id,
@@ -896,7 +895,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 statement ok
-CREATE TABLE checked (id BIGINT, s VARCHAR) WITH (storage = 'search');
+CREATE TABLE checked (id BIGINT, s VARCHAR);
 
 statement ok
 CREATE MACRO narrowed(x) AS CASE WHEN len(x) > 1000 THEN CAST(300 AS TINYINT)::VARCHAR ELSE x END;

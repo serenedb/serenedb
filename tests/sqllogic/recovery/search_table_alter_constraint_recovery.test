@@ -2,7 +2,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE sacr (id INT, b TEXT, n INT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok

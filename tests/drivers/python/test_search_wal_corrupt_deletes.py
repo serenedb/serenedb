@@ -64,7 +64,7 @@ def test_corrupt_delete_refuses_replay(
     try:
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
-            conn.execute("CREATE TABLE ranges (id BIGINT) WITH (storage = 'search')")
+            conn.execute("CREATE TABLE ranges (id BIGINT)")
             conn.execute("CREATE TABLE plain (id BIGINT)")
             conn.execute("INSERT INTO ranges SELECT i FROM range(0, 1000) r(i)")
             conn.execute("CHECKPOINT")

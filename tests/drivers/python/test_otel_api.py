@@ -97,8 +97,7 @@ def test_protobuf_export_accepts_conformance_fixture(conn, signal, fixture):
     if not wire.exists():
         pytest.skip(f"{wire.name} not generated; run scripts/otel/fixtures.py")
     status, payload = _post(
-        conn, f"/v1/{signal}", wire.read_bytes(), content_type="application/x-protobuf"
-    )
+        conn, f"/v1/{signal}", wire.read_bytes(), content_type="application/x-protobuf")
     assert status == 200, payload
     # A full-success Export<Signal>ServiceResponse is an empty message.
     assert payload == ""
@@ -193,7 +192,7 @@ def test_mistyped_schema_is_rejected(conn):
         pg.execute("DROP TABLE otel_logs")
         pg.execute(
             'CREATE TABLE otel_logs ("timestamp" VARCHAR NOT NULL) '
-            "WITH (storage = 'search')"
+
         )
         try:
             status, payload = _post(conn, "/v1/logs", body)

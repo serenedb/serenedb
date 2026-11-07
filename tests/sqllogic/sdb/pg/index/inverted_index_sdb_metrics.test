@@ -1,15 +1,14 @@
 control substitution on
 
 statement ok
-CREATE TABLE t(r text);
+CREATE TABLE t(r text) WITH (compaction_interval = 0);
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY test_english AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false);
 
 statement ok
-CREATE INDEX index_t ON t USING inverted(r test_english)
-WITH (compaction_interval = 0);
+CREATE INDEX index_t ON t USING inverted(r test_english);
 
 statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c');

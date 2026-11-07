@@ -12,11 +12,10 @@ CREATE TEXT SEARCH DICTIONARY wd_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE wdk(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, tag VARCHAR)
+CREATE TABLE wdk(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, tag VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX wdk_idx ON wdk USING inverted(cat wd_kw, tag wd_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO wdk VALUES
@@ -417,11 +416,10 @@ c	t
 
 
 statement ok
-CREATE TABLE wdt(id INTEGER PRIMARY KEY, body VARCHAR)
+CREATE TABLE wdt(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX wdt_idx ON wdt USING inverted(body wd_tx)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO wdt VALUES

@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE sdf (a INT PRIMARY KEY, b TEXT) WITH (storage = 'search', compaction_interval = 0)
+CREATE TABLE sdf (a INT PRIMARY KEY, b TEXT) WITH (compaction_interval = 0)
 
 
 statement ok

@@ -5,11 +5,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY beast_collate AS collate_tokens('en_US.UTF-8')
 
 statement ok
-CREATE TABLE beast_t (id INTEGER PRIMARY KEY, w VARCHAR, c VARCHAR, k VARCHAR)
+CREATE TABLE beast_t (id INTEGER PRIMARY KEY, w VARCHAR, c VARCHAR, k VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX beast_idx ON beast_t USING inverted (id, w beast_wild, c beast_collate, k)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO beast_t VALUES (6, '67', 'six', 'mrbeast'), (7, '67', 'seven', 'feastables')

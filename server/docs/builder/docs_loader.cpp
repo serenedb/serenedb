@@ -87,7 +87,7 @@ CREATE TABLE sdb_docs_build.docs (
   title TEXT NOT NULL,
   breadcrumb TEXT NOT NULL,
   content TEXT NOT NULL USING COMPRESSION zstd
-) WITH (storage = 'search', compaction_interval = 0);
+) WITH (compaction_interval = 0);
 
 CREATE INDEX docs_fts ON sdb_docs_build.docs USING inverted (
   title sdb_docs_build.tokenizer,
@@ -106,7 +106,7 @@ CREATE TABLE sdb_docs_build.objects (
   category TEXT,
   breadcrumb TEXT,
   names TEXT[]
-) WITH (storage = 'search', compaction_interval = 0);
+) WITH (compaction_interval = 0);
 
 CREATE INDEX objects_names ON sdb_docs_build.objects USING inverted (
   names, kind);
@@ -422,8 +422,9 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
     store.CoolAll();
     const auto path = store.Path();
     const auto add = [&](std::string_view file) {
-      image.push_back({.name = absl::StrCat(table_name, "/", file),
-                       .bytes = utils::file_utils::Slurp((path / file).string())});
+      image.push_back(
+        {.name = absl::StrCat(table_name, "/", file),
+         .bytes = utils::file_utils::Slurp((path / file).string())});
     };
     for (const auto& unit : store.GetTable().State()->units) {
       if (unit->replaced_at != 0) {

@@ -1,18 +1,17 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE postgres.public.sfx_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE postgres.public.sfx_docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX sfx_docs_idx ON postgres.public.sfx_docs USING inverted(id, body)
-  WITH (compaction_interval = 0);
+CREATE INDEX sfx_docs_idx ON postgres.public.sfx_docs USING inverted(id, body);
 
 statement ok
 INSERT INTO postgres.public.sfx_docs VALUES (1, 'alpha'), (2, 'beta');
 
 statement ok
 CREATE TABLE postgres.public.sfx_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO postgres.public.sfx_notes VALUES (1, 'gamma');

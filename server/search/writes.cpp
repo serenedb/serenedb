@@ -505,9 +505,8 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
 void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
                                const catalog::SearchTableEntry& table,
                                Tick snapshot) {
-  const bool search = table.Engine() == catalog::TableEngine::Search;
   const auto conflict = [&](bool writing) {
-    if (writing && search) {
+    if (writing) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
         ERR_MSG("Attempting to truncate table ", table.name.GetIdentifierName(),
@@ -521,14 +520,7 @@ void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
   };
   auto& w = EnsureStoreWrites(store);
   absl::MutexLock lock{&w.mutex};
-  if (!search) {
-    if (!store->SoleWriter()) {
-      conflict(true);
-    }
-    if (store->GetTable().LastAppend() > snapshot) {
-      conflict(false);
-    }
-  } else if (!w.truncate_claim) {
+  if (!w.truncate_claim) {
     w.truncate_claim = store->ClaimTruncate();
     if (!w.truncate_claim) {
       conflict(true);
@@ -543,17 +535,7 @@ void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
   w.own_maps.clear();
   w.checked_segments = 0;
   ++w.rows_generation;
-  if (search) {
-    w.changes.AppendTruncate(false);
-    return;
-  }
-  w.changes.ClearBufferedRows();
-  w.changes.removals.clear();
-  w.changes.segments.clear();
-  if (auto removal = store->GetTable().VisibleRemoval(snapshot);
-      !removal->groups.empty()) {
-    w.changes.removals.push_back(std::move(removal));
-  }
+  w.changes.AppendTruncate(false);
 }
 
 void Writes::ClaimExclusive(const std::shared_ptr<Store>& store,

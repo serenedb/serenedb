@@ -5,12 +5,11 @@ CREATE DATABASE ckpt_cooling;
 
 
 statement ok
-CREATE TABLE ckpt_cooling.public.docs (id INTEGER, body TEXT);
+CREATE TABLE ckpt_cooling.public.docs (id INTEGER, body TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX docs_idx ON ckpt_cooling.public.docs USING inverted (body)
-  WITH (compaction_interval = 0);
+CREATE INDEX docs_idx ON ckpt_cooling.public.docs USING inverted (body);
 
 
 statement ok

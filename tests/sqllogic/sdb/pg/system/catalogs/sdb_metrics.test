@@ -76,7 +76,7 @@ t
 
 
 statement ok
-CREATE TABLE sven_storm_hammer (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE sven_storm_hammer (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
 
 statement ok

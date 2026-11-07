@@ -17,7 +17,7 @@ INSERT INTO ows.ser(note) VALUES ('a'), ('b');
 
 # A search table owns no sequence: its rowid is the row's position.
 statement ok
-CREATE TABLE ows.st(a INTEGER, txt TEXT) WITH (storage = 'search');
+CREATE TABLE ows.st(a INTEGER, txt TEXT);
 
 statement ok
 INSERT INTO ows.st VALUES (1, 'one');

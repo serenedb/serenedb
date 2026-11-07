@@ -20,11 +20,10 @@ CREATE TEXT SEARCH DICTIONARY tp_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE tp(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+CREATE TABLE tp(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX tp_idx ON tp USING inverted(cat tp_kw, body tp_tx)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO tp VALUES

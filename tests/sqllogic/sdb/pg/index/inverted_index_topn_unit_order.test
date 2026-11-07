@@ -15,13 +15,12 @@ CREATE TEXT SEARCH DICTIONARY uo_en AS
 
 
 statement ok
-CREATE TABLE uo (id BIGINT PRIMARY KEY, body VARCHAR, c BIGINT);
+CREATE TABLE uo (id BIGINT PRIMARY KEY, body VARCHAR, c BIGINT) WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE INDEX uo_idx ON uo USING inverted(id, body uo_en)
-  INCLUDE (c)
-  WITH (compaction_interval = 0);
+  INCLUDE (c);
 
 
 # Segment 1: c ascends 0..130000 (best DESC values in the tail unit); two

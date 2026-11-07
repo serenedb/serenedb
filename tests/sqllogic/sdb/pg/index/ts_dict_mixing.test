@@ -8,11 +8,10 @@ CREATE TEXT SEARCH DICTIONARY mix_kw AS keyword() WITH (frequency)
 
 statement ok
 CREATE TABLE mixt(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR,
-                  num INTEGER)
+                  num INTEGER) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX mixt_idx ON mixt USING inverted(cat mix_kw, opt mix_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO mixt VALUES

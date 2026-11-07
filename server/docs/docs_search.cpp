@@ -306,8 +306,9 @@ class EmbeddedIndex {
         irs::SegmentReaderImpl::Open(dir, segment.meta, options));
       meta.index_meta.segments.push_back(std::move(segment));
     }
-    return irs::DirectoryReader{std::make_shared<const irs::DirectoryReaderImpl>(
-      dir, options, std::move(meta), std::move(readers))};
+    return irs::DirectoryReader{
+      std::make_shared<const irs::DirectoryReaderImpl>(
+        dir, options, std::move(meta), std::move(readers))};
   }
 
   SpanDirectory _dir;

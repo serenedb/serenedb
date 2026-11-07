@@ -10,7 +10,7 @@ CREATE TEXT SEARCH DICTIONARY dic_sti AS
 
 statement ok
 CREATE TABLE sti (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO sti VALUES (1, 'fox before');

@@ -1,12 +1,11 @@
 control substitution on
 
 statement ok
-CREATE TABLE rows_record (id BIGINT, msg TEXT);
+CREATE TABLE rows_record (id BIGINT, msg TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX rows_record_idx ON rows_record USING inverted (id, msg)
-  WITH (compaction_interval = 0);
+CREATE INDEX rows_record_idx ON rows_record USING inverted (id, msg);
 
 
 statement ok

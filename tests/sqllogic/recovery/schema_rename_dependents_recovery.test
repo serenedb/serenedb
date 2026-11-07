@@ -21,7 +21,7 @@ CREATE INDEX srd_docs_body ON srd.docs USING inverted (body);
 
 
 statement ok
-CREATE TABLE srd.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE srd.st (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -29,7 +29,7 @@ CREATE INDEX srd_st_body ON srd.st USING inverted (body);
 
 
 statement ok
-CREATE TABLE srd.st_numbered (body TEXT) WITH (storage = 'search');
+CREATE TABLE srd.st_numbered (body TEXT);
 
 
 statement ok

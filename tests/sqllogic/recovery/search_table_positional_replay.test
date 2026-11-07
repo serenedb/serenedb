@@ -4,7 +4,7 @@ statement ok
 RESET sdb_faults;
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE rp (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE rp (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE rp_ref (id BIGINT, v TEXT);

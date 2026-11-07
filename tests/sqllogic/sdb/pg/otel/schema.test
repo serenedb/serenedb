@@ -45,19 +45,19 @@ statement ok
 ALTER TABLE otel_logs_renamed RENAME TO otel_logs;
 
 statement error
-CREATE TABLE otel_probe_bad (a VARCHAR) WITH (storage = 'search', row_group_size = 1024);
+CREATE TABLE otel_probe_bad (a VARCHAR) WITH (row_group_size = 1024);
 ----
 db error: ERROR: invalid value for parameter "row_group_size": "1024" (must be a positive multiple of the vector size 2048)
 
 
 statement ok
-CREATE TABLE otel_probe (a VARCHAR) WITH (storage = 'search');
+CREATE TABLE otel_probe (a VARCHAR);
 
 statement error
 CREATE INDEX otel_probe_idx ON otel_probe USING inverted (a) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ----
-db error: ERROR: optimize_top_k is a table option on a search-backed table
-HINT: Set it in CREATE TABLE ... WITH (storage = 'search', optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
 
 
 statement ok
@@ -797,7 +797,7 @@ statement ok
 INSERT INTO otel_logs ("timestamp", body) VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'x');
 
 statement ok
-CREATE TABLE IF NOT EXISTS otel_logs ("timestamp" TIMESTAMP_NS NOT NULL) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS otel_logs ("timestamp" TIMESTAMP_NS NOT NULL);
 
 statement ok
 CREATE INDEX IF NOT EXISTS otel_logs_idx ON otel_logs USING inverted ("timestamp", body otel_body_dict);

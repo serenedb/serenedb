@@ -91,7 +91,7 @@ n	mismatched
 2852	0
 
 statement ok
-CREATE TABLE sif_null_block (id INTEGER PRIMARY KEY, s STRUCT(a INTEGER, b VARCHAR))
+CREATE TABLE sif_null_block (id INTEGER PRIMARY KEY, s STRUCT(a INTEGER, b VARCHAR)) WITH (row_group_size = 2048)
 
 
 statement ok
@@ -101,7 +101,7 @@ FROM range(0, 6000) t(g)
 
 
 statement ok
-CREATE INDEX sif_null_block_idx ON sif_null_block USING inverted (id) INCLUDE (s) WITH (row_group_size = 2048)
+CREATE INDEX sif_null_block_idx ON sif_null_block USING inverted (id) INCLUDE (s)
 
 
 query

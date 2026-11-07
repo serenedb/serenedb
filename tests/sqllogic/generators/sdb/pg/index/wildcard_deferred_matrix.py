@@ -99,19 +99,16 @@ t.insert("wdm", (f"({i}, {i % 50}, '{lit(values[i])}', {tags(i)})"
 for name in ("wdm_kw3", "wdm_kw2", "wdm_kw4", "wdm_kw3_pos"):
     t.index(f"{name}_idx", "wdm", f"id, msg {name}", include="x")
 t.index("wdm_tags_idx", "wdm", "id, tags wdm_kw3", include="x")
-t.refresh("wdm")
 
 t.table("wdm_w", "id INTEGER PRIMARY KEY, x INTEGER, msg VARCHAR")
 t.insert("wdm_w", (f"({i}, {i % 50}, '{lit(sentences[i])}')"
                    for i in range(ROWS)))
 for name in ("wdm_words", "wdm_words_pos"):
     t.index(f"{name}_idx", "wdm_w", f"id, msg {name}", include="x")
-t.refresh("wdm_w")
 
-t.table("wdm_s", "id INTEGER, x INTEGER, msg VARCHAR", search=True)
+t.table("wdm_s", "id INTEGER, x INTEGER, msg VARCHAR")
 t.index("wdm_s_idx", "wdm_s", "id, msg wdm_kw3")
 t.statement("INSERT INTO wdm_s SELECT id, x, msg FROM wdm")
-t.refresh("wdm_s")
 
 CONTEXTS = [
     ("", ""),

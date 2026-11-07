@@ -4,11 +4,11 @@
 
 
 statement ok
-CREATE TABLE ibs(id INTEGER, t TEXT);
+CREATE TABLE ibs(id INTEGER, t TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX ibs_idx ON ibs USING inverted(t) WITH (compaction_interval = 0);
+CREATE INDEX ibs_idx ON ibs USING inverted(t);
 
 
 statement count 5
@@ -44,11 +44,11 @@ count
 
 
 statement ok
-CREATE TABLE ibc(id INTEGER, t TEXT);
+CREATE TABLE ibc(id INTEGER, t TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX ibc_idx ON ibc USING inverted(t) WITH (compaction_interval = 0);
+CREATE INDEX ibc_idx ON ibc USING inverted(t);
 
 
 statement ok
@@ -130,7 +130,7 @@ segments
 
 
 statement ok
-CREATE TABLE sbs(id INTEGER, t TEXT) WITH (storage = 'search');
+CREATE TABLE sbs(id INTEGER, t TEXT);
 
 
 statement count 5

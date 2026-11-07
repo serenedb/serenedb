@@ -31,11 +31,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY fct_kw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TABLE ft(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR)
+CREATE TABLE ft(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ft_idx ON ft USING inverted(cat fct_kw, opt fct_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ft VALUES
@@ -559,11 +558,10 @@ CREATE TEXT SEARCH DICTIONARY fct_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE ftx(id INTEGER PRIMARY KEY, descr VARCHAR NOT NULL)
+CREATE TABLE ftx(id INTEGER PRIMARY KEY, descr VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ftx_idx ON ftx USING inverted(descr fct_tx)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ftx VALUES
@@ -613,11 +611,10 @@ CREATE TEXT SEARCH DICTIONARY fct_body AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE ffw(id INTEGER PRIMARY KEY, scope VARCHAR NOT NULL, body VARCHAR NOT NULL)
+CREATE TABLE ffw(id INTEGER PRIMARY KEY, scope VARCHAR NOT NULL, body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ffw_idx ON ffw USING inverted(scope fct_kw, body fct_body)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ffw VALUES
@@ -769,11 +766,10 @@ QUERY PLAN
 # from the null-marker field restricted by the document filter, and groups
 # whose filtered count is zero disappear.
 statement ok
-CREATE TABLE fnw(id INTEGER PRIMARY KEY, opt VARCHAR, body VARCHAR NOT NULL)
+CREATE TABLE fnw(id INTEGER PRIMARY KEY, opt VARCHAR, body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX fnw_idx ON fnw USING inverted(opt fct_kw, body fct_body)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fnw VALUES
@@ -890,11 +886,10 @@ QUERY PLAN
 # padded NULLs of the other set columns regroup exactly as the sets demand.
 statement ok
 CREATE TABLE gsf(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL,
-                 color VARCHAR NOT NULL, body VARCHAR NOT NULL)
+                 color VARCHAR NOT NULL, body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX gsf_idx ON gsf USING inverted(brand fct_kw, color fct_kw, body fct_body)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO gsf VALUES
@@ -1293,11 +1288,10 @@ QUERY PLAN
 # One nullable key among the sets converts: its genuine NULL group is the
 # only all-NULL group key, so it cannot collide with the other sets' padding.
 statement ok
-CREATE TABLE gsn(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL, opt VARCHAR)
+CREATE TABLE gsn(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL, opt VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX gsn_idx ON gsn USING inverted(brand fct_kw, opt fct_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO gsn VALUES
@@ -1352,11 +1346,10 @@ QUERY PLAN
 # indexed-expression WHERE conjunct claims into the document filter. A
 # generated STORED column carrying the same expression converts identically.
 statement ok
-CREATE TABLE fex(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR NOT NULL)
+CREATE TABLE fex(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX fex_idx ON fex USING inverted((lower(cat)) fct_kw, (split_by_non_alpha(body, case := 'lower')) fct_body)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fex VALUES
@@ -1444,11 +1437,10 @@ QUERY PLAN
 statement ok
 CREATE TABLE fes(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL,
                  lc VARCHAR GENERATED ALWAYS AS (lower(cat)) STORED NOT NULL,
-                 body VARCHAR NOT NULL)
+                 body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX fes_idx ON fes USING inverted(lc fct_kw, (split_by_non_alpha(body, case := 'lower')) fct_body)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fes(id, cat, body) VALUES
@@ -1497,11 +1489,10 @@ QUERY PLAN
 
 # Expression keys join grouping sets as the single nullable key.
 statement ok
-CREATE TABLE fexs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, brand VARCHAR NOT NULL)
+CREATE TABLE fexs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, brand VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX fexs_idx ON fexs USING inverted((lower(cat)) fct_kw, brand fct_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fexs VALUES
@@ -1552,11 +1543,10 @@ QUERY PLAN
 
 # Two keys without a NOT NULL proof fall back.
 statement ok
-CREATE TABLE ftwo(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR NOT NULL)
+CREATE TABLE ftwo(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ftwo_idx ON ftwo USING inverted(a fct_kw, (lower(b)) fct_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ftwo VALUES (1, 'x', 'Q'), (2, NULL, 'q')
@@ -1610,11 +1600,10 @@ QUERY PLAN
 # WHERE, and its zero-count groups vanish.
 statement ok
 CREATE TABLE gsnw(id INTEGER PRIMARY KEY, opt VARCHAR, brand VARCHAR NOT NULL,
-                  body VARCHAR NOT NULL)
+                  body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX gsnw_idx ON gsnw USING inverted(opt fct_kw, brand fct_kw, body fct_body)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO gsnw VALUES
@@ -1837,11 +1826,10 @@ terms
 # constant-false predicate stays restrictive and still eliminates every row.
 
 statement ok
-CREATE TABLE fconst(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+CREATE TABLE fconst(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX fconst_idx ON fconst USING inverted(cat fct_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fconst VALUES (1,'red'),(2,'green'),(3,'red'),(4,'blue'),(5,'red'),(6,'green')
@@ -1933,11 +1921,10 @@ QUERY PLAN
 # scan is preserved; a constant-false WHERE still empties the result.
 
 statement ok
-CREATE TABLE fgs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, region VARCHAR NOT NULL)
+CREATE TABLE fgs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, region VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX fgs_idx ON fgs USING inverted(cat fct_kw, region fct_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO fgs VALUES

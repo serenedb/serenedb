@@ -23,7 +23,7 @@ statement ok
 SET disabled_optimizers = 'late_materialization';
 
 statement ok
-CREATE TABLE docs_topk (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_topk (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement count 1
@@ -53,8 +53,7 @@ CREATE TEXT SEARCH DICTIONARY en_topk AS
 
 
 statement ok
-CREATE INDEX docs_topk_idx ON docs_topk USING inverted(id, body en_topk)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX docs_topk_idx ON docs_topk USING inverted(id, body en_topk);
 
 
 # Top-K with pruning on. Tie-break on id for deterministic ordering across
@@ -507,7 +506,7 @@ QUERY PLAN
 # tfidf with default args.
 
 statement ok
-CREATE TABLE docs_tfidf (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_tfidf (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'tfidf()');
 
 
 statement count 1
@@ -520,8 +519,7 @@ INSERT INTO docs_tfidf VALUES (2, 'fox bar');
 
 statement ok
 CREATE INDEX docs_tfidf_idx ON docs_tfidf
-  USING inverted(id, body en_topk)
-  WITH (optimize_top_k = 'tfidf()');
+  USING inverted(id, body en_topk);
 
 
 query
@@ -547,7 +545,7 @@ QUERY PLAN
 # `ORDER BY BM25(...)` use the same params, so pruning engages.
 
 statement ok
-CREATE TABLE docs_bm25_args (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_bm25_args (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.5, 0.8)');
 
 
 statement count 1
@@ -560,8 +558,7 @@ INSERT INTO docs_bm25_args VALUES (2, 'fox bar');
 
 statement ok
 CREATE INDEX docs_bm25_args_idx ON docs_bm25_args
-  USING inverted(id, body en_topk)
-  WITH (optimize_top_k = 'bm25(1.5, 0.8)');
+  USING inverted(id, body en_topk);
 
 
 query

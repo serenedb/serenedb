@@ -166,7 +166,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────╯
 
 statement ok
-CREATE TABLE pdm_s (id INTEGER, body VARCHAR) WITH (storage = 'search')
+CREATE TABLE pdm_s (id INTEGER, body VARCHAR)
 
 statement ok
 INSERT INTO pdm_s SELECT id, body FROM pdm

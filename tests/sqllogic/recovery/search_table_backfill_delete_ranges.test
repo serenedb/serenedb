@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bdr (id BIGINT, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0,
+  WITH (compaction_interval = 0,
         row_group_size = 8192);
 
 statement ok

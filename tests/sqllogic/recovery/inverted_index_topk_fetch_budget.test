@@ -24,12 +24,11 @@ CREATE TEXT SEARCH DICTIONARY fb_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE fb (id INT PRIMARY KEY, body TEXT, heavy TEXT)
+CREATE TABLE fb (id INT PRIMARY KEY, body TEXT, heavy TEXT) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX fb_idx ON fb USING inverted (id, body fb_en) INCLUDE (heavy)
-  WITH (compaction_interval = 0)
 
 
 # Four refreshes seal four segments. `body` repeats 'fox' a varying number of

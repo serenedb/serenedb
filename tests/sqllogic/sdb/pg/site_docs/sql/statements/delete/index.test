@@ -135,7 +135,7 @@ statement ok
 DROP TABLE IF EXISTS events;
 
 statement ok
-CREATE TABLE events (at TIMESTAMP, body TEXT) WITH (storage = 'search');
+CREATE TABLE events (at TIMESTAMP, body TEXT);
 
 statement ok
 INSERT INTO events VALUES

@@ -70,13 +70,6 @@ class Store;
 }  // namespace sdb::search
 namespace sdb::catalog {
 
-enum class TableEngine : uint8_t {
-  Transactional = 0,
-  Search = 1,
-};
-
-inline constexpr std::string_view kStorageOption = "storage";
-
 inline constexpr auto kSearchTableMaintenanceSettings = std::to_array({
   kCompactionIntervalSetting,
   kCompactionMaxSegmentsSetting,
@@ -103,11 +96,12 @@ inline constexpr auto kSearchTableOptions = std::to_array({
   kOptimizeTopKSetting,
 });
 
-TableEngine ReadStorageEngine(
-  const duckdb::case_insensitive_map_t<
-    duckdb::unique_ptr<duckdb::ParsedExpression>>& options);
-
 void RequireSearchTableIndexOption(std::string_view name);
+
+struct TableOption {
+  std::string_view name;
+  duckdb::Value value;
+};
 
 using persistence::SearchTableOptions;
 
@@ -150,6 +144,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
 
   duckdb::Value Option(std::string_view name) const;
+  std::vector<TableOption> ExplicitOptions() const;
 
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
@@ -184,8 +179,6 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   const std::vector<search::KeySpec>& KeySpecs() const noexcept {
     return _keys;
   }
-
-  TableEngine Engine() const noexcept { return _engine; }
 
  private:
   duckdb::unique_ptr<duckdb::CreateTableInfo> Definition() const;
@@ -252,7 +245,6 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   duckdb::ColumnList _columns;
   std::shared_ptr<search::Store> _storage;
   std::shared_ptr<EntrySet> _triggers;
-  TableEngine _engine = TableEngine::Transactional;
   SearchTableOptions _options;
   uint64_t _schema_epoch = 0;
   std::vector<search::KeySpec> _keys;

@@ -7,7 +7,7 @@ CREATE TEXT SEARCH DICTIONARY rk_en AS
 
 statement ok
 CREATE TABLE rk (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0,
+  WITH (compaction_interval = 0,
         optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok

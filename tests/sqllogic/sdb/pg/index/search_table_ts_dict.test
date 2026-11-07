@@ -12,7 +12,7 @@ CREATE TEXT SEARCH DICTIONARY d1 AS
 
 statement ok
 CREATE TABLE t (id BIGINT PRIMARY KEY, an TEXT, tag TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 # One index covering an analyzer column and a keyword column.
 statement ok
@@ -151,7 +151,7 @@ HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an arr
 # the facet.
 statement ok
 CREATE TABLE m (id BIGINT PRIMARY KEY, a TEXT, b TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX m_a ON m USING inverted (a);
@@ -249,7 +249,7 @@ QUERY PLAN
 statement ok
 CREATE TABLE g (id BIGINT PRIMARY KEY, cat TEXT NOT NULL, brand TEXT NOT NULL,
                 note TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX g_idx ON g USING inverted (cat, brand);
@@ -313,7 +313,7 @@ QUERY PLAN
 # The keys served by two different indexes.
 statement ok
 CREATE TABLE g2 (id BIGINT PRIMARY KEY, cat TEXT NOT NULL, brand TEXT NOT NULL)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX g2_cat ON g2 USING inverted (cat);
@@ -338,7 +338,7 @@ NULL	zed	1
 # One nullable key.
 statement ok
 CREATE TABLE g3 (id BIGINT PRIMARY KEY, cat TEXT NOT NULL, brand TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX g3_idx ON g3 USING inverted (cat, brand);
@@ -360,7 +360,7 @@ NULL	NULL	1
 # Two nullable keys.
 statement ok
 CREATE TABLE g4 (id BIGINT PRIMARY KEY, cat TEXT, brand TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX g4_idx ON g4 USING inverted (cat, brand);

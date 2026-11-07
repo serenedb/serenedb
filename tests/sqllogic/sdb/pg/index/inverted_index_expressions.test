@@ -1359,11 +1359,11 @@ db error: ERROR: Column '(a + b)': compression 'ZSTD' is not supported for type 
 
 
 statement ok
-CREATE TABLE inc_e_rgs(id INT PRIMARY KEY, a INT);
+CREATE TABLE inc_e_rgs(id INT PRIMARY KEY, a INT) WITH (row_group_size = 2048);
 
 statement ok
 CREATE INDEX inc_e_rgs_idx ON inc_e_rgs USING inverted(
-    id, (a * 2) included (compression='bitpacking')) WITH (row_group_size = 2048);
+    id, (a * 2) included (compression='bitpacking'));
 
 statement ok
 INSERT INTO inc_e_rgs VALUES (1, 1), (2, 5), (3, 12);
@@ -1394,12 +1394,11 @@ db error: ERROR: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: i
 # --- A stored expression is read back by scans: projections and filters use the stored value, not its columns.
 
 statement ok
-CREATE TABLE inc_e_read(id INT PRIMARY KEY, title VARCHAR, n INT);
+CREATE TABLE inc_e_read(id INT PRIMARY KEY, title VARCHAR, n INT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX inc_e_read_idx ON inc_e_read USING inverted(
-    id, (lower(title)) verbatim_dict, (lower(title)) included(), (n + 1) included())
-    WITH (compaction_interval = 0);
+    id, (lower(title)) verbatim_dict, (lower(title)) included(), (n + 1) included());
 
 statement ok
 INSERT INTO inc_e_read VALUES (1, 'New York', 10), (2, 'Boston', 20), (3, 'NEWARK', 30), (4, 'abc', 40);
@@ -1723,7 +1722,7 @@ db error: ERROR: Expression 'lower(title)' is listed more than once with a token
 
 
 statement ok
-CREATE TABLE inc_e_search(id INT, title VARCHAR) WITH (storage = 'search');
+CREATE TABLE inc_e_search(id INT, title VARCHAR);
 
 statement ok
 INSERT INTO inc_e_search VALUES (1, 'New York');

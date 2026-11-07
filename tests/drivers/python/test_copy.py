@@ -443,12 +443,6 @@ def _count(cur, table: str, storage: str, where: str = "") -> int:
     return cur.fetchone()[0]
 
 
-def _assert_insertion_order(cur, table: str, storage: str, rows: int) -> None:
-    if not storage:
-        cur.execute(f'SELECT x FROM public."{table}"')
-        assert [row[0] for row in cur] == list(range(rows))
-
-
 @pytest.mark.parametrize("source", _SOURCES)
 @pytest.mark.parametrize("storage", _STORAGES, ids=["table"])
 def test_large_text_copy_keeps_every_row(conn: psycopg.Connection,
@@ -467,7 +461,6 @@ def test_large_text_copy_keeps_every_row(conn: psycopg.Connection,
             assert _count(cur, table_name, storage,
                           "WHERE label = 'name' || chr(9) || x::VARCHAR"
                           ) == _ROWS
-            _assert_insertion_order(cur, table_name, storage, _ROWS)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
@@ -555,7 +548,6 @@ def test_text_copy_escaped_newlines_on_range_boundaries(
                         f'public."{table_name}" ORDER BY x')
             assert cur.fetchall() == [(x, len(label), label[-6:])
                                       for x, label in enumerate(labels)]
-            _assert_insertion_order(cur, table_name, "", len(labels))
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
@@ -588,7 +580,6 @@ def test_large_text_copy_rows_longer_than_a_read(conn: psycopg.Connection,
                         f'public."{table_name}"')
             assert cur.fetchone() == (rows * (rows - 1) // 2,
                                       sum(map(_label_length, range(rows))))
-            _assert_insertion_order(cur, table_name, storage, rows)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
@@ -638,7 +629,6 @@ def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
             assert cur.fetchone() == (_ROWS * (_ROWS - 1) // 2, _ROWS)
             assert _count(cur, table_name, storage,
                           "WHERE label = 'name' || x::VARCHAR") == _ROWS
-            _assert_insertion_order(cur, table_name, storage, _ROWS)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
@@ -756,7 +746,6 @@ def _assert_lengths(cur, table: str, storage: str,
     assert _count(cur, table, storage) == len(lengths)
     cur.execute(f'SELECT x, length(label) FROM public."{table}" ORDER BY x')
     assert cur.fetchall() == list(enumerate(lengths))
-    _assert_insertion_order(cur, table, storage, len(lengths))
 
 
 @pytest.mark.parametrize("header", [False, True], ids=["plain", "header"])
@@ -794,7 +783,6 @@ def test_text_copy_from_named_pipe(conn: psycopg.Connection, table_name: str,
                         "(FORMAT TEXT, HEADER)")
             writer.join(timeout=60)
             assert _count(cur, table_name, storage) == _ROWS
-            _assert_insertion_order(cur, table_name, storage, _ROWS)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
@@ -817,7 +805,6 @@ def test_file_copy_without_read_ahead(conn: psycopg.Connection,
                 _copy_from(cur, table_name, _binary_rows(cur, _ROWS),
                            "FORMAT BINARY", "file", shared_path)
                 assert _count(cur, table_name, "") == _ROWS
-                _assert_insertion_order(cur, table_name, "", _ROWS)
         finally:
             cur.execute(f"RESET {setting}")
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')

@@ -1,6 +1,6 @@
 """What boot does with a data directory that lost files or holds leftovers.
 
-A database whose data file is missing: the default refuses to start, since
+A database whose directory is missing: the default refuses to start, since
 coming back with an empty database would turn a lost file into silent data
 loss. --missing_database=skip boots without attaching it, and
 --missing_database=drop removes it from the catalog.
@@ -12,6 +12,7 @@ start too. Empty directories a crashed first boot left are removed.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -97,8 +98,7 @@ def test_missing_database_file(tmp_path: Path) -> None:
         server.stop()
     database_dir = datadir / "engine_v1" / str(oid)
     assert sum(path.is_dir() for path in database_dir.iterdir()) == 2
-    for path in database_dir.glob("data.db*"):
-        path.unlink()
+    shutil.rmtree(database_dir)
 
     refused = _Server(datadir)
     try:
@@ -141,7 +141,7 @@ def test_missing_catalog_log(tmp_path: Path) -> None:
             conn.execute("INSERT INTO kept VALUES (1)")
     finally:
         server.stop()
-    (datadir / "engine_v1" / "catalog.wal").unlink()
+    shutil.rmtree(datadir / "engine_v1" / "log")
 
     refused = _Server(datadir)
     try:
@@ -150,7 +150,8 @@ def test_missing_catalog_log(tmp_path: Path) -> None:
         assert "holds database directories" in refused.output()
     finally:
         refused.stop()
-    assert any((datadir / "engine_v1").glob("*/data.db"))
+    assert any(path.name.isdigit() and any(path.iterdir())
+               for path in (datadir / "engine_v1").iterdir())
 
 
 def test_first_boot_leftovers(tmp_path: Path) -> None:
@@ -166,7 +167,7 @@ def test_first_boot_leftovers(tmp_path: Path) -> None:
     finally:
         server.stop()
     assert not (engine / "4242").exists()
-    assert (engine / "5" / "data.db").exists()
+    assert (engine / "5").is_dir()
 
 
 def _search_table_dir(server: _Server, datadir: Path, database: str,

@@ -29,12 +29,12 @@ ID_SPAN = 1_000_000_000
 
 WRITER_CASES = [
     ("compaction_interval = 0", 8, ""),
-    ("compaction_interval = 10, segment_docs_max = 64", 8, ""),
-    ("compaction_interval = 5, segment_docs_max = 1000", 4,
+    ("compaction_interval = 10, segment_memory_max = 4096", 8, ""),
+    ("compaction_interval = 5, segment_memory_max = 65536", 4,
      "big_inserts"),
     ("compaction_interval = 10", 6, "partial second"),
     ("compaction_interval = 0", 4, "big_inserts big_updates"),
-    ("compaction_interval = 5, segment_docs_max = 32", 8,
+    ("compaction_interval = 5, segment_memory_max = 4096", 8,
      "partial second big_updates"),
     ("compaction_interval = 5", 6,
      "second big_inserts big_updates"),
@@ -67,27 +67,28 @@ def pause(rng: random.Random) -> None:
         time.sleep(rng.random() * 0.03)
 
 
-def create_index(conn: psycopg.Connection, index: Index, options: str) -> None:
+def create_index(conn: psycopg.Connection, index: Index) -> None:
     where = "" if index.where == "true" else f" WHERE {index.where}"
     conn.execute(
         f"CREATE INDEX {index.name} ON {index.table} "
-        f"USING inverted(id, body t_words) WITH ({options}){where}"
+        f"USING inverted(id, body t_words){where}"
     )
 
 
 def create_schema(conn: psycopg.Connection, options: str, partial: bool = False,
                   second: bool = False) -> list[Index]:
     conn.execute("CREATE TEXT SEARCH DICTIONARY t_words AS split_text()")
-    conn.execute("CREATE TABLE t (id BIGINT, body VARCHAR)")
+    conn.execute(f"CREATE TABLE t (id BIGINT, body VARCHAR) WITH ({options})")
     indexes = [T_IDX]
     if partial:
         indexes.append(T_PART)
     if second:
-        conn.execute("CREATE TABLE u (id BIGINT, body VARCHAR)")
+        conn.execute(
+            f"CREATE TABLE u (id BIGINT, body VARCHAR) WITH ({options})")
         conn.execute("CREATE INDEX u_id ON u (id)")
         indexes.append(U_IDX)
     for index in indexes:
-        create_index(conn, index, options)
+        create_index(conn, index)
     return indexes
 
 
@@ -99,12 +100,7 @@ def checkpoint(conn: psycopg.Connection) -> None:
 
 
 def live_docs(conn: psycopg.Connection, index: Index = T_IDX) -> int:
-    row = conn.execute(
-        "SELECT value FROM sdb_metrics WHERE metric = 'num_live_docs' AND "
-        "relation_id = (SELECT oid FROM pg_class WHERE relname = %s)",
-        (index.name,),
-    ).fetchone()
-    return int(row[0])
+    return conn.execute(f"SELECT count(*) FROM {index.name}").fetchone()[0]
 
 
 def phrase_count(conn: psycopg.Connection, word: str, index: Index = T_IDX) -> int:
@@ -282,7 +278,8 @@ class Workload:
                     try:
                         next_id = self.step(conn, rng, next_id)
                         self.counted()
-                    except psycopg.errors.TransactionRollback:
+                    except (psycopg.errors.TransactionRollback,
+                            psycopg.errors.SerializationFailure):
                         pass
                     except psycopg.Error as error:
                         if "onflict" in str(error):
@@ -309,7 +306,8 @@ class Workload:
                                 f"DELETE FROM {rng.choice(tables)} WHERE id %% 7 = %s",
                                 (rng.randrange(7),),
                             )
-                        except psycopg.errors.TransactionRollback:
+                        except (psycopg.errors.TransactionRollback,
+                                psycopg.errors.SerializationFailure):
                             pass
                         except psycopg.Error as error:
                             if "onflict" not in str(error):
@@ -383,8 +381,8 @@ def a_crash_during_concurrent_writes_replays_to_an_equal_index(
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
             indexes = create_schema(
-                conn, "compaction_interval = 20, "
-                      "segment_docs_max = 256", partial=partial, second=second)
+                conn, "compaction_interval = 20, segment_memory_max = 4096",
+                partial=partial, second=second)
             seed_rows(conn, indexes, 5000)
         for _ in range(3):
             workload = Workload(server, seed=rng.randrange(1 << 30), writers=6,

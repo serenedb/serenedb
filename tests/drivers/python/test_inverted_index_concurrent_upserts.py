@@ -41,11 +41,7 @@ def test_a_partial_index_rebuilt_while_writers_run(tmp_path: Path) -> None:
                 for rebuild in range(6):
                     if rebuild:
                         builder.execute(f"DROP INDEX {T_PART.name}")
-                    create_index(builder, T_PART, rng.choice([
-                        "compaction_interval = 0",
-                        "compaction_interval = 5, "
-                        "segment_docs_max = 5000",
-                    ]))
+                    create_index(builder, T_PART)
                     time.sleep(rng.random())
             time.sleep(2)
             workload.stop.set()
@@ -65,7 +61,7 @@ def test_a_partial_index_rebuilt_while_writers_run(tmp_path: Path) -> None:
     "options",
     [
         "compaction_interval = 0",
-        "compaction_interval = 5, segment_docs_max = 64",
+        "compaction_interval = 5, segment_memory_max = 4096",
     ],
 )
 def test_concurrent_upserts_keep_the_index_equal_to_the_table(
@@ -77,8 +73,9 @@ def test_concurrent_upserts_keep_the_index_equal_to_the_table(
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
             conn.execute("CREATE TEXT SEARCH DICTIONARY t_words AS split_text()")
-            conn.execute("CREATE TABLE v (id BIGINT PRIMARY KEY, body VARCHAR)")
-            create_index(conn, index, options)
+            conn.execute(
+                f"CREATE TABLE v (id BIGINT PRIMARY KEY, body VARCHAR) WITH ({options})")
+            create_index(conn, index)
             conn.execute(
                 "INSERT INTO v SELECT i, 'w' || (i %% 40) FROM range(%s) r(i)", (keys,)
             )

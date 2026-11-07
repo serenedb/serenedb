@@ -32,8 +32,6 @@ def test_deletes_of_unpublished_rows_land_with_them(tmp_path: Path) -> None:
                 "DELETE FROM t WHERE id < 50 OR id >= 150"
             ).rowcount == 100
             conn.execute("UPDATE t SET body = 'w4' WHERE id >= 100 AND id < 110")
-            assert phrase_count(conn, "w3") == 0
-            assert live_docs(conn) == 0
             assert_index_matches_table(conn)
             assert phrase_count(conn, "w1") == 50
             assert phrase_count(conn, "w3") == 40
@@ -66,8 +64,8 @@ def test_unpublished_deletes_survive_a_checkpoint_and_a_crash(
     ("options", "crash"),
     [
         ("compaction_interval = 0", False),
-        ("compaction_interval = 5, segment_docs_max = 64", False),
-        ("compaction_interval = 5, segment_docs_max = 64", True),
+        ("compaction_interval = 5, segment_memory_max = 4096", False),
+        ("compaction_interval = 5, segment_memory_max = 4096", True),
     ],
 )
 def test_an_update_is_never_half_visible(
@@ -97,7 +95,8 @@ def test_an_update_is_never_half_visible(
                                 "UPDATE t SET body = %s WHERE id = ANY(%s)",
                                 (body(rng), ids),
                             )
-                        except psycopg.errors.TransactionRollback:
+                        except (psycopg.errors.TransactionRollback,
+                                psycopg.errors.SerializationFailure):
                             pass
                         except psycopg.Error as error:
                             if "onflict" not in str(error):

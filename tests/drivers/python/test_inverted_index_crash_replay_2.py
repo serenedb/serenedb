@@ -48,8 +48,7 @@ def test_a_crash_during_an_online_index_build_replays_to_equal_indexes(
         def build() -> None:
             try:
                 with psycopg.connect(server.dsn(), autocommit=True) as builder:
-                    create_index(builder, T_PART,
-                                 "compaction_interval = 0")
+                    create_index(builder, T_PART)
             except psycopg.Error:
                 pass
 

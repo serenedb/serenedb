@@ -174,7 +174,6 @@ Durability, the write-ahead log, and how rows are laid out on disk.
 | `enable_optimistic_write` | Whether or not to optimistically write large appends to disk before committing. Disable this to keep bulk appends in memory. | `BOOLEAN` | `GLOBAL` | `true` |
 | `fsync_mode` | How to synchronize database file changes to stable storage (`STANDARD`, `NONE` or `FULL`). `NONE` may cause database corruption after an operating system or hardware crash. | `VARCHAR` | `GLOBAL` | `STANDARD` |
 | `initial_column_segment_size` | The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Subsequent segments double in size until reaching the block size. | `UBIGINT` | `GLOBAL` | `2048` |
-| `recovery_replay_depth` | Maximum number of write-ahead-log chunks each inverted index holds while recovery replays it; a larger value uses more memory during recovery. 0 = 4 x the number of threads. Recovery reads the server's global value: set it at start with the `--recovery_replay_depth` flag. | `UINTEGER` | `SESSION` | `0` |
 | `row_group_size` | Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880. | `UINTEGER` | `SESSION` | `122880` |
 | `storage_block_prefetch` | In which scenarios to use storage block prefetching | `VARCHAR` | `GLOBAL` | `REMOTE_ONLY` |
 | `storage_compatibility_version` | Serialize on checkpoint with compatibility for a given duckdb version | `VARCHAR` | `GLOBAL` | `latest` |

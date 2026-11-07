@@ -60,6 +60,8 @@ By default, the following components preserve insertion order:
 -   [JSON reader](../data_import_and_export/json/overview.md) (`read_json` function)
 -   [Parquet reader](../data_import_and_export/parquet/overview.md) (`read_parquet` function)
 
+A table returns its rows in the order it stores them, which is not the order they were inserted in once a write such as `INSERT ... SELECT` or `COPY` runs on several threads. Use `ORDER BY` when the order of a table's rows matters.
+
 Preservation of insertion order is controlled by the `preserve_insertion_order` [configuration option](../configuration/overview.md).
 This setting is `true` by default, indicating that the order should be preserved.
 To change this setting, use:

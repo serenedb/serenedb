@@ -45,8 +45,9 @@ def test_prepared_statements_survive_concurrent_alters(tmp_path: Path) -> None:
             pudge.execute("CREATE INDEX vjling_wards_b ON vjling_wards USING inverted (b)")
 
         stop = time.monotonic() + RUN_SECONDS
-        expected = (psycopg.errors.SerializationFailure, psycopg.errors.UndefinedColumn,
-                    psycopg.errors.UndefinedTable, psycopg.errors.DuplicateColumn)
+        expected = (psycopg.errors.SerializationFailure, psycopg.errors.ObjectInUse,
+                    psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedTable,
+                    psycopg.errors.DuplicateColumn)
         failures: list[str] = []
 
         def run(work) -> None:

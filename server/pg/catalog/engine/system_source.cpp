@@ -358,9 +358,8 @@ void SystemScan::VisitKey(
     key < keys.names.size()
       ? catalog.Set(source.type)
           .Get(transaction, duckdb::Identifier{keys.names[key]})
-      : catalog.LookupOid(
-          transaction,
-          static_cast<duckdb::idx_t>(keys.oids[key - keys.names.size()]));
+      : catalog.LookupOid(transaction, static_cast<duckdb::idx_t>(
+                                         keys.oids[key - keys.names.size()]));
   if (entry && entry->type == source.type) {
     visit(*entry);
   }

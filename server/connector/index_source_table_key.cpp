@@ -58,15 +58,17 @@ TableKeyIndexSource::TableKeyIndexSource(
   duckdb::Transaction::Get(context, _table->ParentCatalog());
   const auto& columns = _table->GetColumns();
   const auto names = columns.GetColumnNames();
-  InitProjection(context, projected_columns, projected_types, bind_column_ids,
-                 SourceColumns{names}, [&](duckdb::idx_t column) {
-                   _projected_slots.push_back(ScanColumn(column));
-                   return columns.GetColumn(duckdb::LogicalIndex{column}).Type();
-                 });
+  InitProjection(
+    context, projected_columns, projected_types, bind_column_ids,
+    SourceColumns{names}, [&](duckdb::idx_t column) {
+      _projected_slots.push_back(ScanColumn(column));
+      return columns.GetColumn(duckdb::LogicalIndex{column}).Type();
+    });
   for (const auto& key : _fast_path.key_columns) {
     _scan_keys.push_back(
       {.input_col_idx = ScanColumn(key.source_index), .type = key.type});
-    _input_keys.push_back({.input_col_idx = _input_keys.size(), .type = key.type});
+    _input_keys.push_back(
+      {.input_col_idx = _input_keys.size(), .type = key.type});
   }
   duckdb::vector<duckdb::LogicalType> types;
   types.reserve(_scan_columns.size());
@@ -120,8 +122,8 @@ duckdb::unique_ptr<duckdb::Expression> TableKeyIndexSource::KeyFilter(
   const auto column = [&](size_t key) {
     return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
       _scan_keys[key].type,
-      duckdb::ColumnBinding(
-        get.table_index, duckdb::ProjectionIndex(_scan_keys[key].input_col_idx)));
+      duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(
+                                               _scan_keys[key].input_col_idx)));
   };
   const auto value = [&](size_t key, duckdb::idx_t row) {
     return duckdb::make_uniq<duckdb::BoundConstantExpression>(
@@ -209,8 +211,8 @@ duckdb::idx_t TableKeyIndexSource::Materialize(duckdb::ClientContext& context,
   _survivor_idx.resize(count);
   IndexKeys(pk, count);
   auto get = BindSource(context, pk);
-  duckdb::TableFunctionInitInput init(get->bind_data.get(),
-                                      get->GetColumnIds(), {}, nullptr);
+  duckdb::TableFunctionInitInput init(get->bind_data.get(), get->GetColumnIds(),
+                                      {}, nullptr);
   auto global = get->function.init_global(context, init);
   duckdb::ThreadContext thread{context};
   duckdb::ExecutionContext exec{context, thread, nullptr};

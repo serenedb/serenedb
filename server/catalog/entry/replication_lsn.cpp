@@ -58,9 +58,10 @@ std::optional<uint64_t> ReplicationLsnEntry::RelationSyncedLsn(
 
 ReplicationOriginEntry::ReplicationOriginEntry(
   duckdb::Catalog& catalog, duckdb::CreateReplicationOriginInfo& info)
-  : ReplicationLsnEntry{duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY, catalog,
-                        info.GetQualifiedName().Name(), info.oid,
-                        std::make_shared<ReplicationLsnState>(info.remote_lsn)} {
+  : ReplicationLsnEntry{
+      duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY, catalog,
+      info.GetQualifiedName().Name(), info.oid,
+      std::make_shared<ReplicationLsnState>(info.remote_lsn)} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;

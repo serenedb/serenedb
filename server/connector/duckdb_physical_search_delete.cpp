@@ -34,8 +34,8 @@
 #include <vector>
 
 #include "catalog/entry/search_table.h"
-#include "connector/column_id.h"
 #include "catalog/transaction.h"
+#include "connector/column_id.h"
 #include "connector/primary_key.h"
 #include "connector/row_position_deduplicator.h"
 #include "connector/search_sink_writer.hpp"
@@ -124,8 +124,7 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   transaction.SearchTxn().RegisterWriter(state->search_table, *_table);
 
   if (_row_id_handling != duckdb::RowIdHandling::ASSUME_UNIQUE) {
-    state->pinned =
-      transaction.SearchTxn().PinnedReader(*state->search_table);
+    state->pinned = transaction.SearchTxn().PinnedReader(*state->search_table);
     state->deleted_rows.emplace(*state->pinned);
   }
 
@@ -187,13 +186,14 @@ duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
   auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
   absl::MutexLock lock{&gstate.mutex};
 #ifdef SDB_DEV
-  SDB_ASSERT(!gstate.deleted_rows ||
-             gstate.deleted_rows->Covers(*gstate.sdb_txn->SearchTxn().PinnedReader(
-               *gstate.search_table)));
+  SDB_ASSERT(
+    !gstate.deleted_rows ||
+    gstate.deleted_rows->Covers(
+      *gstate.sdb_txn->SearchTxn().PinnedReader(*gstate.search_table)));
 #endif
   if (!lstate.positions.Empty()) {
-    gstate.sdb_txn->SearchTxn().AddRemoval(
-      context.client, gstate.search_table, std::move(lstate.positions));
+    gstate.sdb_txn->SearchTxn().AddRemoval(context.client, gstate.search_table,
+                                           std::move(lstate.positions));
   }
   gstate.delete_count += lstate.delete_count;
   if (lstate.returned && lstate.returned->Count() != 0) {

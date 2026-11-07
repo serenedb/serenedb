@@ -67,6 +67,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
+#include "pg/connection_context.h"
 #include "pg/types/char.h"
 #include "pg/types/float.h"
 #include "pg/types/geometric.h"
@@ -79,7 +80,6 @@
 #include "pg/types/range.h"
 #include "pg/types/tid.h"
 #include "pg/types/xml.h"
-#include "pg/connection_context.h"
 #include "query/config.h"
 
 namespace sdb::pg {

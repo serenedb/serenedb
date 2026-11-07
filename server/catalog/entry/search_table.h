@@ -47,8 +47,8 @@
 
 #include "catalog/entry_set.h"
 #include "catalog/persistence/search_table.h"
-#include "search/table_keys.h"
 #include "query/config_variable_names.h"
+#include "search/table_keys.h"
 
 namespace duckdb {
 

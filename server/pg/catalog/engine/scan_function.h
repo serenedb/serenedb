@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/function/table_function.hpp>
-#include <duckdb/function/table_function.hpp>
 #include <duckdb/main/database.hpp>
 
 #include "catalog/entry/system_table.h"
@@ -35,8 +34,7 @@ struct SystemTableBindData final : duckdb::FunctionData {
     : table{table}, catalog{catalog}, entry{entry} {}
   explicit SystemTableBindData(catalog::SystemTableEntry& entry)
     : SystemTableBindData{entry.Table(),
-                          entry.catalog.Cast<catalog::BaseCatalog>(), &entry} {
-  }
+                          entry.catalog.Cast<catalog::BaseCatalog>(), &entry} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<SystemTableBindData>(*this);

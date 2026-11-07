@@ -98,13 +98,14 @@ const duckdb::Constraint* ReferencedKey(
     if (constraint->type != duckdb::ConstraintType::UNIQUE) {
       continue;
     }
-    const auto indexes = constraint->Cast<duckdb::UniqueConstraint>()
-                           .GetLogicalIndexes(parent_columns);
+    const auto indexes =
+      constraint->Cast<duckdb::UniqueConstraint>().GetLogicalIndexes(
+        parent_columns);
     if (indexes.size() == columns.size() &&
         absl::c_all_of(columns, [&](const duckdb::Identifier& name) {
           return parent_columns.ColumnExists(name) &&
-                 absl::c_linear_search(indexes,
-                                       parent_columns.GetColumn(name).Logical());
+                 absl::c_linear_search(
+                   indexes, parent_columns.GetColumn(name).Logical());
         })) {
       return constraint.get();
     }
@@ -134,10 +135,10 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
         add_column(spec, columns.GetColumn(index));
       }
       if (spec.constraint.empty()) {
-        spec.constraint = unique.IsPrimaryKey()
-                            ? absl::StrCat(table.name.GetIdentifierName(),
-                                           "_pkey")
-                            : DefaultName(table, spec.names, "key");
+        spec.constraint =
+          unique.IsPrimaryKey()
+            ? absl::StrCat(table.name.GetIdentifierName(), "_pkey")
+            : DefaultName(table, spec.names, "key");
       }
       keys.specs.push_back(std::move(spec));
       continue;
@@ -162,8 +163,8 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
       spec.constraint = DefaultName(table, names, "fkey");
     }
     const auto* parent = ReferencedTable(table, fk, transaction);
-    const auto* referenced = parent ? ReferencedKey(*parent, fk.pk_columns)
-                                    : nullptr;
+    const auto* referenced =
+      parent ? ReferencedKey(*parent, fk.pk_columns) : nullptr;
     if (parent && !referenced) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_FOREIGN_KEY),
@@ -185,10 +186,13 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
          referenced->Cast<duckdb::UniqueConstraint>().GetLogicalIndexes(
            parent_columns)) {
       const auto& parent_column = parent_columns.GetColumn(index);
-      const auto at = absl::c_find_if(fk.pk_columns, [&](const auto& name) {
-                        return parent_columns.GetColumn(name).Logical() == index;
-                      }) -
-                      fk.pk_columns.begin();
+      const auto at =
+        absl::c_find_if(fk.pk_columns,
+                        [&](const auto& name) {
+                          return parent_columns.GetColumn(name).Logical() ==
+                                 index;
+                        }) -
+        fk.pk_columns.begin();
       const auto& column = columns.GetColumn(fk.fk_columns[at]);
       spec.key.columns.push_back(connector::TableColumnId(column));
       spec.names.push_back(column.Name().GetIdentifierName());
@@ -272,9 +276,8 @@ std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
                                     duckdb::CatalogTransaction transaction) {
   transaction.view.visibility_bound =
     duckdb::VisibilityBound::IncludingUncommitted();
-  const auto entry =
-    table.catalog.Cast<catalog::BaseCatalog>().Oids().Find(transaction,
-                                                           key.field);
+  const auto entry = table.catalog.Cast<catalog::BaseCatalog>().Oids().Find(
+    transaction, key.field);
   if (!entry || entry->type != duckdb::CatalogType::INDEX_ENTRY) {
     return std::nullopt;
   }
@@ -429,8 +432,8 @@ void ForEachSegmentKey(
       const auto& masks = cursor.segment->masks;
       const auto first = cursor.segment->first;
       cursor.reader->ReadDocs(Bytes(least), [&](irs::doc_id_t doc) {
-        if (doc - irs::doc_limits::min() >= first && !cursor.mask.Contains(doc) &&
-            !masks.Contains(doc)) {
+        if (doc - irs::doc_limits::min() >= first &&
+            !cursor.mask.Contains(doc) && !masks.Contains(doc)) {
           ++rows;
         }
         return true;

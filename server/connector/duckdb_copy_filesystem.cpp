@@ -60,8 +60,7 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
               " is only valid on a server-side PostgreSQL wire connection"));
   }
   auto& conn = ConnectionContext::Get(*client_context);
-  return {conn.GetSideChannel<pg::CopyInBatches>(), conn.GetSendBuffer(),
-          conn};
+  return {conn.GetSideChannel<pg::CopyInBatches>(), conn.GetSendBuffer(), conn};
 }
 
 }  // namespace

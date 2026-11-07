@@ -1057,7 +1057,8 @@ void Store::SetConstraintKeys(std::vector<catalog::ConstraintKey> keys) {
 
 void Store::AddReferencing(std::weak_ptr<const Referencing> referencing) {
   absl::MutexLock lock{&_referencing_mutex};
-  std::erase_if(_referencing, [](const auto& entry) { return entry.expired(); });
+  std::erase_if(_referencing,
+                [](const auto& entry) { return entry.expired(); });
   _referencing.push_back(std::move(referencing));
 }
 

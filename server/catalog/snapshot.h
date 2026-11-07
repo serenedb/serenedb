@@ -30,10 +30,10 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
-
-#include "catalog/entry_set.h"
 #include <string_view>
 #include <vector>
+
+#include "catalog/entry_set.h"
 
 namespace sdb::catalog {
 

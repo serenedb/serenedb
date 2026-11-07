@@ -50,8 +50,8 @@ class SegmentEncoder {
   Segment* Cut(const Config& config, const StringAccumulator& acc,
                uint64_t begin);
 
-  Segment* Cut(const Config& config, ChunkCursor& cursor, uint64_t begin,
-               uint64_t end);
+  void SealChunks(const Config& config, std::span<const WriteChunk> chunks,
+                  SegmentSink sink);
 
   Segment* Encode(const Config& config, const StringAccumulator& acc,
                   uint64_t begin, uint64_t end);
@@ -80,10 +80,6 @@ class SegmentEncoder {
 
   template<typename Encoder>
   Encoder& Get(std::optional<Encoder>& slot);
-
-  template<typename Cursor>
-  Segment* CutWith(const Config& config, Cursor& cursor, uint64_t begin,
-                   uint64_t end, size_t distinct);
 
   const Profile& Measure(const StringAccumulator& acc, Shape shape,
                          uint64_t begin, uint64_t end);

@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/codecs/segment_encoder.hpp"
 
 #include <algorithm>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <type_traits>
 
 #include "iresearch/utils/assert.hpp"
@@ -73,38 +74,69 @@ Encoder& SegmentEncoder::Get(std::optional<Encoder>& slot) {
   return *slot;
 }
 
-template<typename Cursor>
-Segment* SegmentEncoder::CutWith(const Config& config, Cursor& cursor,
-                                 uint64_t begin, uint64_t end,
-                                 size_t distinct) {
+Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
+                             uint64_t begin) {
   auto* seg = Acquire();
   With(config, [&](auto& enc) {
-    _builder.Begin(enc, config, begin, distinct);
-    _builder.Cut(enc, cursor, end, _params.segment_target);
+    const std::span<const uint32_t> codes = acc.codes;
+    const std::span<const duckdb::string_t> values = acc.entries;
+    const auto target = _params.segment_target;
+    _builder.Begin(enc, config, begin, values.size());
+    for (auto row = begin; row < codes.size();) {
+      _builder.AddCode(enc, codes[row++], values);
+      if (_builder.Full(enc, target)) {
+        break;
+      }
+    }
     _builder.Finish(enc, *seg);
   });
   return seg;
 }
 
-Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
-                             uint64_t begin) {
-  auto cursor = acc.At(begin);
-  return CutWith(config, cursor, begin, acc.Rows(), acc.entries.size());
-}
-
-Segment* SegmentEncoder::Cut(const Config& config, ChunkCursor& cursor,
-                             uint64_t begin, uint64_t end) {
-  return CutWith(config, cursor, begin, end, 0);
+void SegmentEncoder::SealChunks(const Config& config,
+                                std::span<const WriteChunk> chunks,
+                                SegmentSink sink) {
+  auto* seg = Acquire();
+  With(config, [&](auto& enc) {
+    const auto seal = [&] {
+      _builder.Finish(enc, *seg);
+      const std::string_view parts[] = {seg->head, seg->data};
+      sink(seg->config.choice, std::move(*seg->stats), seg->rows, parts);
+    };
+    const auto target = _params.segment_target;
+    uint64_t row = 0;
+    uint64_t first = 0;
+    _builder.Begin(enc, config, first, 0);
+    for (const auto& chunk : chunks) {
+      for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
+        _builder.AddValue(enc,
+                          entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
+        ++row;
+        if (_builder.Full(enc, target)) {
+          seal();
+          first = row;
+          _builder.Begin(enc, config, first, 0);
+        }
+      }
+    }
+    if (row != first) {
+      seal();
+    }
+  });
+  Release(seg);
 }
 
 Segment* SegmentEncoder::Encode(const Config& config,
                                 const StringAccumulator& acc, uint64_t begin,
                                 uint64_t end) {
   auto* seg = Acquire();
-  auto cursor = acc.At(begin);
   With(config, [&](auto& enc) {
-    _builder.Begin(enc, config, begin, acc.entries.size());
-    _builder.AddUntil(enc, cursor, end);
+    const std::span<const uint32_t> codes = acc.codes;
+    const std::span<const duckdb::string_t> values = acc.entries;
+    _builder.Begin(enc, config, begin, values.size());
+    for (auto row = begin; row < end; ++row) {
+      _builder.AddCode(enc, codes[row], values);
+    }
     _builder.Finish(enc, *seg);
   });
   return seg;

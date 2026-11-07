@@ -39,7 +39,6 @@
 #include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
-#include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -118,36 +117,66 @@ class SegmentBuilder {
     _level = config.level;
     _layout = config.layout;
     _next = begin;
+    _estimated_raw = _raw;
     if (_shape == Shape::Dedup) {
       _dedup.Begin(distinct);
     }
     leaf.Begin(_shape, _level, _layout);
   }
 
-  template<typename Leaf, typename Cursor>
-  uint64_t Cut(Leaf& leaf, Cursor& cursor, uint64_t end, uint32_t target) {
-    const uint64_t step = target / kEstimateSteps;
-    uint64_t estimated_raw = _raw;
-    while (_next < end) {
-      AddRow(leaf, cursor);
-      ++_next;
-      if (_rows % kEstimateEvery != 0 && _raw - estimated_raw < step) {
-        continue;
-      }
-      estimated_raw = _raw;
-      if (Estimate() + leaf.Estimate(View()) >= target) {
-        break;
-      }
+  template<typename Leaf>
+  IRS_FORCE_INLINE void AddValue(Leaf& leaf, const duckdb::string_t* value) {
+    SDB_ASSERT(_shape == Shape::Plain);
+    ++_next;
+    if (value) {
+      _input += value->GetSize();
+      _stats.Update(*value);
+      AppendEntry(leaf, *value);
+    } else {
+      _stats.SetHasNull();
+      ++_nulls;
+      AppendEntry(leaf, duckdb::string_t{});
     }
-    return _next;
+    ++_rows;
   }
 
-  template<typename Leaf, typename Cursor>
-  void AddUntil(Leaf& leaf, Cursor& cursor, uint64_t end) {
-    while (_next < end) {
-      AddRow(leaf, cursor);
-      ++_next;
+  template<typename Leaf>
+  IRS_FORCE_INLINE void AddCode(Leaf& leaf, uint32_t code,
+                                std::span<const duckdb::string_t> values) {
+    if (_shape == Shape::Plain) {
+      AddValue(leaf, code == 0 ? nullptr : &values[code - 1]);
+      return;
     }
+    ++_next;
+    if (code == 0) {
+      _stats.SetHasNull();
+      ++_nulls;
+      PushCode(0);
+      ++_rows;
+      return;
+    }
+    const auto& value = values[code - 1];
+    _input += value.GetSize();
+    const auto [local, fresh] =
+      _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);
+    if (fresh) {
+      _stats.Update(value);
+      AppendEntry(leaf, value);
+    } else {
+      _stats.UpdateRepeated(value);
+    }
+    PushCode(local);
+    ++_rows;
+  }
+
+  template<typename Leaf>
+  IRS_FORCE_INLINE bool Full(Leaf& leaf, uint32_t target) {
+    if (_rows % kEstimateEvery != 0 &&
+        _raw - _estimated_raw < target / kEstimateSteps) {
+      return false;
+    }
+    _estimated_raw = _raw;
+    return Estimate() + leaf.Estimate(View()) >= target;
   }
 
   template<typename Leaf>
@@ -189,47 +218,6 @@ class SegmentBuilder {
     uint32_t entry;
   };
 
-  template<typename Leaf, typename Cursor>
-  IRS_FORCE_INLINE void AddRow(Leaf& leaf, Cursor& cursor) {
-    if (_shape == Shape::Plain) {
-      if (const auto* value = cursor.Value()) {
-        _input += value->GetSize();
-        _stats.Update(*value);
-        AppendEntry(leaf, *value);
-      } else {
-        _stats.SetHasNull();
-        ++_nulls;
-        AppendEntry(leaf, duckdb::string_t{"", 0});
-      }
-      ++_rows;
-      return;
-    }
-    if constexpr (Cursor::kCodes) {
-      const auto code = cursor.Code();
-      if (code == 0) {
-        _stats.SetHasNull();
-        ++_nulls;
-        PushCode(0);
-        ++_rows;
-        return;
-      }
-      const auto& value = cursor.Entry(code);
-      _input += value.GetSize();
-      const auto [local, fresh] =
-        _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);
-      if (fresh) {
-        _stats.Update(value);
-        AppendEntry(leaf, value);
-      } else {
-        _stats.UpdateRepeated(value);
-      }
-      PushCode(local);
-      ++_rows;
-    } else {
-      SDB_UNREACHABLE();
-    }
-  }
-
   template<typename Leaf>
   IRS_FORCE_INLINE void AppendEntry(Leaf& leaf, const duckdb::string_t& value) {
     _entries.emplace_back(value);
@@ -267,6 +255,7 @@ class SegmentBuilder {
   uint64_t _runs = 0;
   uint32_t _last_code = 0;
   uint64_t _raw = 0;
+  uint64_t _estimated_raw = 0;
   uint32_t _max_len = 0;
   uint64_t _nulls = 0;
   uint64_t _input = 0;

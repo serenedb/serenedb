@@ -68,8 +68,6 @@ struct Key {
 inline constexpr size_t kFixedClasses = 2;
 inline constexpr size_t kMaxFixedSize = 3 * sizeof(uint64_t);
 
-using ClassSizes = std::array<size_t, kFixedClasses + 1>;
-
 IRS_FORCE_INLINE inline uint64_t Load8(const char* p) noexcept {
   uint64_t word;
   std::memcpy(&word, p, sizeof(word));
@@ -236,27 +234,15 @@ class StringTable {
       [=](auto& table) { table.reserve(words / (kFixedClasses + 1)); });
   }
 
-  void Reserve(const ClassSizes& sizes) {
-    [&]<size_t... I>(std::index_sequence<I...>) {
-      (std::get<I>(_tables).reserve(sizes[I]), ...);
-    }(std::make_index_sequence<kFixedClasses + 1>{});
-  }
-
   template<std::ranges::input_range Words>
   void Reserve(const Words& words) {
-    ClassSizes counts{};
+    std::array<size_t, kFixedClasses + 1> counts{};
     for (const auto& word : words) {
       ++counts[TableOf(CharsOf(word))];
     }
-    Reserve(counts);
-  }
-
-  ClassSizes Sizes() const noexcept {
-    ClassSizes sizes{};
     [&]<size_t... I>(std::index_sequence<I...>) {
-      ((sizes[I] = std::get<I>(_tables).size()), ...);
+      (std::get<I>(_tables).reserve(counts[I]), ...);
     }(std::make_index_sequence<kFixedClasses + 1>{});
-    return sizes;
   }
 
   size_t MemoryBytes() const noexcept {
@@ -324,8 +310,6 @@ class StringTable {
 };
 
 }  // namespace detail
-
-using detail::ClassSizes;
 
 template<typename LongKey>
 class StringSet

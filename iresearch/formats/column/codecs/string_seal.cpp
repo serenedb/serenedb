@@ -20,12 +20,10 @@
 
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <duckdb/common/types/string_type.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/calibration.hpp"
@@ -43,23 +41,11 @@ uint64_t PlainStorageBytes(const text::Segment& seg) noexcept {
 
 }  // namespace
 
-static_assert(std::is_same_v<decltype(StringTuning::last_distinct),
-                             analysis::dict::ClassSizes>);
-
-void StringAccumulator::Reserve(uint64_t rows,
-                                const analysis::dict::ClassSizes& distinct) {
+void StringAccumulator::Reserve(uint64_t rows, uint64_t distinct) {
   codes.reserve(rows);
-  const uint64_t expected = absl::c_accumulate(distinct, uint64_t{0});
-  if (expected == 0) {
-    entries.reserve(rows);
-    _map.Reserve(rows);
-    return;
-  }
-  analysis::dict::ClassSizes sizes;
-  absl::c_transform(distinct, sizes.begin(),
-                    [&](size_t n) { return std::min<size_t>(n, rows); });
-  entries.reserve(std::min(rows, expected));
-  _map.Reserve(sizes);
+  const auto expected = distinct == 0 ? rows : std::min(rows, distinct);
+  entries.reserve(expected);
+  _map.reserve(expected);
 }
 
 void StringAccumulator::Add(const duckdb::Vector& input) {
@@ -87,12 +73,6 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
     _last_code = mapped;
     code = mapped;
   }
-}
-
-void ChunkCursor::Enter() {
-  _values.emplace(_chunks[_next_chunk++].data);
-  _count = _values->size();
-  _index = 0;
 }
 
 SealOutcome SealSegments(const StringAccumulator& acc,
@@ -141,23 +121,15 @@ SealOutcome SealSegments(std::span<const WriteChunk> chunks,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          SegmentSink sink) {
-  uint64_t rows = 0;
-  for (const auto& chunk : chunks) {
-    rows += chunk.data.size();
-  }
   text::SegmentEncoder encoder{params, type, tuning};
-  const auto config = text::NamedConfig(named, params);
-  ChunkCursor cursor{chunks};
   SealOutcome outcome{.sealed = true};
-  for (uint64_t row = 0; row < rows;) {
-    auto* seg = encoder.Cut(config, cursor, row, rows);
-    row = seg->begin + seg->rows;
-    outcome.all_dedup =
-      outcome.all_dedup && seg->config.choice.shape == Shape::Dedup;
-    const std::string_view parts[] = {seg->head, seg->data};
-    sink(seg->config.choice, std::move(*seg->stats), seg->rows, parts);
-    encoder.Release(seg);
-  }
+  encoder.SealChunks(
+    text::NamedConfig(named, params), chunks,
+    [&](StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
+        std::span<const std::string_view> parts) {
+      outcome.all_dedup = outcome.all_dedup && choice.shape == Shape::Dedup;
+      sink(choice, std::move(stats), rows, parts);
+    });
   return outcome;
 }
 

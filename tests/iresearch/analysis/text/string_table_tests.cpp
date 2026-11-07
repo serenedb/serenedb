@@ -148,29 +148,6 @@ TEST(string_set_tests, reserve_by_words_sizes_each_class) {
   EXPECT_EQ(reserved + zero_tail.size() + kBeyondSso.size(), set.MemoryBytes());
 }
 
-TEST(string_set_tests, class_sizes_reserve_each_class) {
-  std::vector<std::string> words;
-  for (size_t i = 0; i < 300; ++i) {
-    words.emplace_back(absl::StrCat("w", i));
-  }
-  words.emplace_back(kLonger);
-  words.emplace_back(kBeyondSso);
-  StringSet source;
-  for (const auto& word : words) {
-    source.Insert(word);
-  }
-  const auto sizes = source.Sizes();
-  EXPECT_EQ((irs::analysis::dict::ClassSizes{300, 1, 1}), sizes);
-  StringSet set;
-  set.Reserve(sizes);
-  const auto reserved = set.MemoryBytes();
-  for (const auto& word : words) {
-    set.Insert(word);
-  }
-  EXPECT_EQ(sizes, set.Sizes());
-  EXPECT_EQ(reserved + kBeyondSso.size(), set.MemoryBytes());
-}
-
 TEST(string_set_tests, size_class_boundaries) {
   const std::vector<std::string> words{
     "",

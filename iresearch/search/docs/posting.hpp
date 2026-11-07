@@ -44,9 +44,8 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     SDB_ASSERT(meta.docs_count > 1, "a single document has its own root");
-    this->OpenInput(meta, doc_in, has_score_bounds);
     this->SetFreqLen(has_freq);
-    this->ArmWalk(meta, layout, has_score_bounds);
+    this->OpenList(meta, doc_in, layout, has_score_bounds);
   }
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {

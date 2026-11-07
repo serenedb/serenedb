@@ -128,10 +128,12 @@ inline IRS_FORCE_INLINE uint32_t CopyBelow(const doc_id_t* IRS_RESTRICT first,
 }
 
 template<typename InputType, bool Scored>
-class PostingBatch {
+class PostingBatch
+  : public PostingLeaf<InputType, Scored ? kScoredBatchShape : kBatchShape> {
+  using Base = PostingLeaf<InputType, Scored ? kScoredBatchShape : kBatchShape>;
+
  public:
-  static constexpr uint32_t kBlock = doc_limits::kBlockSize;
-  static constexpr bool kDefaultInit = true;
+  using Base::kBlock;
 
   doc_id_t Last() const noexcept { return _last; }
 
@@ -160,51 +162,22 @@ class PostingBatch {
   }
 
  protected:
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
-
-  IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
-
-  void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
-                 bool bounds) {
-    _in = OpenDocInput(meta, doc_in);
-    auto& in = In();
-    if (const auto extent = DocExtent(meta); extent != 0) {
-      _hint.Arm(meta.doc_start, meta.doc_start + extent);
-    }
-    if (meta.docs_count <= kBlock) {
-      SkipScoreBounds(bounds, in);
-    }
-    _left_in_list = meta.docs_count;
-  }
-
-  void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
-    if (meta.docs_count > kBlock) {
-      _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
-    }
-  }
-
-  IRS_FORCE_INLINE void SetFreqLen(bool has_freq) noexcept {
-    static_assert(!Scored);
-    _freq_len.value = has_freq ? kBlock : 0;
-  }
-
-  void MakeScore(const SubReader& segment, const TermReader& field,
-                 const ScoreArgs& args) {
-    static_assert(Scored);
-    _provider.freq.value = _freqs.data;
-    _score.fetcher = args.fetcher;
-    _score.score = PrepareScore(args, segment, field.meta(), _provider);
-  }
-
-  IRS_FORCE_INLINE void SkipFreqs(uint32_t len) {
-    static_assert(!Scored);
-    SDB_ASSERT(len != 0);
-    if (len == _freq_len.value) {
-      block_io::SkipBlock(In());
-    }
-  }
+  using Base::_freqs;
+  using Base::_hint;
+  using Base::_in;
+  using Base::_last;
+  using Base::_left_in_list;
+  using Base::_provider;
+  using Base::_score;
+  using Base::_walk;
+  using Base::ArmWalk;
+  using Base::Enc;
+  using Base::In;
+  using Base::MakeScore;
+  using Base::OpenInput;
+  using Base::OpenList;
+  using Base::SetFreqLen;
+  using Base::SkipFreqs;
 
   IRS_FORCE_INLINE void ReadDocs(doc_id_t* IRS_RESTRICT dest, uint32_t len) {
     _hint.Advance(In(), In().Position());
@@ -229,17 +202,6 @@ class PostingBatch {
     _score.score.Score(scores, static_cast<scores_size_t>(len));
     _provider.freq.value = _freqs.data;
   }
-
-  [[no_unique_address]] NeedEnc<InputType> _enc;
-  [[no_unique_address]] utils::Need<Scored, FreqBuf> _freqs;
-  IndexInput::ptr _in;
-  doc_id_t _last = 0;
-  uint32_t _left_in_list = 0;
-  [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
-  [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
-  [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
-  GrowingHint _hint;
-  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

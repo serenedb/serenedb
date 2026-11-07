@@ -86,7 +86,11 @@ class PhraseBound {
 
   template<typename Slots>
   score_t Score(const Slots& slots, BoundPair bound) {
-    _source->Set(slots.FreqBoundOf(bound.freq), bound.norm);
+    return ScoreOf({.freq = slots.FreqBoundOf(bound.freq), .norm = bound.norm});
+  }
+
+  score_t ScoreOf(BoundPair bound) {
+    _source->Set(bound.freq, bound.norm);
     return _func.Score();
   }
 

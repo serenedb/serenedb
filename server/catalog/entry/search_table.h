@@ -150,6 +150,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
 
+  void InternalAppend(duckdb::ClientContext& context,
+                      duckdb::ColumnDataCollection& collection) final;
+
   void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
 

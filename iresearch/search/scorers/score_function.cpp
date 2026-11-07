@@ -41,40 +41,16 @@ IRS_FORCE_INLINE void ConstantScoreImpl(score_t* res, scores_size_t n,
   }
 }
 
-class ConstantScore : public ScoreOperator {
+class ConstantScore : public ScoreOperatorOf<ConstantScore> {
  public:
   explicit ConstantScore(score_t value) noexcept : _value{value} {}
+
+  score_t ScoreOne() const noexcept { return _value; }
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
     ConstantScoreImpl<MergeType>(res, n, _value);
-  }
-
-  score_t Score() const noexcept final { return _value; }
-
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-
-  void ScorePostingBlock(score_t* res) const noexcept final {
-    ScoreImpl(res, kPostingBlock);
   }
 
  private:

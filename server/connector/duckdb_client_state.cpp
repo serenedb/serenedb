@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -180,6 +181,14 @@ namespace {
 // ClientContext parameter of their own.
 thread_local ConnectionContext* tls_committing_ctx = nullptr;
 
+void LogRollbackFailure(std::string_view database,
+                        const std::exception& e) noexcept try {
+  SDB_ERROR(GENERAL,
+            "rolling back the transaction of a server session in database \"",
+            database, "\" failed: ", duckdb::ErrorData{e}.RawMessage());
+} catch (...) {
+}
+
 }  // namespace
 
 ConnectionContext* CurrentCommittingContext() noexcept {
@@ -324,6 +333,9 @@ void SereneDBClientState::TransactionRollback(
   }
   _connection_ctx->Rollback(transaction.global_transaction_id);
   _connection_ctx->RefreshCatalogEpoch(transaction);
+  SDB_IF_FAILURE("transaction_rollback_fails") {
+    THROW_SQL_ERROR(ERR_MSG("injected rollback failure"));
+  }
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
@@ -389,6 +401,9 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
 
 NoticeSink LogNotices(std::string prefix) {
   return [prefix = std::move(prefix)](irs::pg::SqlErrorData& notice) {
+    SDB_IF_FAILURE("notice_sink_fails") {
+      THROW_SQL_ERROR(ERR_MSG("injected notice sink failure"));
+    }
     SDB_WARN(GENERAL, prefix, notice.errmsg);
   };
 }
@@ -407,9 +422,16 @@ SystemConnection::SystemConnection(const SystemSession& session,
 SystemConnection::~SystemConnection() {
   auto& transaction = conn->context->transaction;
   if (transaction.HasActiveTransaction()) {
-    transaction.Rollback(nullptr);
+    try {
+      transaction.Rollback(nullptr);
+    } catch (const std::exception& e) {
+      LogRollbackFailure(ctx->GetDatabase(), e);
+    }
   }
-  ctx->ConsumeNotices(sink);
+  try {
+    ctx->ConsumeNotices(sink);
+  } catch (...) {
+  }
 }
 
 }  // namespace sdb::connector

@@ -1,0 +1,75 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET enable_logging = true;
+
+
+statement ok
+SET logging_storage = 'memory';
+
+
+statement ok
+CREATE JOB jtf_open AFTER 1 HOUR SUSPENDED AS $$BEGIN; SELECT 1;$$;
+
+
+statement ok
+SET sdb_faults = 'transaction_rollback_fails';
+
+
+statement ok
+EXECUTE JOB jtf_open;
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) > 0 AS logged FROM duckdb_logs()
+WHERE message LIKE '%rolling back the transaction of a server session in database%failed: injected rollback failure%';
+----
+logged
+t
+
+
+statement ok
+CREATE JOB jtf_notices AFTER 1 HOUR SUSPENDED
+  AS SELECT pg_cancel_backend(424242), pg_cancel_backend(424243);
+
+
+statement ok
+SET sdb_faults = 'notice_sink_fails';
+
+
+statement ok
+EXECUTE JOB jtf_notices;
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS logged FROM duckdb_logs()
+WHERE message LIKE '%job "jtf_notices": PID 42424_ is not a PostgreSQL backend process%';
+----
+logged
+0
+
+
+query
+SELECT job_name, last_status FROM sdb_jobs() WHERE starts_with(job_name, 'jtf_') ORDER BY job_name;
+----
+job_name	last_status
+jtf_notices	success
+jtf_open	success
+
+
+statement ok
+DROP JOB jtf_open;
+
+
+statement ok
+DROP JOB jtf_notices;

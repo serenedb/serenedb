@@ -24,7 +24,7 @@ connection s2
 statement error
 TRUNCATE tci
 ----
-db error: ERROR: Attempting to truncate table tci but another transaction is writing to this table
+db error: ERROR: Attempting to truncate table "tci" but another transaction is writing to this table
 
 
 connection s1
@@ -56,13 +56,20 @@ TRUNCATE tcp
 
 
 connection s2
-statement ok
+statement error
 INSERT INTO tcp VALUES (1, 5)
+----
+db error: ERROR: Attempting to write to table tcp but another transaction is truncating it
 
 
 connection s1
 statement ok
 COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO tcp VALUES (1, 5)
 
 
 connection s2
@@ -122,7 +129,7 @@ connection s2
 statement error
 TRUNCATE tci RESTART IDENTITY
 ----
-db error: ERROR: Attempting to truncate table tci but another transaction is writing to this table
+db error: ERROR: Attempting to truncate table "tci" but another transaction is writing to this table
 
 
 connection s1
@@ -182,7 +189,7 @@ connection s2
 statement error
 TRUNCATE tcs
 ----
-db error: ERROR: Attempting to truncate table tcs but another transaction is writing to this table
+db error: ERROR: Attempting to truncate table "tcs" but another transaction is writing to this table
 
 
 connection s1
@@ -255,7 +262,7 @@ connection s2
 statement error
 TRUNCATE tcn
 ----
-db error: ERROR: Attempting to truncate table tcn but another transaction is writing to this table
+db error: ERROR: Attempting to truncate table "tcn" but another transaction is writing to this table
 
 
 connection s1

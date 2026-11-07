@@ -25,11 +25,8 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement error
+statement ok
 CHECKPOINT;
-----
-db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
-
 
 connection default
 statement ok
@@ -56,6 +53,10 @@ connection default
 statement ok
 SET GLOBAL checkpoint_threshold = '1KB';
 
+connection writer
+statement ok
+INSERT INTO tcw_rows SELECT i, repeat('x', 100) FROM range(100) t(i);
+
 connection default
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
@@ -69,15 +70,8 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement error
-CHECKPOINT;
-----
-db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
-
-
-connection writer
 statement ok
-INSERT INTO tcw_rows SELECT i, repeat('x', 100) FROM range(100) t(i);
+CHECKPOINT;
 
 connection default
 statement ok

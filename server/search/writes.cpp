@@ -617,7 +617,8 @@ void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
     if (writing) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
-        ERR_MSG("Attempting to truncate table ", table.name.GetIdentifierName(),
+        ERR_MSG("Attempting to truncate table ",
+                duckdb::SQLQuotedIdentifier::ToString(table.name),
                 " but another transaction is writing to this table"));
     }
     THROW_SQL_ERROR(

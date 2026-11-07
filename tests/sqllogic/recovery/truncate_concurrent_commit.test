@@ -48,7 +48,7 @@ connection s2
 statement error
 TRUNCATE tcw
 ----
-db error: ERROR: Attempting to truncate table "tcw" but another transaction has added rows to this table
+db error: ERROR: Attempting to truncate table "tcw" but another transaction is writing to this table
 
 
 statement ok

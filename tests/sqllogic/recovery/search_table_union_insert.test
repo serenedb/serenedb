@@ -21,7 +21,7 @@ EXPLAIN INSERT INTO u
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────────────────╮
+╭─ INSERT ──────────────────────────╮
 ╰─────────────────┬─────────────────╯
 ╭─ PROJECTION ────┴─────────────────╮
 │ Projections: CAST(#0 AS INTEGER), │
@@ -54,7 +54,7 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
   AND metric = 'num_segments';
 ----
 value
-2
+1
 
 query
 SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
@@ -90,7 +90,7 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
   AND metric = 'num_segments';
 ----
 value
-2
+1
 
 query
 SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;

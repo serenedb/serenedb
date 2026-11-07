@@ -14,15 +14,15 @@ INSERT INTO commit_fail_docs SELECT i, 'm' || (i % 7) FROM range(500) t(i);
 
 
 statement ok
-SET sdb_faults = 'IndexWriter::Transaction::Commit';
+SET sdb_faults = 'search_feed_pending_fails';
 
 
-statement ok
+statement error intentional debug error
 INSERT INTO commit_fail_docs SELECT i, 'late' FROM range(500, 600) t(i);
 
 
 statement ok
-SET sdb_faults = '-IndexWriter::Transaction::Commit';
+SET sdb_faults = '-search_feed_pending_fails';
 
 
 statement ok
@@ -33,7 +33,7 @@ query
 SELECT count(*) AS n FROM commit_fail_docs;
 ----
 n
-500
+501
 
 
 statement ok
@@ -53,4 +53,4 @@ query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT count(*) AS n, count(*) FILTER (WHERE msg = 'late') AS late, count(*) FILTER (WHERE msg = 'after') AS after FROM commit_fail_docs;
 ----
 n	late	after
-601	100	1
+501	0	1

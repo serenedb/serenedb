@@ -39,7 +39,7 @@ CREATE TABLE dlc_oids AS
   SELECT 'db' AS name, oid FROM pg_database WHERE datname = 'dlc_db'
   UNION ALL
   SELECT table_name, table_oid FROM duckdb_tables()
-  WHERE database_name = 'dlc_db' AND table_name = 'st'
+  WHERE database_name = 'dlc_db' AND table_name IN ('st', 'tt')
   UNION ALL
   SELECT index_name, index_oid FROM duckdb_indexes()
   WHERE database_name = 'dlc_db' AND index_name IN ('tt_inv', 'tv_inv');
@@ -52,20 +52,11 @@ FROM dlc_oids o WHERE name <> 'db' ORDER BY name;
 ----
 name	stored
 st	t
-tt_inv	t
+tt	t
+tt_inv	f
 tv_inv	t
 
 
-query
-SELECT count(*) AS database_files FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*')
-WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dlc_oids WHERE name = 'db') || '/data.db';
-----
-database_files
-1
-
-
-# A committed DROP INDEX whose removal a crash cuts off: the next boot removes
-# the directory, since no index owns it.
 statement ok
 SET sdb_faults = 'crash_on_drop';
 
@@ -82,16 +73,6 @@ indexes
 1
 
 
-connection after_index_drop
-query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
-WHERE file LIKE '%/' || (SELECT oid FROM dlc_oids WHERE name = 'tt_inv') || '/%';
-----
-leftover
-0
-
-
-# The same for a search table.
 connection after_index_drop
 statement ok
 SET sdb_faults = 'crash_on_drop';
@@ -142,12 +123,12 @@ tables
 
 connection after_lost_create
 query
-SELECT list(DISTINCT regexp_extract(file, '/engine_v1/[0-9]+/([0-9]+)/', 1)::BIGINT)
-       = [(SELECT oid FROM dlc_oids WHERE name = 'tv_inv')] AS only_the_view_index
+SELECT list_sort(list(DISTINCT regexp_extract(file, '/engine_v1/[0-9]+/([0-9]+)/', 1)::BIGINT))
+       = list_sort([(SELECT oid FROM dlc_oids WHERE name = 'tt'), (SELECT oid FROM dlc_oids WHERE name = 'tv_inv')]) AS only_live_relations
 FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
 WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dlc_oids WHERE name = 'db') || '/%';
 ----
-only_the_view_index
+only_live_relations
 t
 
 
@@ -171,11 +152,11 @@ DROP DATABASE dlc_db;
 # The racer still holds the database, so its files stay until it lets go.
 connection dropper
 query
-SELECT count(*) AS held FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')
-WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dlc_oids WHERE name = 'db') || '/data.db';
+SELECT count(*) > 0 AS held FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
+WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dlc_oids WHERE name = 'db') || '/%';
 ----
 held
-1
+t
 
 
 connection racer

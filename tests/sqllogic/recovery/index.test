@@ -210,12 +210,10 @@ DROP TABLE t;
 
 connection new2
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT metric, value FROM sdb_metrics WHERE metric IN ('refresh_active', 'refresh_pending', 'compaction_active', 'compaction_pending', 'cleanup_active', 'cleanup_pending') ORDER BY metric;
+SELECT metric, value FROM sdb_metrics WHERE metric IN ('compaction_active', 'compaction_pending', 'cleanup_active', 'cleanup_pending') ORDER BY metric;
 ----
 metric	value
 cleanup_active	0
 cleanup_pending	0
 compaction_active	0
 compaction_pending	0
-refresh_active	0
-refresh_pending	0

@@ -63,7 +63,8 @@ count
 
 connection after_index_drop
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
+WHERE file NOT LIKE '%/' || (SELECT oid FROM pg_class WHERE relname = 't') || '/%';
 ----
 leftover
 0

@@ -1,13 +1,3 @@
-# Rowid gaps vs the online CREATE INDEX delete-log bound. Checkpoint vacuum
-# drops fully-deleted row groups and persists the rowid gap (rowids stay
-# stable), so live rowids can exceed the table's physical row count. The
-# delete-log bound must come from the rowid ALLOCATOR (GetNextRowId), not the
-# row count -- a count-based bound routes mid-build deletes of high-rowid
-# rows to the native remove path, and the backfill copy resurrects them.
-#
-# Requires SDB_FAULT_INJECTION, like the rest of the recovery suite.
-
-
 statement ok
 RESET sdb_faults;
 
@@ -20,7 +10,6 @@ statement ok
 INSERT INTO oci_gap SELECT g, md5(g::text) FROM generate_series(1, 300000) g;
 
 
-# Row group 0 covers rowids 0..122879 (x = 1..122880): fully deleted.
 statement ok
 DELETE FROM oci_gap WHERE x <= 130000;
 
@@ -29,13 +18,11 @@ statement ok
 CHECKPOINT;
 
 
-# The vacuum dropped the empty prefix row group with rowids preserved:
-# physical rows (reltuples) sit below the max live rowid (299999) now.
 query
-SELECT reltuples::bigint AS physical_rows FROM pg_class WHERE relname = 'oci_gap';
+SELECT reltuples::bigint AS live_rows FROM pg_class WHERE relname = 'oci_gap';
 ----
-physical_rows
-177120
+live_rows
+170000
 
 
 statement ok
@@ -58,9 +45,6 @@ count
 1
 
 
-# Mid-build delete of a surviving row whose rowid (249999) is far above the
-# physical row count: with a count-based bound this took the native path and
-# resurrected.
 statement ok retry 20 backoff 500ms
 DELETE FROM oci_gap WHERE x = 250000;
 

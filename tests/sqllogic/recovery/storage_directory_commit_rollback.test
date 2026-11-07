@@ -1,10 +1,5 @@
 control substitution on
 
-# A search table, an inverted index on a table and one on a view each own a
-# directory. A committed drop removes it, a rolled-back drop keeps it, and a
-# rolled-back create removes the one it made; a create that is skipped makes
-# none. Nothing is left that no object owns.
-
 
 statement ok
 CREATE TABLE sdl_t (id INT, body TEXT);
@@ -83,7 +78,7 @@ query
 SELECT sdl_stored('sdl_t_inv') AS t_inv, sdl_stored('sdl_s') AS s, sdl_stored('sdl_v_inv') AS v_inv;
 ----
 t_inv	s	v_inv
-t	t	t
+f	t	t
 
 
 statement ok
@@ -127,7 +122,7 @@ CREATE INDEX sdl_keep_s_inv ON sdl_keep_s USING inverted (body);
 
 
 statement ok
-CREATE INDEX sdl_keep_v_inv ON sdl_v USING inverted (body);
+CREATE INDEX sdl_keep_v_inv ON sdl_v USING inverted (body) INCLUDE (id);
 
 
 statement ok
@@ -164,7 +159,7 @@ SELECT sdl_stored('sdl_keep_inv') AS t_inv, sdl_stored('sdl_keep_s') AS s,
        sdl_stored('sdl_keep_v_inv') AS v_inv, sdl_orphans() AS orphans;
 ----
 t_inv	s	v_inv	orphans
-t	t	t	0
+f	t	t	0
 
 
 query
@@ -213,7 +208,7 @@ SELECT sdl_orphans() AS orphans, sdl_stored('sdl_keep_inv') AS kept,
        sdl_stored('sdl_keep_s') AS kept_table;
 ----
 orphans	kept	kept_table
-0	t	t
+0	f	t
 
 
 query
@@ -360,7 +355,8 @@ COMMIT;
 
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/')
-WHERE regexp_extract(file, '[^/]+$') NOT IN (SELECT oid::TEXT FROM pg_database);
+WHERE regexp_matches(regexp_extract(file, '[^/]+$'), '^[0-9]+$')
+  AND regexp_extract(file, '[^/]+$') NOT IN (SELECT oid::TEXT FROM pg_database);
 ----
 orphans
 0

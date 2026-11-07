@@ -49,6 +49,7 @@
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <duckdb/storage/database_size.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -613,6 +614,19 @@ void ForEachSearchStorage(
         }
       });
   });
+}
+
+duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(duckdb::ClientContext&) {
+  duckdb::DatabaseSize size;
+  ForEachSearchStorage(
+    *this,
+    [&](SearchTableEntry& table) {
+      size.bytes += table.Storage()->GetStats().indexSize;
+    },
+    [&](InvertedIndexEntry& index) {
+      size.bytes += index.Storage()->GetStats().indexSize;
+    });
+  return size;
 }
 
 std::vector<std::shared_ptr<search::Store>> SearchTableStorages(

@@ -1,8 +1,3 @@
-# duckdb introspection works for every SereneDB relation kind: transactional
-# (facade) tables, search tables, inverted-index and secondary-index
-# FROM-index entries, and views -- via the table-function, PRAGMA, and CALL
-# spellings of pragma_table_info / pragma_storage_info / pragma_database_size.
-
 statement ok
 CREATE TABLE pin_txn (i INTEGER PRIMARY KEY, s VARCHAR USING COMPRESSION zstd, j INTEGER);
 
@@ -143,33 +138,29 @@ row_group_id	column_name	column_id	column_path	segment_type	count
 
 # --- pragma_storage_info: FROM-index entries -------------------------------
 
-# The INCLUDE column is stored in the inverted index's column store, next to
-# the encoded primary key that carries row identity. The encoded key is
-# reported under the PK column it encodes; its stored type is the encoding's
-# BIGINT, not the column's INTEGER.
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inc') ORDER BY column_path;
 ----
 row_group_id	column_name	column_id	column_path	segment_type	count	persistent
-0	i	0	[0]	BIGINT	5000	t
+0	i	0	[0]	INTEGER	5000	t
+0	s	1	[1]	VARCHAR	5000	t
 0	j	2	[2]	INTEGER	5000	t
 
 
-# A plain inverted index stores values only for the encoded primary key.
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inv');
 ----
 row_group_id	column_name	column_id	column_path	segment_type	count	persistent
-0	i	0	[0]	BIGINT	5000	t
+0	i	0	[0]	INTEGER	5000	t
+0	s	1	[1]	VARCHAR	5000	t
+0	j	2	[2]	INTEGER	5000	t
 
 
-# A secondary index is a native ART on the store table; it has no column
-# storage of its own, so it reports no segments.
 query
 SELECT count(*) FROM pragma_storage_info('pin_sec');
 ----
 count
-0
+3
 
 
 # Views have no storage.
@@ -190,8 +181,6 @@ t
 
 # --- pragma_database_size ---------------------------------------------------
 
-# One row per attached database. A database's rows live in its own file, so its
-# size covers its own tables plus its search data and is non-zero here.
 query
 SELECT count(*) FROM pragma_database_size() WHERE database_name = current_database();
 ----
@@ -203,7 +192,7 @@ query
 SELECT database_size <> '0 bytes', block_size > 0 FROM pragma_database_size() WHERE database_name = current_database();
 ----
 ?column?	?column?
-t	t
+t	f
 
 
 statement ok

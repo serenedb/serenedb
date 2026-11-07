@@ -88,6 +88,7 @@ class SereneDBCatalog final : public BaseCatalog {
                   duckdb::CatalogEntry& entry) final;
 
   std::string GetCatalogType() final { return kStorageType; }
+  duckdb::DatabaseSize GetDatabaseSize(duckdb::ClientContext& context) final;
 
   duckdb::SqlCompatibility Compatibility() const final {
     return duckdb::SqlCompatibility::POSTGRES;

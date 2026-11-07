@@ -43,6 +43,7 @@
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
+#include "search/store.h"
 
 namespace sdb::pg {
 namespace {
@@ -205,9 +206,14 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
              scan.Triggered(row.table);
     }),
     Col<"reltuples">([](const auto& row) {
-      return row.table.IsDuckTable()
-               ? static_cast<float>(row.table.GetStorage().GetTotalRows())
-               : -1.0F;
+      if (row.table.IsDuckTable()) {
+        return static_cast<float>(row.table.GetStorage().GetTotalRows());
+      }
+      if (row.search) {
+        return static_cast<float>(
+          row.search->Storage()->GetDirectoryReader().live_docs_count());
+      }
+      return -1.0F;
     }),
     Col<"relacl">([](const auto& row) -> const auto& {
       return row.table.permissions.acl;

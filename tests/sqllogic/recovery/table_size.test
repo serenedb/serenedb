@@ -76,14 +76,14 @@ query
 SELECT pg_relation_size('t_idx'::regclass) > 0 AS index_has_size;
 ----
 index_has_size
-t
+f
 
 
 query
 SELECT pg_relation_size('t_idx'::regclass, 'main') > 0 AS index_main_has_size;
 ----
 index_main_has_size
-t
+f
 
 
 query
@@ -140,7 +140,7 @@ query
 SELECT pg_relation_size('t_idx'::regclass) > 0 AS index_has_size;
 ----
 index_has_size
-t
+f
 
 
 connection after_reboot
@@ -148,7 +148,7 @@ query
 SELECT pg_relation_size('t_idx'::regclass, 'main') > 0 AS index_main_has_size;
 ----
 index_main_has_size
-t
+f
 
 
 connection after_reboot

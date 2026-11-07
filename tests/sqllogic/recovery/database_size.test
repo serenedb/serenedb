@@ -1,7 +1,3 @@
-# A facade database holds no row data itself (it lives in the hidden store
-# database), so pragma_database_size used to report 0 for it. GetDatabaseSize now
-# delegates to the store, so the facade database reports a real (non-zero) size.
-
 statement ok
 CREATE TABLE dbsize_t (a INT, b INT);
 
@@ -15,7 +11,7 @@ FORCE CHECKPOINT;
 
 
 query
-SELECT block_size > 0 AS has_size FROM pragma_database_size() WHERE database_name = 'postgres';
+SELECT database_size <> '0 bytes' AS has_size FROM pragma_database_size() WHERE database_name = current_database();
 ----
 has_size
 t

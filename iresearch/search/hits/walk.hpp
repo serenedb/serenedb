@@ -26,6 +26,7 @@
 
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/hits/root.hpp"
+#include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -87,23 +88,8 @@ class Walk : public Root {
     if (batch == 0) {
       return;
     }
-    if (batch == kBatch) {
-      ScoreFull(_batch, _batch_scores);
-    } else {
-      Score(_batch, _batch_scores, batch);
-    }
+    FetchAndScore(_fetcher, _score, _batch, _batch_scores, batch);
     _batched = batch;
-  }
-
-  void ScoreFull(const doc_id_t* docs, score_t* scores) {
-    _fetcher.FetchScoreBlock(
-      std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
-    _score.ScoreBlock(scores);
-  }
-
-  void Score(const doc_id_t* docs, score_t* scores, uint32_t len) {
-    _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
-    _score.Score(scores, static_cast<scores_size_t>(len));
   }
 
   ColumnArgsFetcher& _fetcher;
@@ -126,13 +112,7 @@ class ConstantWalk : public Root {
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
                score_t* IRS_RESTRICT scores) final {
-    uint32_t n = 0;
-
-    auto doc = _node.Seek(min);
-    while (doc < max) {
-      out[n++] = doc;
-      doc = _node.Next();
-    }
+    const auto n = lead::GatherAll(_node, min, max, out);
     std::fill_n(scores, n, _score);
     return n;
   }

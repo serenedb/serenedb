@@ -36,12 +36,15 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/landings.hpp"
+#include "iresearch/search/detail/masked_leaf.hpp"
+#include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -67,9 +70,38 @@ IRS_FORCE_INLINE uint32_t FirstCompetitive(const BlockIndex& index, uint32_t b,
   return b;
 }
 
+inline constexpr detail::LeafShape kPrunedShape{
+  .scored = true,
+  .defer = true,
+  .freqs = true,
+  .enc = true,
+  .delta = true,
+};
+
 template<typename InputType, bool Standalone>
-class PrunedLeafBase {
+class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
+  using Base = detail::PostingLeaf<InputType, kPrunedShape>;
+
+ public:
+  using Base::kDefaultInit;
+
  protected:
+  using Base::_doc;
+  using Base::_docs;
+  using Base::_enc;
+  using Base::_freqs;
+  using Base::_hint;
+  using Base::_in;
+  using Base::_last;
+  using Base::_left_in_leaf;
+  using Base::_left_in_list;
+  using Base::_provider;
+  using Base::_recipe;
+  using Base::_score;
+  using Base::_walk;
+  using Base::In;
+  using Base::Scores;
+
   class NoBoundSource final : public ScoreBoundSource {
    public:
     Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
@@ -78,15 +110,6 @@ class PrunedLeafBase {
   };
 
  public:
-  static constexpr bool kDefaultInit = true;
-
-  PrunedLeafBase() = default;
-
-  PrunedLeafBase(const PrunedLeafBase&) = delete;
-  PrunedLeafBase& operator=(const PrunedLeafBase&) = delete;
-  PrunedLeafBase(PrunedLeafBase&&) = delete;
-  PrunedLeafBase& operator=(PrunedLeafBase&&) = delete;
-
   bool PrepareCommon(const PostingMeta& meta, const IndexInput& doc_in,
                      IndexFeatures layout, const SubReader& segment,
                      const TermReader& field, const detail::ScoreArgs& args) {
@@ -94,21 +117,13 @@ class PrunedLeafBase {
     SDB_ASSERT(args.scorer != nullptr);
     SDB_ASSERT(args.fetcher != nullptr);
     SDB_ASSERT(FeaturesHaveFreq(layout));
-    _fetcher = args.fetcher;
-    _recipe = {&segment, &field, args};
-    _provider.freq.value = _freqs.data;
+    this->SetRecipe(segment, field, args);
     _cost = meta.docs_count;
 
     auto source = args.scorer->PrepareScoreBoundSource();
     if (source) {
-      _bound_func = args.scorer->PrepareScorer({
-        .segment = segment,
-        .field = field.meta(),
-        .doc_attrs = *source,
-        .fetcher = *args.fetcher,
-        .stats = args.stats,
-        .boost = args.boost,
-      });
+      _bound_func =
+        irs::detail::PrepareScore(args, segment, field.meta(), *source);
       _bound_source = std::move(source);
     } else {
       _bound_func =
@@ -116,16 +131,9 @@ class PrunedLeafBase {
       _bound_source = std::make_unique<NoBoundSource>();
     }
 
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    this->MakeScore(segment, field, args);
 
-    _cursor.Disarm();
+    _walk.Disarm();
     _cached.fill(kNoBlock);
     _cached_runs.fill(kNoBlock);
     _root_score = std::numeric_limits<score_t>::max();
@@ -144,14 +152,12 @@ class PrunedLeafBase {
     auto& in = In();
     *(std::end(_docs) - 1) = doc_limits::invalid();
     _left_in_list = meta.docs_count;
-    if (const auto extent = DocExtent(meta); extent != 0) {
-      _hint.Arm(meta.doc_start, meta.doc_start + extent);
-    }
+    _hint.Arm(meta);
 
     if (meta.docs_count > doc_limits::kBlockSize) {
-      _cursor.Arm(meta, BlockIndexShapeOf(layout, true));
-      _cursor.Load(in);
-      _root_score = BoundScore(_cursor.Index().Root());
+      _walk.Arm(meta, BlockIndexShapeOf(layout, true));
+      _walk.Load(in);
+      _root_score = BoundScore(_walk.Index().Root());
     } else {
       const auto size = in.ReadByte();
       _bound_source->Read(in, size);
@@ -164,31 +170,33 @@ class PrunedLeafBase {
 
   uint32_t Cost() const noexcept { return _cost; }
 
+  score_t RootScore() const noexcept { return _root_score; }
+
   doc_id_t AdvanceBlock(doc_id_t target) {
-    if (!_cursor.Armed()) [[unlikely]] {
+    if (!_walk.Armed()) [[unlikely]] {
       return doc_limits::eof();
     }
-    if (_cursor.UpperBound() >= target) {
-      return _cursor.UpperBound();
+    if (_walk.UpperBound() >= target) {
+      return _walk.UpperBound();
     }
     const auto left = SeekCursor(target);
-    if (_needs_reposition || target > _max_in_leaf) {
+    if (_needs_reposition || target > _last) {
       _left_in_list = left;
       _left_in_leaf = 0;
-      _max_in_leaf = doc_limits::invalid();
+      _last = doc_limits::invalid();
       _needs_reposition = true;
-      _doc = _cursor.LandingDoc();
+      _doc = _walk.LandingDoc();
     }
-    return _cursor.UpperBound();
+    return _walk.UpperBound();
   }
 
   score_t MaxScore(doc_id_t doc) {
-    if (!_cursor.Armed()) {
+    if (!_walk.Armed()) {
       return _root_score;
     }
-    const auto& index = _cursor.Index();
+    const auto& index = _walk.Index();
     const auto n = index.Size();
-    auto b = _cursor.Block();
+    auto b = _walk.Block();
     if (b == n) {
       return _root_score;
     }
@@ -223,14 +231,30 @@ class PrunedLeafBase {
     return score;
   }
 
+  doc_id_t SkipNonCompetitive(doc_id_t target, doc_id_t limit,
+                              score_t threshold) {
+    if (!_walk.Armed()) {
+      return target;
+    }
+    const auto& index = _walk.Index();
+    const auto n = index.Size();
+    const auto b = index.Find(_walk.Block(), target);
+    const auto first = FirstCompetitive(
+      index, b, threshold, [&](uint32_t r) { return RunScore(r); },
+      [&](uint32_t k) { return BlockScore(k); });
+    if (first == b) {
+      return target;
+    }
+    const auto next =
+      first == n ? limit : std::min(limit, index.Last(first - 1) + 1);
+    AdvanceBlock(next);
+    return next;
+  }
+
  protected:
   static constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
   static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;
   static constexpr uint32_t kCachedRuns = 8;
-
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
 
   score_t BoundScore(BoundPair bound) {
     _bound_source->Set(bound.freq, bound.norm);
@@ -241,7 +265,7 @@ class PrunedLeafBase {
     const auto slot = k % kCachedBlocks;
     if (_cached[slot] != k) {
       _cached[slot] = k;
-      _cached_scores[slot] = BoundScore(_cursor.Index().Bound(k));
+      _cached_scores[slot] = BoundScore(_walk.Index().Bound(k));
     }
     return _cached_scores[slot];
   }
@@ -250,20 +274,20 @@ class PrunedLeafBase {
     const auto slot = r % kCachedRuns;
     if (_cached_runs[slot] != r) {
       _cached_runs[slot] = r;
-      _run_scores[slot] = BoundScore(_cursor.Index().RunBound(r));
+      _run_scores[slot] = BoundScore(_walk.Index().RunBound(r));
     }
     return _run_scores[slot];
   }
 
   uint32_t SeekCursor(doc_id_t target) {
     if constexpr (Standalone) {
-      const auto& index = _cursor.Index();
-      return _cursor.MoveTo(FirstCompetitive(
-        index, index.Find(_cursor.Block(), target), _threshold,
+      const auto& index = _walk.Index();
+      return _walk.MoveTo(FirstCompetitive(
+        index, index.Find(_walk.Block(), target), _threshold,
         [&](uint32_t r) { return RunScore(r); },
         [&](uint32_t b) { return BlockScore(b); }));
     } else {
-      return _cursor.Seek(target, In());
+      return _walk.Seek(target, In());
     }
   }
 
@@ -272,7 +296,7 @@ class PrunedLeafBase {
       return;
     }
     _needs_reposition = false;
-    const auto state = _cursor.Landing();
+    const auto state = _walk.Landing();
     In().Seek(state.doc_ptr);
     _doc = state.doc;
   }
@@ -282,7 +306,7 @@ class PrunedLeafBase {
       return;
     }
     _needs_reposition = false;
-    const auto state = _cursor.Landing();
+    const auto state = _walk.Landing();
     In().Seek(state.doc_ptr);
     ReadLeaf(state.doc);
     const auto* const first =
@@ -294,25 +318,14 @@ class PrunedLeafBase {
 
   IRS_FORCE_INLINE const doc_id_t* FirstNotBelow(const doc_id_t* begin,
                                                  doc_id_t max) const noexcept {
-    if (_len == doc_limits::kBlockSize) [[likely]] {
-      return BranchlessLowerBound<doc_limits::kBlockSize>(std::cbegin(_docs),
-                                                          max);
-    }
-    return std::find_if(begin, std::cend(_docs),
-                        [max](doc_id_t doc) { return doc >= max; });
+    return LeafLowerBound<doc_limits::kBlockSize>(std::cbegin(_docs), _len,
+                                                  begin, max);
   }
 
   void ReadLeaf(doc_id_t prev) {
-    auto& in = In();
-    _hint.Advance(in, in.Position());
-    const auto len = std::min(_left_in_list, doc_limits::kBlockSize);
-    block_io::ReadTailDelta(len, in, _enc.data, _docs, prev);
-    block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
-    _left_in_leaf = len;
-    _len = len;
-    _left_in_list -= len;
+    this->ReadLeafDelta(prev);
+    _len = _left_in_leaf;
     _base = prev;
-    _max_in_leaf = *(std::end(_docs) - 1);
     _scored = false;
   }
 
@@ -383,38 +396,11 @@ class PrunedLeafBase {
                         IRS_FORCE_INLINE { Emit(docs, len, visit); });
   }
 
-  IRS_FORCE_INLINE score_t* Scores() noexcept {
-    static_assert(sizeof(score_t) == sizeof(_enc.data[0]));
-    return reinterpret_cast<score_t*>(std::begin(_enc.data));
-  }
-
   void ScoreLeaf() {
     _scored = true;
-    if (_len == doc_limits::kBlockSize) {
-      _fetcher->FetchPostingBlock(
-        std::span<const doc_id_t, doc_limits::kBlockSize>{
-          std::begin(_docs), doc_limits::kBlockSize});
-      _score.ScorePostingBlock(Scores());
-      return;
-    }
-    const auto offset = doc_limits::kBlockSize - _len;
-    _fetcher->Fetch(
-      std::span<const doc_id_t>{std::begin(_docs) + offset, _len});
-    _provider.freq.value = _freqs.data + offset;
-    _score.Score(Scores() + offset, static_cast<scores_size_t>(_len));
-    _provider.freq.value = _freqs.data;
+    Base::ScoreLeaf(doc_limits::kBlockSize - _len, _len);
   }
 
-  detail::EncBuf _enc;
-  detail::FreqBuf _freqs;
-  DocsBuf _docs;
-  IndexInput::ptr _in;
-  ColumnArgsFetcher* _fetcher = nullptr;
-  ScoreFunction _score;
-  detail::LeafProvider _provider;
-  detail::LeafRecipe _recipe;
-  BlockCursor _cursor;
-  GrowingHint _hint;
   ScoreFunction _bound_func;
   ScoreBoundSource::ptr _bound_source;
   std::array<uint32_t, kCachedBlocks> _cached;
@@ -423,15 +409,191 @@ class PrunedLeafBase {
   std::array<score_t, kCachedRuns> _run_scores;
   score_t _root_score = std::numeric_limits<score_t>::max();
   score_t _threshold = std::numeric_limits<score_t>::lowest();
-  doc_id_t _doc = 0;
-  uint32_t _left_in_leaf = 0;
   uint32_t _len = 0;
   doc_id_t _base = 0;
-  doc_id_t _max_in_leaf = doc_limits::invalid();
-  uint32_t _left_in_list = 0;
   uint32_t _cost = 0;
   bool _needs_reposition = false;
   bool _scored = false;
+};
+
+template<typename InputType>
+class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
+  using Base = PrunedLeafBase<InputType, false>;
+
+ public:
+  uint32_t TakeReads() noexcept { return std::exchange(_reads, 0); }
+
+ protected:
+  using Base::_base;
+  using Base::_doc;
+  using Base::_docs;
+  using Base::_enc;
+  using Base::_freqs;
+  using Base::_hint;
+  using Base::_last;
+  using Base::_left_in_list;
+  using Base::_needs_reposition;
+  using Base::_walk;
+  using Base::In;
+
+  static constexpr uint32_t kBlock = doc_limits::kBlockSize;
+
+  template<typename Visit>
+  IRS_FORCE_INLINE void Members(const doc_id_t* docs, uint32_t n,
+                                Visit&& visit) {
+    ForEachLeafOf(docs, n, [&](uint32_t i) IRS_FORCE_INLINE {
+      const auto doc = docs[i];
+      _doc = _leaf.Find(std::begin(_docs), _base, doc);
+      const bool hit = _doc == doc;
+      DecodeLazyFreqs(hit);
+      visit(i, doc, hit, _freqs.data[_leaf.Index()]);
+      return i + 1;
+    });
+  }
+
+  template<typename Visit>
+  IRS_FORCE_INLINE void Matches(const doc_id_t* docs, uint32_t n,
+                                Visit&& visit) {
+    uint32_t index[kScoreBlock];
+    ForEachLeafOf(docs, n, [&](uint32_t i) IRS_FORCE_INLINE {
+      const auto end = CountLess<kScoreBlock>(docs, _last + 1);
+      SDB_ASSERT(i < end && end <= n);
+      ScoreMask hits = 0;
+      _doc = _leaf.template Match<kScoreBlock>(std::begin(_docs), _base, docs,
+                                               i, end, hits, index);
+      if (hits != 0) {
+        DecodeLazyFreqs();
+        for (; hits != 0; hits &= hits - 1) {
+          const auto j = static_cast<uint32_t>(std::countr_zero(hits));
+          visit(j, _freqs.data[index[j]]);
+        }
+      }
+      return end;
+    });
+  }
+
+  template<typename Visit>
+  IRS_FORCE_INLINE void ForEachLeafOf(const doc_id_t* docs, uint32_t n,
+                                      Visit&& visit) {
+    SDB_ASSERT(n <= kScoreBlock);
+    uint32_t blocks[kScoreBlock];
+    const auto landings = Landings(docs, n, blocks);
+    uint32_t landed = 0;
+    for (uint32_t i = 0; i != n;) {
+      if (docs[i] > _last) {
+        if (landed != landings) {
+          LandOn(blocks[landed++]);
+        } else if (!Reach(docs[i])) {
+          _doc = doc_limits::eof();
+          return;
+        }
+      }
+      i = visit(i);
+    }
+  }
+
+  IRS_FORCE_INLINE void DecodeLazyFreqs(bool needed = true) noexcept {
+    if constexpr (InputType::kVolatileAlways) {
+      if (_lazy != nullptr) [[unlikely]] {
+        if (needed) {
+          DecodeFreqs();
+        }
+      }
+    }
+  }
+
+  uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
+    if (!_walk.Armed() || n < 2 || in[n - 1] <= _last ||
+        (!_needs_reposition &&
+         (in[n - 1] - in[0]) / (n - 1) <= _last - _base)) {
+      return 0;
+    }
+    const auto& index = _walk.Index();
+    const auto size = index.Size();
+    const auto block = _walk.NextBlock(_left_in_list);
+    return irs::detail::PlanLandings(
+      index,
+      {.block = block,
+       .next = _needs_reposition ? size : block,
+       .upper = _needs_reposition ? doc_limits::invalid() : _last,
+       .cap = n},
+      in, n, blocks, [&](uint32_t landed) IRS_FORCE_INLINE {
+        if constexpr (InputType::kVolatileAlways) {
+          const auto begin =
+            reinterpret_cast<uintptr_t>(In().At(_walk.BlockStart(landed)));
+          const auto end = landed + 1 != size
+                             ? reinterpret_cast<uintptr_t>(
+                                 In().At(_walk.BlockStart(landed + 1)))
+                             : begin + 1;
+          for (auto line = begin & ~uintptr_t{ABSL_CACHELINE_SIZE - 1};
+               line < end; line += ABSL_CACHELINE_SIZE) {
+            __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 2);
+          }
+        }
+      });
+  }
+
+  void LandOn(uint32_t block) {
+    if (!_needs_reposition && block == _walk.NextBlock(_left_in_list)) {
+      ReadFill(_last);
+      return;
+    }
+    _left_in_list = _walk.MoveTo(block);
+    _needs_reposition = false;
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    ReadFill(landing.doc);
+  }
+
+  bool Reach(doc_id_t target) {
+    if (!_walk.Armed()) {
+      if (_left_in_list == 0) {
+        return false;
+      }
+      ReadFill(_last);
+      return target <= _last;
+    }
+    const auto& index = _walk.Index();
+    auto block = _walk.NextBlock(_left_in_list);
+    if (block < index.Size() && index.Last(block) < target) {
+      block = index.Find(block, target);
+    }
+    if (block >= index.Size()) {
+      return false;
+    }
+    LandOn(block);
+    return true;
+  }
+
+  void ReadFill(doc_id_t prev) {
+    ++_reads;
+    auto& in = In();
+    _hint.Advance(in, in.Position());
+    const auto len = std::min(_left_in_list, kBlock);
+    const auto leaf =
+      block_io::ReadTailForFill(len, in, _enc.data, nullptr, _docs, prev);
+    _left_in_list -= len;
+    const auto* const bitset =
+      block_io::StableBitset<InputType>(leaf, std::begin(_docs));
+    if constexpr (InputType::kVolatileAlways) {
+      _lazy = in.Current();
+      block_io::SkipTail(len, in);
+    } else {
+      block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
+    }
+    _base = prev;
+    _last = leaf.max;
+    _leaf.Reset(leaf, bitset, len);
+  }
+
+  IRS_NO_INLINE void DecodeFreqs() noexcept {
+    block_io::DecodeTail<block_io::kFreqBias>(_lazy, _leaf.Len(), _freqs.data);
+    _lazy = nullptr;
+  }
+
+  const byte_type* _lazy = nullptr;
+  detail::MaskedLeaf _leaf;
+  uint32_t _reads = 0;
 };
 
 }  // namespace irs::top

@@ -34,6 +34,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/landings.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -41,6 +42,7 @@
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -60,10 +62,21 @@ struct LeafShape {
   bool enc = false;
   bool delta = false;
   bool holes = false;
+  bool docs = true;
   LeafReads reads = LeafReads::Grows;
 };
 
-inline constexpr LeafShape kWindowShape{.delta = true, .holes = true};
+inline constexpr LeafShape kFillShape{.cursor = true, .holes = true};
+
+inline constexpr LeafShape kBatchShape{.docs = false};
+
+inline constexpr LeafShape kScoredBatchShape{
+  .scored = true,
+  .freqs = true,
+  .docs = false,
+};
+
+inline constexpr LeafShape kPosShape{.freqs = true, .delta = true};
 
 inline constexpr LeafShape kCountShape{
   .delta = true,
@@ -111,6 +124,53 @@ struct LeafScore {
 struct LeafCursor {
   doc_id_t base = 0;
 };
+
+template<ScoreMergeType MergeType, bool Counts>
+IRS_FORCE_INLINE void AddDoc(doc_id_t doc, score_t score, doc_id_t min,
+                             uint32_t* IRS_RESTRICT counts,
+                             uint64_t* IRS_RESTRICT mask,
+                             score_t* IRS_RESTRICT window) noexcept {
+  static constexpr auto kBits = BitsRequired<uint64_t>();
+  const size_t offset = doc - min;
+  if constexpr (Counts) {
+    ++counts[offset];
+  }
+  SetBit(mask[offset / kBits], offset % kBits);
+  irs::Merge<MergeType>(window[offset], score);
+}
+
+template<ScoreMergeType MergeType, bool Counts>
+IRS_FORCE_INLINE void AddWhole(const doc_id_t* begin, const doc_id_t* end,
+                               const score_t* IRS_RESTRICT scores, doc_id_t min,
+                               uint32_t* IRS_RESTRICT counts,
+                               uint64_t* IRS_RESTRICT mask,
+                               score_t* IRS_RESTRICT window) noexcept {
+  const auto len = static_cast<uint32_t>(end - begin);
+  if (len == doc_limits::kBlockSize) [[likely]] {
+    VisitDocs<doc_limits::kBlockSize>(
+      doc_limits::kBlockSize, [&](uint32_t i) IRS_FORCE_INLINE {
+        AddDoc<MergeType, Counts>(begin[i], scores[i], min, counts, mask,
+                                  window);
+      });
+  } else {
+    for (uint32_t i = 0; i != len; ++i) {
+      AddDoc<MergeType, Counts>(begin[i], scores[i], min, counts, mask, window);
+    }
+  }
+}
+
+template<ScoreMergeType MergeType, bool Counts>
+IRS_FORCE_INLINE const doc_id_t* AddUntil(
+  const doc_id_t* begin, const doc_id_t* end,
+  const score_t* IRS_RESTRICT scores, doc_id_t min, doc_id_t max,
+  uint32_t* IRS_RESTRICT counts, uint64_t* IRS_RESTRICT mask,
+  score_t* IRS_RESTRICT window) noexcept {
+  for (; begin != end && *begin < max; ++begin, ++scores) {
+    AddDoc<MergeType, Counts>(*begin, *scores, min, counts, mask, window);
+  }
+  SDB_ASSERT(begin != end);
+  return begin;
+}
 
 template<typename InputType, LeafShape Shape>
 class PostingLeaf {
@@ -206,29 +266,16 @@ class PostingLeaf {
     return reinterpret_cast<const score_t*>(_enc.data);
   }
 
-  IRS_FORCE_INLINE static const doc_id_t* Behind(const doc_id_t* begin,
-                                                 const doc_id_t* end,
-                                                 doc_id_t min) noexcept {
-    while (begin != end && *begin < min) {
-      ++begin;
-    }
-    return begin;
+  IRS_FORCE_INLINE const score_t* ScoresAt(const doc_id_t* doc) const noexcept {
+    return Scores() + (doc - std::cbegin(_docs));
   }
 
   IRS_FORCE_INLINE const UnalignedWord* StableBitset(
     const block_io::FillLeaf& leaf) noexcept {
-    if constexpr (InputType::kVolatileAlways) {
-      return leaf.bitset;
-    } else {
-      if (!leaf.IsBitset()) {
-        return leaf.bitset;
-      }
-      SDB_ASSERT(leaf.words <=
-                 _docs.size() * sizeof(doc_id_t) / sizeof(uint64_t));
-      std::memcpy(_docs.begin(), leaf.bitset,
-                  size_t{leaf.words} * sizeof(uint64_t));
-      return reinterpret_cast<const UnalignedWord*>(_docs.begin());
-    }
+    SDB_ASSERT(!leaf.IsBitset() || leaf.words <= _docs.size() *
+                                                   sizeof(doc_id_t) /
+                                                   sizeof(uint64_t));
+    return block_io::StableBitset<InputType>(leaf, _docs.begin());
   }
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
@@ -238,9 +285,7 @@ class PostingLeaf {
     if constexpr (Shape.reads == LeafReads::Whole) {
       PrefetchDocs(in, meta);
     } else if constexpr (Shape.reads == LeafReads::Grows) {
-      if (const auto extent = DocExtent(meta); extent != 0) {
-        _hint.Arm(meta.doc_start, meta.doc_start + extent);
-      }
+      _hint.Arm(meta);
     }
     if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
@@ -252,6 +297,17 @@ class PostingLeaf {
     if (meta.docs_count > kBlock) {
       _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
     }
+  }
+
+  bool OpenList(const PostingMeta& meta, const IndexInput& doc_in,
+                IndexFeatures layout, bool bounds) {
+    SDB_ASSERT(meta.docs_count != 0);
+    if (meta.docs_count == 1) {
+      return false;
+    }
+    OpenInput(meta, doc_in, bounds);
+    ArmWalk(meta, layout, bounds);
+    return true;
   }
 
   IRS_FORCE_INLINE bool Armed() const noexcept { return _walk.Armed(); }
@@ -304,15 +360,7 @@ class PostingLeaf {
     static_assert(Shape.scored && Shape.freqs);
     _score.fetcher = args.fetcher;
     _provider.freq.value = _freqs.data;
-    SDB_ASSERT(args.scorer != nullptr);
-    _score.score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score.score = PrepareScore(args, segment, field.meta(), _provider);
   }
 
   IRS_FORCE_INLINE void SetRecipe(const SubReader& segment,
@@ -328,15 +376,8 @@ class PostingLeaf {
     static_assert(Shape.defer && Shape.gather);
     _provider.freq.value = _gather.data;
     SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
-    SDB_ASSERT(_recipe.args.scorer != nullptr);
-    return _recipe.args.scorer->PrepareScorer({
-      .segment = *_recipe.segment,
-      .field = _recipe.field->meta(),
-      .doc_attrs = _provider,
-      .fetcher = *_recipe.args.fetcher,
-      .stats = _recipe.args.stats,
-      .boost = _recipe.args.boost,
-    });
+    return PrepareScore(_recipe.args, *_recipe.segment, _recipe.field->meta(),
+                        _provider);
   }
 
   IRS_FORCE_INLINE void SkipFreqs(uint32_t len) {
@@ -379,6 +420,7 @@ class PostingLeaf {
     _last = *(std::end(_docs) - 1);
   }
 
+  template<bool Score = true>
   bool ReadLeafBelow(uint32_t len, doc_id_t min) {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     auto& in = In();
@@ -389,7 +431,9 @@ class PostingLeaf {
       return false;
     }
     block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
-    ScoreLeaf(kBlock - len, len);
+    if constexpr (Score) {
+      ScoreLeaf(kBlock - len, len);
+    }
     return true;
   }
 
@@ -408,69 +452,70 @@ class PostingLeaf {
     _provider.freq.value = _freqs.data;
   }
 
-  template<ScoreMergeType MergeType, bool Counts>
-  IRS_FORCE_INLINE static void AddDoc(doc_id_t doc, score_t score, doc_id_t min,
-                                      uint32_t* IRS_RESTRICT counts,
-                                      uint64_t* IRS_RESTRICT mask,
-                                      score_t* IRS_RESTRICT window) noexcept {
-    const size_t offset = doc - min;
-    if constexpr (Counts) {
-      ++counts[offset];
+  template<ScoreMergeType MergeType>
+  const doc_id_t* ScoreMasked(const doc_id_t* begin, const doc_id_t* end,
+                              doc_id_t min, doc_id_t max,
+                              const uint64_t* IRS_RESTRICT mask,
+                              score_t* IRS_RESTRICT window) {
+    static_assert(Shape.scored && Shape.freqs);
+    doc_id_t docs[kBlock];
+    uint32_t freqs[kBlock];
+    uint32_t offsets[kBlock];
+    uint32_t hits = 0;
+    const auto* const first = std::cbegin(_docs);
+    for (; begin != end && *begin < max; ++begin) {
+      const auto offset = static_cast<uint32_t>(*begin - min);
+      docs[hits] = *begin;
+      freqs[hits] = _freqs.data[begin - first];
+      offsets[hits] = offset;
+      hits +=
+        static_cast<uint32_t>(CheckBit(mask[offset / kBits], offset % kBits));
     }
-    SetBit(mask[offset / kBits], offset % kBits);
-    irs::Merge<MergeType>(window[offset], score);
-  }
-
-  template<ScoreMergeType MergeType, bool Counts>
-  IRS_FORCE_INLINE void AddWhole(const doc_id_t* begin, const doc_id_t* end,
-                                 doc_id_t min, uint32_t* IRS_RESTRICT counts,
-                                 uint64_t* IRS_RESTRICT mask,
-                                 score_t* IRS_RESTRICT window) const noexcept {
-    const auto* const scores = Scores() + (begin - std::cbegin(_docs));
-    const auto len = static_cast<uint32_t>(end - begin);
-    if (len == kBlock) [[likely]] {
-      VisitDocs<doc_limits::kBlockSize>(
-        doc_limits::kBlockSize, [&](uint32_t i) IRS_FORCE_INLINE {
-          AddDoc<MergeType, Counts>(begin[i], scores[i], min, counts, mask,
-                                    window);
-        });
-    } else {
-      for (uint32_t i = 0; i != len; ++i) {
-        AddDoc<MergeType, Counts>(begin[i], scores[i], min, counts, mask,
-                                  window);
+    if (hits != 0) {
+      score_t scores[kBlock];
+      _provider.freq.value = freqs;
+      FetchAndScore(*_score.fetcher, _score.score, docs, scores, hits);
+      _provider.freq.value = _freqs.data;
+      for (uint32_t i = 0; i != hits; ++i) {
+        irs::Merge<MergeType>(window[offsets[i]], scores[i]);
       }
     }
-  }
-
-  template<ScoreMergeType MergeType, bool Counts>
-  IRS_FORCE_INLINE const doc_id_t* AddUntil(
-    const doc_id_t* begin, const doc_id_t* end, doc_id_t min, doc_id_t max,
-    uint32_t* IRS_RESTRICT counts, uint64_t* IRS_RESTRICT mask,
-    score_t* IRS_RESTRICT window) const noexcept {
-    const auto* scores = Scores() + (begin - std::cbegin(_docs));
-    for (; begin != end && *begin < max; ++begin, ++scores) {
-      AddDoc<MergeType, Counts>(*begin, *scores, min, counts, mask, window);
-    }
-    SDB_ASSERT(begin != end);
     return begin;
   }
 
   doc_id_t Scan(doc_id_t target) {
-    for (auto left = _left_in_leaf; left != 0; --left) {
-      const auto doc = *(std::end(_docs) - left);
-      if (target <= doc) {
-        _left_in_leaf = left - 1;
-        return _doc = doc;
-      }
+    const auto* const end = std::cend(_docs);
+    const auto* const it = ScanNotBelow(end - _left_in_leaf, end, target);
+    if (it == end) {
+      _left_in_leaf = 0;
+      return _doc = doc_limits::eof();
     }
-
-    _left_in_leaf = 0;
-    return _doc = doc_limits::eof();
+    _left_in_leaf = static_cast<uint32_t>(end - it) - 1;
+    return _doc = *it;
   }
 
   template<typename Read>
   IRS_NO_INLINE bool SeekToLeaf(doc_id_t target, Read&& read) {
     static_assert(Shape.cursor);
+    if (_walk.Armed() && !_walk.Pending()) {
+      if (_left_in_list == 0) [[unlikely]] {
+        return false;
+      }
+      const auto& index = _walk.Index();
+      const auto next = _walk.NextBlock(_left_in_list);
+      if (index.Last(next) >= target) {
+        read(_last);
+        return true;
+      }
+      _left_in_list = _walk.MoveTo(index.Find(next + 1, target));
+      if (_left_in_list == 0) [[unlikely]] {
+        return false;
+      }
+      const auto landing = _walk.Landing();
+      In().Seek(landing.doc_ptr);
+      read(landing.doc);
+      return true;
+    }
     const auto span = _last - _cursor.base;
     const bool avoid_seek = target - _last <= span ||
                             target <= _walk.UpperBound() ||
@@ -504,6 +549,38 @@ class PostingLeaf {
       target, [this](doc_id_t prev) IRS_FORCE_INLINE { ReadLeafDelta(prev); });
   }
 
+  uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
+    static_assert(Shape.cursor);
+    if (!_walk.Armed() || _walk.Pending() || n < 2 || in[n - 1] <= _last ||
+        (in[n - 1] - in[0]) / (n - 1) <= _last - _cursor.base) {
+      return 0;
+    }
+    const auto block = _walk.NextBlock(_left_in_list);
+    return PlanLandings(
+      _walk.Index(),
+      {.block = block, .next = block, .upper = _last, .cap = kBlock}, in, n,
+      blocks, [&](uint32_t landed) IRS_FORCE_INLINE {
+        if constexpr (InputType::kVolatileAlways) {
+          const auto* const at = In().At(_walk.BlockStart(landed));
+          __builtin_prefetch(at, 0, 2);
+          __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
+        }
+      });
+  }
+
+  template<typename Read>
+  IRS_FORCE_INLINE void LandOn(uint32_t block, Read&& read) {
+    static_assert(Shape.cursor);
+    if (block == _walk.NextBlock(_left_in_list)) {
+      read(_last);
+      return;
+    }
+    _left_in_list = _walk.MoveTo(block);
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    read(landing.doc);
+  }
+
   struct FillRead {
     block_io::FillLeaf leaf;
     const UnalignedWord* bitset;
@@ -525,11 +602,14 @@ class PostingLeaf {
     return {.leaf = leaf, .bitset = bitset, .len = len};
   }
 
+  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
+                                    GrowingHint> _hint;
+  BlockCursor _walk;
   [[no_unique_address]] utils::Need<kEnc, EncBuf> _enc;
   [[no_unique_address]] utils::Need<Shape.holes, HoleBuf> _holes;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
-  DocsBuf _docs;
+  [[no_unique_address]] utils::Need<Shape.docs, DocsBuf> _docs;
   IndexInput::ptr _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();
@@ -541,9 +621,6 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
-  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
-                                    GrowingHint> _hint;
-  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

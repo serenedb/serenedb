@@ -62,8 +62,8 @@ struct Case {
   value_t slop{0};
 };
 
-spm::MatchResult LuceneRun(const Case& c) {
-  spm::MatchResult res{};
+spm::RunResult LuceneRun(const Case& c) {
+  spm::RunResult res{};
   const size_t n = c.slots.size();
   if (n < 2) {
     return res;
@@ -200,7 +200,7 @@ spm::MatchResult LuceneRun(const Case& c) {
   return res;
 }
 
-spm::MatchResult Reference(const Case& c) { return LuceneRun(c); }
+spm::RunResult Reference(const Case& c) { return LuceneRun(c); }
 
 std::string Show(const Case& c) {
   std::string s = "slop=" + std::to_string(c.slop) + " expected=[";
@@ -237,7 +237,7 @@ std::string Show(const Case& c) {
   return s;
 }
 
-std::string Show(const spm::MatchResult& r) {
+std::string Show(const spm::RunResult& r) {
   return "{any=" + std::string(r.any ? "1" : "0") +
          " freq=" + std::to_string(r.freq) +
          " best=" + std::to_string(r.best_distance) + "}";
@@ -245,12 +245,12 @@ std::string Show(const spm::MatchResult& r) {
 
 // The compile-time arity specialisation must agree with the dynamic one on
 // every n == 2 case: same freq, same best distance, same collected spans.
-bool CheckStaticArity(const Case& c, const spm::MatchResult& ref,
+bool CheckStaticArity(const Case& c, const spm::RunResult& ref,
                       const std::vector<spm::MatchSpan>& run_out) {
   SDB_ASSERT(c.slots.size() == 2);
   spm::MatchScratch scratch;
   std::vector<spm::MatchSpan> out;
-  const spm::MatchResult fixed =
+  const spm::RunResult fixed =
     spm::Run<2>(c.slots, c.slop, c.expected_steps, scratch,
                 /*early_exit=*/false, c.groups, &out);
 
@@ -281,7 +281,7 @@ bool CheckStaticArity(const Case& c, const spm::MatchResult& ref,
   }
 
   spm::MatchScratch scratch2;
-  const spm::MatchResult fixed_exit =
+  const spm::RunResult fixed_exit =
     spm::Run<2>(c.slots, c.slop, c.expected_steps, scratch2,
                 /*early_exit=*/true, c.groups);
   if (fixed_exit.any != ref.any) {
@@ -297,13 +297,13 @@ bool Check(const Case& c) {
 
   // run_full also collects: one DFS pass counts and emits.
   std::vector<spm::MatchSpan> out;
-  const spm::MatchResult run_full =
+  const spm::RunResult run_full =
     spm::Run(c.slots, c.slop, c.expected_steps, scratch, /*early_exit=*/false,
              c.groups, &out);
   // early_exit cannot collect (Run asserts !(early_exit && out)).
-  const spm::MatchResult run_exit = spm::Run(
+  const spm::RunResult run_exit = spm::Run(
     c.slots, c.slop, c.expected_steps, scratch, /*early_exit=*/true, c.groups);
-  const spm::MatchResult ref = Reference(c);
+  const spm::RunResult ref = Reference(c);
 
   bool ok = true;
 
@@ -490,7 +490,7 @@ int RunEdgeCases() {
   int failures = 0;
   auto expect = [&](const Case& c, bool want_any, uint64_t want_freq,
                     value_t want_best, const char* name) {
-    const spm::MatchResult ref = Reference(c);
+    const spm::RunResult ref = Reference(c);
     if (!Check(c)) {
       std::printf("  (in edge case '%s')\n", name);
       ++failures;

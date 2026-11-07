@@ -41,20 +41,15 @@
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void IndriImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t mu_p, score_t mu,
-  score_t const_boost) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
-    const score_t dl = TermCountToScore(norm[i]);
-    score_t r = std::log((tf + mu_p) / (dl + mu));
-    r *= const_boost;
-    Merge<MergeType>(res[i], r);
+struct IndriFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    return std::log((tf + mu_p) / (dl + mu)) * boost;
   }
-}
+
+  score_t boost;
+  score_t mu;
+  score_t mu_p;
+};
 
 template<bool HasScale>
 struct IndriScore : public ScoreOperatorOf<IndriScore<HasScale>> {
@@ -64,23 +59,19 @@ struct IndriScore : public ScoreOperatorOf<IndriScore<HasScale>> {
     : freq{freq},
       norm{norm},
       scale{scale},
-      boost{boost},
-      mu{mu},
-      mu_p{mu * stats.collection_prob} {}
+      formula{boost, mu, mu * stats.collection_prob} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    IndriImpl<MergeType, HasScale>(res, n, freq->value, norm,
-                                   TryGetValue(scale), mu_p, mu, boost);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
+                                    TryGetValue(scale), formula);
   }
 
   const FreqBlockAttr* freq;
   const uint32_t* norm;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  score_t boost;
-  score_t mu;
-  score_t mu_p;
+  IndriFormula formula;
 };
 
 }  // namespace

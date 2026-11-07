@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <limits>
+
+#include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
@@ -29,16 +32,16 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   using Base = PrunedLeafBase<InputType, false>;
 
   using Base::_base;
-  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
   using Base::_freqs;
+  using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
-  using Base::_max_in_leaf;
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_score;
+  using Base::_walk;
   using Base::ReadLeaf;
 
  public:
@@ -63,14 +66,26 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   }
 
   doc_id_t BlockLast() {
-    Base::AdvanceBlock(_doc);
-    return *(std::end(_docs) - 1);
+    const auto last = Base::AdvanceBlock(_doc);
+    return _walk.Armed() ? last : *(std::end(_docs) - 1);
+  }
+
+  doc_id_t SeekCompetitive(doc_id_t target, doc_id_t max, score_t threshold) {
+    target = Base::SkipNonCompetitive(target, max, threshold);
+    return target < max ? SkipTo(target) : target;
+  }
+
+  template<typename Visitor>
+  void ForEachDocs(doc_id_t max, Visitor&& visit) {
+    Base::ForEachBlock(max, [&](doc_id_t* docs, uint32_t len) IRS_FORCE_INLINE {
+      visit(docs, _freqs.data + (docs - std::begin(_docs)), len);
+    });
   }
 
   doc_id_t SpanLast(uint32_t blocks) {
-    if (blocks > 1 && _cursor.Armed()) {
-      const auto& index = _cursor.Index();
-      return index.Last(std::min(index.Size(), _cursor.Block() + blocks) - 1);
+    if (blocks > 1 && _walk.Armed()) {
+      const auto& index = _walk.Index();
+      return index.Last(std::min(index.Size(), _walk.Block() + blocks) - 1);
     }
     return *(std::end(_docs) - 1);
   }
@@ -92,7 +107,7 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
-    if (_left_in_leaf != 0 && target <= _max_in_leaf) [[likely]] {
+    if (_left_in_leaf != 0 && target <= _last) [[likely]] {
       return _doc = Scan(target);
     }
     return SeekSlow(target);
@@ -102,17 +117,76 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     return _freqs.data[doc_limits::kBlockSize - _left_in_leaf - 1];
   }
 
+  template<typename Visitor>
+  void ForEachCompetitiveBlock(doc_id_t max, score_t required,
+                               Visitor&& visit) {
+    const auto least = LeastFreq(required);
+    if (least == 1) {
+      Base::ForEachScoredBlock(
+        max, [&](doc_id_t* docs, uint32_t len, score_t* scores)
+               IRS_FORCE_INLINE { visit(docs, len, scores, len); });
+      return;
+    }
+    Base::ForEachBlock(max, [&](doc_id_t* docs, uint32_t len) IRS_FORCE_INLINE {
+      ABSL_CACHELINE_ALIGNED doc_id_t kept_docs[doc_limits::kBlockSize];
+      ABSL_CACHELINE_ALIGNED uint32_t kept_freqs[doc_limits::kBlockSize];
+      ABSL_CACHELINE_ALIGNED score_t kept_scores[doc_limits::kBlockSize];
+      const auto kept =
+        irs::detail::FilterFreqs(docs, _freqs.data + (docs - std::begin(_docs)),
+                                 len, least, kept_docs, kept_freqs);
+      if (kept != 0) {
+        _provider.freq.value = kept_freqs;
+        FetchAndScore(*_score.fetcher, _score.score, kept_docs, kept_scores,
+                      kept);
+        _provider.freq.value = _freqs.data;
+      }
+      visit(kept_docs, kept, kept_scores, len);
+    });
+  }
+
   void ScoreFreqs(uint32_t* freqs, score_t* scores, uint32_t count) {
     _provider.freq.value = freqs;
     if (count == kScoreBlock) {
-      _score.ScoreBlock(scores);
+      _score.score.ScoreBlock(scores);
     } else {
-      _score.Score(scores, static_cast<scores_size_t>(count));
+      _score.score.Score(scores, static_cast<scores_size_t>(count));
     }
     _provider.freq.value = _freqs.data;
   }
 
  private:
+  uint32_t LeastFreq(score_t required) {
+    if (required == _required) {
+      return _least_freq;
+    }
+    _required = required;
+    _least_freq = 1;
+    if (!_walk.Armed() || Base::BoundScore({.freq = 1, .norm = 1}) > required) {
+      return _least_freq;
+    }
+    auto most = _walk.Index().Root().freq + 1;
+    while (_least_freq < most) {
+      const auto mid = _least_freq + (most - _least_freq) / 2;
+      if (Base::BoundScore({.freq = mid, .norm = mid}) > required) {
+        most = mid;
+      } else {
+        _least_freq = mid + 1;
+      }
+    }
+    return _least_freq;
+  }
+
+  doc_id_t SkipTo(doc_id_t target) {
+    if (!_walk.Armed() || (_left_in_leaf != 0 && target <= _last)) {
+      return Seek(target);
+    }
+    Base::AdvanceBlock(target);
+    if (!_needs_reposition || _walk.LandingDoc() + 1 != target) {
+      return Seek(target);
+    }
+    return _left_in_list != 0 ? target : doc_limits::eof();
+  }
+
   IRS_FORCE_INLINE doc_id_t Scan(doc_id_t target) noexcept {
     for (auto left = _left_in_leaf;; --left) {
       const auto doc = *(std::end(_docs) - left);
@@ -125,9 +199,9 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
 
   IRS_NO_INLINE doc_id_t SeekSlow(doc_id_t target) {
     if (!_needs_reposition && _left_in_list != 0 &&
-        target - _max_in_leaf <= _max_in_leaf - _base) {
-      ReadLeaf(_max_in_leaf);
-      if (target <= _max_in_leaf) [[likely]] {
+        target - _last <= _last - _base) {
+      ReadLeaf(_last);
+      if (target <= _last) [[likely]] {
         return _doc = Scan(target);
       }
     }
@@ -153,6 +227,9 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
       ReadLeaf(*(std::end(_docs) - 1));
     }
   }
+
+  score_t _required = std::numeric_limits<score_t>::lowest();
+  uint32_t _least_freq = 1;
 };
 
 }  // namespace irs::top

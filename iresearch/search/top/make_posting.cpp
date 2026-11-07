@@ -36,10 +36,7 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
-  const irs::detail::ScoreArgs args{.scorer = posting.stats.scorer,
-                                    .stats = posting.stats.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = posting.boost};
+  const auto args = posting.Args(&ctx.fetcher);
   if (meta.docs_count == 1) {
     return MakePrepared(ctx, [&](auto table) -> Root::ptr {
       auto root = memory::make_managed<SinglePosting<decltype(table)>>(table);
@@ -51,8 +48,8 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
   if (const auto value = irs::detail::ConstantOf(segment, own, args)) {
     return lead::ResolvePostingDocs<Root::ptr>(
       posting, [&]<typename Leaf>(auto&&... rest) -> Root::ptr {
-        return MakeShape<ConstantWalk, Leaf>(
-          ctx, *value, std::forward<decltype(rest)>(rest)...);
+        return Constant<Leaf>(ctx, *value,
+                              std::forward<decltype(rest)>(rest)...);
       });
   }
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {

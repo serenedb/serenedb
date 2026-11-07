@@ -62,30 +62,50 @@ Root::ptr MakePrunedConjunction(
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                          .stats = posting.stats.stats,
-                                          .fetcher = &ctx.fetcher,
-                                          .boost = posting.boost});
+                   segment, own, posting.Args(&ctx.fetcher));
     };
-    const auto make = [&]<typename Others> -> Root::ptr {
+    const auto docs = static_cast<doc_id_t>(segment.docs_count());
+    std::vector<size_t> joined;
+    joined.reserve(size - 1);
+    for (size_t i = 1; i != size; ++i) {
+      if (!irs::detail::DensePosting(terms[i].state.cookie.docs_count, docs)) {
+        joined.push_back(i);
+      }
+    }
+    const auto prepare_joined = [&](irs::detail::PostingFill<Input>& leaf,
+                                    size_t i) {
+      irs::detail::PreparePlain(leaf, terms[joined[i]], nullptr, *doc);
+    };
+    const auto make = [&]<typename Others, typename Joined>(
+                        const auto& joined_args) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
-          ctx, ctx.fetcher, size, init, std::forward_as_tuple());
+        return MakeShape<PrunedConjunction, Lead, Others, Joined, utils::Empty>(
+          ctx, ctx.fetcher, !ctx.prune, size, init, joined_args,
+          std::forward_as_tuple());
       }
       const uint64_t lead = terms.front().state.cookie.docs_count;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, lead, lead,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
-            ctx, ctx.fetcher, size, init,
+          return MakeShape<PrunedConjunction, Lead, Others, Joined, Exclude>(
+            ctx, ctx.fetcher, !ctx.prune, size, init, joined_args,
             std::forward<decltype(negated)>(negated));
         });
     };
-    if (size == 2) {
-      return make.template operator()<PrunedLeaves<Clause, 1>>();
-    }
-    return make.template operator()<PrunedLeaves<Clause>>();
+    using Fill = irs::detail::PostingFill<Input>;
+    const bool windowed =
+      !joined.empty() && irs::detail::DenseConjunction(terms, docs);
+    const auto shape = [&]<size_t N>() -> Root::ptr {
+      if (windowed) {
+        return make.template
+        operator()<PrunedLeaves<Clause, N>, fill::AndLeaves<Fill, N>>(
+          std::forward_as_tuple(joined.size(), prepare_joined));
+      }
+      return make.template operator()<PrunedLeaves<Clause, N>, utils::Empty>(
+        std::tuple<>{});
+    };
+    return size == 2 ? shape.template operator()<1>()
+                     : shape.template operator()<0>();
   });
 }
 

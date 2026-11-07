@@ -28,10 +28,10 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/lead/boolean_sparse.hpp"
 #include "iresearch/search/lead/two_phase.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
-#include "iresearch/search/top/boolean_sparse.hpp"
 #include "iresearch/search/top/boolean_window.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/posting.hpp"
@@ -58,7 +58,7 @@ struct Family {
 
   template<typename Node, typename... Args>
   static Result Constant(const Context& ctx, score_t value, Args&&... args) {
-    return MakeShape<ConstantWalk, Node>(ctx, value,
+    return MakeShape<ConstantWalk, Node>(ctx, ctx.prune, value,
                                          std::forward<Args>(args)...);
   }
 
@@ -71,6 +71,7 @@ struct Family {
   static constexpr bool kWrapsMerge = false;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kBoostArity = true;
+  static constexpr bool kScoredLeadWindow = true;
 
   static score_t Base(score_t) noexcept { return 0; }
 
@@ -83,7 +84,7 @@ struct Family {
                            ExcludesArgs&& excludes) {
     static_assert(std::is_same_v<Others, utils::Empty>);
     return MakeShape<BooleanWindow, Lead, Optional, Excludes>(
-      ctx, std::piecewise_construct, std::forward<LeadArgs>(lead),
+      ctx, ctx.prune, std::piecewise_construct, std::forward<LeadArgs>(lead),
       std::forward<OptionalArgs>(optional),
       std::forward<ExcludesArgs>(excludes), merge, score.absorbed);
   }
@@ -92,9 +93,10 @@ struct Family {
            typename... Args>
   static Result MakeSparse(const Context& ctx, ScoreMergeType,
                            irs::detail::Scored score, Args&&... args) {
-    return MakeShape<BooleanSparse, Lead, Probes, Optional, Excludes>(
-      ctx, std::piecewise_construct, ctx.fetcher, score,
-      std::forward<Args>(args)...);
+    return MakeShape<Walk, lead::BooleanSparse<Lead, Probes, Optional, Excludes,
+                                               irs::detail::Scored>>(
+      ctx, ctx.fetcher, std::piecewise_construct, std::forward<Args>(args)...,
+      score);
   }
 
   template<typename Input, typename Exclude, typename ExcludeArgs>

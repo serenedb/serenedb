@@ -105,4 +105,18 @@ class ColumnArgsFetcher {
   irs::containers::FlatHashMap<field_id, uint32_t*> _index;
 };
 
+inline IRS_FORCE_INLINE void FetchAndScore(ColumnArgsFetcher& fetcher,
+                                           const ScoreFunction& score,
+                                           const doc_id_t* docs,
+                                           score_t* scores, uint32_t n) {
+  if (n == kScoreBlock) {
+    fetcher.FetchScoreBlock(
+      std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
+    score.ScoreBlock(scores);
+  } else {
+    fetcher.Fetch(std::span<const doc_id_t>{docs, n});
+    score.Score(scores, static_cast<scores_size_t>(n));
+  }
+}
+
 }  // namespace irs

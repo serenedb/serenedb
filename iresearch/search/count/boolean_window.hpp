@@ -28,6 +28,7 @@
 
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/boolean_window_base.hpp"
+#include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -37,30 +38,27 @@ namespace irs::count {
 
 template<typename Lead, typename Others, typename Optional, typename Excludes,
          typename Table>
-class BooleanWindow : public Root {
+class BooleanWindow : public Root,
+                      detail::WindowClauses<Lead, Others, Optional, Excludes> {
+  using Clauses = detail::WindowClauses<Lead, Others, Optional, Excludes>;
+  using Clauses::_excludes;
+  using Clauses::_lead;
+  using Clauses::_optional;
+  using Clauses::_others;
+  using Clauses::FillClauses;
+  using Clauses::KeepBatch;
+  using Clauses::kExcludes;
+  using Clauses::kLead;
+  using Clauses::kOptional;
+  using Clauses::kOthers;
+
  public:
-  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
-  static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
-  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
-  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  static constexpr bool kBatches = kLead && detail::kBatchLead<Lead>;
   static_assert(kLead != kOptional);
-  static_assert(kLead || !kOthers);
 
-  template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
-           typename ExcludesArgs>
-  BooleanWindow(Table table, std::piecewise_construct_t, LeadArgs&& lead,
-                OthersArgs&& others, OptionalArgs&& optional,
-                ExcludesArgs&& excludes)
-    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
-      _optional{
-        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
-      _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _table{table} {}
-
-  BooleanWindow(BooleanWindow&&) = delete;
-  BooleanWindow& operator=(BooleanWindow&&) = delete;
+  template<typename... Args>
+  explicit BooleanWindow(Table table, Args&&... args)
+    : Clauses{std::forward<Args>(args)...}, _table{table} {}
 
   uint64_t Run(doc_id_t begin, doc_id_t end) final {
     uint64_t total = 0;
@@ -75,12 +73,23 @@ class BooleanWindow : public Root {
       if (!_table.Skip(min) || min >= end) {
         return total;
       }
+      if constexpr (kBatches) {
+        min = _lead.Seek(min);
+        if (min >= end) {
+          return total;
+        }
+        if (_lead.Sparse()) {
+          const auto rest = _lead.Rest(end);
+          total += Sift(rest.data(), static_cast<uint32_t>(rest.size()));
+          min = rest.back() + 1;
+          continue;
+        }
+      }
       SDB_ASSERT(min <= doc_limits::eof() - detail::kWindowDocs);
       const doc_id_t max = std::min<doc_id_t>(min + detail::kWindowDocs, end);
 
       auto* const words = _mask.data();
-      const auto next = detail::FillClauses(_lead, _others, _optional,
-                                            _excludes, min, max, words);
+      const auto next = FillClauses(min, max, words);
 
       total += _table.CountAndClear(
         min, words, static_cast<uint32_t>(detail::WindowWords(min, max)));
@@ -93,11 +102,28 @@ class BooleanWindow : public Root {
   }
 
  private:
+  uint64_t Sift(const doc_id_t* in, uint32_t n) {
+    auto* const out = _found.data();
+    if constexpr (detail::Narrowing<Table>::kTable) {
+      return _table.Run(out, nullptr, KeepBatch(in, n, out));
+    }
+    if constexpr (kOthers) {
+      n = _others.Keep(in, n, out);
+      in = out;
+    }
+    if constexpr (!kExcludes) {
+      return n;
+    } else if constexpr (requires { _excludes.Drop(in, n, out); }) {
+      return _excludes.Drop(in, n, out);
+    } else {
+      return n - detail::CountExcluded(_excludes, in, n);
+    }
+  }
+
   detail::Scratch _mask{};
-  [[no_unique_address]] Lead _lead;
-  [[no_unique_address]] Others _others;
-  [[no_unique_address]] Optional _optional;
-  [[no_unique_address]] Excludes _excludes;
+  [[no_unique_address]] utils::Need<
+    kBatches,
+    SlackBuf<doc_id_t, doc_limits::kBlockSize, doc_limits::kDocsSlack>> _found;
   [[no_unique_address]] detail::Narrowing<Table> _table;
 };
 

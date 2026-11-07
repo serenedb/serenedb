@@ -48,43 +48,40 @@
 namespace irs {
 namespace {
 
-IRS_FORCE_INLINE score_t TfIdf(score_t tf, score_t idf) noexcept {
-  return std::sqrt(tf) * idf;
-}
-
-template<ScoreMergeType MergeType, bool HasNorm, bool HasScale>
-IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, scores_size_t n,
-                            const uint32_t* IRS_RESTRICT freq,
-                            [[maybe_unused]] const uint32_t* IRS_RESTRICT norm,
-                            [[maybe_unused]] const score_t* IRS_RESTRICT scale,
-                            score_t idf) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const auto r = TfIdf(ScaledFreq<HasScale>(freq, scale, i), idf);
-    if constexpr (HasNorm) {
-      Merge<MergeType>(res[i], r / std::sqrt(TermCountToScore(norm[i])));
-    } else {
-      Merge<MergeType>(res[i], r);
-    }
+template<bool HasNorm>
+struct TfIdfFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf) const noexcept
+    requires(!HasNorm)
+  {
+    return std::sqrt(tf) * idf;
   }
-}
+
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept
+    requires HasNorm
+  {
+    return std::sqrt(tf) * idf / std::sqrt(dl);
+  }
+
+  score_t idf;
+};
 
 template<bool HasNorm, bool HasScale>
 struct TfIdfScore : public ScoreOperatorOf<TfIdfScore<HasNorm, HasScale>> {
   TfIdfScore(const uint32_t* norm, score_t boost, TFIDFStats idf,
              const FreqBlockAttr* freq, const score_t* scale = nullptr) noexcept
-    : freq{freq}, scale{scale}, norm{norm}, idf{boost * idf.value} {}
+    : freq{freq}, scale{scale}, norm{norm}, formula{boost * idf.value} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
-    TfIdf<MergeType, HasNorm, HasScale>(res, n, freq->value, TryGetValue(norm),
-                                        TryGetValue(scale), idf);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, TryGetValue(norm),
+                                    TryGetValue(scale), formula);
   }
 
   const FreqBlockAttr* freq;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   [[no_unique_address]] utils::Need<HasNorm, const uint32_t*> norm;
-  score_t idf;
+  TfIdfFormula<HasNorm> formula;
 };
 
 }  // namespace

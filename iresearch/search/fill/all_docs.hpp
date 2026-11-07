@@ -40,22 +40,13 @@ class AllDocs {
     return FillOrImpl(min, max, mask, [](doc_id_t, doc_id_t) noexcept {});
   }
 
-  doc_id_t FillSum(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
+  template<ScoreMergeType M>
+  doc_id_t FillMerge(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                     score_t* IRS_RESTRICT scores, score_t constant) {
     return FillOrImpl(min, max, mask,
                       [=](doc_id_t begin, doc_id_t end) IRS_FORCE_INLINE {
                         for (auto i = begin; i != end; ++i) {
-                          Merge<ScoreMergeType::Sum>(scores[i], constant);
-                        }
-                      });
-  }
-
-  doc_id_t FillMax(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillOrImpl(min, max, mask,
-                      [=](doc_id_t begin, doc_id_t end) IRS_FORCE_INLINE {
-                        for (auto i = begin; i != end; ++i) {
-                          Merge<ScoreMergeType::Max>(scores[i], constant);
+                          Merge<M>(scores[i], constant);
                         }
                       });
   }

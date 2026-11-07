@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -54,16 +55,10 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool bounds) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(FeaturesHaveFreq(layout));
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, layout, bounds)) {
       _doc = _last = doc_limits::min() + meta.doc_delta;
-      return;
     }
-
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, layout, bounds);
   }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
@@ -81,14 +76,9 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
                  std::begin(_docs), target);
       }
       const auto* const end = std::cend(_docs);
-      for (const auto* it = end - _len; it != end; ++it) {
-        if (target <= *it) {
-          _len = static_cast<uint32_t>(end - it);
-          return _doc = *it;
-        }
-      }
-      _len = 0;
-      return _doc = doc_limits::eof();
+      const auto* const it = ScanNotBelow(end - _len, end, target);
+      _len = static_cast<uint32_t>(end - it);
+      return _doc = it != end ? *it : doc_limits::eof();
     }
 
     if (_kind == block_io::FillLeaf::Kind::Bitset) {
@@ -97,6 +87,40 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
 
     SDB_ASSERT(_kind == block_io::FillLeaf::Kind::Run);
     return _doc = target;
+  }
+
+  uint32_t Drop(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
+                uint32_t n) {
+    uint32_t blocks[kBlock];
+    const auto landings = n != 0 ? this->Landings(docs, n, blocks) : 0;
+    uint32_t landed = 0;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != n;) {
+      if (docs[i] > _last) {
+        if (landed != landings) {
+          this->LandOn(blocks[landed++],
+                       [this](doc_id_t prev)
+                         IRS_FORCE_INLINE { ReadLeaf(prev); });
+        } else if (!ReadTo(docs[i])) {
+          _doc = doc_limits::eof();
+          for (; i != n; ++i) {
+            docs[kept] = docs[i];
+            scores[kept] = scores[i];
+            ++kept;
+          }
+          return kept;
+        }
+      }
+      const auto last = _last;
+      do {
+        const auto doc = docs[i];
+        const bool member = Probe(doc) == doc;
+        docs[kept] = doc;
+        scores[kept] = scores[i];
+        kept += static_cast<uint32_t>(!member);
+      } while (++i != n && docs[i] <= last);
+    }
+    return kept;
   }
 
  private:

@@ -69,13 +69,25 @@ class BooleanSparse {
   BooleanSparse(BooleanSparse&&) = delete;
   BooleanSparse& operator=(BooleanSparse&&) = delete;
 
-  doc_id_t Next() { return Converge(_lead.Next()); }
+  IRS_FORCE_INLINE doc_id_t Next(doc_id_t max = doc_limits::eof()) {
+    return Converge(_lead.Next(), max);
+  }
 
-  doc_id_t Seek(doc_id_t target) {
+  IRS_FORCE_INLINE doc_id_t Seek(doc_id_t target,
+                                 doc_id_t max = doc_limits::eof()) {
     if (target <= _doc) {
       return _doc;
     }
-    return Converge(_lead.Seek(target));
+    return Converge(_lead.Seek(target), max);
+  }
+
+  uint64_t Count(doc_id_t min, doc_id_t max)
+    requires(!kProbes && !kOptional && LeafType<Lead>)
+  {
+    return CountLeaves(
+      _lead, min, max, [&](const doc_id_t* docs, uint32_t len) {
+        return len - detail::CountExcluded(_excludes, docs, len);
+      });
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
@@ -131,8 +143,8 @@ class BooleanSparse {
     }
   }
 
-  doc_id_t Converge(doc_id_t doc) {
-    while (!doc_limits::eof(doc)) {
+  IRS_FORCE_INLINE doc_id_t Converge(doc_id_t doc, doc_id_t max) {
+    while (doc < max) {
       if constexpr (kProbes) {
         const auto probe = _probes.Probe(doc);
         if (probe != doc) {
@@ -150,9 +162,9 @@ class BooleanSparse {
       if (detail::SkipExcluded(_excludes, _lead, doc)) {
         continue;
       }
-      break;
+      return _doc = doc;
     }
-    return _doc = doc;
+    return doc;
   }
 
   Lead _lead;

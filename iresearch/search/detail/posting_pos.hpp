@@ -30,22 +30,38 @@
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 
-template<typename InputType, bool Bounds, bool Offs = false>
-class PostingPos {
+template<typename InputType, bool Bounds, bool Offs = false,
+         bool Deferrable = false>
+class PostingPos : public PostingLeaf<InputType, kPosShape> {
+  static_assert(!Deferrable || InputType::kVolatileAlways);
+
+  using Base = PostingLeaf<InputType, kPosShape>;
+  using Base::_doc;
+  using Base::_docs;
+  using Base::_freqs;
+  using Base::_hint;
+  using Base::_last;
+  using Base::_left_in_leaf;
+  using Base::_left_in_list;
+  using Base::_walk;
+  using Base::Enc;
+  using Base::In;
+  using Base::ReadLeafDelta;
+
  public:
   using PosTraits = IteratorTraitsImpl<true, true, Offs>;
   using Position = PositionImpl<PosTraits>;
 
   static constexpr bool kOffsets = Offs;
-  static constexpr bool kDefaultInit = true;
 
   PostingPos() = default;
 
@@ -55,48 +71,27 @@ class PostingPos {
     Prepare(meta, doc_in, layout, pos_in, pay_in);
   }
 
-  PostingPos(const PostingPos&) = delete;
-  PostingPos& operator=(const PostingPos&) = delete;
-  PostingPos(PostingPos&&) = delete;
-  PostingPos& operator=(PostingPos&&) = delete;
-
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, const IndexInput& pos_in,
                const IndexInput* pay_in) {
-    SDB_ASSERT(meta.docs_count != 0);
     SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, layout));
     SDB_ASSERT(!Offs || IsSubsetOf(IndexFeatures::Offs, layout));
     _docs_count = meta.docs_count;
-
-    if (meta.docs_count == 1) {
-      const auto doc = doc_limits::min() + meta.doc_delta;
-      *(std::end(_docs) - 1) = doc;
-      *(std::end(_freqs.data) - 1) = meta.freq;
-      _left_in_leaf = 1;
-      _max_in_leaf = doc;
-    } else {
-      _in = OpenDocInput(meta, doc_in);
-      auto& in = In();
-      if (const auto extent = DocExtent(meta); extent != 0) {
-        _hint.Arm(meta.doc_start, meta.doc_start + extent);
-      }
-      if (meta.docs_count <= doc_limits::kBlockSize) {
-        SkipScoreBounds(Bounds, in);
-      }
-      _left_in_list = meta.docs_count;
-
-      if (meta.docs_count > doc_limits::kBlockSize) {
-        _cursor.Arm(meta, BlockIndexShapeOf(layout, Bounds));
-      }
+    if (!this->OpenList(meta, doc_in, layout, Bounds)) {
+      this->SetSingle(meta);
     }
+    PreparePositions(_pos, meta, pos_in, pay_in);
+  }
 
+  void PreparePositions(Position& pos, const PostingMeta& meta,
+                        const IndexInput& pos_in, const IndexInput* pay_in) {
     const DocState state{
       .pos_in = &pos_in,
       .pay_in = pay_in,
       .term_state = &meta,
       .enc_buf = Enc(),
     };
-    _pos.template Prepare<InputType>(state);
+    pos.template Prepare<InputType>(state);
   }
 
   doc_id_t Value() const noexcept { return _doc; }
@@ -105,12 +100,24 @@ class PostingPos {
 
   uint32_t Estimate() const noexcept { return _docs_count; }
 
+  bool Covers(doc_id_t target) const noexcept { return target <= _last; }
+
+  std::span<const doc_id_t> Upcoming() const noexcept {
+    return {std::cend(_docs) - _left_in_leaf, _left_in_leaf};
+  }
+
+  std::span<const doc_id_t> Onward() const noexcept {
+    const auto* const current = std::cend(_docs) - _left_in_leaf - 1;
+    SDB_ASSERT(*current == _doc);
+    return {current, _left_in_leaf + 1};
+  }
+
   Position& Positions() noexcept { return _pos; }
 
   const BlockIndex* Blocks() {
     if constexpr (Bounds) {
-      if (_cursor.Armed()) {
-        return &_cursor.Loaded(In());
+      if (_walk.Armed()) {
+        return &_walk.Loaded(In());
       }
     }
     return nullptr;
@@ -121,12 +128,47 @@ class PostingPos {
     return (_docs_count - _left_in_list - 1) / doc_limits::kBlockSize;
   }
 
+  void Defer() noexcept
+    requires(Deferrable)
+  {
+    _deferral.on = _docs_count > doc_limits::kBlockSize;
+  }
+
+  bool Deferred() const noexcept
+    requires(Deferrable)
+  {
+    return _deferral.on;
+  }
+
+  IRS_FORCE_INLINE void Sync()
+    requires(Deferrable)
+  {
+    const auto& deferral = _deferral;
+    if (deferral.on && deferral.notified + _left_in_leaf < deferral.len) {
+      SyncDeferred();
+    }
+  }
+
+  IRS_FORCE_INLINE doc_id_t ProbeDeferred(doc_id_t target)
+    requires(Deferrable)
+  {
+    SDB_ASSERT(_deferral.on);
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
+    if (_last < target && !LandDeferred(target)) [[unlikely]] {
+      _left_in_leaf = 0;
+      return _doc = doc_limits::eof();
+    }
+    return Locate(target);
+  }
+
   IRS_FORCE_INLINE doc_id_t Next() {
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();
       }
-      ReadLeaf(_max_in_leaf);
+      ReadLeafDelta(_last);
     }
     const auto freq = *(std::end(_freqs.data) - _left_in_leaf);
     _doc = *(std::end(_docs) - _left_in_leaf);
@@ -141,7 +183,7 @@ class PostingPos {
       return _doc;
     }
 
-    if (_max_in_leaf < target && !SeekToLeaf(target)) [[unlikely]] {
+    if (_last < target && !SeekToLeaf(target)) [[unlikely]] {
       _left_in_leaf = 0;
       return _doc = doc_limits::eof();
     }
@@ -190,7 +232,7 @@ class PostingPos {
       return _doc;
     }
 
-    if (_max_in_leaf < target && !SeekToLeaf(target)) [[unlikely]] {
+    if (_last < target && !SeekToLeaf(target)) [[unlikely]] {
       _left_in_leaf = 0;
       return _doc = doc_limits::eof();
     }
@@ -214,62 +256,105 @@ class PostingPos {
   }
 
  private:
-  IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
+  static constexpr uint32_t kEagerShare = 4;
+  static constexpr uint32_t kEagerProbes = 64;
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
+  struct Deferral {
+    const byte_type* freqs = nullptr;
+    uint32_t len = 0;
+    uint32_t notified = 0;
+    uint32_t probes = 0;
+    uint32_t landings = 0;
+    uint32_t syncs = 0;
+    bool on = false;
+  };
+
+  IRS_FORCE_INLINE doc_id_t Locate(doc_id_t target) {
+    ++_deferral.probes;
+    const auto* const end = std::cend(_docs);
+    const auto* const it = LeafLowerBound<doc_limits::kBlockSize>(
+      std::cbegin(_docs), _deferral.len, end - _left_in_leaf, target);
+    _left_in_leaf = static_cast<uint32_t>(end - it) - 1;
+    return _doc = *it;
   }
 
-  void ReadLeaf(doc_id_t prev) {
-    auto& in = In();
-    _hint.Advance(in, in.Position());
-    if (_left_in_list >= doc_limits::kBlockSize) [[likely]] {
-      block_io::ReadBlockDelta(in, Enc(), _docs, prev);
-      _left_in_leaf = doc_limits::kBlockSize;
-      _left_in_list -= doc_limits::kBlockSize;
-      block_io::ReadBlock<block_io::kFreqBias>(in, Enc(), _freqs.data);
-    } else {
-      const auto tail = _left_in_list;
-      block_io::ReadTailDelta(tail, in, Enc(), _docs, prev);
-      _left_in_leaf = tail;
-      _left_in_list = 0;
-      block_io::ReadTail<block_io::kFreqBias>(tail, in, Enc(), _freqs.data);
+  IRS_NO_INLINE void SyncDeferred() {
+    auto& deferral = _deferral;
+    const auto len = deferral.len;
+    if (deferral.freqs != nullptr) [[unlikely]] {
+      DecodeDeferred();
     }
-    _max_in_leaf = *(std::end(_docs) - 1);
+    const auto current = len - _left_in_leaf - 1;
+    const auto* const freq = std::cend(_freqs.data) - len;
+    uint32_t skipped = 0;
+    for (auto i = deferral.notified; i != current; ++i) {
+      skipped += freq[i];
+    }
+    _pos.Notify(freq[current], skipped + freq[current]);
+    _pos.Clear();
+    deferral.notified = current + 1;
+    const auto syncs = uint64_t{++deferral.syncs} * kEagerShare;
+    const uint64_t probes = deferral.probes;
+    if (probes >= kEagerProbes &&
+        (syncs > 2 * probes ||
+         (syncs > probes && deferral.landings * kEagerShare < probes)))
+      [[unlikely]] {
+      deferral.on = false;
+    }
   }
 
-  IRS_NO_INLINE bool SeekToLeaf(doc_id_t target) {
-    if (target <= _cursor.UpperBound()) [[unlikely]] {
-      if (_left_in_list == 0) [[unlikely]] {
-        return false;
-      }
-      ReadLeaf(_max_in_leaf);
-      return true;
-    }
+  IRS_NO_INLINE void DecodeDeferred() noexcept {
+    block_io::DecodeTail<block_io::kFreqBias>(_deferral.freqs, _deferral.len,
+                                              _freqs.data);
+    _deferral.freqs = nullptr;
+  }
 
-    _left_in_list = _cursor.Seek(target, In());
+  IRS_NO_INLINE bool LandDeferred(doc_id_t target) {
+    ++_deferral.landings;
+    _left_in_list = _walk.Seek(target, In());
     if (_left_in_list == 0) [[unlikely]] {
       return false;
     }
-    const auto last = _cursor.Landing();
-    In().Seek(last.doc_ptr);
+    const auto last = _walk.Landing();
+    auto& in = In();
+    in.Seek(last.doc_ptr);
     _pos.Prepare(last);
-    ReadLeaf(last.doc);
+    _hint.Advance(in, in.Position());
+    const auto len = std::min(_left_in_list, doc_limits::kBlockSize);
+    block_io::ReadTailDelta(len, in, Enc(), _docs, last.doc);
+    _deferral.freqs = in.Current();
+    block_io::SkipTail(len, in);
+    _left_in_leaf = len;
+    _left_in_list -= len;
+    _deferral.len = len;
+    _deferral.notified = 0;
+    _last = *(std::end(_docs) - 1);
     return true;
   }
 
-  [[no_unique_address]] NeedEnc<InputType> _enc;
-  FreqBuf _freqs;
-  DocsBuf _docs;
-  IndexInput::ptr _in;
+  IRS_NO_INLINE bool SeekToLeaf(doc_id_t target) {
+    if (target <= _walk.UpperBound()) [[unlikely]] {
+      if (_left_in_list == 0) [[unlikely]] {
+        return false;
+      }
+      ReadLeafDelta(_last);
+      return true;
+    }
+
+    _left_in_list = _walk.Seek(target, In());
+    if (_left_in_list == 0) [[unlikely]] {
+      return false;
+    }
+    const auto last = _walk.Landing();
+    In().Seek(last.doc_ptr);
+    _pos.Prepare(last);
+    ReadLeafDelta(last.doc);
+    return true;
+  }
+
   Position _pos;
-  BlockCursor _cursor;
-  GrowingHint _hint;
-  doc_id_t _doc = doc_limits::invalid();
-  doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _docs_count = 0;
-  uint32_t _left_in_leaf = 0;
-  uint32_t _left_in_list = 0;
+  [[no_unique_address]] utils::Need<Deferrable, Deferral> _deferral;
 };
 
 }  // namespace irs::detail

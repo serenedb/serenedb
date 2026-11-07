@@ -31,6 +31,7 @@
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/admit.hpp"
+#include "iresearch/search/top/phrase_bound.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -55,29 +56,12 @@ class PrunedPhrase : public Root {
   PrunedPhrase(Table table, const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, Args&&... slots)
     : _slots{std::forward<Args>(slots)...},
+      _bound{segment, field, args},
       _fetcher{*args.fetcher},
       _admit{table} {
     _provider.freq.value = _freqs;
-    SDB_ASSERT(args.scorer != nullptr);
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
-    if (auto source = args.scorer->PrepareScoreBoundSource()) {
-      _bound_func = args.scorer->PrepareScorer({
-        .segment = segment,
-        .field = field.meta(),
-        .doc_attrs = *source,
-        .fetcher = *args.fetcher,
-        .stats = args.stats,
-        .boost = args.boost,
-      });
-      _bound_source = std::move(source);
-    }
+    _score = irs::detail::PrepareScore(args, segment, field.meta(), _provider);
+    _slots.Gate();
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
@@ -105,30 +89,24 @@ class PrunedPhrase : public Root {
   }
 
  private:
-  score_t BoundScore(BoundPair bound) {
-    _bound_source->Set(_slots.FreqBoundOf(bound.freq), bound.norm);
-    return _bound_func.Score();
-  }
-
   score_t RunScore(const BlockIndex& index, uint32_t r) {
     if (_run != r) {
       _run = r;
-      _run_score = BoundScore(index.RunBound(r));
+      _run_score = _bound.Score(_slots, index.RunBound(r));
     }
     return _run_score;
   }
 
   doc_id_t SkipBlocks(doc_id_t doc, score_t threshold) {
-    auto* const leaf = _bound_source ? _slots.BoundLeaf() : nullptr;
-    const auto* const index = leaf ? leaf->Blocks() : nullptr;
+    const auto* const index = _bound.Index(_slots);
     if (!index) {
       _block_last = doc_limits::eof();
       return doc;
     }
-    const auto first = leaf->LeafBlock();
+    const auto first = _slots.BoundLeaf()->LeafBlock();
     const auto b = FirstCompetitive(
       *index, first, threshold, [&](uint32_t r) { return RunScore(*index, r); },
-      [&](uint32_t k) { return BoundScore(index->Bound(k)); });
+      [&](uint32_t k) { return _bound.Score(_slots, index->Bound(k)); });
     if (b == first) {
       _block_last = index->Last(b);
       return doc;
@@ -149,8 +127,7 @@ class PrunedPhrase : public Root {
       _docs[_batch] = doc;
       _freqs[_batch] = _slots.Freq();
       if (++_batch == kScoreBlock) {
-        _fetcher.FetchScoreBlock(std::span<const doc_id_t, kScoreBlock>{_docs});
-        _score.ScoreBlock(_scores);
+        FetchAndScore(_fetcher, _score, _docs, _scores, kScoreBlock);
         _admit.AddDocs(collector, _docs, kScoreBlock, _scores);
         _batch = 0;
       }
@@ -161,11 +138,53 @@ class PrunedPhrase : public Root {
   doc_id_t BoundFirst(doc_id_t doc, doc_id_t end,
                       LoserScoreCollector& collector) {
     FlushBatch(collector);
-    for (; doc < end && _seen != kWindow; doc = _slots.Next(doc)) {
+    doc = _slots.Gating() ? Bound<true>(doc, end, collector)
+                          : Bound<false>(doc, end, collector);
+    if (_seen >= kWindow) {
+      if (_passed * kPassShare > _seen) {
+        _interval = std::min(2 * _interval, kMaxInterval);
+        _skip = _interval;
+      } else {
+        _interval = 1;
+      }
+      _seen = 0;
+      _passed = 0;
+    }
+    return doc;
+  }
+
+  template<bool Gated>
+  doc_id_t Bound(doc_id_t doc, doc_id_t end, LoserScoreCollector& collector) {
+    auto fetched = doc_limits::invalid();
+    const auto admit = [&](doc_id_t candidate, uint32_t bound) {
+      if (fetched != candidate) {
+        fetched = candidate;
+        _fetcher.Fetch(candidate);
+      }
+      _freqs[0] = bound;
+      if (_score.Score() > collector.ScoreThreshold()) {
+        return true;
+      }
+      ++_seen;
+      return false;
+    };
+    const auto next = [&] {
+      if constexpr (Gated) {
+        return _slots.Next(doc, end, admit);
+      } else {
+        return _slots.Next(doc);
+      }
+    };
+    for (; doc < end && _seen < kWindow; doc = next()) {
       ++_seen;
       const auto bound = _slots.FreqBound();
+      if (bound == 0) {
+        continue;
+      }
       _freqs[0] = bound;
-      _fetcher.Fetch(doc);
+      if (!Gated || fetched != doc) {
+        _fetcher.Fetch(doc);
+      }
       auto score = _score.Score();
       if (score <= collector.ScoreThreshold()) {
         continue;
@@ -181,23 +200,16 @@ class PrunedPhrase : public Root {
       }
       _admit.Add(collector, score, doc);
     }
-    if (_seen == kWindow) {
-      if (_passed * kPassShare > _seen) {
-        _interval = std::min(2 * _interval, kMaxInterval);
-        _skip = _interval;
-      } else {
-        _interval = 1;
-      }
-      _seen = 0;
-      _passed = 0;
+    if constexpr (Gated) {
+      return _slots.Seek(doc);
+    } else {
+      return doc;
     }
-    return doc;
   }
 
   void FlushBatch(LoserScoreCollector& collector) {
     if (_batch != 0) {
-      _fetcher.Fetch(std::span<const doc_id_t>{_docs, _batch});
-      _score.Score(_scores, _batch);
+      FetchAndScore(_fetcher, _score, _docs, _scores, _batch);
       _admit.AddDocs(collector, _docs, _batch, _scores);
       _batch = 0;
     }
@@ -209,8 +221,7 @@ class PrunedPhrase : public Root {
   Slots _slots;
   irs::detail::LeafProvider _provider;
   ScoreFunction _score;
-  ScoreFunction _bound_func;
-  ScoreBoundSource::ptr _bound_source;
+  PhraseBound _bound;
   ColumnArgsFetcher& _fetcher;
   doc_id_t _block_last = doc_limits::invalid();
   uint32_t _run = std::numeric_limits<uint32_t>::max();

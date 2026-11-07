@@ -91,11 +91,10 @@ class ConstFillScored {
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT window) {
-    if constexpr (MergeType == ScoreMergeType::Max) {
-      return _leaf.FillMax(min, max, mask, window, _value);
-    } else {
-      return _leaf.FillSum(min, max, mask, window, _value);
-    }
+    constexpr auto kMerge = MergeType == ScoreMergeType::Max
+                              ? ScoreMergeType::Max
+                              : ScoreMergeType::Sum;
+    return _leaf.template FillMerge<kMerge>(min, max, mask, window, _value);
   }
 
  private:

@@ -173,81 +173,31 @@ struct FillLeaf {
   bool IsBitset() const noexcept { return kind == Kind::Bitset; }
 };
 
-IRS_FORCE_INLINE inline uint32_t* MaterializeBitsetFrom(
-  uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset, uint32_t first_word,
-  uint64_t first_mask, uint32_t words, uint32_t* IRS_RESTRICT out) {
-  SDB_ASSERT(first_word < words);
+template<typename Input>
+IRS_FORCE_INLINE const UnalignedWord* StableBitset(const FillLeaf& leaf,
+                                                   doc_id_t* scratch) noexcept {
+  if constexpr (!Input::kVolatileAlways) {
+    if (leaf.IsBitset()) {
+      std::memcpy(scratch, leaf.bitset, size_t{leaf.words} * sizeof(uint64_t));
+      return reinterpret_cast<const UnalignedWord*>(scratch);
+    }
+  }
+  return leaf.bitset;
+}
+
+IRS_FORCE_INLINE inline uint32_t* MaterializeBitset(
+  uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset, uint32_t words,
+  uint32_t* IRS_RESTRICT out) {
+  SDB_ASSERT(words != 0);
   constexpr auto kBits = BitsRequired<uint64_t>();
-  auto word = first_mask;
-  for (auto i = first_word;;) {
+  uint64_t word = bitset[0];
+  for (uint32_t i = 0;;) {
     out = block_codec::MaterializeBits(prev + 1 + i * kBits, word, out);
     if (++i == words) {
       return out;
     }
     word = bitset[i];
   }
-}
-
-template<bool Clear>
-IRS_FORCE_INLINE uint32_t MaskLeaf(FillLeaf leaf, uint32_t prev, uint32_t len,
-                                   doc_id_t min, doc_id_t max,
-                                   uint64_t* IRS_RESTRICT mask,
-                                   uint32_t* IRS_RESTRICT docs_end) {
-  SDB_ASSERT(leaf.Maskable());
-  SDB_ASSERT(min <= prev && prev < max);
-  constexpr auto kBits = BitsRequired<uint64_t>();
-  const uint64_t first = uint64_t{prev} + 1 - min;
-  const auto range = [&](uint64_t begin, uint64_t end) IRS_FORCE_INLINE {
-    if constexpr (Clear) {
-      ClearBitRange(mask, begin, end);
-    } else {
-      SetBitRange(mask, begin, end);
-    }
-  };
-  const auto bitset_at = [&](const UnalignedWord* IRS_RESTRICT src,
-                             uint32_t words, uint64_t last) IRS_FORCE_INLINE {
-    if constexpr (Clear) {
-      AndNotBitsetAt(mask, first, src, words, last);
-    } else {
-      OrBitsetAt(mask, first, src, words, last);
-    }
-  };
-
-  if (leaf.IsRun()) {
-    if (leaf.max < max) {
-      range(first, first + len);
-      return 0;
-    }
-    const auto inside = max - prev - 1;
-    if (inside != 0) {
-      range(first, first + inside);
-    }
-    const auto live = len - inside;
-    block_codec::FillProgression(docs_end - live, live, max - 1, 1);
-    return live;
-  }
-
-  const auto* const bitset = leaf.bitset;
-  if (leaf.max < max) {
-    bitset_at(bitset, leaf.words, bitset[leaf.words - 1]);
-    return 0;
-  }
-  const uint64_t below = max - prev - 1;
-  if (below != 0) {
-    const auto head = static_cast<uint32_t>((below - 1) / kBits + 1);
-    bitset_at(bitset, head,
-              bitset[head - 1] & (~uint64_t{0} >> (head * kBits - below)));
-  }
-  const auto split = static_cast<uint32_t>(below / kBits);
-  SDB_ASSERT(split < leaf.words);
-  const auto rest = bitset[split] & (~uint64_t{0} << (below % kBits));
-  auto live = static_cast<uint32_t>(std::popcount(rest));
-  for (auto i = split + 1; i != leaf.words; ++i) {
-    live += static_cast<uint32_t>(std::popcount(bitset[i]));
-  }
-  SDB_ASSERT(live != 0 && live <= len);
-  MaterializeBitsetFrom(prev, bitset, split, rest, leaf.words, docs_end - live);
-  return live;
 }
 
 IRS_FORCE_INLINE inline bool HoleToken(uint32_t token) noexcept {
@@ -429,6 +379,17 @@ IRS_FORCE_INLINE void ReadTail(uint32_t len, InputType& in, uint32_t* buf,
     [len](const byte_type* p) { return Codec::ValuesTailSize(p, len); });
   End(in, begin,
       Codec::DecodeValuesTail<Add>(begin, len, out + (kBlock - len)));
+}
+
+template<uint32_t Add = 0>
+IRS_FORCE_INLINE void DecodeTail(const byte_type* in, uint32_t len,
+                                 uint32_t* out) {
+  SDB_ASSERT(1 <= len && len <= kBlock);
+  if (len == kBlock) {
+    Codec::DecodeValuesBlock<Add>(in, out);
+    return;
+  }
+  Codec::DecodeValuesTail<Add>(in, len, out + (kBlock - len));
 }
 
 template<typename InputType>

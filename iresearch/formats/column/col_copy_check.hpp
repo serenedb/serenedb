@@ -23,9 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/storage/object_cache.hpp>
-#include <memory>
 
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/reencode_cache.hpp"
@@ -39,9 +37,9 @@ inline constexpr uint64_t kReencodeMinSavingsPercent = 10;
 
 bool ReencodePays(const ReencodeEstimate& estimate) noexcept;
 
-ReencodeEstimate EstimateReencode(
-  const ColReader& reader, const ColumnReader& column,
-  const IndexFieldOptions& options, duckdb::ObjectCache* cache,
-  std::shared_ptr<const codecs::TrainedDictionary> dictionary = nullptr);
+ReencodeEstimate EstimateReencode(const ColReader& reader,
+                                  const ColumnReader& column,
+                                  const IndexFieldOptions& options,
+                                  duckdb::ObjectCache* cache);
 
 }  // namespace irs

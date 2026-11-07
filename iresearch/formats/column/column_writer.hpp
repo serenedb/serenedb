@@ -41,11 +41,6 @@
 
 namespace irs {
 
-bool TrainsColumnDictionary(duckdb::DatabaseInstance& db,
-                            const duckdb::LogicalType& type,
-                            duckdb::CompressionType forced,
-                            const ColCodecParams& params);
-
 void EmitEmptyValidity(duckdb::DatabaseInstance& db, uint64_t rows,
                        std::vector<ColumnBlockMeta>& sink);
 
@@ -100,13 +95,6 @@ class ColumnWriter final {
 
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
-
-  bool TrainsDictionary() const noexcept;
-  void SampleDictionary(std::span<const std::string_view> entries);
-  void ShareLeafDictionary(
-    std::span<const uint32_t> path,
-    std::shared_ptr<const codecs::TrainedDictionary> dictionary,
-    uint16_t index);
 
  private:
   friend class ColWriter;

@@ -61,7 +61,6 @@ namespace irs {
 enum class MergeUnitKind : uint8_t {
   Norms,
   Column,
-  ColumnTrain,
   ColumnCopy,
   ColumnsFooter,
   Ann,

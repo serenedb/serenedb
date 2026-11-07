@@ -208,12 +208,9 @@ struct FsstScan {
   }
 
   template<typename Frames>
-  void Stream(Frames& s, uint32_t f, char* out, std::string_view,
-              uint32_t* ends) {
+  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
     WalkFrame(s, f, out, [&](uint32_t, std::string_view v) {
-      if (ends) {
-        *ends++ = static_cast<uint32_t>(v.data() + v.size() - out);
-      }
+      *ends++ = static_cast<uint32_t>(v.data() + v.size() - out);
     });
   }
 

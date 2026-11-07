@@ -25,7 +25,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -68,15 +67,11 @@ class ColumnMerger {
 
   bool Splittable(field_id column) const;
 
-  bool HoldsText(field_id column) const;
-
   bool Copyable(field_id column, size_t input) const;
 
   void Open(field_id column, ColWriter& output) const;
 
   bool Merge(field_id column, ColWriter& output, const MergeProgress& progress);
-
-  bool Train(field_id column, ColWriter& output, const MergeProgress& progress);
 
   bool MergeRange(field_id column, uint32_t part, uint64_t begin, uint64_t end,
                   ColWriter& output, const MergeProgress& progress);
@@ -91,22 +86,11 @@ class ColumnMerger {
     std::vector<std::vector<duckdb::sel_t>> windows;
   };
 
-  struct LeafDictionary {
-    std::vector<uint32_t> path;
-    std::shared_ptr<const codecs::TrainedDictionary> dictionary;
-  };
-
   struct ColumnSlot {
     const ColumnReader* first = nullptr;
-    std::shared_ptr<const codecs::TrainedDictionary> dictionary;
-    std::vector<LeafDictionary> leaves;
-    bool trained = false;
   };
 
-  struct LeafSample;
   struct OrderedInput;
-
-  static bool AllReady(std::span<const LeafSample> leaves);
 
   std::vector<duckdb::sel_t>& KeptFor(size_t si, uint64_t pos);
 
@@ -131,14 +115,6 @@ class ColumnMerger {
                  const MergeProgress& progress, Visit&& visit);
 
   uint64_t Rows(field_id column) const;
-
-  bool TrainLeaves(field_id column, ColWriter& output,
-                   const MergeProgress& progress);
-
-  bool SampleRowGroups(field_id column,
-                       std::span<const std::shared_ptr<ReadContext>> ctxs,
-                       std::span<LeafSample> leaves, bool exact,
-                       const MergeProgress& progress);
 
   void OpenOrdered(OrderedInput& in, size_t si, field_id column, uint64_t live);
 

@@ -139,35 +139,16 @@ struct PlainScan final : duckdb::SegmentScanState {
   }
 
   void Open(uint32_t f) {
-    const bool first_frame =
-      entries.header.flags == FrameDictionary::FirstFrame;
-    std::string_view dictionary;
-    if (f != 0 && first_frame) {
-      if (!frame_zero) {
-        frame_zero = Inflate(0, {}, nullptr);
-      }
-      dictionary = {frame_zero->data.get(), frame_zero->size};
-    }
     ends.resize(entries.FrameEnd(f) - entries.frames[f].first_entry);
-    bytes = Inflate(f, dictionary, ends.data());
-    if (f == 0 && first_frame) {
-      frame_zero = bytes;
-    }
-    frame = f;
-  }
-
-  duckdb::shared_ptr<FrameBytes> Inflate(uint32_t f,
-                                         std::string_view dictionary,
-                                         uint32_t* frame_ends) {
     auto out = duckdb::make_shared_ptr<FrameBytes>(entries.frames[f].raw_len);
-    entries.leaf->Stream(entries, f, out->data.get(), dictionary, frame_ends);
-    return out;
+    entries.leaf->Stream(entries, f, out->data.get(), ends.data());
+    bytes = std::move(out);
+    frame = f;
   }
 
   EntryFrames<Shape::Plain, Leaf> entries;
   uint32_t frame = kNoFrame;
   duckdb::shared_ptr<const FrameBytes> bytes;
-  duckdb::shared_ptr<const FrameBytes> frame_zero;
   ScratchVector<uint32_t> ends;
   FrameLink link;
 };

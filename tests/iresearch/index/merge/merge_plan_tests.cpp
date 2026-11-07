@@ -327,8 +327,6 @@ TEST_F(MergePlanTest, OneThreadKeepsEveryColumnWhole) {
   const auto units = plan.Units();
   EXPECT_EQ(
     7, std::ranges::count(units, MergeUnitKind::Column, &irs::MergeUnit::kind));
-  EXPECT_EQ(0, std::ranges::count(units, MergeUnitKind::ColumnTrain,
-                                  &irs::MergeUnit::kind));
 }
 
 TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
@@ -336,32 +334,18 @@ TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
   auto plan = MakePlan(out, &_small_row_groups);
   ASSERT_TRUE(plan.Prepare(MergePool(64)));
   const auto units = plan.Units();
-  const auto trains = UnitsOf(units, MergeUnitKind::ColumnTrain, kTextColumn);
-  ASSERT_EQ(1, trains.size());
-  const auto text = UnitsOf(units, MergeUnitKind::Column, kTextColumn);
-  ASSERT_LT(1, text.size());
-  for (uint32_t part = 0; part != text.size(); ++part) {
-    EXPECT_EQ(part, units[text[part]].part);
-    EXPECT_TRUE(
-      std::ranges::equal(std::vector{trains[0]}, units[text[part]].deps));
-  }
   const auto numbers = UnitsOf(units, MergeUnitKind::Column, kBigintColumn);
   ASSERT_LT(1, numbers.size());
-  EXPECT_TRUE(
-    UnitsOf(units, MergeUnitKind::ColumnTrain, kBigintColumn).empty());
-  for (const auto unit : numbers) {
-    EXPECT_TRUE(std::ranges::equal(units[trains[0]].deps, units[unit].deps));
-  }
-  for (const auto id : {kListColumn, kStructColumn}) {
+  for (const auto id :
+       {kTextColumn, kBigintColumn, kListColumn, kStructColumn}) {
     const auto parts = UnitsOf(units, MergeUnitKind::Column, id);
     ASSERT_LT(1, parts.size());
     for (uint32_t part = 0; part != parts.size(); ++part) {
       EXPECT_EQ(part, units[parts[part]].part);
+      EXPECT_TRUE(
+        std::ranges::equal(units[numbers[0]].deps, units[parts[part]].deps));
     }
   }
-  EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnTrain, kListColumn).empty());
-  EXPECT_EQ(1,
-            UnitsOf(units, MergeUnitKind::ColumnTrain, kStructColumn).size());
   const auto footer =
     static_cast<size_t>(std::ranges::find(units, MergeUnitKind::ColumnsFooter,
                                           &irs::MergeUnit::kind) -
@@ -391,7 +375,6 @@ TEST_F(MergePlanTest, SplitTextWithoutATrainedCodecMerges) {
   auto plan = MakePlan(out, &_uncompressed_text);
   ASSERT_TRUE(plan.Prepare(MergePool(64)));
   const auto units = plan.Units();
-  ASSERT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnTrain, kTextColumn).size());
   ASSERT_LT(1, UnitsOf(units, MergeUnitKind::Column, kTextColumn).size());
   const ShuffledUnits shuffle;
   ASSERT_TRUE(irs::ExecuteMerge(plan));
@@ -426,19 +409,22 @@ std::string RandomId(std::mt19937_64& rng, size_t size) {
   return id;
 }
 
-std::string LogLine(size_t row) {
-  static constexpr std::string_view kVerbs[] = {
-    "handled request", "rejected payment", "retried connection",
-    "flushed cache",   "opened session",   "closed stream",
-    "queued job",      "scheduled task"};
-  static constexpr std::string_view kServices[] = {
-    "checkout", "frontend", "cart", "shipping", "currency", "ads", "email"};
-  std::mt19937_64 rng{row * 0x9E3779B97F4A7C15ULL + 7};
-  const auto id = RandomId(rng, 16);
-  return absl::StrCat("2026-10-05T12:", rng() % 60, " INFO ",
-                      kServices[rng() % std::size(kServices)], " ",
-                      kVerbs[rng() % std::size(kVerbs)], " id=", id,
-                      " user=", rng() % 100000, " took ", rng() % 997, "ms");
+// One of 200 long templates, the row and a random tail: a trained dictionary
+// beats the first frame on these once a segment holds about a megabyte of
+// them, which 8192 rows reach; short repeated words never need one.
+std::string TemplatedLine(size_t row) {
+  static const auto kTemplates = [] {
+    std::vector<std::string> out;
+    std::mt19937_64 rng{42};
+    for (size_t t = 0; t != 200; ++t) {
+      out.push_back(RandomId(rng, 100));
+    }
+    return out;
+  }();
+  std::mt19937_64 rng{row};
+  return absl::StrCat(
+    kTemplates[(row * 0x9E3779B97F4A7C15ULL >> 40) % kTemplates.size()], row,
+    "-", RandomId(rng, 24));
 }
 
 std::vector<std::string> DictionariesByBlock(const irs::ColReader& cs,
@@ -537,13 +523,13 @@ class ColumnSplitTest : public ::testing::Test {
                                         irs::tests::DefaultReaderOptions());
   }
 
-  void ExpectOneSharedDictionary(size_t docs_per_segment, bool deletes,
-                                 uint64_t row_group) {
+  void ExpectEveryPartTrains(size_t docs_per_segment, bool deletes,
+                             uint64_t row_group) {
     constexpr irs::field_id kText = kFirstColumn;
     for (size_t s = 0; s != 2; ++s) {
       AddSegment(docs_per_segment, [&](auto& doc, size_t row) {
         WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
-                   duckdb::Value{LogLine(row)});
+                   duckdb::Value{TemplatedLine(row)});
       });
     }
     std::vector<std::string> removed;
@@ -555,7 +541,6 @@ class ColumnSplitTest : public ::testing::Test {
     std::span<const irs::MergeUnit> units;
     const auto merged = Merge(out, static_cast<uint32_t>(row_group), 4, &units);
     ASSERT_NE(nullptr, merged);
-    ASSERT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnTrain, kText).size());
     EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnCopy, kText).empty());
     const auto parts = UnitsOf(units, MergeUnitKind::Column, kText).size();
     ASSERT_LT(1, parts);
@@ -569,12 +554,12 @@ class ColumnSplitTest : public ::testing::Test {
     bool first = false;
     bool last = false;
     for (size_t block = 0; block != dictionaries.size(); ++block) {
-      const bool trained = dictionaries[block] == "trained:1";
+      const bool trained = dictionaries[block] == "local";
       first |= trained && col->DataBlockFirstRow(block) < row_group;
       last |= trained && col->DataBlockFirstRow(block) >= last_part;
     }
-    EXPECT_TRUE(first);
-    EXPECT_TRUE(last);
+    EXPECT_TRUE(first) << ::testing::PrintToString(dictionaries);
+    EXPECT_TRUE(last) << ::testing::PrintToString(dictionaries);
   }
 
   irs::MemoryDirectory _dir;
@@ -593,23 +578,15 @@ class ColumnSplitTest : public ::testing::Test {
   bool _serial = false;
 };
 
-TEST_F(ColumnSplitTest, SplitTextColumnSharesOneTrainedDictionary) {
-  ExpectOneSharedDictionary(30000, true, 8192);
+TEST_F(ColumnSplitTest, SplitTextPartsTrainTheirOwnSegments) {
+  ExpectEveryPartTrains(30000, true, 8192);
 }
 
-TEST_F(ColumnSplitTest, SplitTextSamplesRowGroupsWhenWindowsFallShort) {
-  ExpectOneSharedDictionary(17000, false, 32768);
-}
-
-TEST_F(ColumnSplitTest, SplitTextSamplesRowGroupsPastDeletedRows) {
-  ExpectOneSharedDictionary(17000, true, 8192);
-}
-
-TEST_F(ColumnSplitTest, SplitTextUnderAForcedNumericCodecSharesOneDictionary) {
+TEST_F(ColumnSplitTest, SplitTextUnderAForcedNumericCodecStillTrains) {
   auto con = irs::DuckDBEngine::Instance().CreateConnection();
   ASSERT_FALSE(con->Query("SET force_compression = 'bitpacking'")->HasError());
   absl::Cleanup reset = [&] { con->Query("SET force_compression = 'auto'"); };
-  ExpectOneSharedDictionary(30000, true, 8192);
+  ExpectEveryPartTrains(30000, true, 8192);
 }
 
 TEST_F(ColumnSplitTest, RangesPadInputsWithoutTheColumn) {
@@ -749,15 +726,15 @@ class NestedTextSplitTest : public ColumnSplitTest {
  protected:
   static constexpr irs::field_id kMap = kFirstColumn;
 
-  void ExpectOneSharedLeafDictionary(size_t docs_per_segment, bool deletes,
-                                     uint32_t row_group) {
+  void ExpectEveryLeafPartTrains(size_t docs_per_segment, bool deletes,
+                                 uint32_t row_group) {
     const auto text = duckdb::LogicalType::VARCHAR;
     const auto map_type = duckdb::LogicalType::MAP(text, text);
     for (size_t s = 0; s != 2; ++s) {
       AddSegment(docs_per_segment, [&](auto& doc, size_t row) {
         WriteValue(doc, kMap, map_type,
                    duckdb::Value::MAP(text, text, {duckdb::Value{"message"}},
-                                      {duckdb::Value{LogLine(row)}}));
+                                      {duckdb::Value{TemplatedLine(row)}}));
       });
     }
     std::vector<std::string> removed;
@@ -769,37 +746,27 @@ class NestedTextSplitTest : public ColumnSplitTest {
     std::span<const irs::MergeUnit> units;
     const auto merged = Merge(out, row_group, 4, &units);
     ASSERT_NE(nullptr, merged);
-    ASSERT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnTrain, kMap).size());
     ASSERT_LT(1, UnitsOf(units, MergeUnitKind::Column, kMap).size());
     EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
     const auto* col = merged->GetColReader()->Column(kMap);
     ASSERT_NE(nullptr, col);
     ASSERT_NE(nullptr, col->Child());
-    const auto& entries = *col->Child();
-    EXPECT_TRUE(entries.StructField(0).DictionaryMetas().empty());
-    const auto& values = entries.StructField(1);
-    EXPECT_EQ(1, values.DictionaryMetas().size());
+    const auto& values = col->Child()->StructField(1);
     const auto blocks = DictionariesByBlock(*merged->GetColReader(), values);
     ASSERT_LT(3, blocks.size());
     const auto quarter = blocks.size() / 4;
     EXPECT_TRUE(std::any_of(blocks.begin(), blocks.begin() + quarter,
-                            [](const auto& d) { return d == "trained:1"; }));
+                            [](const auto& d) { return d == "local"; }))
+      << ::testing::PrintToString(blocks);
     EXPECT_TRUE(std::any_of(blocks.end() - quarter, blocks.end(),
-                            [](const auto& d) { return d == "trained:1"; }));
+                            [](const auto& d) { return d == "local"; }))
+      << ::testing::PrintToString(blocks);
     ExpectGathersMatchScans(*merged, kMap);
   }
 };
 
-TEST_F(NestedTextSplitTest, LeavesShareOneTrainedDictionary) {
-  ExpectOneSharedLeafDictionary(30000, true, 8192);
-}
-
-TEST_F(NestedTextSplitTest, LeavesSampleRowGroupsWhenWindowsFallShort) {
-  ExpectOneSharedLeafDictionary(17000, false, 32768);
-}
-
-TEST_F(NestedTextSplitTest, LeavesSampleRowGroupsPastDeletedRows) {
-  ExpectOneSharedLeafDictionary(17000, true, 8192);
+TEST_F(NestedTextSplitTest, LeavesTrainInEveryPart) {
+  ExpectEveryLeafPartTrains(30000, true, 8192);
 }
 
 TEST_F(ColumnSplitTest, NestedColumnsSplitIntoRowRanges) {
@@ -957,16 +924,18 @@ class ColumnCopyTest : public ColumnSplitTest {
   }
 
   static constexpr uint32_t kTrainedRowGroup = 4096;
+  static constexpr uint32_t kTrainingRowGroup = 8192;
 
   std::shared_ptr<const irs::SegmentReaderImpl> TrainedSegment(
-    irs::Directory& dir) {
-    AddSegment(60000, [](auto& doc, size_t row) {
+    irs::Directory& dir, size_t rows = 60000) {
+    AddSegment(rows, [](auto& doc, size_t row) {
       WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
-                 duckdb::Value{LogLine(row)});
+                 duckdb::Value{TemplatedLine(row)});
     });
     auto merged = MergeSegments(dir, Fresh(1), 16384);
-    EXPECT_FALSE(
-      merged->GetColReader()->Column(kText)->DictionaryMetas().empty());
+    const auto dictionaries = DictionariesByBlock(*merged, kText);
+    EXPECT_TRUE(absl::c_linear_search(dictionaries, "local"))
+      << ::testing::PrintToString(dictionaries);
     return merged;
   }
 };
@@ -989,8 +958,6 @@ TEST_F(ColumnCopyTest, MergeWrittenInputsCopyTheirBlocks) {
     std::ranges::copy(BlocksOf(*b, id), std::back_inserter(expected));
     EXPECT_EQ(expected, BlocksOf(*merged, id));
   }
-  EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnTrain, kText).size());
-  EXPECT_TRUE(merged->GetColReader()->Column(kText)->DictionaryMetas().empty());
 }
 
 TEST_F(ColumnCopyTest, CopiedColumnsKeepTheirNulls) {
@@ -1140,11 +1107,11 @@ TEST_F(ColumnCopyTest, CopyUnitsReencodeWhenThatPays) {
   }
 }
 
-TEST_F(ColumnCopyTest, ReencodedTextCopiesUseTheTrainedDictionary) {
+TEST_F(ColumnCopyTest, ReencodedTextCopiesTrainTheirSegments) {
   for (size_t s = 0; s != 2; ++s) {
-    AddSegment(30000, [](auto& doc, size_t row) {
+    AddSegment(70000, [](auto& doc, size_t row) {
       WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
-                 duckdb::Value{LogLine(row)});
+                 duckdb::Value{TemplatedLine(row)});
     });
   }
   _merge_columns = [](irs::field_id) {
@@ -1153,14 +1120,13 @@ TEST_F(ColumnCopyTest, ReencodedTextCopiesUseTheTrainedDictionary) {
   };
   irs::MemoryDirectory out;
   std::span<const irs::MergeUnit> units;
-  const auto merged = Merge(out, 2048, 1, &units);
+  const auto merged = Merge(out, kTrainingRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, kText).size());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
-  EXPECT_FALSE(
-    merged->GetColReader()->Column(kText)->DictionaryMetas().empty());
-  EXPECT_TRUE(
-    absl::c_linear_search(DictionariesByBlock(*merged, kText), "trained:1"));
+  const auto dictionaries = DictionariesByBlock(*merged, kText);
+  EXPECT_TRUE(absl::c_linear_search(dictionaries, "local"))
+    << ::testing::PrintToString(dictionaries);
 }
 
 TEST_F(ColumnCopyTest, InputsThatCannotBeCopiedAreReencoded) {
@@ -1329,7 +1295,7 @@ TEST_F(ColumnCopyTest, StreamedDuckDBStringBlocksAreReencoded) {
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
 }
 
-TEST_F(ColumnCopyTest, CopiedDuckDBBlocksBesideTrainedDictionariesCopyAgain) {
+TEST_F(ColumnCopyTest, CopiedDuckDBBlocksBesideTrainedSegmentsCopyAgain) {
   const auto status = [](size_t row) {
     std::mt19937_64 rng{row};
     return absl::StrCat("status-of-the-request-", rng() % 3);
@@ -1370,7 +1336,8 @@ TEST_F(ColumnCopyTest, CopiedDuckDBBlocksBesideTrainedDictionariesCopyAgain) {
                                    kTrainedRowGroup);
   ASSERT_NE(nullptr, first);
   ASSERT_EQ(streamed_blocks, duckdb_blocks(*first));
-  ASSERT_FALSE(first->GetColReader()->Column(kText)->DictionaryMetas().empty());
+  ASSERT_TRUE(
+    absl::c_linear_search(DictionariesByBlock(*first, kText), "local"));
   AddSegment(40000, [&](auto& doc, size_t row) {
     WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
                duckdb::Value{status(row)});
@@ -1396,132 +1363,42 @@ TEST_F(ColumnCopyTest, CopiedTextKeepsItsTrainedDictionaries) {
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, kText).size());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
-  EXPECT_EQ(2, merged->GetColReader()->Column(kText)->DictionaryMetas().size());
-  const auto dictionaries = DictionariesByBlock(*merged, kText);
-  EXPECT_TRUE(absl::c_linear_search(dictionaries, "trained:1"));
-  EXPECT_TRUE(absl::c_linear_search(dictionaries, "trained:2"));
+  auto expected = BlocksOf(*a, kText);
+  std::ranges::copy(BlocksOf(*b, kText), std::back_inserter(expected));
+  EXPECT_EQ(expected, BlocksOf(*merged, kText));
+  EXPECT_TRUE(
+    absl::c_linear_search(DictionariesByBlock(*merged, kText), "local"));
 }
 
-TEST_F(ColumnCopyTest, CopiedBlocksNamingAMissingDictionaryAreRejected) {
-  irs::MemoryDirectory dir;
-  const auto written = TrainedSegment(dir);
-  const auto meta = _meta;
-  const auto* col = written->GetColReader()->Column(kText);
-  ASSERT_NE(col, nullptr);
-  const auto dictionaries = DictionariesByBlock(*written, kText);
-  const auto trained = absl::c_find(dictionaries, "trained:1");
-  ASSERT_NE(trained, dictionaries.end());
-  const auto& block = col->DataBlocks()[trained - dictionaries.begin()];
-  const auto file = irs::FileName(meta.name);
-  std::string bytes;
-  {
-    auto in = dir.open(file, irs::IOAdvice::SEQUENTIAL);
-    ASSERT_NE(in, nullptr);
-    bytes.resize(in->Length());
-    in->ReadData(reinterpret_cast<irs::byte_type*>(bytes.data()), bytes.size());
-  }
-  auto* data =
-    reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + block.file_offset);
-  auto header = irs::codecs::Header::Parse(data, block.byte_size);
-  ASSERT_EQ(header.dictionary, 1);
-  header.dictionary = 9;
-  duckdb::Store(header, data);
-  {
-    auto out = dir.create(file);
-    ASSERT_NE(out, nullptr);
-    out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
-                   bytes.size());
-  }
-  const auto corrupted =
-    irs::SegmentReaderImpl::Open(dir, meta, irs::tests::DefaultReaderOptions());
-  ASSERT_NE(corrupted, nullptr);
-  const auto* cs = corrupted->GetColReader();
-  ASSERT_NE(cs, nullptr);
-  irs::MemoryDirectory out_dir;
-  irs::ColWriter writer{out_dir, "copy",
-                        irs::DuckDBEngine::Instance().instance(),
-                        irs::WriteTier::Merge};
-  writer.PlanParts(kText, 1);
-  constexpr uint16_t kRemapped[] = {2};
-  irs::ReadContext ctx{*cs};
-  const auto copy = [&] {
-    writer.CopyColumnPart(kText, 0, ctx, *cs->Column(kText), true, kRemapped,
-                          [] { return true; });
-  };
-#ifdef SDB_DEV
-  GTEST_FLAG_SET(death_test_style, "threadsafe");
-  EXPECT_DEATH(copy(), "missing trained dictionary 9");
-#else
-  EXPECT_ANY_THROW(copy());
-#endif
-}
-
-TEST_F(ColumnCopyTest, CopiedBlocksWithoutTheDictionaryStayAsTheyAre) {
+TEST_F(ColumnCopyTest, CopiedBlocksWithAndWithoutADictionaryStayAsTheyAre) {
   irs::MemoryDirectory dir_a;
   irs::MemoryDirectory dir_b;
-  const auto a = TrainedSegment(dir_a);
-  for (size_t s = 0; s != 2; ++s) {
-    AddSegment(17000, [](auto& doc, size_t row) {
-      WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
-                 duckdb::Value{LogLine(row)});
-    });
-  }
-  const auto b = MergeSegments(dir_b, Fresh(2), kTrainedRowGroup);
+  const auto a = TrainedSegment(dir_a, 70000);
+  AddSegment(35000, [](auto& doc, size_t row) {
+    WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
+               duckdb::Value{TemplatedLine(row)});
+  });
+  AddSegment(35000, [](auto& doc, size_t row) {
+    WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
+               duckdb::Value{absl::StrCat("value-", row % 700)});
+  });
+  const auto b = MergeSegments(dir_b, Fresh(2), kTrainingRowGroup);
   const auto mixed = DictionariesByBlock(*b, kText);
-  ASSERT_TRUE(absl::c_linear_search(mixed, "trained:1"));
-  ASSERT_TRUE(absl::c_any_of(mixed, [](const std::string& dictionary) {
-    return !dictionary.starts_with("trained:");
-  }));
+  ASSERT_TRUE(absl::c_linear_search(mixed, "local"))
+    << ::testing::PrintToString(mixed);
+  ASSERT_TRUE(absl::c_any_of(
+    mixed, [](const std::string& dictionary) { return dictionary != "local"; }))
+    << ::testing::PrintToString(mixed);
   irs::MemoryDirectory out;
   std::span<const irs::MergeUnit> units;
   const auto merged =
-    MergeSegments(out, {a.get(), b.get()}, kTrainedRowGroup, 1, &units);
+    MergeSegments(out, {a.get(), b.get()}, kTrainingRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, kText).size());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
-  EXPECT_TRUE(
-    absl::c_linear_search(DictionariesByBlock(*merged, kText), "trained:2"));
-}
-
-TEST_F(ColumnCopyTest, CopiedDictionariesFollowTheMergeOwnDictionary) {
-  irs::MemoryDirectory dir_a;
-  const auto a = TrainedSegment(dir_a);
-  AddSegment(20000, [](auto& doc, size_t row) {
-    WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
-               duckdb::Value{LogLine(row)});
-  });
-  auto inputs = Fresh(1);
-  inputs.push_back(a.get());
-  _serial = true;
-  irs::MemoryDirectory out;
-  std::span<const irs::MergeUnit> units;
-  const auto merged = MergeSegments(out, inputs, kTrainedRowGroup, 1, &units);
-  ASSERT_NE(nullptr, merged);
-  EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnCopy, kText).size());
-  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
-  EXPECT_EQ(2, merged->GetColReader()->Column(kText)->DictionaryMetas().size());
-}
-
-TEST_F(ColumnCopyTest, CopiesThatOverflowTheDictionariesAreReencoded) {
-  std::vector<std::unique_ptr<irs::MemoryDirectory>> dirs;
-  std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> trained;
-  for (size_t i = 0; i != irs::kMaxColumnDictionaries; ++i) {
-    trained.emplace_back(TrainedSegment(
-      *dirs.emplace_back(std::make_unique<irs::MemoryDirectory>())));
-  }
-  std::vector<const irs::SubReader*> inputs;
-  for (const auto& segment : trained) {
-    inputs.push_back(segment.get());
-  }
-  irs::MemoryDirectory out;
-  std::span<const irs::MergeUnit> units;
-  const auto merged = MergeSegments(out, inputs, kTrainedRowGroup, 1, &units);
-  ASSERT_NE(nullptr, merged);
-  EXPECT_EQ(irs::kMaxColumnDictionaries,
-            UnitsOf(units, MergeUnitKind::ColumnCopy, kText).size());
-  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
-  EXPECT_EQ(irs::kMaxColumnDictionaries,
-            merged->GetColReader()->Column(kText)->DictionaryMetas().size());
+  auto expected = DictionariesByBlock(*a, kText);
+  absl::c_copy(mixed, std::back_inserter(expected));
+  EXPECT_EQ(expected, DictionariesByBlock(*merged, kText));
 }
 
 }  // namespace

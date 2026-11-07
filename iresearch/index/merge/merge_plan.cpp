@@ -39,7 +39,6 @@
 
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/merge.hpp"
@@ -67,7 +66,6 @@ namespace {
 constexpr uint64_t kAnnCostPerByte = 32;
 constexpr uint64_t kCopyCostDivisor = 10;
 constexpr double kEncodeCostPerRow = 0.3;
-constexpr uint64_t kTrainCostPerSampleByte = 10;
 constexpr uint64_t kRangesPerThread = 4;
 constexpr uint64_t kRowsPerOrderPartition = uint64_t{1} << 18;
 constexpr uint64_t kTermsPerPart = 4096;
@@ -311,15 +309,6 @@ uint64_t MergePlan::AddColumns(const std::vector<size_t>& after_norms) {
       continue;
     }
     _col_writer->PlanParts(id, static_cast<uint32_t>(column_ranges.size()));
-    auto part_deps = after_norms;
-    if (_columns->HoldsText(id)) {
-      part_deps = {AddUnit({
-        .kind = MergeUnitKind::ColumnTrain,
-        .id = id,
-        .cost = codecs::kTrainSampleBytes * kTrainCostPerSampleByte,
-        .deps = after_norms,
-      })};
-    }
     for (uint32_t part = 0; part != column_ranges.size(); ++part) {
       const auto& range = column_ranges[part];
       AddUnit({
@@ -328,7 +317,7 @@ uint64_t MergePlan::AddColumns(const std::vector<size_t>& after_norms) {
         .id = id,
         .cost = range.cost,
         .part = part,
-        .deps = part_deps,
+        .deps = after_norms,
       });
     }
     _ranges.emplace(id, std::move(column_ranges));
@@ -668,9 +657,6 @@ bool MergePlan::RunUnit(size_t unit) {
     case MergeUnitKind::Column:
     case MergeUnitKind::ColumnCopy:
       return MergeColumn(work) && lap(MergeStep::Columns);
-    case MergeUnitKind::ColumnTrain:
-      return _columns->Train(work.id, *_col_writer, _progress) &&
-             lap(MergeStep::Columns);
     case MergeUnitKind::ColumnsFooter:
       _col_writer->SetIdxWriter(*_idx);
       return _col_writer->Commit(_segment.docs_count, _progress) &&

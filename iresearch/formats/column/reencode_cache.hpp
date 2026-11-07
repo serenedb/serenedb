@@ -43,7 +43,6 @@ struct ReencodeKey {
     duckdb::CompressionType::COMPRESSION_AUTO;
   ColCodecParams codec_params;
   uint32_t row_group_size = 0;
-  uint64_t dictionary = 0;
 
   bool operator==(const ReencodeKey&) const = default;
 };

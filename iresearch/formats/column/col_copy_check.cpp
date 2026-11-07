@@ -68,10 +68,10 @@ ReencodeKey KeyOf(const ColumnReader& column,
   };
 }
 
-ReencodeEstimate TrialReencode(
-  const ColReader& reader, const ColumnReader& column, const ReencodeKey& key,
-  duckdb::ObjectCache* cache,
-  std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
+ReencodeEstimate TrialReencode(const ColReader& reader,
+                               const ColumnReader& column,
+                               const ReencodeKey& key,
+                               duckdb::ObjectCache* cache) {
   SDB_ASSERT(!column.Type().IsNested() && column.RowCount() != 0);
   const uint64_t rows = column.RowCount();
   const uint64_t group_rows = std::max<uint32_t>(1, key.row_group_size);
@@ -88,9 +88,6 @@ ReencodeEstimate TrialReencode(
                        .compression = key.compression,
                        .codec_params = key.codec_params,
                      });
-  if (dictionary) {
-    writer.ShareLeafDictionary({}, std::move(dictionary), 1);
-  }
   auto state = column.InitScan(MergeReadContext(reader, cache));
   ColumnReader::VectorScratch scratch{column.Type()};
   ReencodeEstimate estimate;
@@ -156,14 +153,13 @@ void ReencodeCache::Store(field_id column, const ReencodeKey& key,
   _entries.insert_or_assign(column, Entry{.key = key, .estimate = estimate});
 }
 
-ReencodeEstimate EstimateReencode(
-  const ColReader& reader, const ColumnReader& column,
-  const IndexFieldOptions& options, duckdb::ObjectCache* cache,
-  std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
-  auto key = KeyOf(column, options);
-  key.dictionary = dictionary ? dictionary->Id() : 0;
+ReencodeEstimate EstimateReencode(const ColReader& reader,
+                                  const ColumnReader& column,
+                                  const IndexFieldOptions& options,
+                                  duckdb::ObjectCache* cache) {
+  const auto key = KeyOf(column, options);
   return reader.Reencodes().Estimate(column.Id(), key, [&] {
-    return TrialReencode(reader, column, key, cache, std::move(dictionary));
+    return TrialReencode(reader, column, key, cache);
   });
 }
 

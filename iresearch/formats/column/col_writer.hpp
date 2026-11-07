@@ -20,10 +20,7 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
-#include <absl/container/btree_map.h>
 #include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -52,8 +49,6 @@
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
-
-inline constexpr size_t kMaxColumnDictionaries = 8;
 
 class ColWriter final {
  public:
@@ -92,19 +87,7 @@ class ColWriter final {
 
   bool CopyColumnPart(field_id id, uint32_t part, ReadContext& ctx,
                       const ColumnReader& column, bool validity,
-                      std::span<const uint16_t> dictionaries,
                       absl::FunctionRef<bool()> progress);
-
-  uint16_t AddColumnDictionary(field_id id, std::string_view bytes);
-
-  void AddLeafDictionary(field_id id, std::span<const uint32_t> path,
-                         std::string_view bytes);
-
-  bool AddCopiedDictionaries(
-    field_id id,
-    std::span<const std::shared_ptr<const codecs::TrainedDictionary>>
-      dictionaries,
-    std::vector<uint16_t>& indexes);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -143,11 +126,6 @@ class ColWriter final {
 
     std::vector<ColumnEntry> parts;
     bool whole;
-    absl::Mutex mutex;
-    uint16_t own ABSL_GUARDED_BY(mutex) = 0;
-    std::vector<ColumnDictionaryMeta> dictionaries ABSL_GUARDED_BY(mutex);
-    absl::btree_map<std::vector<uint32_t>, ColumnDictionaryMeta>
-      leaf_dictionaries;
   };
 
   Column& AddColumn(field_id id, uint32_t parts, bool whole);

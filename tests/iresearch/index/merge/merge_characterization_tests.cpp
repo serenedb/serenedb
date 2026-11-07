@@ -528,7 +528,7 @@ TEST(MergeColumnsTest, DictionarySamplingSkipsInputsWithoutTheColumn) {
     auto seg = col->OpenSegment(b, ctx);
     auto info = seg->GetCompressionFunction().get_segment_info(
       duckdb::QueryContext{}, *seg);
-    trained = info["dictionary"] == "trained:1";
+    trained = info["dictionary"] == "local";
   }
   EXPECT_TRUE(trained);
   EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged.reader)));

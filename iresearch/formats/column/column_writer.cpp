@@ -929,44 +929,4 @@ void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
   _hll_auto = false;
 }
 
-bool TrainsColumnDictionary(duckdb::DatabaseInstance& db,
-                            const duckdb::LogicalType& type,
-                            duckdb::CompressionType forced,
-                            const ColCodecParams& params) {
-  if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {
-    return false;
-  }
-  const auto forced_method = ForcedMethod(db, forced);
-  if (forced_method == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED) {
-    return false;
-  }
-  return codecs::TrainsDictionary(codecs::ChoiceOf(forced_method), params);
-}
-
-bool ColumnWriter::TrainsDictionary() const noexcept {
-  return TrainsColumnDictionary(WriteCtx().Database(), _type, _forced,
-                                _codec_params);
-}
-
-void ColumnWriter::SampleDictionary(std::span<const std::string_view> entries) {
-  if (!_meta.write_string_tuning) {
-    _meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
-  }
-  _meta.write_string_tuning->sampler.Add(entries);
-}
-
-void ColumnWriter::ShareLeafDictionary(
-  std::span<const uint32_t> path,
-  std::shared_ptr<const codecs::TrainedDictionary> dictionary, uint16_t index) {
-  auto* meta = &_meta;
-  for (const auto child : path) {
-    if (meta->children.size() <= child) {
-      meta->children.resize(child + 1);
-    }
-    meta = &meta->children[child];
-  }
-  meta->write_string_tuning = std::make_unique<codecs::StringTuning>();
-  codecs::Adopt(*meta->write_string_tuning, std::move(dictionary), index);
-}
-
 }  // namespace irs

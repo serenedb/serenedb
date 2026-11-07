@@ -2427,7 +2427,7 @@ TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
     auto seg = col->OpenSegment(b, ctx);
     auto info = seg->GetCompressionFunction().get_segment_info(
       duckdb::QueryContext{}, *seg);
-    trained = info["dictionary"] == "trained:1";
+    trained = info["dictionary"] == "local";
   }
   EXPECT_TRUE(trained);
 

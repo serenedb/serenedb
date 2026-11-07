@@ -24,9 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
-#include <cstring>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -40,7 +38,6 @@
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/formats/ann_writer.hpp"
-#include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -85,8 +82,6 @@ void DropTuning(ColumnMeta& meta) {
 void AppendPart(ColumnMeta& meta, ColumnMeta& part) {
   SDB_ASSERT(part.list_parts.empty() && part.variant_rgs.empty() &&
              !part.hyperloglog);
-  SDB_ENSURE(part.dictionaries.empty(), "column ", part.id,
-             ": a merged part trained its own dictionary");
   if (meta.type.id() == duckdb::LogicalTypeId::INVALID) {
     meta.id = part.id;
     meta.type = std::move(part.type);
@@ -145,26 +140,8 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
               });
 }
 
-bool PatchDictionary(std::string_view block,
-                     std::span<const uint16_t> dictionaries,
-                     std::array<char, sizeof(codecs::Header)>& head) {
-  const auto header = codecs::Header::Parse(
-    reinterpret_cast<duckdb::const_data_ptr_t>(block.data()), block.size());
-  if (header.flags != codecs::FrameDictionary::Trained) {
-    return false;
-  }
-  SDB_ENSURE(header.dictionary <= dictionaries.size(),
-             "col codec: missing trained dictionary ", header.dictionary);
-  const uint16_t dictionary = dictionaries[header.dictionary - 1];
-  std::memcpy(head.data(), block.data(), head.size());
-  std::memcpy(head.data() + offsetof(codecs::Header, dictionary), &dictionary,
-              sizeof(dictionary));
-  return true;
-}
-
 bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
-                std::span<const uint16_t> dictionaries, ColFileWriter& sink,
-                std::vector<ColumnBlockMeta>& out,
+                ColFileWriter& sink, std::vector<ColumnBlockMeta>& out,
                 absl::FunctionRef<bool()> progress) {
   std::string bytes;
   for (const auto& block : blocks) {
@@ -187,18 +164,7 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
                block.byte_size);
       view = bytes;
     }
-    std::array<char, sizeof(codecs::Header)> head{};
-    if (!dictionaries.empty() &&
-        duckdb::IsSereneDBCompressionType(block.codec->type) &&
-        PatchDictionary(view, dictionaries, head)) {
-      const std::array<std::string_view, 2> parts{
-        std::string_view{head.data(), head.size()},
-        view.substr(head.size()),
-      };
-      copy.file_offset = sink.AppendAligned(parts);
-    } else {
-      copy.file_offset = sink.AppendAligned({&view, 1});
-    }
+    copy.file_offset = sink.AppendAligned({&view, 1});
   }
   return true;
 }
@@ -362,71 +328,24 @@ void ColWriter::CloseColumnPart(field_id id, uint32_t part) {
 
 bool ColWriter::CopyColumnPart(field_id id, uint32_t part, ReadContext& ctx,
                                const ColumnReader& column, bool validity,
-                               std::span<const uint16_t> dictionaries,
                                absl::FunctionRef<bool()> progress) {
   auto& slot = PartOf(id, part);
   SDB_ASSERT(!slot.writer);
   auto& meta = slot.meta;
   meta.id = column.Id();
   meta.type = column.Type();
-  if (!CopyBlocks(ctx, column.DataBlocks(), dictionaries, *_file, meta.data,
-                  progress)) {
+  if (!CopyBlocks(ctx, column.DataBlocks(), *_file, meta.data, progress)) {
     return false;
   }
   if (!validity) {
     return true;
   }
   if (const auto* stored = column.Validity()) {
-    return CopyBlocks(ctx, stored->DataBlocks(), {}, *_file, meta.validity,
+    return CopyBlocks(ctx, stored->DataBlocks(), *_file, meta.validity,
                       progress);
   }
   for (const auto& block : meta.data) {
     EmitEmptyValidity(*_db, block.tuple_count, meta.validity);
-  }
-  return true;
-}
-
-uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
-  auto& column = ColumnOf(id);
-  absl::MutexLock lock{&column.mutex};
-  if (column.own == 0) {
-    SDB_ASSERT(column.dictionaries.size() < kMaxColumnDictionaries);
-    column.dictionaries.push_back(
-      {.file_offset = _file->Append(bytes), .byte_size = bytes.size()});
-    column.own = static_cast<uint16_t>(column.dictionaries.size());
-  }
-  return column.own;
-}
-
-void ColWriter::AddLeafDictionary(field_id id, std::span<const uint32_t> path,
-                                  std::string_view bytes) {
-  const bool added =
-    ColumnOf(id)
-      .leaf_dictionaries
-      .try_emplace(std::vector<uint32_t>{path.begin(), path.end()},
-                   ColumnDictionaryMeta{.file_offset = _file->Append(bytes),
-                                        .byte_size = bytes.size()})
-      .second;
-  SDB_ASSERT(added);
-}
-
-bool ColWriter::AddCopiedDictionaries(
-  field_id id,
-  std::span<const std::shared_ptr<const codecs::TrainedDictionary>>
-    dictionaries,
-  std::vector<uint16_t>& indexes) {
-  auto& column = ColumnOf(id);
-  absl::MutexLock lock{&column.mutex};
-  const size_t reserved = column.own == 0 ? 1 : 0;
-  if (column.dictionaries.size() + reserved + dictionaries.size() >
-      kMaxColumnDictionaries) {
-    return false;
-  }
-  for (const auto& dictionary : dictionaries) {
-    const auto bytes = dictionary->Bytes();
-    column.dictionaries.push_back(
-      {.file_offset = _file->Append(bytes), .byte_size = bytes.size()});
-    indexes.emplace_back(static_cast<uint16_t>(column.dictionaries.size()));
   }
   return true;
 }
@@ -442,18 +361,6 @@ ColumnMeta ColWriter::Assemble(Column& column) {
     SDB_ASSERT(!part.writer &&
                part.meta.type.id() != duckdb::LogicalTypeId::INVALID);
     AppendPart(meta, part.meta);
-  }
-  {
-    absl::MutexLock lock{&column.mutex};
-    meta.dictionaries = std::move(column.dictionaries);
-  }
-  for (auto& [path, dictionary] : column.leaf_dictionaries) {
-    auto* leaf = &meta;
-    for (const auto child : path) {
-      SDB_ASSERT(child < leaf->children.size());
-      leaf = &leaf->children[child];
-    }
-    leaf->dictionaries = {dictionary};
   }
   return meta;
 }

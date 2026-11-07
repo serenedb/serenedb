@@ -10,7 +10,7 @@ CREATE TABLE sx_src AS SELECT (TIMESTAMP '2025-09-23' + INTERVAL (i) SECOND)::TI
 FROM range(20) t(i);
 
 statement ok
-CREATE TABLE sx_last WITH (storage = 'search', compaction_interval = 0) AS SELECT ts, svc, sev, body FROM sx_src WHERE false;
+CREATE TABLE sx_last WITH (compaction_interval = 0) AS SELECT ts, svc, sev, body FROM sx_src WHERE false;
 
 statement ok
 CREATE INDEX sx_last_idx ON sx_last USING inverted ((split_by_non_alpha(body, case := 'lower')) sx_en);
@@ -19,7 +19,7 @@ statement ok
 INSERT INTO sx_last SELECT ts, svc, sev, body FROM sx_src;
 
 statement ok
-CREATE TABLE sx_second WITH (storage = 'search', compaction_interval = 0) AS SELECT svc, body, ts, sev FROM sx_src WHERE false;
+CREATE TABLE sx_second WITH (compaction_interval = 0) AS SELECT svc, body, ts, sev FROM sx_src WHERE false;
 
 statement ok
 CREATE INDEX sx_second_idx ON sx_second USING inverted ((split_by_non_alpha(body, case := 'lower')) sx_en);
@@ -28,7 +28,7 @@ statement ok
 INSERT INTO sx_second SELECT svc, body, ts, sev FROM sx_src;
 
 statement ok
-CREATE TABLE sx_first WITH (storage = 'search', compaction_interval = 0) AS SELECT body, ts, svc, sev FROM sx_src WHERE false;
+CREATE TABLE sx_first WITH (compaction_interval = 0) AS SELECT body, ts, svc, sev FROM sx_src WHERE false;
 
 statement ok
 CREATE INDEX sx_first_idx ON sx_first USING inverted ((split_by_non_alpha(body, case := 'lower')) sx_en);

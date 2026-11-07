@@ -29,7 +29,7 @@ CREATE TABLE otel_logs (
     resource_attributes JSON,
     scope_attributes    JSON,
     log_attributes      JSON
-) WITH (storage = 'search', optimize_top_k = 'bm25(1.2, 0.75)');
+) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
 CREATE INDEX otel_logs_idx ON otel_logs USING inverted (

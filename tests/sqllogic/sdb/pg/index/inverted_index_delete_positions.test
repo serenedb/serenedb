@@ -3,17 +3,15 @@ CREATE TEXT SEARCH DICTIONARY dp_words AS split_text()
 
 
 statement ok
-CREATE TABLE dp (id BIGINT, body VARCHAR, keep BOOLEAN)
+CREATE TABLE dp (id BIGINT, body VARCHAR, keep BOOLEAN) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX dp_idx ON dp USING inverted(id, body dp_words)
-  WITH (compaction_interval = 0)
 
 
 statement ok
-CREATE INDEX dp_part ON dp USING inverted(id, body dp_words)
-  WITH (compaction_interval = 0) WHERE keep
+CREATE INDEX dp_part ON dp USING inverted(id, body dp_words) WHERE keep
 
 
 statement ok
@@ -218,12 +216,11 @@ dp_part	0
 
 # One commit removing rows of two tables.
 statement ok
-CREATE TABLE dq (id BIGINT, body VARCHAR)
+CREATE TABLE dq (id BIGINT, body VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX dq_idx ON dq USING inverted(id, body dp_words)
-  WITH (compaction_interval = 0)
 
 
 statement ok
@@ -269,12 +266,11 @@ id
 
 # Rows moving into and out of a partial index, before and after a refresh.
 statement ok
-CREATE TABLE dr (id BIGINT, body VARCHAR, keep BOOLEAN)
+CREATE TABLE dr (id BIGINT, body VARCHAR, keep BOOLEAN) WITH (compaction_interval = 0)
 
 
 statement ok
-CREATE INDEX dr_part ON dr USING inverted(id, body dp_words)
-  WITH (compaction_interval = 0) WHERE keep
+CREATE INDEX dr_part ON dr USING inverted(id, body dp_words) WHERE keep
 
 
 statement ok
@@ -320,12 +316,11 @@ id
 
 
 statement ok
-CREATE TABLE ds (id BIGINT PRIMARY KEY, body VARCHAR)
+CREATE TABLE ds (id BIGINT PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX ds_idx ON ds USING inverted(id, body dp_words)
-  WITH (compaction_interval = 0)
 
 
 statement ok

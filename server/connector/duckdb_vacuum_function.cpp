@@ -166,10 +166,9 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
     } break;
     case Scope::Schema: {
       if (!bind.catalog.empty()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("VACUUM (COMPACT_SCHEMA) expects "
-                  "[<database>.]<schema>"));
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("VACUUM (COMPACT_SCHEMA) expects "
+                                "[<database>.]<schema>"));
       }
       out.database = bind.schema;
       out.schema = bind.name;

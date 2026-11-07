@@ -1,6 +1,5 @@
 statement ok
-CREATE TABLE sac (id INT PRIMARY KEY, a INT, b TEXT, n INT NOT NULL)
-WITH (storage = 'search');
+CREATE TABLE sac (id INT PRIMARY KEY, a INT, b TEXT, n INT NOT NULL);
 
 
 statement ok
@@ -261,7 +260,7 @@ id	cc
 
 
 statement ok
-CREATE TABLE sac_ck (x INT, CONSTRAINT sac_ck_x CHECK (x > 0)) WITH (storage = 'search');
+CREATE TABLE sac_ck (x INT, CONSTRAINT sac_ck_x CHECK (x > 0));
 
 
 statement ok
@@ -297,7 +296,7 @@ ALTER TABLE sac DROP CONSTRAINT sac_pkey;
 
 
 statement ok
-CREATE TABLE sac_tx (id INT, v TEXT) WITH (storage = 'search');
+CREATE TABLE sac_tx (id INT, v TEXT);
 
 
 statement ok
@@ -397,8 +396,7 @@ id	w
 
 
 statement ok
-CREATE TABLE sac_vec (id INT PRIMARY KEY, emb FLOAT[2], a INT)
-WITH (storage = 'search');
+CREATE TABLE sac_vec (id INT PRIMARY KEY, emb FLOAT[2], a INT);
 
 
 statement ok
@@ -453,8 +451,7 @@ id
 
 
 statement ok
-CREATE TABLE sac_expr (id INT PRIMARY KEY, b TEXT, n INT)
-WITH (storage = 'search');
+CREATE TABLE sac_expr (id INT PRIMARY KEY, b TEXT, n INT);
 
 
 statement ok
@@ -489,8 +486,7 @@ id	b	n	d
 
 
 statement ok
-CREATE TABLE sac_serial (id SERIAL, v INT)
-WITH (storage = 'search');
+CREATE TABLE sac_serial (id SERIAL, v INT);
 
 
 statement ok

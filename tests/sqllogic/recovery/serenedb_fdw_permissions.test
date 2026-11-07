@@ -1,11 +1,10 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE postgres.public.sfp_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE postgres.public.sfp_docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX sfp_docs_idx ON postgres.public.sfp_docs USING inverted(id, body)
-  WITH (compaction_interval = 0);
+CREATE INDEX sfp_docs_idx ON postgres.public.sfp_docs USING inverted(id, body);
 
 statement ok
 INSERT INTO postgres.public.sfp_docs VALUES (1, 'alpha'), (2, 'beta');

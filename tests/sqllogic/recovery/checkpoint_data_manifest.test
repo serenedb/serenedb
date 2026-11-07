@@ -32,7 +32,7 @@ INSERT INTO cdm_pk VALUES (1, 'x'), (2, 'y');
 
 # No row store, so no manifest record -- and the boot must not wait for one.
 statement ok
-CREATE TABLE cdm_search (id INTEGER, txt TEXT) WITH (storage='search');
+CREATE TABLE cdm_search (id INTEGER, txt TEXT);
 
 
 statement ok

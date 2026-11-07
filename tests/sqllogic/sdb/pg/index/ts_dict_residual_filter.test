@@ -25,7 +25,7 @@ CREATE TEXT SEARCH DICTIONARY rtx AS
 statement ok
 CREATE TABLE rbase(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
                    svc VARCHAR NOT NULL, region VARCHAR, tier VARCHAR,
-                   body VARCHAR NOT NULL)
+                   body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO rbase VALUES
@@ -40,7 +40,7 @@ INSERT INTO rbase VALUES
 
 statement ok
 CREATE INDEX rtab_idx ON rbase USING inverted(sev rkw, tier rkw, body rtx)
-    INCLUDE (svc, region) WITH (compaction_interval = 0)
+    INCLUDE (svc, region)
 
 statement ok
 CREATE VIEW rlog AS

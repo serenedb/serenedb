@@ -5,7 +5,7 @@ SET GLOBAL checkpoint_threshold = '1MB';
 
 statement ok
 CREATE TABLE wdel (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wdel SELECT i, 'seed' FROM range(0, 20000) r(i);

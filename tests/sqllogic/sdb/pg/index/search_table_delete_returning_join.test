@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE rj (a BIGINT, b BIGINT, c BIGINT, t TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE rj (a BIGINT, b BIGINT, c BIGINT, t TEXT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE rj_plain (a BIGINT, b BIGINT, c BIGINT, t TEXT);
@@ -11,7 +11,7 @@ statement ok
 INSERT INTO rj_plain SELECT i, i * 10, i * 100, 't' || i FROM generate_series(0, 99) g(i);
 
 statement ok
-CREATE TABLE rk (k TEXT PRIMARY KEY, n INT, x BIGINT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE rk (k TEXT PRIMARY KEY, n INT, x BIGINT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE rk_plain (k TEXT PRIMARY KEY, n INT, x BIGINT);

@@ -36,11 +36,11 @@ CREATE TABLE eik.child (id SERIAL PRIMARY KEY, parent_id INT REFERENCES eik.pare
 
 
 statement ok
-CREATE TABLE eik.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE eik.st (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
-CREATE TABLE eik.st_numbered (a INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE eik.st_numbered (a INT, body TEXT);
 
 
 statement ok

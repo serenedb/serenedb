@@ -232,7 +232,6 @@ class Table final {
     const std::shared_ptr<const irs::DocRemoval>& removal) const;
   bool Conflicts(Tick snapshot, const irs::DocRemoval& removal) const;
   void CheckConflicts(Tick snapshot, const irs::DocRemoval& removal) const;
-  std::shared_ptr<const irs::DocRemoval> VisibleRemoval(Tick snapshot) const;
   Tick LastAppend() const noexcept {
     return _last_append.load(std::memory_order_acquire);
   }

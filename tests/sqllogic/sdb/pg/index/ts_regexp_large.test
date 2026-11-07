@@ -2,7 +2,7 @@ hash-threshold 100
 
 
 statement ok
-CREATE TABLE regexp_large (id BIGINT, k VARCHAR) WITH (storage = 'search')
+CREATE TABLE regexp_large (id BIGINT, k VARCHAR)
 
 
 statement ok

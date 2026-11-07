@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE ljs (id INTEGER, k INTEGER, url VARCHAR, payload VARCHAR)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO ljs
@@ -127,11 +127,10 @@ CREATE TEXT SEARCH DICTIONARY ljd_words AS
     WITH (frequency, position, norm, offset);
 
 statement ok
-CREATE TABLE ljd (id INTEGER PRIMARY KEY, k INTEGER, body VARCHAR, payload VARCHAR, note VARCHAR);
+CREATE TABLE ljd (id INTEGER PRIMARY KEY, k INTEGER, body VARCHAR, payload VARCHAR, note VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX ljd_idx ON ljd USING inverted (id, k, body ljd_words) INCLUDE (k, payload)
-WITH (compaction_interval = 0);
+CREATE INDEX ljd_idx ON ljd USING inverted (id, k, body ljd_words) INCLUDE (k, payload);
 
 statement ok
 INSERT INTO ljd

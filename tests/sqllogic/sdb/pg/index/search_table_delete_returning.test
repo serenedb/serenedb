@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE dr (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE dr (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE dr_plain (id BIGINT, v TEXT);

@@ -95,11 +95,11 @@ CREATE INDEX IF NOT EXISTS cck_t_inv ON cck.t USING inverted (v);
 
 
 statement ok
-CREATE TABLE cck.st (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE cck.st (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS cck.st (id BIGINT PRIMARY KEY, other TEXT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS cck.st (id BIGINT PRIMARY KEY, other TEXT);
 
 
 statement ok

@@ -23,7 +23,7 @@ INSERT INTO corir_t VALUES (1, 'Alpha'), (2, 'beta'), (3, 'alpha');
 
 
 statement ok
-CREATE TABLE corir_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE corir_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement ok

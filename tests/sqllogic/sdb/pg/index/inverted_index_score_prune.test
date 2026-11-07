@@ -32,7 +32,7 @@ CREATE TEXT SEARCH DICTIONARY en_prune AS
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TABLE prune_small (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_small (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement count 1
@@ -56,8 +56,7 @@ INSERT INTO prune_small VALUES (5, 'rabbit fox');
 
 
 statement ok
-CREATE INDEX prune_small_idx ON prune_small USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX prune_small_idx ON prune_small USING inverted(id, body en_prune);
 
 
 # Term-only filter + matching scorer + LIMIT -> pruning engages.
@@ -238,7 +237,7 @@ QUERY PLAN
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TABLE prune_big (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_big (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
@@ -266,8 +265,7 @@ INSERT INTO plain_big SELECT * FROM prune_big;
 
 
 statement ok
-CREATE INDEX prune_big_idx ON prune_big USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX prune_big_idx ON prune_big USING inverted(id, body en_prune);
 
 
 statement ok
@@ -539,7 +537,7 @@ count
 # ============================================================================
 
 statement ok
-CREATE TABLE bnd (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE bnd (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'lm_jm(0.7)');
 
 
 statement ok
@@ -560,28 +558,23 @@ CREATE INDEX bnd_plain_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_jm_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'lm_jm(0.7)');
+CREATE INDEX bnd_jm_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_dir_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'lm_dirichlet(2000)');
+CREATE INDEX bnd_dir_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_dfi_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'dfi()');
+CREATE INDEX bnd_dfi_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_rtf_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'raw_tf()');
+CREATE INDEX bnd_rtf_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_ind_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'indri_dirichlet(2000)');
+CREATE INDEX bnd_ind_idx ON bnd USING inverted(id, body en_prune);
 
 
 # lm_jm: DivNorm -- log1p(c * tf/dl) is monotone in tf/dl, and the constant folds

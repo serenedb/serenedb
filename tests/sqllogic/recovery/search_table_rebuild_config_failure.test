@@ -3,7 +3,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE brc (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO brc SELECT i, 't' || (i % 5) FROM generate_series(1, 5000) g(i);

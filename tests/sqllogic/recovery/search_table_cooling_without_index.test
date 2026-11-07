@@ -1,6 +1,5 @@
 statement ok
 CREATE TABLE cwi_plain (id INT, body TEXT)
-WITH (storage = 'search')
 
 
 statement ok
@@ -27,7 +26,6 @@ num_segments	0
 
 statement ok
 CREATE TABLE cwi_indexed (id INT, body TEXT)
-WITH (storage = 'search')
 
 
 statement ok

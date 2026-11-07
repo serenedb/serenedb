@@ -94,7 +94,7 @@ RESET search_path;
 
 statement ok
 CREATE TABLE fdr_st (id INT, a INT DEFAULT fdr_sdef(1), g INT GENERATED ALWAYS AS (fdr_sgen(a)) STORED)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok

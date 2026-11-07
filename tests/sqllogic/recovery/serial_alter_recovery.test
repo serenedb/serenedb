@@ -17,7 +17,7 @@ ALTER TABLE sar_t ALTER COLUMN note SET NOT NULL;
 
 
 statement ok
-CREATE TABLE sar_s (id serial, v int) WITH (storage = 'search');
+CREATE TABLE sar_s (id serial, v int);
 
 
 statement ok

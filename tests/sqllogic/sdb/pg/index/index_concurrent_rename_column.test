@@ -136,11 +136,11 @@ icr_inv_id
 
 
 statement ok
-CREATE TABLE icr_st (id INT, b TEXT) WITH (storage = 'search');
+CREATE TABLE icr_st (id INT, b TEXT);
 
 
 statement ok
-CREATE TABLE icr_st2 (id INT, b TEXT) WITH (storage = 'search');
+CREATE TABLE icr_st2 (id INT, b TEXT);
 
 
 connection s1

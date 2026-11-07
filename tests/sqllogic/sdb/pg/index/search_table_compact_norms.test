@@ -5,14 +5,14 @@ CREATE TEXT SEARCH DICTIONARY cn_en AS
 
 statement ok
 CREATE TABLE cn (id BIGINT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX cn_idx ON cn USING inverted (body cn_en);
 
 statement ok
 CREATE TABLE cn_topk (id BIGINT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0,
+WITH (compaction_interval = 0,
       optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok

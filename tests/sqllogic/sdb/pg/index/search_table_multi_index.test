@@ -19,7 +19,7 @@ CREATE TEXT SEARCH DICTIONARY plain_en AS
 
 statement ok
 CREATE TABLE s (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX s_stem ON s USING inverted (body stem_en);
@@ -90,7 +90,7 @@ CREATE TEXT SEARCH DICTIONARY tok_en AS
 
 statement ok
 CREATE TABLE k (id BIGINT PRIMARY KEY, txt TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX k_kw ON k USING inverted (txt);

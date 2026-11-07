@@ -15,7 +15,7 @@ CREATE SCHEMA isps_b;
 
 
 statement ok
-CREATE TABLE isps_a.src (id BIGINT, val TEXT);
+CREATE TABLE isps_a.src (id BIGINT, val TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -23,8 +23,7 @@ INSERT INTO isps_a.src VALUES (1, 'from index');
 
 
 statement ok
-CREATE INDEX isps_rel ON isps_a.src USING inverted(id) INCLUDE(val)
-  WITH (compaction_interval = 0);
+CREATE INDEX isps_rel ON isps_a.src USING inverted(id) INCLUDE(val);
 
 
 statement ok

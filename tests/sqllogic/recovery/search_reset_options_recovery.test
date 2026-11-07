@@ -2,21 +2,20 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE rso_t (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 100);
-
-
-statement ok
-CREATE TABLE rso_plain (id INT, body TEXT);
-
-
-statement ok
-CREATE INDEX rso_idx ON rso_plain USING inverted (body)
 WITH (compaction_interval = 100);
 
 
 statement ok
+CREATE TABLE rso_plain (id INT, body TEXT) WITH (compaction_interval = 100);
+
+
+statement ok
+CREATE INDEX rso_idx ON rso_plain USING inverted (body);
+
+
+statement ok
 CREATE TABLE rso_old (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 100);
+WITH (compaction_interval = 100);
 
 
 statement ok
@@ -32,8 +31,7 @@ ALTER INDEX rso_idx RESET (compaction_interval);
 
 
 statement ok
-CREATE INDEX rso_old_idx ON rso_plain USING inverted (id)
-WITH (compaction_interval = 100);
+CREATE INDEX rso_old_idx ON rso_plain USING inverted (id);
 
 
 statement ok

@@ -34,7 +34,7 @@ t
 
 
 statement ok
-CREATE TABLE tuple_search (id BIGINT PRIMARY KEY, payload TUPLE(BIGINT, BIGINT)) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE tuple_search (id BIGINT PRIMARY KEY, payload TUPLE(BIGINT, BIGINT)) WITH (compaction_interval = 0);
 
 
 statement ok

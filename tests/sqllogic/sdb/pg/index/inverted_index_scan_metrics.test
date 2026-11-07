@@ -10,12 +10,11 @@ CREATE TEXT SEARCH DICTIONARY sm_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE sm (id INT PRIMARY KEY, body TEXT)
+CREATE TABLE sm (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX sm_idx ON sm USING inverted (id, body sm_en)
-  WITH (compaction_interval = 0)
 
 
 statement ok

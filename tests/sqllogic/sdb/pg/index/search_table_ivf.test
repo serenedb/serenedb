@@ -7,7 +7,7 @@
 
 statement ok
 CREATE TABLE v (id BIGINT PRIMARY KEY, vec FLOAT[3])
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX v_idx ON v USING inverted (vec ivf(metric='l2'));
@@ -69,7 +69,7 @@ id
 # expression, stored + IVF-attached under the expression's own field.
 statement ok
 CREATE TABLE ve (id BIGINT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX ve_idx ON ve USING inverted ((array_value(x, y, z)) ivf(metric='l2'));
@@ -124,7 +124,7 @@ id
 
 statement ok
 CREATE TABLE dv (id BIGINT PRIMARY KEY, vec FLOAT[3], txt TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX dv_ivf ON dv USING inverted (vec ivf(metric = 'l2'));
@@ -162,7 +162,7 @@ s	z
 # HNSW graph and leaves the IVF's cluster postings out.
 statement ok
 CREATE TABLE rv (id BIGINT PRIMARY KEY, vec FLOAT[3])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rv_idx ON rv USING inverted (vec ivf(metric = 'l2'));
@@ -203,7 +203,7 @@ n
 
 statement ok
 CREATE TABLE sv (id BIGINT PRIMARY KEY, vec FLOAT[3])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX sv_a ON sv USING inverted (vec ivf(metric = 'l2'), vec);

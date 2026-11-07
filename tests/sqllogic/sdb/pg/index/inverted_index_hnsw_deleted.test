@@ -1,11 +1,10 @@
 statement ok
-CREATE TABLE hnsw_d (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+CREATE TABLE hnsw_d (pk INTEGER PRIMARY KEY, emb FLOAT[8]) WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE INDEX hnsw_d_idx ON hnsw_d
-  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
-  WITH (compaction_interval = 0);
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
 
 
 statement ok

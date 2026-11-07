@@ -4,7 +4,7 @@ CREATE TEXT SEARCH DICTIONARY dd_en AS
     WITH (frequency, position, norm);
 
 statement ok
-CREATE TABLE dd (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE dd (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
 INSERT INTO dd
@@ -12,7 +12,7 @@ SELECT i, CASE WHEN i % 2 = 0 THEN 'fox ' ELSE 'cat ' END || repeat('dog ', (i *
 FROM generate_series(1, 6000) s(i);
 
 statement ok
-CREATE INDEX dd_idx ON dd USING inverted (body dd_en) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX dd_idx ON dd USING inverted (body dd_en);
 
 query
 EXPLAIN SELECT id FROM dd_idx WHERE body @@ ts_any(['fox', 'cat']) ORDER BY BM25(dd_idx.tableoid) DESC LIMIT 10;

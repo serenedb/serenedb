@@ -4,11 +4,10 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE DATABASE sfd_shop;
 
 statement ok
-CREATE TABLE sfd_shop.public.docs(id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE sfd_shop.public.docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX docs_idx ON sfd_shop.public.docs USING inverted(id, body)
-  WITH (compaction_interval = 0);
+CREATE INDEX docs_idx ON sfd_shop.public.docs USING inverted(id, body);
 
 statement ok
 ALTER INDEX sfd_shop.public.docs_idx SET (compaction_interval = 600000);
@@ -19,7 +18,7 @@ SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1, 101) t(i)
 
 statement ok
 CREATE TABLE sfd_shop.public.notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 ALTER TABLE sfd_shop.public.notes SET (compaction_interval = 600000);
@@ -31,22 +30,20 @@ statement ok
 INSERT INTO sfd_shop.public.notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
 
 statement ok
-CREATE TABLE sfd_shop.public.gone(id INTEGER, body VARCHAR);
+CREATE TABLE sfd_shop.public.gone(id INTEGER, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX gone_idx ON sfd_shop.public.gone USING inverted(body)
-  WITH (compaction_interval = 0);
+CREATE INDEX gone_idx ON sfd_shop.public.gone USING inverted(body);
 
 statement ok
 INSERT INTO sfd_shop.public.gone VALUES (1, 'kept');
 
 statement ok
-CREATE INDEX gone_id_idx ON sfd_shop.public.gone USING inverted(id)
-  WITH (compaction_interval = 0);
+CREATE INDEX gone_id_idx ON sfd_shop.public.gone USING inverted(id);
 
 statement ok
 CREATE TABLE sfd_shop.public.gone_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO sfd_shop.public.gone_notes VALUES (1, 'dropped');

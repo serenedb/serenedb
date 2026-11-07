@@ -13,7 +13,7 @@ statement ok
 CREATE INDEX sm_t_idx ON sm_t USING inverted (body);
 
 statement ok
-CREATE TABLE sm_s (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE sm_s (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX sm_s_idx ON sm_s USING inverted (body);
@@ -22,7 +22,7 @@ statement ok
 INSERT INTO sm_s VALUES (1, 'gamma cat'), (2, 'delta dog'), (3, 'epsilon cat');
 
 statement ok
-CREATE TABLE sm_empty (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE sm_empty (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
 query
 SELECT metric, value

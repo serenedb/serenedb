@@ -52,7 +52,7 @@ def pause(rng: random.Random) -> None:
 
 def create_schema(conn: psycopg.Connection, options: str, index: bool) -> None:
     conn.execute("CREATE TEXT SEARCH DICTIONARY s_words AS split_text()")
-    conn.execute(f"CREATE TABLE s (id BIGINT, body TEXT) WITH (storage = 'search', {options})")
+    conn.execute(f"CREATE TABLE s (id BIGINT, body TEXT) WITH ({options})")
     conn.execute("CREATE TABLE m (id BIGINT, body TEXT)")
     if index:
         conn.execute("CREATE INDEX s_idx ON s USING inverted (id, body s_words)")

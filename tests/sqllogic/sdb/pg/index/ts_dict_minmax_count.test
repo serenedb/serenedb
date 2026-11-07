@@ -15,11 +15,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY mmc_kw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TABLE mc(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR)
+CREATE TABLE mc(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX mc_idx ON mc USING inverted(cat mmc_kw, opt mmc_kw)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO mc VALUES

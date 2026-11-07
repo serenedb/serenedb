@@ -18,7 +18,7 @@ CREATE TEXT SEARCH DICTIONARY mxb_en AS
 
 
 statement ok
-CREATE TABLE mxb (id INT PRIMARY KEY, body VARCHAR, g INT, tag VARCHAR);
+CREATE TABLE mxb (id INT PRIMARY KEY, body VARCHAR, g INT, tag VARCHAR) WITH (row_group_size = 4096);
 
 
 # Rows 1..4096 (block A): alternating 'aaa'/'nnn', no NULLs -> dictionary
@@ -39,8 +39,7 @@ FROM generate_series(1, 12288) t(i);
 statement ok
 CREATE INDEX mxb_idx ON mxb
     USING inverted(id, body mxb_en)
-    INCLUDE (g, tag)
-    WITH (row_group_size = 4096);
+    INCLUDE (g, tag);
 
 
 # tag <= 'azz' matches the 'aaa' rows only; NULLs must fail the predicate.

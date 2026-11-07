@@ -480,7 +480,7 @@ statement ok
 DROP TABLE IF EXISTS events;
 
 statement ok
-CREATE TABLE events (id INTEGER PRIMARY KEY, msg VARCHAR) WITH (storage = 'search');
+CREATE TABLE events (id INTEGER PRIMARY KEY, msg VARCHAR);
 
 # DOCS_TEST_BODY
 
@@ -572,4 +572,4 @@ CREATE TRIGGER events_audited AFTER INSERT ON events FOR EACH ROW INSERT INTO ev
 statement error
 ALTER TABLE events ENABLE REPLICA TRIGGER events_audited;
 ----
-db error: ERROR: this ALTER TABLE on a search-backed table is not yet supported
+db error: ERROR: this ALTER TABLE is not supported

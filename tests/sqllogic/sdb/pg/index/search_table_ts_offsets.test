@@ -11,7 +11,7 @@ CREATE TEXT SEARCH DICTIONARY offs_en AS
 
 statement ok
 CREATE TABLE d (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX d_off ON d USING inverted (body offs_en);
@@ -75,7 +75,7 @@ CREATE TEXT SEARCH DICTIONARY no_offs_en AS
 
 statement ok
 CREATE TABLE d2 (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX d2_idx ON d2 USING inverted (body no_offs_en);

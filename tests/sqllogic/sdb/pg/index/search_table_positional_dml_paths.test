@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE pa (id BIGINT, g INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+CREATE TABLE pa (id BIGINT, g INT, v TEXT) WITH (compaction_interval = 0, segment_memory_max = 2097152);
 
 statement ok
 INSERT INTO pa SELECT i, i % 10, 'v' || i FROM generate_series(0, 9999) g(i);
@@ -44,10 +44,10 @@ statement ok
 DROP TABLE pa;
 
 statement ok
-CREATE TABLE pb1 (id BIGINT, g INT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pb1 (id BIGINT, g INT) WITH (compaction_interval = 0);
 
 statement ok
-CREATE TABLE pb2 (id BIGINT, g INT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pb2 (id BIGINT, g INT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pb1 SELECT i, 0 FROM generate_series(0, 999) g(i);
@@ -86,7 +86,7 @@ statement ok
 DROP TABLE pb2;
 
 statement ok
-CREATE TABLE pc (id BIGINT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pc (id BIGINT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pc SELECT i FROM generate_series(0, 999) g(i);
@@ -116,7 +116,7 @@ statement ok
 DROP TABLE pc;
 
 statement ok
-CREATE TABLE pd (id BIGINT, g INT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pd (id BIGINT, g INT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pd SELECT i, i % 10, 'v' FROM generate_series(0, 9999) g(i);
@@ -146,7 +146,7 @@ statement ok
 DROP TABLE pd;
 
 statement ok
-CREATE TABLE pe (id BIGINT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pe (id BIGINT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(0, 99) g(i);
@@ -260,7 +260,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY pf_bm AS split_text(case := 'lower') WITH (frequency, position, norm);
 
 statement ok
-CREATE TABLE pf (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE TABLE pf (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
 CREATE INDEX pf_idx ON pf USING inverted (body pf_bm);
@@ -332,7 +332,7 @@ DROP TEXT SEARCH DICTIONARY pf_bm;
 
 
 statement ok
-CREATE TABLE pg (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pg (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pg SELECT i, 'v' || i FROM generate_series(1, 5000) g(i);

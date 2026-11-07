@@ -5,7 +5,7 @@ statement ok
 CREATE MACRO fallback(x) AS CASE WHEN len(x) = 0 THEN ['none'] ELSE x END;
 
 statement ok
-CREATE TABLE consts (id BIGINT, s VARCHAR, v VARCHAR[]) WITH (storage = 'search');
+CREATE TABLE consts (id BIGINT, s VARCHAR, v VARCHAR[]);
 
 statement ok
 CREATE INDEX consts_idx ON consts USING inverted (id,

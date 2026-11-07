@@ -17,11 +17,10 @@ CREATE TEXT SEARCH DICTIONARY ddm_tx AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE ddm(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+CREATE TABLE ddm(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ddm_idx ON ddm USING inverted(cat ddm_kw, body ddm_tx)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ddm VALUES
@@ -395,11 +394,10 @@ cat_docs	body_docs
 # Case 5: deleting every row leaves no live docs and no enumerable terms.
 
 statement ok
-CREATE TABLE ddm2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR)
+CREATE TABLE ddm2(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX ddm2_idx ON ddm2 USING inverted(cat ddm_kw, body ddm_tx)
-    WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO ddm2 VALUES (1, 'a', 'one two'), (2, 'b', 'two'), (3, 'c', 'three')

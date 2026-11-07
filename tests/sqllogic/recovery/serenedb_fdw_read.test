@@ -1,11 +1,10 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE postgres.public.sfr_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE postgres.public.sfr_docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX sfr_docs_idx ON postgres.public.sfr_docs USING inverted(id, body)
-  WITH (compaction_interval = 0);
+CREATE INDEX sfr_docs_idx ON postgres.public.sfr_docs USING inverted(id, body);
 
 statement ok
 INSERT INTO postgres.public.sfr_docs
@@ -13,7 +12,7 @@ SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1, 101) t(i)
 
 statement ok
 CREATE TABLE postgres.public.sfr_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX sfr_notes_idx ON postgres.public.sfr_notes USING inverted(body);

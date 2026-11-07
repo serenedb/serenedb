@@ -157,11 +157,11 @@ DROP TABLE tcp
 
 
 statement ok
-CREATE TABLE tcs (id BIGINT PRIMARY KEY, v TEXT) WITH (storage = 'search')
+CREATE TABLE tcs (id BIGINT PRIMARY KEY, v TEXT)
 
 
 statement ok
-CREATE TABLE tcn (a INT, v TEXT) WITH (storage = 'search')
+CREATE TABLE tcn (a INT, v TEXT)
 
 
 statement ok

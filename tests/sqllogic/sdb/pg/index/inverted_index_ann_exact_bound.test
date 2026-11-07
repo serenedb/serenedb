@@ -1,28 +1,28 @@
 control substitution on
 
 statement ok
-CREATE TABLE ebl (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+CREATE TABLE ebl (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ebl_idx ON ebl
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq8'))
-  INCLUDE (tag) WITH (compaction_interval = 0);
+  INCLUDE (tag);
 
 statement ok
-CREATE TABLE ebi (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+CREATE TABLE ebi (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ebi_idx ON ebi
   USING inverted(pk, emb hnsw (metric = 'ip', quant = 'usq8'))
-  INCLUDE (tag) WITH (compaction_interval = 0);
+  INCLUDE (tag);
 
 statement ok
-CREATE TABLE ebc (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+CREATE TABLE ebc (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ebc_idx ON ebc
   USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'sq8'))
-  INCLUDE (tag) WITH (compaction_interval = 0);
+  INCLUDE (tag);
 
 statement ok
 CREATE TABLE eb_src AS SELECT i AS pk,

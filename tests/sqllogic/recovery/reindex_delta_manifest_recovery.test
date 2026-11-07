@@ -28,7 +28,7 @@ COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DI
 
 
 statement ok
-SET sdb_faults = 'refresh_before_manifest_publish';
+SET sdb_faults = 'commit_before_manifest_publish';
 
 
 query
@@ -39,7 +39,7 @@ delta	1
 
 
 statement ok
-SET sdb_faults = '-refresh_before_manifest_publish';
+SET sdb_faults = '-commit_before_manifest_publish';
 
 
 query

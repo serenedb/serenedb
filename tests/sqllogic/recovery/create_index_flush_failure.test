@@ -3,7 +3,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE cif_t (id BIGINT, value TEXT);
+CREATE TABLE cif_t (id BIGINT, value TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -37,8 +37,7 @@ INSERT INTO cif_t VALUES (3, 'third');
 
 
 statement ok
-CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value)
-  WITH (compaction_interval = 0);
+CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value);
 
 
 statement ok

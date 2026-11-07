@@ -81,7 +81,7 @@ ALTER TABLE mrbeast.subscribers SET SCHEMA feastables;
 
 
 statement ok
-CREATE TABLE mrbeast.beast_games (id INTEGER PRIMARY KEY, title TEXT) WITH (storage = 'search');
+CREATE TABLE mrbeast.beast_games (id INTEGER PRIMARY KEY, title TEXT);
 
 
 statement ok

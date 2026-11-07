@@ -2231,7 +2231,7 @@ DROP TABLE coro_snap_log;
 # --- OR REPLACE on a search table -------------------------------------------
 
 statement ok
-CREATE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE coro_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement count 2
@@ -2250,7 +2250,7 @@ id
 
 
 statement ok
-CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT, n INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT, n INT);
 
 
 # The old documents and the old inverted index are gone.
@@ -2315,7 +2315,7 @@ n
 
 
 statement ok
-CREATE OR REPLACE TABLE coro_s WITH (storage = 'search') AS
+CREATE OR REPLACE TABLE coro_s AS
   SELECT range::INT AS id, 'b' || range AS body FROM range(3);
 
 
@@ -2330,7 +2330,7 @@ id	body
 
 # A CTAS replace that fails keeps the old documents.
 statement error
-CREATE OR REPLACE TABLE coro_s WITH (storage = 'search') AS
+CREATE OR REPLACE TABLE coro_s AS
   SELECT range::INT AS id, (CASE WHEN range = 150000 THEN 'x' ELSE range::TEXT END)::INT::TEXT AS body FROM range(200000);
 ----
 db error: ERROR: Could not convert string 'x' to INT32
@@ -2348,7 +2348,7 @@ id	body
 # Rolled back, the replace of a search table brings back its documents and its
 # index, which keeps indexing new writes.
 statement ok
-CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement count 2
@@ -2364,7 +2364,7 @@ BEGIN;
 
 
 statement ok
-CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT);
 
 
 statement count 1
@@ -2418,7 +2418,7 @@ BEGIN;
 
 connection s1
 statement ok
-CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT);
 
 
 connection s2
@@ -2486,7 +2486,7 @@ s_delete	2
 
 
 statement ok
-CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT);
 
 
 query
@@ -3024,7 +3024,7 @@ DROP TABLE coro_ixm;
 
 # A search table rebuilds the replacing index from its documents.
 statement ok
-CREATE TABLE coro_ixs (id INT PRIMARY KEY, body TEXT, extra INT) WITH (storage = 'search');
+CREATE TABLE coro_ixs (id INT PRIMARY KEY, body TEXT, extra INT);
 
 
 statement count 3

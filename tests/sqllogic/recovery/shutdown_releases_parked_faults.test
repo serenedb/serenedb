@@ -2,7 +2,7 @@ control substitution on
 
 statement ok
 CREATE TABLE srp (id INT, body TEXT)
-WITH (storage = 'search', compaction_interval = 100)
+WITH (compaction_interval = 100)
 
 
 statement ok

@@ -145,7 +145,7 @@ db error: ERROR: FOR EACH ROW trigger "trg_norow" on table "trg_t" must referenc
 
 # Search-backed tables: both granularities, reached through RETURNING.
 statement ok
-CREATE TABLE trg_s(a INT, b TEXT) WITH (storage = 'search');
+CREATE TABLE trg_s(a INT, b TEXT);
 
 
 statement ok

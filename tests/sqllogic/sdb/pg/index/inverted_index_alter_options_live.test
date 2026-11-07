@@ -19,13 +19,12 @@ CREATE TEXT SEARCH DICTIONARY aol_dict AS
     WITH (frequency, position);
 
 statement ok
-CREATE TABLE aol(id INTEGER, txt TEXT);
+CREATE TABLE aol(id INTEGER, txt TEXT) WITH (compaction_interval = 0);
 
 # Background refresh and compaction off: they would rewrite the segment set
 # underneath the comparison.
 statement ok
-CREATE INDEX aol_idx ON aol USING inverted(id, txt aol_dict)
-  WITH (compaction_interval = 0);
+CREATE INDEX aol_idx ON aol USING inverted(id, txt aol_dict);
 
 statement ok
 INSERT INTO aol SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 20000) g;

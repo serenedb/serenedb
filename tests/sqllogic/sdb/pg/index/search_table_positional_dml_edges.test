@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE pe (id BIGINT, grp INT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pe (id BIGINT, grp INT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 SET threads = 1;
@@ -191,7 +191,7 @@ statement ok
 DROP TABLE pe_keys;
 
 statement ok
-CREATE TABLE pk (id BIGINT PRIMARY KEY, r TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pk (id BIGINT PRIMARY KEY, r TEXT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX pk_r ON pk USING inverted (r);
@@ -230,7 +230,7 @@ statement ok
 DROP TABLE pk;
 
 statement ok
-CREATE TABLE pc (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pc (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pc SELECT i, 'a' FROM generate_series(0, 4999) g(i);
@@ -335,7 +335,7 @@ statement ok
 DROP TABLE pc;
 
 statement ok
-CREATE TABLE pr (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pr (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pr SELECT i, 'v' || i FROM generate_series(1, 100) g(i);

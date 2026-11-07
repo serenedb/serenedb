@@ -5,12 +5,11 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE commit_fail (id BIGINT, msg TEXT);
+CREATE TABLE commit_fail (id BIGINT, msg TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX commit_fail_idx ON commit_fail USING inverted (id, msg)
-  WITH (compaction_interval = 0);
+CREATE INDEX commit_fail_idx ON commit_fail USING inverted (id, msg);
 
 
 statement ok

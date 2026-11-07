@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE rejected_s(id INTEGER PRIMARY KEY, a INTEGER) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE rejected_s(id INTEGER PRIMARY KEY, a INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO rejected_s SELECT i, i % 7 FROM range(1, 2001) r(i);

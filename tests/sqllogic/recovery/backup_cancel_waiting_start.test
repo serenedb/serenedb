@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE bcw_docs (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE bcw_docs (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok

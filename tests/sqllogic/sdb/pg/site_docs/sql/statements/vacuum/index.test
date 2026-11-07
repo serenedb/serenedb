@@ -114,7 +114,7 @@ statement ok
 DROP TABLE IF EXISTS docs_store;
 
 statement ok
-CREATE TABLE docs_store (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search');
+CREATE TABLE docs_store (id INTEGER PRIMARY KEY, body VARCHAR);
 
 # DOCS_TEST_BODY
 statement ok

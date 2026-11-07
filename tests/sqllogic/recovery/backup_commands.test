@@ -6,7 +6,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bcmd_docs (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -15,7 +15,7 @@ INSERT INTO bcmd_docs SELECT i, 'first' FROM range(0, 100) r(i);
 
 statement ok
 CREATE TABLE bcmd_merge (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -42,7 +42,7 @@ segments
 
 
 statement ok
-CREATE TABLE bcmd_gone (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE bcmd_gone (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok

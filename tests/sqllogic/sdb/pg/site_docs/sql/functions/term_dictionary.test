@@ -9,11 +9,10 @@ CREATE TEXT SEARCH DICTIONARY tx AS
 
 statement ok
 CREATE TABLE products(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL,
-                      promo VARCHAR, body VARCHAR);
+                      promo VARCHAR, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX products_idx ON products USING inverted (cat, promo, body tx)
-    WITH (compaction_interval = 0);
+CREATE INDEX products_idx ON products USING inverted (cat, promo, body tx);
 
 statement ok
 INSERT INTO products VALUES

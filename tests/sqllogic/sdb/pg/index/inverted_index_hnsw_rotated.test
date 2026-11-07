@@ -159,7 +159,7 @@ t
 
 statement ok
 CREATE TABLE rot_st (id INTEGER PRIMARY KEY, emb FLOAT[256])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rot_st_l2 ON rot_st
@@ -167,7 +167,7 @@ CREATE INDEX rot_st_l2 ON rot_st
 
 statement ok
 CREATE TABLE rot_st_ip (id INTEGER PRIMARY KEY, emb FLOAT[256])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rot_st_ip_idx ON rot_st_ip
@@ -257,7 +257,7 @@ INSERT INTO rot_wide_src SELECT i, rot_wide(i) FROM range(10240) t(i);
 
 statement ok
 CREATE TABLE rot_wide (id INTEGER PRIMARY KEY, emb FLOAT[1280])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rot_wide_ip ON rot_wide
@@ -285,7 +285,7 @@ t
 
 statement ok
 CREATE TABLE rot_sq8 (id INTEGER PRIMARY KEY, emb FLOAT[256])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rot_sq8_ip ON rot_sq8
@@ -293,7 +293,7 @@ CREATE INDEX rot_sq8_ip ON rot_sq8
 
 statement ok
 CREATE TABLE rot_sq8_cos (id INTEGER PRIMARY KEY, emb FLOAT[256])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rot_sq8_cos_idx ON rot_sq8_cos

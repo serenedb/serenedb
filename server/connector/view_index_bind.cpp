@@ -275,19 +275,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   auto& context = binder.context;
   auto info = TakeInfo(stmt);
   if (info->index_type != catalog::kInvertedIndexTypeName) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("only inverted indexes are supported on a search-backed table"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("only inverted indexes are supported on a table"));
   }
   if (info->options.contains(kOptimizeTopKSetting)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(kOptimizeTopKSetting,
-              " is a table option on a search-backed table"),
-      ERR_HINT("Set it in CREATE TABLE ... WITH (storage = 'search', ",
-               kOptimizeTopKSetting,
-               " = '...'); the table's store keeps the score bounds every "
-               "index on it prunes with."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(kOptimizeTopKSetting, " is a table option"),
+                    ERR_HINT("Set it in CREATE TABLE ... WITH (",
+                             kOptimizeTopKSetting, " = '...')."));
   }
   if (info->where_clause) {
     THROW_SQL_ERROR(
@@ -300,8 +295,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
       writes->HasWritesFor(table.oid)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-      ERR_MSG("CREATE INDEX on a search-backed table cannot run in a "
-              "transaction that has already written to \"",
+      ERR_MSG("CREATE INDEX cannot run in a transaction that has already "
+              "written to \"",
               table.name.GetIdentifierName(), "\""));
   }
 

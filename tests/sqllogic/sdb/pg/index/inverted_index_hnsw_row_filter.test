@@ -194,7 +194,7 @@ pk
 statement ok
 CREATE TABLE hnsw_rs (pk INTEGER PRIMARY KEY, num INTEGER, tag VARCHAR,
   extra INTEGER, emb FLOAT[2])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX hnsw_rs_idx ON hnsw_rs

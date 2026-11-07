@@ -34,7 +34,7 @@ CREATE TEXT SEARCH DICTIONARY en_prune AS
 
 
 statement ok
-CREATE TABLE prune_huge (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_huge (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
@@ -87,8 +87,7 @@ INSERT INTO plain_huge SELECT * FROM prune_huge;
 
 
 statement ok
-CREATE INDEX prune_huge_idx ON prune_huge USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX prune_huge_idx ON prune_huge USING inverted(id, body en_prune);
 
 
 statement ok

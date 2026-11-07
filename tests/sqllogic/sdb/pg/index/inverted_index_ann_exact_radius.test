@@ -19,7 +19,7 @@ CREATE INDEX er_ivf_idx ON er_ivf
 statement ok
 CREATE TABLE er_search (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
   extra INTEGER, emb FLOAT[8])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX er_search_idx ON er_search

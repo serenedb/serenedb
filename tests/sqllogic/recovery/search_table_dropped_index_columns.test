@@ -14,11 +14,11 @@ CREATE MACRO sdc_ratio() AS (
 
 statement ok
 CREATE TABLE sdc (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE sdc_twin (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX sdc_idx ON sdc USING inverted ((body || '-') included());

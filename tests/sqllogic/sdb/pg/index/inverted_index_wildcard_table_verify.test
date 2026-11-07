@@ -10,15 +10,13 @@ CREATE TEXT SEARCH DICTIONARY tv_pos_dict AS
     WITH (frequency, position)
 
 statement ok
-CREATE TABLE tv_t (id BIGINT PRIMARY KEY, x INTEGER, k VARCHAR, msg VARCHAR)
+CREATE TABLE tv_t (id BIGINT PRIMARY KEY, x INTEGER, k VARCHAR, msg VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX tv_idx ON tv_t USING inverted(id, msg tv_dict, k) INCLUDE (x)
-  WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX tv_pos_idx ON tv_t USING inverted(id, msg tv_pos_dict) INCLUDE (x)
-  WITH (compaction_interval = 0)
 
 # Each refresh seals a segment and nothing merges them: the scan meets several
 # segments, one of them without a stored term at all (every msg is NULL).
@@ -2132,11 +2130,10 @@ DROP TABLE tv_t
 # s is not a number.
 
 statement ok
-CREATE TABLE tv_thr (id BIGINT PRIMARY KEY, x INTEGER, msg VARCHAR, s VARCHAR)
+CREATE TABLE tv_thr (id BIGINT PRIMARY KEY, x INTEGER, msg VARCHAR, s VARCHAR) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX tv_thr_idx ON tv_thr USING inverted(id, msg tv_dict) INCLUDE (x, s)
-  WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO tv_thr VALUES

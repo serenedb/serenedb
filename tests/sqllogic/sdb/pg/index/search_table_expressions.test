@@ -8,7 +8,7 @@
 # --- Scalar numeric expression ---
 statement ok
 CREATE TABLE num (id BIGINT PRIMARY KEY, a INT, b INT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX num_idx ON num USING inverted ((a + b));
@@ -48,7 +48,7 @@ QUERY PLAN
 # --- String expression ---
 statement ok
 CREATE TABLE str (id BIGINT PRIMARY KEY, s1 TEXT, s2 TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX str_idx ON str USING inverted ((s1 || s2));
@@ -71,7 +71,7 @@ id
 # --- JSON-leaf expression (exercises the synthetic null/bool/numeric leaves) ---
 statement ok
 CREATE TABLE j (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX j_idx ON j USING inverted ((doc->>'name'));
@@ -96,7 +96,7 @@ CREATE TEXT SEARCH DICTIONARY ste_words AS split_text(case := 'lower') WITH (fre
 
 statement ok
 CREATE TABLE split (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX split_terms ON split USING inverted ((upper(body)) ste_words);
@@ -127,7 +127,7 @@ id	u
 
 statement ok
 CREATE TABLE jmeta (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX jmeta_idx ON jmeta USING inverted ((doc->'meta') included());
@@ -149,7 +149,7 @@ CREATE TEXT SEARCH DICTIONARY ste_shape AS encode_geojson();
 
 statement ok
 CREATE TABLE jgeo (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX jgeo_idx ON jgeo USING inverted ((doc->'geo') ste_shape);
@@ -169,7 +169,7 @@ id
 
 statement ok
 CREATE TABLE jtok (id BIGINT PRIMARY KEY, doc JSON)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX jtok_idx ON jtok USING inverted ((doc->'meta') ste_words);

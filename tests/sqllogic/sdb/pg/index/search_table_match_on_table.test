@@ -10,7 +10,7 @@ CREATE TABLE mt_src AS SELECT (TIMESTAMP '2025-09-23' + INTERVAL (i) SECOND)::TI
 FROM range(24) t(i);
 
 statement ok
-CREATE TABLE mt WITH (storage = 'search', compaction_interval = 0) AS SELECT ts, svc, body FROM mt_src WHERE false;
+CREATE TABLE mt WITH (compaction_interval = 0) AS SELECT ts, svc, body FROM mt_src WHERE false;
 
 statement ok
 CREATE INDEX mt_svc ON mt USING inverted (svc);
@@ -22,7 +22,7 @@ statement ok
 INSERT INTO mt SELECT ts, svc, body FROM mt_src;
 
 statement ok
-CREATE TABLE mt_expr WITH (storage = 'search', compaction_interval = 0) AS SELECT body, ts, svc FROM mt_src WHERE false;
+CREATE TABLE mt_expr WITH (compaction_interval = 0) AS SELECT body, ts, svc FROM mt_src WHERE false;
 
 statement ok
 CREATE INDEX mt_expr_idx ON mt_expr USING inverted ((split_by_non_alpha(body, case := 'lower')) mt_en);
@@ -31,7 +31,7 @@ statement ok
 INSERT INTO mt_expr SELECT body, ts, svc FROM mt_src;
 
 statement ok
-CREATE TABLE mt_bare WITH (storage = 'search', compaction_interval = 0) AS SELECT ts, svc, body FROM mt_src WHERE false;
+CREATE TABLE mt_bare WITH (compaction_interval = 0) AS SELECT ts, svc, body FROM mt_src WHERE false;
 
 statement ok
 INSERT INTO mt_bare SELECT ts, svc, body FROM mt_src;
@@ -116,7 +116,7 @@ QUERY PLAN
 ╰─────────────────────────────────────────────────╯
 
 statement ok
-CREATE TABLE mt_pk (id BIGINT PRIMARY KEY, svc TEXT NOT NULL, body TEXT, n INT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE mt_pk (id BIGINT PRIMARY KEY, svc TEXT NOT NULL, body TEXT, n INT) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX mt_pk_svc ON mt_pk USING inverted (svc);

@@ -103,7 +103,7 @@ BEGIN;
 
 
 statement ok
-CREATE TABLE ddl_txn_s1(id INTEGER, body TEXT) WITH (storage = 'search');
+CREATE TABLE ddl_txn_s1(id INTEGER, body TEXT);
 
 
 statement ok
@@ -144,7 +144,7 @@ BEGIN;
 
 
 statement ok
-CREATE TABLE ddl_txn_s2(id INTEGER, body TEXT) WITH (storage = 'search');
+CREATE TABLE ddl_txn_s2(id INTEGER, body TEXT);
 
 
 statement ok

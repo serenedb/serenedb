@@ -8,12 +8,11 @@ CREATE TEXT SEARCH DICTIONARY slots_keyword AS
 
 
 statement ok
-CREATE TABLE slots (id INTEGER PRIMARY KEY, b BOOLEAN, n BIGINT, s VARCHAR);
+CREATE TABLE slots (id INTEGER PRIMARY KEY, b BOOLEAN, n BIGINT, s VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX slots_idx ON slots USING inverted(id, b, n, s slots_keyword)
-  WITH (compaction_interval = 0);
+CREATE INDEX slots_idx ON slots USING inverted(id, b, n, s slots_keyword);
 
 
 statement ok
@@ -319,12 +318,11 @@ id
 # the list UNKNOWN, so a negation excludes the row.
 
 statement ok
-CREATE TABLE slot_lists (id INTEGER PRIMARY KEY, tags VARCHAR[]);
+CREATE TABLE slot_lists (id INTEGER PRIMARY KEY, tags VARCHAR[]) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX slot_lists_idx ON slot_lists USING inverted(id, tags slots_keyword)
-  WITH (compaction_interval = 0);
+CREATE INDEX slot_lists_idx ON slot_lists USING inverted(id, tags slots_keyword);
 
 
 statement ok
@@ -426,13 +424,12 @@ id
 # A JSON null makes every cast comparison of the leaf UNKNOWN as well.
 
 statement ok
-CREATE TABLE slot_json (id INTEGER PRIMARY KEY, content JSON);
+CREATE TABLE slot_json (id INTEGER PRIMARY KEY, content JSON) WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE INDEX slot_json_idx ON slot_json
-  USING inverted(id, (content->'val') slots_keyword)
-  WITH (compaction_interval = 0);
+  USING inverted(id, (content->'val') slots_keyword);
 
 
 statement ok

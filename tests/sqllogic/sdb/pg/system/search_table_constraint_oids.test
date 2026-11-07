@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE stco_t (id BIGINT PRIMARY KEY, v TEXT) WITH (storage = 'search');
+CREATE TABLE stco_t (id BIGINT PRIMARY KEY, v TEXT);
 
 
 query
@@ -24,7 +24,7 @@ n
 
 
 statement ok
-CREATE TABLE stco_u (id BIGINT PRIMARY KEY, v TEXT) WITH (storage = 'search');
+CREATE TABLE stco_u (id BIGINT PRIMARY KEY, v TEXT);
 
 
 query

@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE build_fail (id BIGINT, msg TEXT);
+CREATE TABLE build_fail (id BIGINT, msg TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -30,8 +30,7 @@ INSERT INTO build_fail VALUES (2000, 'after');
 
 
 statement ok
-CREATE INDEX build_fail_idx ON build_fail USING inverted (id, msg)
-  WITH (compaction_interval = 0);
+CREATE INDEX build_fail_idx ON build_fail USING inverted (id, msg);
 
 
 query

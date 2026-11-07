@@ -20,13 +20,12 @@ CREATE TEXT SEARCH DICTIONARY cfm_en AS
 
 
 statement ok
-CREATE TABLE cfm (id INT PRIMARY KEY, body VARCHAR, c INT, d INT);
+CREATE TABLE cfm (id INT PRIMARY KEY, body VARCHAR, c INT, d INT) WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE INDEX cfm_idx ON cfm USING inverted(id, body cfm_en)
-  INCLUDE (c)
-  WITH (compaction_interval = 0);
+  INCLUDE (c);
 
 
 statement ok
@@ -280,7 +279,7 @@ DROP TEXT SEARCH DICTIONARY cfm_en;
 # Search table: the same count shapes through the unified engine (every column
 # lives in `.col`, no lookup source).
 statement ok
-CREATE TABLE cfm_st (a INT, s TEXT) WITH (storage='search', compaction_interval=0);
+CREATE TABLE cfm_st (a INT, s TEXT) WITH (compaction_interval=0);
 
 
 statement ok

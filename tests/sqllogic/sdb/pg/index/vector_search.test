@@ -1282,12 +1282,11 @@ id
 # Four segments with distinct distances make the answer fully ordered.
 
 statement ok
-CREATE TABLE prep_bar (id INT, emb FLOAT[3]);
+CREATE TABLE prep_bar (id INT, emb FLOAT[3]) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX prep_bar_idx ON prep_bar USING inverted(id, emb)
-  WITH (compaction_interval = 0);
+CREATE INDEX prep_bar_idx ON prep_bar USING inverted(id, emb);
 
 
 statement count 3

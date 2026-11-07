@@ -5,7 +5,7 @@
 
 
 statement ok
-CREATE TABLE oci_rot(x bigint, label text);
+CREATE TABLE oci_rot(x bigint, label text) WITH (compaction_interval = 3600000);
 
 
 statement ok
@@ -13,7 +13,7 @@ INSERT INTO oci_rot SELECT g, repeat(md5(g::text), 4) FROM generate_series(1, 50
 
 
 statement ok
-CREATE INDEX oci_rot_idx ON oci_rot USING inverted(label) WITH (segment_docs_max = 1000, compaction_interval = 3600000);
+CREATE INDEX oci_rot_idx ON oci_rot USING inverted(label);
 
 
 query

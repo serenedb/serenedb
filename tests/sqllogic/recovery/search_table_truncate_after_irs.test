@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tai (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO tai VALUES (1, 'a'), (2, 'b');

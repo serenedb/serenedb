@@ -1,10 +1,10 @@
 statement ok
-CREATE TABLE sc_on (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search')
+CREATE TABLE sc_on (id INT PRIMARY KEY, body TEXT)
 
 
 statement ok
 CREATE TABLE sc_off (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (compaction_interval = 0)
 
 
 query
@@ -186,7 +186,7 @@ count	sum
 
 statement ok
 CREATE TABLE sc_tgt (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (compaction_interval = 0)
 
 
 statement ok
@@ -283,7 +283,7 @@ count	sum
 # A CREATE INDEX that fails leaves the table compacting as before.
 statement ok
 CREATE TABLE sc_abort (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (compaction_interval = 0)
 
 
 statement ok
@@ -315,7 +315,7 @@ segments
 # segments a compaction merged after the drop.
 statement ok
 CREATE TABLE sc_snap (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (compaction_interval = 0)
 
 
 statement ok

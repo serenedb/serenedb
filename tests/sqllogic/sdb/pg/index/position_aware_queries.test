@@ -5,7 +5,7 @@ CREATE TEXT SEARCH DICTIONARY pq_syn AS
 
 
 statement ok
-CREATE TABLE pq_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE pq_docs (id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -18,8 +18,7 @@ INSERT INTO pq_docs VALUES
 
 
 statement ok
-CREATE INDEX pq_idx ON pq_docs USING inverted (id, body pq_syn)
-  WITH (compaction_interval = 0);
+CREATE INDEX pq_idx ON pq_docs USING inverted (id, body pq_syn);
 
 
 query

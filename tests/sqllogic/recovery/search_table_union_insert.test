@@ -9,7 +9,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 SET profiling_renderer_settings = {'deterministic': true};
@@ -76,7 +76,7 @@ DROP TABLE u;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO u
@@ -106,7 +106,7 @@ SET threads = 4;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO u
@@ -142,7 +142,7 @@ DROP TABLE u;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO u
@@ -169,7 +169,7 @@ DROP TABLE u;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 BEGIN;
@@ -208,7 +208,7 @@ DROP TABLE u;
 
 statement ok
 CREATE TABLE u (x INTEGER, y TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 SET sdb_faults = 'crash_after_commit';

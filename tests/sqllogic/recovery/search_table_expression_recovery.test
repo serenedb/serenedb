@@ -9,7 +9,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE num(id BIGINT PRIMARY KEY, a INT, b INT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX num_idx ON num USING inverted ((a + b));

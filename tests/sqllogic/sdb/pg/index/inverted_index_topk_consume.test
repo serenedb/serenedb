@@ -14,7 +14,7 @@ CREATE TEXT SEARCH DICTIONARY tk_d AS split_text_csv(' ')
   WITH (frequency, position);
 
 statement ok
-CREATE TABLE tk(id INTEGER PRIMARY KEY, body TEXT, tag TEXT, n INTEGER);
+CREATE TABLE tk(id INTEGER PRIMARY KEY, body TEXT, tag TEXT, n INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO tk VALUES
@@ -25,8 +25,7 @@ INSERT INTO tk VALUES
   (5, 'dog', 'e', 50);
 
 statement ok
-CREATE INDEX tk_idx ON tk USING inverted(id, body tk_d) INCLUDE (tag, n)
-    WITH (compaction_interval = 0);
+CREATE INDEX tk_idx ON tk USING inverted(id, body tk_d) INCLUDE (tag, n);
 
 
 # The ordering key is not selected, so the scan projects the one column asked

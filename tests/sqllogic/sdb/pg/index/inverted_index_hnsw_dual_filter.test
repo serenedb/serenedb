@@ -6,7 +6,7 @@
 statement ok
 CREATE TABLE hd (pk INTEGER PRIMARY KEY, emb FLOAT[8], cat INTEGER,
   num INTEGER, tag VARCHAR, extra INTEGER)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX hd_idx ON hd

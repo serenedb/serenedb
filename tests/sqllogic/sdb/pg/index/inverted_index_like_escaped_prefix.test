@@ -3,7 +3,7 @@ CREATE TEXT SEARCH DICTIONARY lep_kw AS keyword() WITH (frequency)
 
 
 statement ok
-CREATE TABLE lep_logs (id INT, msg VARCHAR) WITH (storage = 'search')
+CREATE TABLE lep_logs (id INT, msg VARCHAR)
 
 
 statement ok
@@ -33,12 +33,11 @@ id
 1
 
 statement ok
-CREATE TABLE lep_plain (id INT PRIMARY KEY, msg VARCHAR)
+CREATE TABLE lep_plain (id INT PRIMARY KEY, msg VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX lep_plain_idx ON lep_plain USING inverted (id, msg lep_kw)
-  WITH (compaction_interval = 0)
 
 
 statement ok
@@ -86,12 +85,11 @@ id
 3
 
 statement ok
-CREATE TABLE lep_trail (id INT PRIMARY KEY, msg VARCHAR)
+CREATE TABLE lep_trail (id INT PRIMARY KEY, msg VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX lep_trail_idx ON lep_trail USING inverted (id, msg lep_kw)
-  WITH (compaction_interval = 0)
 
 
 statement ok

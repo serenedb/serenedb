@@ -9,7 +9,7 @@ CREATE TEXT SEARCH DICTIONARY st_topk_en AS
 
 statement ok
 CREATE TABLE st_topk (id INTEGER PRIMARY KEY, body VARCHAR)
-WITH (storage = 'search', compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)');
+WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
 CREATE INDEX st_topk_idx ON st_topk USING inverted (body st_topk_en);
@@ -81,7 +81,7 @@ QUERY PLAN
 
 statement ok
 CREATE TABLE st_plain (id INTEGER PRIMARY KEY, body VARCHAR)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX st_plain_idx ON st_plain USING inverted (body st_topk_en);
@@ -109,24 +109,24 @@ QUERY PLAN
 
 statement ok
 CREATE TABLE st_empty (id INTEGER PRIMARY KEY, body VARCHAR)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement error
 CREATE INDEX st_empty_topk ON st_empty USING inverted (body st_topk_en) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ----
-db error: ERROR: optimize_top_k is a table option on a search-backed table
-HINT: Set it in CREATE TABLE ... WITH (storage = 'search', optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
+db error: ERROR: optimize_top_k is a table option
+HINT: Set it in CREATE TABLE ... WITH (optimize_top_k = '...'); the table's store keeps the score bounds every index on it prunes with.
 
 
 statement error
-CREATE TABLE st_expr (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search', optimize_top_k = 'bm25(1 + 0.2, 0.75)');
+CREATE TABLE st_expr (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1 + 0.2, 0.75)');
 ----
 db error: ERROR: 'optimize_top_k' scorer args must be constants: 'bm25(1 + 0.2, 0.75)'
 HINT: Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'
 
 
 statement error
-CREATE TABLE st_bad (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search', optimize_top_k = 'nope()');
+CREATE TABLE st_bad (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'nope()');
 ----
 db error: ERROR: Unknown scorer 'nope'
 HINT: Expected one of: bm25, tfidf, lm_jm, lm_dirichlet, indri_dirichlet, dfi, idf, raw_boost, raw_tf, raw_dl

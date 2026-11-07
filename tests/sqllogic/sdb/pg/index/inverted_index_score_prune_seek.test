@@ -6,7 +6,7 @@ CREATE TEXT SEARCH DICTIONARY en_prune_seek AS
     WITH (frequency, position, norm);
 
 statement ok
-CREATE TABLE prune_seek (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_seek (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 statement ok
 INSERT INTO prune_seek SELECT i, CASE
@@ -19,8 +19,7 @@ INSERT INTO prune_seek SELECT i, CASE
   FROM generate_series(1, 4500) AS s(i);
 
 statement ok
-CREATE INDEX prune_seek_idx ON prune_seek USING inverted(id, body en_prune_seek)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX prune_seek_idx ON prune_seek USING inverted(id, body en_prune_seek);
 
 query
 SELECT count(*) FROM prune_seek_idx

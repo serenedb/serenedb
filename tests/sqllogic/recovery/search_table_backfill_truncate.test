@@ -12,7 +12,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bft (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bft VALUES (1, 'a'), (2, 'b'), (3, 'c');

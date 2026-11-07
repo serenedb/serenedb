@@ -103,7 +103,7 @@ DETACH sfa_session;
 
 statement ok
 CREATE TABLE postgres.public.sfa_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO postgres.public.sfa_notes SELECT i, 'note' FROM range(1, 4) t(i);

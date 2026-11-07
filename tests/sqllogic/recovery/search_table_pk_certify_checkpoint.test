@@ -13,8 +13,7 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE ckpt_pk(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search');
+CREATE TABLE ckpt_pk(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok
@@ -121,8 +120,7 @@ CREATE DATABASE ckpt_fail;
 
 
 statement ok
-CREATE TABLE ckpt_fail.public.s(i INTEGER PRIMARY KEY, t TEXT)
-  WITH (storage = 'search');
+CREATE TABLE ckpt_fail.public.s(i INTEGER PRIMARY KEY, t TEXT);
 
 
 statement ok

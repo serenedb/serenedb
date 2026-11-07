@@ -90,8 +90,7 @@ def _schema(server: Serened) -> None:
         conn.execute("CREATE TABLE ledger (txid BIGINT, body TEXT)")
         conn.execute("CREATE INDEX ledger_idx ON ledger USING inverted (body)")
         conn.execute(
-            "CREATE TABLE ledger_s (id BIGINT PRIMARY KEY, txid BIGINT) "
-            "WITH (storage = 'search')")
+            "CREATE TABLE ledger_s (id BIGINT PRIMARY KEY, txid BIGINT) ")
         conn.execute("CREATE TABLE witness (txid BIGINT, target BIGINT, kind TEXT)")
     with _connect(server, "db2") as conn:
         conn.execute("CREATE TABLE ledger2 (txid BIGINT, body TEXT)")
@@ -464,7 +463,7 @@ def _retained_backup(tmp_path: Path) -> tuple[Path, int, int]:
             conn.execute("CREATE DATABASE st")
         with _connect(source, "st") as conn:
             conn.execute("CREATE TABLE docs (id BIGINT, body TEXT) WITH "
-                         "(storage = 'search', compaction_interval = 0)")
+                         "(compaction_interval = 0)")
             conn.execute("INSERT INTO docs SELECT i, 'first' FROM range(0, 1000) r(i)")
             conn.execute("CHECKPOINT st")
             conn.execute("DELETE FROM docs WHERE id < 100")
@@ -567,8 +566,7 @@ def test_backup_of_a_database_with_a_failed_checkpoint(tmp_path: Path, abort: st
         with _connect(source, "fc") as conn:
             conn.execute("CREATE TABLE t (id BIGINT, b TEXT)")
             conn.execute("CREATE INDEX t_idx ON t USING inverted (b)")
-            conn.execute("CREATE TABLE s (id BIGINT PRIMARY KEY, body TEXT) "
-                         "WITH (storage = 'search')")
+            conn.execute("CREATE TABLE s (id BIGINT PRIMARY KEY, body TEXT) ")
             conn.execute("INSERT INTO t SELECT i, 'base' FROM range(0, 1000) r(i)")
             conn.execute("INSERT INTO s SELECT i, 'base' FROM range(0, 100) r(i)")
             conn.execute("CHECKPOINT fc")

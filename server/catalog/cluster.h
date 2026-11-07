@@ -67,7 +67,7 @@ class ClusterCatalog final : public BaseCatalog {
 
   EntrySet& Set(duckdb::CatalogType type) final;
 
-  void Bootstrap(duckdb::ClientContext& context);
+  void Bootstrap(duckdb::ClientContext& context, bool default_database);
 
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;

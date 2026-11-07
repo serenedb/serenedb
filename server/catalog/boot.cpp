@@ -186,7 +186,7 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
           .transaction_manager = duckdb::make_uniq<TransactionManager>(db)};
 }
 
-void InitCatalog() {
+void InitCatalog(bool default_database) {
   auto& instance = irs::DuckDBEngine::Instance().instance();
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
@@ -216,7 +216,8 @@ void InitCatalog() {
     transactions.SetReplaying(0);
     transactions.Open(std::move(log));
   }
-  context.RunFunctionInTransaction([&] { cluster.Bootstrap(context); });
+  context.RunFunctionInTransaction(
+    [&] { cluster.Bootstrap(context, default_database); });
   auth::PublishRoles(cluster);
   if (layout.InMemory()) {
     return;

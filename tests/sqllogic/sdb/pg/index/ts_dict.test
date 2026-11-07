@@ -167,6 +167,7 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: td_idx                  │
+│ Lookup: search                 │
 │ TsDict: body                   │
 │ Projections:                   │
 │ sdb_inverted_index_term$body   │
@@ -192,6 +193,7 @@ QUERY PLAN
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: td_idx                       │
+│ Lookup: search                      │
 │ TsDict: body                        │
 │ Projections:                        │
 │ sdb_inverted_index_term$body,       │
@@ -200,12 +202,11 @@ QUERY PLAN
 ╰─────────────────────────────────────╯
 
 
-# ts_dict_agg over a base table (not the index relation) has no inverted index
-# scan to claim, so the stub aggregate fires.
-statement error
-SELECT ts_dict_agg(body) FROM td
+query
+SELECT list_sort(ts_dict_agg(body)) AS terms FROM td
 ----
-db error: ERROR: ts_dict_agg() requires an inverted index scan in the same sub-query
+terms
+{apple,banana,cherry,date}
 
 
 statement ok

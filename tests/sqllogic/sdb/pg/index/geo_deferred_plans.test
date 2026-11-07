@@ -86,7 +86,7 @@ EXPLAIN SELECT id FROM gdm_v_idx WHERE ST_Intersects(geo, '{"type":"Polygon","co
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: gdm_v_idx                  │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Geo ──────────────╮            │
 │ │ Field: geo(string) │            │
@@ -112,7 +112,7 @@ EXPLAIN SELECT id FROM gdm_v_idx WHERE NOT ST_Intersects(geo, '{"type":"Polygon"
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: gdm_v_idx                             │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Not ────────────╮                         │
 │ ╰─────────┬────────╯                         │
@@ -143,7 +143,7 @@ QUERY PLAN
 ╰────────────────────────┬────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
 │ Index: gdm_v_idx                                │
-│ Lookup: table                                   │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ And ───────────────╮                         │
 │ ╰──────────┬──────────╯                         │
@@ -156,8 +156,7 @@ QUERY PLAN
 │                          ╰────────────────────╯ │
 │ Offsets: body                                   │
 │ Projections:                                    │
-│ body (i), id (l),                               │
-│ sdb_inverted_index_offsets$body                 │
+│ body, id, sdb_inverted_index_offsets$body       │
 │ ~1 row                                          │
 ╰─────────────────────────────────────────────────╯
 
@@ -192,6 +191,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: gdm_v_idx                          │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Geo ──────────────╮                    │
 │ │ Field: geo(string) │                    │
@@ -244,7 +244,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: gdm_score_idx                                    │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ And ───────────────╮                                 │
 │ ╰──────────┬──────────╯                                 │
@@ -283,7 +283,7 @@ ORDER BY BM25(gdm_score_idx.tableoid) DESC LIMIT 1
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────╮
 │ Index: gdm_score_idx                            │
-│ Lookup: table                                   │
+│ Lookup: search                                  │
 │ Index Filter:                                   │
 │ ╭─ And ───────────────╮                         │
 │ ╰──────────┬──────────╯                         │
@@ -322,7 +322,7 @@ WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.71
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_score_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -337,8 +337,7 @@ QUERY PLAN
 │ │ Shape: S2Polygon     │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: id (l),     │
-│              geo (i)     │
+│ Projections: id, geo     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -348,7 +347,7 @@ EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"Polygon"
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_shape_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -373,7 +372,7 @@ EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Contains('{"type":"Polygon","coord
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_shape_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -398,7 +397,7 @@ EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Contains(geo, '{"type":"Polygon","
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_shape_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -423,7 +422,7 @@ EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Distance_Between(geo, '{"type":"Po
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_shape_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ──────╮  │
 │ │ Field: geo(string)  │  │
@@ -446,7 +445,7 @@ EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Distance_Centroid(geo, '{"type":"P
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_shape_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -467,30 +466,27 @@ query
 EXPLAIN SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}') AND id % 3 = 0
 ----
 QUERY PLAN
-╭─ FILTER ─────────────────╮
-│ Expression: (id % 3) = 0 │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: gdm_u32_idx       │
-│ Lookup: table            │
-│ Index Filter:            │
-│ ╭─ Geo ──────────────╮   │
-│ │ Field: geo(string) │   │
-│ │ Op: Intersects     │   │
-│ │ Shape: S2Polygon   │   │
-│ │ Verify: false      │   │
-│ ╰────────────────────╯   │
-│ Table Filter:            │
-│ ╭─ Geo ────────────────╮ │
-│ │ Field: geo(string)   │ │
-│ │ Op: Intersects       │ │
-│ │ Shape: S2Polygon     │ │
-│ │ Verify: table filter │ │
-│ ╰──────────────────────╯ │
-│ Projections: id          │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: gdm_u32_idx          │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Geo ──────────────╮      │
+│ │ Field: geo(string) │      │
+│ │ Op: Intersects     │      │
+│ │ Shape: S2Polygon   │      │
+│ │ Verify: false      │      │
+│ ╰────────────────────╯      │
+│ Column Filter: (id % 3) = 0 │
+│ Table Filter:               │
+│ ╭─ Geo ────────────────╮    │
+│ │ Field: geo(string)   │    │
+│ │ Op: Intersects       │    │
+│ │ Shape: S2Polygon     │    │
+│ │ Verify: table filter │    │
+│ ╰──────────────────────╯    │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}') OR id < 0
@@ -498,7 +494,7 @@ EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"Polygon"
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────╮
 │ Index: gdm_shape_idx                           │
-│ Lookup: table                                  │
+│ Lookup: search                                 │
 │ Index Filter:                                  │
 │ ╭─ Or ───────────────╮                         │
 │ ╰──────────┬─────────╯                         │
@@ -519,7 +515,7 @@ EXPLAIN SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, 'POLYGON((37.6
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_g_s2point_idx │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -544,7 +540,7 @@ EXPLAIN SELECT id FROM gdm_p_idx WHERE ST_Distance_Centroid(geo, '{"type":"Point
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_p_idx         │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -637,7 +633,7 @@ EXPLAIN SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"Polyg
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_centroid_idx  │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -668,7 +664,7 @@ EXPLAIN SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"Polygon"
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_point_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -701,7 +697,7 @@ EXPLAIN SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"Polygo
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_s2point_idx   │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -734,7 +730,7 @@ EXPLAIN SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"Polygon","
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_f64_idx       │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │
@@ -766,7 +762,7 @@ EXPLAIN SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"Po
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────╮
 │ Index: gdm_centroid_s2_idx │
-│ Lookup: table              │
+│ Lookup: search             │
 │ Index Filter:              │
 │ ╭─ Geo ──────────────╮     │
 │ │ Field: geo(string) │     │
@@ -798,7 +794,7 @@ EXPLAIN SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, 'POLYGON((37.6 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_g_source_idx  │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo ──────────────╮   │
 │ │ Field: geo(string) │   │

@@ -229,9 +229,6 @@ CREATE TEXT SEARCH DICTIONARY test_english AS
 statement ok
 CREATE INDEX vedernikoff_team_idx ON vedernikoff (team);
 
-# Inverted index: phrase search on quote. refresh_interval = 0 disables the
-# background refresh loop: the as-of-last-refresh assertions below are only
-# deterministic when refreshes happen solely through the explicit VACUUM.
 statement ok
 CREATE INDEX vedernikoff_quote_idx ON vedernikoff USING inverted(id, team, quote test_english);
 
@@ -297,22 +294,17 @@ SELECT count(*) FROM vedernikoff WHERE team = 'babsky';
 count
 0
 
-# Inverted index scans are eventually consistent (as-of-last-refresh), not
-# MVCC. TRUNCATE without a subsequent refresh leaves the inverted index at its
-# last-refresh state, so count(*) WHERE <phrase> still returns the last-refresh
-# matched count, NOT 0. This contrasts with the secondary B-tree above, which
-# drops the rows immediately.
 query
 SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
 ----
 count
-10000
+0
 
 query
 SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
 ----
 count
-2000
+0
 
 query
 SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
@@ -793,36 +785,27 @@ query
 EXPLAIN DELETE FROM explain_t;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: explain_t      │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ DELETE ───────────────╮
+│ Table: explain_t       │
+│ Row Ids: ASSUME_UNIQUE │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: explain_t       │
+│ ~3 rows                │
+╰────────────────────────╯
 
 
 query
 EXPLAIN TRUNCATE explain_t;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: explain_t      │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ TRUNCATE ─╮
+╰────────────╯
 
 
 query
 EXPLAIN TRUNCATE TABLE explain_t;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: explain_t      │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ TRUNCATE ─╮
+╰────────────╯

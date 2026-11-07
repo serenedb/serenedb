@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <atomic>
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -33,6 +35,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace duckdb {
 
@@ -92,6 +95,21 @@ void RegisterConfigVariables(duckdb::DBConfig& config);
 duckdb::Value ValidateSetting(duckdb::ClientContext& context,
                               std::string_view name,
                               const duckdb::Value& value);
+
+template<typename Options>
+std::vector<std::string_view> SortedOptionNames(const Options& options) {
+  std::vector<std::string_view> names;
+  names.reserve(options.size());
+  for (const auto& option : options) {
+    if constexpr (requires { option.GetIdentifierName(); }) {
+      names.push_back(option.GetIdentifierName());
+    } else {
+      names.push_back(option.first);
+    }
+  }
+  absl::c_sort(names);
+  return names;
+}
 
 }  // namespace connector
 }  // namespace sdb

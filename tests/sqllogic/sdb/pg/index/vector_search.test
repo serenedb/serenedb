@@ -19,7 +19,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l2_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 2                            │
 │ Projections: id                   │
@@ -33,7 +33,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY l2_norm(emb) LIMIT 5;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l2_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 5                            │
 │ Projections: id                   │
@@ -47,7 +47,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY l2_distance([0, 0, 0]::FLOAT[3], emb) L
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l2_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 10                           │
 │ Projections: id                   │
@@ -61,7 +61,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY emb <-> '[0, 0, 0]' LIMIT 2;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l2_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 2                            │
 │ Projections: id                   │
@@ -75,7 +75,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY emb <-> [0, 0, 0] LIMIT 2;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l2_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 2                            │
 │ Projections: id                   │
@@ -89,7 +89,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY array_distance(emb, [0, 0, 0]::FLOAT[3]
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l2_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 2                            │
 │ Projections: id                   │
@@ -122,8 +122,8 @@ QUERY PLAN
 ╰────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: l2_index                 │
-│ Lookup: table                   │
-│ Projections: id (l), emb (i)    │
+│ Lookup: search                  │
+│ Projections: id, emb            │
 │ ~4 rows                         │
 ╰─────────────────────────────────╯
 
@@ -165,7 +165,7 @@ EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <-> emb < 0.7;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: l2_index    │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Vector Range ─╮ │
 │ │ Field: emb     │ │
@@ -183,7 +183,7 @@ EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <#> emb < 0.7;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: l2_index                          │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Projections: id                          │
 │ Column Filter: ([0, 0, 0] <#> emb) < 0.7 │
 │ ~1 row                                   │
@@ -200,7 +200,7 @@ QUERY PLAN
 ╰──────────┬─────────╯
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: l2_index    │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Vector Range ─╮ │
 │ │ Field: emb     │ │
@@ -231,22 +231,19 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id % 2 = 0;
 ----
 QUERY PLAN
-╭─ FILTER ─────────────────╮
-│ Expression: (id % 2) = 0 │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: l2_index          │
-│ Lookup: table            │
-│ Index Filter:            │
-│ ╭─ Vector Range ─╮       │
-│ │ Field: emb     │       │
-│ │ Metric: l2     │       │
-│ │ Radius: < 100  │       │
-│ ╰────────────────╯       │
-│ Projections: id          │
-│ ~4 rows                  │
-╰──────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: l2_index             │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Vector Range ─╮          │
+│ │ Field: emb     │          │
+│ │ Metric: l2     │          │
+│ │ Radius: < 100  │          │
+│ ╰────────────────╯          │
+│ Column Filter: (id % 2) = 0 │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 query
@@ -290,7 +287,7 @@ EXPLAIN SELECT id FROM l2_index WHERE emb <-> '[0, 0, 0]'::FLOAT[3] < (0.5 + 0.2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: l2_index    │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Vector Range ─╮ │
 │ │ Field: emb     │ │
@@ -308,7 +305,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY l2_distance(emb, [0, 0, 0]::FLOAT[3]) L
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l2_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 10                           │
 │ Projections: id                   │
@@ -332,8 +329,8 @@ QUERY PLAN
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: l2_index                     │
-│ Lookup: table                       │
-│ Projections: id (l), emb (i)        │
+│ Lookup: search                      │
+│ Projections: id, emb                │
 │ ~4 rows                             │
 ╰─────────────────────────────────────╯
 
@@ -344,7 +341,7 @@ EXPLAIN SELECT id FROM l2_index WHERE l2_distance(emb, emb) < 0.7;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: l2_index                │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Projections: id                │
 │ Column Filter:                 │
 │ l2_distance(emb, emb) < 0.7    │
@@ -394,7 +391,7 @@ EXPLAIN SELECT id FROM l1_index ORDER BY l1_norm(emb) LIMIT 5;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l1_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l1_distance(emb, FLOAT[3]) │
 │ Top: 5                            │
 │ Projections: id                   │
@@ -408,7 +405,7 @@ EXPLAIN SELECT id FROM l1_index ORDER BY emb <+> [0, 1, 0]::FLOAT[3] LIMIT 5;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: l1_index                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l1_distance(emb, FLOAT[3]) │
 │ Top: 5                            │
 │ Projections: id                   │
@@ -451,7 +448,7 @@ EXPLAIN SELECT id FROM cos_index ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMI
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: cos_index                      │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Score: cosine_distance(emb, FLOAT[3]) │
 │ Top: 2                                │
 │ Projections: id                       │
@@ -473,7 +470,7 @@ EXPLAIN SELECT id FROM cos_index ORDER BY cosine_similarity(emb, [1.0, 0.0, 0.0]
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: cos_index                      │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Score: cosine_distance(emb, FLOAT[3]) │
 │ Top: 2                                │
 │ Projections: id                       │
@@ -487,7 +484,7 @@ EXPLAIN SELECT id FROM cos_index ORDER BY cosine_distance(emb, [1.0, 0.0, 0.0]::
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: cos_index                      │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Score: cosine_distance(emb, FLOAT[3]) │
 │ Top: 2                                │
 │ Projections: id                       │
@@ -501,7 +498,7 @@ EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLO
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: cos_index   │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Vector Range ─╮ │
 │ │ Field: emb     │ │
@@ -519,7 +516,7 @@ EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLO
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: cos_index                      │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Score: cosine_distance(emb, FLOAT[3]) │
 │ Exact:                                │
 │ brute force over the stored vectors   │
@@ -545,7 +542,7 @@ EXPLAIN SELECT id FROM ip_index ORDER BY emb <#> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: ip_index                     │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: inner_product(emb, FLOAT[3]) │
 │ Top: 2                              │
 │ Projections: id                     │
@@ -567,7 +564,7 @@ EXPLAIN SELECT id FROM ip_index ORDER BY negative_inner_product(emb, [1.0, 0.0, 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: ip_index                     │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: inner_product(emb, FLOAT[3]) │
 │ Top: 2                              │
 │ Projections: id                     │
@@ -581,7 +578,7 @@ EXPLAIN SELECT id FROM ip_index ORDER BY inner_product(emb, [1.0, 0.0, 0.0]::FLO
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: ip_index                     │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: inner_product(emb, FLOAT[3]) │
 │ Top: 2                              │
 │ Projections: id                     │
@@ -597,7 +594,7 @@ EXPLAIN SELECT id FROM ip_index WHERE inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: ip_index                     │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: inner_product(emb, FLOAT[3]) │
 │ Top: 2                              │
 │ Min Score: 50                       │
@@ -619,7 +616,7 @@ EXPLAIN SELECT id FROM ip_index WHERE negative_inner_product(emb, [1.0, 0.0, 0.0
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: ip_index    │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Index Filter:      │
 │ ╭─ Vector Range ─╮ │
 │ │ Field: emb     │ │
@@ -637,7 +634,7 @@ EXPLAIN SELECT id FROM ip_index WHERE inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: ip_index                     │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: inner_product(emb, FLOAT[3]) │
 │ Exact:                              │
 │ brute force over the stored vectors │
@@ -755,26 +752,15 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE id % 2 = 0 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ─────────────────────────────────────────────────╮
-│ Top: 2                                                  │
-│ Order By: #1 ASC                                        │
-│ ~1 row                                                  │
-╰────────────────────────────┬────────────────────────────╯
-╭─ FILTER ───────────────────┴────────────────────────────╮
-│ Expression: (id % 2) = 0                                │
-│ ~1 row                                                  │
-╰────────────────────────────┬────────────────────────────╯
-╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
-│ Index: l2_index                                         │
-│ Lookup: table                                           │
-│ Score: l2_distance(emb, FLOAT[3])                       │
-│ Exact:                                                  │
-│ brute force over the stored vectors                     │
-│ Projections: id, sdb_inverted_index_score               │
-│ Column Filter:                                          │
-│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
-│ ~4 rows                                                 │
-╰─────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: l2_index                   │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[3]) │
+│ Top: 2                            │
+│ Projections: id                   │
+│ Column Filter: (id % 2) = 0       │
+│ ~1 row                            │
+╰───────────────────────────────────╯
 
 
 query
@@ -840,7 +826,7 @@ EXPLAIN SELECT id FROM proj_idx WHERE category = 1 ORDER BY emb <-> [0, 0, 0]::F
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: proj_idx                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 2                            │
 │ Projections: id                   │
@@ -855,7 +841,7 @@ EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 200 AND cosi
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: l2_index                       │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Vector Range ─╮                    │
 │ │ Field: emb     │                    │
@@ -875,7 +861,7 @@ EXPLAIN SELECT id FROM l2_index WHERE cosine_distance(emb, [0, 0, 0]::FLOAT[3]) 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: l2_index                       │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Vector Range ─╮                    │
 │ │ Field: emb     │                    │
@@ -895,7 +881,7 @@ EXPLAIN SELECT id FROM proj_idx WHERE category = 1 AND emb <-> [0, 0, 0]::FLOAT[
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: proj_idx             │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Vector Range ─╮          │
 │ │ Field: emb     │          │
@@ -955,7 +941,7 @@ EXPLAIN SELECT id FROM mixed_idx WHERE body @@ ts_phrase('red') ORDER BY emb <->
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: mixed_idx                  │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Term ──────────────╮           │
 │ │ Field: body(string) │           │
@@ -1086,7 +1072,7 @@ EXPLAIN SELECT id FROM mixed_idx WHERE id > 2 AND body @@ ts_any(['red', 'blue']
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: mixed_idx                  │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Or ──────────────────╮         │
 │ ╰───────────┬───────────╯         │

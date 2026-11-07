@@ -55,17 +55,18 @@ QUERY PLAN
 │ Projections:                             │
 │ sdb_inverted_index_term$cat,             │
 │ sdb_inverted_index_term$cat IS NOT NULL  │
-│ ~3 rows                                  │
+│ ~2 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
-│ ~3 rows                                  │
+│ ~2 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~6 rows                                  │
+│ ~4 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query
@@ -95,18 +96,19 @@ QUERY PLAN
 │ Projections:                               │
 │ sdb_inverted_index_term$plain,             │
 │ sdb_inverted_index_term$plain IS NOT NULL  │
-│ ~3 rows                                    │
+│ ~2 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ──────┴─────────────────────╮
 │ Groups: #0                                 │
-│ ~3 rows                                    │
+│ ~2 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: aa_idx                              │
+│ Lookup: search                             │
 │ TsDict: plain                              │
 │ Projections:                               │
 │ sdb_inverted_index_term$plain              │
-│ ~6 rows                                    │
+│ ~4 rows                                    │
 ╰────────────────────────────────────────────╯
 
 query
@@ -136,7 +138,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: aa_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: body         │
 │ ~7 rows                   │
 ╰───────────────────────────╯
@@ -156,7 +158,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: aa_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: opt          │
 │ ~7 rows                   │
 ╰───────────────────────────╯
@@ -184,7 +186,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: aa_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: cat          │
 │ ~7 rows                   │
 ╰───────────────────────────╯
@@ -203,7 +205,7 @@ QUERY PLAN
                    ├──────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╭─ CROSS_PRODUCT ───────────╮
 │ Index: aa_idx                      │  ╰─────────────┬─────────────╯
-│ Lookup: table                      │                ├──────────────────────────────╮
+│ Lookup: search                     │                ├──────────────────────────────╮
 │ Projections: cat                   │  ╭─ UNGROUPED_AGGREGATE ─────╮  ╭─ UNGROUPED_AGGREGATE ────╮
 │ ~7 rows                            │  │ Aggregates: array_agg(#0) │  │ Aggregates: count_star() │
 ╰────────────────────────────────────╯  │ ~1 row                    │  │ ~1 row                   │
@@ -237,7 +239,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: aa_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: id, cat      │
 │ ~7 rows                   │
 ╰───────────────────────────╯
@@ -264,6 +266,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
@@ -304,19 +307,20 @@ QUERY PLAN
 │ sdb_inverted_index_term$cat IS NOT NULL,   │
 │ sdb_inverted_index_term$plain,             │
 │ sdb_inverted_index_term$plain IS NOT NULL  │
-│ ~6 rows                                    │
+│ ~4 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ──────┴─────────────────────╮
 │ Groups: #0, #1                             │
-│ ~6 rows                                    │
+│ ~4 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: aa_idx                              │
+│ Lookup: search                             │
 │ TsDict: cat, plain                         │
 │ Projections:                               │
 │ sdb_inverted_index_term$cat,               │
 │ sdb_inverted_index_term$plain              │
-│ ~12 rows                                   │
+│ ~8 rows                                    │
 ╰────────────────────────────────────────────╯
 
 query
@@ -348,17 +352,18 @@ EXPLAIN SELECT unnest(array_agg(DISTINCT cat)) AS t FROM aa_idx ORDER BY t
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────╮
 │ Order By: t ASC                          │
-│ ~3 rows                                  │
+│ ~2 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
-│ ~3 rows                                  │
+│ ~2 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~6 rows                                  │
+│ ~4 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query
@@ -376,17 +381,18 @@ EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS t FROM aa_idx ORDER BY t
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────╮
 │ Order By: t ASC                          │
-│ ~3 rows                                  │
+│ ~2 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
-│ ~3 rows                                  │
+│ ~2 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~6 rows                                  │
+│ ~4 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query

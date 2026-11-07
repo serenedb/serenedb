@@ -146,7 +146,7 @@ statement ok
 DROP TABLE pd;
 
 statement ok
-CREATE TABLE pe (id BIGINT) WITH (compaction_interval = 0);
+CREATE TABLE pe (id BIGINT) WITH (compaction_interval = 0, segment_memory_max = 1);
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(0, 99) g(i);
@@ -341,7 +341,7 @@ query
 EXPLAIN UPDATE pg SET v = 'x' WHERE id = 3;
 ----
 QUERY PLAN
-╭─ SEARCH_UPDATE ────────╮
+╭─ UPDATE ───────────────╮
 │ Table: pg              │
 │ Row Ids: ASSUME_UNIQUE │
 ╰────────────┬───────────╯
@@ -351,8 +351,7 @@ QUERY PLAN
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
-│ Index: pg              │
-│ Lookup: search         │
+│ Table: pg              │
 │ Projections: id, rowid │
 │ Column Filter: id = 3  │
 │ ~1 row                 │

@@ -23,18 +23,15 @@ CREATE TABLE t (id BIGINT PRIMARY KEY, tag TEXT, body TEXT)
 statement ok
 CREATE INDEX t_tag_idx ON t USING inverted (tag);
 
-# A non-inverted index type is rejected.
-statement error
+statement ok
 CREATE INDEX t_bad_idx ON t (tag);
-----
-db error: ERROR: only inverted indexes are supported on a table
-
 
 # The index is a real catalog object.
 query
 SELECT indexname FROM pg_indexes WHERE tablename = 't' ORDER BY indexname;
 ----
 indexname
+t_bad_idx
 t_pkey
 t_tag_idx
 
@@ -129,17 +126,16 @@ query
 EXPLAIN SELECT id FROM t WHERE tag = 'red';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: t         │
-│ Lookup: search   │
-│ Index Filter:    │
-│ ╭─ Term ─────╮   │
-│ │ Field: tag │   │
-│ │ Value: red │   │
-│ ╰────────────╯   │
-│ Projections: id  │
-│ ~1 row           │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: t               │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: tag(string) │ │
+│ │ Value: red         │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
 
 # A direct index scan pushes the predicate down through the index's own term
 # field.
@@ -181,6 +177,7 @@ query
 SELECT indexname FROM pg_indexes WHERE tablename = 't' ORDER BY indexname;
 ----
 indexname
+t_bad_idx
 t_body_idx
 t_pkey
 

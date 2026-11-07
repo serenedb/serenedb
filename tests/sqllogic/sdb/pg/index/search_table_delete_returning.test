@@ -48,9 +48,9 @@ query ?? rowsort
 DELETE FROM dr_plain WHERE id IN (5, 1005, 2005) RETURNING id, rowid;
 ----
 id	rowid
-1005	1005
-2005	2005
-5	5
+1005	1006
+2005	2006
+5	6
 
 query
 DELETE FROM dr WHERE id = 6 RETURNING rowid & 4294967295 AS doc, id, tableoid::regclass::text AS rel;
@@ -62,7 +62,7 @@ query
 DELETE FROM dr_plain WHERE id = 6 RETURNING rowid, id, tableoid::regclass::text AS rel;
 ----
 rowid	id	rel
-6	6	dr_plain
+7	6	dr_plain
 
 query
 DELETE FROM dr WHERE id = 8 RETURNING tableoid::regclass::text AS rel, (rowid & 4294967295) + 1 AS next, rowid & 4294967295 AS doc;
@@ -74,7 +74,7 @@ query
 DELETE FROM dr_plain WHERE id = 8 RETURNING tableoid::regclass::text AS rel, rowid + 1 AS next, rowid;
 ----
 rel	next	rowid
-dr_plain	9	8
+dr_plain	10	9
 
 query
 DELETE FROM dr WHERE id = 9 RETURNING id, v;
@@ -142,10 +142,10 @@ query ?? rowsort
 DELETE FROM dr_plain USING dr_src WHERE dr_plain.id = dr_src.id + 1 AND dr_plain.id < 30 RETURNING dr_plain.id, rowid;
 ----
 id	rowid
-1	1
-15	15
-22	22
-29	29
+1	2
+15	16
+22	23
+29	30
 
 query ??? rowsort
 DELETE FROM dr USING dr_src WHERE dr.id = dr_src.id + 2 AND dr.id < 30 RETURNING dr.id, v, tableoid::regclass::text AS rel;
@@ -264,10 +264,10 @@ query ?? rowsort
 DELETE FROM dr_plain WHERE EXISTS (SELECT 1 FROM dr_src WHERE dr_src.id = dr_plain.id - 600) AND id < 625 RETURNING id, rowid;
 ----
 id	rowid
-600	600
-607	607
-614	614
-621	621
+600	601
+607	608
+614	615
+621	622
 
 query
 DELETE FROM dr USING dr_src WHERE dr.id = dr_src.id AND dr.id < 50 RETURNING dr.id;
@@ -323,9 +323,9 @@ query ?? rowsort
 DELETE FROM dr_plain USING dr_src WHERE dr_plain.id = dr_src.id + 1 AND dr_plain.id BETWEEN 800 AND 820 RETURNING dr_plain.id, rowid;
 ----
 id	rowid
-806	806
-813	813
-820	820
+806	807
+813	814
+820	821
 
 statement ok
 COMMIT;

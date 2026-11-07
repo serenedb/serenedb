@@ -20,33 +20,31 @@ query
 EXPLAIN SELECT pk FROM sft WHERE d = 0;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: sft       │
-│ Lookup: search   │
-│ Index Filter:    │
-│ ╭─ Term ───╮     │
-│ │ Field: d │     │
-│ │ Value: 0 │     │
-│ ╰──────────╯     │
-│ Projections: pk  │
-│ ~401 rows        │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Table: sft            │
+│ Index Filter:         │
+│ ╭─ Term ────────────╮ │
+│ │ Field: d(numeric) │ │
+│ │ Value: 0          │ │
+│ ╰───────────────────╯ │
+│ Projections: pk       │
+│ ~401 rows             │
+╰───────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM sft WHERE d BETWEEN 0 AND 2;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────╮
-│ Index: sft           │
-│ Lookup: search       │
-│ Index Filter:        │
-│ ╭─ Granular Range ─╮ │
-│ │ Field: d         │ │
-│ │ Range: >=0, <=2  │ │
-│ ╰──────────────────╯ │
-│ Projections: pk      │
-│ ~401 rows            │
-╰──────────────────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Table: sft            │
+│ Index Filter:         │
+│ ╭─ Granular Range ──╮ │
+│ │ Field: d(numeric) │ │
+│ │ Range: >=0, <=2   │ │
+│ ╰───────────────────╯ │
+│ Projections: pk       │
+│ ~401 rows             │
+╰───────────────────────╯
 
 query
 SELECT pk FROM sft WHERE d = 0 ORDER BY pk;

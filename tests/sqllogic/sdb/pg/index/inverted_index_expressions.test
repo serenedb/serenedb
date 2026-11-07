@@ -291,7 +291,7 @@ EXPLAIN SELECT id FROM mix_idx WHERE a || b = 'foobar';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: mix_idx              │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────────╮ │
 │ │ Field: (a || b)(string) │ │
@@ -319,7 +319,7 @@ EXPLAIN SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: mix_idx                                    │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ And ────────────╮                              │
 │ ╰─────────┬────────╯                              │
@@ -1025,7 +1025,7 @@ EXPLAIN SELECT id FROM tx_n_idx WHERE a + b = 30;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tx_n_idx             │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────────╮ │
 │ │ Field: (a + b)(numeric) │ │
@@ -1041,7 +1041,7 @@ EXPLAIN SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ 'foobar'::tsquery;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: tx_v_idx               │
-│ Lookup: table                 │
+│ Lookup: search                │
 │ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: (s1 || s2)(string) │ │
@@ -1057,7 +1057,7 @@ EXPLAIN SELECT id FROM tx_b_idx WHERE (a > b) = true;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: tx_b_idx          │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: (a > b)(bool) │ │
@@ -1168,7 +1168,7 @@ EXPLAIN SELECT id FROM types_smoke_idx WHERE (a + 1)::TINYINT = 2::TINYINT;
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: types_smoke_idx                       │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Term ───────────────────────────────────╮ │
 │ │ Field: CAST((a + 1) AS tinyint)(numeric) │ │
@@ -1184,7 +1184,7 @@ EXPLAIN SELECT id FROM types_smoke_idx WHERE DATE '2020-01-01' + (a + 1) = DATE 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────╮
 │ Index: types_smoke_idx                              │
-│ Lookup: table                                       │
+│ Lookup: search                                      │
 │ Index Filter:                                       │
 │ ╭─ Term ──────────────────────────────────────────╮ │
 │ │ Field:                                          │ │
@@ -1199,20 +1199,13 @@ query
 EXPLAIN SELECT id FROM types_smoke_idx WHERE a * a = 4;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: #1         │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ FILTER ───┴────────────╮
-│ Expression: (a * a) = 4 │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ IRESEARCH_SCAN ────────╮
-│ Index: types_smoke_idx  │
-│ Lookup: table           │
-│ Projections: a, id      │
-│ ~2 rows                 │
-╰─────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: types_smoke_idx     │
+│ Lookup: search             │
+│ Projections: id            │
+│ Column Filter: (a * a) = 4 │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 query
 SELECT id FROM types_smoke_idx WHERE a * a = 4;
@@ -1416,14 +1409,14 @@ query
 EXPLAIN SELECT id, lower(title), n + 1 FROM inc_e_read_idx;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: inc_e_read_idx          │
-│ Lookup: table                  │
-│ Projections: id (l),           │
-│              lower(title) (i), │
-│              (n + 1) (i)       │
-│ ~4 rows                        │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: inc_e_read_idx      │
+│ Lookup: search             │
+│ Projections: id,           │
+│              lower(title), │
+│              n + 1         │
+│ ~4 rows                    │
+╰────────────────────────────╯
 
 query
 SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
@@ -1437,7 +1430,7 @@ EXPLAIN SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: inc_e_read_idx           │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Index Filter:                   │
 │ ╭─ Term ──────────────────────╮ │
 │ │ Field: lower(title)(string) │ │
@@ -1489,9 +1482,8 @@ QUERY PLAN
 ╰──────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ───────────╮
 │ Index: inc_e_read_plain    │
-│ Lookup: table              │
-│ Projections: id (l),       │
-│              title (i)     │
+│ Lookup: search             │
+│ Projections: id, title     │
 │ ~4 rows                    │
 ╰────────────────────────────╯
 
@@ -1531,6 +1523,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: inc_e_read_idx                    │
+│ Lookup: search                           │
 │ Projections: lower(title), n + 1         │
 │ ~5 rows                                  │
 ╰──────────────────────────────────────────╯
@@ -1581,8 +1574,8 @@ QUERY PLAN
 ╰────────────────────────────────┬───────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────────┴───────────────────────────────╮
 │ Index: inc_e_read_idx                                          │
-│ Lookup: table                                                  │
-│ Projections: id (l), lower(title) (i), (n + 1) (i)             │
+│ Lookup: search                                                 │
+│ Projections: id, lower(title), n + 1                           │
 │ ~5 rows                                                        │
 ╰────────────────────────────────────────────────────────────────╯
 
@@ -1597,18 +1590,18 @@ query
 EXPLAIN SELECT id, lower('ABC'), 'x-' || lower(title) FROM inc_e_read_idx;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────╮
-│ Projections: id, 'abc',        │
-│              'x-' || #1        │
-│ ~5 rows                        │
-╰────────────────┬───────────────╯
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: inc_e_read_idx          │
-│ Lookup: table                  │
-│ Projections: id (l),           │
-│              lower(title) (i)  │
-│ ~5 rows                        │
-╰────────────────────────────────╯
+╭─ PROJECTION ───────────────╮
+│ Projections: id, 'abc',    │
+│              'x-' || #1    │
+│ ~5 rows                    │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: inc_e_read_idx      │
+│ Lookup: search             │
+│ Projections: id,           │
+│              lower(title)  │
+│ ~5 rows                    │
+╰────────────────────────────╯
 
 query
 SELECT id, n + 1 + (random() * 0)::INT AS v FROM inc_e_read_idx WHERE random() < 2 AND lower(title) = 'abc';
@@ -1632,13 +1625,13 @@ QUERY PLAN
 ╰───────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮
 │ Index: inc_e_read_idx                 │
-│ Lookup: table                         │
+│ Lookup: search                        │
 │ Index Filter:                         │
 │ ╭─ Term ──────────────────────╮       │
 │ │ Field: lower(title)(string) │       │
 │ │ Value: abc                  │       │
 │ ╰─────────────────────────────╯       │
-│ Projections: id (l), (n + 1) (i)      │
+│ Projections: id, n + 1                │
 │ ~1 row                                │
 ╰───────────────────────────────────────╯
 
@@ -1821,9 +1814,8 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯
 ╭─ IRESEARCH_SCAN ┴─────────────────╮
 │ Index: inc_e_tz_idx               │
-│ Lookup: table                     │
-│ Projections: ts (l), v (l),       │
-│              epoch(plain) (i)     │
+│ Lookup: search                    │
+│ Projections: ts, v, epoch(plain)  │
 │ ~1 row                            │
 ╰───────────────────────────────────╯
 
@@ -1910,7 +1902,7 @@ QUERY PLAN
 ╰────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: inc_e_timetz_idx │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Projections: ts         │
 │ ~1 row                  │
 ╰─────────────────────────╯
@@ -1962,7 +1954,7 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯
 ╭─ IRESEARCH_SCAN ┴─────────────────╮
 │ Index: inc_e_tz_ns_idx            │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Projections: ts                   │
 │ ~1 row                            │
 ╰───────────────────────────────────╯
@@ -2029,7 +2021,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: inc_e_tz_terms_idx        │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Projections: ts                  │
 │ ~2 rows                          │
 ╰──────────────────────────────────╯
@@ -2072,6 +2064,7 @@ QUERY PLAN
 ╰───────────────────────┬───────────────────────╯
 ╭─ IRESEARCH_SCAN ──────┴───────────────────────╮
 │ Index: inc_e_tz_terms_idx                     │
+│ Lookup: search                                │
 │ TsDict: lower("label")                        │
 │ Projections:                                  │
 │ sdb_inverted_index_term$lower("label"),       │
@@ -2159,20 +2152,13 @@ query
 EXPLAIN SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR = '2026-01-02 08:30:00+09';
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────────╮
-│ Projections: #1                                │
-│ ~1 row                                         │
-╰────────────────────────┬───────────────────────╯
-╭─ FILTER ───────────────┴───────────────────────╮
-│ Expression:                                    │
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: inc_e_tz_filters_idx                    │
+│ Lookup: search                                 │
+│ Projections: id                                │
+│ Column Filter:                                 │
 │ CAST(ts AS VARCHAR) = '2026-01-02 08:30:00+09' │
 │ ~1 row                                         │
-╰────────────────────────┬───────────────────────╯
-╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
-│ Index: inc_e_tz_filters_idx                    │
-│ Lookup: table                                  │
-│ Projections: ts, id                            │
-│ ~3 rows                                        │
 ╰────────────────────────────────────────────────╯
 
 query
@@ -2187,7 +2173,7 @@ EXPLAIN SELECT id FROM inc_e_tz_filters_idx WHERE (ts AT TIME ZONE 'UTC')::VARCH
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: inc_e_tz_filters_idx                      │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ Term ───────────────────────────────────────╮ │
 │ │ Field:                                       │ │
@@ -2223,6 +2209,7 @@ QUERY PLAN
 ╰──────────────────────────────────┬──────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────┴──────────────────────────────────╮
 │ Index: inc_e_tz_filters_idx                                         │
+│ Lookup: search                                                      │
 │ TsDict:                                                             │
 │ CAST(timezone('UTC', ts) AS VARCHAR)                                │
 │ Projections:                                                        │
@@ -2355,7 +2342,7 @@ EXPLAIN SELECT id FROM inc_e_nest_idx WHERE lower(title) = 'boston';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: inc_e_nest_idx                  │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Projections: id                        │
 │ Column Filter: lower(title) = 'boston' │
 │ ~1 row                                 │
@@ -2373,7 +2360,7 @@ EXPLAIN SELECT id FROM inc_e_nest_idx WHERE upper(lower(title)) = 'BOSTON';
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: inc_e_nest_idx                  │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────────────────╮ │
 │ │ Field: upper(lower(title))(string) │ │
@@ -2427,7 +2414,7 @@ EXPLAIN SELECT id FROM ivf_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOA
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
 │ Index: ivf_e_idx                            │
-│ Lookup: table                               │
+│ Lookup: search                              │
 │ Score:                                      │
 │ l2_distance(array_value(x, y, z), FLOAT[3]) │
 │ Top: 2                                      │

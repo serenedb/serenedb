@@ -587,19 +587,22 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
   const bool keeps_columns =
     scan.KeepsColumnForms() || scan.ReadsInMemorySegments();
   const auto keep_column_form = [&](const duckdb::Expression& conjunct) {
-    const auto* ref = optimizer::SoleColumn(conjunct);
-    if (!ref) {
+    auto form = optimizer::RowFormOf(conjunct);
+    if (!form) {
       return false;
     }
-    const auto it = claim.columns->find(MakeBindingKey(ref->Binding()));
-    if (it == claim.columns->end() || !it->second.column_stored) {
-      return false;
+    DeferredRowFilter row;
+    for (const auto* ref : form->columns) {
+      const auto it = claim.columns->find(MakeBindingKey(ref->Binding()));
+      if (it == claim.columns->end() || !it->second.column_stored) {
+        return false;
+      }
+      row.columns.push_back(it->second.column);
+      row.types.push_back(ref->GetReturnType());
     }
-    out.dual_filters.push_back(
-      {.column = it->second.column,
-       .type = ref->GetReturnType(),
-       .filter = duckdb::make_uniq<duckdb::ExpressionFilter>(
-         optimizer::ColumnFormOf(conjunct.Copy()))});
+    row.filter =
+      duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(form->expr));
+    out.dual_filters.push_back(std::move(row));
     return true;
   };
   const auto to_index = [&](duckdb::unique_ptr<duckdb::Expression> conjunct) {
@@ -722,9 +725,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     MakeSearchFilter(*root, conjuncts, getter, context, expr_getter, &scorers);
   if (!status.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("cannot build the search filter from the "
-                            "statement's parameters: ",
-                            status.message()));
+                    ERR_MSG(status.message()));
   }
   irs::Filter::ptr filter = std::move(root);
   EnsureIncludeSides(*filter);

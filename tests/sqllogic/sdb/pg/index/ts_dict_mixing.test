@@ -57,6 +57,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mixt_idx                          │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~4 rows                                  │
@@ -103,6 +104,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: mixt_idx                           │
+│ Lookup: search                            │
 │ TsDict: cat, opt                          │
 │ Projections: sdb_inverted_index_term$cat, │
 │              sdb_inverted_index_term$opt  │
@@ -176,7 +178,7 @@ QUERY PLAN
                    ├──────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╭─ CROSS_PRODUCT ───────────╮
 │ Index: mixt_idx                    │  ╰─────────────┬─────────────╯
-│ Lookup: table                      │                ├────────────────────────────╮
+│ Lookup: search                     │                ├────────────────────────────╮
 │ Projections: opt, cat              │  ╭─ UNGROUPED_AGGREGATE ─────╮  ╭─ UNGROUPED_AGGREGATE ─╮
 │ ~5 rows                            │  │ Aggregates: array_agg(#0) │  │ Aggregates: min(#0)   │
 ╰────────────────────────────────────╯  │ ~1 row                    │  │ ~1 row                │
@@ -303,7 +305,7 @@ QUERY PLAN
 ╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: mixt_idx       │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Projections: opt, cat │
 │ ~5 rows               │
 ╰───────────────────────╯
@@ -348,6 +350,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mixt_idx                          │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~1 row                                   │

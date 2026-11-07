@@ -226,6 +226,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   if (ss.plan_cache.deferred) {
     ApplyDeferredClaim(*state, context, ss);
   }
+  if (ss.score.text && ss.relation.kind == ScanEntryKind::SearchTable &&
+      !state->ClaimedWhere()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(ss.score.text->Name(),
+              "() requires an inverted index scan in the same sub-query"));
+  }
   state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
   state->top_k = ss.score.top_k;
   state->top_offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;

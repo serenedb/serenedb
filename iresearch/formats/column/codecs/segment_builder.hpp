@@ -182,6 +182,8 @@ class SegmentBuilder {
       .first_entry = FirstEntry(),
       .raw = _raw,
       .max_len = _max_len,
+      .first_row = _next - _rows,
+      .row_count = _rows,
     };
   }
 

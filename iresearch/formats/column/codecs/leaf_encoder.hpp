@@ -40,6 +40,8 @@ struct SegmentEntries {
   uint32_t first_entry = 0;
   uint64_t raw = 0;
   uint32_t max_len = 0;
+  uint64_t first_row = 0;
+  uint64_t row_count = 0;
 };
 
 inline size_t EntryCount(const SegmentEntries& rows) noexcept {

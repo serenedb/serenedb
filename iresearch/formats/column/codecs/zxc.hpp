@@ -54,6 +54,7 @@ struct Zxc {
     explicit Compressor(uint8_t level);
 
     bool Train(std::string_view frames, std::span<const size_t> sizes);
+    bool Adopt(std::string_view dictionary);
     void Use(std::string_view raw);
     void Clear() noexcept {
       _dictionary.clear();
@@ -66,6 +67,7 @@ struct Zxc {
 
    private:
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
+    bool Pack();
     void Attach();
 
     uint8_t _level;

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -43,14 +44,48 @@ inline constexpr size_t kPriceFrames = 8;
 inline constexpr size_t kLocalMinFrames = 8;
 inline constexpr uint64_t kLocalDictionaryPacking = 2;
 
+class TrainedDictionaries {
+ public:
+  const std::string* Find(ByteCodec codec, uint64_t first_row, uint64_t rows,
+                          Shape shape) const noexcept {
+    const auto& entry = _entries[static_cast<size_t>(codec)];
+    if (entry.rows == 0 || entry.first_row != first_row || entry.rows != rows ||
+        entry.shape != shape) {
+      return nullptr;
+    }
+    return &entry.dictionary;
+  }
+
+  void Store(ByteCodec codec, uint64_t first_row, uint64_t rows, Shape shape,
+             std::string_view dictionary) {
+    auto& entry = _entries[static_cast<size_t>(codec)];
+    entry.first_row = first_row;
+    entry.rows = rows;
+    entry.shape = shape;
+    entry.dictionary.assign(dictionary);
+  }
+
+ private:
+  struct Entry {
+    uint64_t first_row = 0;
+    uint64_t rows = 0;
+    Shape shape = Shape::Dedup;
+    std::string dictionary;
+  };
+
+  std::array<Entry, kByteCodecCount> _entries;
+};
+
 template<typename Codec>
 class BlobEncoder {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  explicit BlobEncoder(StringTuning& tuning)
-    : _tuning{tuning}, _history{tuning.history[static_cast<size_t>(kCodec)]} {}
+  explicit BlobEncoder(StringTuning& tuning, TrainedDictionaries& dictionaries)
+    : _tuning{tuning},
+      _dictionaries{dictionaries},
+      _history{tuning.history[static_cast<size_t>(kCodec)]} {}
 
   void Begin(Shape shape, uint8_t level, FrameLayout layout) {
     _shape = shape;
@@ -85,7 +120,7 @@ class BlobEncoder {
     Close();
     if (_layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames) {
       Sizes();
-      _trained = _codec->Train(_frame, _sizes);
+      _trained = Train(rows.first_row, rows.row_count, _shape);
     }
     CompressRest();
     if (_trained && !Pays()) {
@@ -115,7 +150,7 @@ class BlobEncoder {
   std::string& Data() noexcept { return _data; }
 
   uint64_t Price(const Profile& p, uint8_t level, FrameLayout layout,
-                 uint64_t seed) {
+                 uint64_t begin) {
     Configure(level, layout);
     for (uint64_t i = 0; i < p.entries.size(); ++i) {
       Add(i, p.entries[i].size());
@@ -131,7 +166,7 @@ class BlobEncoder {
           _frame.append(entry);
         }
         Sizes();
-        _trained = _codec->Train(_frame, _sizes);
+        _trained = Train(begin, p.rows, p.shape);
       }
       const auto frame = [&](size_t i) {
         return whole ? Slice(i) : Assemble(p.entries, _spans[i]);
@@ -147,7 +182,7 @@ class BlobEncoder {
       }
       uint64_t sampled_raw = 0;
       uint64_t sampled = 0;
-      Sample([&](size_t j) { return Jitter(seed, j); },
+      Sample([&](size_t j) { return Jitter(begin, j); },
              [&](size_t i) {
                const auto raw = frame(i);
                sampled_raw += raw.size();
@@ -172,6 +207,16 @@ class BlobEncoder {
     size_t frame;
     size_t first;
   };
+
+  bool Train(uint64_t first_row, uint64_t rows, Shape shape) {
+    if (const auto* dictionary =
+          _dictionaries.Find(kCodec, first_row, rows, shape)) {
+      return _codec->Adopt(*dictionary);
+    }
+    const bool trained = _codec->Train(_frame, _sizes);
+    _dictionaries.Store(kCodec, first_row, rows, shape, _codec->Dictionary());
+    return trained;
+  }
 
   struct Span {
     uint64_t first = 0;
@@ -390,6 +435,7 @@ class BlobEncoder {
   }
 
   const StringTuning& _tuning;
+  TrainedDictionaries& _dictionaries;
   RatioHistory* _history;
   std::optional<typename Codec::Compressor> _codec;
   std::optional<typename Codec::Compressor> _probe;

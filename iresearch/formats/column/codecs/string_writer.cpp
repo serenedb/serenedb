@@ -509,7 +509,7 @@ class SegmentWriter {
       if constexpr (Sorted(Encoder::kCodec)) {
         slot.emplace(_tuning, _params.segment_target);
       } else {
-        slot.emplace(_tuning);
+        slot.emplace(_tuning, _dictionaries);
       }
     }
     return *slot;
@@ -532,6 +532,7 @@ class SegmentWriter {
   StringTuning& _tuning;
   DedupScratch _dedup;
   SegmentBuilder _builder;
+  text::TrainedDictionaries _dictionaries;
   LeafEncoders _encoders;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;

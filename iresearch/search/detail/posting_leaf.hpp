@@ -34,6 +34,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
+#include "iresearch/search/detail/landings.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -563,34 +564,17 @@ class PostingLeaf {
         (in[n - 1] - in[0]) / (n - 1) <= _last - _cursor.base) {
       return 0;
     }
-    const auto& index = _walk.Index();
-    const auto size = index.Size();
-    auto block = _walk.NextBlock(_left_in_list);
-    doc_id_t upper = _last;
-    uint32_t landings = 0;
-    for (uint32_t i = 0; i != n && landings != kBlock; ++i) {
-      if (in[i] <= upper) {
-        continue;
-      }
-      const auto next = block;
-      if (block == size || index.Last(block) < in[i]) {
-        block = index.Find(block, in[i]);
-      }
-      if (block == size) {
-        break;
-      }
-      blocks[landings++] = block;
-      if constexpr (InputType::kVolatileAlways) {
-        if (block != next) {
-          const auto* const at = In().At(_walk.BlockStart(block));
+    const auto block = _walk.NextBlock(_left_in_list);
+    return PlanLandings(
+      _walk.Index(),
+      {.block = block, .next = block, .upper = _last, .cap = kBlock}, in, n,
+      blocks, [&](uint32_t landed) IRS_FORCE_INLINE {
+        if constexpr (InputType::kVolatileAlways) {
+          const auto* const at = In().At(_walk.BlockStart(landed));
           __builtin_prefetch(at, 0, 2);
           __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
         }
-      }
-      upper = index.Last(block);
-      ++block;
-    }
-    return landings;
+      });
   }
 
   template<typename Read>

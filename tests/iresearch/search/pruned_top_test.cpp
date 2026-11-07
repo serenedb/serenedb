@@ -24,11 +24,13 @@
 #include <absl/strings/str_split.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <duckdb/common/allocator.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/exclusion_of.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
@@ -629,6 +631,104 @@ TEST_P(PrunedTopTest, unions_merging_by_max) {
         << doc << " " << it->second << " " << score;
     }
     CheckRanking(filter);
+  }
+}
+
+TEST_P(PrunedTopTest, nested_groups_score_as_their_parts) {
+  Build();
+  using Scores = absl::flat_hash_map<doc_id_t, irs::score_t>;
+  const auto alone = [&](irs::Filter::ptr leaf) {
+    irs::BooleanFilter filter;
+    filter.Add(std::move(leaf), irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
+    return Matches(filter);
+  };
+  const auto term = [&](std::string_view value) {
+    irs::BooleanFilter filter;
+    filter.Add(Clause(value), irs::Occur::Should);
+    filter.SetMinShouldMatch(1);
+    return Matches(filter);
+  };
+  const auto both = [](const Scores& lhs, const Scores& rhs) {
+    Scores out;
+    for (const auto& [doc, score] : lhs) {
+      if (const auto it = rhs.find(doc); it != rhs.end()) {
+        out.emplace(doc, score + it->second);
+      }
+    }
+    return out;
+  };
+  const auto either = [](Scores lhs, const Scores& rhs,
+                         irs::ScoreMergeType merge) {
+    for (const auto& [doc, score] : rhs) {
+      auto [it, fresh] = lhs.try_emplace(doc, score);
+      if (!fresh) {
+        it->second = merge == irs::ScoreMergeType::Max
+                       ? std::max(it->second, score)
+                       : it->second + score;
+      }
+    }
+    return lhs;
+  };
+  const auto group = [](irs::Occur occur, std::string_view a,
+                        std::string_view b, irs::ScoreMergeType merge) {
+    auto filter = std::make_unique<irs::BooleanFilter>();
+    filter->Add(Clause(a), occur);
+    filter->Add(Clause(b), occur);
+    if (occur == irs::Occur::Should) {
+      filter->SetMinShouldMatch(1);
+    }
+    filter->SetMergeType(merge);
+    return filter;
+  };
+  const auto check = [&](const irs::Filter& filter, const Scores& expected) {
+    const auto matches = Matches(filter);
+    ASSERT_EQ(expected.size(), matches.size());
+    for (const auto& [doc, score] : matches) {
+      const auto it = expected.find(doc);
+      ASSERT_NE(it, expected.end()) << doc;
+      ASSERT_TRUE(AlmostEqual(it->second, score))
+        << doc << " " << it->second << " " << score;
+    }
+    CheckRanking(filter);
+  };
+  for (const auto& [x, a, b] : std::vector<std::array<std::string_view, 3>>{
+         {"mid", "dense", "half"},
+         {"sparse", "common", "dense"},
+         {"doc", "single", "edge"},
+       }) {
+    SCOPED_TRACE(absl::StrCat(x, " ", a, " ", b));
+    const auto xs = term(x);
+    const auto as = term(a);
+    const auto bs = term(b);
+    {
+      irs::BooleanFilter filter;
+      filter.Add(Clause(x), irs::Occur::Should);
+      filter.Add(group(irs::Occur::Must, a, b, irs::ScoreMergeType::Sum),
+                 irs::Occur::Should);
+      filter.SetMinShouldMatch(1);
+      check(filter, either(xs, both(as, bs), irs::ScoreMergeType::Sum));
+    }
+    for (const auto merge :
+         {irs::ScoreMergeType::Sum, irs::ScoreMergeType::Max}) {
+      irs::BooleanFilter filter;
+      filter.Add(Clause(x), irs::Occur::Must);
+      filter.Add(group(irs::Occur::Should, a, b, merge), irs::Occur::Must);
+      check(filter, both(xs, either(as, bs, merge)));
+    }
+  }
+  {
+    SCOPED_TRACE("mid (all dense)");
+    irs::BooleanFilter filter;
+    filter.Add(Clause("mid"), irs::Occur::Must);
+    auto inner = std::make_unique<irs::BooleanFilter>();
+    inner->Add(std::make_unique<irs::All>(), irs::Occur::Should);
+    inner->Add(Clause("dense"), irs::Occur::Should);
+    inner->SetMinShouldMatch(1);
+    filter.Add(std::move(inner), irs::Occur::Must);
+    check(filter,
+          both(term("mid"), either(alone(std::make_unique<irs::All>()),
+                                   term("dense"), irs::ScoreMergeType::Sum)));
   }
 }
 

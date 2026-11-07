@@ -161,8 +161,6 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
 }
 
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
-  const auto* scale = ScaleOf(ctx);
-
   if (IsBM1()) {
     return MakeScaleScore(ctx, ctx.boost * stats_cast(ctx.stats)->idf);
   }
@@ -178,6 +176,7 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   }
 
   auto* stats = stats_cast(ctx.stats);
+  const auto* scale = ScaleOf(ctx);
 
   return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
     if (IsBM15()) {

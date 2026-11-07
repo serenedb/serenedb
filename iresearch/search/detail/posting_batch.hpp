@@ -135,8 +135,6 @@ class PostingBatch {
 
   doc_id_t Last() const noexcept { return _last; }
 
-  uint32_t Left() const noexcept { return _left_in_list; }
-
   bool Step(doc_id_t live) {
     if (live - _last <= kBlock || !_walk.Armed()) {
       return true;

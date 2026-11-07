@@ -36,10 +36,10 @@ class Walk : public Root {
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
     uint32_t n = 0;
-    auto doc = _node.Seek(min);
+    auto doc = lead::SeekBelow(_node, min, max);
     while (doc < max) {
       out[n++] = doc;
-      doc = _node.Next();
+      doc = lead::NextBelow(_node, max);
     }
     return n;
   }

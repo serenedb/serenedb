@@ -26,12 +26,12 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/detail/sparse_cursor.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/hits/boolean_window.hpp"
 #include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/hits/posting.hpp"
 #include "iresearch/search/hits/walk.hpp"
+#include "iresearch/search/lead/boolean_sparse.hpp"
 #include "iresearch/search/lead/two_phase.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
@@ -90,9 +90,10 @@ struct Family {
            typename... Args>
   static Result MakeSparse(const Context& ctx, ScoreMergeType,
                            irs::detail::Scored score, Args&&... args) {
-    return MakeShape<
-      Walk, irs::detail::SparseCursor<Lead, Probes, Optional, Excludes>>(
-      ctx, ctx.fetcher, score, std::forward<Args>(args)...);
+    return MakeShape<Walk, lead::BooleanSparse<Lead, Probes, Optional, Excludes,
+                                               irs::detail::Scored>>(
+      ctx, ctx.fetcher, std::piecewise_construct, std::forward<Args>(args)...,
+      score);
   }
 
   template<typename Input, typename Exclude, typename ExcludeArgs>

@@ -51,18 +51,12 @@ class PostingLeadScored : public PostingLeaf<InputType, kCursorScoredShape> {
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const SubReader& segment, const TermReader& field,
                const ScoreArgs& args) {
-    SDB_ASSERT(meta.docs_count != 0);
     SDB_ASSERT(FeaturesHaveFreq(field.meta().index_features));
     this->SetRecipe(segment, field, args);
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, field.meta().index_features,
+                        field.HasScoreBounds())) {
       this->SetSingle(meta);
-      return;
     }
-
-    const auto bounds = field.HasScoreBounds();
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, field.meta().index_features, bounds);
   }
 
   ScoreFunction PrepareScore() { return this->MakeDeferredScore(); }

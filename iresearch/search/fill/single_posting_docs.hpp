@@ -37,17 +37,11 @@ class SingleDocs {
     return FillOrImpl(min, max, mask, [](size_t) noexcept {});
   }
 
-  doc_id_t FillSum(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
+  template<ScoreMergeType M>
+  doc_id_t FillMerge(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                     score_t* IRS_RESTRICT scores, score_t constant) {
     return FillOrImpl(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-      Merge<ScoreMergeType::Sum>(scores[offset], constant);
-    });
-  }
-
-  doc_id_t FillMax(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT scores, score_t constant) {
-    return FillOrImpl(min, max, mask, [=](size_t offset) IRS_FORCE_INLINE {
-      Merge<ScoreMergeType::Max>(scores[offset], constant);
+      Merge<M>(scores[offset], constant);
     });
   }
 

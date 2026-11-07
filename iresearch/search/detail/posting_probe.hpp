@@ -54,16 +54,10 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                IndexFeatures layout, bool bounds) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(FeaturesHaveFreq(layout));
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, layout, bounds)) {
       _doc = _last = doc_limits::min() + meta.doc_delta;
-      return;
     }
-
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, layout, bounds);
   }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {

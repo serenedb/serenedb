@@ -21,6 +21,7 @@
 #pragma once
 
 #include <fsst.h>
+#include <fsst12.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -34,26 +35,34 @@ namespace irs::codecs {
 
 inline constexpr size_t kFsstMaxExpansion = 8;
 
-struct FsstFree {
-  void operator()(duckdb_fsst_encoder_t* encoder) const noexcept {
-    duckdb_fsst_destroy(encoder);
-  }
+enum class FsstCodes : uint8_t {
+  Byte,
+  Twelve,
 };
 
 class FsstEncoder {
  public:
+  FsstEncoder() noexcept : FsstEncoder{FsstCodes::Byte} {}
+  explicit FsstEncoder(FsstCodes codes) noexcept : _codes{codes} {}
+
   void Encode(std::span<const std::string_view> strings, std::string& out,
               std::vector<uint32_t>& lengths);
 
   std::string_view SymbolTable() const noexcept {
-    return {reinterpret_cast<const char*>(_table), _table_size};
+    return {reinterpret_cast<const char*>(_table.data()), _table_size};
   }
 
   void Reset() noexcept;
 
  private:
-  std::unique_ptr<duckdb_fsst_encoder_t, FsstFree> _encoder;
-  unsigned char _table[sizeof(duckdb_fsst_decoder_t)];
+  struct Free {
+    FsstCodes codes;
+    void operator()(void** encoder) const noexcept;
+  };
+
+  FsstCodes _codes;
+  std::unique_ptr<void*, Free> _encoder{nullptr, Free{_codes}};
+  std::vector<unsigned char> _table;
   size_t _table_size = 0;
   std::vector<size_t> _in_lengths;
   std::vector<unsigned char*> _in_ptrs;
@@ -63,7 +72,11 @@ class FsstEncoder {
 
 class FsstDecoder {
  public:
-  bool Import(std::string_view table) noexcept;
+  bool Import(std::string_view table) noexcept {
+    return duckdb_fsst_import(
+             &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
+             table.size()) == table.size();
+  }
 
   size_t Decode(const char* in, size_t in_length, char* out,
                 size_t capacity) const noexcept {
@@ -75,6 +88,25 @@ class FsstDecoder {
 
  private:
   duckdb_fsst_decoder_t _decoder{};
+};
+
+class Fsst12Decoder {
+ public:
+  bool Import(std::string_view table) noexcept {
+    return duckdb_fsst12_import(
+             &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
+             table.size()) == table.size();
+  }
+
+  size_t Decode(const char* in, size_t in_length, char* out,
+                size_t capacity) const noexcept {
+    return duckdb_fsst12_decompress(
+      &_decoder, in_length, reinterpret_cast<const unsigned char*>(in),
+      capacity, reinterpret_cast<unsigned char*>(out));
+  }
+
+ private:
+  duckdb_fsst12_decoder_t _decoder{};
 };
 
 }  // namespace irs::codecs

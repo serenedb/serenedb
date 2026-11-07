@@ -53,6 +53,7 @@ using duckdb::string_t;
 using text::BlobEncoder;
 using text::Config;
 using text::DedupScratch;
+using text::Fsst12ChainEncoder;
 using text::FsstChainEncoder;
 using text::FsstPlusEncoder;
 using text::kDriftMinFraction;
@@ -141,6 +142,10 @@ class SegmentWriter {
           if (auto& onpair =
                 std::get<std::optional<OnPairEncoder>>(_encoders)) {
             onpair->Retrain();
+          }
+          if (auto& fsst =
+                std::get<std::optional<Fsst12ChainEncoder>>(_encoders)) {
+            fsst->Retrain();
           }
         }
         if (scheduled || drift) {
@@ -486,6 +491,8 @@ class SegmentWriter {
         return f(Get<FsstPlusEncoder>());
       case ByteCodec::OnPair:
         return f(Get<OnPairEncoder>());
+      case ByteCodec::Fsst12:
+        return f(Get<Fsst12ChainEncoder>());
     }
     SDB_UNREACHABLE();
   }
@@ -523,7 +530,7 @@ class SegmentWriter {
   std::tuple<std::optional<BlobEncoder<Lz4>>, std::optional<BlobEncoder<Lz4Hc>>,
              std::optional<BlobEncoder<Zstd>>, std::optional<BlobEncoder<Zxc>>,
              std::optional<FsstChainEncoder>, std::optional<FsstPlusEncoder>,
-             std::optional<OnPairEncoder>>
+             std::optional<OnPairEncoder>, std::optional<Fsst12ChainEncoder>>
     _encoders;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;

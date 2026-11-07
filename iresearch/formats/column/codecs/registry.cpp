@@ -77,6 +77,12 @@ constexpr TextCodec kTextCodecs[] = {
   {CompressionType::COMPRESSION_COL_ONPAIR,
    {Shape::Plain, ByteCodec::OnPair},
    OnPairFunction},
+  {CompressionType::COMPRESSION_COL_DICT_FSST12,
+   {Shape::Dedup, ByteCodec::Fsst12},
+   DictFsst12Function},
+  {CompressionType::COMPRESSION_COL_FSST12,
+   {Shape::Plain, ByteCodec::Fsst12},
+   Fsst12Function},
   {CompressionType::COMPRESSION_ZSTD, {Shape::Plain, ByteCodec::Zstd}, nullptr},
   {CompressionType::COMPRESSION_DICT_FSST,
    {Shape::Dedup, ByteCodec::Fsst},
@@ -135,6 +141,7 @@ uint8_t MaxLevel(CompressionType type) {
     case ByteCodec::Fsst:
     case ByteCodec::FsstPlus:
     case ByteCodec::OnPair:
+    case ByteCodec::Fsst12:
       return 0;
   }
   return 0;

@@ -412,6 +412,8 @@ const std::vector<LevelArm>& EveryCodec() {
     {duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, {0}},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, {0}},
     {duckdb::CompressionType::COMPRESSION_COL_ONPAIR, {0}},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, {0}},
+    {duckdb::CompressionType::COMPRESSION_COL_FSST12, {0}},
     {duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, {0}},
     {duckdb::CompressionType::COMPRESSION_ZSTD, {0, 1, 22}},
     {duckdb::CompressionType::COMPRESSION_AUTO, {0}},
@@ -460,6 +462,10 @@ TEST_F(ColCodecsTest, DictFsstSortedKeys) {
   RoundTrip(duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, {}, 30000,
             8192, value);
   RoundTrip(duckdb::CompressionType::COMPRESSION_COL_ONPAIR, {}, 30000, 8192,
+            value);
+  RoundTrip(duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, {}, 30000,
+            8192, value);
+  RoundTrip(duckdb::CompressionType::COMPRESSION_COL_FSST12, {}, 30000, 8192,
             value);
 }
 
@@ -600,6 +606,7 @@ TEST_F(ColCodecsTest, PlainSparseGatherThenScan) {
                            duckdb::CompressionType::COMPRESSION_FSST,
                            duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS,
                            duckdb::CompressionType::COMPRESSION_COL_ONPAIR,
+                           duckdb::CompressionType::COMPRESSION_COL_FSST12,
                            duckdb::CompressionType::COMPRESSION_ZXC}) {
     irs::MemoryDirectory dir{};
     Write(dir, codec, {.segment_target = 64 * 1024}, 6000, 2048,
@@ -1048,9 +1055,10 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     {Shape::Dedup, ByteCodec::Fsst},     {Shape::Dedup, ByteCodec::Lz4},
     {Shape::Dedup, ByteCodec::Zstd},     {Shape::Dedup, ByteCodec::Zxc},
     {Shape::Dedup, ByteCodec::FsstPlus}, {Shape::Dedup, ByteCodec::OnPair},
-    {Shape::Plain, ByteCodec::Fsst},     {Shape::Plain, ByteCodec::Lz4},
-    {Shape::Plain, ByteCodec::Zstd},     {Shape::Plain, ByteCodec::Zxc},
-    {Shape::Plain, ByteCodec::FsstPlus}, {Shape::Plain, ByteCodec::OnPair},
+    {Shape::Dedup, ByteCodec::Fsst12},   {Shape::Plain, ByteCodec::Fsst},
+    {Shape::Plain, ByteCodec::Lz4},      {Shape::Plain, ByteCodec::Zstd},
+    {Shape::Plain, ByteCodec::Zxc},      {Shape::Plain, ByteCodec::FsstPlus},
+    {Shape::Plain, ByteCodec::OnPair},   {Shape::Plain, ByteCodec::Fsst12},
   };
   const auto chunks = Chunks(20000, kWordSoup);
   for (const auto choice : choices) {
@@ -1345,6 +1353,8 @@ TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
         case CompressionType::COMPRESSION_COL_DICT_FSST_PLUS:
         case CompressionType::COMPRESSION_COL_ONPAIR:
         case CompressionType::COMPRESSION_COL_DICT_ONPAIR:
+        case CompressionType::COMPRESSION_COL_FSST12:
+        case CompressionType::COMPRESSION_COL_DICT_FSST12:
           EXPECT_EQ(level, "0") << label;
           break;
         default:
@@ -1799,7 +1809,8 @@ TEST_F(ColCodecsTest, SortedDictionaryFiltersMatchTheValues) {
   for (const auto codec :
        {duckdb::CompressionType::COMPRESSION_DICT_FSST,
         duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS,
-        duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR}) {
+        duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR,
+        duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12}) {
     SCOPED_TRACE(duckdb::CompressionTypeToString(codec));
     irs::MemoryDirectory dir{};
     Write(dir, codec, {}, kRows, 8192, value);
@@ -2331,6 +2342,8 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, "FSST_PLUS"},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, "DICT_ONPAIR"},
     {duckdb::CompressionType::COMPRESSION_COL_ONPAIR, "ONPAIR"},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, "DICT_FSST12"},
+    {duckdb::CompressionType::COMPRESSION_COL_FSST12, "FSST12"},
   };
   EXPECT_EQ(
     static_cast<size_t>(duckdb::CompressionType::COMPRESSION_SERENEDB_COUNT) -
@@ -2369,6 +2382,8 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {"fsst_plus", duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS},
     {"dict_onpair", duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR},
     {"onpair", duckdb::CompressionType::COMPRESSION_COL_ONPAIR},
+    {"dict_fsst12", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12},
+    {"fsst12", duckdb::CompressionType::COMPRESSION_COL_FSST12},
   };
   for (const auto& [name, type] : parsed) {
     SCOPED_TRACE(name);
@@ -2758,6 +2773,88 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
     GTEST_FLAG_SET(death_test_style, "threadsafe");
     EXPECT_DEATH(scan(), c.error);
     EXPECT_DEATH(fetch(), c.error);
+#else
+    EXPECT_ANY_THROW(scan());
+    EXPECT_ANY_THROW(fetch());
+#endif
+  }
+}
+
+TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
+  struct Case {
+    std::string_view name;
+    void (*corrupt)(irs::codecs::Header&, duckdb::data_ptr_t);
+  };
+  const Case cases[] = {
+    {"version",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       duckdb::Store<uint64_t>(0, block + h.off_symtab);
+     }},
+    {"symbol count",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       duckdb::Store<uint16_t>(0xFFFF, block + h.off_symtab + 8);
+     }},
+    {"symbol length",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       block[h.off_symtab + 24] = 9;
+     }},
+  };
+  const Value values = [](uint64_t g) -> std::optional<std::string> {
+    return "https://example.org/users/" + std::to_string(g % 5000) + "/profile";
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    const auto path =
+      test_dir() / ("col_codecs_corrupt_fsst12_" + std::string{c.name});
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      irs::MMapDirectory dir{path};
+      Write(dir, duckdb::CompressionType::COMPRESSION_COL_FSST12, {}, 20000,
+            DEFAULT_ROW_GROUP_SIZE, values);
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      offset = col->DataBlocks().front().file_offset;
+      size = col->DataBlocks().front().byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_LE(offset + size, bytes.size());
+    auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+    auto h = irs::codecs::Header::Parse(block, size);
+    ASSERT_EQ(h.codec, irs::codecs::ByteCodec::Fsst12);
+    ASSERT_GT(h.symtab_size, 24u);
+    c.corrupt(h, block);
+    duckdb::Store(h, block);
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    irs::MMapDirectory dir{path};
+    const auto scan = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+    };
+    const auto fetch = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      const auto* col = r.Column(kField);
+      irs::ColumnReader::PointReader cursor{r, *col};
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+      cursor.FetchRow(7, out, 0);
+    };
+#ifdef SDB_DEV
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(scan(), "corrupted symbol table");
+    EXPECT_DEATH(fetch(), "corrupted symbol table");
 #else
     EXPECT_ANY_THROW(scan());
     EXPECT_ANY_THROW(fetch());

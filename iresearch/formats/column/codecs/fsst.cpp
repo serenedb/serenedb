@@ -146,6 +146,28 @@ const duckdb::CompressionFunction& DictFsstFunction() {
   return kFunction;
 }
 
+const duckdb::CompressionFunction& Fsst12Function() {
+  static const auto kFunction =
+    text::StringFunction<text::PlainScan<text::Fsst12Leaf>>(
+      duckdb::CompressionType::COMPRESSION_COL_FSST12);
+  return kFunction;
+}
+
+const duckdb::CompressionFunction& DictFsst12Function() {
+  static const auto kFunction =
+    text::StringFunction<text::DictionaryScan<text::Fsst12Leaf>>(
+      duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12);
+  return kFunction;
+}
+
+void FsstEncoder::Free::operator()(void** encoder) const noexcept {
+  if (codes == FsstCodes::Byte) {
+    duckdb_fsst_destroy(encoder);
+  } else {
+    duckdb_fsst12_destroy(encoder);
+  }
+}
+
 void FsstEncoder::Reset() noexcept {
   _encoder.reset();
   _table_size = 0;
@@ -168,11 +190,18 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
       reinterpret_cast<unsigned char*>(const_cast<char*>(strings[i].data()));
     total += strings[i].size();
   }
+  const bool byte = _codes == FsstCodes::Byte;
   if (!_encoder) {
     _encoder.reset(
-      duckdb_fsst_create(n, _in_lengths.data(), _in_ptrs.data(), 0));
+      byte ? duckdb_fsst_create(n, _in_lengths.data(), _in_ptrs.data(), 0)
+           : duckdb_fsst12_create(
+               n, _in_lengths.data(),
+               const_cast<const unsigned char**>(_in_ptrs.data()), 0));
     SDB_ENSURE(_encoder, "fsst: cannot build a symbol table");
-    _table_size = duckdb_fsst_export(_encoder.get(), _table);
+    _table.resize(byte ? sizeof(duckdb_fsst_decoder_t)
+                       : sizeof(duckdb_fsst12_decoder_t));
+    _table_size = byte ? duckdb_fsst_export(_encoder.get(), _table.data())
+                       : duckdb_fsst12_export(_encoder.get(), _table.data());
   }
 
   _out_lengths.resize(n);
@@ -180,10 +209,14 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
   lengths.resize(n);
   size_t done = 0;
   out.resize_and_overwrite(2 * total + 8, [&](char* buf, size_t size) {
-    done = duckdb_fsst_compress(_encoder.get(), n, _in_lengths.data(),
-                                _in_ptrs.data(), size,
-                                reinterpret_cast<unsigned char*>(buf),
-                                _out_lengths.data(), _out_ptrs.data());
+    auto* output = reinterpret_cast<unsigned char*>(buf);
+    done = byte ? duckdb_fsst_compress(_encoder.get(), n, _in_lengths.data(),
+                                       _in_ptrs.data(), size, output,
+                                       _out_lengths.data(), _out_ptrs.data())
+                : duckdb_fsst12_compress(
+                    _encoder.get(), n, _in_lengths.data(),
+                    const_cast<const unsigned char**>(_in_ptrs.data()), size,
+                    output, _out_lengths.data(), _out_ptrs.data());
     size_t used = 0;
     for (size_t i = 0; i < done; ++i) {
       lengths[i] = static_cast<uint32_t>(_out_lengths[i]);
@@ -192,12 +225,6 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
     return used;
   });
   SDB_ENSURE(done == n, "fsst: compression ran out of space");
-}
-
-bool FsstDecoder::Import(std::string_view table) noexcept {
-  return duckdb_fsst_import(
-           &_decoder, reinterpret_cast<const unsigned char*>(table.data()),
-           table.size()) == table.size();
 }
 
 }  // namespace irs::codecs

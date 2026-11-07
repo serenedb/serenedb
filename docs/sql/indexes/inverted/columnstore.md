@@ -28,6 +28,8 @@ A column's codec is either picked automatically (`auto`, the default: each segme
 | `fsst_plus` | text | one entry per row, a prefix shared by neighbouring rows stored once, FSST-encoded; reading one row decodes only that row |
 | `dict_onpair` | text | sorted dictionary, each entry stored as codes for frequent substrings of up to 16 bytes learned per segment; reading one entry decodes only that entry |
 | `onpair` | text | one entry per row, each row stored as codes for frequent substrings of up to 16 bytes learned per segment; reading one row decodes only that row |
+| `dict_fsst12` | text | sorted dictionary, front-coded, encoded with FSST's 12-bit variant: up to 4096 symbols of up to 8 bytes instead of 255 |
+| `fsst12` | text | one entry per row, front-coded against the previous row, encoded with FSST's 12-bit variant |
 | `dict_lz4` | text | dictionary, lz4 over the dictionary bytes |
 | `dict_zstd` | text | dictionary, zstd over the dictionary bytes |
 | `lz4` | text | one entry per row, lz4 over the row bytes, for long text with few repeats |
@@ -64,7 +66,7 @@ A refresh stores the transformed values as they are or compressed with `lz4`. A 
 
 ## Choosing a codec
 
-Name the codec on the column with `USING COMPRESSION`, optionally with a level in parentheses, as in `USING COMPRESSION zstd(compression_level = 9)`. A named codec is used as named: it is not measured against other codecs, and without a level it runs at its default level (1 for `lz4` and `zstd`, 3 for `zxc`). `lz4` and `dict_lz4` take levels 1 to 12, `zstd` and `dict_zstd` 1 to 22, `zxc` and `dict_zxc` 1 to 7; `fsst`, `dict_fsst`, `fsst_plus`, `dict_fsst_plus`, `onpair` and `dict_onpair` take none. A `zstd` frame decodes several times slower than an `fsst` or `lz4` one, which shows on point lookups and cold scans; `zxc` reads like `fsst` at levels 3 to 5 and trades read and write speed for size at 6 and 7.
+Name the codec on the column with `USING COMPRESSION`, optionally with a level in parentheses, as in `USING COMPRESSION zstd(compression_level = 9)`. A named codec is used as named: it is not measured against other codecs, and without a level it runs at its default level (1 for `lz4` and `zstd`, 3 for `zxc`). `lz4` and `dict_lz4` take levels 1 to 12, `zstd` and `dict_zstd` 1 to 22, `zxc` and `dict_zxc` 1 to 7; `fsst`, `dict_fsst`, `fsst_plus`, `dict_fsst_plus`, `onpair`, `dict_onpair`, `fsst12` and `dict_fsst12` take none. A `zstd` frame decodes several times slower than an `fsst` or `lz4` one, which shows on point lookups and cold scans; `zxc` reads like `fsst` at levels 3 to 5 and trades read and write speed for size at 6 and 7.
 
 <SqlLogicTest id="sql/indexes/inverted/columnstore/example_001" />
 

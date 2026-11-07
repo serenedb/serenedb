@@ -203,6 +203,8 @@ constexpr ColArm kColArms[] = {
   {"fsst_plus", duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, 0},
   {"dict_onpair", duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, 0},
   {"onpair", duckdb::CompressionType::COMPRESSION_COL_ONPAIR, 0},
+  {"dict_fsst12", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, 0},
+  {"fsst12", duckdb::CompressionType::COMPRESSION_COL_FSST12, 0},
   {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 0},
   {"dict_lz4_hc2", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 2},
   {"dict_lz4_hc4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 4},

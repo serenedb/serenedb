@@ -221,6 +221,7 @@ void Open(Data& data) {
     std::make_unique<irs::IdxReader>(fs, data.root, "segment", true, nullptr);
   data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
+    .db = db,
     .fs = fs,
     .root = data.root,
     .meta = kMeta,

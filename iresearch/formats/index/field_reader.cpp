@@ -32,6 +32,12 @@
 
 namespace irs::term_dict {
 
+FieldReader::~FieldReader() {
+  if (_reserved != 0) {
+    _buffers->FreeReservedMemory(_reserved);
+  }
+}
+
 bytes_view FieldReader::Load(uint64_t offset, uint64_t size) {
   if (_base) {
     return {_base + offset, size};
@@ -39,21 +45,32 @@ bytes_view FieldReader::Load(uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    copy.resize(size);
-    IndexInput{*_in}.ReadData(offset, copy.data(), size);
+    copy = _buffers->GetBufferAllocator().Allocate(size);
+    IndexInput{*_in}.ReadData(offset, copy.get(), size);
   }
-  SDB_ASSERT(copy.size() == size);
-  return copy;
+  SDB_ASSERT(copy.GetSize() == size);
+  return {copy.get(), size};
 }
 
 bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    copy.resize(size);
-    _pending.push_back({.offset = offset, .size = size, .data = copy.data()});
+    copy = _buffers->GetBufferAllocator().Allocate(size);
+    _pending.push_back({.offset = offset, .size = size, .data = copy.get()});
   }
-  return copy;
+  return {copy.get(), size};
+}
+
+uint64_t FieldReader::DecodedBytes() const noexcept {
+  uint64_t bytes = _spans.capacity() * sizeof(SpanningBlock) +
+                   SeparatorBytes(_separators) + _inline_pages.MemoryBytes() +
+                   _single_inline.capacity() +
+                   (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0);
+  for (const auto& reader : _keyed) {
+    bytes += reader.MemoryBytes();
+  }
+  return bytes;
 }
 
 const byte_type* FieldReader::CopyBlock(uint32_t block, uint64_t length) {
@@ -151,6 +168,7 @@ void FieldReader::prepare(const ReaderState& state) {
   }
 
   _base = _in->Span().data();
+  _buffers = &duckdb::BufferManager::GetBufferManager(state.db);
   const auto& heads = terms.fields;
   if (!heads.empty()) {
     Bind(terms);
@@ -194,6 +212,9 @@ void FieldReader::prepare(const ReaderState& state) {
     _single_inline.resize(_single_inline.size() + kSlack);
   }
   FillCopies();
+  const auto decoded = DecodedBytes();
+  _buffers->ReserveMemory(decoded);
+  _reserved = decoded;
 }
 
 const byte_type* FieldReader::KeepInline(bytes_view bytes) {

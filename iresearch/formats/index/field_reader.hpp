@@ -25,6 +25,8 @@
 
 #include <cstdint>
 #include <deque>
+#include <duckdb/common/allocator.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -47,6 +49,7 @@ namespace irs::term_dict {
 class FieldReader final {
  public:
   FieldReader() = default;
+  ~FieldReader();
 
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
@@ -102,6 +105,7 @@ class FieldReader final {
 
   void Bind(const TermsMeta& terms);
   void FillCopies();
+  uint64_t DecodedBytes() const noexcept;
 
   std::deque<TermReaderImpl> _keyed;
   std::deque<SingleTermReader> _singles;
@@ -114,7 +118,8 @@ class FieldReader final {
   std::vector<SpanningBlock> _spans;
   Separators _separators;
   InlinePages _inline_pages;
-  containers::NodeHashMap<uint64_t, bstring> _copies;
+  duckdb::BufferManager* _buffers = nullptr;
+  containers::NodeHashMap<uint64_t, duckdb::AllocatedData> _copies;
   std::vector<byte_type> _single_inline;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   const byte_type* _inline_region = nullptr;
@@ -122,6 +127,7 @@ class FieldReader final {
   uint64_t _inline_offset = 0;
   uint64_t _inline_size = 0;
   uint64_t _ranges_size = 0;
+  uint64_t _reserved = 0;
   uint32_t _block_count = 0;
   std::vector<PendingCopy> _pending;
 };

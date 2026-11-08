@@ -158,6 +158,10 @@ class TermReaderImpl final : public TermReader {
   }
   std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
   uint32_t RangePrefix() const noexcept { return _range_prefix; }
+  size_t MemoryBytes() const noexcept {
+    return _root.MemoryBytes() + (_prefixes ? _prefixes->MemoryBytes() : 0) +
+           _levels.capacity() * sizeof(RangeLevel);
+  }
   uint64_t InlineBegin() const noexcept;
   uint64_t InlineEnd() const noexcept;
   const byte_type* ResolveInline(uint64_t end, uint8_t size) const;

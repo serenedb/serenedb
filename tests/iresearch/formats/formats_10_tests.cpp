@@ -104,6 +104,7 @@ class Format10TestCase : public tests::FormatTestCase {
       meta.name = "segment_name";
 
       const irs::ReaderState state{
+        .db = dir->Db(),
         .fs = dir->Fs(),
         .root = dir->Root(),
         .meta = meta,
@@ -332,6 +333,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     meta.name = "segment_name";
 
     const irs::ReaderState state{
+      .db = dir().Db(),
       .fs = dir().Fs(),
       .root = dir().Root(),
       .meta = meta,
@@ -474,6 +476,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     meta.name = "segment_name";
 
     const irs::ReaderState state{
+      .db = dir().Db(),
       .fs = dir().Fs(),
       .root = dir().Root(),
       .meta = meta,
@@ -793,8 +796,11 @@ TEST_P(Format10TestCase, ires336) {
                             nullptr};
   irs::term_dict::FieldReader fr_obj;
   auto* fr = &fr_obj;
-  fr->prepare(irs::ReaderState{
-    .fs = dir->Fs(), .root = dir->Root(), .meta = meta, .idx = &idx_reader});
+  fr->prepare(irs::ReaderState{.db = dir->Db(),
+                               .fs = dir->Fs(),
+                               .root = dir->Root(),
+                               .meta = meta,
+                               .idx = &idx_reader});
 
   const auto fields = fr->fields(field_meta.id);
   ASSERT_EQ(1, fields.size());
@@ -997,6 +1003,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         meta.name = "segment_name";
 
         const irs::ReaderState state{
+          .db = dir->Db(),
           .fs = dir->Fs(),
           .root = dir->Root(),
           .meta = meta,
@@ -1132,7 +1139,8 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
     try {
       irs::PostingsReader reader;
       reader.prepare(
-        irs::ReaderState{.fs = dir->Fs(), .root = dir->Root(), .meta = meta},
+        irs::ReaderState{
+          .db = dir->Db(), .fs = dir->Fs(), .root = dir->Root(), .meta = meta},
         irs::IndexFeatures::None);
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);

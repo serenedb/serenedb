@@ -746,8 +746,11 @@ TEST_P(FormatTestCase, fields_read_write) {
     irs::IdxReader idx{dir().Fs(), dir().Root(), "segment_name", true, nullptr};
     irs::term_dict::FieldReader reader_obj;
     auto* reader = &reader_obj;
-    reader->prepare(irs::ReaderState{
-      .fs = dir().Fs(), .root = dir().Root(), .meta = meta, .idx = &idx});
+    reader->prepare(irs::ReaderState{.db = dir().Db(),
+                                     .fs = dir().Fs(),
+                                     .root = dir().Root(),
+                                     .meta = meta,
+                                     .idx = &idx});
     ASSERT_EQ(1, reader->size());
 
     // check terms

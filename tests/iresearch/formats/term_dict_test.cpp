@@ -24,6 +24,7 @@
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index/field_reader.hpp>
@@ -421,8 +422,11 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     _idx = std::make_unique<irs::IdxReader>(from.Fs(), from.Root(), kSegment,
                                             true, nullptr);
     _reader = std::make_unique<irs::term_dict::FieldReader>();
-    _reader->prepare(irs::ReaderState{
-      .fs = from.Fs(), .root = from.Root(), .meta = _meta, .idx = _idx.get()});
+    _reader->prepare(irs::ReaderState{.db = from.Db(),
+                                      .fs = from.Fs(),
+                                      .root = from.Root(),
+                                      .meta = _meta,
+                                      .idx = _idx.get()});
   }
 
   const irs::TermReader* Get(
@@ -1374,6 +1378,26 @@ TEST_P(TermDictTest, small_fields_are_copied_at_open) {
     }
     AssertField(impl, field.entries);
   }
+}
+
+TEST_P(TermDictTest, open_readers_count_against_the_memory_limit) {
+  const auto& buffers = duckdb::BufferManager::GetBufferManager(dir().Db());
+  const auto used = [&](duckdb::MemoryTag tag) {
+    return buffers.GetMemoryUsageInfo()[static_cast<size_t>(tag)].size;
+  };
+  const auto copies = used(duckdb::MemoryTag::ALLOCATOR);
+  const auto decoded = used(duckdb::MemoryTag::EXTENSION);
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries({Bytes("x"), Bytes("y"), Bytes("z")})},
+    {.id = 2, .entries = MakeEntries(Words(20000, 5))},
+  };
+  Write(fields);
+  EXPECT_LT(copies, used(duckdb::MemoryTag::ALLOCATOR));
+  EXPECT_LT(decoded, used(duckdb::MemoryTag::EXTENSION));
+  AssertField(Blocks(*Get(1)), fields[0].entries);
+  _reader.reset();
+  EXPECT_EQ(copies, used(duckdb::MemoryTag::ALLOCATOR));
+  EXPECT_EQ(decoded, used(duckdb::MemoryTag::EXTENSION));
 }
 
 TEST_P(TermDictTest, inline_starts_bound_each_block_postings) {

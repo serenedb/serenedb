@@ -23,6 +23,7 @@
 #pragma once
 
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <string_view>
 
 namespace irs {
@@ -31,6 +32,7 @@ class IdxReader;
 struct SegmentMeta;
 
 struct ReaderState {
+  duckdb::DatabaseInstance& db;
   duckdb::FileSystem& fs;
   std::string_view root;
   const SegmentMeta& meta;

@@ -158,6 +158,7 @@ SegmentReaderImpl::ColumnData::ColumnData(duckdb::DatabaseInstance& db,
                duckdb::MappedFileAccess::RANDOM},
     idx_reader{fs, root, meta.name, HasFile(meta, kIdxFormatExt), hnsw_bases} {
   field_reader.prepare(ReaderState{
+    .db = db,
     .fs = fs,
     .root = root,
     .meta = meta,

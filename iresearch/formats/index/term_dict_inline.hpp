@@ -39,6 +39,10 @@ class InlinePages {
               uint64_t size);
 
   Span Of(uint32_t block) const noexcept;
+  size_t MemoryBytes() const noexcept {
+    return (_ones.capacity() + _empty.capacity() + _samples.capacity()) *
+           sizeof(uint64_t);
+  }
 
  private:
   uint64_t Select(uint64_t rank) const noexcept;

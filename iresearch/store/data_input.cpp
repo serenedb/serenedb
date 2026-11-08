@@ -49,13 +49,20 @@ void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
     return;
   }
   constexpr uint64_t kChunk = uint64_t{64} << 20;
-  constexpr uint64_t kMappedAhead = 2 * kChunk;
+  constexpr uint64_t kAhead = 2 * kChunk;
   const auto start = in.Position();
+  const bool mapped = file->Contiguous();
+  if (mapped) {
+    file->Prefetch(start, std::min(count, kAhead));
+  }
   for (uint64_t done = 0; done < count;) {
-    const auto rest = count - done;
-    const auto n = std::min(rest, kChunk);
-    file->Prefetch(start + done,
-                   file->Contiguous() ? std::min(rest, kMappedAhead) : rest);
+    const auto n = std::min(count - done, kChunk);
+    if (!mapped) {
+      file->Prefetch(start + done, count - done);
+    } else if (done + kAhead < count) {
+      file->Prefetch(start + done + kAhead,
+                     std::min(count - done - kAhead, kChunk));
+    }
     in.ReadData(b + done, n);
     file->Evict(start + done, n);
     done += n;
@@ -173,6 +180,9 @@ uint64_t InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
 
 bool InputFile::Evicted(uint64_t offset, uint64_t size,
                         uint32_t& epoch) const noexcept {
+  if (!_paged) {
+    return false;
+  }
   if (Warm(offset, size) == size && !file_utils::PollResidency(size)) {
     return false;
   }

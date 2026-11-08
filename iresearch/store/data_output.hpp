@@ -44,7 +44,7 @@ class DataOutput {
   }
 
   IRS_FORCE_INLINE void WriteData(const byte_type* b, size_t size) {
-    if (size >= Remain()) [[unlikely]] {
+    if (size > Remain()) [[unlikely]] {
       return Overflow(b, size);
     }
     std::memcpy(_pos, b, size);

@@ -19,6 +19,9 @@ a PUT or a part up to 1 MiB against its own checksum, and a
 multipart upload created with the full-object type against the checksum its
 completion sends, which the checksums of its parts combine to. A mismatch is
 refused with BadDigest; CHECKSUM counts the checksums that matched.
+An upload whose X-Amz-Content-Sha256 is a SHA-256 must match its body, or
+it is refused with XAmzContentSHA256Mismatch; UNSIGNED_PAYLOAD counts the
+uploads sent with UNSIGNED-PAYLOAD and SIGNED_PAYLOAD those with a body hash.
 
 Run as a script, it serves until interrupted and answers on the `__admin`
 bucket: GET /__admin/stats returns the counters as JSON, POST /__admin/reset
@@ -247,6 +250,20 @@ class _Handler(Handler):
     def _bad_digest(self) -> None:
         self._xml(400, "<Error><Code>BadDigest</Code></Error>")
 
+    def _payload_matches(self, body: bytes) -> bool:
+        claimed = self.headers.get("x-amz-content-sha256", "")
+        if claimed == "UNSIGNED-PAYLOAD":
+            self.fake.count("UNSIGNED_PAYLOAD")
+            return True
+        if len(claimed) != 64:
+            return True
+        if body:
+            self.fake.count("SIGNED_PAYLOAD")
+        return claimed == hashlib.sha256(body).hexdigest()
+
+    def _payload_mismatch(self) -> None:
+        self._xml(400, "<Error><Code>XAmzContentSHA256Mismatch</Code></Error>")
+
     def _expired(self) -> bool:
         tokens = self.fake.session_tokens
         if tokens is None or self.headers.get("x-amz-security-token") in tokens:
@@ -448,6 +465,9 @@ class _Handler(Handler):
         if not matches:
             self._bad_digest()
             return
+        if not self._payload_matches(body):
+            self._payload_mismatch()
+            return
         obj = _Object(body)
         if not self._store(bucket, key, obj):
             self._xml(412, "<Error><Code>PreconditionFailed</Code></Error>")
@@ -472,6 +492,9 @@ class _Handler(Handler):
             matches, checksum = self._checksum(body)
             if not matches:
                 self._bad_digest()
+                return
+            if not self._payload_matches(body):
+                self._payload_mismatch()
                 return
             with self.fake.lock:
                 upload = self.fake.uploads.get(upload_id)

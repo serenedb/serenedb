@@ -424,6 +424,26 @@ def test_large_index_files_upload_parts_at_once(tmp_path: Path) -> None:
     assert fake.requests["PUT_PART"] > 2, fake.requests
     assert fake.max_parts_in_flight > 1, fake.requests
     assert fake.requests["CHECKSUM"] > fake.requests["COMPLETE_UPLOAD"] > 0, fake.requests
+    assert fake.requests["UNSIGNED_PAYLOAD"] >= fake.requests["PUT_PART"], fake.requests
+    assert fake.requests["SIGNED_PAYLOAD"] == 0, fake.requests
+
+
+def test_uploads_without_a_checksum_send_their_body_hash(tmp_path: Path) -> None:
+    location = f"s3://bucket/hashed-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL s3_upload_checksum = false")
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            assert _matches(server) == [1]
+        finally:
+            server.stop()
+    assert fake.requests["SIGNED_PAYLOAD"] > 0, fake.requests
+    assert fake.requests["UNSIGNED_PAYLOAD"] == 0, fake.requests
 
 
 def test_a_trickling_read_fails_by_its_deadline(tmp_path: Path) -> None:

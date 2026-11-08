@@ -28,7 +28,6 @@
 
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::term_dict {
@@ -38,7 +37,6 @@ constexpr uint32_t kLeafFanout = 64;
 constexpr uint32_t kFanout = 16;
 constexpr uint64_t kHeavyDocs = uint64_t{1} << 14;
 constexpr uint64_t kTopPieces = 16;
-constexpr byte_type kZeros[kSlack]{};
 
 uint32_t Load32(const byte_type* p, uint32_t i) noexcept {
   return absl::little_endian::Load32(p + uint64_t{i} * sizeof(uint32_t));
@@ -307,25 +305,45 @@ void RangeWriter::Write(bstring& region, size_t prefix,
   if (_height == 0) {
     return;
   }
-  BytesOutput out;
+  size_t size = kSlack;
   for (size_t level = 0; level != _height; ++level) {
     const auto& range = _levels[level];
     const size_t width = range.starts.size() / range.count;
-    counts.push_back(range.count);
-    for (uint32_t i = 0; i != range.count; ++i) {
-      out.WriteData(range.starts.data() + i * width + prefix, width - prefix);
-    }
-    for (const auto first : range.firsts) {
-      out.WriteU32(first);
-    }
-    out.WriteU32(0);
-    for (const auto end : range.ends) {
-      out.WriteU32(end);
-    }
-    out.WriteData(range.records.data(), range.records.size());
+    size += range.count * (width - prefix) +
+            sizeof(uint32_t) * (range.firsts.size() + 1 + range.ends.size()) +
+            range.records.size();
   }
-  out.WriteData(kZeros, kSlack);
-  region.append(out.Bytes());
+  const auto offset = region.size();
+  region.resize_and_overwrite(offset + size, [&](byte_type* data, size_t n) {
+    auto* p = data + offset;
+    const auto put = [&](const void* bytes, size_t count) {
+      std::memcpy(p, bytes, count);
+      p += count;
+    };
+    const auto put32 = [&](uint32_t value) {
+      value = absl::little_endian::FromHost(value);
+      put(&value, sizeof(value));
+    };
+    for (size_t level = 0; level != _height; ++level) {
+      const auto& range = _levels[level];
+      const size_t width = range.starts.size() / range.count;
+      counts.push_back(range.count);
+      for (uint32_t i = 0; i != range.count; ++i) {
+        put(range.starts.data() + i * width + prefix, width - prefix);
+      }
+      for (const auto first : range.firsts) {
+        put32(first);
+      }
+      put32(0);
+      for (const auto end : range.ends) {
+        put32(end);
+      }
+      put(range.records.data(), range.records.size());
+    }
+    std::memset(p, 0, kSlack);
+    SDB_ASSERT(p + kSlack == data + n);
+    return n;
+  });
 }
 
 void RangeWriter::Clear() noexcept {

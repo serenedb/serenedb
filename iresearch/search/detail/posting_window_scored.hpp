@@ -88,36 +88,12 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
                      score_t* IRS_RESTRICT window)
     requires(!Counts)
   {
-    SDB_ASSERT(min < max);
-    if (!this->Start(min, max)) {
-      return _doc;
-    }
-    const auto* const end = std::cend(_docs);
-    if (_left_in_leaf != 0) {
-      const auto* const begin = ScanNotBelow(end - _left_in_leaf, end, min);
-      const auto* const it = this->template ScoreMasked<MergeType>(
-        begin, end, min, max, mask, window);
-      _left_in_leaf = static_cast<uint32_t>(end - it);
-      if (it != end) {
-        return _doc = *it;
-      }
-    }
-    for (;;) {
-      if (_left_in_list == 0) {
-        return _doc = doc_limits::eof();
-      }
-      const auto len = std::min(_left_in_list, kBlock);
-      _left_in_list -= len;
-      if (!this->template ReadLeafBelow<false>(len, min)) {
-        continue;
-      }
-      const auto* const it = this->template ScoreMasked<MergeType>(
-        ScanNotBelow(end - len, end, min), end, min, max, mask, window);
-      if (it != end) {
-        _left_in_leaf = static_cast<uint32_t>(end - it);
-        return _doc = *it;
-      }
-    }
+    return WalkLeaves<false>(
+      min, max,
+      [&](const doc_id_t* begin, const doc_id_t* end, bool) IRS_FORCE_INLINE {
+        return this->template ScoreMasked<MergeType>(begin, end, min, max, mask,
+                                                     window);
+      });
   }
 
  private:
@@ -125,48 +101,52 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
                                 uint32_t* IRS_RESTRICT counts,
                                 uint64_t* IRS_RESTRICT mask,
                                 score_t* IRS_RESTRICT window) {
+    return WalkLeaves<true>(
+      min, max,
+      [&](const doc_id_t* begin, const doc_id_t* end, bool whole)
+        IRS_FORCE_INLINE -> const doc_id_t* {
+          if (whole) {
+            AddWhole<MergeType, kCounts>(begin, end, ScoresAt(begin), min,
+                                         counts, mask, window);
+            return end;
+          }
+          return AddUntil<MergeType, kCounts>(begin, end, ScoresAt(begin), min,
+                                              max, counts, mask, window);
+        });
+  }
+
+  template<bool Score, typename Range>
+  IRS_FORCE_INLINE doc_id_t WalkLeaves(doc_id_t min, doc_id_t max,
+                                       Range&& range) {
     SDB_ASSERT(min < max);
     if (!this->Start(min, max)) {
       return _doc;
     }
     const auto* const end = std::cend(_docs);
-
     if (_left_in_leaf != 0) {
       const auto* const begin = ScanNotBelow(end - _left_in_leaf, end, min);
-      if (begin == end) {
-        _left_in_leaf = 0;
-      } else if (_last >= max) {
-        const auto* const it = AddUntil<MergeType, kCounts>(
-          begin, end, ScoresAt(begin), min, max, counts, mask, window);
-        _left_in_leaf = static_cast<uint32_t>(end - it);
+      const auto* const it =
+        begin == end ? end : range(begin, end, _last < max);
+      _left_in_leaf = static_cast<uint32_t>(end - it);
+      if (it != end) {
         return _doc = *it;
-      } else {
-        AddWhole<MergeType, kCounts>(begin, end, ScoresAt(begin), min, counts,
-                                     mask, window);
-        _left_in_leaf = 0;
       }
     }
-
     for (;;) {
       if (_left_in_list == 0) {
         return _doc = doc_limits::eof();
       }
       const auto len = std::min(_left_in_list, kBlock);
       _left_in_list -= len;
-      if (!ReadLeafBelow(len, min)) {
+      if (!this->template ReadLeafBelow<Score>(len, min)) {
         continue;
       }
-
-      const auto* const begin = ScanNotBelow(end - len, end, min);
-      if (_last < max) {
-        AddWhole<MergeType, kCounts>(begin, end, ScoresAt(begin), min, counts,
-                                     mask, window);
-        continue;
+      const auto* const it =
+        range(ScanNotBelow(end - len, end, min), end, _last < max);
+      if (it != end) {
+        _left_in_leaf = static_cast<uint32_t>(end - it);
+        return _doc = *it;
       }
-      const auto* const it = AddUntil<MergeType, kCounts>(
-        begin, end, ScoresAt(begin), min, max, counts, mask, window);
-      _left_in_leaf = static_cast<uint32_t>(end - it);
-      return _doc = *it;
     }
   }
 };

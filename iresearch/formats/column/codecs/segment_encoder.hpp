@@ -88,7 +88,6 @@ class SegmentEncoder {
   StringTuning& _tuning;
   duckdb::BufferManager& _buffers;
   DedupScratch _dedup;
-  TrainedDictionaries _dictionaries;
   States _states;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;

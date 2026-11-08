@@ -70,11 +70,6 @@ bool Zstd::Compressor::Train(std::string_view frames,
   return Pack();
 }
 
-bool Zstd::Compressor::Adopt(std::string_view dictionary) {
-  _dictionary.assign(dictionary);
-  return Pack();
-}
-
 bool Zstd::Compressor::Pack() {
   _stored.clear();
   if (_dictionary.empty()) {

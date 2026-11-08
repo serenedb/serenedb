@@ -117,7 +117,7 @@ State& SegmentEncoder::Get(std::optional<State>& slot) {
     if constexpr (Sorted(State::kCodec)) {
       slot.emplace(_type, _dedup, _tuning, _params.segment_target);
     } else {
-      slot.emplace(_type, _dedup, _tuning, _dictionaries);
+      slot.emplace(_type, _dedup, _tuning);
     }
   }
   return *slot;

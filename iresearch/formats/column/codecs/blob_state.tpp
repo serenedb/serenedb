@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -44,38 +43,6 @@ inline constexpr size_t kPriceFrames = 8;
 inline constexpr size_t kLocalMinFrames = 8;
 inline constexpr uint64_t kLocalDictionaryPacking = 2;
 
-class TrainedDictionaries {
- public:
-  const std::string* Find(ByteCodec codec, uint64_t first_row, uint64_t rows,
-                          Shape shape) const noexcept {
-    const auto& entry = _entries[static_cast<size_t>(codec)];
-    if (entry.rows == 0 || entry.first_row != first_row || entry.rows != rows ||
-        entry.shape != shape) {
-      return nullptr;
-    }
-    return &entry.dictionary;
-  }
-
-  void Store(ByteCodec codec, uint64_t first_row, uint64_t rows, Shape shape,
-             std::string_view dictionary) {
-    auto& entry = _entries[static_cast<size_t>(codec)];
-    entry.first_row = first_row;
-    entry.rows = rows;
-    entry.shape = shape;
-    entry.dictionary.assign(dictionary);
-  }
-
- private:
-  struct Entry {
-    uint64_t first_row = 0;
-    uint64_t rows = 0;
-    Shape shape = Shape::Dedup;
-    std::string dictionary;
-  };
-
-  std::array<Entry, kByteCodecCount> _entries;
-};
-
 template<typename Codec>
 class BlobState {
  public:
@@ -83,9 +50,8 @@ class BlobState {
   static_assert(!Sorted(kCodec));
 
   BlobState(const duckdb::LogicalType& type, DedupScratch& dedup,
-            StringTuning& tuning, TrainedDictionaries& dictionaries)
+            StringTuning& tuning)
     : _rows{type, dedup, tuning.codes},
-      _dictionaries{dictionaries},
       _history{tuning.history[static_cast<size_t>(kCodec)]} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct,
@@ -122,7 +88,7 @@ class BlobState {
     Close();
     if (_layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames) {
       Sizes();
-      _trained = Train(rows.first_row, rows.row_count, _rows.SegmentShape());
+      _trained = _codec->Train(_frame, _sizes);
     }
     CompressRest();
     if (_trained && !Pays()) {
@@ -164,7 +130,7 @@ class BlobState {
       if (whole) {
         Assemble(p, 0, p.codes.size());
         Sizes();
-        _trained = Train(begin, p.rows, p.shape);
+        _trained = _codec->Train(_frame, _sizes);
       }
       const auto frame = [&](size_t i) {
         return whole ? Slice(i) : Assemble(p, _spans[i].first, _spans[i].end);
@@ -230,16 +196,6 @@ class BlobState {
            static_cast<uint64_t>(
              static_cast<double>(raw - _packed) *
              Ratio(_history[static_cast<size_t>(_rows.SegmentShape())], 1.0));
-  }
-
-  bool Train(uint64_t first_row, uint64_t rows, Shape shape) {
-    if (const auto* dictionary =
-          _dictionaries.Find(kCodec, first_row, rows, shape)) {
-      return _codec->Adopt(*dictionary);
-    }
-    const bool trained = _codec->Train(_frame, _sizes);
-    _dictionaries.Store(kCodec, first_row, rows, shape, _codec->Dictionary());
-    return trained;
   }
 
   RatioHistory& History() noexcept {
@@ -458,7 +414,6 @@ class BlobState {
   }
 
   SegmentRows _rows;
-  TrainedDictionaries& _dictionaries;
   RatioHistory* _history;
   std::optional<typename Codec::Compressor> _codec;
   std::optional<typename Codec::Compressor> _probe;

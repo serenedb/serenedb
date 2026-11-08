@@ -54,7 +54,6 @@ struct Zxc {
     explicit Compressor(uint8_t level);
 
     bool Train(std::string_view frames, std::span<const size_t> sizes);
-    bool Adopt(std::string_view dictionary);
     void Use(std::string_view raw);
     void Clear() noexcept {
       _dictionary.clear();

@@ -33,6 +33,10 @@ INSERT INTO cfm SELECT i, 'fox', NULL, i*10 FROM generate_series(1,100) g(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) cfm;
+
+
+statement ok
 INSERT INTO cfm
   SELECT i, CASE WHEN i%2=0 THEN 'fox' ELSE 'dog' END, i, i*10
   FROM generate_series(101,200) g(i);
@@ -287,6 +291,10 @@ CREATE TABLE cfm_st (a INT, s TEXT) WITH (compaction_interval=0);
 
 statement ok
 INSERT INTO cfm_st SELECT i, 'x'||i FROM generate_series(1,100) g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) cfm_st;
 
 
 statement ok

@@ -13,6 +13,10 @@ INSERT INTO lc SELECT i, 'fox ' || i FROM generate_series(1, 200) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) lc
+
+
+statement ok
 CREATE INDEX lc_x ON lc USING inverted (body)
 
 
@@ -32,7 +36,7 @@ connection b
 statement error
 CREATE INDEX lc_b ON lc USING inverted (id)
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -40,7 +44,7 @@ connection b
 statement error
 CREATE OR REPLACE INDEX lc_x ON lc USING inverted (body, id)
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -48,7 +52,7 @@ connection b
 statement error
 DROP INDEX lc_x
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -56,7 +60,7 @@ connection b
 statement error
 ALTER TABLE lc SET (compaction_interval = 500)
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -64,7 +68,7 @@ connection b
 statement error
 DROP TABLE lc
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -126,7 +130,7 @@ connection b
 statement error
 CREATE INDEX lc_c ON lc USING inverted (body)
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -170,7 +174,7 @@ connection b
 statement error
 CREATE INDEX lc_d ON lc USING inverted (body)
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -178,7 +182,7 @@ connection b
 statement error
 ALTER TABLE lc SET (compaction_interval = 900)
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -210,7 +214,7 @@ connection b
 statement error
 CREATE INDEX lc_e ON lc USING inverted (body)
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -274,7 +278,7 @@ connection b
 statement error
 CREATE INDEX lc_g ON lc USING inverted (body)
 ----
-db error: ERROR: search table "lc" is being changed by another transaction
+db error: ERROR: table "lc" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -344,7 +348,7 @@ connection b
 statement error
 DROP SCHEMA lcs CASCADE
 ----
-db error: ERROR: search table "t" is being changed by another transaction
+db error: ERROR: table "t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

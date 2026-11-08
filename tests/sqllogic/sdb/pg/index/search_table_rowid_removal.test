@@ -5,6 +5,9 @@ statement ok
 INSERT INTO rr SELECT i, 'a' || i FROM generate_series(0, 299999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rr;
+
+statement ok
 INSERT INTO rr SELECT i, 'b' || i FROM generate_series(300000, 300099) g(i);
 
 query
@@ -92,7 +95,13 @@ statement ok
 INSERT INTO rc SELECT i, 'a' || i FROM generate_series(0, 99999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rc;
+
+statement ok
 INSERT INTO rc SELECT i, 'b' || i FROM generate_series(100000, 199999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) rc;
 
 connection deleter
 statement ok

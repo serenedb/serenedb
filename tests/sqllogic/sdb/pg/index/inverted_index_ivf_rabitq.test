@@ -131,7 +131,7 @@ pk
 1
 4
 
-# DELETE: deleted row must drop out after refresh; survivors still correct.
+# DELETE: deleted row must drop out; survivors still correct.
 statement ok
 DELETE FROM rabitq_dml WHERE pk = 1
 
@@ -167,7 +167,7 @@ SELECT pk FROM rabitq_dml_idx ORDER BY emb <-> [21, 0, 0]::FLOAT[3] LIMIT 1;
 pk
 2
 
-# multi-segment: a second refreshed batch creates a new segment; kNN merges.
+# multi-segment: a second batch creates a new segment; kNN merges.
 statement count 2
 INSERT INTO rabitq_dml VALUES
   (5, [30, 0, 0]::FLOAT[3], 'e'),

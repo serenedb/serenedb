@@ -956,6 +956,10 @@ INSERT INTO coinr_st VALUES (1, 'old one'), (2, 'old two');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) coinr_st;
+
+
+statement ok
 BEGIN;
 
 
@@ -989,6 +993,10 @@ CREATE TABLE coinr_st_rb (id INT, body TEXT);
 
 statement ok
 INSERT INTO coinr_st_rb VALUES (1, 'kept one'), (2, 'kept two');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) coinr_st_rb;
 
 
 statement ok
@@ -1042,6 +1050,10 @@ CREATE TABLE coinr_st_to_plain (id INT, body TEXT);
 
 statement ok
 INSERT INTO coinr_st_to_plain VALUES (1, 'searchable');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) coinr_st_to_plain;
 
 
 statement ok
@@ -3645,6 +3657,11 @@ CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 connection after_checkpoint
 statement ok
 INSERT INTO coinr_c_st VALUES (30, 'tail thirty');
+
+
+connection after_checkpoint
+statement ok
+VACUUM (FLUSH_TABLE) coinr_c_st;
 
 
 connection after_checkpoint

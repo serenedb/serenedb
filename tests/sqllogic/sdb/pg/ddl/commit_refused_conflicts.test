@@ -30,7 +30,7 @@ connection t1
 statement error
 UPDATE crc_t SET v = 100 WHERE id = 1;
 ----
-db error: ERROR: search table "crc_t" was altered by a concurrent transaction
+db error: ERROR: table "crc_t" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 
@@ -99,7 +99,7 @@ connection t1
 statement error
 INSERT INTO crc_t VALUES (4, 4, 4);
 ----
-db error: ERROR: search table "crc_t" was altered by a concurrent transaction
+db error: ERROR: table "crc_t" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 

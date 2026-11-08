@@ -75,6 +75,11 @@ statement ok
 SET sdb_faults = 'slow_search_task';
 
 
+connection new2
+statement ok
+VACUUM (FLUSH_TABLE) t;
+
+
 statement async ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
 

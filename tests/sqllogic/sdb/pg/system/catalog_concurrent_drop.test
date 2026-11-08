@@ -36,7 +36,7 @@ connection s2
 statement error
 DROP TABLE ccd_rename;
 ----
-db error: ERROR: search <slt:ignore>
+db error: ERROR: table <slt:ignore>
 
 
 # The refused drop left its connection usable.
@@ -163,7 +163,7 @@ connection s2
 statement error
 DROP TABLE ccd_renamecol;
 ----
-db error: ERROR: search <slt:ignore>
+db error: ERROR: table <slt:ignore>
 
 
 connection s1
@@ -195,7 +195,7 @@ connection s2
 statement error
 DROP TABLE ccd_index;
 ----
-db error: ERROR: search <slt:ignore>
+db error: ERROR: table <slt:ignore>
 
 
 connection s1

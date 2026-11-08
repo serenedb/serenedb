@@ -26,6 +26,9 @@ CREATE INDEX jl_idx ON jl USING inverted(pk, js jl_verbatim, ja jl_verbatim,
                                          ((doc->'t')::JSON[]) jl_verbatim);
 
 statement ok
+VACUUM (FLUSH_TABLE) jl;
+
+statement ok
 INSERT INTO jl VALUES
   (6, ['"gamma"', '3', NULL]::JSON[], ['"gamma"', '3']::JSON[2],
       '{"t": ["gamma", 3, null]}'),

@@ -21,6 +21,9 @@ RESET sdb_faults;
 statement ok
 INSERT INTO num VALUES (1, 10, 20), (2, 5, 5);
 
+statement ok
+VACUUM (FLUSH_TABLE) num;
+
 # Crash AFTER the WAL commit: (3, 100, 1) is fsynced into the WAL but never
 # refresh-published; recovery must recompute a+b=101 for it.
 statement ok

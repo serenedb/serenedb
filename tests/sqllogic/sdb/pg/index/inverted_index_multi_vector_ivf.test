@@ -19,8 +19,7 @@ CREATE INDEX mv_ivf ON mv
     USING inverted(pk, a ivf (metric = 'l2'), b ivf (metric = 'cosine'));
 
 # A second index over the same two columns, each quantized with a different
-# metric (a: l2/sq8, b: ip/sq8). Created up front so REFRESH builds it together
-# with mv_ivf over the same rows.
+# metric (a: l2/sq8, b: ip/sq8).
 statement ok
 CREATE INDEX mv_ivf_q ON mv
     USING inverted(pk, a ivf (metric = 'l2', quant = 'sq8'),

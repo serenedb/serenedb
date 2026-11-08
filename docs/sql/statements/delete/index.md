@@ -38,7 +38,7 @@ A [job](../create_job/index.md) that deletes rows older than a cutoff keeps a ta
 
 <SqlLogicTest id="sql/statements/delete/index/example_007" />
 
-On a search table, the log space of a delete grows with the number of stretches of consecutive rows it removes, not with the number of rows: the oldest rows of a table filled in time order are one stretch, however many rows go. Rows deleted one by one from among rows that stay are a stretch each. Finding the rows to delete still reads each of them.
+The log space of a delete grows with the number of stretches of consecutive rows it removes, not with the number of rows: the oldest rows of a table filled in time order are one stretch, however many rows go. Rows deleted one by one from among rows that stay are a stretch each. Finding the rows to delete still reads each of them.
 
 ## Syntax
 
@@ -58,7 +58,7 @@ The `TRUNCATE` statement removes all rows from a table, acting as an alias for `
 
 <SqlLogicTest id="sql/statements/delete/index/example_006" />
 
-PostgreSQL makes `TRUNCATE` wait for the transactions that are writing to the table. SereneDB waits only for a commit that is writing the table at that moment: `TRUNCATE` fails with a serialization error (`40001`) when another transaction has added rows to the table that the truncating transaction does not see, because they are not committed yet or were committed after its snapshot, and the transaction can be retried. On a search table, any open write to the table refuses `TRUNCATE` the same way, and while a transaction that truncated a search table is open, writes to that table from other transactions fail with `40001`.
+PostgreSQL makes `TRUNCATE` wait for the transactions that are writing to the table. SereneDB waits only for a commit that is writing the table at that moment: `TRUNCATE` fails with a serialization error (`40001`) when another transaction has added rows to the table that the truncating transaction does not see, because they are not committed yet or were committed after its snapshot, and the transaction can be retried. Any open write to the table refuses `TRUNCATE` the same way, and while a transaction that truncated a table is open, writes to that table from other transactions fail with `40001`.
 
 ## Limitations on Reclaiming Memory and Disk Space
 

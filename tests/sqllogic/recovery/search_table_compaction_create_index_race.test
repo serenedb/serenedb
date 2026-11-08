@@ -17,6 +17,10 @@ INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(1, 100) s(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) ccr;
+
+
+statement ok
 SET sdb_faults = 'search_compaction_before_selection';
 
 

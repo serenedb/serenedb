@@ -168,6 +168,10 @@ INSERT INTO list_n2 VALUES
 
 
 statement ok
+VACUUM (FLUSH_TABLE) list_n2
+
+
+statement ok
 INSERT INTO list_n2 VALUES
   (4, 'fourth', NULL),
   (5, 'fifth',  ['epsilon'])
@@ -242,6 +246,10 @@ statement ok
 INSERT INTO list_n3 VALUES
   (1, 'first',  ['alpha']),
   (2, 'second', [])
+
+
+statement ok
+VACUUM (FLUSH_TABLE) list_n3
 
 
 statement ok

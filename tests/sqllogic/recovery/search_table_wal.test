@@ -289,6 +289,10 @@ INSERT INTO del_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection mix_conn
 statement ok
+VACUUM (FLUSH_TABLE) del_t;
+
+connection mix_conn
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection mix_conn
@@ -329,6 +333,10 @@ INSERT INTO del_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
 
 connection del_after
 statement ok
+VACUUM (FLUSH_TABLE) del_g;
+
+connection del_after
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection del_after
@@ -363,6 +371,10 @@ CREATE TABLE reins (id INTEGER PRIMARY KEY, b TEXT);
 connection del_g_after
 statement ok
 INSERT INTO reins VALUES (1, 'a');
+
+connection del_g_after
+statement ok
+VACUUM (FLUSH_TABLE) reins;
 
 connection del_g_after
 statement ok
@@ -416,6 +428,10 @@ INSERT INTO upd_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection reins_after
 statement ok
+VACUUM (FLUSH_TABLE) upd_t;
+
+connection reins_after
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection reins_after
@@ -457,6 +473,10 @@ INSERT INTO upd_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
 
 connection upd_after
 statement ok
+VACUUM (FLUSH_TABLE) upd_g;
+
+connection upd_after
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection upd_after
@@ -492,6 +512,10 @@ CREATE TABLE trunc_t (id INTEGER PRIMARY KEY, b TEXT);
 connection upd_g_after
 statement ok
 INSERT INTO trunc_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
+
+connection upd_g_after
+statement ok
+VACUUM (FLUSH_TABLE) trunc_t;
 
 connection upd_g_after
 statement ok

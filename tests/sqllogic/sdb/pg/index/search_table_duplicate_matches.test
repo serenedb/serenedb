@@ -11,6 +11,9 @@ statement ok
 INSERT INTO dm_plain SELECT i, 'v' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) dm;
+
+statement ok
 CREATE TABLE dm_src (id BIGINT);
 
 statement ok

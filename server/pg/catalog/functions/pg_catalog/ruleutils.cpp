@@ -335,9 +335,7 @@ IndexShape ShapeOf(const Session& session,
                        ? index.catalog.GetCatalogTransaction(*session.context)
                        : *session.transaction)
         .get(),
-    .method = catalog::IsInvertedIndex(index)
-                ? std::string_view{catalog::kInvertedIndexTypeName}
-                : std::string_view{"secondary"},
+    .method = catalog::kInvertedIndexTypeName,
     .options = Options(index.options),
   };
   for (duckdb::idx_t i = 0; i < index.parsed_expressions.size(); ++i) {
@@ -375,7 +373,7 @@ IndexShape ShapeOf(const duckdb::TableCatalogEntry& table,
     .name = key.constraint_name,
     .unique = true,
     .relation = &table,
-    .method = "secondary",
+    .method = catalog::kInvertedIndexTypeName,
   };
   for (auto& column : KeyColumns(table, key)) {
     shape.keys.emplace_back(

@@ -12,7 +12,13 @@ statement ok
 INSERT INTO rr SELECT i, 'row ' || i FROM range(0, 100000) r(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rr;
+
+statement ok
 INSERT INTO rr SELECT i, 'row ' || i FROM range(100000, 200000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) rr;
 
 statement ok
 CHECKPOINT;

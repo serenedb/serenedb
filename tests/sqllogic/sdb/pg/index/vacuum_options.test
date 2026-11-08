@@ -163,7 +163,15 @@ INSERT INTO public.docs VALUES (10, 'theta compact A');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) public.docs;
+
+
+statement ok
 INSERT INTO public.docs VALUES (11, 'theta compact B');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) public.docs;
 
 
 statement ok

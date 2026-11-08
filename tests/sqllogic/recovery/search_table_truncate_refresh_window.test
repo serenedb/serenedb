@@ -11,6 +11,9 @@ statement ok
 INSERT INTO trw VALUES (1, 'refreshed');
 
 statement ok
+VACUUM (FLUSH_TABLE) trw;
+
+statement ok
 INSERT INTO trw VALUES (2, 'pending');
 
 statement ok

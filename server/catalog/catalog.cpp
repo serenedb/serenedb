@@ -80,15 +80,9 @@
 namespace sdb::catalog {
 namespace {
 
-[[noreturn]] void RefuseTable(const duckdb::CatalogEntry& table) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-    ERR_MSG("\"", table.name.GetIdentifierName(), "\" is not a search table"));
-}
-
 const SearchTableEntry& SearchTable(const duckdb::TableCatalogEntry& table) {
   if (!IsSearchTable(table)) {
-    RefuseTable(table);
+    RefuseSystemCatalog(table);
   }
   return table.Cast<SearchTableEntry>();
 }
@@ -528,11 +522,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::TableCatalogEntry& table,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
-  if (table.internal) {
+  if (table.internal || !IsSearchTable(table)) {
     RefuseSystemCatalog(table);
-  }
-  if (!IsSearchTable(table)) {
-    RefuseTable(table);
   }
   const bool plain = stmt.info->Cast<duckdb::CreateIndexInfo>().index_type !=
                      kInvertedIndexTypeName;

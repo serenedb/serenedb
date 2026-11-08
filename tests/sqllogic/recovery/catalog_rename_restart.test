@@ -286,7 +286,7 @@ connection s2
 statement error
 CREATE INDEX rr6_i ON rr6 (a);
 ----
-db error: ERROR: search table "rr6" is being changed by another transaction
+db error: ERROR: table "rr6" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

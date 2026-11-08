@@ -953,11 +953,19 @@ IRS_FORCE_INLINE bool ColumnReader::PointReader::FetchValidity(
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
-bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
-                                         duckdb::idx_t out_offset) {
-  if (_reader->InMemory()) {
-    return _reader->FetchInMemory(row, out, out_offset);
-  }
+bool ColumnReader::FetchPoint(PointReader& reader, uint64_t row,
+                              duckdb::Vector& out,
+                              duckdb::idx_t out_offset) const {
+  return reader.FetchStored(row, out, out_offset);
+}
+
+bool ColumnReader::ValidPoint(PointReader& reader, uint64_t row,
+                              duckdb::Vector& scratch) const {
+  return reader.ValidStored(row, scratch);
+}
+
+bool ColumnReader::PointReader::FetchStored(uint64_t row, duckdb::Vector& out,
+                                            duckdb::idx_t out_offset) {
   if (row >= _reader->RowCount()) {
     duckdb::FlatVector::ValidityMutable(out).SetInvalid(out_offset);
     return false;
@@ -974,11 +982,8 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
-bool ColumnReader::PointReader::ValidRow(uint64_t row,
-                                         duckdb::Vector& scratch) {
-  if (_reader->InMemory()) {
-    return _reader->FetchInMemory(row, scratch, 0);
-  }
+bool ColumnReader::PointReader::ValidStored(uint64_t row,
+                                            duckdb::Vector& scratch) {
   if (row >= _reader->RowCount()) {
     return false;
   }

@@ -171,6 +171,10 @@ INSERT INTO ls SELECT i, 'bulk ' || i, ['Tag' || i, 'skip'], '{"n": 1}' FROM ran
 
 
 statement ok
+VACUUM (FLUSH_TABLE) ls
+
+
+statement ok
 UPDATE ls SET tags = ['Purple', 'Orange'] WHERE id = 2
 
 

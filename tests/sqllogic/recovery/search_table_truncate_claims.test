@@ -11,6 +11,9 @@ statement ok
 INSERT INTO tcl VALUES (1, 'a'), (2, 'b');
 
 statement ok
+VACUUM (FLUSH_TABLE) tcl;
+
+statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
 
 connection truncator

@@ -47,6 +47,9 @@ statement ok
 INSERT INTO tu3 VALUES (1, 'a'), (2, 'b');
 
 statement ok
+VACUUM (FLUSH_TABLE) tu3;
+
+statement ok
 INSERT INTO tu3 VALUES (3, 'c');
 
 statement ok

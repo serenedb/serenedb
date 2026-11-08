@@ -152,7 +152,7 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _read_only{read_only},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
-    _durability{db_id, absl::StrCat("search table ", id)},
+    _durability{db_id, absl::StrCat("table ", id)},
     _table_columns{TableColumns(columns)},
     _row_group_size{options.row_group_size},
     _block_size{options.block_size},
@@ -486,7 +486,7 @@ void Store::Cool(bool all, bool durable) {
     try {
       CoolOne(hot, durable);
     } catch (const std::exception& e) {
-      SDB_FATAL(SEARCH, "search table ", _id,
+      SDB_FATAL(SEARCH, "table ", _id,
                 ": could not write the rows it holds in memory: ",
                 duckdb::ErrorData{e}.RawMessage());
     }
@@ -684,7 +684,7 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                     });
     } catch (const std::exception& e) {
       co_return absl::InternalError(
-        absl::StrCat("compaction of search table ", _id,
+        absl::StrCat("compaction of table ", _id,
                      " failed: ", duckdb::ErrorData{e}.RawMessage()));
     }
     co_return absl::OkStatus();
@@ -1022,8 +1022,7 @@ bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
   if (acquired && _layout.owner != kNoLayoutOwner) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("search table \"", name,
-              "\" is being changed by another transaction"),
+      ERR_MSG("table \"", name, "\" is being changed by another transaction"),
       ERR_HINT("Retry once that transaction commits or rolls back."));
   }
   _layout.owner = owner;

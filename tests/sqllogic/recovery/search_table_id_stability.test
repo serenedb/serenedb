@@ -29,6 +29,9 @@ CREATE INDEX ib ON t USING inverted (body db);
 statement ok
 INSERT INTO t VALUES (1, 'foo'), (2, 'bar');
 
+statement ok
+VACUUM (FLUSH_TABLE) t;
+
 # Drop the highest-id index. Its field id is gone from the catalog but its
 # postings linger in the shared store (the rows stay live).
 statement ok

@@ -50,9 +50,8 @@ class DuckDBEngine {
 
  private:
   DuckDBEngine() = default;
-  void ConfigureExtensions();
 
-  duckdb::shared_ptr<duckdb::DuckDB> _db;
+  duckdb::shared_ptr<duckdb::DatabaseInstance> _instance;
 };
 
 }  // namespace irs

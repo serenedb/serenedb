@@ -8,8 +8,6 @@
 # column errors. A direct index scan (SELECT * FROM <idx>) still returns every
 # column off the columnstore. The index is a real catalog object (shows in
 # pg_indexes, DROPs, survives restart). Non-inverted types are rejected.
-# Search tables are commit-time-only, so rows are observed after
-# VACUUM (REFRESH_TABLE).
 #
 # Indexing a POPULATED table is supported: the build rewrites the existing
 # segments to carry the new term field. Only the reachability of already-stored

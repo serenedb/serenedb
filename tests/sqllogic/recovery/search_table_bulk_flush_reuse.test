@@ -30,6 +30,9 @@ CREATE TABLE bt (pk BIGINT PRIMARY KEY, x BIGINT)
 statement ok
 INSERT INTO bt VALUES (-1, -1), (-2, -2), (-3, -3);
 
+statement ok
+VACUUM (FLUSH_TABLE) bt;
+
 # One explicit transaction: BULK insert (appends flushed per-thread transactions)
 # then a serial INSERT and a serial DELETE -- both reuse the flushed tail.
 statement ok

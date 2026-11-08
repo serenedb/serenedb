@@ -35,7 +35,7 @@ connection s2
 statement error
 DROP TABLE ccr_t
 ----
-db error: ERROR: search table "ccr_t" is being changed by another transaction
+db error: ERROR: table "ccr_t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

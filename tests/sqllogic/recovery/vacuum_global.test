@@ -66,11 +66,19 @@ INSERT INTO public.docs VALUES (2, 'beta one');
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 INSERT INTO public.docs VALUES (3, 'beta two');
 
 
 statement ok
 INSERT INTO s1.notes VALUES (2, 'beta two');
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok

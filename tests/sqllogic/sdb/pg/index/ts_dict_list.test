@@ -6,8 +6,7 @@ hash-threshold 100
 # terms are the distinct elements, ts_dict_count is live documents per term
 # (an element listed twice in one row still counts that document once),
 # ts_dict_freq is total postings. The Key=Value facet-tag pattern is the
-# motivating shape. Background maintenance is disabled; visibility is driven
-# by VACUUM (REFRESH_TABLE).
+# motivating shape.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY ldl_kw AS keyword() WITH (frequency)

@@ -5,6 +5,9 @@ statement ok
 INSERT INTO pa SELECT i, i % 10, 'v' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pa;
+
+statement ok
 BEGIN;
 
 statement ok
@@ -56,6 +59,12 @@ statement ok
 INSERT INTO pb2 SELECT i, 0 FROM generate_series(0, 999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pb1;
+
+statement ok
+VACUUM (FLUSH_TABLE) pb2;
+
+statement ok
 BEGIN;
 
 statement ok
@@ -92,6 +101,9 @@ statement ok
 INSERT INTO pc SELECT i FROM generate_series(0, 999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pc;
+
+statement ok
 BEGIN;
 
 statement ok
@@ -122,7 +134,13 @@ statement ok
 INSERT INTO pd SELECT i, i % 10, 'v' FROM generate_series(0, 9999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pd;
+
+statement ok
 DELETE FROM pd WHERE id % 3 = 0;
+
+statement ok
+VACUUM (FLUSH_TABLE) pd;
 
 statement ok
 UPDATE pd SET v = 'x' WHERE g = 4;
@@ -152,88 +170,175 @@ statement ok
 INSERT INTO pe SELECT i FROM generate_series(0, 99) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(100, 199) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(200, 299) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(300, 399) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(400, 499) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(500, 599) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(600, 699) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(700, 799) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(800, 899) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(900, 999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1000, 1099) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(1100, 1199) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1200, 1299) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(1300, 1399) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1400, 1499) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(1500, 1599) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1600, 1699) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(1700, 1799) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(1800, 1899) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(1900, 1999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2000, 2099) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(2100, 2199) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2200, 2299) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(2300, 2399) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2400, 2499) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(2500, 2599) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2600, 2699) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(2700, 2799) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i FROM generate_series(2800, 2899) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i FROM generate_series(2900, 2999) g(i);
@@ -313,6 +418,9 @@ id
 
 statement ok
 INSERT INTO pf VALUES (1, 'quick fox');
+
+statement ok
+VACUUM (FLUSH_TABLE) pf;
 
 statement ok
 DELETE FROM pf WHERE body = 'fox';

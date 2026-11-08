@@ -1067,7 +1067,13 @@ statement ok
 INSERT INTO pwp_segments VALUES (1, 'quick brown fox'), (2, 'brown quick fox')
 
 statement ok
+VACUUM (FLUSH_TABLE) pwp_segments
+
+statement ok
 INSERT INTO pwp_segments VALUES (3, 'the quick brown dog'), (4, 'quick dog brown')
+
+statement ok
+VACUUM (FLUSH_TABLE) pwp_segments
 
 statement ok
 INSERT INTO pwp_segments VALUES (5, 'brown fox quick brown')

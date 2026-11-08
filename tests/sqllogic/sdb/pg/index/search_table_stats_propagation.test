@@ -17,6 +17,10 @@ INSERT INTO stp SELECT i, i, CASE WHEN i < 50 THEN NULL ELSE i END, 'r'||i
 
 
 statement ok
+VACUUM (FLUSH_TABLE) stp;
+
+
+statement ok
 INSERT INTO stp SELECT i, i, i, 'r'||i FROM generate_series(100,199) g(i);
 
 

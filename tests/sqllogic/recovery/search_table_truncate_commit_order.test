@@ -11,6 +11,9 @@ statement ok
 INSERT INTO tco VALUES (1, 'old'), (2, 'old');
 
 statement ok
+VACUUM (FLUSH_TABLE) tco;
+
+statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
 
 connection truncator

@@ -40,6 +40,10 @@ INSERT INTO pr_a SELECT g, 'row ' || g || ' alpha' FROM generate_series(1, 5000)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) pr_a;
+
+
+statement ok
 INSERT INTO pr_a SELECT g, 'row ' || g || ' bravo' FROM generate_series(5001, 10000) g;
 
 

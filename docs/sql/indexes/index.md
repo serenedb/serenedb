@@ -19,7 +19,7 @@ An index in SereneDB is an [inverted index](./inverted/index.md), on a table or 
 |---|---|---|
 | [Inverted Index](./inverted/index.md) | With `CREATE INDEX` or `CREATE UNIQUE INDEX`, with or without `USING inverted` | Equality and range lookups, full-text search, [vector / ANN search](./inverted/vector-search.md) and [geospatial search](./inverted/geospatial-search.md) |
 
-The catalog lists the keys of `PRIMARY KEY` and `UNIQUE` constraints as indexes with the `secondary` access method.
+The catalog lists the keys of `PRIMARY KEY` and `UNIQUE` constraints as indexes with the `inverted` access method.
 
 ## Persistence
 

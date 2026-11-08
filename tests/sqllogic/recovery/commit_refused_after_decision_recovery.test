@@ -27,7 +27,7 @@ connection t1
 statement error
 INSERT INTO crd_t VALUES (3, 3);
 ----
-db error: ERROR: search table "crd_t" was altered by a concurrent transaction
+db error: ERROR: table "crd_t" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 

@@ -56,6 +56,9 @@ statement ok
 CREATE INDEX rx_words_idx ON rx_t USING inverted(id, v rx_words_dict)
 
 statement ok
+VACUUM (FLUSH_TABLE) rx_t
+
+statement ok
 INSERT INTO rx_t VALUES
     (21, 'user@example.com'),
     (22, 'admin@example.org'),

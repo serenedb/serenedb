@@ -10,7 +10,13 @@ statement ok
 INSERT INTO mc SELECT i, 'a' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) mc;
+
+statement ok
 INSERT INTO mc SELECT i, 'b' || i FROM generate_series(10000, 19999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) mc;
 
 connection racer
 statement ok

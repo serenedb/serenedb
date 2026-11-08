@@ -13,11 +13,23 @@ INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row 
 
 
 statement ok
+VACUUM (FLUSH_TABLE) dr
+
+
+statement ok
 INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(100000, 200000) r(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) dr
+
+
+statement ok
 INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(200000, 300000) r(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dr
 
 
 statement ok
@@ -177,6 +189,10 @@ DELETE FROM dr WHERE id >= 390000 AND id < 390004 RETURNING id
 
 statement ok
 DELETE FROM dr_ref WHERE id >= 390000 AND id < 390004
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dr
 
 
 connection writer

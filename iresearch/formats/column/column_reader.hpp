@@ -267,11 +267,13 @@ class ColumnReader {
     const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
     NullCheckKind null_check, duckdb::Vector& scratch) const;
 
-  virtual bool InMemory() const noexcept { return false; }
-  virtual bool FetchInMemory(uint64_t /*row*/, duckdb::Vector& /*out*/,
-                             duckdb::idx_t /*out_offset*/) const {
-    return false;
-  }
+  class PointReader;
+
+  virtual bool FetchPoint(PointReader& reader, uint64_t row,
+                          duckdb::Vector& out, duckdb::idx_t out_offset) const;
+
+  virtual bool ValidPoint(PointReader& reader, uint64_t row,
+                          duckdb::Vector& scratch) const;
 
   class PointReader {
    public:
@@ -280,9 +282,18 @@ class ColumnReader {
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
 
-    bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
+    bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset) {
+      return _reader->FetchPoint(*this, row, out, out_offset);
+    }
 
-    bool ValidRow(uint64_t row, duckdb::Vector& scratch);
+    bool ValidRow(uint64_t row, duckdb::Vector& scratch) {
+      return _reader->ValidPoint(*this, row, scratch);
+    }
+
+    bool FetchStored(uint64_t row, duckdb::Vector& out,
+                     duckdb::idx_t out_offset);
+
+    bool ValidStored(uint64_t row, duckdb::Vector& scratch);
 
    protected:
     struct OpenBlock {

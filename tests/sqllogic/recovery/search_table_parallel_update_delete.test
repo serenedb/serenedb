@@ -22,7 +22,15 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(0, 1000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) pud;
+
+
+statement ok
 INSERT INTO pud SELECT i, 'seed' || i FROM range(1000, 2000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -30,7 +38,15 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(2000, 3000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) pud;
+
+
+statement ok
 INSERT INTO pud SELECT i, 'seed' || i FROM range(3000, 4000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -38,7 +54,15 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(4000, 5000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) pud;
+
+
+statement ok
 INSERT INTO pud SELECT i, 'seed' || i FROM range(5000, 6000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -46,7 +70,15 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(6000, 7000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) pud;
+
+
+statement ok
 INSERT INTO pud SELECT i, 'seed' || i FROM range(7000, 8000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -171,6 +203,10 @@ n	d	ok
 
 statement ok
 UPDATE pud_plain SET b = 'u3_' || a WHERE a % 2 = 1;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok

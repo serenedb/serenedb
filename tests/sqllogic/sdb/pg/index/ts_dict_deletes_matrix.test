@@ -4,9 +4,7 @@ statement ok
 SET compaction_interval = 0
 
 # Explicit ts_dict_* aggregate family crossed with the segment lifecycle on a
-# keyword field and a text field (frequency = true). refresh_interval = 0 and
-# compaction_interval = 0 disable background maintenance, so deletion masks
-# persist and visibility is driven only by VACUUM (REFRESH_TABLE).
+# keyword field and a text field (frequency = true).
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY ddm_kw AS keyword() WITH (frequency)
@@ -403,6 +401,9 @@ CREATE INDEX ddm2_idx ON ddm2 USING inverted(cat ddm_kw, body ddm_tx)
 
 statement ok
 INSERT INTO ddm2 VALUES (1, 'a', 'one two'), (2, 'b', 'two'), (3, 'c', 'three')
+
+statement ok
+VACUUM (FLUSH_TABLE) ddm2;
 
 statement ok
 DELETE FROM ddm2

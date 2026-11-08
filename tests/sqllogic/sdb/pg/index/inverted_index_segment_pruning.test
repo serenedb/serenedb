@@ -31,9 +31,17 @@ statement ok
 INSERT INTO segp SELECT n, n, 'fox dog' FROM generate_series(1, 10) AS s(n)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) segp
+
+
 # Segment 2: g in [11, 20].
 statement ok
 INSERT INTO segp SELECT n, n, 'fox dog' FROM generate_series(11, 20) AS s(n)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) segp
 
 
 # Segment 3: g in [21, 30].

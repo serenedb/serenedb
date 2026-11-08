@@ -21,6 +21,10 @@ INSERT INTO mc SELECT i, 'b' || i FROM generate_series(1000, 1999) g(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) mc;
+
+
+statement ok
 SET sdb_faults = 'pause_search_compact_before_publish';
 
 

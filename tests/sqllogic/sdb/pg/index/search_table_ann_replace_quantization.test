@@ -36,7 +36,13 @@ statement ok
 INSERT INTO rq_ivf SELECT * FROM rq_ref WHERE id < 1000;
 
 statement ok
+VACUUM (FLUSH_TABLE) rq_ivf;
+
+statement ok
 INSERT INTO rq_ivf SELECT * FROM rq_ref WHERE id >= 1000 AND id < 2000;
+
+statement ok
+VACUUM (FLUSH_TABLE) rq_ivf;
 
 statement ok
 INSERT INTO rq_ivf SELECT * FROM rq_ref WHERE id >= 2000;
@@ -113,7 +119,13 @@ statement ok
 INSERT INTO rq_hnsw SELECT * FROM rq_ref WHERE id < 1000;
 
 statement ok
+VACUUM (FLUSH_TABLE) rq_hnsw;
+
+statement ok
 INSERT INTO rq_hnsw SELECT * FROM rq_ref WHERE id >= 1000 AND id < 2000;
+
+statement ok
+VACUUM (FLUSH_TABLE) rq_hnsw;
 
 statement ok
 INSERT INTO rq_hnsw SELECT * FROM rq_ref WHERE id >= 2000;
@@ -190,6 +202,9 @@ statement ok
 INSERT INTO rq_tx SELECT * FROM rq_ref WHERE id < 1500;
 
 statement ok
+VACUUM (FLUSH_TABLE) rq_tx;
+
+statement ok
 INSERT INTO rq_tx SELECT * FROM rq_ref WHERE id >= 1500;
 
 statement ok
@@ -221,6 +236,9 @@ CREATE TABLE rq_two (id INTEGER PRIMARY KEY, emb FLOAT[16])
 
 statement ok
 INSERT INTO rq_two SELECT * FROM rq_ref WHERE id < 1500;
+
+statement ok
+VACUUM (FLUSH_TABLE) rq_two;
 
 statement ok
 INSERT INTO rq_two SELECT * FROM rq_ref WHERE id >= 1500;
@@ -293,10 +311,16 @@ statement ok
 INSERT INTO rq_snap_ivf SELECT * FROM rq_ref WHERE id < 1500;
 
 statement ok
+VACUUM (FLUSH_TABLE) rq_snap_ivf;
+
+statement ok
 INSERT INTO rq_snap_ivf SELECT * FROM rq_ref WHERE id >= 1500;
 
 statement ok
 INSERT INTO rq_snap_hnsw SELECT * FROM rq_ref WHERE id < 1500;
+
+statement ok
+VACUUM (FLUSH_TABLE) rq_snap_hnsw;
 
 statement ok
 INSERT INTO rq_snap_hnsw SELECT * FROM rq_ref WHERE id >= 1500;

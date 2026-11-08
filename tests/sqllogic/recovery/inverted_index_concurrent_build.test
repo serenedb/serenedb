@@ -31,7 +31,7 @@ connection b
 statement error
 CREATE OR REPLACE INDEX cb_x ON cb USING inverted (body, id);
 ----
-db error: ERROR: search table "cb" is being changed by another transaction
+db error: ERROR: table "cb" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

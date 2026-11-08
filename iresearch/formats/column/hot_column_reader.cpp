@@ -269,8 +269,9 @@ void HotColumnReader::CopyRows(uint64_t row, duckdb::idx_t count,
   }
 }
 
-bool HotColumnReader::FetchInMemory(uint64_t row, duckdb::Vector& out,
-                                    duckdb::idx_t out_offset) const {
+bool HotColumnReader::FetchPoint(PointReader&, uint64_t row,
+                                 duckdb::Vector& out,
+                                 duckdb::idx_t out_offset) const {
   if (row >= _row_count) {
     duckdb::FlatVector::SetNull(out, out_offset, true);
     return false;

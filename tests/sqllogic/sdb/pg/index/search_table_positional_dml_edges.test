@@ -8,6 +8,9 @@ statement ok
 INSERT INTO pe SELECT i, i % 10, 'v' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 INSERT INTO pe SELECT i, i % 10, 'v' || i FROM generate_series(10000, 19999) g(i);
 
 statement ok
@@ -176,6 +179,9 @@ statement ok
 INSERT INTO pe SELECT i, i % 10, 'w' || i FROM generate_series(0, 99) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pe;
+
+statement ok
 DELETE FROM pe WHERE id < 50;
 
 query
@@ -198,6 +204,9 @@ CREATE INDEX pk_r ON pk USING inverted (r);
 
 statement ok
 INSERT INTO pk SELECT i, 'r' || (i % 7) FROM generate_series(1, 7000) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pk;
 
 statement ok
 DELETE FROM pk WHERE r = 'r3';
@@ -236,7 +245,13 @@ statement ok
 INSERT INTO pc SELECT i, 'a' FROM generate_series(0, 4999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pc;
+
+statement ok
 INSERT INTO pc SELECT i, 'b' FROM generate_series(5000, 9999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pc;
 
 connection first
 statement ok

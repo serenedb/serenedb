@@ -163,7 +163,7 @@ void AppendReplacements(const Slice& slice,
     const uint64_t live = sub->live_docs_count();
     for (uint64_t rank = 0; rank < live;) {
       SDB_ENSURE(i < slice.flushed.size(),
-                 "search-table build: fed more rows than its segments hold");
+                 "index build: fed more rows than its segments hold");
       const uint64_t docs = slice.flushed[i].meta.docs_count;
       const auto take = std::min(live - rank, docs - used);
       out[first + i].absorbed.push_back({
@@ -182,7 +182,7 @@ void AppendReplacements(const Slice& slice,
     }
   }
   SDB_ENSURE(i == slice.flushed.size(),
-             "search-table build: fed fewer rows than its segments hold");
+             "index build: fed fewer rows than its segments hold");
 }
 
 // By bytes, not by segment count: sizes are uneven, and a group is only as
@@ -223,11 +223,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
       }
-      if (context.IsInterrupted()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_QUERY_CANCELED),
-          ERR_MSG("canceled while rebuilding search table ", target.table_id));
-      }
+      context.InterruptCheck();
       return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
     }
     SDB_WAIT_ON_FAILURE("pause_search_backfill_fed");
@@ -310,13 +306,13 @@ search::Tick RebuildGroup(duckdb::ClientContext& context,
   } catch (const irs::SqlException& e) {
     THROW_SQL_ERROR(
       ERR_CODE(e.error().errcode),
-      ERR_MSG("search-table build: failed to swap in the rebuilt segments on "
+      ERR_MSG("index build: failed to swap in the rebuilt segments of "
               "table ",
               target.table_id, ": ", e.message()));
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("search-table build: failed to swap in the rebuilt segments on "
+      ERR_MSG("index build: failed to swap in the rebuilt segments of "
               "table ",
               target.table_id, ": ", duckdb::ErrorData{e}.RawMessage()));
   }

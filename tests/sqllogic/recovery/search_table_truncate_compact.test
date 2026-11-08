@@ -11,13 +11,25 @@ statement ok
 INSERT INTO tcm VALUES (1, 'a');
 
 statement ok
+VACUUM (FLUSH_TABLE) tcm;
+
+statement ok
 INSERT INTO tcm VALUES (2, 'b');
+
+statement ok
+VACUUM (FLUSH_TABLE) tcm;
 
 statement ok
 INSERT INTO tcm VALUES (3, 'c');
 
 statement ok
+VACUUM (FLUSH_TABLE) tcm;
+
+statement ok
 INSERT INTO tcm VALUES (4, 'd');
+
+statement ok
+VACUUM (FLUSH_TABLE) tcm;
 
 statement ok
 INSERT INTO tcm VALUES (5, 'e');
@@ -74,7 +86,15 @@ INSERT INTO tcm VALUES (6, 'f');
 
 connection default
 statement ok
+VACUUM (FLUSH_TABLE) tcm;
+
+connection default
+statement ok
 INSERT INTO tcm VALUES (7, 'g');
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) tcm;
 
 connection default
 statement ok

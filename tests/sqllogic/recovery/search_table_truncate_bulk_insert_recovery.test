@@ -19,6 +19,10 @@ INSERT INTO repro_st VALUES (-1, 'seed');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) repro_st;
+
+
+statement ok
 SET threads = 4;
 
 

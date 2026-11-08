@@ -2,8 +2,7 @@
 # term posting: the vector value is stored once under its column id and the IVF
 # attaches to that column, so an ANN query through the index scan pushes the
 # distance + top-k INTO the scan (accelerated) rather than computing distances
-# over every row. Commit-time-only, so rows are observed after
-# VACUUM (REFRESH_TABLE).
+# over every row.
 
 statement ok
 CREATE TABLE v (id BIGINT PRIMARY KEY, vec FLOAT[3])
@@ -137,6 +136,9 @@ INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
   'w' || (i % 10) FROM range(500) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) dv;
+
+statement ok
 DROP INDEX dv_ivf;
 
 statement ok
@@ -170,6 +172,9 @@ CREATE INDEX rv_idx ON rv USING inverted (vec ivf(metric = 'l2'));
 statement ok
 INSERT INTO rv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(500) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) rv;
 
 statement ok
 DROP INDEX rv_idx;

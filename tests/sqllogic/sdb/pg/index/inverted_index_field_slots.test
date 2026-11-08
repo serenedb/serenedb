@@ -24,6 +24,10 @@ INSERT INTO slots VALUES
 
 
 statement ok
+VACUUM (FLUSH_TABLE) slots;
+
+
+statement ok
 INSERT INTO slots VALUES
   (5, false, 50, 'apple'),
   (6, NULL, 60, NULL),

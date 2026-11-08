@@ -44,6 +44,15 @@ statement ok
 INSERT INTO ebc SELECT * FROM eb_src WHERE pk < 2000;
 
 statement ok
+VACUUM (FLUSH_TABLE) ebl;
+
+statement ok
+VACUUM (FLUSH_TABLE) ebi;
+
+statement ok
+VACUUM (FLUSH_TABLE) ebc;
+
+statement ok
 INSERT INTO ebl SELECT * FROM eb_src WHERE pk >= 2000;
 
 statement ok

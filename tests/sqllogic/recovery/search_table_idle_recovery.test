@@ -25,9 +25,15 @@ CREATE TABLE gc_tuned (a INTEGER, b TEXT)
 statement ok
 INSERT INTO gc_tuned VALUES (42, 'tuned');
 
+statement ok
+VACUUM (FLUSH_TABLE) gc_tuned;
+
 # Publish a baseline on the active table.
 statement ok
 INSERT INTO gc_active VALUES (1, 'one'), (2, 'two');
+
+statement ok
+VACUUM (FLUSH_TABLE) gc_active;
 
 statement ok
 SET sdb_faults = 'crash_after_commit';

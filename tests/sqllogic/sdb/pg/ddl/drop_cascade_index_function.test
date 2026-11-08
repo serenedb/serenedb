@@ -26,6 +26,10 @@ statement ok
 CREATE INDEX kostya_idx ON kostya_t USING inverted(id, (babsky_double(n)));
 
 
+statement ok
+VACUUM (FLUSH_TABLE) kostya_t;
+
+
 # Live INSERT path: new rows go through the macro as they're written.
 statement count 1
 INSERT INTO kostya_t VALUES (4, 7);

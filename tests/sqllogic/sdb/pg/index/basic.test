@@ -279,6 +279,9 @@ statement count 3
 INSERT INTO table_numeric_idx VALUES (3,1), (7,3), (17,5);
 
 statement ok
+VACUUM (FLUSH_TABLE) table_numeric_idx;
+
+statement ok
 BEGIN;
 
 # In-transaction search is allowed: postings hold committed rows only, so the

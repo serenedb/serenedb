@@ -57,6 +57,10 @@ statement ok
 INSERT INTO m VALUES (4, 'delta', 40, 'note-4')
 
 
+statement ok
+VACUUM (FLUSH_TABLE) m
+
+
 # ---------------- Segment 2: exactly STANDARD_VECTOR_SIZE (== 2048) -----
 # Range [100, 2147] inclusive = 2048 rows. Every 7th row gets NULL in
 # `note` (sparse nulls) and every 3rd row gets NULL in `tag` so the cs
@@ -71,6 +75,10 @@ SELECT i,
 FROM generate_series(100, 2147) AS s(i)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) m
+
+
 # ---------------- Segment 3: 2048 + 1 (partial last word in last chunk) -
 # Range [3000, 5048] = 2049 rows. Last word in chunk-2 holds exactly 1
 # bit -- the tail-bit mask must clear the remaining 63 padding bits.
@@ -81,6 +89,10 @@ SELECT i,
        i,
        CASE WHEN i % 13 = 0 THEN NULL ELSE 'tag-' || i END
 FROM generate_series(3000, 5048) AS s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) m
 
 
 # ---------------- Segment 4: 4096 rows == 2 * STANDARD_VECTOR_SIZE ------
@@ -94,6 +106,10 @@ SELECT i,
 FROM generate_series(10000, 14095) AS s(i)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) m
+
+
 # ---------------- Segment 5: 2047 (single chunk, max-tail-mask) ---------
 # One bit short of the chunk boundary -- last word in chunk has 1 padding
 # bit at the top.
@@ -101,6 +117,10 @@ statement ok
 INSERT INTO m
 SELECT i, 'fox', NULL, NULL
 FROM generate_series(20000, 22046) AS s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) m
 
 
 # ---------------- Removals: force the mask-filter / id_map paths --------

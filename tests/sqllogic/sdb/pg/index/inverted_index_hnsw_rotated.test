@@ -177,7 +177,13 @@ statement ok
 INSERT INTO rot_st SELECT i, rot_vec(i) FROM range(0, 2500) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rot_st;
+
+statement ok
 INSERT INTO rot_st SELECT i, rot_vec(i) FROM range(2500, 5000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) rot_st;
 
 statement ok
 INSERT INTO rot_st SELECT i, rot_vec(i) FROM range(5000, 7500) t(i);
@@ -202,6 +208,9 @@ count
 
 statement ok
 INSERT INTO rot_st_ip SELECT * FROM rot_st WHERE id < 2500;
+
+statement ok
+VACUUM (FLUSH_TABLE) rot_st_ip;
 
 statement ok
 INSERT INTO rot_st_ip SELECT * FROM rot_st WHERE id >= 2500;
@@ -301,6 +310,9 @@ CREATE INDEX rot_sq8_cos_idx ON rot_sq8_cos
 
 statement ok
 INSERT INTO rot_sq8 SELECT i, rot_vec(i) FROM range(0, 2500) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) rot_sq8;
 
 statement ok
 INSERT INTO rot_sq8 SELECT i, rot_vec(i) FROM range(2500, 5000) t(i);

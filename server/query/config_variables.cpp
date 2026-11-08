@@ -1132,7 +1132,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_compact_target_segments",
       {
         LogicalTypeId::UINTEGER,
-        "How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or "
+        "How many segments VACUUM (COMPACT_*) leaves in a table. 0 or "
         "1 (default) merges every segment into one; a larger N splits the "
         "segments into N disjoint groups, merges each group into one segment "
         "and stops there, so no single merge holds the whole table. A table "
@@ -1197,7 +1197,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       kSearchBackfillGroupBytesSetting,
       {
         LogicalTypeId::UBIGINT,
-        "Bytes of existing segments a search-table CREATE INDEX rewrites "
+        "Bytes of existing segments a CREATE INDEX on a table rewrites "
         "before swapping them in and moving on. Bounds the build's peak disk "
         "(~2x one group) and the length of each publish; a value above the "
         "table's size means a single swap. 0 = no limit (one swap for the "

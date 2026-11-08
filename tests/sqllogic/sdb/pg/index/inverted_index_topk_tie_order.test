@@ -24,11 +24,19 @@ FROM generate_series(1, 100000) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) tto
+
+
+statement ok
 INSERT INTO tto
 SELECT i, CASE WHEN i % 100000 IN (10, 50010) THEN repeat('fox ', 5)
                WHEN i % 100000 = 20000 THEN repeat('fox ', 3)
                ELSE 'fox' END
 FROM generate_series(100001, 200000) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) tto
 
 
 statement ok

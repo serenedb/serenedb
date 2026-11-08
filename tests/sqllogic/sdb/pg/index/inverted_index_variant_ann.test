@@ -54,8 +54,8 @@ count
 
 # A high ef_search makes the greedy walk reliably descend the filler gradient
 # to the (reachable) sentinel island. Without it the approximate top-k depends
-# on the per-segment graph layout, which the parallel suite perturbs (refresh /
-# merge timing), so the probes below would be flaky. With it they return the
+# on the per-segment graph layout, which the parallel suite perturbs (merge
+# timing), so the probes below would be flaky. With it they return the
 # true nearest neighbours.
 statement ok
 SET sdb_ivf_search_nprobe TO 4096

@@ -24,6 +24,9 @@ CREATE INDEX idx ON t USING inverted(body en) INCLUDE (id, val);
 statement ok
 INSERT INTO t VALUES (1, 'fox', 11);
 
+statement ok
+VACUUM (FLUSH_TABLE) t;
+
 # Three-row chunk with conflict in the FIRST position. The cs vector
 # arrives as [chunk[0]=conflict, chunk[1]=survivor, chunk[2]=survivor]
 # but the segment only allocates doc ids for chunk[1] and chunk[2].
@@ -44,6 +47,9 @@ id	val
 # are rows 0 and 2; cs row 1 must not show up at any doc.
 statement ok
 INSERT INTO t VALUES (4, 'fox eagle', 44);
+
+statement ok
+VACUUM (FLUSH_TABLE) t;
 
 statement count 2
 INSERT INTO t VALUES (5, 'fox bee', 55), (1, 'conflict', 999), (6, 'fox jay', 66) ON CONFLICT DO NOTHING;

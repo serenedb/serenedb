@@ -192,7 +192,7 @@ with psycopg.connect("host=127.0.0.1 port=7890 user=postgres dbname=postgres") a
     conn.execute('VACUUM (RECOMPUTE_STATS_TABLE) "public"."my_docs";')
 ```
 
-Recomputing statistics is optional tuning -- it does not affect which rows match, only how they are scored and planned. See [Manual maintenance with `VACUUM`](../../sql/indexes/inverted/maintenance.md#manual-maintenance-with-vacuum) for the full family of operations, and [Publishing writes](./engine.md#eventual-consistency) for the refresh that makes new rows visible in the first place.
+Recomputing statistics is optional tuning -- it does not affect which rows match, only how they are scored and planned. See [Manual maintenance with `VACUUM`](../../sql/indexes/inverted/maintenance.md#manual-maintenance-with-vacuum) for the full family of operations.
 
 ### `is_valid_index()` {#is_valid_index}
 

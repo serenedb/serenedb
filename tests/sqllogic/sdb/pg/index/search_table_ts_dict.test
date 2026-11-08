@@ -2,8 +2,7 @@
 # read the index's term dictionary through a direct index scan. On a search
 # table a plain column's terms live under the index's own allocated field (not
 # the column id), so the ts_dict planner must read from that field -- otherwise
-# it reads the empty column id and returns nothing. Commit-time only, so rows
-# are observed after VACUUM (REFRESH_TABLE).
+# it reads the empty column id and returns nothing.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY d1 AS

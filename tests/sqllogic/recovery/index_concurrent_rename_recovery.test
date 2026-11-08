@@ -23,7 +23,7 @@ connection s2
 statement error
 CREATE INDEX icrr_b ON icrr USING inverted (b);
 ----
-db error: ERROR: search table "icrr" is being changed by another transaction
+db error: ERROR: table "icrr" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

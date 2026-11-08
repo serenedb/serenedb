@@ -58,9 +58,13 @@ class HotColumnReader final : public ColumnReader {
                   std::vector<WriteChunk> chunks,
                   std::vector<std::unique_ptr<ColumnReader>> children);
 
-  bool InMemory() const noexcept final { return true; }
-  bool FetchInMemory(uint64_t row, duckdb::Vector& out,
-                     duckdb::idx_t out_offset) const final;
+  bool FetchPoint(PointReader& reader, uint64_t row, duckdb::Vector& out,
+                  duckdb::idx_t out_offset) const final;
+
+  bool ValidPoint(PointReader& reader, uint64_t row,
+                  duckdb::Vector& scratch) const final {
+    return FetchPoint(reader, row, scratch, 0);
+  }
 
   uint64_t RowGroupEnd(uint64_t row) const noexcept final;
 

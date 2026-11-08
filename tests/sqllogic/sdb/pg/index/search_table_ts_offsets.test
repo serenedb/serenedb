@@ -1,8 +1,7 @@
 # ts_offsets over a search-table index. ts_offsets reads the stored match
 # offsets for the term filter, which live under the index's own allocated term
 # field on a search table (not the column id); the offsets collector matches the
-# scan's term query on that field. ts_highlight then renders them. Commit-time
-# only, so rows are observed after VACUUM (REFRESH_TABLE).
+# scan's term query on that field. ts_highlight then renders them.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY offs_en AS

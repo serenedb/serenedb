@@ -38,12 +38,21 @@ INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
 FROM range(30000) t(i)
 
 statement ok
+VACUUM (FLUSH_TABLE) fb
+
+statement ok
 INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
 FROM range(30000, 45000) t(i)
 
 statement ok
+VACUUM (FLUSH_TABLE) fb
+
+statement ok
 INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
 FROM range(45000, 52000) t(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) fb
 
 statement ok
 INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i

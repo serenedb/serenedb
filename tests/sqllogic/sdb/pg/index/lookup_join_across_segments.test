@@ -10,6 +10,9 @@ SELECT i, i % 3000,
 FROM range(0, 3000) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) ljs;
+
+statement ok
 INSERT INTO ljs
 SELECT i, i % 3000,
        CASE WHEN i % 3000 % 7 = 0 THEN 'https://google.com/' ELSE 'https://example.com/' END || i,
@@ -17,11 +20,17 @@ SELECT i, i % 3000,
 FROM range(3000, 6000) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) ljs;
+
+statement ok
 INSERT INTO ljs
 SELECT i, i % 3000,
        CASE WHEN i % 3000 % 7 = 0 THEN 'https://google.com/' ELSE 'https://example.com/' END || i,
        'payload-' || i || '-long-enough-to-not-inline'
 FROM range(6000, 9000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) ljs;
 
 statement ok
 DELETE FROM ljs WHERE id < 3000 AND id % 14 = 0;
@@ -140,6 +149,9 @@ SELECT i, i % 3000,
 FROM range(0, 3000) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) ljd;
+
+statement ok
 INSERT INTO ljd
 SELECT i, i % 3000,
        CASE WHEN i % 3000 % 7 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i,
@@ -148,12 +160,18 @@ SELECT i, i % 3000,
 FROM range(3000, 6000) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) ljd;
+
+statement ok
 INSERT INTO ljd
 SELECT i, i % 3000,
        CASE WHEN i % 3000 % 7 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i,
        'payload-' || i || '-long-enough-to-not-inline',
        'note-' || i
 FROM range(6000, 9000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) ljd;
 
 statement ok
 DELETE FROM ljd WHERE id < 3000 AND id % 14 = 0;

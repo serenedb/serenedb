@@ -17,6 +17,9 @@ statement ok
 INSERT INTO fl_words VALUES (1, 'cuts');
 
 statement ok
+VACUUM (FLUSH_TABLE) fl_words;
+
+statement ok
 INSERT INTO fl_words VALUES (2, 'bats'), (3, 'cuts'), (4, 'mats'), (5, 'dogs');
 
 query
@@ -188,6 +191,9 @@ CREATE INDEX fl_docs_idx ON fl_docs USING inverted (body fl_en);
 
 statement ok
 INSERT INTO fl_docs VALUES (1, 'cuts dogs');
+
+statement ok
+VACUUM (FLUSH_TABLE) fl_docs;
 
 statement ok
 INSERT INTO fl_docs VALUES (2, 'bats cuts'), (3, 'mats');

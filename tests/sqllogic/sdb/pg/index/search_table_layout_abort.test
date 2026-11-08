@@ -35,6 +35,10 @@ INSERT INTO la SELECT * FROM la_ref WHERE id < 500
 
 
 statement ok
+VACUUM (FLUSH_TABLE) la
+
+
+statement ok
 INSERT INTO la SELECT * FROM la_ref WHERE id >= 500
 
 

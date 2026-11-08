@@ -56,12 +56,24 @@ INSERT INTO rwi
   UNION ALL SELECT 101, [255, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8];
 
 statement ok
+VACUUM (FLUSH_TABLE) rw;
+
+statement ok
+VACUUM (FLUSH_TABLE) rwi;
+
+statement ok
 INSERT INTO rw
   SELECT 200 + i, [i * 10, 1, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
 
 statement ok
 INSERT INTO rwi
   SELECT 200 + i, [i * 10, 1, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(30) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) rw;
+
+statement ok
+VACUUM (FLUSH_TABLE) rwi;
 
 statement ok
 INSERT INTO rw

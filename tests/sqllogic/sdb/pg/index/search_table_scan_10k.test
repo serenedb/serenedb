@@ -15,7 +15,15 @@ INSERT INTO stk SELECT i, i, 'r'||i, NULL FROM generate_series(0,7999) g(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) stk;
+
+
+statement ok
 INSERT INTO stk SELECT i, i, 'r'||i, i FROM generate_series(8000,15999) g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stk;
 
 
 statement ok
@@ -114,6 +122,10 @@ CREATE TABLE stk_np (x BIGINT, s TEXT) WITH (compaction_interval=0);
 
 statement ok
 INSERT INTO stk_np SELECT i, 'r'||i FROM generate_series(0,5999) g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stk_np;
 
 
 statement ok

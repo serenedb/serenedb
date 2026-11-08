@@ -109,8 +109,6 @@ count
 4
 
 
-# DML: TurboQuant is data-oblivious, so a re-refresh re-encodes correctly.
-
 statement ok
 DELETE FROM hnsw_tq WHERE pk = 43;
 

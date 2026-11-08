@@ -8,8 +8,7 @@ SET compaction_interval = 0
 # first live term per segment and max-only requests seek to the greatest term
 # of a clean segment, so the cases below place dead terms at the byte-smallest
 # and byte-greatest positions and combine min/max with consumers that force
-# full enumeration. Background maintenance is disabled; visibility is driven
-# by VACUUM (REFRESH_TABLE) only, so deletion masks persist.
+# full enumeration.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY mmx_kw AS keyword() WITH (frequency)

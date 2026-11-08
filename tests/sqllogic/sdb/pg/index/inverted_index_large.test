@@ -348,6 +348,9 @@ FROM generate_series(1, 5000) AS s(n);
 statement ok
 CREATE INDEX dense_pk_slow_idx ON dense_pk_slow USING inverted(a, b test_english);
 
+statement ok
+VACUUM (FLUSH_TABLE) dense_pk_slow;
+
 statement count 5000
 INSERT INTO dense_pk_slow
 SELECT n, 'every row shares universal phrase number ' || n::text
@@ -394,6 +397,9 @@ FROM generate_series(51, 200) AS s(n);
 
 statement ok
 CREATE INDEX dense_no_pk_slow_idx ON dense_no_pk_slow USING inverted(a, b test_english, c test_english);
+
+statement ok
+VACUUM (FLUSH_TABLE) dense_no_pk_slow;
 
 # intentional insert out of order to test generated score column reading
 statement count 5000

@@ -109,7 +109,13 @@ statement ok
 INSERT INTO dc_compact VALUES (1, 1), (2, 2), (3, 3)
 
 statement ok
+VACUUM (FLUSH_TABLE) dc_compact
+
+statement ok
 INSERT INTO dc_compact VALUES (4, 3), (5, 4), (6, 5)
+
+statement ok
+VACUUM (FLUSH_TABLE) dc_compact
 
 statement ok
 INSERT INTO dc_compact VALUES (7, 5), (8, 6), (9, 7)

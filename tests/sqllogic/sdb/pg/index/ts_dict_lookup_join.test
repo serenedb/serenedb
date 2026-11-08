@@ -23,6 +23,9 @@ SELECT i,
 FROM generate_series(1, 15) t(i)
 
 statement ok
+VACUUM (FLUSH_TABLE) tl_docs
+
+statement ok
 INSERT INTO tl_docs
 SELECT i,
        'title-' || i || '-long-enough-to-not-inline',
@@ -80,12 +83,12 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~3 rows                                              │
+│ ~6 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~3 rows                                              │
+│ ~6 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: tl_idx                                        │
@@ -94,7 +97,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~6 rows                                              │
+│ ~12 rows                                             │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -120,12 +123,12 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-│ ~3 rows                                              │
+│ ~6 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
-│ ~3 rows                                              │
+│ ~6 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: tl_idx                                        │
@@ -139,7 +142,7 @@ QUERY PLAN
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body                   │
-│ ~6 rows                                              │
+│ ~12 rows                                             │
 ╰──────────────────────────────────────────────────────╯
 
 query
@@ -280,12 +283,12 @@ QUERY PLAN
 │ Top: 2                            │  │ Index: tl_idx      │  │ Projections:                                         │
 │ Order By: id DESC                 │  │ Lookup: search     │  │ sdb_inverted_index_term$body,                        │
 │ ~2 rows                           │  │ Projections: title │  │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-╰─────────────────┬─────────────────╯  │ ~2 rows            │  │ ~3 rows                                              │
+╰─────────────────┬─────────────────╯  │ ~2 rows            │  │ ~6 rows                                              │
 ╭─ IRESEARCH_SCAN ┴─────────────────╮  ╰────────────────────╯  ╰───────────────────────────┬──────────────────────────╯
 │ Index: tl_idx                     │                          ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Lookup: search                    │                          │ Groups: #0                                           │
 │ Index Filter:                     │                          │ Aggregates: sum(#1)                                  │
-│ ╭─ Term ──────────────╮           │                          │ ~3 rows                                              │
+│ ╭─ Term ──────────────╮           │                          │ ~6 rows                                              │
 │ │ Field: body(string) │           │                          ╰───────────────────────────┬──────────────────────────╯
 │ │ Value: fox          │           │                          ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ ╰─────────────────────╯           │                          │ Index: tl_idx                                        │
@@ -294,7 +297,7 @@ QUERY PLAN
 │ Projections: id, rowid            │                          │ Projections:                                         │
 │ ~6 rows                           │                          │ sdb_inverted_index_term$body,                        │
 ╰───────────────────────────────────╯                          │ sdb_inverted_index_term_count$body                   │
-                                                               │ ~6 rows                                              │
+                                                               │ ~12 rows                                             │
                                                                ╰──────────────────────────────────────────────────────╯
 
 query

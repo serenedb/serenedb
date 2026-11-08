@@ -47,7 +47,7 @@ connection t1
 statement error
 INSERT INTO cdir_local VALUES (10, 'refused');
 ----
-db error: ERROR: search table "cdir_local" was altered by a concurrent transaction
+db error: ERROR: table "cdir_local" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 

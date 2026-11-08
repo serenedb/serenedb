@@ -74,7 +74,13 @@ statement ok
 INSERT INTO docs VALUES (5, 'fox alpha',          55, 'five');
 
 statement ok
+VACUUM (FLUSH_TABLE) docs;
+
+statement ok
 INSERT INTO docs VALUES (6, 'fox beta gamma',     66, 'six');
+
+statement ok
+VACUUM (FLUSH_TABLE) docs;
 
 statement ok
 INSERT INTO docs VALUES (7, 'fox delta epsilon zeta eta', 77, 'seven');

@@ -99,6 +99,9 @@ INSERT INTO sq4_dml VALUES
   (4, [20, 0, 0]::FLOAT[3])
 
 statement ok
+VACUUM (FLUSH_TABLE) sq4_dml
+
+statement ok
 DELETE FROM sq4_dml WHERE pk = 1
 
 statement ok

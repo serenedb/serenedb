@@ -102,6 +102,9 @@ CREATE TABLE bpt (id BIGINT PRIMARY KEY, tag TEXT)
 statement ok
 INSERT INTO bpt VALUES (1, 'old'), (2, 'old');
 
+statement ok
+VACUUM (FLUSH_TABLE) bpt;
+
 connection writer
 statement ok
 BEGIN;

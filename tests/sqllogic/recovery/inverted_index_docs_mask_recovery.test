@@ -34,6 +34,9 @@ statement ok
 DELETE FROM dmf WHERE grp < 60;
 
 statement ok
+VACUUM (FLUSH_TABLE) dmf;
+
+statement ok
 DELETE FROM dmf WHERE grp = 60;
 
 query
@@ -82,6 +85,10 @@ count
 connection after_crash
 statement ok
 DELETE FROM dmf WHERE grp = 61;
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) dmf;
 
 connection after_crash
 statement ok

@@ -48,13 +48,13 @@ FROM pg_class c WHERE c.relnamespace = 'rs'::regnamespace AND c.relkind = 'i' OR
 ----
 relname	def
 Odd Idx	CREATE INDEX "Odd Idx" ON rs.t USING inverted ("Odd Col")
-t_c_uq	CREATE UNIQUE INDEX t_c_uq ON rs.t USING secondary (c)
+t_c_uq	CREATE UNIQUE INDEX t_c_uq ON rs.t USING inverted (c)
 t_coalesce	CREATE INDEX t_coalesce ON rs.t USING inverted (COALESCE(a, b))
 t_expr	CREATE INDEX t_expr ON rs.t USING inverted (((a + b)))
 t_incl	CREATE UNIQUE INDEX t_incl ON rs.t USING inverted (b) INCLUDE (c)
 t_lower	CREATE UNIQUE INDEX t_lower ON rs.t USING inverted (lower(c))
 t_part	CREATE INDEX t_part ON rs.t USING inverted (a) WHERE ((a > 10) AND (b IS NOT NULL))
-t_pkey	CREATE UNIQUE INDEX t_pkey ON rs.t USING secondary (id)
+t_pkey	CREATE UNIQUE INDEX t_pkey ON rs.t USING inverted (id)
 t_plain	CREATE INDEX t_plain ON rs.t USING inverted (a, b)
 
 

@@ -159,7 +159,15 @@ INSERT INTO dp SELECT 300 + i, 'epsilon', true FROM range(30) r(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) dp
+
+
+statement ok
 INSERT INTO dp SELECT 400 + i, 'epsilon', true FROM range(30) r(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dp
 
 
 statement ok
@@ -331,6 +339,11 @@ COMMIT
 connection second
 statement ok
 INSERT INTO ds SELECT i, 'again' FROM range(5000, 6000) r(i)
+
+
+connection second
+statement ok
+VACUUM (FLUSH_TABLE) ds
 
 
 connection second

@@ -18,6 +18,10 @@ INSERT INTO dsr_keep VALUES (1, 'kept');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) dsr_keep;
+
+
+statement ok
 CREATE TABLE dsr_oids (name TEXT, oid BIGINT);
 
 
@@ -144,6 +148,11 @@ INSERT INTO dsr_db.public.s VALUES (1, 'alpha');
 
 connection after_index
 statement ok
+VACUUM (FLUSH_TABLE) dsr_db.public.s;
+
+
+connection after_index
+statement ok
 INSERT INTO dsr_oids SELECT 'dsr_db', oid FROM pg_database WHERE datname = 'dsr_db';
 
 
@@ -218,6 +227,11 @@ CREATE TABLE dsr_r (id INT, body TEXT);
 connection after_database
 statement ok
 INSERT INTO dsr_r VALUES (1, 'old');
+
+
+connection after_database
+statement ok
+VACUUM (FLUSH_TABLE) dsr_r;
 
 
 connection after_database
@@ -317,6 +331,11 @@ INSERT INTO dsr_si VALUES (1, 'alpha');
 connection after_replace
 statement ok
 CREATE INDEX dsr_si_idx ON dsr_si USING inverted (body);
+
+
+connection after_replace
+statement ok
+VACUUM (FLUSH_TABLE) dsr_si;
 
 
 connection after_replace

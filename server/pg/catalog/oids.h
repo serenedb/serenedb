@@ -49,7 +49,7 @@ inline constexpr duckdb::idx_t kMaxSystem = 262144;
 inline constexpr duckdb::idx_t kRootUser = kMinSystem;
 
 inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
-inline constexpr duckdb::idx_t kPgAmSecondary = kMinSystem + 303;
+inline constexpr duckdb::idx_t kPgAmIResearch = kMinSystem + 301;
 
 inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
 inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
@@ -105,7 +105,7 @@ struct SystemAccessMethod {
 inline constexpr std::array kSystemAccessMethods{
   SystemAccessMethod{kPgAmHeap, "heap", 't', kPgAmHeapHandler},
   SystemAccessMethod{kPgAmInverted, "inverted", 'i', kInvalidOid},
-  SystemAccessMethod{kPgAmSecondary, "secondary", 'i', kInvalidOid},
+  SystemAccessMethod{kPgAmIResearch, "iresearch", 't', kInvalidOid},
 };
 
 template<typename T, size_t N>

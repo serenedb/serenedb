@@ -941,7 +941,7 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_t(i INTEGER)
 ----
-db error: ERROR: search table "cmr_t" is being changed by another transaction
+db error: ERROR: table "cmr_t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -949,7 +949,7 @@ connection s2
 statement error
 DROP TABLE cmr_t
 ----
-db error: ERROR: search table "cmr_t" is being changed by another transaction
+db error: ERROR: table "cmr_t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -969,7 +969,7 @@ connection s2
 statement error
 ALTER TABLE cmr_t ADD COLUMN z INTEGER
 ----
-db error: ERROR: search table "cmr_t" is being changed by another transaction
+db error: ERROR: table "cmr_t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -977,7 +977,7 @@ connection s2
 statement error
 ALTER TABLE cmr_t RENAME TO cmr_t_other
 ----
-db error: ERROR: search table "cmr_t" is being changed by another transaction
+db error: ERROR: table "cmr_t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1028,7 +1028,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: search table "cmr_t" is being changed by another transaction
+db error: ERROR: table "cmr_t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1051,7 +1051,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: search table "cmr_t" is being changed by another transaction
+db error: ERROR: table "cmr_t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1082,7 +1082,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: search table "cmr_t" is being changed by another transaction
+db error: ERROR: table "cmr_t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1193,7 +1193,7 @@ connection s2
 statement error
 CREATE INDEX cmr_ti_j ON cmr_ti(a)
 ----
-db error: ERROR: search table "cmr_ti" is being changed by another transaction
+db error: ERROR: table "cmr_ti" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1340,6 +1340,10 @@ statement ok
 INSERT INTO cmr_s VALUES (1, 'x'), (2, 'y')
 
 
+statement ok
+VACUUM (FLUSH_TABLE) cmr_s
+
+
 connection s1
 statement ok
 BEGIN
@@ -1472,7 +1476,7 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_s(f INTEGER) WITH (compaction_interval = 0)
 ----
-db error: ERROR: search table "cmr_s" is being changed by another transaction
+db error: ERROR: table "cmr_s" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1481,7 +1485,7 @@ connection s2
 statement error
 DROP TABLE cmr_s
 ----
-db error: ERROR: search table "cmr_s" is being changed by another transaction
+db error: ERROR: table "cmr_s" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1489,7 +1493,7 @@ connection s2
 statement error
 ALTER TABLE cmr_s RENAME TO cmr_s_other
 ----
-db error: ERROR: search table "cmr_s" is being changed by another transaction
+db error: ERROR: table "cmr_s" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1603,6 +1607,10 @@ statement ok
 INSERT INTO cmr_sr VALUES (1, 'x')
 
 
+statement ok
+VACUUM (FLUSH_TABLE) cmr_sr
+
+
 connection s2
 statement ok
 BEGIN
@@ -1617,7 +1625,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (compaction_interval = 0)
 ----
-db error: ERROR: search table "cmr_sr" is being changed by another transaction
+db error: ERROR: table "cmr_sr" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -1640,7 +1648,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (compaction_interval = 0)
 ----
-db error: ERROR: search table "cmr_sr" is being changed by another transaction
+db error: ERROR: table "cmr_sr" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

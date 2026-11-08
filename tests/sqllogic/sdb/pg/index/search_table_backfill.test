@@ -2,11 +2,6 @@
 # iresearch store, so the segments written before the index existed are
 # rewritten to carry its new term field (search_table_backfill.md).
 #
-# Search tables are commit-time-only, and the background refresh loop would
-# otherwise publish committed rows on its own schedule. Both intervals are
-# pinned to 0 so that ONLY the explicit VACUUM (REFRESH_TABLE) calls publish --
-# every visibility assertion below is then a matter of sequence, not timing.
-#
 # Two shapes to keep in mind while reading the queries:
 #   - An index with no text search dictionary terms the WHOLE value, so a
 #     single word out of a multi-word value does not match it. Word-level
@@ -219,10 +214,19 @@ statement ok
 INSERT INTO bf_groups VALUES (1, 'v1');
 
 statement ok
+VACUUM (FLUSH_TABLE) bf_groups;
+
+statement ok
 INSERT INTO bf_groups VALUES (2, 'v2');
 
 statement ok
+VACUUM (FLUSH_TABLE) bf_groups;
+
+statement ok
 INSERT INTO bf_groups VALUES (3, 'v3');
+
+statement ok
+VACUUM (FLUSH_TABLE) bf_groups;
 
 statement ok
 INSERT INTO bf_groups VALUES (4, 'v4');
@@ -269,7 +273,13 @@ statement ok
 INSERT INTO bf_onegroup VALUES (1, 'v1');
 
 statement ok
+VACUUM (FLUSH_TABLE) bf_onegroup;
+
+statement ok
 INSERT INTO bf_onegroup VALUES (2, 'v2');
+
+statement ok
+VACUUM (FLUSH_TABLE) bf_onegroup;
 
 statement ok
 INSERT INTO bf_onegroup VALUES (3, 'v3');
@@ -304,6 +314,9 @@ CREATE TABLE bf_masked (id BIGINT PRIMARY KEY, tag TEXT)
 
 statement ok
 INSERT INTO bf_masked SELECT i, 't' || (i % 3) FROM generate_series(1, 10000) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bf_masked;
 
 statement ok
 DELETE FROM bf_masked WHERE id % 2 = 0 OR id BETWEEN 2001 AND 7000;
@@ -368,7 +381,13 @@ statement ok
 INSERT INTO bf_split SELECT i, 'w' || (i % 50) || ' x' || i FROM generate_series(0, 99999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) bf_split;
+
+statement ok
 INSERT INTO bf_split SELECT i, 'w' || (i % 50) || ' y' || i FROM generate_series(100000, 199999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bf_split;
 
 statement ok
 DELETE FROM bf_split WHERE id % 7 = 0;

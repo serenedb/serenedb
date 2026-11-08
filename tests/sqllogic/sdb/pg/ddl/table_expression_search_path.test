@@ -145,6 +145,10 @@ INSERT INTO public.tesp_st (id, a) VALUES (1, 1);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) public.tesp_st;
+
+
+statement ok
 UPDATE public.tesp_t SET id = 2;
 
 

@@ -27,6 +27,9 @@ statement ok
 INSERT INTO agg SELECT i, concat_ws(' ', ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + (i % 24)], ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + ((i*7) % 24)]) FROM generate_series(13001, 26000) g(i)
 
 statement ok
+VACUUM (FLUSH_TABLE) agg;
+
+statement ok
 INSERT INTO agg SELECT i, concat_ws(' ', ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + (i % 24)], ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + ((i*7) % 24)]) FROM generate_series(26001, 40000) g(i)
 
 statement ok

@@ -156,9 +156,6 @@ count
 0
 
 
-# Eventual consistency: a row deleted after the refresh can no longer be
-# looked up, so it reads as a filtered-out row (not NULL) -- both ext = 1 and
-# ext IS NULL exclude it.
 statement ok
 DELETE FROM fpdocs WHERE id = 3
 

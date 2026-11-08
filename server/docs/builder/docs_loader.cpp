@@ -415,7 +415,7 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
       dynamic_cast<const catalog::SearchTableEntry*>(entry.get());
     if (!table) {
       SDB_ERROR(STARTUP, "cannot build the docs index: ", kSchema, ".",
-                table_name, " is not a search table in the catalog");
+                table_name, " is not a table in the catalog");
       return;
     }
     auto& store = *table->Storage();

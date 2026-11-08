@@ -23,6 +23,9 @@ INSERT INTO v VALUES
   (1, array_value(1::FLOAT, 2::FLOAT, 3::FLOAT)),
   (2, array_value(10::FLOAT, 10::FLOAT, 10::FLOAT));
 
+statement ok
+VACUUM (FLUSH_TABLE) v;
+
 # Crash AFTER the WAL commit: (3,[0,0,0]) is fsynced into the WAL but never
 # refresh-published; recovery must rebuild it into the IVF.
 statement ok

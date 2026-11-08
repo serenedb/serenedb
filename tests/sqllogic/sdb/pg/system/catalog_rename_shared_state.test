@@ -37,7 +37,7 @@ connection s2
 statement error
 ALTER TABLE crs.t RENAME TO t3;
 ----
-db error: ERROR: search table "t" is being changed by another transaction
+db error: ERROR: table "t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -151,7 +151,7 @@ connection s1
 statement error
 ALTER TABLE crs.t2 RENAME TO t5;
 ----
-db error: ERROR: search table "t2" is being changed by another transaction
+db error: ERROR: table "t2" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -171,7 +171,7 @@ connection s2
 statement error
 CREATE INDEX i5 ON crs.t2 (id);
 ----
-db error: ERROR: search table "t2" is being changed by another transaction
+db error: ERROR: table "t2" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

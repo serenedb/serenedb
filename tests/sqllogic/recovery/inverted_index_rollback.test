@@ -48,6 +48,10 @@ statement ok
 INSERT INTO doc_rb VALUES (1, 'baseline alpha', 'a', 100)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) doc_rb
+
+
 # Aborted txn: INSERTs go to the cs writer but ROLLBACK must drop the segment
 # (and remove the partial `.cs`).
 statement ok
@@ -119,6 +123,10 @@ CREATE INDEX doc_pre_idx ON doc_pre USING inverted(pk, body en) INCLUDE (label, 
 # after recovery.
 statement ok
 INSERT INTO doc_pre VALUES (1, 'alpha one', 'a', 100)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) doc_pre
 
 
 # Arm the crash: serened will exit(1) before the commit is durable the next COMMIT.
@@ -216,6 +224,11 @@ CREATE INDEX doc_post_idx ON doc_post USING inverted(pk, body en) INCLUDE (label
 connection pre_after
 statement ok
 INSERT INTO doc_post VALUES (1, 'alpha one', 'a', 100)
+
+
+connection pre_after
+statement ok
+VACUUM (FLUSH_TABLE) doc_post
 
 
 # Arm: crash *after* the commit -- the next COMMIT persists then dies.

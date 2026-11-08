@@ -5,7 +5,7 @@
 # results must be exact for any claim order. Segments exceed one scan unit
 # (122880 rows), and the key ascends within the first segment but descends
 # within the second, so ASC and DESC each find their best unit at opposite
-# ends of a file. A post-refresh DELETE demotes a segment to the masked
+# ends of a file. A DELETE demotes a segment to the masked
 # streaming walk, which cannot reorder -- results still exact.
 
 statement ok
@@ -29,6 +29,10 @@ statement ok
 INSERT INTO uo
   SELECT i, 'fox', CASE WHEN i < 2 THEN NULL ELSE i END
   FROM generate_series(0, 130000) g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) uo;
 
 
 # Segment 2: c descends 269999..139999 (best DESC values in the head unit).
@@ -91,9 +95,6 @@ sum
 269499500
 
 
-# Deleting a matched row after refresh does not change the last-refresh
-# matched set; after the refresh below, segment 2 carries a mask and takes
-# the forward masked walk (no reordering) -- results stay exact.
 statement ok
 DELETE FROM uo WHERE c = 269999;
 

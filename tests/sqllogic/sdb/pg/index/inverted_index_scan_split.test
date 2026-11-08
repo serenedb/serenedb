@@ -34,6 +34,10 @@ FROM generate_series(1, 300000) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sp
+
+
+statement ok
 INSERT INTO sp
 SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 10000
 FROM generate_series(300001, 305000) s(i)

@@ -4,7 +4,6 @@
 # independent analyzers. A predicate pushes down through a direct index scan
 # (SELECT ... FROM <idx>), using that index's own term field + analyzer; a bare
 # @@ on a non-PK column errors, matching a transactional inverted index.
-# Commit-time-only, so rows are observed after VACUUM (REFRESH_TABLE).
 
 # --- Two analyzers on one column: stemming vs non-stemming ---
 statement ok

@@ -31,6 +31,10 @@ statement ok
 INSERT INTO docs VALUES (2, 'the quick fox');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) docs;
+
+
 # Batch 2 — segment B
 statement ok
 INSERT INTO docs VALUES (3, 'the lazy dog');
@@ -38,6 +42,10 @@ INSERT INTO docs VALUES (3, 'the lazy dog');
 
 statement ok
 INSERT INTO docs VALUES (4, 'a fox is a fox is a fox');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) docs;
 
 
 # Batch 3 — segment C

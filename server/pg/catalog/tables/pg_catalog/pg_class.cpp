@@ -179,7 +179,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
     Col<"relkind">([](const auto&) { return 'r'; }), kRelationState,
-    Col<"relam">([](const auto&) { return kPgAmHeap; }),
+    Col<"relam">([](const auto&) { return kPgAmIResearch; }),
     Col<"relnatts">([](const auto& row) {
       return row.table.GetColumns().LogicalColumnCount();
     }),
@@ -229,7 +229,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
     Col<"relkind">([](const auto&) { return 'i'; }),
-    Col<"relam">([](const auto&) { return kPgAmSecondary; }),
+    Col<"relam">([](const auto&) { return kPgAmInverted; }),
     Col<"relnatts">([](const auto& row) {
       return KeyAttnums(row.table.GetColumns(), row.key).size();
     }));
@@ -241,11 +241,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relnamespace">(
       [](const auto& row) { return row.index.ParentSchemaOid(); }),
     Col<"relkind">([](const auto&) { return 'i'; }),
-    Col<"relam">([](const auto& row) {
-      return row.index.index_type == catalog::kInvertedIndexTypeName
-               ? kPgAmInverted
-               : kPgAmSecondary;
-    }),
+    Col<"relam">([](const auto&) { return kPgAmInverted; }),
     Col<"relnatts">(
       [](const auto& row) { return row.index.parsed_expressions.size(); }),
     Col<"reloptions">([](const auto& row) {

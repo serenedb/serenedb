@@ -40,11 +40,23 @@ INSERT INTO bpm_s SELECT i, 'alpha' FROM generate_series(1, 100) s(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) bpm_s;
+
+
+statement ok
 INSERT INTO bpm_s SELECT i, 'alpha' FROM generate_series(101, 200) s(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) bpm_s;
+
+
+statement ok
 INSERT INTO bpm_t SELECT i, 'alpha' FROM generate_series(1, 100) s(i);
+
+
+statement ok
+VACUUM (FLUSH_INDEX) bpm_idx;
 
 
 statement ok

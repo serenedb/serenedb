@@ -10,7 +10,6 @@
 #                                          native LIKE; counts/sums/topk)
 #                nested-gather            (filtered nested reads at 0.1/1/10%
 #                                          density vs native table filters)
-#                search-table             (write/ingest: storage='search' + count)
 #   dims:        threads {1,64} x {cold, hot=avg of 2 after cold}
 #   metrics:     write time, read time (cold/hot), peak RSS (VmHWM), disk size
 #
@@ -45,7 +44,7 @@ TYPES_PQ="${FM_TYPES_PQ:-${HOME}/data/types_perf.parquet}"
 HITS_PQ="${FM_HITS_PQ:-${HOME}/data/hits_10pct.parquet}"
 NESTED_ROWS="${FM_NESTED_ROWS:-10000000}"
 NESTED_PQ="${FM_NESTED_PQ:-${FM}/nested_v2.parquet}"
-BENCHES="${FM_BENCHES:-per-type hits nested text-gather nested-gather search-table}"
+BENCHES="${FM_BENCHES:-per-type hits nested text-gather nested-gather}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo run)"
 OUT="${FM}/matrix-${STAMP}.tsv"
 
@@ -438,7 +437,6 @@ run_native() { # bench
 }
 
 for bench in $BENCHES; do
-	[[ "$bench" == "search-table" ]] && continue # handled separately below
 	echo "===== benchmark: $bench ====="
 	run_cs_engine "$bench" old "$OLD_BIN"
 	run_cs_engine "$bench" new "$NEW_BIN"
@@ -478,7 +476,6 @@ render_bench() {
     }' "$OUT"
 }
 for bench in $BENCHES; do
-	[[ "$bench" == "search-table" ]] && continue
 	render_bench "$bench"
 done
 echo

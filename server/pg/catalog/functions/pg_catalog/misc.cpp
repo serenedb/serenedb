@@ -1399,7 +1399,6 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   const auto float8 = duckdb::LogicalType::DOUBLE;
   const auto any = duckdb::LogicalType::ANY;
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
-  const std::string_view builtin = DEFAULT_SCHEMA;
 
   for (const auto& [name, function] : {
          NamedScalar{.name = "pg_table_is_visible",
@@ -1484,16 +1483,16 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction function{{any}, REGTYPE(), PgTypeofFunction};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     function.SetBindExpressionCallback(BindPgTypeof);
-    RegisterScalar(loader, builtin, "pg_typeof", CONSISTENT_WITHIN_QUERY,
-                   nullptr, {function});
+    ExtendScalar(loader, "pg_typeof", CONSISTENT_WITHIN_QUERY, nullptr,
+                 {function});
   }
 
   {
     duckdb::ScalarFunction function{
       {text, boolean}, text, CurrentSetting2Function};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    RegisterScalar(loader, builtin, "current_setting", CONSISTENT_WITHIN_QUERY,
-                   nullptr, {function});
+    ExtendScalar(loader, "current_setting", CONSISTENT_WITHIN_QUERY, nullptr,
+                 {function});
   }
 
   {
@@ -1501,42 +1500,38 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
       {text, text, boolean}, text, SetConfigFunction};
     function.SetFallible();
     function.SetRequiresOrderedExecution(true);
-    RegisterScalar(loader, builtin, "set_config", VOLATILE, nullptr,
-                   {function});
+    ExtendScalar(loader, "set_config", VOLATILE, nullptr, {function});
   }
 
-  RegisterScalar(
-    loader, builtin, "search_path_canonical", CONSISTENT_WITHIN_QUERY, nullptr,
-    {duckdb::ScalarFunction{{}, text, SearchPathCanonicalFunction}});
+  ExtendScalar(loader, "search_path_canonical", CONSISTENT_WITHIN_QUERY,
+               nullptr,
+               {duckdb::ScalarFunction{{}, text, SearchPathCanonicalFunction}});
 
-  RegisterScalar(loader, builtin, "version", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, VersionFunction}});
+  ExtendScalar(loader, "version", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, text, VersionFunction}});
 
-  RegisterScalar(loader, builtin, "pg_backend_pid", CONSISTENT_WITHIN_QUERY,
-                 nullptr,
-                 {duckdb::ScalarFunction{{}, int4, PgBackendPidFunction}});
+  ExtendScalar(loader, "pg_backend_pid", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, int4, PgBackendPidFunction}});
 
-  RegisterScalar(
-    loader, builtin, "pg_cancel_backend", VOLATILE, nullptr,
+  ExtendScalar(
+    loader, "pg_cancel_backend", VOLATILE, nullptr,
     {duckdb::ScalarFunction{{int4}, boolean, SignalBackendFunction<false>}});
-  RegisterScalar(
-    loader, builtin, "pg_terminate_backend", VOLATILE, nullptr,
+  ExtendScalar(
+    loader, "pg_terminate_backend", VOLATILE, nullptr,
     {duckdb::ScalarFunction{{int4}, boolean, SignalBackendFunction<true>}});
 
   {
     duckdb::ScalarFunction function{{any}, int4, CountNullsFunction<false>};
     function.GetSignature().AddArgs("args", any).AddKwargs("kwargs", any);
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    RegisterScalar(loader, builtin, "num_nonnulls", CONSISTENT, nullptr,
-                   {function});
+    ExtendScalar(loader, "num_nonnulls", CONSISTENT, nullptr, {function});
   }
 
   {
     duckdb::ScalarFunction function{{any}, int4, CountNullsFunction<true>};
     function.GetSignature().AddArgs("args", any).AddKwargs("kwargs", any);
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    RegisterScalar(loader, builtin, "num_nulls", CONSISTENT, nullptr,
-                   {function});
+    ExtendScalar(loader, "num_nulls", CONSISTENT, nullptr, {function});
   }
 
   {
@@ -1548,26 +1543,21 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
                                       WidthBucketThresholdsFunction,
                                       WidthBucketThresholdsBind};
     thresholds.SetFallible();
-    RegisterScalar(loader, builtin, "width_bucket", CONSISTENT, nullptr,
-                   {function, thresholds});
+    ExtendScalar(loader, "width_bucket", CONSISTENT, nullptr,
+                 {function, thresholds});
   }
 
-  RegisterScalar(loader, builtin, "pg_current_xact_id", CONSISTENT_WITHIN_QUERY,
-                 nullptr,
-                 {duckdb::ScalarFunction{{}, XID8(), NotSupportedFunction}});
-  RegisterScalar(
-    loader, builtin, "pg_xact_status", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{{XID8()}, text, NotSupportedFunction}});
+  ExtendScalar(loader, "pg_current_xact_id", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, XID8(), NotSupportedFunction}});
+  ExtendScalar(loader, "pg_xact_status", VOLATILE, nullptr,
+               {duckdb::ScalarFunction{{XID8()}, text, NotSupportedFunction}});
 
-  RegisterScalar(loader, builtin, "current_user", CONSISTENT_WITHIN_QUERY,
-                 nullptr,
-                 {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
-  RegisterScalar(loader, builtin, "current_role", CONSISTENT_WITHIN_QUERY,
-                 nullptr,
-                 {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
-  RegisterScalar(loader, builtin, "session_user", CONSISTENT_WITHIN_QUERY,
-                 nullptr,
-                 {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
+  ExtendScalar(loader, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
+  ExtendScalar(loader, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
+  ExtendScalar(loader, "session_user", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
 
   RegisterScalar(
     loader, pg_catalog, "pg_basetype", CONSISTENT_WITHIN_QUERY, InitSession,

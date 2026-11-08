@@ -10,10 +10,19 @@ statement ok
 INSERT INTO rt SELECT i, 'a' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rt;
+
+statement ok
 INSERT INTO rt SELECT i, 'b' || i FROM generate_series(10000, 19999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rt;
+
+statement ok
 INSERT INTO rt SELECT i, 'c' || i FROM generate_series(20000, 29999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) rt;
 
 statement ok
 SET sdb_faults = 'crash_after_commit';
@@ -191,6 +200,10 @@ n
 connection after_race
 statement ok
 INSERT INTO rt SELECT i, 'e' || i FROM generate_series(40000, 40999) g(i);
+
+connection after_race
+statement ok
+VACUUM (FLUSH_TABLE) rt;
 
 connection after_race
 statement ok

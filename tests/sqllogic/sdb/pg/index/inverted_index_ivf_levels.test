@@ -115,6 +115,9 @@ CREATE INDEX mrg_idx ON mrg USING inverted(pk, emb ivf (metric = 'l2', quant = '
 statement ok
 INSERT INTO mrg SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(1000) t(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) mrg;
+
 # change the session GUC AFTER the index exists
 statement ok
 RESET sdb_ivf_posting_size;

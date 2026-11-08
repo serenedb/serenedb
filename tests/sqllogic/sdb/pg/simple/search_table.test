@@ -408,6 +408,9 @@ statement ok
 INSERT INTO search_upd VALUES (1, 'a', 10), (2, 'a', 20), (3, 'b', 30),
   (4, 'b', 40);
 
+statement ok
+VACUUM (FLUSH_TABLE) search_upd;
+
 # Multi-row UPDATE: two rows match; non-matching rows are untouched.
 statement ok
 UPDATE search_upd SET n = n + 100 WHERE grp = 'a';
@@ -589,6 +592,9 @@ statement ok
 INSERT INTO search_gen_upd (id, w, tag) VALUES (1, 3, 'a'), (2, 5, 'b'),
   (3, 8, 'a');
 
+statement ok
+VACUUM (FLUSH_TABLE) search_gen_upd;
+
 # Updating a non-feeder column leaves the generated column and the PK untouched.
 statement ok
 UPDATE search_gen_upd SET tag = 'z' WHERE id = 2;
@@ -628,6 +634,9 @@ statement ok
 INSERT INTO search_gen_upd_gpk (w, h) VALUES (3, 4), (5, 6);
 
 statement ok
+VACUUM (FLUSH_TABLE) search_gen_upd_gpk;
+
+statement ok
 UPDATE search_gen_upd_gpk SET h = 10 WHERE w = 3;
 
 query
@@ -655,7 +664,13 @@ statement ok
 INSERT INTO comp_del VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd');
 
 statement ok
+VACUUM (FLUSH_TABLE) comp_del;
+
+statement ok
 INSERT INTO comp_del VALUES (5, 'e'), (6, 'f'), (7, 'g'), (8, 'h');
+
+statement ok
+VACUUM (FLUSH_TABLE) comp_del;
 
 # Delete the even ids across both segments, then publish the tombstones.
 statement ok
@@ -744,6 +759,9 @@ statement ok
 INSERT INTO comp_reins VALUES (1, 'old'), (2, 'keep');
 
 statement ok
+VACUUM (FLUSH_TABLE) comp_reins;
+
+statement ok
 DELETE FROM comp_reins WHERE id = 1;
 
 statement ok
@@ -778,6 +796,9 @@ statement ok
 INSERT INTO comp_genpk VALUES (10, 'p'), (20, 'q'), (30, 'r'), (40, 's');
 
 statement ok
+VACUUM (FLUSH_TABLE) comp_genpk;
+
+statement ok
 DELETE FROM comp_genpk WHERE a >= 30;
 
 statement ok
@@ -808,6 +829,9 @@ CREATE TABLE drop_nopk (a INTEGER, b TEXT);
 
 statement ok
 INSERT INTO drop_nopk VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (FLUSH_TABLE) drop_nopk;
 
 statement ok
 DROP TABLE drop_nopk;

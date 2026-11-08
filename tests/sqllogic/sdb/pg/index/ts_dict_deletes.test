@@ -6,9 +6,7 @@ SET compaction_interval = 0
 # Deleted documents are per-segment masks until compaction rewrites the
 # segment. The term-dict scan drops terms with no live documents and
 # ts_dict_count() counts live documents only; ts_dict_freq() stays a raw
-# index statistic until compaction. refresh_interval = 0 and
-# compaction_interval = 0 disable background maintenance so segments stay
-# dirty; VACUUM (REFRESH_TABLE) commits pending data and masks.
+# index statistic until compaction.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY del_kw AS keyword() WITH (frequency)
@@ -219,6 +217,9 @@ CREATE INDEX dd2_idx ON dd2 USING inverted(cat del_kw)
 
 statement ok
 INSERT INTO dd2 VALUES (1, 'a'), (2, 'b'), (3, 'c')
+
+statement ok
+VACUUM (FLUSH_TABLE) dd2;
 
 statement ok
 DELETE FROM dd2

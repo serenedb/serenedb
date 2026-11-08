@@ -56,6 +56,10 @@ statement ok
 CREATE INDEX wiki_topk_idx ON wiki_docs USING inverted(id, title, body en_topk_slow);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) wiki_docs;
+
+
 # Insert more to create a second segment
 statement ok
 INSERT INTO wiki_docs

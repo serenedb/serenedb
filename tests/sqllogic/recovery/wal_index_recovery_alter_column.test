@@ -19,6 +19,9 @@ CREATE INDEX ac_idx ON ac_t USING inverted(body ac_dict);
 statement count 1
 INSERT INTO ac_t VALUES (1, 'alpha bravo', 'keep');
 
+statement ok
+VACUUM (FLUSH_TABLE) ac_t;
+
 # Durable schema changes: add a backfilled column, drop a non-indexed column.
 statement ok
 ALTER TABLE ac_t ADD COLUMN score INTEGER DEFAULT 7;

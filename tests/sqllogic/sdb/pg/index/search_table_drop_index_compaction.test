@@ -14,6 +14,9 @@ statement ok
 INSERT INTO notes VALUES (1, 'the quick brown fox'), (2, 'lazy dog jumps');
 
 statement ok
+VACUUM (FLUSH_TABLE) notes;
+
+statement ok
 INSERT INTO notes VALUES (3, 'fox runs fast'), (4, 'a dog sleeps');
 
 statement ok
@@ -92,6 +95,9 @@ CREATE INDEX held_idx ON held USING inverted (body dic_norms);
 
 statement ok
 INSERT INTO held VALUES (1, 'the quick brown fox'), (2, 'lazy dog jumps');
+
+statement ok
+VACUUM (FLUSH_TABLE) held;
 
 statement ok
 INSERT INTO held VALUES (3, 'fox runs fast'), (4, 'a dog sleeps');

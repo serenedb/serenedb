@@ -32,6 +32,9 @@ statement ok
 INSERT INTO tt VALUES (3, 'c');
 
 statement ok
+VACUUM (FLUSH_TABLE) tt;
+
+statement ok
 BEGIN;
 
 statement ok
@@ -92,6 +95,9 @@ statement ok
 INSERT INTO tt VALUES (8, 'h'), (9, 'i');
 
 statement ok
+VACUUM (FLUSH_TABLE) tt;
+
+statement ok
 PREPARE tt_truncate AS TRUNCATE tt;
 
 statement ok
@@ -114,6 +120,9 @@ id	r
 
 statement ok
 INSERT INTO tt VALUES (11, 'k');
+
+statement ok
+VACUUM (FLUSH_TABLE) tt;
 
 statement ok
 BEGIN;

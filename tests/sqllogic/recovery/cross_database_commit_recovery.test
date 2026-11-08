@@ -19,6 +19,9 @@ statement ok
 INSERT INTO xcr_local SELECT i, 'bulk' || i FROM range(0, 20000) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) xcr_local;
+
+statement ok
 BEGIN;
 
 statement ok

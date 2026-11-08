@@ -29,7 +29,13 @@ statement ok
 INSERT INTO cart SELECT i, concat_ws(' ', ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + (i % 24)], ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + ((i*7) % 24)]) FROM generate_series(10001, 20000) g(i)
 
 statement ok
+VACUUM (FLUSH_TABLE) cart;
+
+statement ok
 INSERT INTO cart SELECT i, concat_ws(' ', ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + (i % 24)], ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + ((i*7) % 24)]) FROM generate_series(20001, 30000) g(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) cart;
 
 statement ok
 INSERT INTO cart SELECT i, concat_ws(' ', ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + (i % 24)], ARRAY['apple','aple','appl','apricot','avocado','banana','berry','blueberry','cherry','citrus','cranberry','date','dragonfruit','elderberry','fig','grape','guava','kiwi','lemon','lime','mango','melon','orange','papaya'][1 + ((i*7) % 24)]) FROM generate_series(30001, 40000) g(i)

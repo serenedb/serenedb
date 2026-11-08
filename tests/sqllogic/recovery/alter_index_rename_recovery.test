@@ -60,6 +60,10 @@ statement ok
 ALTER INDEX rni_inv RENAME TO rni_inv2;
 
 
+statement ok
+VACUUM (FLUSH_TABLE) rni_t;
+
+
 # Renaming a table takes the same catalog-only path.
 statement ok
 CREATE TABLE rni_tbl (x INTEGER);

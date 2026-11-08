@@ -29,6 +29,10 @@ INSERT INTO strn VALUES (10), (20), (30);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) strn;
+
+
+statement ok
 DELETE FROM strn WHERE id = 10;
 
 

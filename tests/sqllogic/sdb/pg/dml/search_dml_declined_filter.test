@@ -6,6 +6,10 @@ statement ok
 INSERT INTO sdf SELECT i, 'v' || i FROM generate_series(1, 5) g(i)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) sdf
+
+
 statement count 1
 DELETE FROM sdf WHERE tableoid = 'sdf'::regclass AND a = 3
 

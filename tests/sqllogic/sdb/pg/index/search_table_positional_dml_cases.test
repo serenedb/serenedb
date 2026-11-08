@@ -8,10 +8,16 @@ statement ok
 INSERT INTO pq SELECT i, i % 10, 'v' || i FROM generate_series(0, 4999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) pq;
+
+statement ok
 INSERT INTO pq SELECT i, i % 10, 'v' || i FROM generate_series(5000, 9999) g(i);
 
 statement ok
 RESET threads;
+
+statement ok
+VACUUM (FLUSH_TABLE) pq;
 
 statement ok
 CREATE TABLE pq_dup (id BIGINT);
@@ -51,6 +57,9 @@ CREATE TABLE pq2 (id BIGINT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO pq2 SELECT i FROM generate_series(0, 2999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) pq2;
 
 statement ok
 BEGIN;

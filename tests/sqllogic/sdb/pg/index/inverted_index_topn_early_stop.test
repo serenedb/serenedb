@@ -30,6 +30,10 @@ FROM generate_series(1, 40960) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) es
+
+
+statement ok
 INSERT INTO ess
 SELECT i, i, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
   'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
@@ -37,10 +41,18 @@ FROM generate_series(1, 40960) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) ess
+
+
+statement ok
 INSERT INTO es
 SELECT i, i, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
   'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
 FROM generate_series(40961, 61440) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) es
 
 
 statement ok
@@ -51,6 +63,10 @@ FROM generate_series(40961, 61440) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) ess
+
+
+statement ok
 INSERT INTO es
 SELECT i, NULL, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
   'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
@@ -58,10 +74,18 @@ FROM generate_series(61441, 65536) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) es
+
+
+statement ok
 INSERT INTO ess
 SELECT i, NULL, (i * 7919) % 100003, 'prefix__' || lpad(i::text, 8, '0'),
   'fox' || (i % 7) || CASE WHEN i % 1000 = 0 THEN ' rare' ELSE '' END
 FROM generate_series(61441, 65536) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ess
 
 
 statement ok

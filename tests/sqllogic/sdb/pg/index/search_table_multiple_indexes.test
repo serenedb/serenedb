@@ -35,6 +35,9 @@ statement ok
 INSERT INTO mi SELECT * FROM mi_ref WHERE id < 800;
 
 statement ok
+VACUUM (FLUSH_TABLE) mi;
+
+statement ok
 INSERT INTO mi SELECT * FROM mi_ref WHERE id >= 800 AND id < 1500;
 
 statement ok

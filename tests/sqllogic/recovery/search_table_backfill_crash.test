@@ -31,7 +31,13 @@ statement ok
 INSERT INTO bfx VALUES (1, 'alpha');
 
 statement ok
+VACUUM (FLUSH_TABLE) bfx;
+
+statement ok
 INSERT INTO bfx VALUES (2, 'beta');
+
+statement ok
+VACUUM (FLUSH_TABLE) bfx;
 
 statement ok
 INSERT INTO bfx VALUES (3, 'gamma');
@@ -168,11 +174,23 @@ INSERT INTO bfy VALUES (1, 'alpha');
 
 connection after_crash
 statement ok
+VACUUM (FLUSH_TABLE) bfy;
+
+connection after_crash
+statement ok
 INSERT INTO bfy VALUES (2, 'beta');
 
 connection after_crash
 statement ok
+VACUUM (FLUSH_TABLE) bfy;
+
+connection after_crash
+statement ok
 INSERT INTO bfy VALUES (3, 'gamma');
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) bfy;
 
 connection after_crash
 statement ok

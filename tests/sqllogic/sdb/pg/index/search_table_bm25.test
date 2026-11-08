@@ -4,7 +4,6 @@
 # a norm-featured search index aborted the writer ("Norm-featured field requires
 # per-field index options"). Scores are read through the index scan; length
 # normalization (the norm column) makes a shorter matching document rank higher.
-# Commit-time-only, so rows are observed after VACUUM (REFRESH_TABLE).
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY norm_en AS

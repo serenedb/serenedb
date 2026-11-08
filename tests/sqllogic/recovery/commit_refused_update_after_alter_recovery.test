@@ -27,7 +27,7 @@ connection t1
 statement error
 UPDATE cru_t SET v = v + 1 WHERE id = 2;
 ----
-db error: ERROR: search table "cru_t" was altered by a concurrent transaction
+db error: ERROR: table "cru_t" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 

@@ -23,6 +23,10 @@ FROM generate_series(1, 400000) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) so
+
+
+statement ok
 INSERT INTO so
 SELECT i, CASE WHEN i = 500000 THEN repeat('fox ', 40)
                WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 10000
@@ -30,9 +34,17 @@ FROM generate_series(400001, 700000) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) so
+
+
+statement ok
 INSERT INTO so
 SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 10000
 FROM generate_series(700001, 950000) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) so
 
 
 statement ok
@@ -43,15 +55,27 @@ FROM generate_series(950001, 1080000) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) so
+
+
+statement ok
 INSERT INTO so
 SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 10000
 FROM generate_series(1080001, 1085000) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) so
+
+
+statement ok
 INSERT INTO so
 SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END, i % 10000
 FROM generate_series(1085001, 1090000) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) so
 
 
 statement ok

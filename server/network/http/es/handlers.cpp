@@ -61,27 +61,6 @@ yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
   co_return std::move(result);
 }
 
-bool WantsRefresh(const HttpRequest& request) {
-  for (const auto& [key, value] : request.query) {
-    if (key == "refresh") {
-      return value != "false";
-    }
-  }
-  return false;
-}
-
-yaclib::Task<bool> MaybeRefresh(RequestContext& ctx, const HttpRequest& request,
-                                std::string_view index,
-                                http::HttpResponseWriter& writer) {
-  if (!WantsRefresh(request)) {
-    co_return true;
-  }
-  auto result = co_await RunSql(
-    ctx, absl::StrCat("CALL es_refresh(", SqlLiteral(index), ")"), writer,
-    index);
-  co_return result != nullptr;
-}
-
 int64_t TookMs(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
            std::chrono::steady_clock::now() - start)
@@ -197,9 +176,6 @@ class BulkHandler final : public HttpHandler {
       WriteSqlError(writer, result->GetErrorObject(), index);
       co_return {};
     }
-    if (!co_await MaybeRefresh(ctx, request, index, writer)) {
-      co_return {};
-    }
     const std::string head = absl::StrCat("{\"took\":", TookMs(start),
                                           ",\"errors\":false,\"items\":[");
     static constexpr std::string_view kTail = "]}";
@@ -256,8 +232,7 @@ class DocHandler final : public HttpHandler {
                                   " SELECT * FROM es_doc(", SqlLiteral(index),
                                   ", ", SqlLiteral(id), ", ",
                                   SqlLiteral(FlattenBody(request.body)), ")");
-    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true) ||
-        !co_await MaybeRefresh(ctx, request, index, writer)) {
+    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true)) {
       co_return {};
     }
     simdjson::builder::string_builder sb;

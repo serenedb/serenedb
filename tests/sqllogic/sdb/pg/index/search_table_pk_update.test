@@ -2,8 +2,7 @@
 # unique index, but UPDATE/DELETE address rows by their rowid, the row's position.
 # Covers UPDATE of a non-PK column, UPDATE of the PK column itself (stable
 # identity, no composite-key rewrite), DELETE, and delete-then-reinsert of the
-# same PK. Search tables are commit-time-only, so each mutation is observed
-# after VACUUM (REFRESH_TABLE).
+# same PK.
 
 statement ok
 CREATE TABLE pt (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT)

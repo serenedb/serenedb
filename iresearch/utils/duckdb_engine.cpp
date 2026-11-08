@@ -33,7 +33,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/main/setting_info.hpp>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/log.hpp"
@@ -106,73 +105,56 @@ void DuckDBEngine::Configure(duckdb::DBConfig& config) {
                          duckdb::Value::BOOLEAN(false));
 }
 
-void DuckDBEngine::ConfigureExtensions() {
-  auto& db = *_db->instance;
-  auto& db_config = duckdb::DBConfig::GetConfig(db);
-  // Extension settings register at load, and the pre-construct validation
-  // rejects them as unrecognized
-  if (duckdb::ExtensionOption caching;
-      db_config.TryGetExtensionOption("httpfs_connection_caching", caching) &&
-      caching.set_function) {
-    auto enabled = duckdb::Value::BOOLEAN(true);
-    duckdb::Connection connection{db};
-    caching.set_function(*connection.context, duckdb::SetScope::GLOBAL,
-                         enabled);
-    db_config.SetOptionByName("httpfs_connection_caching", enabled);
-  }
-  // Attached iceberg tables read CURRENT metadata: the default txn-start
-  // time travel errors out any catalog enumeration that walks a table
-  // created after the reader's transaction began.
-  db_config.SetOptionByName("iceberg_use_metadata_log",
-                            duckdb::Value::BOOLEAN(false));
-}
-
 void DuckDBEngine::Initialize(DBConfigMutator mutator) {
-  SDB_ASSERT(!_db);
+  SDB_ASSERT(!_instance);
   duckdb::DBConfig config;
   Configure(config);
   mutator(config);
 
-  _db = duckdb::DuckDB::CreateEmpty(&config);
-  ConfigureExtensions();
+  _instance = duckdb::DuckDB::CreateEmpty(&config)->instance;
+  // Attached iceberg tables read CURRENT metadata: the default txn-start
+  // time travel errors out any catalog enumeration that walks a table
+  // created after the reader's transaction began.
+  _instance->config.SetOptionByName("iceberg_use_metadata_log",
+                                    duckdb::Value::BOOLEAN(false));
 
-  auto& manager = _db->instance->GetLogManager();
+  auto& manager = _instance->GetLogManager();
 
   duckdb::LogConfig cfg;
   cfg.enabled = true;
   cfg.storage = absl::AsciiStrToLower(absl::GetFlag(FLAGS_log_storage));
   cfg.level = ParseLogLevel(absl::GetFlag(FLAGS_log_level));
-  manager.SetConfig(*_db->instance, cfg);
+  manager.SetConfig(*_instance, cfg);
 
   if (cfg.storage == duckdb::LogConfig::FILE_STORAGE_NAME) {
     duckdb::case_insensitive_map_t<duckdb::Value> storage_config;
     storage_config["path"] = duckdb::Value(absl::GetFlag(FLAGS_log_path));
-    manager.UpdateLogStorageConfig(*_db->instance, storage_config);
+    manager.UpdateLogStorageConfig(*_instance, storage_config);
   }
 
   log::SetLogger(&manager.GlobalLogger());
 }
 
 void DuckDBEngine::CloseDatabases() {
-  if (!_db) {
+  if (!_instance) {
     return;
   }
-  duckdb::DatabaseManager::Get(*_db->instance).ResetDatabases();
+  duckdb::DatabaseManager::Get(*_instance).ResetDatabases();
 }
 
 void DuckDBEngine::Shutdown() {
   log::SetLogger(nullptr);
-  _db.reset();
+  _instance.reset();
 }
 
 duckdb::DatabaseInstance& DuckDBEngine::instance() {
-  SDB_ASSERT(_db);
-  return *_db->instance;
+  SDB_ASSERT(_instance);
+  return *_instance;
 }
 
 duckdb::unique_ptr<duckdb::Connection> DuckDBEngine::CreateConnection() {
-  SDB_ASSERT(_db);
-  return duckdb::make_uniq<duckdb::Connection>(*_db);
+  SDB_ASSERT(_instance);
+  return duckdb::make_uniq<duckdb::Connection>(*_instance);
 }
 
 }  // namespace irs

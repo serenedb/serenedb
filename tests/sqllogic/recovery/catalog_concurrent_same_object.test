@@ -236,7 +236,7 @@ connection s12
 statement error
 ALTER TABLE ccso_n RENAME TO ccso_n2
 ----
-db error: ERROR: search table "ccso_n" is being changed by another transaction
+db error: ERROR: table "ccso_n" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

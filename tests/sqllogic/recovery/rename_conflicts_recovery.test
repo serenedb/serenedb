@@ -30,7 +30,7 @@ connection s2
 statement error
 ALTER TABLE rcr.t RENAME TO t3;
 ----
-db error: ERROR: search table "t" is being changed by another transaction
+db error: ERROR: table "t" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

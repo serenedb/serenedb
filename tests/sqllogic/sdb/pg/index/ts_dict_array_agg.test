@@ -36,6 +36,9 @@ INSERT INTO aa VALUES
   (4, 'blue',  'hello again', NULL, 'p3')
 
 statement ok
+VACUUM (FLUSH_TABLE) aa;
+
+statement ok
 INSERT INTO aa VALUES
   (5, 'green', 'red green',   NULL, 'p2'),
   (6, 'amber', 'foo world',   'z',  'p4'),
@@ -55,18 +58,18 @@ QUERY PLAN
 │ Projections:                             │
 │ sdb_inverted_index_term$cat,             │
 │ sdb_inverted_index_term$cat IS NOT NULL  │
-│ ~2 rows                                  │
+│ ~3 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
-│ ~2 rows                                  │
+│ ~3 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
 │ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~4 rows                                  │
+│ ~6 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query
@@ -96,11 +99,11 @@ QUERY PLAN
 │ Projections:                               │
 │ sdb_inverted_index_term$plain,             │
 │ sdb_inverted_index_term$plain IS NOT NULL  │
-│ ~2 rows                                    │
+│ ~3 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ──────┴─────────────────────╮
 │ Groups: #0                                 │
-│ ~2 rows                                    │
+│ ~3 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: aa_idx                              │
@@ -108,7 +111,7 @@ QUERY PLAN
 │ TsDict: plain                              │
 │ Projections:                               │
 │ sdb_inverted_index_term$plain              │
-│ ~4 rows                                    │
+│ ~6 rows                                    │
 ╰────────────────────────────────────────────╯
 
 query
@@ -307,11 +310,11 @@ QUERY PLAN
 │ sdb_inverted_index_term$cat IS NOT NULL,   │
 │ sdb_inverted_index_term$plain,             │
 │ sdb_inverted_index_term$plain IS NOT NULL  │
-│ ~4 rows                                    │
+│ ~6 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ──────┴─────────────────────╮
 │ Groups: #0, #1                             │
-│ ~4 rows                                    │
+│ ~6 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: aa_idx                              │
@@ -320,7 +323,7 @@ QUERY PLAN
 │ Projections:                               │
 │ sdb_inverted_index_term$cat,               │
 │ sdb_inverted_index_term$plain              │
-│ ~8 rows                                    │
+│ ~12 rows                                   │
 ╰────────────────────────────────────────────╯
 
 query
@@ -352,18 +355,18 @@ EXPLAIN SELECT unnest(array_agg(DISTINCT cat)) AS t FROM aa_idx ORDER BY t
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────╮
 │ Order By: t ASC                          │
-│ ~2 rows                                  │
+│ ~3 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
-│ ~2 rows                                  │
+│ ~3 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
 │ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~4 rows                                  │
+│ ~6 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query
@@ -381,18 +384,18 @@ EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS t FROM aa_idx ORDER BY t
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────╮
 │ Order By: t ASC                          │
-│ ~2 rows                                  │
+│ ~3 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
-│ ~2 rows                                  │
+│ ~3 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
 │ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~4 rows                                  │
+│ ~6 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query

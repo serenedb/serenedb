@@ -27,7 +27,15 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_on
+
+
+statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_off
 
 
 statement ok
@@ -35,7 +43,15 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_on
+
+
+statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_off
 
 
 statement ok
@@ -43,7 +59,15 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_on
+
+
+statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_off
 
 
 statement ok
@@ -51,7 +75,15 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_on
+
+
+statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_off
 
 
 statement ok
@@ -59,7 +91,15 @@ INSERT INTO sc_on SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_on
+
+
+statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_off
 
 
 statement ok
@@ -111,7 +151,15 @@ INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(601, 700) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_off
+
+
+statement ok
 INSERT INTO sc_off SELECT i, 'fox dog' FROM generate_series(701, 800) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_off
 
 
 statement ok
@@ -195,7 +243,15 @@ INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_tgt
+
+
+statement ok
 INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_tgt
 
 
 statement ok
@@ -203,7 +259,15 @@ INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(201, 300) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_tgt
+
+
+statement ok
 INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(301, 400) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_tgt
 
 
 statement ok
@@ -211,11 +275,23 @@ INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(401, 500) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_tgt
+
+
+statement ok
 INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(501, 600) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_tgt
+
+
+statement ok
 INSERT INTO sc_tgt SELECT i, 'fox dog' FROM generate_series(601, 700) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_tgt
 
 
 statement ok
@@ -292,6 +368,10 @@ INSERT INTO sc_abort SELECT i, 'fox' FROM generate_series(1, 100) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sc_abort
+
+
+statement ok
 INSERT INTO sc_abort SELECT i, 'fox' FROM generate_series(101, 200) s(i)
 
 
@@ -329,6 +409,10 @@ CREATE INDEX sc_snap_idx ON sc_snap USING inverted (body)
 
 statement ok
 INSERT INTO sc_snap SELECT i, 'fox' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sc_snap
 
 
 statement ok

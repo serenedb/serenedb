@@ -29,7 +29,13 @@ statement ok
 INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id < 5000;
 
 statement ok
+VACUUM (FLUSH_TABLE) pqc_l2;
+
+statement ok
 INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id >= 5000 AND id < 10000;
+
+statement ok
+VACUUM (FLUSH_TABLE) pqc_l2;
 
 statement ok
 INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id >= 10000;
@@ -38,7 +44,13 @@ statement ok
 INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id < 5000;
 
 statement ok
+VACUUM (FLUSH_TABLE) pqc_ip;
+
+statement ok
 INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id >= 5000 AND id < 10000;
+
+statement ok
+VACUUM (FLUSH_TABLE) pqc_ip;
 
 statement ok
 INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id >= 10000;

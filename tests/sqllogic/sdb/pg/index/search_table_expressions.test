@@ -2,8 +2,7 @@
 # single-field: it has no stored column, so the write path evaluates it per row
 # and emits its value + terms under the expression's own allocated field. A
 # predicate on the expression pushes down through the index scan (matching a
-# transactional expression index). Empty-table-only CREATE INDEX, commit-time
-# only, so rows are observed after VACUUM (REFRESH_TABLE).
+# transactional expression index). Empty-table-only CREATE INDEX.
 
 # --- Scalar numeric expression ---
 statement ok

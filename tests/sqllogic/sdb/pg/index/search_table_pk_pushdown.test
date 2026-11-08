@@ -2,8 +2,7 @@
 # term-indexed in the table's own iresearch store, so PK predicates (=, IN,
 # range, composite, partial-PK) push down as iresearch term filters rather than
 # a full columnstore scan. Covers BIGINT / VARCHAR / composite PKs across two
-# segments, non-PK fallback, and delete-then-reinsert. Search tables are
-# commit-time-only, so results are observed after VACUUM (REFRESH_TABLE). The
+# segments, non-PK fallback, and delete-then-reinsert. The
 # EXPLAIN blocks at the end pin the plan shape (PK -> no Column Filter; non-PK ->
 # a columnstore Column Filter).
 
@@ -13,6 +12,9 @@ CREATE TABLE tb (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT)
 
 statement ok
 INSERT INTO tb SELECT i, i * 10, 'r' || i FROM generate_series(1, 2000) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) tb;
 
 statement ok
 INSERT INTO tb SELECT i, i * 10, 'r' || i FROM generate_series(2001, 4000) g(i);
@@ -58,6 +60,9 @@ CREATE TABLE tv (pk VARCHAR PRIMARY KEY, n BIGINT)
 
 statement ok
 INSERT INTO tv SELECT 'k' || i, i FROM generate_series(1, 1500) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) tv;
 
 statement ok
 INSERT INTO tv SELECT 'k' || i, i FROM generate_series(1501, 3000) g(i);

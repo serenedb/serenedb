@@ -17,6 +17,9 @@ INSERT INTO ht_sq8 SELECT i, i % 10, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
   FROM range(1500, 3000) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) ht_sq8;
+
+statement ok
 INSERT INTO ht_sq8 SELECT i, i % 10, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
   FROM range(0, 1500) t(i);
 
@@ -25,6 +28,9 @@ VACUUM (COMPACT_TABLE) ht_sq8;
 
 statement ok
 INSERT INTO ht_none SELECT * FROM ht_sq8 WHERE id >= 1500;
+
+statement ok
+VACUUM (FLUSH_TABLE) ht_none;
 
 statement ok
 INSERT INTO ht_none SELECT * FROM ht_sq8 WHERE id < 1500;

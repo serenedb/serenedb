@@ -20,15 +20,27 @@ FROM generate_series(1, 61440) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sf
+
+
+statement ok
 INSERT INTO sf
 SELECT i, 'fox' || (i % 7) || ' dog' || (i % 5)
 FROM generate_series(61441, 65536) s(i)
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sf
+
+
+statement ok
 INSERT INTO sf
 SELECT i, 'fox' || (i % 7) || ' dog' || (i % 5)
 FROM generate_series(65537, 69632) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sf
 
 
 statement ok

@@ -49,6 +49,11 @@ CREATE INDEX cfl_idx ON cfl
     INCLUDE (g, h, hn, tag);
 
 
+# Segment 1: ids 1..33000.
+statement ok
+VACUUM (FLUSH_TABLE) cfl;
+
+
 statement ok
 INSERT INTO cfl
 SELECT i,
@@ -58,6 +63,11 @@ SELECT i,
        CASE WHEN i % 1000 = 0 THEN NULL ELSE i % 100 END,
        't' || (i % 7)
 FROM generate_series(33001, 66000) t(i);
+
+
+# Segment 2: ids 33001..66000.
+statement ok
+VACUUM (FLUSH_TABLE) cfl;
 
 
 statement ok

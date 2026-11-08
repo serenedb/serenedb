@@ -29,6 +29,10 @@ INSERT INTO dr_docs VALUES
   (4, 'banana fig',   'news')
 
 
+statement ok
+VACUUM (FLUSH_TABLE) dr_docs;
+
+
 # A second segment: the global term enumeration still merges counts across
 # segments (this is the supported, postings-free behavior).
 statement ok
@@ -90,11 +94,11 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$body,             │
 │ sdb_inverted_index_term$body IS NOT NULL  │
-│ ~3 rows                                   │
+│ ~4 rows                                   │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
-│ ~3 rows                                   │
+│ ~4 rows                                   │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: dr_idx                             │
@@ -107,7 +111,7 @@ QUERY PLAN
 │ TsDict: body                              │
 │ Projections:                              │
 │ sdb_inverted_index_term$body              │
-│ ~7 rows                                   │
+│ ~8 rows                                   │
 ╰───────────────────────────────────────────╯
 
 # Document-level negation: NOT over a tokenized-field or cross-field @@

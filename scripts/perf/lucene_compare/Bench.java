@@ -482,7 +482,7 @@ public final class Bench {
       sst.execute("CREATE INDEX " + index + " ON " + table + " USING inverted(" + ds.column() + ")");
       final long s1 = System.nanoTime();
       sst.execute("COPY " + table + " FROM '" + csv + "' (FORMAT CSV, HEADER false)");
-      sst.execute("VACUUM (REFRESH_TABLE) " + table);
+      sst.execute("VACUUM (FLUSH_TABLE) " + table);
       final double sdbIngest = (System.nanoTime() - s1) / 1e9;
       final long sdbBytes = sdbIndexSize(sst, Paths.get(env("SDB_DATA")), index);
       WALL[SERENEDB] += System.nanoTime() - s0;

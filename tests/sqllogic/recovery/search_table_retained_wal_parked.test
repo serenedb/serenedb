@@ -18,6 +18,10 @@ INSERT INTO st_rparked.public.docs VALUES (1, 'a'), (2, 'b');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) st_rparked.public.docs;
+
+
+statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
 
 

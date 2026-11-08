@@ -21,6 +21,9 @@ INSERT INTO sag SELECT i, i * 3 - 50, DATE '2024-01-01' + i, 'category-shared-pr
   FROM generate_series(1, 100) g(i)
 
 statement ok
+VACUUM (FLUSH_TABLE) sag
+
+statement ok
 INSERT INTO sag SELECT i, i * 3 - 50, DATE '2024-01-01' + i, 'category-shared-prefix-' || (i % 7),
     'slow cat', NULL
   FROM generate_series(101, 150) g(i)
@@ -267,6 +270,9 @@ CREATE TABLE sag_st (id BIGINT PRIMARY KEY, n BIGINT, cat VARCHAR, body TEXT)
 statement ok
 INSERT INTO sag_st SELECT i, i * 2, 'category-shared-prefix-' || (i % 5), 'w' || i
   FROM generate_series(1, 60) g(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) sag_st
 
 statement ok
 INSERT INTO sag_st SELECT i, i * 2, 'category-shared-prefix-' || (i % 5), 'w' || i

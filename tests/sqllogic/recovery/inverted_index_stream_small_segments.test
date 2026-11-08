@@ -32,14 +32,23 @@ INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
 FROM range(90000) t(i)
 
 statement ok
+VACUUM (FLUSH_TABLE) sc
+
+statement ok
 INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
        i % 997, 't' || (i % 31)
 FROM range(90000, 110000) t(i)
 
 statement ok
+VACUUM (FLUSH_TABLE) sc
+
+statement ok
 INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,
        i % 997, 't' || (i % 31)
 FROM range(110000, 118000) t(i)
+
+statement ok
+VACUUM (FLUSH_TABLE) sc
 
 statement ok
 INSERT INTO sc SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END,

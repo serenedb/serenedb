@@ -18,6 +18,10 @@ INSERT INTO salpf SELECT i, i * 0.01, (i * 0.01)::FLOAT,
 
 
 statement ok
+VACUUM (FLUSH_TABLE) salpf;
+
+
+statement ok
 INSERT INTO salpf SELECT i, i * 0.01, (i * 0.01)::FLOAT,
   CASE WHEN i % 10 = 0 THEN NULL ELSE i * 0.01 END, 'w' || (i // 4000)
   FROM generate_series(12000, 23999) g(i);

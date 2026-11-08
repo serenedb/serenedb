@@ -37,7 +37,7 @@ connection b
 statement error
 CREATE INDEX ic_b ON ic USING inverted (body, id)
 ----
-db error: ERROR: search table "ic" is being changed by another transaction
+db error: ERROR: table "ic" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -45,7 +45,7 @@ connection b
 statement error
 CREATE OR REPLACE INDEX ic_x ON ic USING inverted (body, id)
 ----
-db error: ERROR: search table "ic" is being changed by another transaction
+db error: ERROR: table "ic" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

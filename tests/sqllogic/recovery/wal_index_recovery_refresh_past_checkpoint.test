@@ -34,6 +34,9 @@ statement ok
 INSERT INTO rpc_t SELECT i, 'seed_' || i FROM range(0, 1000) AS t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rpc_t;
+
+statement ok
 CHECKPOINT;
 
 # Post-checkpoint batch, made durable in the segments by a refresh that stamps

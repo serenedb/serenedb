@@ -6,9 +6,6 @@
 #   referenced BIGINT)
 # The rows now come off the chunk each operator already has: the resolved new row
 # for INSERT and UPDATE, the scanned row for DELETE.
-#
-# A search table's writes reach a later statement only once the index refreshes,
-# so every read-back below refreshes first.
 
 
 statement ok
@@ -113,8 +110,16 @@ statement count 1
 INSERT INTO ret_pk VALUES (12, 'm');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) ret_pk;
+
+
 statement count 1
 UPDATE ret_pk SET b = 'n' WHERE a = 12;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ret_pk;
 
 
 statement count 1

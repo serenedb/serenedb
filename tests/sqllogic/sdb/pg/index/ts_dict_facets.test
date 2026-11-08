@@ -24,8 +24,6 @@ SET compaction_interval = 0
 # non-claimable WHERE conjuncts, same-field WHERE on a nullable column,
 # multiple plain group keys, GROUPING() markers and non-singleton or empty
 # sets fall back to the document scan.
-# Background maintenance is disabled; visibility is driven by
-# VACUUM (REFRESH_TABLE).
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY fct_kw AS keyword() WITH (frequency)

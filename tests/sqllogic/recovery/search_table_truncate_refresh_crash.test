@@ -11,6 +11,9 @@ statement ok
 INSERT INTO trc VALUES (1, 'a'), (2, 'b');
 
 statement ok
+VACUUM (FLUSH_TABLE) trc;
+
+statement ok
 INSERT INTO trc VALUES (3, 'c');
 
 statement ok

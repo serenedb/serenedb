@@ -45,7 +45,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | COLUMN TYPE        | Yes           | Not on a column that has a `CHECK` constraint |
 | RENAME COLUMN      | Yes           |  |
 | RENAME TO          | Yes           |  |
-| SET SCHEMA         | Partial       | Moves a table, a search table included, with its indexes and owned sequences, and with `ALTER VIEW`, `ALTER SEQUENCE`, `ALTER TYPE`, `ALTER FUNCTION` and `ALTER TEXT SEARCH DICTIONARY` a view, sequence, type, function or dictionary; not an entry that another object depends on |
+| SET SCHEMA         | Partial       | Moves a table with its indexes and owned sequences, and with `ALTER VIEW`, `ALTER SEQUENCE`, `ALTER TYPE`, `ALTER FUNCTION` and `ALTER TEXT SEARCH DICTIONARY` a view, sequence, type, function or dictionary; not an entry that another object depends on |
 
 ### Privileges
 | Feature               | Support State | Details                                                      |
@@ -791,7 +791,7 @@ The `jsonb` type is a `json` value that keeps its text as written (see [`jsonb`]
 |------------------------------------|---------------|---------|
 | pg_get_constraintdef               | Yes           | `CHECK` expressions are printed in SereneDB's form (for example `!=` and no casts) |
 | pg_get_serial_sequence             | Yes           |  |
-| pg_get_indexdef                    | Yes           | The access method is `secondary` or `inverted`. An inverted index shows its column dictionaries and options, `INCLUDE` columns and settings; ordering (`DESC`, `NULLS FIRST`) is not stored, so it is not shown |
+| pg_get_indexdef                    | Yes           | The access method is `inverted`. An inverted index shows its column dictionaries and options, `INCLUDE` columns and settings; ordering (`DESC`, `NULLS FIRST`) is not stored, so it is not shown |
 | pg_get_viewdef                     | Yes           | The view's query in SereneDB's one-line form |
 | pg_get_ruledef                     | Yes           | The `_RETURN` rule of a view, around the same query text |
 | pg_get_triggerdef                  | Yes           | A trigger runs a statement, which takes the place of `EXECUTE FUNCTION` |

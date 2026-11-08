@@ -11,6 +11,9 @@ statement ok
 INSERT INTO ld SELECT i, 'v' || i FROM range(0, 5000) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) ld;
+
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed

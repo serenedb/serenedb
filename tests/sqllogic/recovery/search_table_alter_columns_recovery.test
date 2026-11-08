@@ -14,6 +14,10 @@ INSERT INTO sacr VALUES (1, 10, 'one'), (2, 20, 'two');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sacr;
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -127,6 +131,11 @@ WITH (compaction_interval = 0);
 connection restarted
 statement ok
 INSERT INTO sacm VALUES (1, 10);
+
+
+connection restarted
+statement ok
+VACUUM (FLUSH_TABLE) sacm;
 
 
 connection restarted

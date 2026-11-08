@@ -1605,21 +1605,21 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE coro_mc (second INT);
 ----
-db error: ERROR: search <slt:ignore>
+db error: ERROR: table <slt:ignore>
 
 
 connection s2
 statement error
 DROP TABLE coro_mc;
 ----
-db error: ERROR: search <slt:ignore>
+db error: ERROR: table <slt:ignore>
 
 
 connection s2
 statement error
 ALTER TABLE coro_mc ADD COLUMN extra INT;
 ----
-db error: ERROR: search <slt:ignore>
+db error: ERROR: table <slt:ignore>
 
 
 connection s1
@@ -1823,7 +1823,7 @@ connection s2
 statement error
 CREATE INDEX coro_od_idx ON coro_od (a);
 ----
-db error: ERROR: search table "coro_od" is being changed by another transaction
+db error: ERROR: table "coro_od" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -2363,6 +2363,10 @@ INSERT INTO coro_s VALUES (1, 'alpha'), (2, 'bravo');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) coro_s;
+
+
+statement ok
 CREATE INDEX coro_s_idx ON coro_s USING inverted (body);
 
 
@@ -2479,6 +2483,10 @@ CREATE OR REPLACE TRIGGER coro_s_trg AFTER DELETE ON coro_s FOR EACH ROW
 
 statement count 2
 INSERT INTO coro_s VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) coro_s;
 
 
 statement count 1
@@ -3136,7 +3144,7 @@ connection s2
 statement error
 CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted (id);
 ----
-db error: ERROR: search table "coro_ixs" is being changed by another transaction
+db error: ERROR: table "coro_ixs" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

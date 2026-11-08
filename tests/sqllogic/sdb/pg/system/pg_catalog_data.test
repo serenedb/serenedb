@@ -279,7 +279,7 @@ SELECT amname, amtype FROM pg_catalog.pg_am ORDER BY amname
 amname	amtype
 heap	t
 inverted	i
-secondary	i
+iresearch	t
 
 
 # Index vs table access-method counts
@@ -287,14 +287,14 @@ query
 SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 'i'
 ----
 count
-2
+1
 
 
 query
 SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 't'
 ----
 count
-1
+2
 
 
 # pg_language

@@ -58,6 +58,10 @@ INSERT INTO prune_cons SELECT i, CASE i % 5
   FROM generate_series(1, 1000) AS s(i);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) prune_cons;
+
+
 # Segment 2: 1000 more rows under a disjoint pk range.
 statement ok
 INSERT INTO prune_cons SELECT i, CASE i % 5

@@ -145,6 +145,12 @@ CREATE TABLE wupd(a INTEGER, b TEXT)
 statement ok
 INSERT INTO wupd SELECT i, 'seed' || i || repeat('x', 200) FROM range(8000) t(i);
 
+# An UPDATE matches through the index, and a search table publishes rows only
+# on refresh -- without this the UPDATE below sees an empty table and silently
+# updates nothing.
+statement ok
+VACUUM (FLUSH_TABLE) wupd;
+
 statement ok
 UPDATE wupd SET b = 'aupd' || a || repeat('y', 200);
 
@@ -176,6 +182,9 @@ CREATE TABLE wmixa(a INTEGER, b TEXT)
 
 statement ok
 INSERT INTO wmixa SELECT i, 'seed' || i || repeat('x', 200) FROM range(6000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) wmixa;
 
 statement ok
 BEGIN;
@@ -210,6 +219,9 @@ CREATE TABLE wmixb(a INTEGER, b TEXT)
 
 statement ok
 INSERT INTO wmixb SELECT i, 'seed' || i || repeat('x', 200) FROM range(2000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) wmixb;
 
 statement ok
 BEGIN;

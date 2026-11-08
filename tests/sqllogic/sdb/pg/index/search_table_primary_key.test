@@ -6,6 +6,10 @@ statement ok
 INSERT INTO pk_dup VALUES (1, 'a'), (2, 'b');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) pk_dup;
+
+
 # A key the index already holds.
 statement error
 INSERT INTO pk_dup VALUES (1, 'again');
@@ -56,6 +60,10 @@ statement ok
 UPDATE pk_dup SET t = 'updated' WHERE i = 1;
 
 
+statement ok
+VACUUM (FLUSH_TABLE) pk_dup;
+
+
 # The same within one transaction, spelled out.
 statement ok
 BEGIN;
@@ -88,6 +96,10 @@ DELETE FROM pk_dup WHERE i = 4;
 
 
 statement ok
+VACUUM (FLUSH_TABLE) pk_dup;
+
+
+statement ok
 INSERT INTO pk_dup VALUES (4, 'taken again');
 
 
@@ -110,6 +122,10 @@ CREATE TABLE pk_bool(tenant_id INTEGER, is_active BOOLEAN, note TEXT,
 
 statement ok
 INSERT INTO pk_bool VALUES (1, true, 'on'), (1, false, 'off'), (2, true, 'two');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pk_bool;
 
 
 statement error

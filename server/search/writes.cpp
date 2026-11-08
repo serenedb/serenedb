@@ -542,7 +542,7 @@ std::shared_ptr<irs::DirectoryReader> Writes::PinnedReader(
   absl::ReaderMutexLock lock{&_mutex};
   const auto pinned =
     _readers.find(std::pair{store.GetDatabaseId(), store.GetId()});
-  SDB_ENSURE(pinned != _readers.end(), "search table ", store.GetId(),
+  SDB_ENSURE(pinned != _readers.end(), "table ", store.GetId(),
              ": deletes without the reader their positions come from");
   return pinned->second.reader;
 }
@@ -1325,7 +1325,7 @@ void Writes::Apply(Tick tick, Tick oldest, Lsn lsn) noexcept {
         }
       } catch (const std::exception& e) {
         SDB_FATAL(
-          SEARCH, "search-table commit: applying to table ", store_id,
+          SEARCH, "commit: applying to table ", store_id,
           " failed after the log took it: ", duckdb::ErrorData{e}.RawMessage());
       }
       w.transactions.clear();

@@ -11,6 +11,9 @@ statement ok
 INSERT INTO bfs VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 statement ok
+VACUUM (FLUSH_TABLE) bfs;
+
+statement ok
 SET sdb_faults = 'pause_search_backfill_before_publish';
 
 connection builder
@@ -63,6 +66,9 @@ CREATE TABLE bfu (id BIGINT PRIMARY KEY, tag TEXT)
 
 statement ok
 INSERT INTO bfu VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+VACUUM (FLUSH_TABLE) bfu;
 
 statement ok
 SET sdb_faults = 'pause_search_backfill_before_publish';

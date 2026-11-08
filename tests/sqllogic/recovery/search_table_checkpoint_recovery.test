@@ -11,6 +11,9 @@ statement ok
 INSERT INTO ck_search VALUES (1, 'one'), (2, 'two');
 
 statement ok
+VACUUM (FLUSH_TABLE) ck_search;
+
+statement ok
 DELETE FROM ck_search WHERE id = 1;
 
 statement ok

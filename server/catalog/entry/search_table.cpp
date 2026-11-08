@@ -681,7 +681,7 @@ duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
 void SearchTableEntry::RequireCurrentSchema() const {
   if (_schema_epoch != _storage->SchemaEpoch()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
-                    ERR_MSG("search table \"", name.GetIdentifierName(),
+                    ERR_MSG("table \"", name.GetIdentifierName(),
                             "\" was altered by a concurrent transaction"),
                     ERR_HINT("Retry the transaction."));
   }

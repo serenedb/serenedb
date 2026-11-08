@@ -25,7 +25,7 @@ connection s2
 statement error
 CREATE INDEX icr_art_b ON icr_art (b);
 ----
-db error: ERROR: search table "icr_art" is being changed by another transaction
+db error: ERROR: table "icr_art" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -53,7 +53,7 @@ connection s2
 statement error
 CREATE INDEX icr_inv_b ON icr_inv USING inverted (b);
 ----
-db error: ERROR: search table "icr_inv" is being changed by another transaction
+db error: ERROR: table "icr_inv" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -164,7 +164,7 @@ connection s2
 statement error
 CREATE INDEX icr_st_b ON icr_st USING inverted (b);
 ----
-db error: ERROR: search table "icr_st" is being changed by another transaction
+db error: ERROR: table "icr_st" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -187,7 +187,7 @@ connection s2
 statement error
 ALTER TABLE icr_st2 RENAME COLUMN b TO c;
 ----
-db error: ERROR: search table "icr_st2" is being changed by another transaction
+db error: ERROR: table "icr_st2" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 

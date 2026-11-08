@@ -74,7 +74,7 @@ Queries and writes run as usual. These commands behave differently until `pg_bac
 | `VACUUM (COMPACT_*)` | Waits until the backup ends, then compacts. It can be canceled while it waits. |
 | `VACUUM (REFRESH_*)` | Runs. The index files it would normally clean up are kept until after the backup. |
 | `DROP TABLE`, `DROP INDEX`, `DROP DATABASE`, `DETACH` | Commit at once. The files of the dropped objects are removed after `pg_backup_stop`. |
-| Background compaction of indexes and search tables | Paused. |
+| Background compaction of tables and indexes | Paused. |
 
 Because nothing is checkpointed, the write-ahead logs keep growing, and dropped objects keep their disk space until `pg_backup_stop`. Plan disk space for the length of the backup.
 

@@ -91,7 +91,7 @@ void RecoverSearchStorages(
           replayed_tables.fetch_add(1, std::memory_order_relaxed);
         }
         if (const auto status = table->CleanupUnsafe().res; !status.ok()) {
-          SDB_WARN(SEARCH, "cleanup of search table '", table->GetId(),
+          SDB_WARN(SEARCH, "cleanup of table '", table->GetId(),
                    "' after log replay failed: ", status.message());
         }
       }));
@@ -102,10 +102,9 @@ void RecoverSearchStorages(
   }
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
-  SDB_INFO(SEARCH, "search recovery: replayed the log into ",
+  SDB_INFO(SEARCH, "recovery: replayed the log into ",
            replayed_tables.load(std::memory_order_relaxed), " of ",
-           tables.size(), " search table(s) in ",
-           absl::FormatDuration(duration));
+           tables.size(), " table(s) in ", absl::FormatDuration(duration));
 }
 
 void CoverLog(uint64_t target) {

@@ -39,7 +39,7 @@ connection t1
 statement error
 INSERT INTO crx_local VALUES (3, 3);
 ----
-db error: ERROR: search table "crx_local" was altered by a concurrent transaction
+db error: ERROR: table "crx_local" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 

@@ -184,7 +184,7 @@ void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
                   duckdb::SelectionVector& live, duckdb::DataChunk& chunk,
                   absl::FunctionRef<bool(duckdb::DataChunk&)> visit) {
   const auto* col_reader = segment.GetColReader();
-  SDB_ENSURE(col_reader, "search table segment has no columnstore");
+  SDB_ENSURE(col_reader, "table segment has no columnstore");
   FullScanner scanner{*col_reader, projections, {}, &context, filter_states};
   const bool has_mask = segment.docs_mask() != nullptr;
   auto mask = irs::MakeGenericDocsMask(segment.docs_mask());

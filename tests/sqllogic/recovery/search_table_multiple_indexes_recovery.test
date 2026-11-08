@@ -46,6 +46,9 @@ statement ok
 INSERT INTO mr SELECT * FROM mr_ref WHERE id < 1000;
 
 statement ok
+VACUUM (FLUSH_TABLE) mr;
+
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed

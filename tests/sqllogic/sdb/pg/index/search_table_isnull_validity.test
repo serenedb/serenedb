@@ -20,11 +20,19 @@ INSERT INTO nv
   FROM generate_series(0, 7999) g(i);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) nv;
+
+
 # Segment 2: x fully valued, s fully NULL.
 statement ok
 INSERT INTO nv
   SELECT i, i, NULL, 'tag' || (i % 4)
   FROM generate_series(8000, 15999) g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) nv;
 
 
 # Segment 3: x fully NULL, s fully valued.

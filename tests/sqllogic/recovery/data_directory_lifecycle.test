@@ -198,6 +198,11 @@ INSERT INTO dlc_db2.public.st VALUES (1, 10);
 
 connection dropper
 statement ok
+VACUUM (FLUSH_TABLE) dlc_db2.public.st;
+
+
+connection dropper
+statement ok
 INSERT INTO dlc_oids SELECT 'db2', oid FROM pg_database WHERE datname = 'dlc_db2';
 
 

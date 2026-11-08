@@ -165,7 +165,7 @@ pk
 1
 4
 
-# DELETE: deleted row must drop out after refresh; survivors still correct.
+# DELETE: deleted row must drop out; survivors still correct.
 statement ok
 DELETE FROM sq8_dml WHERE pk = 1
 
@@ -201,7 +201,7 @@ SELECT pk FROM sq8_dml_idx ORDER BY emb <-> [21, 0, 0]::FLOAT[3] LIMIT 1;
 pk
 2
 
-# multi-segment: a second refreshed batch creates a new segment; kNN merges.
+# multi-segment: a second batch creates a new segment; kNN merges.
 statement count 2
 INSERT INTO sq8_dml VALUES
   (5, [30, 0, 0]::FLOAT[3], 'e'),
@@ -453,7 +453,7 @@ pk
 1
 2
 
-# DELETE: deleted row must drop out after refresh; disjunction merge across
+# DELETE: deleted row must drop out; disjunction merge across
 # the remaining clusters (now via MaskDocIterator) still correct.
 statement ok
 DELETE FROM sq8_mc_dml WHERE pk = 1
@@ -487,7 +487,7 @@ SELECT pk FROM sq8_mc_dml_idx ORDER BY emb <-> [-71, 0, 0]::FLOAT[3] LIMIT 1;
 pk
 8
 
-# multi-segment: a second refreshed batch creates a new segment; kNN merges
+# multi-segment: a second batch creates a new segment; kNN merges
 # across per-cluster disjunctions from both segments.
 statement count 2
 INSERT INTO sq8_mc_dml VALUES

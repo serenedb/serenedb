@@ -89,6 +89,10 @@ INSERT INTO jc_patch_t VALUES (1, 'alpha', '{"host":"hp1"}'::json);
 
 connection jc_after
 statement ok
+VACUUM (FLUSH_TABLE) jc_patch_t;
+
+connection jc_after
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 connection jc_after
@@ -211,6 +215,10 @@ CREATE INDEX jc_seq_idx ON jc_seq_t USING inverted(id, (content->>'host') json_c
 connection jc_hash_after
 statement ok
 INSERT INTO jc_seq_t VALUES (1, '{"host":"orig"}'::json);
+
+connection jc_hash_after
+statement ok
+VACUUM (FLUSH_TABLE) jc_seq_t;
 
 connection jc_hash_after
 statement ok

@@ -8,8 +8,7 @@ SET compaction_interval = 0
 # ByRange > automatons) and every other claimable acceptor becomes a term
 # predicate checked per emitted term inside the scan, so @@ ts_* matchers can
 # be combined. Scalar shapes keep post-filtering above the scan. The score
-# column reflects the DRIVING acceptor only. Background maintenance disabled;
-# visibility driven by VACUUM (REFRESH_TABLE).
+# column reflects the DRIVING acceptor only.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY tp_kw AS keyword() WITH (frequency)

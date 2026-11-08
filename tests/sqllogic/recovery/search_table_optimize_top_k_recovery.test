@@ -20,6 +20,9 @@ statement ok
 INSERT INTO rk VALUES (1, 'fox'), (2, 'fox fox'), (3, 'dog');
 
 statement ok
+VACUUM (FLUSH_TABLE) rk;
+
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed

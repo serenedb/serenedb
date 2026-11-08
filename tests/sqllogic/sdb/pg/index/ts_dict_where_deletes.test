@@ -34,6 +34,9 @@ INSERT INTO wdk VALUES
   (13, 'quince', 'x')
 
 statement ok
+VACUUM (FLUSH_TABLE) wdk;
+
+statement ok
 DELETE FROM wdk WHERE id IN (2, 5, 6, 8, 11, 12, 13)
 
 query TI
@@ -435,6 +438,9 @@ INSERT INTO wdt VALUES
   (2, 'Aple cherry'),
   (3, 'appl banana'),
   (4, 'axle date')
+
+statement ok
+VACUUM (FLUSH_TABLE) wdt;
 
 statement ok
 DELETE FROM wdt WHERE id IN (3, 4)

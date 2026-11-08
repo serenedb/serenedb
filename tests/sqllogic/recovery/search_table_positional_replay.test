@@ -16,16 +16,25 @@ statement ok
 INSERT INTO rp_ref SELECT i, 'a' FROM generate_series(0, 9999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rp;
+
+statement ok
 INSERT INTO rp SELECT i, 'b' FROM generate_series(10000, 19999) g(i);
 
 statement ok
 INSERT INTO rp_ref SELECT i, 'b' FROM generate_series(10000, 19999) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) rp;
+
+statement ok
 INSERT INTO rp SELECT i, 'c' FROM generate_series(20000, 29999) g(i);
 
 statement ok
 INSERT INTO rp_ref SELECT i, 'c' FROM generate_series(20000, 29999) g(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) rp;
 
 statement ok
 BEGIN;

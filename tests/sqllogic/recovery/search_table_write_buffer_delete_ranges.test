@@ -11,6 +11,9 @@ statement ok
 INSERT INTO wdel SELECT i, 'seed' FROM range(0, 20000) r(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) wdel;
+
+statement ok
 CHECKPOINT;
 
 statement ok

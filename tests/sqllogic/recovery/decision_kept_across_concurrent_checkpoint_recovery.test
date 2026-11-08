@@ -32,6 +32,11 @@ INSERT INTO melstroi.public.pudge VALUES (1, 'base');
 
 connection default
 statement ok
+VACUUM (FLUSH_TABLE) melstroi.public.pudge;
+
+
+connection default
+statement ok
 SET sdb_faults = 'pause_checkpoint';
 
 

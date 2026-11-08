@@ -15,7 +15,7 @@ SELECT amname, amtype FROM pg_am ORDER BY amname;
 amname	amtype
 heap	t
 inverted	i
-secondary	i
+iresearch	t
 
 
 query
@@ -52,10 +52,10 @@ WHERE c.relname LIKE 'sven\_am\_cleave%'
 ORDER BY c.relname;
 ----
 relname	relkind	amname	amtype
-sven_am_cleave	r	heap	t
+sven_am_cleave	r	iresearch	t
 sven_am_cleave_body	i	inverted	i
 sven_am_cleave_inv	i	inverted	i
-sven_am_cleave_pkey	i	secondary	i
+sven_am_cleave_pkey	i	inverted	i
 
 
 query
@@ -92,7 +92,7 @@ FROM pg_am ORDER BY amname;
 amname	handler	handler_name
 heap	3	heap_tableam_handler
 inverted	0	-
-secondary	0	-
+iresearch	0	-
 
 
 statement ok

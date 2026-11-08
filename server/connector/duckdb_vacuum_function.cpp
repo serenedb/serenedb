@@ -472,8 +472,8 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
       if (!status.ok()) {
         context.InterruptCheck();
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                        ERR_MSG("failed to compact search table '", step.name,
-                                "': ", status.message()));
+                        ERR_MSG("failed to compact table \"", step.name,
+                                "\": ", status.message()));
       }
     }
     if (progress) {

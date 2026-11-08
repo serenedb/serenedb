@@ -20,6 +20,9 @@ statement ok
 INSERT INTO tbl SELECT i, 'c' || i FROM range(2001, 3001) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) tbl;
+
+statement ok
 DELETE FROM tbl WHERE id < 2500;
 
 query
@@ -47,7 +50,13 @@ statement ok
 INSERT INTO tbl SELECT i, 'f' || i FROM range(3201, 4201) t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) tbl;
+
+statement ok
 DELETE FROM tbl WHERE id % 3 = 0;
+
+statement ok
+VACUUM (FLUSH_TABLE) tbl;
 
 statement ok
 UPDATE tbl SET body = 'u' WHERE id < 3200;

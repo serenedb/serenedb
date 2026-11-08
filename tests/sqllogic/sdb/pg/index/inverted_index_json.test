@@ -832,6 +832,9 @@ INSERT INTO dml_t VALUES
     (2, '{"host":"beta"}'::json);
 
 statement ok
+VACUUM (FLUSH_TABLE) dml_t;
+
+statement ok
 UPDATE dml_t SET content = '{"host":"gamma"}'::json WHERE id = 1;
 
 query

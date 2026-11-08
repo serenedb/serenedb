@@ -16,6 +16,10 @@ INSERT INTO repro_st VALUES (-1, 'seed');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) repro_st;
+
+
+statement ok
 BEGIN;
 
 
@@ -105,6 +109,10 @@ CREATE TABLE repro_rf (id BIGINT)
 
 statement ok
 INSERT INTO repro_rf VALUES (1);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) repro_rf;
 
 
 statement ok

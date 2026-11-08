@@ -11,6 +11,10 @@ INSERT INTO sac VALUES (1, 10, 'alpha', 1), (2, 20, 'bravo', 2);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sac;
+
+
+statement ok
 INSERT INTO sac VALUES (3, 30, 'charlie', 3);
 
 
@@ -370,7 +374,7 @@ connection s2
 statement error
 INSERT INTO sac_tx VALUES (5, 'five', 7);
 ----
-db error: ERROR: search table "sac_tx" was altered by a concurrent transaction
+db error: ERROR: table "sac_tx" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 
@@ -575,6 +579,10 @@ CREATE INDEX sac_vec_idx ON sac_vec
 
 statement ok
 INSERT INTO sac_vec VALUES (1, [1, 0], 10), (2, [2, 0], 20);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sac_vec;
 
 
 statement ok

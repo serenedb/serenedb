@@ -654,6 +654,9 @@ statement ok
 CREATE INDEX multi_seg_idx ON multi_seg USING inverted(a, b score_en);
 
 statement ok
+VACUUM (FLUSH_TABLE) multi_seg;
+
+statement ok
 INSERT INTO multi_seg VALUES (3, 'gamma fox'), (4, 'delta fox');
 
 query
@@ -980,6 +983,9 @@ INSERT INTO dense_multi VALUES
 
 statement ok
 CREATE INDEX dense_multi_idx ON dense_multi USING inverted(a, b test_english);
+
+statement ok
+VACUUM (FLUSH_TABLE) dense_multi;
 
 statement ok
 INSERT INTO dense_multi VALUES

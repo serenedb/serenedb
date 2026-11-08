@@ -26,6 +26,9 @@ RESET sdb_faults;
 statement ok
 INSERT INTO nb VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
 
+statement ok
+VACUUM (FLUSH_TABLE) nb;
+
 # Crash AFTER the WAL commit: (3,'fox runs fast') is fsynced into the WAL but
 # never refresh-published; recovery must re-index it through the norm-featured
 # field (which needs field options).

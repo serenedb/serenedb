@@ -1239,12 +1239,24 @@ statement count 2
 INSERT INTO t_merge VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) t_merge;
+
+
 statement count 2
 INSERT INTO t_merge VALUES (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) t_merge;
+
+
 statement count 2
 INSERT INTO t_merge VALUES (5, [10, 10, 10]::FLOAT[3]), (6, [20, 20, 20]::FLOAT[3]);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) t_merge;
 
 
 statement count 2
@@ -1279,12 +1291,24 @@ statement count 3
 INSERT INTO prep_bar VALUES (1, [1,0,0]::FLOAT[3]), (2, [2,0,0]::FLOAT[3]), (3, [3,0,0]::FLOAT[3]);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) prep_bar;
+
+
 statement count 3
 INSERT INTO prep_bar VALUES (4, [4,0,0]::FLOAT[3]), (5, [5,0,0]::FLOAT[3]), (6, [6,0,0]::FLOAT[3]);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) prep_bar;
+
+
 statement count 3
 INSERT INTO prep_bar VALUES (7, [7,0,0]::FLOAT[3]), (8, [8,0,0]::FLOAT[3]), (9, [9,0,0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) prep_bar;
 
 
 statement count 3

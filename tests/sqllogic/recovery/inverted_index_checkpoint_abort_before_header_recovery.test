@@ -13,6 +13,10 @@ INSERT INTO pudge_hooks SELECT i, 'hook' || (i % 5) FROM range(0, 1000) r(i);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) pudge_hooks;
+
+
+statement ok
 INSERT INTO pudge_hooks SELECT i, 'hook' || (i % 5) FROM range(1000, 1500) r(i);
 
 

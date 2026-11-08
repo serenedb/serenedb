@@ -280,6 +280,35 @@ union_counted	union_listed	conjunction_counted	conjunction_listed	dense_union_co
 t	t	t	t	t
 
 
+query
+SELECT
+  (SELECT count(*) FROM shapes_idx
+   WHERE body @@ ts_compound(ts_phrase('rare'), NULL, [ts_phrase('mid'), ts_phrase('sparse')], 1)) =
+  (SELECT count(*) FROM shapes
+   WHERE regexp_matches(body, '\brare\b')
+     AND (regexp_matches(body, '\bmid\b') OR regexp_matches(body, '\bsparse\b'))) AS rare_one_of_two_counted,
+  (SELECT list(id ORDER BY id) FROM shapes_idx
+   WHERE body @@ ts_compound(ts_phrase('rare'), NULL, [ts_phrase('mid'), ts_phrase('sparse')], 1)) IS NOT DISTINCT FROM
+  (SELECT list(id ORDER BY id) FROM shapes
+   WHERE regexp_matches(body, '\brare\b')
+     AND (regexp_matches(body, '\bmid\b') OR regexp_matches(body, '\bsparse\b'))) AS rare_one_of_two_listed,
+  (SELECT count(*) FROM shapes_idx
+   WHERE body @@ ts_compound(ts_phrase('sparse'), NULL, [ts_phrase('half'), ts_phrase('dense'), ts_phrase('mid')], 2)) =
+  (SELECT count(*) FROM shapes
+   WHERE regexp_matches(body, '\bsparse\b')
+     AND regexp_matches(body, '\bhalf\b')::INTEGER + regexp_matches(body, '\bdense\b')::INTEGER
+       + regexp_matches(body, '\bmid\b')::INTEGER >= 2) AS sparse_two_of_three_counted,
+  (SELECT list(id ORDER BY id) FROM shapes_idx
+   WHERE body @@ ts_compound(ts_phrase('sparse'), ts_phrase('run'), [ts_phrase('half'), ts_phrase('dense'), ts_phrase('mid')], 2)) IS NOT DISTINCT FROM
+  (SELECT list(id ORDER BY id) FROM shapes
+   WHERE regexp_matches(body, '\bsparse\b') AND NOT regexp_matches(body, '\brun\b')
+     AND regexp_matches(body, '\bhalf\b')::INTEGER + regexp_matches(body, '\bdense\b')::INTEGER
+       + regexp_matches(body, '\bmid\b')::INTEGER >= 2) AS sparse_two_of_three_not_run_listed;
+----
+rare_one_of_two_counted	rare_one_of_two_listed	sparse_two_of_three_counted	sparse_two_of_three_not_run_listed
+t	t	t	t
+
+
 statement ok
 CREATE TABLE early (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 

@@ -1142,14 +1142,16 @@ uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
 std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
                         uint64_t runs, NumericTuning& tuning) {
   TypedSealer<uint32_t> sealer{duckdb::LogicalType::UINTEGER, codes};
+  const auto bound = CodesBound(codes.size(), entries, runs);
   bool due = tuning.Due();
   auto bytes = sealer.SealWith(kLeaflessPlan, kNoRival, tuning, due).bytes;
-  if (bytes.empty()) {
+  if (bytes.empty() ||
+      (!due && static_cast<double>(bytes.size()) >
+                 static_cast<double>(bound) * tuning.codes_ratio * kDrift)) {
     due = true;
     bytes = sealer.SealWith(kLeaflessPlan, kNoRival, tuning, true).bytes;
   }
-  if (const auto bound = CodesBound(codes.size(), entries, runs);
-      due && bound != 0) {
+  if (due && bound != 0) {
     tuning.codes_ratio =
       static_cast<double>(bytes.size()) / static_cast<double>(bound);
   }

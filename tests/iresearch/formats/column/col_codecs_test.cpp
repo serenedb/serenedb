@@ -3063,6 +3063,35 @@ TEST_F(ColCodecsTest, CodesInShortRunsAreNotRunPacked) {
   }
 }
 
+TEST_F(ColCodecsTest, CodesThatTurnIntoRunsAreRunPacked) {
+  constexpr uint64_t kSwitch = 400000;
+  constexpr uint64_t kRows = 600000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    const auto key = g < kSwitch ? g : g / 128;
+    return "v" + std::to_string(std::mt19937_64{key}() % 1000);
+  };
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+        {.segment_target = 16 * 1024}, kRows, 65536, value);
+  Verify(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, kRows, value);
+  const auto transforms = SegmentInfo(dir, "codes_transform");
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataBlocks().size(), transforms.size());
+  uint64_t row = 0;
+  size_t runs = 0;
+  for (size_t b = 0; b < transforms.size(); ++b) {
+    if (row >= kSwitch) {
+      ++runs;
+      EXPECT_TRUE(transforms[b].starts_with("rle"))
+        << "block at row " << row << ": " << transforms[b];
+    }
+    row += col->DataBlocks()[b].tuple_count;
+  }
+  EXPECT_GT(runs, 0u);
+}
+
 TEST_F(ColCodecsTest, NumericCodesFilterTheValues) {
   constexpr uint64_t kRows = 30000;
   irs::MemoryDirectory dir{};

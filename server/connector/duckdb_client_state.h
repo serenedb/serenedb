@@ -151,14 +151,34 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database);
 
+struct NoticeTarget {
+  std::string_view what;
+  std::string_view name;
+  ConnectionContext* forward_to = nullptr;
+};
+
+void HandNotices(ConnectionContext& ctx, const NoticeTarget& target);
+
+struct SystemSession {
+  std::string_view user;
+  std::string_view system_user;
+  duckdb::idx_t role = 0;
+  std::string_view database;
+  duckdb::idx_t database_id = 0;
+  int32_t backend_pid = 0;
+};
+
 struct SystemConnection {
+  explicit SystemConnection(const SystemSession& session,
+                            const NoticeTarget& notices);
+  SystemConnection(const SystemConnection&) = delete;
+  SystemConnection& operator=(const SystemConnection&) = delete;
+  ~SystemConnection();
+
   duckdb::unique_ptr<duckdb::Connection> conn;
   std::shared_ptr<ConnectionContext> ctx;
   pg::ProgressRegistration progress;
+  NoticeTarget notices;
 };
-
-SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
-                                      std::string_view database,
-                                      duckdb::idx_t database_id);
 
 }  // namespace sdb::connector

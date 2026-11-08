@@ -21,10 +21,12 @@
 #include "connector/duckdb_client_state.h"
 
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -40,6 +42,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -177,6 +180,14 @@ namespace {
 // TransactionPreCommit and before TransactionCommit/Rollback, with no
 // ClientContext parameter of their own.
 thread_local ConnectionContext* tls_committing_ctx = nullptr;
+
+void LogRollbackFailure(std::string_view database,
+                        const std::exception& e) noexcept try {
+  SDB_ERROR(GENERAL,
+            "rolling back the transaction of a server session in database \"",
+            database, "\" failed: ", duckdb::ErrorData{e}.RawMessage());
+} catch (...) {
+}
 
 }  // namespace
 
@@ -385,19 +396,45 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
   search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 }
 
-SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
-                                      std::string_view database,
-                                      duckdb::idx_t database_id) {
-  SystemConnection system{.conn =
-                            irs::DuckDBEngine::Instance().CreateConnection()};
-  auto& context = *system.conn->context;
-  system.ctx = std::make_shared<ConnectionContext>(
-    context, user, std::string_view{}, role, database, database_id, nullptr, 0,
-    nullptr);
-  system.progress = pg::ProgressRegistration{
-    SereneDBClientState::Register(context, system.ctx, false).progress_source};
-  SetDefaultSearchPath(context, database);
-  return system;
+void HandNotices(ConnectionContext& ctx, const NoticeTarget& target) {
+  if (target.forward_to) {
+    ctx.ConsumeNotices([&](irs::pg::SqlErrorData& notice) {
+      target.forward_to->AddNotice(std::move(notice));
+    });
+    return;
+  }
+  ctx.ConsumeNotices([&](const irs::pg::SqlErrorData& notice) {
+    SDB_IF_FAILURE("log_notice_fails") {
+      THROW_SQL_ERROR(ERR_MSG("injected notice log failure"));
+    }
+    SDB_WARN(GENERAL, target.what, " \"", target.name, "\": ", notice.errmsg);
+  });
+}
+
+SystemConnection::SystemConnection(const SystemSession& session,
+                                   const NoticeTarget& notices)
+  : conn{irs::DuckDBEngine::Instance().CreateConnection()},
+    ctx{std::make_shared<ConnectionContext>(
+      *conn->context, session.user, session.system_user, session.role,
+      session.database, session.database_id, nullptr, session.backend_pid,
+      nullptr)},
+    progress{SereneDBClientState::Register(*conn->context, ctx, false)
+               .progress_source},
+    notices{notices} {}
+
+SystemConnection::~SystemConnection() {
+  auto& transaction = conn->context->transaction;
+  if (transaction.HasActiveTransaction()) {
+    try {
+      transaction.Rollback(nullptr);
+    } catch (const std::exception& e) {
+      LogRollbackFailure(ctx->GetDatabase(), e);
+    }
+  }
+  try {
+    HandNotices(*ctx, notices);
+  } catch (...) {
+  }
 }
 
 }  // namespace sdb::connector

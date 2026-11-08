@@ -388,8 +388,16 @@ def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
             s3_store.fake.keys(s3_store.bucket)
 
 
-def _large_table(server: _Server, store: _Store, location: str) -> None:
-    _create_secret(server, store, location)
+def _create_azure_secret(server: _Server, fake: FakeAzure, location: str) -> None:
+    with server.connect() as conn:
+        conn.execute(
+            "CREATE PERSISTENT SECRET index_store (TYPE azure, "
+            f"CONNECTION_STRING '{fake.connection_string}', "
+            f"SCOPE '{location}')")
+    _create_tablespace(server, location)
+
+
+def _fill_docs(server: _Server, rows: int) -> None:
     with server.connect() as conn:
         conn.execute(
             "CREATE TEXT SEARCH DICTIONARY words AS "
@@ -398,7 +406,12 @@ def _large_table(server: _Server, store: _Store, location: str) -> None:
         conn.execute(
             "INSERT INTO docs SELECT i, concat_ws(' ', 'fox', md5(i::VARCHAR), "
             "md5((i + 1000000)::VARCHAR), md5((i + 2000000)::VARCHAR)) "
-            "FROM range(300000) t(i)")
+            f"FROM range({rows}) t(i)")
+
+
+def _large_table(server: _Server, store: _Store, location: str) -> None:
+    _create_secret(server, store, location)
+    _fill_docs(server, 300000)
 
 
 def _count_fox(server: _Server) -> int:
@@ -426,6 +439,60 @@ def test_large_index_files_upload_parts_at_once(tmp_path: Path) -> None:
     assert fake.requests["CHECKSUM"] > fake.requests["COMPLETE_UPLOAD"] > 0, fake.requests
     assert fake.requests["UNSIGNED_PAYLOAD"] >= fake.requests["PUT_PART"], fake.requests
     assert fake.requests["SIGNED_PAYLOAD"] == 0, fake.requests
+
+
+def test_blob_blocks_are_staged_from_cache_blocks_and_read_back(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    with FakeAzure() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL azure_write_block_size = 1000000")
+            _create_azure_secret(server, fake, f"az://indexes/blocks-{tmp_path.name}")
+            _fill_docs(server, 20000)
+            with server.connect() as conn:
+                conn.execute(CREATE_INDEX)
+        finally:
+            server.stop()
+        with fake.lock:
+            blocks = sorted(len(block) for blob in fake.blobs.values()
+                            for block in blob.blocks.values())
+        assert blocks[-1] > 1000000, blocks
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _count_fox(again) == 20000
+        finally:
+            again.stop()
+
+
+@pytest.mark.faults
+@pytest.mark.parametrize("kind", ["s3", "azure"])
+def test_a_write_out_of_cache_blocks_uploads_every_byte(tmp_path: Path, kind: str) -> None:
+    datadir = tmp_path / "data"
+    with FakeS3() if kind == "s3" else FakeAzure() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            if kind == "s3":
+                _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                               f"s3://bucket/short-{tmp_path.name}")
+            else:
+                _create_azure_secret(server, fake, f"az://indexes/short-{tmp_path.name}")
+            _fill_docs(server, 20000)
+            with server.connect() as conn:
+                conn.execute("SET sdb_faults = 'remote_write_cache_block'")
+                conn.execute(CREATE_INDEX)
+                conn.execute("RESET sdb_faults")
+        finally:
+            server.stop()
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _count_fox(again) == 20000
+        finally:
+            again.stop()
 
 
 def test_uploads_without_a_checksum_send_their_body_hash(tmp_path: Path) -> None:

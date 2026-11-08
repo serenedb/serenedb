@@ -71,10 +71,10 @@ An engine created with `loop=None` can only be used through the `a`-prefixed met
 
 ### Server version check {#version-check}
 
-The integration supports SereneDB **26.11.2** and later. Each engine reads the server's release from `SELECT version()` — which reports, for example, `PostgreSQL 18.6 (SereneDB 26.11.2)` — and raises `UnsupportedServerVersionError` when it is older, or when the reply names no SereneDB release at all (a plain PostgreSQL server, for instance):
+The integration supports SereneDB **26.11.3** and later. Each engine reads the server's release from `SELECT version()` — which reports, for example, `PostgreSQL 18.6 (SereneDB 26.11.3)` — and raises `UnsupportedServerVersionError` when it is older, or when the reply names no SereneDB release at all (a plain PostgreSQL server, for instance):
 
 ```text
-UnsupportedServerVersionError: version 26.10.0 is not supported. Minimum supported version is 26.11.2. To disable version check use ignore_db_version=True
+UnsupportedServerVersionError: version 26.10.0 is not supported. Minimum supported version is 26.11.3. To disable version check use ignore_db_version=True
 ```
 
 The check runs once per engine: when the engine is created, or before its first query for an engine from [`from_pool()`](#from_pool) that cannot wait during creation. `UnsupportedServerVersionError` is a `RuntimeError`, importable from `langchain_serenedb`.

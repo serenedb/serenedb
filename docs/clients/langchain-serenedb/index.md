@@ -36,7 +36,7 @@ The distribution is named `langchain-serenedb`; the import name is `langchain_se
 | `psycopg[binary]` | `>= 3, < 4` |
 | `psycopg-pool` | `>= 3.2.1, < 4` |
 | `numpy` | `>= 1.21, < 3` |
-| SereneDB server | `>= 26.11.2` |
+| SereneDB server | `>= 26.11.3` |
 
 You also need a running SereneDB server. Note the port: SereneDB listens on **7890** by default, not PostgreSQL's 5432. The engine checks the server version when it is created and refuses an older server — see [Server version check](./engine.md#version-check).
 

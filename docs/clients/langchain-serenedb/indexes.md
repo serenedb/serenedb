@@ -153,7 +153,7 @@ Issues `DROP INDEX IF EXISTS` for the derived index name. Subsequent dense searc
 store.reindex()  # raises NotImplementedError
 ```
 
-Would rebuild the store's index in place. **Not supported yet** -- the method raises `NotImplementedError`:
+Rebuilding the store's index in place is not supported: the method raises `NotImplementedError`:
 
 ```text
 SereneDB REINDEX currently supports views only, not the store's base table, so
@@ -161,9 +161,9 @@ reindexing in place is not available yet. Drop and recreate the index instead
 (drop_vector_index + apply_vector_index).
 ```
 
-SereneDB's [`REINDEX`](../../sql/indexes/inverted/views.md#refreshing-the-index) applies to view-backed indexes, where it runs a refresh pass against the view's source. A vector store lives in a base table, so there is nothing for it to act on here. The method exists, and raises rather than silently doing something else, so that the intent is unambiguous; it will perform a real reindex once SereneDB supports `REINDEX` on tables.
+SereneDB's [`REINDEX`](../../sql/indexes/inverted/views.md#refreshing-the-index) applies to view-backed indexes, where it runs a refresh pass against the view's source. A vector store lives in a base table, so there is nothing for it to act on here. The method exists, and raises rather than silently doing something else, so that the intent is unambiguous.
 
-To rebuild the index today, drop it and apply it again:
+To rebuild the index, drop it and apply it again:
 
 ```python
 store.drop_vector_index()

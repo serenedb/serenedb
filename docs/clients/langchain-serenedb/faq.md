@@ -24,7 +24,7 @@ Questions that come up when working with the integration, each with the cause an
 | `similarity_search_with_score()` ignores the hybrid config | [Scored search is dense by design](#hybrid-scores) |
 | `fts_query` on a scored search raises | [Use `similarity_search()` for hybrid](#scored-hybrid) |
 | MMR results ignore the keyword half | [MMR is always dense](#mmr) |
-| Creating the engine raises `UnsupportedServerVersionError` | [Upgrade the server to 26.11.2 or later](#server-version) |
+| Creating the engine raises `UnsupportedServerVersionError` | [Upgrade the server to 26.11.3 or later](#server-version) |
 | `from_texts()` raises `NotImplementedError` | [Create the table, then `create_sync()`](#from-texts) |
 | `await store.aadd_texts(...)` is slower than expected | [Use `AsyncSereneDBVectorStore`](#async) |
 | An `IVFIndex` changed after being passed to the store | [It is mutated in place](#mutation) |
@@ -81,7 +81,7 @@ Either build the index through the store's own method, or construct a new store 
 
 ### Why does `reindex()` raise `NotImplementedError`? {#reindex}
 
-SereneDB's `REINDEX` applies to view-backed indexes, where it runs a refresh pass against the view's source. A vector store lives in a base table, so there is nothing for it to act on. Rather than quietly doing something adjacent, [`reindex()`](./indexes.md#reindex) raises until `REINDEX` on tables is supported.
+SereneDB's `REINDEX` applies to view-backed indexes, where it runs a refresh pass against the view's source. A vector store lives in a base table, so there is nothing for it to act on. Rather than quietly doing something adjacent, [`reindex()`](./indexes.md#reindex) raises.
 
 To rebuild the index, drop it and apply it again:
 
@@ -177,10 +177,10 @@ If you need hybrid retrieval, use [`similarity_search()`](./vector-store.md#simi
 
 ### Why does creating the engine raise `UnsupportedServerVersionError`? {#server-version}
 
-The integration supports SereneDB 26.11.2 and later, and every engine checks the server's release before it is used. The message names the release the server reported:
+The integration supports SereneDB 26.11.3 and later, and every engine checks the server's release before it is used. The message names the release the server reported:
 
 ```text
-version 26.10.0 is not supported. Minimum supported version is 26.11.2. To disable version check use ignore_db_version=True
+version 26.10.0 is not supported. Minimum supported version is 26.11.3. To disable version check use ignore_db_version=True
 ```
 
 Upgrade the server. If you cannot — or you are running a development build, which always reports patch level `0` — pass `ignore_db_version=True` to [`from_connection_string()`](./engine.md#from_connection_string) or [`from_pool()`](./engine.md#from_pool), accepting that some queries may be rejected or misbehave. See [Server version check](./engine.md#version-check).

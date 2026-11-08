@@ -359,6 +359,9 @@ class Store final : public std::enable_shared_from_this<Store>,
   void ClaimColumnOids(const irs::DirectoryReader& reader) const;
   void SyncSegments() const;
   void CoolOne(const std::shared_ptr<HotContext>& hot);
+  bool OwnerDropped() const noexcept {
+    return Dropped() || _directory->Dropped();
+  }
   void CommitStorage(std::string entry,
                      absl::FunctionRef<void(Tick, Tick, Lsn)> apply);
   void ScheduleCooling();

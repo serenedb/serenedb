@@ -348,13 +348,17 @@ void Store::ScheduleCooling() {
 
 void Store::CommitStorage(std::string entry,
                           absl::FunctionRef<void(Tick, Tick, Lsn)> apply) {
-  std::vector<uint8_t> record;
-  if (!_in_memory) {
-    duckdb::vector<std::string> entries;
-    entries.push_back(std::move(entry));
-    record = catalog::SearchRecord(_db_id, _id, entries);
-  }
-  catalog::Transactions::Get().CommitStorage(record, apply);
+  catalog::Transactions::Get().CommitStorage(
+    [&] {
+      std::vector<uint8_t> record;
+      if (!_in_memory && !OwnerDropped()) {
+        duckdb::vector<std::string> entries;
+        entries.push_back(std::move(entry));
+        record = catalog::SearchRecord(_db_id, _id, entries);
+      }
+      return record;
+    },
+    apply);
 }
 
 void Store::CoolOne(const std::shared_ptr<HotContext>& hot) {
@@ -434,12 +438,16 @@ void Store::CoolRetired(Lsn before) {
 
 void Store::Cover(Lsn target) {
   EnsureOpen();
-  if (!_table || _in_memory || _table->NeededFrom() >= target) {
+  if (!_table || _in_memory || OwnerDropped() ||
+      _table->NeededFrom() >= target) {
     return;
   }
   CoolRetired(target);
   catalog::Transactions::Get().CommitState(
     [&] {
+      if (OwnerDropped()) {
+        return std::vector<uint8_t>{};
+      }
       duckdb::vector<std::string> entries;
       entries.push_back(LogState(_table->StateUnits()));
       return catalog::SearchRecord(_db_id, _id, entries);

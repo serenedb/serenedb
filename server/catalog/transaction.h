@@ -189,7 +189,7 @@ class Transactions final {
 
   void Commit(SessionTransaction& transaction, duckdb::ClientContext& context);
   void CommitStorage(
-    std::span<const uint8_t> record,
+    absl::FunctionRef<std::vector<uint8_t>()> build,
     absl::FunctionRef<void(duckdb::transaction_t, duckdb::transaction_t, Lsn)>
       apply);
   void CommitState(absl::FunctionRef<std::vector<uint8_t>()> build,

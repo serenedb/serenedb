@@ -51,6 +51,9 @@ class DatabaseDirectory final {
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
+  bool Dropped() const noexcept {
+    return _dropped.load(std::memory_order_acquire);
+  }
 
  private:
   std::filesystem::path _path;

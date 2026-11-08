@@ -358,14 +358,16 @@ void Transactions::Commit(SessionTransaction& transaction,
 }
 
 void Transactions::CommitStorage(
-  std::span<const uint8_t> record,
+  absl::FunctionRef<std::vector<uint8_t>()> build,
   absl::FunctionRef<void(duckdb::transaction_t, duckdb::transaction_t, Lsn)>
     apply) {
+  std::vector<uint8_t> record;
   Log::Range range;
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
   {
     absl::MutexLock lock{&_commit_mutex};
+    record = build();
     if (!record.empty() && _log && _replaying == 0) {
       range = _log->Reserve(record.size());
     }
@@ -393,6 +395,9 @@ void Transactions::CommitState(absl::FunctionRef<std::vector<uint8_t>()> build,
   {
     absl::MutexLock lock{&_commit_mutex};
     record = build();
+    if (record.empty()) {
+      return;
+    }
     range = _log->Reserve(record.size());
     logged(range.begin);
   }

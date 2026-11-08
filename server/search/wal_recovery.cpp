@@ -29,6 +29,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_executor.hpp>
@@ -121,6 +122,7 @@ void CoverLog(uint64_t target) {
       },
       [](catalog::InvertedIndexEntry&) {});
   }
+  SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
   for (const auto& table : tables) {
     table->Cover(target);
   }

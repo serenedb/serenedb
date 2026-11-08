@@ -15,7 +15,6 @@ CREATE TABLE ef_t(id INTEGER PRIMARY KEY, body TEXT);
 statement ok
 CREATE INDEX ef_idx ON ef_t USING inverted(id, body ef_dict);
 
-# No VACUUM (REFRESH_TABLE) needed — table is empty, index has 0 docs.
 
 # Initial sanity: index is empty.
 query

@@ -3,15 +3,7 @@ control substitution on
 # Port of view-search-alias-recover-tick-in-past-noncluster.js / view-
 # serenesearch-link-recover-tick-in-past-noncluster.js.
 #
-# Original: 1000 docs inserted, then index created (its initial _recovery_tick
-# captured), then more writes, then bg-thread fault prevents the index's tick
-# from advancing, then crash. On restart the recovery range covers everything
-# from the captured tick onward → the index must contain all 1000 docs.
 #
-# Adapted: we have no `RocksDBBackgroundThread::run` fault, but we don't need
-# it — `SearchRefreshTask::commitUnsafe` blocks every search commit including
-# the one schedule right after CREATE INDEX. So whatever the index already
-# committed during backfill is durable; everything after stays in WAL.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY past_dict AS

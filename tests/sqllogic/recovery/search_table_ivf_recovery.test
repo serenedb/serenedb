@@ -26,8 +26,6 @@ INSERT INTO v VALUES
 statement ok
 VACUUM (FLUSH_TABLE) v;
 
-# Crash AFTER the WAL commit: (3,[0,0,0]) is fsynced into the WAL but never
-# refresh-published; recovery must rebuild it into the IVF.
 statement ok
 SET sdb_faults = 'crash_after_commit';
 

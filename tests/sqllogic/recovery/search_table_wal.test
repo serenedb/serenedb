@@ -6,7 +6,7 @@ CREATE TABLE s_wal(a INTEGER, b TEXT);
 statement ok
 RESET sdb_faults;
 
-# --- Fixture: a published baseline, durable in the iresearch index on disk. ---
+# --- Fixture: a baseline flushed to segments on disk. ---
 statement ok
 INSERT INTO s_wal VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
@@ -24,8 +24,6 @@ a	b
 
 ###############################################################################
 # 1. Crash AFTER the WAL commit -> the write survives via recovery replay.
-#    (4,5) is fsynced into the WAL but never refresh-published, so it exists
-#    ONLY in the WAL; recovery must rebuild it into iresearch.
 ###############################################################################
 
 statement ok
@@ -294,8 +292,6 @@ DROP TABLE mix_t;
 
 ###############################################################################
 # 6. DELETE -> the removal survives recovery replay (with and without a PK).
-#    The baseline is published; the DELETE is fsynced into the WAL but crashes
-#    before the iresearch removal commits, so recovery must re-apply it.
 ###############################################################################
 
 connection mix_conn
@@ -381,10 +377,6 @@ DROP TABLE del_g;
 
 ###############################################################################
 # 7. DELETE then re-INSERT the same PK -> last write wins through recovery.
-#    'a' is published; the same-PK [DELETE id=1] (unpublished) and [INSERT
-#    (1,'b')] are both fsynced into the WAL but crash before publish. Recovery
-#    replays them in manifest order (delete before the re-insert), so the
-#    higher-tick re-insert survives: exactly one row, b.
 ###############################################################################
 
 connection del_g_after
@@ -432,11 +424,7 @@ DROP TABLE reins;
 
 
 ###############################################################################
-# 8. UPDATE = delete-old + insert-new survives recovery replay. The baseline is
-#    published; the UPDATE's removal + re-insert are fsynced into the WAL but
-#    crash before the iresearch commit, so recovery must replay BOTH halves --
-#    and in manifest order (delete before insert), or the re-inserted row would
-#    be masked by its own removal.
+# 8. UPDATE = delete-old + insert-new survives recovery replay.
 ###############################################################################
 
 # 8a. Explicit PK, non-PK column updated -> old and new rows share the PK, so
@@ -522,10 +510,7 @@ DROP TABLE upd_g;
 
 
 ###############################################################################
-# 9. TRUNCATE -> the wipe survives recovery replay. The baseline is published;
-#    the TRUNCATE's marker is fsynced into the WAL but crashes before the
-#    iresearch Clear runs, so recovery must re-apply the Clear (dropping the
-#    on-disk baseline) from the bodyless TRUNCATE op.
+# 9. TRUNCATE -> the wipe survives recovery replay.
 ###############################################################################
 
 connection upd_g_after

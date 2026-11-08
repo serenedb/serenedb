@@ -1,12 +1,3 @@
-# A user inverted index on a search table survives a crash + WAL replay: the
-# index is storage-less (its terms live in the table's own iresearch store), so
-# recovery must (a) rebuild the shard's merged index config at boot from the
-# persisted index definition, and (b) re-index the WAL-replayed rows through
-# that config. Rows fsynced to the WAL but never refresh-published exist ONLY in
-# the WAL; after restart a @@ predicate through the index scan (a term filter the
-# columnstore cannot evaluate) must still return those replayed rows -- which
-# proves their terms were rebuilt, not just their stored values.
-
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
@@ -26,9 +17,6 @@ INSERT INTO sidx VALUES (1, 'red'), (2, 'blue');
 statement ok
 VACUUM (FLUSH_TABLE) sidx;
 
-# Crash AFTER the WAL commit: (3,'red'),(4,'green') are fsynced into the WAL but
-# never refresh-published, so they exist ONLY in the WAL; recovery must rebuild
-# them into iresearch -- terms included.
 statement ok
 SET sdb_faults = 'crash_after_commit';
 

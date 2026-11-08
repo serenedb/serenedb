@@ -19,17 +19,7 @@ RESET sdb_faults;
 
 ## Part 1 -- the delete-log ordering invariant
 #
-# A removal that a refresh has already APPLIED cannot ride the adopt tick into
-# the rebuilt segment (only still-pending ones do), so the log's reissue is the
-# only thing that keeps the row deleted. pause_search_commit_after_irs parks
-# the deleter with its removal queued and visible to the refresh but its commit
-# not yet returned -- proving the log entry is written BEFORE the removal
-# becomes visible. Record the deletes on the far side of that commit instead
-# and the build drains an empty log, so row 2 comes back from the dead.
 #
-# A short refresh interval, not 0: the removal has to reach the published index
-# while the deleter is parked, and the parked session cannot run the VACUUM
-# itself.
 statement ok
 CREATE TABLE bfc (id BIGINT PRIMARY KEY, tag TEXT)
   WITH (compaction_interval = 0);
@@ -73,9 +63,6 @@ statement async ok
 DELETE FROM bfc WHERE id = 2;
 
 
-# The refresh loop applies the queued removal while the deleter is still parked
-# mid-commit. Row 2 is now gone from the base segment and lives only in the
-# rebuilt one the build has not swapped in yet.
 connection default
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM bfc WHERE id = 2;

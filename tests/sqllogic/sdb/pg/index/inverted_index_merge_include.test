@@ -2,7 +2,7 @@ hash-threshold 100
 
 # Validity must round-trip through the cs segment merge for INCLUDE'd
 # composite types. We force the index into a multi-segment shape by
-# inserting in two batches separated by VACUUM (REFRESH_TABLE) -- each
+# inserting in two batches separated by VACUUM (FLUSH_TABLE) -- each
 # VACUUM commits a fresh segment -- then drive compaction via
 # VACUUM (COMPACT_TABLE) <table> and re-run the same
 # projection. The post-merge projection must match the pre-merge one,

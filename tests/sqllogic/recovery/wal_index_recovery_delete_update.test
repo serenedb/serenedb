@@ -1,11 +1,5 @@
 control substitution on
 
-# Phase 2 bounded replay, mutating tail: a refresh makes the rows durable in
-# the segments. Then a DELETE and an UPDATE run with the search commit faulted
-# off, so they live only in the store WAL. After a crash, recovery replays that
-# tail (these ops are PAST the durable cursor, so they are NOT skipped) and the
-# index reflects them -- the deleted rows are gone, the updated row carries its
-# new value.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY du_dict AS

@@ -326,7 +326,7 @@ a	o
 1	{12,15}
 
 # ----------------------------------------------------------------------
-# Re-EXECUTE after a catalog refresh sees the new rows
+# Re-EXECUTE sees the new rows
 # ----------------------------------------------------------------------
 
 statement ok

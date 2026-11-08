@@ -154,9 +154,6 @@ CREATE TABLE wupd(a INTEGER, b TEXT)
 statement ok
 INSERT INTO wupd SELECT i, 'seed' || i || repeat('x', 200) FROM range(8000) t(i);
 
-# An UPDATE matches through the index, and a search table publishes rows only
-# on refresh -- without this the UPDATE below sees an empty table and silently
-# updates nothing.
 statement ok
 VACUUM (FLUSH_TABLE) wupd;
 

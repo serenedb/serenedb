@@ -15,7 +15,7 @@ hash-threshold 100
 #       * boundary+/- 1 cases for off-by-one in tail-bit masking
 #
 # Driven via `VACUUM (COMPACT_TABLE) <table>` after several
-# VACUUM (REFRESH_TABLE) segment-creating batches.
+# VACUUM (FLUSH_TABLE) segment-creating batches.
 
 statement ok
 CREATE TABLE m (

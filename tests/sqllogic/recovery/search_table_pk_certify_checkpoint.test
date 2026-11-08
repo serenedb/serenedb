@@ -38,7 +38,6 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-search_commit_prepared:parked';
 
 
-# Somebody takes it, and with no refresh the key lives only in the WAL.
 connection other
 statement ok
 INSERT INTO ckpt_pk VALUES (9, 'winner');

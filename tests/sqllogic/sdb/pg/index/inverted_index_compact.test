@@ -2,7 +2,7 @@ hash-threshold 100
 
 # End-to-end test: BM25 ordering must remain correct after the inverted
 # index is compacted. We force the index into a multi-segment shape by
-# inserting in three batches with VACUUM (REFRESH_TABLE) between each
+# inserting in three batches with VACUUM (FLUSH_TABLE) between each
 # batch (each VACUUM commits a fresh segment). Then we drive compaction
 # to a fixpoint via the COMPACT_TABLE handler and re-run the same
 # BM25 queries. Norms feed BM25, so this also covers the norm read path

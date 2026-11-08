@@ -10,10 +10,6 @@ control substitution on
 # carries a stats blob the reader accepts, and that the re-encoded codes
 # score correctly.
 #
-# Pre-crash row goes through a normal commit so the on-disk .cs is the
-# reference. Post-crash rows land in the storage WAL only -- we freeze
-# SearchRefreshTask::commitUnsafe before INSERTing them so the iresearch trx
-# never gets to flush.
 
 statement ok
 CREATE TABLE wal_tq_t(pk INTEGER PRIMARY KEY, emb FLOAT[3]);

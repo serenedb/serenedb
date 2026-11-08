@@ -3,11 +3,6 @@ control substitution on
 statement ok
 RESET sdb_faults;
 
-# The only rows predate the index but are not published yet (no refresh loop),
-# so the build's first snapshot sees no segment to rebuild. Unless the build
-# publishes what the drained writers committed before reading that snapshot,
-# the loop exits at once and the next refresh publishes the row without the
-# indexed field -- unreachable through the index for good.
 statement ok
 CREATE TABLE bpu (id BIGINT PRIMARY KEY, tag TEXT)
   WITH (compaction_interval = 0);

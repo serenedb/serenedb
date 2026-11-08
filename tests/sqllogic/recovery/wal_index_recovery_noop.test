@@ -1,8 +1,5 @@
 control substitution on
 
-# WAL index recovery no-op path: crash with iresearch fully caught up.
-# _recovery_tick == engine.recoveryTick() → RunWalRecovery must be skipped
-# and the index must still be consistent.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY nop_dict AS

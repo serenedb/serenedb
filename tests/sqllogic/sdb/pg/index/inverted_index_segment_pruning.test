@@ -2,7 +2,7 @@ hash-threshold 100
 
 # Segment-level filter pruning: TableFilter::State::StartSegment returns
 # false when segment-wide zonemaps prove no row can pass the pushed column
-# filters, and the scan skips the segment. Each INSERT + VACUUM(REFRESH_TABLE)
+# filters, and the scan skips the segment. Each INSERT + VACUUM(FLUSH_TABLE)
 # round flushes its own segment, and the batches use disjoint `g` ranges, so
 # filters below kill 0, 1, 2, or all 3 segments. Results must be identical
 # either way (pruned segments contain no passing rows by construction) --

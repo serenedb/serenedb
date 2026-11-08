@@ -51,8 +51,6 @@ connection truncater
 statement ok
 COMMIT;
 
-# The refresh loop applies it while the build is still parked, so it cannot ride
-# the adopt tick into the rebuilt segment.
 connection default
 query ok retry 40 backoff 250ms
 SELECT count(*) AS n FROM bft;

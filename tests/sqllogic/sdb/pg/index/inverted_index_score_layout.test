@@ -1,6 +1,6 @@
 # Reproducer for the flaky BM25-OR scoring bug from inverted_index_score.test:1480.
 # The original test was non-deterministic w.r.t. segment layout; here we pin
-# each layout explicitly via `VACUUM (REFRESH_TABLE)` per INSERT or as a
+# each layout explicitly via `VACUUM (FLUSH_TABLE)` per INSERT or as a
 # single batch, plus `VACUUM (COMPACT_TABLE) <table>` for
 # compaction.
 #

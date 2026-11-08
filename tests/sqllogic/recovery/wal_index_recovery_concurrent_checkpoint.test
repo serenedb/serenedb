@@ -6,10 +6,6 @@ control max-async-connections 16
 # token's @@ match count is exactly 1 -- a duplicate posting would make some
 # token match twice, and a lost insert would make it match zero.
 #
-# All async INSERTs are awaited (`wait`) before the crash, so every row is
-# durable in the store WAL and MUST survive recovery: some land in the segments
-# via the racing checkpoint, the rest replay from the WAL. The combined set must
-# equal the store table with no duplicates and nothing missing.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY cc_dict AS
@@ -158,8 +154,6 @@ connection checkpointer
 statement async ok
 CHECKPOINT;
 
-# Wait for every writer to durably commit to the store WAL before crashing, so
-# the full set must survive recovery (no in-flight rows are silently dropped).
 wait
 
 # Crash while the post-checkpoint tail is only in the WAL (not the segments). On

@@ -9,9 +9,7 @@
 # Search-backed tables take triggers too. Trigger expansion reads the affected
 # rows through RETURNING, which the search write operators now project, so both
 # granularities fire -- the row trigger reads OLD off the deleted row and the
-# statement trigger leaves the affected-row count alone. A search table's writes
-# only become visible to a later statement once the index refreshes, so the DML
-# below refreshes before reading back.
+# statement trigger leaves the affected-row count alone.
 
 
 statement ok

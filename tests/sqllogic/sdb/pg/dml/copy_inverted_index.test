@@ -3,7 +3,7 @@ control substitution on
 # COPY FROM a file into a table that carries an inverted index. COPY drives a
 # bulk write path (optimistic data writer / ROW_GROUP_DATA in the WAL),
 # distinct from row-at-a-time INSERT, so this pins that COPY'd rows still feed
-# the inverted index sink: after a refresh they are searchable and INCLUDE
+# the inverted index sink: they are searchable and INCLUDE
 # columns round-trip. A 4000-row COPY exercises the multi-vector bulk path.
 
 

@@ -1,6 +1,5 @@
 control substitution on
 
-# WAL index recovery: VACUUM (REFRESH_TABLE) AFTER a TRUNCATE, then crash.
 #
 # Sequence inside the recovery range:
 #   1) seed + VACUUM            -> on-disk iresearch holds the seed.

@@ -1,13 +1,5 @@
 control substitution on
 
-# TRUNCATE then re-insert reusing the freed rowids, then crash before any
-# refresh. The pre-truncate rows are durable in the segments; the truncate and
-# the reusing inserts live only in the store WAL. Recovery streams the tail in
-# WAL order with each op on its own strictly-ascending sub-tick, so the
-# tick-bound delete (truncate) masks only the pre-truncate docs and the later
-# inserts that reuse the same rowids survive -- last-op-wins for free, no
-# same-key suppression. Only the reused rows must be present and searchable;
-# the pre-truncate content must be gone.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY tr_dict AS

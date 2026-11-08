@@ -39,9 +39,6 @@ INSERT INTO m VALUES (1, 'running'), (2, 'walking');
 statement ok
 VACUUM (FLUSH_TABLE) m;
 
-# Crash AFTER the WAL commit: (3,'running fast') is fsynced into the WAL but never
-# refresh-published, so it exists ONLY in the WAL; recovery must rebuild it into
-# both indexes' fields.
 statement ok
 SET sdb_faults = 'crash_after_commit';
 

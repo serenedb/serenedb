@@ -1,12 +1,5 @@
 control substitution on
 
-# Phase 2 bounded replay: a refresh makes batch 1 durable in the iresearch
-# segments and stamps the durable WAL cursor. Batch 2 is inserted with the
-# search commit faulted off, so it lives only in the store WAL (post-refresh,
-# un-durable in the segments). After a crash, recovery replays only the
-# un-durable tail (batch 1 is skipped via the WAL-offset cursor; the boundary
-# overlap is absorbed by the idempotent delete-then-insert), and the index is
-# fully correct -- every row searchable, none duplicated.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY rd_dict AS
@@ -19,7 +12,6 @@ CREATE TABLE rd_t(id INTEGER PRIMARY KEY, body TEXT);
 statement ok
 CREATE INDEX rd_idx ON rd_t USING inverted(id, body rd_dict);
 
-# Batch 1: insert, then force a durable refresh -> stamps the durable WAL cursor.
 statement ok
 INSERT INTO rd_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
 
@@ -76,7 +68,6 @@ SELECT id FROM rd_idx WHERE body @@ ts_phrase('doc_4999');
 id
 4999
 
-# Post-refresh tail (batch 2) replayed from the WAL.
 connection rd_after
 query
 SELECT id FROM rd_idx WHERE body @@ ts_phrase('doc_5000');

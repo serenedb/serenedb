@@ -24,9 +24,6 @@ CREATE TABLE bfx (id BIGINT PRIMARY KEY, tag TEXT)
   WITH (compaction_interval = 0);
 
 
-# Three separate published segments: one INSERT + refresh each. With a 1-byte
-# group budget every segment is its own group and its own swap, so the crash
-# below lands with the first group swapped and the other two untouched.
 statement ok
 INSERT INTO bfx VALUES (1, 'alpha');
 

@@ -1328,9 +1328,6 @@ DROP TABLE cmr_tc
 # ===========================================================================
 # SEARCH TABLE: the same replacement over a search-backed table
 # ===========================================================================
-#
-# A search table's rows become readable once the table refreshes, so the
-# records below refresh before reading back what a committed writer wrote.
 
 statement ok
 CREATE TABLE cmr_s(a INTEGER, b TEXT) WITH (compaction_interval = 0)

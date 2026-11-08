@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <duckdb.hpp>
@@ -48,6 +49,8 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iterator>
+#include <limits>
 #include <optional>
 #include <set>
 #include <span>
@@ -151,6 +154,34 @@ const std::vector<Shape>& Shapes() {
      }},
     {"short_hash_runs",
      [](uint64_t g) { return static_cast<int64_t>(Mix(g / 3)); }},
+    {"extremes",
+     [](uint64_t g) -> std::optional<int64_t> {
+       static constexpr int64_t kValues[] = {
+         std::numeric_limits<int64_t>::min(),
+         std::numeric_limits<int64_t>::max(),
+         0,
+         -1,
+         1,
+         -128,
+         127,
+         255,
+         -32768,
+         32767,
+         65535,
+         std::numeric_limits<int32_t>::min(),
+         std::numeric_limits<int32_t>::max(),
+         std::numeric_limits<uint32_t>::max(),
+       };
+       if (g % 7 == 3) {
+         return std::nullopt;
+       }
+       const auto run = g % 3 == 0 ? g / 64 : Mix(g);
+       return kValues[run % std::size(kValues)];
+     }},
+    {"min_and_zero",
+     [](uint64_t g) {
+       return g % 3 == 0 ? std::numeric_limits<int64_t>::min() : int64_t{0};
+     }},
   };
   return kShapes;
 }
@@ -1023,6 +1054,96 @@ TEST_F(ColNumericCodecTest, AllNullAndSingleRow) {
     irs::MemoryDirectory dir{};
     Write(dir, duckdb::LogicalType::BIGINT, {}, rows, 4096, gen);
     Verify(dir, duckdb::LogicalType::BIGINT, rows, gen);
+  }
+}
+
+TEST_F(ColNumericCodecTest, FloatSpecialsKeepTheirBits) {
+  constexpr uint64_t kRows = 20000;
+  const auto check = [&]<typename T, typename Bits>(
+                       const duckdb::LogicalType& type, irs::WriteTier tier) {
+    SCOPED_TRACE(type.ToString() + " " +
+                 std::to_string(static_cast<int>(tier)));
+    const T values[] = {
+      std::numeric_limits<T>::quiet_NaN(),
+      -std::numeric_limits<T>::quiet_NaN(),
+      T{0},
+      -T{0},
+      std::numeric_limits<T>::infinity(),
+      -std::numeric_limits<T>::infinity(),
+      std::numeric_limits<T>::denorm_min(),
+      std::numeric_limits<T>::max(),
+      std::numeric_limits<T>::lowest(),
+      T{1.5},
+    };
+    const auto at = [&](uint64_t g) -> std::optional<T> {
+      if (g % 11 == 4) {
+        return std::nullopt;
+      }
+      return values[(g % 2 == 0 ? g / 50 : Mix(g)) % std::size(values)];
+    };
+    irs::MemoryDirectory dir{};
+    {
+      irs::ColWriter w{dir, kSeg, Db(), tier};
+      auto& cw = w.OpenColumn(
+        kField, type, {.row_group_size = 4096, .codec_params = {.tier = tier}});
+      for (uint64_t pos = 0; pos < kRows;) {
+        const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector vec{type, STANDARD_VECTOR_SIZE};
+        auto* data = duckdb::FlatVector::GetDataMutable<T>(vec);
+        auto& validity = duckdb::FlatVector::ValidityMutable(vec);
+        validity.Reset(STANDARD_VECTOR_SIZE);
+        for (uint64_t k = 0; k < take; ++k) {
+          if (const auto v = at(pos + k)) {
+            data[k] = *v;
+          } else {
+            validity.SetInvalid(k);
+          }
+        }
+        duckdb::FlatVector::SetSize(vec, take);
+        cw.Append(vec, take);
+        pos += take;
+      }
+      ASSERT_TRUE(w.Commit(0));
+    }
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    const auto expect = [&](const duckdb::Vector& out, duckdb::idx_t k,
+                            uint64_t g) {
+      const auto want = at(g);
+      ASSERT_EQ(duckdb::FlatVector::Validity(out).RowIsValid(k),
+                want.has_value())
+        << "row " << g;
+      if (want) {
+        EXPECT_EQ(std::bit_cast<Bits>(duckdb::FlatVector::GetData<T>(out)[k]),
+                  std::bit_cast<Bits>(*want))
+          << "row " << g;
+      }
+    };
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, take);
+      out.Flatten(take);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        expect(out, k, pos + k);
+      }
+      pos += take;
+    }
+    irs::ColumnReader::PointReader cursor{r, *col};
+    duckdb::Vector one{type, 1};
+    for (uint64_t g = 0; g < kRows; g += 13) {
+      duckdb::FlatVector::ValidityMutable(one).Reset();
+      cursor.FetchRow(g, one, 0);
+      expect(one, 0, g);
+    }
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    check.template operator()<float, uint32_t>(duckdb::LogicalType::FLOAT,
+                                               tier);
+    check.template operator()<double, uint64_t>(duckdb::LogicalType::DOUBLE,
+                                                tier);
   }
 }
 

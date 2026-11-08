@@ -165,26 +165,17 @@ std::shared_ptr<const RegexpAcceptor> WordAcceptor(bytes_view separator) {
 }
 
 template<typename Bounds>
-class WordIterator final : public WrappedTermIterator {
+class WordIterator final : public SeekFirstTermIterator<WordIterator<Bounds>> {
+  using Base = SeekFirstTermIterator<WordIterator<Bounds>>;
+  using Base::_impl;
+
  public:
   WordIterator(const TermReader& reader, Bounds bounds, bytes_view separator)
-    : WrappedTermIterator{reader.iterator()},
-      _bounds{bounds},
-      _separator{separator} {}
+    : Base{reader.iterator()}, _bounds{bounds}, _separator{separator} {}
 
-  bool next() final {
-    if (_started) {
-      if (!_impl->next()) {
-        return false;
-      }
-    } else {
-      _started = true;
-      if (!_bounds.Start(*_impl)) {
-        return false;
-      }
-    }
-    return SkipShingles();
-  }
+  bool Start() { return _bounds.Start(*_impl); }
+
+  bool next() final { return this->Step() && SkipShingles(); }
 
  private:
   bool SkipShingles() {
@@ -207,7 +198,6 @@ class WordIterator final : public WrappedTermIterator {
   Bounds _bounds;
   bytes_view _separator;
   bstring _upper;
-  bool _started = false;
 };
 
 class WordTermsVisitor final : public FilterVisitor {

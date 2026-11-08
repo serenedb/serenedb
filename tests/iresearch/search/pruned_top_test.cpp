@@ -842,6 +842,24 @@ TEST_P(PrunedTopTest, phrases_left_alone_in_unions) {
   }
 }
 
+TEST_P(PrunedTopTest, phrases_matching_most_candidates_in_unions) {
+  Build(PhrasesText);
+  for (const auto& terms : std::vector<std::vector<std::string_view>>{
+         {"of"},
+         {"band", "town"},
+         {"medal", "honor", "club"},
+       }) {
+    SCOPED_TRACE(absl::StrJoin(terms, " "));
+    irs::BooleanFilter filter;
+    filter.Add(PhraseOf({"pad", "pad"}), irs::Occur::Should);
+    for (const auto term : terms) {
+      filter.Add(Clause(term), irs::Occur::Should);
+    }
+    filter.SetMinShouldMatch(1);
+    CheckRanking(filter);
+  }
+}
+
 TEST_P(PrunedTopTest, sloppy_phrases_in_unions) {
   Build(PhrasesText);
   auto phrase = PhraseOf({"brass", "band"});
@@ -924,6 +942,11 @@ TEST_P(PrunedTopTest, phrases_ranked_by_a_scorer_without_bounds) {
     SCOPED_TRACE(absl::StrJoin(parts, " "));
     CheckRanking(*PhraseOf(parts));
   }
+  irs::BooleanFilter phrases;
+  phrases.Add(PhraseOf({"brass", "band"}), irs::Occur::Should);
+  phrases.Add(PhraseOf({"harbor", "town"}), irs::Occur::Should);
+  phrases.SetMinShouldMatch(1);
+  CheckRanking(phrases);
 }
 
 TEST_P(PrunedTopTest, a_lone_phrase_beside_an_unscored_all) {

@@ -99,10 +99,6 @@ Because nothing is checkpointed, the write-ahead logs keep growing, and dropped 
 
 A restored server starts with every [subscription](../sql/statements/create_subscription/index.md) disabled, and logs a warning for each one. Their publishers' replication slots have moved past the restored position, so resuming as they are would skip the transactions in between, and the server the backup was taken from may still be using those slots. To resume a subscription, either check that its slot on the publisher can still provide what the restored server needs, or create a new slot and resynchronize, then run `ALTER SUBSCRIPTION ... ENABLE`. The subscription stays disabled across restarts until you do.
 
-## Databases with a failed checkpoint
-
-When a checkpoint of a database has failed since the server started, `pg_backup_start` still succeeds, but sends a warning naming that database and logs it. After a restore, that database recovers as it does after a crash. Check it before relying on the backup, or restart the server and take the backup again.
-
 ## Volume snapshots
 
 When the data directory lives on storage that takes crash-consistent snapshots, a snapshot of the running server's volume is a backup. A crash-consistent snapshot holds every write the volume had completed at that moment, the same state the volume would be in after a power failure, and SereneDB recovers from it at startup the way it recovers from a crash. No `backup_label` is needed: start the server on a volume restored from the snapshot.

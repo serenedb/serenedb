@@ -168,6 +168,15 @@ std::string Log::ChunkName(Lsn begin) {
   return absl::StrFormat("%016x%s", begin, kChunkSuffix);
 }
 
+std::optional<Lsn> Log::HistoryCut(const std::filesystem::path& dir) {
+  auto fs = duckdb::FileSystem::CreateLocal();
+  const auto history = ReadHistory(*fs, dir / kHistoryFile);
+  if (history.bytes.empty()) {
+    return std::nullopt;
+  }
+  return history.cut;
+}
+
 Log::Log(duckdb::FileSystem& fs, std::filesystem::path dir)
   : _fs{fs}, _dir{std::move(dir)} {
   if (std::filesystem::create_directories(_dir)) {

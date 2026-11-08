@@ -54,6 +54,7 @@ class Log {
 
   static std::optional<Lsn> ChunkBegin(std::string_view name);
   static std::string ChunkName(Lsn begin);
+  static std::optional<Lsn> HistoryCut(const std::filesystem::path& dir);
 
   Log(duckdb::FileSystem& fs, std::filesystem::path dir);
 

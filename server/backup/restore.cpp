@@ -197,12 +197,25 @@ void Restore(const catalog::DataDirectory& layout,
                   chunks.emplace(*begin, path);
                 }
               });
+  if (const auto from = catalog::Log::HistoryCut(log);
+      from && *from < cut.log_size &&
+      (chunks.empty() || chunks.begin()->first > *from)) {
+    Fail("the copy is incomplete:", log,
+         absl::StrCat("the log needs the records from ", *from,
+                      ", its first file starts at ",
+                      chunks.empty() ? cut.log_size : chunks.begin()->first));
+  }
   for (auto it = chunks.begin(); it != chunks.end(); ++it) {
     const auto& [begin, path] = *it;
     const auto next = std::next(it);
     if (begin > cut.log_size) {
       Remove(path);
     } else if (next == chunks.end() || next->first > cut.log_size) {
+      if (std::filesystem::file_size(path) < cut.log_size - begin) {
+        Fail("the copy is incomplete:", path,
+             absl::StrCat("it has ", std::filesystem::file_size(path),
+                          " bytes, the log needs ", cut.log_size - begin));
+      }
       TruncateFile(path, cut.log_size - begin);
     } else if (std::filesystem::file_size(path) < next->first - begin) {
       Fail("the copy is incomplete:", path,

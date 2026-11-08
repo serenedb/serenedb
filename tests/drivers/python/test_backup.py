@@ -454,7 +454,7 @@ def test_backup_under_load_restores_exactly_the_cut(tmp_path: Path) -> None:
             restored.stop()
 
 
-def _retained_backup(tmp_path: Path) -> tuple[Path, int, int]:
+def _retained_backup(tmp_path: Path) -> Path:
     source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
                      log_path=str(tmp_path / "source.log"))
     try:
@@ -470,11 +470,11 @@ def _retained_backup(tmp_path: Path) -> tuple[Path, int, int]:
             conn.execute("INSERT INTO docs SELECT i, 'second' FROM range(1000, 1100) r(i)")
             conn.execute("CHECKPOINT st")
             conn.execute("INSERT INTO docs SELECT i, 'third' FROM range(2000, 2100) r(i)")
-            conn.execute("CHECKPOINT st")
+            conn.execute("SET debug_checkpoint_abort = 'before_truncate'")
+            with pytest.raises(psycopg.Error, match="Checkpoint aborted before truncate"):
+                conn.execute("CHECKPOINT st")
+            conn.execute("RESET debug_checkpoint_abort")
             conn.execute("INSERT INTO docs SELECT i, 'fourth' FROM range(3000, 3010) r(i)")
-            (oid,) = conn.execute(
-                "SELECT database_oid FROM duckdb_databases() "
-                "WHERE database_name = 'st'").fetchone()
 
         copy = tmp_path / "copy"
         with _connect(source) as backup:
@@ -487,14 +487,9 @@ def _retained_backup(tmp_path: Path) -> tuple[Path, int, int]:
         source.stop()
 
     (copy / "backup_label").write_text(label)
-    line = next(line for line in label.splitlines()
-                if line.startswith(f"SERENEDB DATABASE: {oid} "))
-    _, _, _, checkpoint, _, retained_from, _ = line.split()
-    wal = copy / "engine_v1" / str(oid) / "data.db.wal"
-    for generation in range(int(retained_from), int(checkpoint)):
-        assert Path(f"{wal}.retained.{generation}").is_file(), line
-    assert int(checkpoint) - int(retained_from) >= 2, line
-    return copy, int(retained_from), int(checkpoint)
+    chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
+    assert len(chunks) >= 2, chunks
+    return copy
 
 
 def _bodies(server: Serened) -> dict[str, int]:
@@ -503,8 +498,8 @@ def _bodies(server: Serened) -> dict[str, int]:
             "SELECT body, count(*) FROM docs GROUP BY body ORDER BY body").fetchall())
 
 
-def test_backup_restores_search_rows_held_only_in_retained_wals(tmp_path: Path) -> None:
-    copy, _, _ = _retained_backup(tmp_path)
+def test_backup_restores_rows_held_only_in_the_log(tmp_path: Path) -> None:
+    copy = _retained_backup(tmp_path)
     restored = Serened(SERENED_BIN, datadir=str(copy),
                        log_path=str(tmp_path / "restored.log"))
     try:
@@ -520,16 +515,16 @@ def test_backup_restores_search_rows_held_only_in_retained_wals(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("missing", ["oldest", "newest"])
-def test_backup_without_a_retained_wal_refuses_to_boot(tmp_path: Path, missing: str) -> None:
-    copy, retained_from, checkpoint = _retained_backup(tmp_path)
-    generation = retained_from if missing == "oldest" else checkpoint - 1
-    removed = next(copy.glob(f"engine_v1/*/data.db.wal.retained.{generation}"))
-    removed.unlink()
+def test_backup_without_a_log_file_refuses_to_boot(tmp_path: Path, missing: str) -> None:
+    copy = _retained_backup(tmp_path)
+    chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
+    name = (chunks[0] if missing == "oldest" else chunks[-1]).name
+    for directory in ("backup", "log"):
+        (copy / "engine_v1" / directory / name).unlink(missing_ok=True)
     restored = Serened(SERENED_BIN, datadir=str(copy),
                        log_path=str(tmp_path / "restored.log"))
     try:
-        with pytest.raises(RuntimeError, match=f"the backup needs the retained WALs "
-                                               f"{retained_from} to {checkpoint - 1}"):
+        with pytest.raises(RuntimeError, match="the copy is incomplete"):
             restored.start()
         assert (copy / "backup_label").is_file()
     finally:
@@ -554,7 +549,7 @@ def _expect_one_warning(log: Path, message: str) -> None:
     assert len(lines) == 1 and "\tWARNING\t" in lines[0], f"{log}: {lines}"
 
 
-@pytest.mark.parametrize("abort", ["before_header_non_fatal", "before_wal_finish_non_fatal"])
+@pytest.mark.parametrize("abort", ["before_header", "before_truncate"])
 def test_backup_of_a_database_with_a_failed_checkpoint(tmp_path: Path, abort: str) -> None:
     source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
                      log_path=str(tmp_path / "source.log"))
@@ -573,47 +568,26 @@ def test_backup_of_a_database_with_a_failed_checkpoint(tmp_path: Path, abort: st
             conn.execute("INSERT INTO t SELECT i, 'unchecked' FROM range(1000, 1500) r(i)")
             conn.execute("INSERT INTO s SELECT i, 'unchecked' FROM range(100, 150) r(i)")
             conn.execute(f"SET debug_checkpoint_abort = '{abort}'")
-            with pytest.raises(psycopg.Error, match="non-fatal"):
+            with pytest.raises(psycopg.Error, match="Checkpoint aborted"):
                 conn.execute("CHECKPOINT fc")
             conn.execute("RESET debug_checkpoint_abort")
             conn.execute("INSERT INTO t SELECT i, 'failed' FROM range(1500, 2000) r(i)")
             conn.execute("INSERT INTO s SELECT i, 'failed' FROM range(150, 200) r(i)")
-            (oid,) = conn.execute(
-                "SELECT database_oid FROM duckdb_databases() "
-                "WHERE database_name = 'fc'").fetchone()
 
         copy = tmp_path / "copy"
-        notices: list[tuple[str | None, str | None, str | None]] = []
         with _connect(source) as backup:
-            backup.add_notice_handler(lambda n: notices.append(
-                (n.severity_nonlocalized, n.message_primary, n.message_hint)))
             backup.execute("SELECT pg_backup_start('failed checkpoint')")
             with _connect(source, "fc") as conn:
                 conn.execute("INSERT INTO t SELECT i, 'after' FROM range(5000, 5100) r(i)")
                 conn.execute("INSERT INTO s SELECT i, 'after' FROM range(5000, 5010) r(i)")
             shutil.copytree(source.datadir, copy, symlinks=True)
             (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
-        assert notices == [(
-                    "WARNING",
-                    'checkpoints of database "fc" have failed; the backup holds its WAL '
-                    "as the failed checkpoint left it",
-                    "Check the database before relying on the backup.")]
-        line = next(line for line in label.splitlines()
-                    if line.startswith(f"SERENEDB DATABASE: {oid} "))
-        assert line.endswith(" failed_checkpoint"), line
-        _expect_one_warning(tmp_path / "source.log",
-                            'checkpoints of database "fc" have failed; the backup holds its '
-                            "WAL as the failed checkpoint left it; check the database before "
-                            "relying on the backup")
         source.stop()
 
         (copy / "backup_label").write_text(label)
         restored = Serened(SERENED_BIN, datadir=str(copy),
                            log_path=str(tmp_path / "restored.log"))
         restored.start()
-        _expect_one_warning(tmp_path / "restored.log",
-                            f"database {oid} was backed up while its checkpoints were "
-                            "failing; boot recovers it as after a crash; check its state")
         expected = Counter({"base": 1000, "unchecked": 500, "failed": 500})
         assert _failed_checkpoint_state(restored) == (expected, expected, 200)
 

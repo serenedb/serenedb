@@ -111,7 +111,7 @@ struct Family {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
     }
-    return MakePrepared(ctx, [&](auto table) -> Result {
+    return irs::detail::WithTable(ctx.table, [&](auto table) -> Result {
       auto root =
         memory::make_managed<Posting<Input, Exclude, decltype(table)>>(
           table, std::piecewise_construct, std::forward<ExcludeArgs>(negated));

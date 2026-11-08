@@ -49,6 +49,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 
+#include "connector/constraint_keys.h"
 #include "connector/inet_terms.h"
 
 namespace irs {
@@ -158,10 +159,6 @@ std::string DictTermValue(DictRef dict, bytes_view term,
     default:
       return TermValue(term, type);
   }
-}
-
-std::string ClauseValue(const TermClause& clause, const LogicalType& type) {
-  return DictTermValue(clause.dict, clause.term, type);
 }
 
 template<typename T>
@@ -299,12 +296,20 @@ std::string_view VectorMetricName(VectorMetric metric) {
 struct FilterPrinter {
   const FieldNameResolver& name_of;
   const FieldTypeResolver& type_of;
+  const FieldKeyResolver& key_of;
 
   std::string FieldName(field_id fid, DictRef dict) const {
     return name_of(sdb::connector::ColumnId{fid}, dict);
   }
   LogicalType FieldType(field_id fid, DictRef dict) const {
     return type_of(sdb::connector::ColumnId{fid}, dict);
+  }
+  std::string FieldValue(field_id fid, DictRef dict, bytes_view term,
+                         const LogicalType& type) const {
+    if (key_of(sdb::connector::ColumnId{fid})) {
+      return sdb::connector::KeyValueText(ViewCast<char>(term), type);
+    }
+    return DictTermValue(dict, term, type);
   }
 
   std::string PhraseParts(const ByPhraseOptions& options) const {
@@ -387,7 +392,9 @@ struct FilterPrinter {
         leaves.attributes["Values"] = absl::StrJoin(
           run, ", ", [&](std::string* o, const TermClause& clause) {
             const auto start = o->size();
-            absl::StrAppend(o, quote, ClauseValue(clause, type), quote);
+            absl::StrAppend(
+              o, quote,
+              FieldValue(clause.field, clause.dict, clause.term, type), quote);
             const auto pad = [&] { return o->size() == start ? "" : " "; };
             if (clause.boost != kNoBoost) {
               absl::StrAppend(o, pad(), "(", clause.boost, ")");
@@ -463,8 +470,9 @@ struct FilterPrinter {
       const auto& f = downCast<const ByTerm>(filter);
       ExplainNode node{"Term"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      node.attributes["Value"] = DictTermValue(
-        f.dict(), f.options().term, FieldType(f.field_id(), f.dict()));
+      node.attributes["Value"] =
+        FieldValue(f.field_id(), f.dict(), f.options().term,
+                   FieldType(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByRange>::id()) {
@@ -661,16 +669,20 @@ std::string IdentityField(sdb::connector::ColumnId id, DictRef dict) {
 
 LogicalType UnknownType(sdb::connector::ColumnId, DictRef) { return {}; }
 
+bool NoKey(sdb::connector::ColumnId) { return false; }
+
 }  // namespace
 
 duckdb::ExplainNode ToExplainNode(const Filter& f) {
-  return ToExplainNode(f, IdentityField, UnknownType);
+  return ToExplainNode(f, IdentityField, UnknownType, NoKey);
 }
 
 duckdb::ExplainNode ToExplainNode(const Filter& f,
                                   const FieldNameResolver& name_of,
-                                  const FieldTypeResolver& type_of) {
-  return FilterPrinter{.name_of = name_of, .type_of = type_of}.Build(f);
+                                  const FieldTypeResolver& type_of,
+                                  const FieldKeyResolver& key_of) {
+  return FilterPrinter{.name_of = name_of, .type_of = type_of, .key_of = key_of}
+    .Build(f);
 }
 
 }  // namespace irs

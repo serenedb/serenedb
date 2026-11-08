@@ -42,9 +42,11 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -67,14 +69,95 @@
 namespace sdb::connector {
 namespace {
 
-uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
-                                  uint64_t live_docs) {
+using FieldSet = irs::containers::FlatHashSet<irs::field_id>;
+
+FieldSet UniqueTermFields(const ScanBindData& bind) {
+  FieldSet fields;
+  if (!bind.relation.IsSearchTable() || !bind.relation.inverted_config) {
+    return fields;
+  }
+  const auto& config = bind.relation.ScannedIndex();
+  for (const auto& spec :
+       bind.relation.table_entry->Cast<catalog::SearchTableEntry>()
+         .KeySpecs()) {
+    if (spec.kind != search::KeyKind::Unique || spec.key.columns.size() != 1 ||
+        (!spec.key.expressions.empty() &&
+         !spec.key.expressions.front().empty())) {
+      continue;
+    }
+    fields.insert(spec.key.field);
+    const auto column = spec.key.columns.front();
+    const auto type = bind.ColumnTypeById(column).id();
+    const auto term = config.TermField(column);
+    const auto* entry = config.LookupField(term).entry;
+    if (entry && entry->IsTermDict() && !entry->HasJsonLeafFields() &&
+        (!entry->HasTextDictionary() || entry->is_keyword) &&
+        type != duckdb::LogicalTypeId::LIST &&
+        type != duckdb::LogicalTypeId::ARRAY) {
+      fields.insert(term);
+    }
+  }
+  return fields;
+}
+
+std::optional<uint64_t> UniqueMatches(const irs::Filter& filter,
+                                      const FieldSet& unique) {
+  if (filter.type() == irs::Type<irs::ByTerm>::id()) {
+    if (unique.contains(irs::utils::downCast<irs::ByTerm>(filter).field_id())) {
+      return 1;
+    }
+    return std::nullopt;
+  }
+  if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
+    return std::nullopt;
+  }
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
+  std::optional<uint64_t> bound;
+  const auto tighten = [&](uint64_t rows) {
+    bound = bound ? std::min(*bound, rows) : rows;
+  };
+  for (const auto& term : node.Terms(irs::Occur::Must)) {
+    if (unique.contains(term.field)) {
+      tighten(1);
+    }
+  }
+  for (const auto& child : node.Filters(irs::Occur::Must)) {
+    if (const auto rows = UniqueMatches(*child, unique)) {
+      tighten(*rows);
+    }
+  }
+  if (bound || node.Size(irs::Occur::Must) != 0 ||
+      node.Size(irs::Occur::Should) == 0 || node.MinShouldMatch() == 0) {
+    return bound;
+  }
+  uint64_t rows = 0;
+  for (const auto& term : node.Terms(irs::Occur::Should)) {
+    if (!unique.contains(term.field)) {
+      return std::nullopt;
+    }
+    ++rows;
+  }
+  for (const auto& child : node.Filters(irs::Occur::Should)) {
+    const auto child_rows = UniqueMatches(*child, unique);
+    if (!child_rows) {
+      return std::nullopt;
+    }
+    rows += *child_rows;
+  }
+  return rows;
+}
+
+uint64_t EstimateFilterMatchCount(const irs::Filter& filter, uint64_t live_docs,
+                                  const FieldSet& unique) {
   const auto type = filter.type();
   if (type == irs::Type<irs::All>::id()) {
     return live_docs;
   }
   if (type == irs::Type<irs::Empty>::id()) {
     return 0;
+  }
+  if (const auto rows = UniqueMatches(filter, unique)) {
+    return std::max<uint64_t>(std::min(*rows, live_docs), 1U);
   }
   constexpr double kDefaultFilterSelectivity = 0.2;
   return std::max<uint64_t>(
@@ -105,7 +188,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
       return std::max<uint64_t>(terms, 1);
     }();
     estimate += req.having_filter
-                  ? EstimateFilterMatchCount(*req.having_filter, rows)
+                  ? EstimateFilterMatchCount(*req.having_filter, rows, {})
                   : rows;
   }
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
@@ -515,7 +598,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
   }
   const auto live = Snapshot(context)->reader.live_docs_count();
   const auto* filter = search.filter.get();
-  const auto estimate = filter ? EstimateFilterMatchCount(*filter, live) : live;
+  const auto estimate =
+    filter ? EstimateFilterMatchCount(*filter, live, UniqueTermFields(*this))
+           : live;
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
 

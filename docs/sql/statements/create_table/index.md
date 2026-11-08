@@ -104,6 +104,10 @@ Or:
 
 It is not possible to create tables using CTAS statements with constraints (primary keys, check constraints, etc.).
 
+## Key Lookups
+
+A filter that compares a single-column `PRIMARY KEY`, `UNIQUE` or `FOREIGN KEY` column with a value (`=`) or a list of values (`IN`) reads only the matching rows, whatever the column's type, instead of scanning the table. `EXPLAIN` shows it as an `Index Filter` on the column.
+
 ## Check Constraints
 
 A `CHECK` constraint is an expression that must be satisfied by the values of every row in the table.

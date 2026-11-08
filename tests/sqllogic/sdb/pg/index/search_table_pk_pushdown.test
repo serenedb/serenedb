@@ -141,7 +141,7 @@ QUERY PLAN
 │ │ Value: 5           │ │
 │ ╰────────────────────╯ │
 │ Projections: pk, x     │
-│ ~2 rows                │
+│ ~1 row                 │
 ╰────────────────────────╯
 
 query

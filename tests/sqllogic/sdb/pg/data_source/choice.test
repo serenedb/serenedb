@@ -607,7 +607,7 @@ EXPLAIN SELECT * FROM t_choice_nulls WHERE id IN (2,3) ORDER BY id;
 QUERY PLAN
 ╭─ ORDER_BY ─────────────╮
 │ Order By: id ASC       │
-│ ~1 row                 │
+│ ~2 rows                │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
 │ Table: t_choice_nulls  │
@@ -619,7 +619,7 @@ QUERY PLAN
 │ │ Values: 2, 3       │ │
 │ ╰────────────────────╯ │
 │ Projections: id, val   │
-│ ~1 row                 │
+│ ~2 rows                │
 ╰────────────────────────╯
 
 
@@ -3874,7 +3874,7 @@ QUERY PLAN
 │ │ Field: id(numeric) │ │
 │ │ Values: 2, 4       │ │
 │ ╰────────────────────╯ │
-│ ~1 row                 │
+│ ~2 rows                │
 ╰────────────────────────╯
 
 
@@ -4452,7 +4452,7 @@ EXPLAIN SELECT a, nums, labels FROM choices_array WHERE a = 1 OR a = 3 OR a = 4 
 QUERY PLAN
 ╭─ ORDER_BY ─────────────╮
 │ Order By: a ASC        │
-│ ~1 row                 │
+│ ~4 rows                │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
 │ Table: choices_array   │
@@ -4465,7 +4465,7 @@ QUERY PLAN
 │ ╰────────────────────╯ │
 │ Projections: a, nums,  │
 │              labels    │
-│ ~1 row                 │
+│ ~4 rows                │
 ╰────────────────────────╯
 
 

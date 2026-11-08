@@ -68,4 +68,8 @@ std::string ConstraintKeyText(duckdb::ClientContext& context,
                               std::span<const std::string> names,
                               std::span<const duckdb::LogicalType> types);
 
+std::string EncodeKeyValue(const duckdb::Value& value);
+
+std::string KeyValueText(std::string_view key, const duckdb::LogicalType& type);
+
 }  // namespace sdb::connector

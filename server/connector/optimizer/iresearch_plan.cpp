@@ -43,6 +43,7 @@
 #include <duckdb/planner/operator/logical_join.hpp>
 #include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
@@ -72,6 +73,7 @@
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
+#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
 #include "query/config.h"
@@ -495,6 +497,20 @@ bool TryClaimIResearchConjunct(
 
 namespace {
 
+irs::field_id SingleColumnKey(const connector::ScanBindData& scan,
+                              connector::ColumnId col_id) {
+  if (!scan.relation.IsSearchTable()) {
+    return irs::field_limits::invalid();
+  }
+  for (const auto& key : scan.relation.ScannedIndex().constraint_keys) {
+    if (key.columns.size() == 1 && key.columns.front() == col_id &&
+        (key.expressions.empty() || key.expressions.front().empty())) {
+      return key.field;
+    }
+  }
+  return irs::field_limits::invalid();
+}
+
 std::optional<connector::SearchColumnInfo> TermColumnInfo(
   const connector::ScanBindData& scan, const catalog::IndexTokenizers& dicts,
   connector::ColumnId col_id) {
@@ -505,14 +521,27 @@ std::optional<connector::SearchColumnInfo> TermColumnInfo(
   const auto& config = *scan.relation.inverted_config;
   const auto term = config.TermField(col_id);
   const auto* info = config.LookupField(term).entry;
-  if (!info || !info->IsTermDict()) {
-    return std::nullopt;
+  const bool term_dict = info && info->IsTermDict();
+  const auto key = term_dict && connector::term_dict::IsIndexable(type)
+                     ? irs::field_limits::invalid()
+                     : SingleColumnKey(scan, col_id);
+  if (!term_dict) {
+    if (!irs::field_limits::valid(key)) {
+      return std::nullopt;
+    }
+    return connector::SearchColumnInfo{
+      .nullable = true,
+      .key_field = key,
+      .logical_type = std::move(type),
+      .tokenizer = {.analyzer = catalog::Tokenizer::TokenizerWrapper{
+                      new irs::KeywordTokenizer(), {}}}};
   }
   auto column_info =
     MakeSearchColumnInfo(term, info, std::move(type), dicts.Acquire(term));
   if (scan.relation.Stores(col_id)) {
     column_info.text = col_id;
   }
+  column_info.key_field = key;
   return column_info;
 }
 
@@ -1879,6 +1908,13 @@ duckdb::Value ShapeValue(const duckdb::LogicalType& type) {
       return duckdb::Value::BOOLEAN(true);
     case duckdb::LogicalTypeId::VARCHAR:
       return duckdb::Value("a");
+    case duckdb::LogicalTypeId::UUID:
+      return duckdb::Value::UUID(duckdb::hugeint_t{1});
+    case duckdb::LogicalTypeId::ENUM:
+      if (duckdb::EnumType::GetSize(type) != 0) {
+        return duckdb::Value::ENUM(0, type);
+      }
+      break;
     default:
       break;
   }

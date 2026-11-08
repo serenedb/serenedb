@@ -56,6 +56,24 @@ void CollectReads(const duckdb::Expression& expr, std::vector<KeyRead>& reads) {
     expr, [&](const duckdb::Expression& child) { CollectReads(child, reads); });
 }
 
+duckdb::vector<duckdb::Value> DecodeKey(
+  std::string_view key, std::span<const duckdb::LogicalType> types) {
+  duckdb::DataChunk chunk;
+  chunk.Initialize(
+    duckdb::Allocator::DefaultAllocator(),
+    duckdb::vector<duckdb::LogicalType>{types.begin(), types.end()}, 1);
+  duckdb::vector<duckdb::OrderModifiers> modifiers(types.size(), kKeyOrder);
+  duckdb::CreateSortKeyHelpers::DecodeSortKey(
+    duckdb::string_t{key.data(), static_cast<uint32_t>(key.size())}, chunk, 0,
+    modifiers);
+  duckdb::vector<duckdb::Value> values;
+  values.reserve(types.size());
+  for (auto& column : chunk.data) {
+    values.push_back(column.GetValue(0));
+  }
+  return values;
+}
+
 }  // namespace
 
 ConstraintKeyEncoder::ConstraintKeyEncoder(duckdb::ClientContext& context,
@@ -144,26 +162,32 @@ std::string ConstraintKeyText(duckdb::ClientContext& context,
                               std::string_view key,
                               std::span<const std::string> names,
                               std::span<const duckdb::LogicalType> types) {
-  duckdb::DataChunk values;
-  values.Initialize(
-    duckdb::Allocator::DefaultAllocator(),
-    duckdb::vector<duckdb::LogicalType>{types.begin(), types.end()}, 1);
-  duckdb::vector<duckdb::OrderModifiers> modifiers(types.size(), kKeyOrder);
-  duckdb::CreateSortKeyHelpers::DecodeSortKey(
-    duckdb::string_t{key.data(), static_cast<uint32_t>(key.size())}, values, 0,
-    modifiers);
+  const auto values = DecodeKey(key, types);
   std::string out = absl::StrCat("(", absl::StrJoin(names, ", "), ")=(");
-  for (size_t i = 0; i != types.size(); ++i) {
+  for (size_t i = 0; i != values.size(); ++i) {
     if (i != 0) {
       out += ", ";
     }
-    const auto value = values.data[i].GetValue(0);
+    const auto& value = values[i];
     out += value.IsNull() ? "null"
                           : value.CastAs(context, duckdb::LogicalType::VARCHAR)
                               .GetValue<std::string>();
   }
   out += ")";
   return out;
+}
+
+std::string EncodeKeyValue(const duckdb::Value& value) {
+  const duckdb::Vector input{value, duckdb::count_t{1}};
+  duckdb::Vector keys{duckdb::LogicalType::BLOB, 1};
+  duckdb::CreateSortKeyHelpers::CreateSortKey(input, 1, kKeyOrder, keys);
+  const auto key = keys.Values<duckdb::string_t>()[0].GetValue();
+  return std::string{key.GetData(), key.GetSize()};
+}
+
+std::string KeyValueText(std::string_view key,
+                         const duckdb::LogicalType& type) {
+  return DecodeKey(key, {&type, 1}).front().ToString();
 }
 
 }  // namespace sdb::connector

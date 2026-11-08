@@ -42,7 +42,6 @@
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/containers/node_hash_map.hpp"
 
 namespace irs::term_dict {
 
@@ -119,7 +118,7 @@ class FieldReader final {
   Separators _separators;
   InlinePages _inline_pages;
   duckdb::BufferManager* _buffers = nullptr;
-  containers::NodeHashMap<uint64_t, duckdb::AllocatedData> _copies;
+  containers::FlatHashMap<uint64_t, duckdb::AllocatedData> _copies;
   std::vector<byte_type> _single_inline;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   const byte_type* _inline_region = nullptr;

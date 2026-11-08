@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
@@ -37,6 +38,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -107,6 +109,14 @@ std::string RoleName(const auth::RoleGraph& roles, duckdb::idx_t role,
                      std::string_view fallback) {
   auto name = roles.NameOf(role);
   return std::string{name.empty() ? fallback : name};
+}
+
+void LogRollbackFailure(std::string_view database,
+                        const std::exception& e) noexcept try {
+  SDB_ERROR(GENERAL,
+            "rolling back the transaction of a server session in database \"",
+            database, "\" failed: ", duckdb::ErrorData{e}.RawMessage());
+} catch (...) {
 }
 
 }  // namespace
@@ -572,17 +582,46 @@ duckdb::unique_ptr<duckdb::Connection> MakeConnection(
     duckdb::make_shared_ptr<ConnectionContext>(db, identity));
 }
 
-SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
-                                      std::string_view database,
-                                      duckdb::idx_t database_id) {
-  auto conn = MakeConnection(irs::DuckDBEngine::Instance().instance(),
-                             {.user = user,
-                              .role = role,
-                              .database = database,
-                              .database_id = database_id});
+void HandNotices(ConnectionContext& ctx, const NoticeTarget& target) {
+  if (target.forward_to) {
+    ctx.ConsumeNotices([&](irs::pg::SqlErrorData& notice) {
+      target.forward_to->AddNotice(std::move(notice));
+    });
+    return;
+  }
+  ctx.ConsumeNotices([&](const irs::pg::SqlErrorData& notice) {
+    SDB_IF_FAILURE("log_notice_fails") {
+      THROW_SQL_ERROR(ERR_MSG("injected notice log failure"));
+    }
+    SDB_WARN(GENERAL, target.what, " \"", target.name, "\": ", notice.errmsg);
+  });
+}
+
+SystemConnection::SystemConnection(const SystemSession& session,
+                                   const NoticeTarget& notices)
+  : conn{MakeConnection(irs::DuckDBEngine::Instance().instance(),
+                        {.user = session.user,
+                         .system_user = session.system_user,
+                         .role = session.role,
+                         .database = session.database,
+                         .database_id = session.database_id,
+                         .backend_pid = session.backend_pid})},
+    progress{ConnectionContext::Get(*conn->context).ProgressSource()},
+    notices{notices} {}
+
+SystemConnection::~SystemConnection() {
   auto& context = ConnectionContext::Get(*conn->context);
-  return {.conn = std::move(conn),
-          .progress = pg::ProgressRegistration{context.ProgressSource()}};
+  if (context.transaction.HasActiveTransaction()) {
+    try {
+      context.transaction.Rollback(nullptr);
+    } catch (const std::exception& e) {
+      LogRollbackFailure(context.GetDatabase(), e);
+    }
+  }
+  try {
+    HandNotices(context, notices);
+  } catch (...) {
+  }
 }
 
 }  // namespace sdb

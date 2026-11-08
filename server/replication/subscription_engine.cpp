@@ -198,7 +198,7 @@ void SubscriptionEngine::start() {
   }
   if (backup::SubscriptionsHeld()) {
     for (const auto& subscription : subscriptions) {
-      Disable(subscription.database, subscription.oid);
+      Disable(subscription.database, subscription.oid, subscription.name);
       SDB_WARN(REPLICATION, "subscription \"", subscription.name,
                "\" in database \"", subscription.database,
                "\" was disabled because the server was restored from a "
@@ -381,13 +381,17 @@ void SubscriptionEngine::RestartLocked(SubState& state) {
 }
 
 void SubscriptionEngine::Disable(std::string_view database,
-                                 duckdb::idx_t subscription) {
+                                 duckdb::idx_t subscription,
+                                 std::string_view name) {
   auto attached = FindDatabase(database);
   if (!attached) {
     return;
   }
-  auto system = MakeSystemConnection(irs::StaticStrings::kDefaultUser,
-                                     pg::kRootUser, database, attached->oid);
+  SystemConnection system{{.user = irs::StaticStrings::kDefaultUser,
+                           .role = pg::kRootUser,
+                           .database = database,
+                           .database_id = attached->oid},
+                          {.what = "disabling subscription", .name = name}};
   auto& context = *system.conn->context;
   context.RunFunctionInTransaction([&] {
     auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
@@ -509,7 +513,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
       SDB_WARN(REPLICATION, "subscription \"", name,
                "\" has been disabled because of an error");
       try {
-        Disable(database, subscription);
+        Disable(database, subscription, name);
       } catch (const std::exception& ex) {
         SDB_WARN(REPLICATION, "subscription '", name,
                  "' disable failed: ", ex.what());

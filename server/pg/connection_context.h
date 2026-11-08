@@ -177,9 +177,14 @@ class ConnectionContext final : public duckdb::ClientContext {
       auto* next = std::exchange(node->next, fifo);
       fifo = std::exchange(node, next);
     }
+    absl::Cleanup free_rest = [&fifo] {
+      while (fifo) {
+        delete std::exchange(fifo, fifo->next);
+      }
+    };
     while (fifo) {
-      fn(fifo->data);
-      delete std::exchange(fifo, fifo->next);
+      std::unique_ptr<NoticeNode> current{std::exchange(fifo, fifo->next)};
+      fn(current->data);
     }
   }
 
@@ -308,13 +313,33 @@ duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(
 duckdb::unique_ptr<duckdb::Connection> MakeConnection(
   duckdb::DatabaseInstance& db, const SessionIdentity& identity);
 
-struct SystemConnection {
-  duckdb::unique_ptr<duckdb::Connection> conn;
-  pg::ProgressRegistration progress;
+struct NoticeTarget {
+  std::string_view what;
+  std::string_view name;
+  ConnectionContext* forward_to = nullptr;
 };
 
-SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
-                                      std::string_view database,
-                                      duckdb::idx_t database_id);
+void HandNotices(ConnectionContext& ctx, const NoticeTarget& target);
+
+struct SystemSession {
+  std::string_view user;
+  std::string_view system_user;
+  duckdb::idx_t role = 0;
+  std::string_view database;
+  duckdb::idx_t database_id = 0;
+  int32_t backend_pid = 0;
+};
+
+struct SystemConnection {
+  explicit SystemConnection(const SystemSession& session,
+                            const NoticeTarget& notices);
+  SystemConnection(const SystemConnection&) = delete;
+  SystemConnection& operator=(const SystemConnection&) = delete;
+  ~SystemConnection();
+
+  duckdb::unique_ptr<duckdb::Connection> conn;
+  pg::ProgressRegistration progress;
+  NoticeTarget notices;
+};
 
 }  // namespace sdb

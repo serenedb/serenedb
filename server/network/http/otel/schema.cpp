@@ -48,8 +48,11 @@ class Creator {
  public:
   Creator(std::string_view database, duckdb::idx_t database_id,
           std::string_view schema = "public")
-    : _system{MakeSystemConnection(irs::StaticStrings::kDefaultUser,
-                                   pg::kRootUser, database, database_id)},
+    : _system{{.user = irs::StaticStrings::kDefaultUser,
+               .role = pg::kRootUser,
+               .database = database,
+               .database_id = database_id},
+              {.what = "OpenTelemetry schema in database", .name = database}},
       _schema{schema} {}
 
   bool Exists(std::string_view table) {

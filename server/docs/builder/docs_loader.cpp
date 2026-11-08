@@ -245,20 +245,12 @@ class Loader {
  public:
   Loader(std::string_view database, duckdb::idx_t database_id,
          std::span<const Doc> docs)
-    : _conn{MakeConnection(irs::DuckDBEngine::Instance().instance(),
-                           {.user = irs::StaticStrings::kDefaultUser,
-                            .role = pg::kRootUser,
-                            .database = database,
-                            .database_id = database_id})},
-      _ctx{&ConnectionContext::Get(*_conn->context)},
-      _progress{_ctx->ProgressSource()},
+    : _system{{.user = irs::StaticStrings::kDefaultUser,
+               .role = pg::kRootUser,
+               .database = database,
+               .database_id = database_id},
+              {.what = "embedded docs in database", .name = database}},
       _docs{docs} {}
-
-  ~Loader() {
-    _ctx->ConsumeNotices([](auto& notice) {
-      SDB_INFO(STARTUP, "embedded docs: ", notice.errmsg);
-    });
-  }
 
   std::vector<IndexBlob> Build() {
     if (!Run(Sql(kBuildSql)) || !Insert() ||
@@ -270,8 +262,10 @@ class Loader {
           Sql(kObjectsSql), ")"))) {
       return {};
     }
-    auto image = ExportImage(*_conn->context, _ctx->GetDatabase(), "docs");
-    auto objects = ExportImage(*_conn->context, _ctx->GetDatabase(), "objects");
+    auto& context = *_system.conn->context;
+    const auto& database = ConnectionContext::Get(context).GetDatabase();
+    auto image = ExportImage(context, database, "docs");
+    auto objects = ExportImage(context, database, "objects");
     if (image.empty() || objects.empty()) {
       return {};
     }
@@ -280,7 +274,7 @@ class Loader {
   }
 
   bool Run(const std::string& sql) {
-    auto result = _conn->Query(sql);
+    auto result = _system.conn->Query(sql);
     if (!result->HasError()) {
       return true;
     }
@@ -302,7 +296,7 @@ class Loader {
       }
       sql.push_back(')');
     }
-    auto prepared = _conn->Prepare(sql);
+    auto prepared = _system.conn->Prepare(sql);
     if (prepared->HasError()) {
       SDB_WARN(GENERAL,
                "embedded docs: prepare insert failed: ", prepared->GetError());
@@ -342,9 +336,7 @@ class Loader {
     return true;
   }
 
-  duckdb::unique_ptr<duckdb::Connection> _conn;
-  ConnectionContext* _ctx;
-  pg::ProgressRegistration _progress;
+  SystemConnection _system;
   std::span<const Doc> _docs;
 };
 

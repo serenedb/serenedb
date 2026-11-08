@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import os
 import re
 import struct
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "scripts"
 REGION_TAG = b"sdb-docs-index-1"
+SERENED_BIN = os.environ.get("SDB_DRV_SERENED_BIN",
+                             str(REPO / "build" / "bin" / "serened"))
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
@@ -196,6 +201,33 @@ def test_index_embedding_needs_exactly_one_macos_region(
         r = _run(str(SCRIPTS / "embed_docs_index.py"), str(index), str(binary))
         assert r.returncode == 1
         assert "expected exactly one docs index region" in r.stderr
+
+
+@pytest.mark.skipif(
+    not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
+    reason=f"serened binary not found or not executable: {SERENED_BIN}")
+def test_index_build_writes_the_docs_and_objects_indexes(
+        tmp_path: Path) -> None:
+    doc = ("sql/statements/select/index.md#SELECT", "SELECT",
+           "SQL > Statements > SELECT", "# SELECT\n\nSELECT reads rows.\n")
+    corpus = tmp_path / "docs_corpus.bin"
+    corpus.write_bytes(b"".join(struct.pack("<I", len(field)) + field
+                                for field in map(str.encode, doc)))
+    index = tmp_path / "index"
+    r = subprocess.run([SERENED_BIN, str(tmp_path / "datadir"),
+                        f"--build_docs_index={index}",
+                        f"--docs_corpus={corpus}"],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert sorted(p.name for p in index.iterdir()) == ["docs", "objects"]
+    for name in ("docs", "objects"):
+        files = [p.name for p in (index / name).iterdir()]
+        assert "sdb_docs.layout" in files, files
+        assert [f for f in files if f != "sdb_docs.layout" and
+                not f.startswith("segments_")], files
+    layout = (index / "docs" / "sdb_docs.layout").read_text()
+    assert [line.split()[0] for line in layout.splitlines()] == [
+        "path", "title", "breadcrumb", "content", "content_text"]
 
 
 def test_docs_generation_writes_the_corpus(tmp_path: Path) -> None:

@@ -178,16 +178,13 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       duckdb::ExceptionType::CATALOG,
       absl::StrCat("role with OID ", job.owner, " does not exist")};
   }
-  auto connection = MakeSystemConnection(
-    user, job.owner, job.catalog.GetIdentifierName(), job.database_oid);
-  auto& session = ConnectionContext::Get(*connection.conn->context);
-  absl::Cleanup log_notices = [&] {
-    session.ConsumeNotices([&](auto& notice) {
-      SDB_WARN(GENERAL, "job \"", job.name.GetIdentifierName(),
-               "\": ", notice.errmsg);
-    });
-  };
-  session.job_depth = depth;
+  SystemConnection connection{
+    {.user = user,
+     .role = job.owner,
+     .database = job.catalog.GetIdentifierName(),
+     .database_id = job.database_oid},
+    {.what = "job", .name = job.name.GetIdentifierName()}};
+  ConnectionContext::Get(*connection.conn->context).job_depth = depth;
   context = connection.conn->context;
   if (!job.schema->parent) {
     context->client_data->catalog_search_path->Set(

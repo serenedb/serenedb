@@ -396,16 +396,23 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
   search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 }
 
-void LogNotice(std::string_view what, std::string_view name,
-               const irs::pg::SqlErrorData& notice) {
-  SDB_IF_FAILURE("notice_sink_fails") {
-    THROW_SQL_ERROR(ERR_MSG("injected notice sink failure"));
+void HandNotices(ConnectionContext& ctx, const NoticeTarget& target) {
+  if (target.forward_to) {
+    ctx.ConsumeNotices([&](irs::pg::SqlErrorData& notice) {
+      target.forward_to->AddNotice(std::move(notice));
+    });
+    return;
   }
-  SDB_WARN(GENERAL, what, " \"", name, "\": ", notice.errmsg);
+  ctx.ConsumeNotices([&](const irs::pg::SqlErrorData& notice) {
+    SDB_IF_FAILURE("log_notice_fails") {
+      THROW_SQL_ERROR(ERR_MSG("injected notice log failure"));
+    }
+    SDB_WARN(GENERAL, target.what, " \"", target.name, "\": ", notice.errmsg);
+  });
 }
 
 SystemConnection::SystemConnection(const SystemSession& session,
-                                   NoticeSink sink)
+                                   const NoticeTarget& notices)
   : conn{irs::DuckDBEngine::Instance().CreateConnection()},
     ctx{std::make_shared<ConnectionContext>(
       *conn->context, session.user, session.system_user, session.role,
@@ -413,7 +420,7 @@ SystemConnection::SystemConnection(const SystemSession& session,
       nullptr)},
     progress{SereneDBClientState::Register(*conn->context, ctx, false)
                .progress_source},
-    sink{std::move(sink)} {}
+    notices{notices} {}
 
 SystemConnection::~SystemConnection() {
   auto& transaction = conn->context->transaction;
@@ -425,7 +432,7 @@ SystemConnection::~SystemConnection() {
     }
   }
   try {
-    ctx->ConsumeNotices(sink);
+    HandNotices(*ctx, notices);
   } catch (...) {
   }
 }

@@ -16,7 +16,7 @@ CREATE JOB jtf_notices AFTER 1 HOUR SUSPENDED
 
 
 statement ok
-SET sdb_faults = 'notice_sink_fails';
+SET sdb_faults = 'log_notice_fails';
 
 
 statement ok

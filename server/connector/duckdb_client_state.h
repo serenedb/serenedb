@@ -23,9 +23,6 @@
 #include <duckdb.hpp>
 #include <duckdb/common/mutex.hpp>
 #include <duckdb/main/client_context_state.hpp>
-#include <functional>
-#include <iresearch/utils/pg/sql_error.hpp>
-#include <iresearch/utils/serializer.hpp>
 #include <memory>
 #include <string_view>
 #include <vector>
@@ -154,16 +151,13 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database);
 
-using NoticeSink = std::function<void(irs::pg::SqlErrorData&)>;
+struct NoticeTarget {
+  std::string_view what;
+  std::string_view name;
+  ConnectionContext* forward_to = nullptr;
+};
 
-void LogNotice(std::string_view what, std::string_view name,
-               const irs::pg::SqlErrorData& notice);
-
-template<irs::utils::detail::FixedString What>
-NoticeSink LogNotices(std::string_view name) {
-  return
-    [name](irs::pg::SqlErrorData& notice) { LogNotice(What, name, notice); };
-}
+void HandNotices(ConnectionContext& ctx, const NoticeTarget& target);
 
 struct SystemSession {
   std::string_view user;
@@ -175,7 +169,8 @@ struct SystemSession {
 };
 
 struct SystemConnection {
-  explicit SystemConnection(const SystemSession& session, NoticeSink sink);
+  explicit SystemConnection(const SystemSession& session,
+                            const NoticeTarget& notices);
   SystemConnection(const SystemConnection&) = delete;
   SystemConnection& operator=(const SystemConnection&) = delete;
   ~SystemConnection();
@@ -183,7 +178,7 @@ struct SystemConnection {
   duckdb::unique_ptr<duckdb::Connection> conn;
   std::shared_ptr<ConnectionContext> ctx;
   pg::ProgressRegistration progress;
-  NoticeSink sink;
+  NoticeTarget notices;
 };
 
 }  // namespace sdb::connector

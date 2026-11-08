@@ -394,7 +394,7 @@ void SubscriptionEngine::Disable(std::string_view database,
      .role = pg::kRootUser,
      .database = database,
      .database_id = attached->oid},
-    connector::LogNotices<"disabling subscription">(name)};
+    {.what = "disabling subscription", .name = name}};
   auto& context = *system.conn->context;
   connector::SetDefaultSearchPath(context, database);
   context.RunFunctionInTransaction([&] {

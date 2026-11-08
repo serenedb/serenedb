@@ -193,7 +193,7 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
      .role = job.owner,
      .database = job.catalog.GetIdentifierName(),
      .database_id = job.database_oid},
-    connector::LogNotices<"job">(job.name.GetIdentifierName())};
+    {.what = "job", .name = job.name.GetIdentifierName()}};
   connector::SetDefaultSearchPath(*connection.conn->context,
                                   job.catalog.GetIdentifierName());
   context = connection.conn->context;

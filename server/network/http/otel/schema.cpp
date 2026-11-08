@@ -53,8 +53,7 @@ class Creator {
                .role = pg::kRootUser,
                .database = database,
                .database_id = database_id},
-              connector::LogNotices<"OpenTelemetry schema in database">(
-                database)},
+              {.what = "OpenTelemetry schema in database", .name = database}},
       _schema{schema} {
     connector::SetDefaultSearchPath(*_system.conn->context, database);
   }

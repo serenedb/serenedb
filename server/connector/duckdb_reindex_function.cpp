@@ -220,12 +220,6 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   return target;
 }
 
-NoticeSink ForwardNotices(ConnectionContext& caller) {
-  return [&caller](irs::pg::SqlErrorData& notice) {
-    caller.AddNotice(std::move(notice));
-  };
-}
-
 // Internal connection impersonating the caller; notices forward to the
 // caller on scope exit.
 class PassConnection {
@@ -238,7 +232,7 @@ class PassConnection {
                .database = target.database,
                .database_id = target.database_id,
                .backend_pid = caller.GetBackendPid()},
-              ForwardNotices(caller)} {
+              {.forward_to = &caller}} {
     _system.conn->context->config.user_settings = context.config.user_settings;
   }
 
@@ -950,13 +944,13 @@ class ReindexSession {
  public:
   ReindexSession(std::string_view user, duckdb::idx_t role_id,
                  std::string_view database, duckdb::idx_t database_id,
-                 int32_t backend_pid, NoticeSink sink)
+                 int32_t backend_pid, ConnectionContext& caller)
     : _system{{.user = user,
                .role = role_id,
                .database = database,
                .database_id = database_id,
                .backend_pid = backend_pid},
-              std::move(sink)} {}
+              {.forward_to = &caller}} {}
 
   duckdb::ClientContext& Context() { return *_system.conn->context; }
   ConnectionContext& Conn() { return *_system.ctx; }
@@ -999,7 +993,7 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     context.InterruptCheck();
     ReindexSession session{conn_ctx.user(),          conn_ctx.GetRoleId(),
                            target.database,          target.database_id,
-                           conn_ctx.GetBackendPid(), ForwardNotices(conn_ctx)};
+                           conn_ctx.GetBackendPid(), conn_ctx};
     session.Context().config.user_settings = context.config.user_settings;
     session.Begin();
     const auto current =
@@ -1146,12 +1140,9 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   const auto& index_name = index->name.GetIdentifierName();
   const auto& database_name = catalog.GetName().GetIdentifierName();
   try {
-    ReindexSession session{conn_ctx.user(),
-                           conn_ctx.GetRoleId(),
-                           database_name,
-                           conn_ctx.GetDatabaseId(),
-                           conn_ctx.GetBackendPid(),
-                           ForwardNotices(conn_ctx)};
+    ReindexSession session{
+      conn_ctx.user(),          conn_ctx.GetRoleId(),     database_name,
+      conn_ctx.GetDatabaseId(), conn_ctx.GetBackendPid(), conn_ctx};
     session.Begin();
     const auto target =
       ResolveTarget(session.Context(), session.Conn(), index_name,

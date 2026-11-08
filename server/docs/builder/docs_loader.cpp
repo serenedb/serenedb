@@ -250,9 +250,7 @@ class Loader {
                .role = pg::kRootUser,
                .database = database,
                .database_id = database_id},
-              [](irs::pg::SqlErrorData& notice) {
-                SDB_INFO(STARTUP, "embedded docs: ", notice.errmsg);
-              }},
+              {.what = "embedded docs in database", .name = database}},
       _docs{docs} {
     connector::SetDefaultSearchPath(*_system.conn->context, database);
   }

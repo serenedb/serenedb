@@ -36,7 +36,6 @@ concept Producer = requires(T& t, doc_id_t min, doc_id_t max, uint64_t* mask) {
 template<typename T>
 concept Type =
   Producer<T> && requires(T& t, doc_id_t min, doc_id_t max, uint64_t* mask) {
-    { t.FillAnd(min, max, mask) } -> std::same_as<doc_id_t>;
     { t.FillAndNot(min, max, mask) } -> std::same_as<doc_id_t>;
   };
 

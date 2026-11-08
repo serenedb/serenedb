@@ -55,17 +55,6 @@ class WalkDocs {
     return _doc = doc;
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    detail::AndCursor cursor{.words = mask};
-    auto doc = From(min);
-    while (doc < max) {
-      cursor.Doc(doc - min);
-      doc = _leaf.Next();
-    }
-    cursor.Settle(max - min);
-    return _doc = doc;
-  }
-
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     auto doc = From(min);
     while (doc < max) {

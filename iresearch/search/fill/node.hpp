@@ -42,10 +42,6 @@ struct Node : memory::Managed {
     SDB_UNREACHABLE();
   }
 
-  virtual doc_id_t FillAnd(doc_id_t, doc_id_t, uint64_t* IRS_RESTRICT) {
-    SDB_UNREACHABLE();
-  }
-
   virtual doc_id_t FillAndNot(doc_id_t, doc_id_t, uint64_t* IRS_RESTRICT) {
     SDB_UNREACHABLE();
   }

@@ -19,7 +19,7 @@ When importing or exporting datasets (from/to the Parquet or CSV formats), which
 Out of Memory Error: failed to allocate data of size ... (.../... used)
 ```
 
-In these cases, consider setting the [`preserve_insertion_order` configuration option](../../configuration/overview.md) to `false`:
+In these cases, check that the [`preserve_insertion_order` configuration option](../../configuration/overview.md) is `false`, its default:
 
 <SqlLogicTest id="cookbook/performance/how_to_tune_workloads/example_001" />
 

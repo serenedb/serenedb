@@ -6,7 +6,7 @@ split: page
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-For many operations, SereneDB preserves the order of rows, similarly to data frame libraries such as Pandas.
+With the `preserve_insertion_order` [configuration option](../configuration/overview.md) set to `true`, SereneDB preserves the order of rows for many operations, similarly to data frame libraries such as Pandas. The option is `false` by default, which lets parallel operations return rows in any order unless the query has an `ORDER BY`.
 
 ## Example
 
@@ -54,7 +54,7 @@ The following operations **do not** guarantee that the row order is preserved:
 
 ## Insertion Order
 
-By default, the following components preserve insertion order:
+With `preserve_insertion_order` set to `true`, the following components preserve insertion order:
 
 -   [CSV reader](../data_import_and_export/csv/overview.md#order-preservation) (`read_csv` function)
 -   [JSON reader](../data_import_and_export/json/overview.md) (`read_json` function)
@@ -63,7 +63,7 @@ By default, the following components preserve insertion order:
 A table returns its rows in the order it stores them, which is not the order they were inserted in once a write such as `INSERT ... SELECT` or `COPY` runs on several threads. Use `ORDER BY` when the order of a table's rows matters.
 
 Preservation of insertion order is controlled by the `preserve_insertion_order` [configuration option](../configuration/overview.md).
-This setting is `true` by default, indicating that the order should be preserved.
+This setting is `false` by default.
 To change this setting, use:
 
 <SqlLogicTest id="sql/dialect/order_preservation/example_003" />

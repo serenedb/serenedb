@@ -208,7 +208,7 @@ Planning, rewriting and the shape of query output.
 | `partitioned_write_flush_threshold` | The threshold in number of rows after which we flush a thread state when writing using `PARTITION_BY` | `UBIGINT` | `SESSION` | `524288` |
 | `partitioned_write_max_open_files` | The maximum amount of files the system can keep open before flushing to disk when writing using `PARTITION_BY` | `UBIGINT` | `SESSION` | `100` |
 | `prefer_range_joins` | Force use of range joins with mixed predicates | `BOOLEAN` | `SESSION` | `false` |
-| `preserve_insertion_order` | Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses. | `BOOLEAN` | `GLOBAL` | `true` |
+| `preserve_insertion_order` | Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses. | `BOOLEAN` | `GLOBAL` | `false` |
 | `read_ahead_depth` | The number of scan jobs prefetched ahead of decoding (-1 = automatic, bounded by a memory budget; 0 = disabled). | `BIGINT` | `GLOBAL` | `-1` |
 | `scalar_subquery_error_on_multiple_rows` | Deprecated. When true, a scalar subquery that returns more than one row raises an error; when false, it returns an arbitrary one of those rows. | `BOOLEAN` | `SESSION` | `true` |
 | `sdb_job_max_depth` | Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global. | `UINTEGER` | `GLOBAL` | `16` |

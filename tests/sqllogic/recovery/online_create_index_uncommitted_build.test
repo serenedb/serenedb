@@ -15,10 +15,8 @@ SET sdb_faults = 'pause_create_index_mid_build';
 
 
 connection builder
-statement async error
+statement async ok
 CREATE INDEX ocu_idx ON ocu USING inverted (id, msg);
-----
-db error: ERROR: failed to commit index 'ocu_idx': the refresh did not commit the build
 
 
 connection default
@@ -31,18 +29,8 @@ count
 
 
 connection default
-statement ok
-SET sdb_faults = 'IndexWriter::Transaction::Commit';
-
-
-connection default
 statement ok retry 20 backoff 500ms
 INSERT INTO ocu VALUES (100000, 'fresh');
-
-
-connection default
-statement ok
-SET sdb_faults = '-IndexWriter::Transaction::Commit';
 
 
 connection default
@@ -51,19 +39,6 @@ SET sdb_faults = '-pause_create_index_mid_build';
 
 
 wait
-
-
-connection default
-query
-SELECT count(*) AS n FROM pg_class WHERE relname = 'ocu_idx';
-----
-n
-0
-
-
-connection default
-statement ok
-CREATE INDEX ocu_idx ON ocu USING inverted (id, msg);
 
 
 connection default

@@ -98,6 +98,8 @@ void DuckDBEngine::Configure(duckdb::DBConfig& config) {
   config.SetOptionByName("ieee_floating_point_ops",
                          duckdb::Value::BOOLEAN(false));
   config.SetOptionByName("show_behavior", duckdb::Value("SETTING"));
+  config.SetOptionByName("preserve_insertion_order",
+                         duckdb::Value::BOOLEAN(false));
   config.SetOptionByName("autoinstall_known_extensions",
                          duckdb::Value::BOOLEAN(false));
   config.SetOptionByName("autoload_known_extensions",

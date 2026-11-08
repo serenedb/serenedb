@@ -34,6 +34,7 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -175,8 +176,11 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
     } break;
     case Scope::Table:
     case Scope::Index: {
-      out.database = bind.catalog;
-      out.schema = bind.schema;
+      duckdb::Identifier catalog{bind.catalog};
+      duckdb::Identifier schema{bind.schema};
+      duckdb::Binder::BindSchemaOrCatalog(context, catalog, schema);
+      out.database = catalog.GetIdentifierName();
+      out.schema = schema.GetIdentifierName();
       out.object = bind.name;
     } break;
     case Scope::Column: {

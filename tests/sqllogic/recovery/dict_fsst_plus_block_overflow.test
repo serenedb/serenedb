@@ -13,6 +13,10 @@ control substitution on
 
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 CREATE DATABASE dfo_own;
 
 

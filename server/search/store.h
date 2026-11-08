@@ -94,11 +94,12 @@ class Store final : public std::enable_shared_from_this<Store>,
   // `database` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
-  Store(catalog::StorageLocation location, duckdb::AttachedDatabase& database,
-        duckdb::idx_t id, const catalog::InvertedIndexSettings& options,
+  Store(std::unique_ptr<catalog::StorageDirectory> storage,
+        duckdb::AttachedDatabase& database, duckdb::idx_t id,
+        const catalog::InvertedIndexSettings& options,
         const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new);
-  Store(catalog::StorageLocation location, duckdb::AttachedDatabase& database,
-        duckdb::idx_t id, bool is_new,
+  Store(std::unique_ptr<catalog::StorageDirectory> storage,
+        duckdb::AttachedDatabase& database, duckdb::idx_t id, bool is_new,
         const catalog::SearchTableOptions& options,
         const duckdb::ColumnList& columns);
   ~Store();
@@ -118,8 +119,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   // removes the directory once the last of them lets go. Never set on
   // shutdown or detach, where the directory must survive.
   void MarkDropped() noexcept {
-    if (!_read_only) {
-      _dropped.store(true, std::memory_order_release);
+    if (!_read_only && _storage) {
+      _storage->MarkDropped();
     }
   }
 
@@ -373,9 +374,8 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   duckdb::idx_t _id;
   duckdb::idx_t _db_id;
-  catalog::StorageLocation _location;
+  std::unique_ptr<catalog::StorageDirectory> _storage;
   bool _read_only;
-  std::atomic<bool> _dropped{false};
   uint64_t _segment_memory_max;
   uint32_t _segment_docs_max = 0;
   std::optional<irs::ScorerOptions> _topk_options;

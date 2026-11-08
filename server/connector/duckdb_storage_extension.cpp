@@ -89,7 +89,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                             "name is not a database oid"));
   }
   auto directory =
-    std::make_shared<catalog::DatabaseDirectory>(*oid, path, nullptr);
+    std::make_shared<catalog::DatabaseDirectory>(*oid, path, std::string{});
   info.path = directory->DataFile();
   options.defer_storage_load = true;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{

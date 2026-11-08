@@ -55,17 +55,19 @@ bool Eventually(const auto& done) {
   return true;
 }
 
-StorageLocation Storage(const std::shared_ptr<DatabaseDirectory>& database,
-                        std::shared_ptr<TablespaceDirectory> tablespace,
-                        duckdb::idx_t oid) {
-  return {.path = database->StoragePath(tablespace.get(), oid),
-          .database = database,
-          .tablespace = std::move(tablespace)};
+std::unique_ptr<StorageDirectory> Storage(
+  const std::shared_ptr<DatabaseDirectory>& database,
+  std::string_view tablespace, duckdb::idx_t oid) {
+  return database->StorageOf(tablespace, oid);
 }
 
-StorageLocation Storage(const std::shared_ptr<DatabaseDirectory>& database,
-                        duckdb::idx_t oid) {
+std::unique_ptr<StorageDirectory> Storage(
+  const std::shared_ptr<DatabaseDirectory>& database, duckdb::idx_t oid) {
   return Storage(database, database->Tablespace(), oid);
+}
+
+void RemoveStorage(std::unique_ptr<StorageDirectory> storage) {
+  storage->MarkDropped();
 }
 
 class DatabaseDirectoryTest : public ::testing::Test {
@@ -97,8 +99,7 @@ class DatabaseDirectoryTest : public ::testing::Test {
 
   std::shared_ptr<DatabaseDirectory> Database(
     const std::string& tablespace) const {
-    return std::make_shared<DatabaseDirectory>(
-      5, _root / "5", std::make_shared<TablespaceDirectory>(tablespace));
+    return std::make_shared<DatabaseDirectory>(5, _root / "5", tablespace);
   }
 
   std::filesystem::path _root;
@@ -111,7 +112,7 @@ TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5"));
   EXPECT_ANY_THROW(directory->Create());
   EXPECT_EQ(directory->DataFile(), Path("5/data.db"));
-  const auto storage = Storage(directory, 7).path;
+  const auto storage = Storage(directory, 7)->Path();
   EXPECT_EQ(storage, Path("5/7"));
   EXPECT_FALSE(StorageExists(storage));
   CreateStorage(storage);
@@ -121,8 +122,8 @@ TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {
 
 TEST_F(DatabaseDirectoryTest, ABareDirectoryHoldsItsStorages) {
   const auto directory =
-    std::make_shared<DatabaseDirectory>(5, _root / "5", nullptr);
-  EXPECT_EQ(Storage(directory, 7).path, Path("5/7"));
+    std::make_shared<DatabaseDirectory>(5, _root / "5", std::string{});
+  EXPECT_EQ(Storage(directory, 7)->Path(), Path("5/7"));
 }
 
 TEST_F(DatabaseDirectoryTest, CreatesEveryMissingParent) {
@@ -139,8 +140,8 @@ TEST_F(DatabaseDirectoryTest, CreatesEveryMissingParent) {
 TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
   auto directory = Database(_root.string());
   directory->Create();
-  CreateStorage(Storage(directory, 7).path);
-  CreateStorage(Storage(directory, 8).path);
+  CreateStorage(Storage(directory, 7)->Path());
+  CreateStorage(Storage(directory, 8)->Path());
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
   RemoveStorage(Storage(directory, 7));
   EXPECT_TRUE(Gone(_root / "5" / "7"));
@@ -153,7 +154,7 @@ TEST_F(DatabaseDirectoryTest, ADroppedDatabaseGoesAfterItsLastStorage) {
   auto directory = Database(_root.string());
   directory->Create();
   auto storage = Storage(directory, 7);
-  CreateStorage(storage.path);
+  CreateStorage(storage->Path());
   std::ofstream{_root / "5" / "data.db"} << "pages";
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
   directory->MarkDropped();
@@ -166,11 +167,11 @@ TEST_F(DatabaseDirectoryTest, ADroppedDatabaseGoesAfterItsLastStorage) {
 TEST_F(DatabaseDirectoryTest, StoragesInOtherTablespaces) {
   auto directory = Database(Path("indexes"));
   directory->Create();
-  const auto other = std::make_shared<TablespaceDirectory>(Path("other"));
-  EXPECT_EQ(Storage(directory, 7).path, Path("indexes/5/7"));
-  EXPECT_EQ(Storage(directory, other, 8).path, Path("other/5/8"));
-  CreateStorage(Storage(directory, 7).path);
-  CreateStorage(Storage(directory, other, 8).path);
+  const auto other = Path("other");
+  EXPECT_EQ(Storage(directory, 7)->Path(), Path("indexes/5/7"));
+  EXPECT_EQ(Storage(directory, other, 8)->Path(), Path("other/5/8"));
+  CreateStorage(Storage(directory, 7)->Path());
+  CreateStorage(Storage(directory, other, 8)->Path());
   EXPECT_TRUE(std::filesystem::is_directory(_root / "indexes" / "5" / "7"));
   EXPECT_TRUE(std::filesystem::is_directory(_root / "other" / "5" / "8"));
   EXPECT_FALSE(std::filesystem::exists(_root / "5" / "7"));
@@ -189,20 +190,21 @@ TEST_F(DatabaseDirectoryTest, StoragesOnAnObjectStore) {
                                  "bucket/database_directory_", ::getpid());
   auto directory = Database(root);
   directory->Create();
-  const auto storage = Storage(directory, 7);
-  EXPECT_EQ(storage.path, absl::StrCat(root, "/5/7"));
-  EXPECT_FALSE(StorageExists(storage.path));
-  CreateStorage(storage.path);
+  auto storage = Storage(directory, 7);
+  const auto path = storage->Path();
+  EXPECT_EQ(path, absl::StrCat(root, "/5/7"));
+  EXPECT_FALSE(StorageExists(path));
+  CreateStorage(path);
   EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/5/7.storage")));
-  CreateStorage(storage.path);
-  EXPECT_TRUE(StorageExists(storage.path));
-  EXPECT_FALSE(StorageExists(Storage(directory, 8).path));
+  CreateStorage(path);
+  EXPECT_TRUE(StorageExists(path));
+  EXPECT_FALSE(StorageExists(Storage(directory, 8)->Path()));
 
   ObjectStore().Publish(absl::StrCat(root, "/5/7/segment"), "rows");
-  RemoveStorage(storage);
+  RemoveStorage(std::move(storage));
   EXPECT_TRUE(ObjectGone(absl::StrCat(root, "/5/7.storage")));
   EXPECT_TRUE(ObjectGone(absl::StrCat(root, "/5/7/segment")));
-  EXPECT_FALSE(StorageExists(storage.path));
+  EXPECT_FALSE(StorageExists(path));
 }
 
 TEST_F(DatabaseDirectoryTest, RemoveTreeSaysWhetherTheTreeIsGone) {
@@ -213,41 +215,11 @@ TEST_F(DatabaseDirectoryTest, RemoveTreeSaysWhetherTheTreeIsGone) {
   EXPECT_FALSE(std::filesystem::exists(_root / "tree"));
 }
 
-TEST_F(DatabaseDirectoryTest, ADroppedTablespaceGoesAfterItsLastStorage) {
-  auto tablespace =
-    std::make_shared<TablespaceDirectory>(Path("ts/engine_v1/1-2"));
-  CreateDirectories(tablespace->Path());
-  auto directory = Database(_root.string());
-  auto storage = Storage(directory, tablespace, 7);
-  CreateStorage(storage.path);
-  std::ofstream{std::filesystem::path{storage.path} / "segment"} << "rows";
-  tablespace->MarkDropped();
-  EXPECT_TRUE(TablespaceRemovalsPending());
-  tablespace.reset();
-  directory.reset();
-  std::this_thread::sleep_for(std::chrono::milliseconds{50});
-  EXPECT_TRUE(std::filesystem::exists(storage.path));
-  EXPECT_TRUE(TablespaceRemovalsPending());
-  storage = {};
-  EXPECT_TRUE(Gone(_root / "ts" / "engine_v1" / "1-2"));
-  EXPECT_TRUE(Eventually([] { return !TablespaceRemovalsPending(); }));
-  EXPECT_TRUE(std::filesystem::is_directory(_root / "ts" / "engine_v1"));
-}
-
-TEST_F(DatabaseDirectoryTest, AKeptTablespaceKeepsItsFiles) {
-  auto tablespace =
-    std::make_shared<TablespaceDirectory>(Path("ts/engine_v1/1-2"));
-  CreateDirectories(tablespace->Path());
-  tablespace.reset();
-  EXPECT_TRUE(
-    std::filesystem::is_directory(_root / "ts" / "engine_v1" / "1-2"));
-}
-
 TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromADirectory) {
   auto directory = Database(_root.string());
   directory->Create();
-  CreateStorage(Storage(directory, 7).path);
-  CreateStorage(Storage(directory, 8).path);
+  CreateStorage(Storage(directory, 7)->Path());
+  CreateStorage(Storage(directory, 8)->Path());
   std::ofstream{_root / "5" / "8" / "segment"} << "rows";
   std::ofstream{_root / "5" / "notes"} << "kept";
 
@@ -264,8 +236,8 @@ TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromAnObjectStore) {
   const auto root = absl::StrCat(tablespace, "/5");
   auto directory = Database(tablespace);
   directory->Create();
-  CreateStorage(Storage(directory, 7).path);
-  CreateStorage(Storage(directory, 8).path);
+  CreateStorage(Storage(directory, 7)->Path());
+  CreateStorage(Storage(directory, 8)->Path());
   ObjectStore().Publish(absl::StrCat(root, "/7/segment"), "rows");
   ObjectStore().Publish(absl::StrCat(root, "/8/segment"), "rows");
   ObjectStore().Publish(absl::StrCat(root, "/8/segment.meta"), "rows");

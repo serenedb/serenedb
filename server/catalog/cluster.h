@@ -111,7 +111,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::idx_t oid);
   TablespaceCatalogEntry& Tablespace(duckdb::CatalogTransaction transaction,
                                      duckdb::idx_t oid);
-  std::shared_ptr<TablespaceDirectory> TablespaceDirectoryOf(
+  const std::string& TablespaceDirectoryOf(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
   std::vector<std::string> TablespaceDirs(
     duckdb::CatalogTransaction transaction);
@@ -126,7 +126,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   std::optional<duckdb::Identifier> UnattachedDatabase(
     duckdb::CatalogTransaction transaction);
 
-  std::shared_ptr<TablespaceDirectory> _default_directory;
+  std::string _default_directory;
   irs::containers::FlatHashSet<duckdb::idx_t> _unattached;
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;

@@ -67,13 +67,16 @@ FROM pg_tablespace WHERE spcname = 'loc_norm_${__DATABASE__}';
 normalized
 t
 
-statement ok
+statement error
 CREATE TABLESPACE loc_same_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/./base/';
+----
+db error: ERROR: tablespace location "<slt:ignore>/loc/base" is already used by tablespace "<slt:ignore>"
+
 
 system ok
-ls $__TEST_DIR__/loc/base/engine_v1 | wc -l
+ls $__TEST_DIR__/loc/base/*
 ----
-2
+engine_v1
 
 
 statement error
@@ -105,12 +108,10 @@ db error: ERROR: tablespace location "<slt:ignore>/backslash/sub/engine_v1/deepe
 
 
 system ok
-cd $__TEST_DIR__/backslash && find . -maxdepth 2 | sort && find . -mindepth 3 | wc -l
+cd $__TEST_DIR__/backslash && ls && ls sub/*
 ----
-.
-./sub
-./sub/engine_v1
-1
+sub
+engine_v1
 
 
 statement ok
@@ -173,9 +174,9 @@ id	body
 2	child row
 
 query
-SELECT (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/engine_v1/*/*/*/*')) AS parent_files,
-       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/base/child/engine_v1/*/*/*/*')) AS child_files,
-       (SELECT count(*) FROM glob('${__TEST_DIR__}/loc/base/engine_v1/**')) AS base_files;
+SELECT (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/*/engine_v1/*/*/*')) AS parent_files,
+       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/base/child/*/engine_v1/*/*/*')) AS child_files,
+       (SELECT count(*) FROM glob('${__TEST_DIR__}/loc/base/*/engine_v1/**')) AS base_files;
 ----
 parent_files	child_files	base_files
 t	t	0
@@ -205,10 +206,13 @@ statement ok
 CREATE TABLESPACE loc_lost_${__DATABASE__} LOCATION '${__TEST_DIR__}/lost';
 
 system ok
-rm -r $__TEST_DIR__/lost/engine_v1
+rm -r $__TEST_DIR__/lost/*
 
-statement ok
+statement error
 CREATE TABLESPACE loc_lost_again_${__DATABASE__} LOCATION '${__TEST_DIR__}/lost';
+----
+db error: ERROR: tablespace location "<slt:ignore>/lost" is already used by tablespace "<slt:ignore>"
+
 
 statement ok
 CREATE TABLE in_lost (id INT, body TEXT) WITH (storage = 'search') TABLESPACE loc_lost_${__DATABASE__};
@@ -231,11 +235,8 @@ DROP TABLE in_lost;
 statement ok
 DROP TABLESPACE loc_lost_${__DATABASE__};
 
-statement ok
-DROP TABLESPACE loc_lost_again_${__DATABASE__};
-
 query ok retry 240 backoff 250ms
-SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/lost/engine_v1/**')) AS lost_files;
+SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/lost/*/engine_v1/**')) AS lost_files;
 ----
 lost_files
 0
@@ -285,7 +286,7 @@ body
 stored under a unicode path
 
 query
-SELECT count(*) > 0 AS stored FROM glob('${__TEST_DIR__}/names/with space/ünïcode/engine_v1/*/*/*/*');
+SELECT count(*) > 0 AS stored FROM glob('${__TEST_DIR__}/names/with space/ünïcode/*/engine_v1/*/*/*');
 ----
 stored
 t
@@ -360,6 +361,3 @@ DROP TABLESPACE loc_child_${__DATABASE__};
 
 statement ok
 DROP TABLESPACE loc_norm_${__DATABASE__};
-
-statement ok
-DROP TABLESPACE loc_same_${__DATABASE__};

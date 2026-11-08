@@ -37,7 +37,7 @@ void RequireUnreservedTablespaceName(std::string_view name) {
 
 TablespaceCatalogEntry::TablespaceCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateTablespaceInfo& info,
-  std::shared_ptr<TablespaceDirectory> directory)
+  std::string directory)
   : duckdb::InCatalogEntry{duckdb::CatalogType::TABLESPACE_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
     _location{info.location},
@@ -64,18 +64,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> TablespaceCatalogEntry::Copy(
   tablespace.internal = internal;
   return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, tablespace,
                                                    _directory);
-}
-
-void TablespaceCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (CreatedObject(prev_entry)) {
-    SDB_ASSERT(_directory);
-    _directory->MarkDropped();
-  }
-}
-
-void TablespaceCatalogEntry::OnDrop() {
-  SDB_ASSERT(_directory);
-  _directory->MarkDropped();
 }
 
 }  // namespace sdb::catalog

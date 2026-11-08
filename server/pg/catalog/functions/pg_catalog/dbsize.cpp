@@ -428,11 +428,10 @@ int64_t TablespaceBytes(const Session& session,
   duckdb::TaskScheduler::BlockingScope blocking;
   auto& cluster = catalog::ClusterOf(context);
   const auto size = catalog::StorageBytes(
-    (tablespace.oid == kPgGlobalTablespace
-       ? cluster.TablespaceDirectoryOf(cluster.GetCatalogTransaction(context),
-                                       kPgDefaultTablespace)
-       : tablespace.Directory())
-      ->Path());
+    tablespace.oid == kPgGlobalTablespace
+      ? cluster.TablespaceDirectoryOf(cluster.GetCatalogTransaction(context),
+                                      kPgDefaultTablespace)
+      : tablespace.Directory());
   switch (tablespace.oid) {
     case kPgGlobalTablespace:
       return static_cast<int64_t>(size.files);

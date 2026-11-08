@@ -99,8 +99,8 @@ def _matches(server: _Server) -> list[int]:
 
 
 def _directory(location: Path) -> Path:
-    [directory] = (location / "engine_v1").iterdir()
-    return directory
+    [directory] = location.iterdir()
+    return directory / "engine_v1"
 
 
 def _refused(datadir: Path) -> str:
@@ -216,8 +216,8 @@ def test_a_database_in_a_tablespace_keeps_its_objects_there(
             conn.execute("DROP TABLESPACE other")
     finally:
         again.stop()
-    assert not any((home / "engine_v1").iterdir())
-    assert not any((other / "engine_v1").iterdir())
+    assert not any(_directory(home).iterdir())
+    assert not any(_directory(other).iterdir())
     assert not (datadir / "engine_v1" / str(database)).exists()
 
 
@@ -268,7 +268,7 @@ def test_a_database_in_a_tablespace_needs_create_on_it(
                 conn.execute("CREATE DATABASE placed TABLESPACE home")
     finally:
         server.stop()
-    assert not list((home / "engine_v1").glob("*/[0-9]*"))
+    assert not list(home.glob("*/engine_v1/[0-9]*"))
 
 
 MINIO = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
@@ -614,8 +614,8 @@ def test_throttled_requests_are_retried(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("kind", ["s3", "azure"])
-def test_tablespaces_sharing_a_location_keep_apart(tmp_path: Path,
-                                                   kind: str) -> None:
+def test_clusters_sharing_a_location_keep_apart(tmp_path: Path,
+                                                kind: str) -> None:
     with FakeS3() if kind == "s3" else FakeAzure() as fake:
         if kind == "s3":
             bucket, location = "bucket", f"s3://bucket/shared-{tmp_path.name}"
@@ -628,8 +628,8 @@ def test_tablespaces_sharing_a_location_keep_apart(tmp_path: Path,
             keys = fake.names
         prefix = f"shared-{tmp_path.name}/"
 
-        def directories() -> set[str]:
-            return {key.split("/")[2] for key in keys(bucket, prefix)}
+        def clusters() -> set[str]:
+            return {key.split("/")[1] for key in keys(bucket, prefix)}
 
         def rows(server: _Server, table: str) -> list[tuple[int]]:
             with server.connect() as conn:
@@ -653,13 +653,15 @@ def test_tablespaces_sharing_a_location_keep_apart(tmp_path: Path,
                 conn.execute("VACUUM (REFRESH_TABLE) dropped")
                 conn.execute("DROP TABLE dropped")
                 conn.execute("DROP TABLESPACE gone")
-                for name in ("kept", "shared"):
+                conn.execute(f"CREATE TABLESPACE kept LOCATION '{location}'")
+                conn.execute("CREATE TABLE kept_rows (id INT) "
+                             "WITH (storage = 'search') TABLESPACE kept")
+                conn.execute("INSERT INTO kept_rows VALUES (1), (2)")
+                conn.execute("VACUUM (REFRESH_TABLE) kept_rows")
+                with pytest.raises(psycopg.errors.ObjectInUse,
+                                   match="is already used by tablespace"):
                     conn.execute(
-                        f"CREATE TABLESPACE {name} LOCATION '{location}'")
-                    conn.execute(f"CREATE TABLE {name}_rows (id INT) "
-                                 f"WITH (storage = 'search') TABLESPACE {name}")
-                    conn.execute(f"INSERT INTO {name}_rows VALUES (1), (2)")
-                    conn.execute(f"VACUUM (REFRESH_TABLE) {name}_rows")
+                        f"CREATE TABLESPACE shared LOCATION '{location}'")
             with other.connect() as conn:
                 conn.execute(f"CREATE TABLESPACE theirs LOCATION '{location}'")
                 conn.execute("CREATE TABLE theirs_rows (id INT) "
@@ -667,14 +669,14 @@ def test_tablespaces_sharing_a_location_keep_apart(tmp_path: Path,
                 conn.execute("INSERT INTO theirs_rows VALUES (3)")
                 conn.execute("VACUUM (REFRESH_TABLE) theirs_rows")
             assert rows(other, "theirs_rows") == [(3,)]
-            assert len(directories()) == 3, keys(bucket)
+            assert len(clusters()) == 2, keys(bucket)
             with other.connect() as conn:
                 conn.execute("DROP TABLE theirs_rows")
                 conn.execute("DROP TABLESPACE theirs")
         finally:
             first.stop()
             other.stop()
-        assert len(directories()) == 2, keys(bucket)
+        assert len(clusters()) == 1, keys(bucket)
 
         for datadir in ("other", "first"):
             again = _Server(tmp_path / datadir)
@@ -686,19 +688,12 @@ def test_tablespaces_sharing_a_location_keep_apart(tmp_path: Path,
         try:
             assert again.wait_ready(), again.output()
             assert rows(again, "kept_rows") == [(1,), (2,)]
-            assert rows(again, "shared_rows") == [(1,), (2,)]
             with again.connect() as conn:
-                conn.execute("DROP TABLE shared_rows")
-                conn.execute("DROP TABLESPACE shared")
+                conn.execute("DROP TABLE kept_rows")
+                conn.execute("DROP TABLESPACE kept")
         finally:
             again.stop()
-        assert len(directories()) == 1, keys(bucket)
-        last = _Server(tmp_path / "first")
-        try:
-            assert last.wait_ready(), last.output()
-            assert rows(last, "kept_rows") == [(1,), (2,)]
-        finally:
-            last.stop()
+        assert not keys(bucket, prefix), keys(bucket)
 
 
 def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
@@ -1136,7 +1131,7 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
             listings.setdefault(entry["key"], entry)
     swept = [entry for prefix, entry in listings.items()
              if len(parts := prefix.split("/")) == 5
-             and parts[1] == "engine_v1" and parts[3].isdigit()]
+             and parts[2] == "engine_v1" and parts[3].isdigit()]
     assert len(swept) == 1, trace
     assert swept[0]["began"] < min(entry["began"] for entry in opens.values()), \
         (swept, opens)

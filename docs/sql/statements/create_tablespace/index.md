@@ -43,7 +43,13 @@ Only a superuser can create a tablespace. `CREATE TABLESPACE` cannot run inside 
 
 ## Locations
 
-A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. A tablespace keeps its files in a directory of its own under `engine_v1` at its location, named by the server's system identifier and the tablespace's OID, so several tablespaces, of one server or of several, can share a location. A local directory is created when it does not exist; an object store location is listed, so `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow listing it. A location with an `engine_v1` directory in its path, such as one inside the files of another tablespace or of the data directory, is refused:
+A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. A tablespace keeps its files in `<system identifier>/engine_v1` at its location, named by the server's system identifier, so several servers can share a location. Of one server, one tablespace at a time can use a location:
+
+```text
+ERROR:  tablespace location "/mnt/nvme/serenedb" is already used by tablespace "fast"
+```
+
+A local directory is created when it does not exist; an object store location is listed, so `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow listing it. A location with an `engine_v1` directory in its path, such as one inside the files of another tablespace or of the data directory, is refused:
 
 ```text
 ERROR:  tablespace location "/mnt/nvme/serenedb/engine_v1/inside" is inside the files of a tablespace
@@ -152,9 +158,9 @@ ERROR:  tablespace "fast" cannot be dropped while database "lost" is not attache
 HINT:  Restore the files of the database and restart the server, or drop the database.
 ```
 
-Dropping a tablespace removes its directory once the transactions that began before the drop have ended; the location and its `engine_v1` stay, and a new tablespace can use the location at once. If the server stops before the directory is removed, it removes the directory when it starts again. `DROP TABLESPACE` cannot run inside a transaction block.
+Dropping a tablespace removes no files: each object that was in it removed its own files when it was dropped, once the transactions that began before that drop ended. Empty directories stay at a local location, and a new tablespace can use the location at once. `DROP TABLESPACE` cannot run inside a transaction block.
 
-When one transaction places an object in a tablespace while another drops the tablespace, the one that commits second fails, as with any object that another depends on. A drop fails with `tablespace "name" is not empty` when the placement committed before the drop looked, and with `Could not commit DROP of "name" because a dependency was created after the transaction started` when it commits later; a placement that commits after the drop fails with `Could not commit creation of dependency, subject "name" has been deleted`; the files of an object that fails this way are removed with the tablespace.
+When one transaction places an object in a tablespace while another drops the tablespace, the one that commits second fails, as with any object that another depends on. A drop fails with `tablespace "name" is not empty` when the placement committed before the drop looked, and with `Could not commit DROP of "name" because a dependency was created after the transaction started` when it commits later; a placement that commits after the drop fails with `Could not commit creation of dependency, subject "name" has been deleted`; the files of an object that fails this way are removed.
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_010" />
 

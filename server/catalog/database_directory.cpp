@@ -52,8 +52,6 @@ namespace {
 
 constexpr std::string_view kStorageMarker = ".storage";
 
-constinit std::atomic<uint64_t> gTablespaceRemovals{0};
-
 bool IsRemote(std::string_view path) {
   return irs::StorageKindOf(path) == irs::StorageKind::Remote;
 }
@@ -210,34 +208,24 @@ bool StorageExists(const std::string& path) {
                         : fs.DirectoryExists(path);
 }
 
-void RemoveStorage(StorageLocation location) {
-  RunRemoval([location = std::move(location)] {
-    RemoveTree(location.path);
-    if (IsRemote(location.path)) {
-      RemoveObject(MarkerPath(location.path));
-    }
-  });
-}
-
-bool TablespaceRemovalsPending() noexcept {
-  return gTablespaceRemovals.load(std::memory_order_relaxed) != 0;
-}
-
-TablespaceDirectory::~TablespaceDirectory() {
+StorageDirectory::~StorageDirectory() {
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  RunRemoval([path = std::move(_path)] {
-    SDB_PARK_ONCE_ON_FAILURE("pause_tablespace_removal");
-    SDB_IF_FAILURE("tablespace_removal_fails") { return; }
-    if (RemoveTree(path)) {
-      gTablespaceRemovals.fetch_sub(1, std::memory_order_relaxed);
+  RunRemoval([path = std::move(_path), beside = std::move(_beside),
+              parent = std::move(_parent)] {
+    RemoveTree(path);
+    if (IsRemote(path)) {
+      RemoveObject(MarkerPath(path));
+    }
+    for (const auto& directory : beside) {
+      RemoveTree(directory);
     }
   });
 }
 
-void TablespaceDirectory::MarkDropped() noexcept {
-  gTablespaceRemovals.fetch_add(1, std::memory_order_relaxed);
+void StorageDirectory::MarkDropped(std::vector<std::string> beside) noexcept {
+  _beside = std::move(beside);
   _dropped.store(true, std::memory_order_release);
 }
 
@@ -296,46 +284,41 @@ void RemoveUnowned(std::span<const StorageEntry> entries,
   }
 }
 
-DatabaseDirectory::DatabaseDirectory(
-  duckdb::idx_t oid, std::filesystem::path path,
-  std::shared_ptr<TablespaceDirectory> tablespace)
-  : _oid{oid}, _path{std::move(path)}, _tablespace{std::move(tablespace)} {}
+DatabaseDirectory::DatabaseDirectory(duckdb::idx_t oid,
+                                     std::filesystem::path path,
+                                     std::string_view tablespace)
+  : _oid{oid},
+    _path{std::move(path)},
+    _tablespace{tablespace},
+    _storage{std::make_shared<StorageDirectory>(_path.string())} {}
 
-DatabaseDirectory::~DatabaseDirectory() {
-  if (!_dropped.load(std::memory_order_acquire)) {
-    return;
-  }
-  std::vector<std::string> directories;
-  const auto add = [&](std::string directory) {
-    if (directory != _path.string() &&
-        !absl::c_contains(directories, directory)) {
-      directories.push_back(std::move(directory));
+void DatabaseDirectory::MarkDropped() noexcept {
+  std::vector<std::string> beside;
+  const auto add = [&](std::string_view tablespace) {
+    auto directory = absl::StrCat(tablespace, "/", _oid);
+    if (directory != _path.string() && !absl::c_contains(beside, directory)) {
+      beside.push_back(std::move(directory));
     }
   };
-  if (_tablespace) {
-    add(absl::StrCat(_tablespace->Path(), "/", _oid));
+  if (!_tablespace.empty()) {
+    add(_tablespace);
   }
   for (const auto& tablespace : _tablespaces) {
-    add(absl::StrCat(tablespace, "/", _oid));
+    add(tablespace);
   }
-  RunRemoval([path = _path.string(), directories = std::move(directories)] {
-    RemoveTree(path);
-    for (const auto& directory : directories) {
-      RemoveTree(directory);
-    }
-  });
+  _storage->MarkDropped(std::move(beside));
 }
 
 std::string DatabaseDirectory::DataFile() const {
   return (_path / kDataFile).string();
 }
 
-std::string DatabaseDirectory::StoragePath(
-  const TablespaceDirectory* tablespace, duckdb::idx_t oid) const {
-  if (!tablespace) {
-    return absl::StrCat(_path.string(), "/", oid);
-  }
-  return absl::StrCat(tablespace->Path(), "/", _oid, "/", oid);
+std::unique_ptr<StorageDirectory> DatabaseDirectory::StorageOf(
+  std::string_view tablespace, duckdb::idx_t oid) const {
+  return std::make_unique<StorageDirectory>(
+    tablespace.empty() ? absl::StrCat(_path.string(), "/", oid)
+                       : absl::StrCat(tablespace, "/", _oid, "/", oid),
+    _storage);
 }
 
 void DatabaseDirectory::Create() const {

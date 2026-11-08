@@ -22,11 +22,8 @@
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/parser/parsed_data/create_tablespace_info.hpp>
-#include <memory>
 #include <string>
 #include <string_view>
-
-#include "catalog/database_directory.h"
 
 namespace sdb::catalog {
 
@@ -36,23 +33,19 @@ class TablespaceCatalogEntry final : public duckdb::InCatalogEntry {
  public:
   TablespaceCatalogEntry(duckdb::Catalog& catalog,
                          duckdb::CreateTablespaceInfo& info,
-                         std::shared_ptr<TablespaceDirectory> directory);
+                         std::string directory);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   std::string ToSQL() const final { return GetInfo()->ToString(); }
-  void Rollback(duckdb::CatalogEntry& prev_entry) final;
-  void OnDrop() final;
 
   const std::string& Location() const noexcept { return _location; }
-  const std::shared_ptr<TablespaceDirectory>& Directory() const noexcept {
-    return _directory;
-  }
+  const std::string& Directory() const noexcept { return _directory; }
 
  private:
   std::string _location;
-  std::shared_ptr<TablespaceDirectory> _directory;
+  std::string _directory;
 };
 
 }  // namespace sdb::catalog

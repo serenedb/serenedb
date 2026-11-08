@@ -79,22 +79,22 @@ body
 old row
 
 query
-SELECT count(DISTINCT regexp_extract(file, 'engine_v1/([^/]+)/', 1)) AS directories
-FROM glob('${__TEST_DIR__}/sess/engine_v1/*/*/*/*');
+SELECT count(DISTINCT regexp_extract(file, 'engine_v1/[^/]+/([^/]+)/', 1)) AS storages
+FROM glob('${__TEST_DIR__}/sess/*/engine_v1/*/*/*');
 ----
-directories
-2
+storages
+3
 
 connection reader
 statement ok
 COMMIT;
 
 query ok retry 240 backoff 250ms
-SELECT count(DISTINCT regexp_extract(file, 'engine_v1/([^/]+)/', 1)) AS directories
-FROM glob('${__TEST_DIR__}/sess/engine_v1/*/*/*/*');
+SELECT count(DISTINCT regexp_extract(file, 'engine_v1/[^/]+/([^/]+)/', 1)) AS storages
+FROM glob('${__TEST_DIR__}/sess/*/engine_v1/*/*/*');
 ----
-directories
-1
+storages
+2
 
 query
 SELECT (SELECT id FROM sess_a) AS a, (SELECT id FROM sess_b) AS b;
@@ -112,7 +112,7 @@ statement ok
 DROP TABLESPACE sess_new_${__DATABASE__};
 
 query ok retry 240 backoff 250ms
-SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/sess/engine_v1/**');
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/sess/*/engine_v1/**');
 ----
 files_left
 0

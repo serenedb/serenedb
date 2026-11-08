@@ -118,7 +118,7 @@ notes_idx	t
 
 query
 SELECT count(*) > 0 AS stored_on_s3
-FROM glob('s3://${MINIO_BUCKET}/${__DATABASE__}_ts/engine_v1/*/*/*/*');
+FROM glob('s3://${MINIO_BUCKET}/${__DATABASE__}_ts/*/engine_v1/*/*/*');
 ----
 stored_on_s3
 t
@@ -216,7 +216,7 @@ DROP TABLESPACE ts_s3_${__DATABASE__};
 
 query ok retry 40 backoff 250ms
 SELECT count(*) AS left_on_s3
-FROM glob('s3://${MINIO_BUCKET}/${__DATABASE__}_ts/engine_v1/**');
+FROM glob('s3://${MINIO_BUCKET}/${__DATABASE__}_ts/*/engine_v1/**');
 ----
 left_on_s3
 0

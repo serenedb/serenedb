@@ -65,7 +65,7 @@ saved
 connection after_restart
 query
 SELECT count(*) > 0 AS stored_on_s3
-FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/ts/engine_v1/*/*/*/*');
+FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/ts/*/engine_v1/*/*/*');
 ----
 stored_on_s3
 t
@@ -170,7 +170,7 @@ DROP TABLESPACE ts_s3;
 connection after_commit
 query ok retry 40 backoff 250ms
 SELECT count(*) AS left_on_s3
-FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/ts/engine_v1/**');
+FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/ts/*/engine_v1/**');
 ----
 left_on_s3
 0

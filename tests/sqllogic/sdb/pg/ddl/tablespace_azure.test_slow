@@ -98,7 +98,7 @@ VACUUM (REFRESH_TABLE) notes;
 
 query
 SELECT count(*) > 0 AS stored_on_azure
-FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_ts/engine_v1/*/*/*/*');
+FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_ts/*/engine_v1/*/*/*');
 ----
 stored_on_azure
 t
@@ -168,7 +168,7 @@ DROP TABLESPACE ts_az_${__DATABASE__};
 
 query ok retry 40 backoff 250ms
 SELECT count(*) AS left_on_azure
-FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_ts/engine_v1/**');
+FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_ts/*/engine_v1/**');
 ----
 left_on_azure
 0

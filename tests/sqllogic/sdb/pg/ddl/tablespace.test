@@ -101,42 +101,16 @@ id
 1
 
 query
-SELECT count(*) > 0 AS stored_in_ts FROM glob('${__TEST_DIR__}/ts/engine_v1/*/*/*/*');
+SELECT count(*) > 0 AS stored_in_ts FROM glob('${__TEST_DIR__}/ts/*/engine_v1/*/*/*');
 ----
 stored_in_ts
 t
 
-statement ok
+statement error
 CREATE TABLESPACE beside_${__DATABASE__} LOCATION '${__TEST_DIR__}/ts';
-
-statement ok
-CREATE TABLE beside (id INT) WITH (storage = 'search') TABLESPACE beside_${__DATABASE__};
-
-statement ok
-INSERT INTO beside VALUES (1);
-
-statement ok
-VACUUM (REFRESH_TABLE) beside;
-
-query
-SELECT count(DISTINCT regexp_extract(file, 'engine_v1/([^/]+)/', 1)) AS directories
-FROM glob('${__TEST_DIR__}/ts/engine_v1/*/*/*/*');
 ----
-directories
-2
+db error: ERROR: tablespace location "<slt:ignore>/ts" is already used by tablespace "<slt:ignore>"
 
-statement ok
-DROP TABLE beside;
-
-statement ok
-DROP TABLESPACE beside_${__DATABASE__};
-
-query ok retry 240 backoff 250ms
-SELECT count(DISTINCT regexp_extract(file, 'engine_v1/([^/]+)/', 1)) AS directories
-FROM glob('${__TEST_DIR__}/ts/engine_v1/*/*/*/*');
-----
-directories
-1
 
 statement error
 CREATE TABLE plain (id INT) TABLESPACE ts_${__DATABASE__};
@@ -444,7 +418,7 @@ f	f
 t	t
 
 query
-SELECT count(*) AS data_files FROM glob('${__TEST_DIR__}/db_ts/engine_v1/*/*/data.db');
+SELECT count(*) AS data_files FROM glob('${__TEST_DIR__}/db_ts/*/engine_v1/*/data.db');
 ----
 data_files
 1

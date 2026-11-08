@@ -72,8 +72,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                   std::shared_ptr<DatabaseDirectory> directory)
     : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
 
-  StorageLocation Storage(duckdb::CatalogTransaction transaction,
-                          duckdb::idx_t tablespace, duckdb::idx_t oid);
+  std::unique_ptr<StorageDirectory> Storage(
+    duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace,
+    duckdb::idx_t oid);
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
   std::string GetCatalogType() final;

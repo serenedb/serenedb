@@ -108,9 +108,9 @@ std::string NormalizeLocation(std::string_view location) {
 class BuiltinTablespaces final : public duckdb::DefaultGenerator {
  public:
   BuiltinTablespaces(duckdb::Catalog& catalog,
-                     std::shared_ptr<TablespaceDirectory> default_directory)
+                     std::string_view default_directory)
     : duckdb::DefaultGenerator{catalog},
-      _default_directory{std::move(default_directory)} {}
+      _default_directory{default_directory} {}
 
   duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
     duckdb::CatalogTransaction, const duckdb::Identifier& name) final {
@@ -120,12 +120,13 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
     info.permissions.owner = pg::kRootUser;
     if (name == kDefault) {
       info.oid = pg::kPgDefaultTablespace;
-      return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, info,
-                                                       _default_directory);
+      return duckdb::make_uniq<TablespaceCatalogEntry>(
+        catalog, info, std::string{_default_directory});
     }
     if (name == kGlobal) {
       info.oid = pg::kPgGlobalTablespace;
-      return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, info, nullptr);
+      return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, info,
+                                                       std::string{});
     }
     return nullptr;
   }
@@ -140,15 +141,14 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
   static constexpr const char* kDefault = "pg_default";
   static constexpr const char* kGlobal = "pg_global";
 
-  std::shared_ptr<TablespaceDirectory> _default_directory;
+  std::string_view _default_directory;
 };
 
 }  // namespace
 
 void ClusterCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
-  _default_directory = std::make_shared<TablespaceDirectory>(
-    ClusterLayout(GetAttached()).EngineDir().string());
+  _default_directory = ClusterLayout(GetAttached()).EngineDir().string();
   GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
     .SetDefaultGenerator(
       duckdb::make_uniq<BuiltinTablespaces>(*this, _default_directory));
@@ -159,15 +159,15 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeDatabaseEntry(
   if (info.oid == 0) {
     info.oid = GetDatabase().GetDatabaseManager().NextOid();
   }
-  auto tablespace = TablespaceDirectoryOf(transaction, info.tablespace_oid);
+  const auto& tablespace =
+    TablespaceDirectoryOf(transaction, info.tablespace_oid);
   std::filesystem::path path =
-    irs::StorageKindOf(tablespace->Path()) == irs::StorageKind::Remote
+    irs::StorageKindOf(tablespace) == irs::StorageKind::Remote
       ? ClusterLayout(GetAttached()).DatabaseDir(info.oid)
-      : std::filesystem::path{tablespace->Path()} / absl::StrCat(info.oid);
+      : std::filesystem::path{tablespace} / absl::StrCat(info.oid);
   return duckdb::make_uniq<DatabaseCatalogEntry>(
     *this, info,
-    std::make_shared<DatabaseDirectory>(info.oid, std::move(path),
-                                        std::move(tablespace)));
+    std::make_shared<DatabaseDirectory>(info.oid, std::move(path), tablespace));
 }
 
 duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeTablespaceEntry(
@@ -177,9 +177,9 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeTablespaceEntry(
   }
   return duckdb::make_uniq<TablespaceCatalogEntry>(
     *this, info,
-    std::make_shared<TablespaceDirectory>(absl::StrCat(
-      info.location, "/", kEngineDir, "/",
-      backup::PositionSource::Instance().SystemIdentifier(), "-", info.oid)));
+    absl::StrCat(info.location, "/",
+                 backup::PositionSource::Instance().SystemIdentifier(), "/",
+                 kEngineDir));
 }
 
 TablespaceCatalogEntry& ClusterCatalog::Tablespace(
@@ -211,7 +211,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::EntryById(
   return internal;
 }
 
-std::shared_ptr<TablespaceDirectory> ClusterCatalog::TablespaceDirectoryOf(
+const std::string& ClusterCatalog::TablespaceDirectoryOf(
   duckdb::CatalogTransaction transaction, duckdb::idx_t oid) {
   if (oid == pg::kPgDefaultTablespace) {
     return _default_directory;
@@ -225,8 +225,9 @@ std::vector<std::string> ClusterCatalog::TablespaceDirs(
   GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
     .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
       if (const auto& directory =
-            entry.Cast<TablespaceCatalogEntry>().Directory()) {
-        directories.push_back(directory->Path());
+            entry.Cast<TablespaceCatalogEntry>().Directory();
+          !directory.empty()) {
+        directories.push_back(directory);
       }
     });
   return directories;
@@ -243,10 +244,20 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
                     ERR_MSG("tablespace \"", name, "\" already exists"));
   }
   info.location = NormalizeLocation(info.location);
+  std::string_view user;
+  tablespaces.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+    if (entry.Cast<TablespaceCatalogEntry>().Location() == info.location) {
+      user = entry.name.GetIdentifierName();
+    }
+  });
+  if (!user.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("tablespace location \"", info.location,
+                            "\" is already used by tablespace \"", user, "\""));
+  }
   const auto created = duckdb::DuckCatalog::CreateTablespace(transaction, info);
   if (created) {
-    const auto& directory =
-      created->Cast<TablespaceCatalogEntry>().Directory()->Path();
+    const auto& directory = created->Cast<TablespaceCatalogEntry>().Directory();
     if (irs::StorageKindOf(directory) == irs::StorageKind::Remote) {
       StorageFileSystem().ListFiles(directory, [](const std::string&, bool) {});
     } else {
@@ -360,7 +371,7 @@ void ClusterCatalog::OnCatalogLogDecided() {
 void ClusterCatalog::EndCatalogLogCommit() { auth::PublishRoles(*this); }
 
 void ClusterCatalog::MaybeCompactCatalogLog() {
-  if (!_compactable || TablespaceRemovalsPending()) {
+  if (!_compactable) {
     return;
   }
   bool force = false;

@@ -277,19 +277,18 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   return std::move(entry);
 }
 
-StorageLocation SereneDBCatalog::Storage(duckdb::CatalogTransaction transaction,
-                                         duckdb::idx_t tablespace,
-                                         duckdb::idx_t oid) {
+std::unique_ptr<StorageDirectory> SereneDBCatalog::Storage(
+  duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace,
+  duckdb::idx_t oid) {
   if (!_directory) {
-    return {};
+    return nullptr;
   }
-  auto directory = tablespace == 0 || GetAttached().IsReadOnly()
-                     ? _directory->Tablespace()
-                     : ClusterOf(*transaction.db)
-                         .TablespaceDirectoryOf(transaction, tablespace);
-  return {.path = _directory->StoragePath(directory.get(), oid),
-          .database = _directory,
-          .tablespace = std::move(directory)};
+  return _directory->StorageOf(
+    tablespace == 0 || GetAttached().IsReadOnly()
+      ? _directory->Tablespace()
+      : ClusterOf(*transaction.db)
+          .TablespaceDirectoryOf(transaction, tablespace),
+    oid);
 }
 
 namespace {

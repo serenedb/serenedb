@@ -904,9 +904,7 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
       duckdb::TaskScheduler::BlockingScope blocking;
       irs::containers::FlatHashSet<duckdb::idx_t> stored;
       for (const auto& storage : catalog::ListStorages(
-             tablespace->Cast<catalog::TablespaceCatalogEntry>()
-               .Directory()
-               ->Path())) {
+             tablespace->Cast<catalog::TablespaceCatalogEntry>().Directory())) {
         if (catalog::HoldsFiles(storage)) {
           stored.emplace(storage.oid);
         }

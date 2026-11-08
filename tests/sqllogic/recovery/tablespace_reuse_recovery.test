@@ -1,0 +1,111 @@
+control substitution on
+
+# The location of a dropped tablespace can be used again: a restart replays the
+# drops and keeps what the newer tablespace stores there. The files of a table
+# dropped while an older transaction still read it, which a crash left behind,
+# go at the restart.
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLESPACE gone LOCATION '${__TEST_DIR__}/reuse';
+
+statement ok
+CREATE TABLE dropped (id INT, body TEXT) WITH (storage = 'search') TABLESPACE gone;
+
+statement ok
+INSERT INTO dropped VALUES (1, 'dropped row');
+
+statement ok
+VACUUM (REFRESH_TABLE) dropped;
+
+statement ok
+DROP TABLE dropped;
+
+statement ok
+DROP TABLESPACE gone;
+
+statement ok
+CREATE TABLESPACE kept LOCATION '${__TEST_DIR__}/reuse';
+
+statement ok
+CREATE TABLE docs (id INT, body TEXT) WITH (storage = 'search') TABLESPACE kept;
+
+statement ok
+INSERT INTO docs VALUES (1, 'quick fox'), (2, 'lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+statement ok
+CREATE TABLE pending_rows (id INT, body TEXT) WITH (storage = 'search') TABLESPACE kept;
+
+statement ok
+INSERT INTO pending_rows VALUES (1, 'read by an older transaction');
+
+statement ok
+VACUUM (REFRESH_TABLE) pending_rows;
+
+connection reader
+statement ok
+BEGIN;
+
+connection reader
+query
+SELECT body FROM pending_rows;
+----
+body
+read by an older transaction
+
+connection default
+statement ok
+DROP TABLE pending_rows;
+
+connection reader
+query
+SELECT body FROM pending_rows;
+----
+body
+read by an older transaction
+
+connection default
+query ok retry 240 backoff 250ms
+SELECT count(DISTINCT regexp_extract(file, 'engine_v1/[^/]+/([^/]+)/', 1)) AS storages
+FROM glob('${__TEST_DIR__}/reuse/*/engine_v1/*/*/*');
+----
+storages
+2
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM docs ORDER BY id;
+----
+id	body
+1	quick fox
+2	lazy dog
+
+connection after_restart
+query ok retry 240 backoff 250ms
+SELECT count(DISTINCT regexp_extract(file, 'engine_v1/[^/]+/([^/]+)/', 1)) AS storages
+FROM glob('${__TEST_DIR__}/reuse/*/engine_v1/*/*/*');
+----
+storages
+1
+
+connection after_restart
+statement ok
+DROP TABLE docs;
+
+connection after_restart
+statement ok
+DROP TABLESPACE kept;

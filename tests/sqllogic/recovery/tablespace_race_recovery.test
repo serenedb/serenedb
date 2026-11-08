@@ -2,9 +2,9 @@ control substitution on
 
 # A tablespace and the objects placed in it are settled the way any catalog
 # object and its dependents are: of a placement and a DROP TABLESPACE, the one
-# that commits second fails. A dropped tablespace keeps its files until the
-# transactions that began before the drop end, and its location can be used
-# again at once.
+# that commits second fails. A dropped object keeps its files until the
+# transactions that began before the drop end, and the location of a dropped
+# tablespace can be used again at once.
 
 statement ok
 RESET sdb_faults;
@@ -293,17 +293,7 @@ COMMIT;
 
 connection default
 statement ok
-SET sdb_faults = 'pause_tablespace_removal';
-
-
-connection default
-statement ok
 DROP TABLESPACE held_again;
-
-
-connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_tablespace_removal:parked';
 
 
 connection default
@@ -318,7 +308,7 @@ CREATE TABLE held_rows (id INT, body TEXT) WITH (storage = 'search') TABLESPACE 
 
 connection default
 statement ok
-INSERT INTO held_rows VALUES (1, 'placed while a removal was parked');
+INSERT INTO held_rows VALUES (1, 'placed after two drops');
 
 
 connection default
@@ -327,18 +317,13 @@ VACUUM (REFRESH_TABLE) held_rows;
 
 
 connection default
-statement ok
-SET sdb_faults = 'pause_tablespace_removal:release';
-
-
-connection default
-query ok retry 240 backoff 250ms
-SELECT count(DISTINCT regexp_extract(file, 'engine_v1/([^/]+)/', 1)) AS directories,
+query
+SELECT count(DISTINCT regexp_extract(file, 'engine_v1/[^/]+/([^/]+)/', 1)) AS storages,
        (SELECT body FROM held_rows) AS body
-FROM glob('${__TEST_DIR__}/held/engine_v1/*/*/*/*');
+FROM glob('${__TEST_DIR__}/held/*/engine_v1/*/*/*');
 ----
-directories	body
-1	placed while a removal was parked
+storages	body
+1	placed after two drops
 
 
 connection default

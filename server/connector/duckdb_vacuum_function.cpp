@@ -192,18 +192,18 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
     } break;
     case Scope::Column: {
       // [<schema>.]<table>.<column> -- the trailing identifier is the column.
-      if (!bind.catalog.empty()) {
-        out.schema = bind.catalog;
-        out.object = bind.schema;
-        out.column = bind.name;
-      } else if (!bind.schema.empty()) {
-        out.object = bind.schema;
-        out.column = bind.name;
-      } else {
+      if (bind.schema.empty()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("VACUUM (RECOMPUTE_STATS_COLUMN) expects "
                                 "[<schema>.]<table>.<column>"));
       }
+      duckdb::Identifier catalog;
+      duckdb::Identifier schema{bind.catalog};
+      duckdb::Binder::BindSchemaOrCatalog(context, catalog, schema);
+      out.database = catalog.GetIdentifierName();
+      out.schema = schema.GetIdentifierName();
+      out.object = bind.schema;
+      out.column = bind.name;
     } break;
     case Scope::All:
       break;
@@ -524,7 +524,14 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
           ERR_CODE(ERRCODE_UNDEFINED_TABLE),
           ERR_MSG("relation \"", target.object, "\" does not exist"));
       }
-      add(entry->Cast<duckdb::TableCatalogEntry>());
+      auto& table = entry->Cast<duckdb::TableCatalogEntry>();
+      if (scope == Scope::Column &&
+          !table.ColumnExists(duckdb::Identifier{target.column})) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                        ERR_MSG("column \"", target.column, "\" of relation \"",
+                                target.object, "\" does not exist"));
+      }
+      add(table);
     } break;
     case Scope::Schema: {
       auto& database = LookupDatabase(context, target.database);

@@ -265,6 +265,66 @@ VACUUM (RECOMPUTE_STATS_DATABASE) ${__DATABASE__};
 
 
 statement ok
+ATTACH '${__TEST_DIR__}/vacuum_options_attached.duckdb' AS vo_att_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA vo_att_${__DATABASE__}.s3;
+
+
+statement ok
+CREATE TABLE vo_att_${__DATABASE__}.t (id INTEGER, body VARCHAR);
+
+
+statement ok
+CREATE TABLE vo_att_${__DATABASE__}.s3.u (id INTEGER, body VARCHAR);
+
+
+statement ok
+INSERT INTO vo_att_${__DATABASE__}.t SELECT g, 'body ' || g FROM generate_series(1, 3000) g;
+
+
+statement ok
+INSERT INTO vo_att_${__DATABASE__}.s3.u SELECT g, 'body ' || g FROM generate_series(1, 3000) g;
+
+
+statement ok
+VACUUM (RECOMPUTE_STATS_TABLE) vo_att_${__DATABASE__}.t;
+
+
+statement ok
+VACUUM (RECOMPUTE_STATS_TABLE) vo_att_${__DATABASE__}.s3.u;
+
+
+statement ok
+VACUUM (RECOMPUTE_STATS_COLUMN) vo_att_${__DATABASE__}.t.body;
+
+
+statement ok
+VACUUM (RECOMPUTE_STATS_SCHEMA) vo_att_${__DATABASE__}.s3;
+
+
+statement ok
+VACUUM (RECOMPUTE_STATS_DATABASE) vo_att_${__DATABASE__};
+
+
+statement error
+VACUUM (RECOMPUTE_STATS_COLUMN) vo_att_${__DATABASE__}.t.missing;
+----
+db error: ERROR: column "missing" of relation "t" does not exist
+
+
+statement error
+VACUUM (RECOMPUTE_STATS_COLUMN) public.docs.missing;
+----
+db error: ERROR: column "missing" of relation "docs" does not exist
+
+
+statement ok
+DETACH vo_att_${__DATABASE__};
+
+
+statement ok
 CREATE TABLE public.vf (id INTEGER, v INTEGER) WITH (compaction_interval = 0);
 
 

@@ -73,7 +73,7 @@ Each option applies at the scope named by its suffix and takes the matching obje
 | Database | `FLUSH_DATABASE` | `COMPACT_DATABASE` | `RECOMPUTE_STATS_DATABASE` | database name |
 | Everything | `FLUSH_ALL` | `COMPACT_ALL` | `RECOMPUTE_STATS_ALL` | *(none)* |
 
-`RECOMPUTE_STATS` additionally accepts a column scope, `RECOMPUTE_STATS_COLUMN`, whose argument is `[schema.]table.column`.
+`RECOMPUTE_STATS` additionally accepts a column scope, `RECOMPUTE_STATS_COLUMN`, whose argument is `[schema.]table.column`, or `database.table.column` for a table in the default schema of an attached database.
 
 Object names may be qualified, for example `VACUUM (FLUSH_TABLE) mydb.public.articles`. The `*_ALL` scopes are instance-wide and take no argument.
 

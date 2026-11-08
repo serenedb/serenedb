@@ -427,11 +427,31 @@ def va_schema(obs, faults) -> str:
     obs.execute(f"DROP SCHEMA {VA_SCHEMA} CASCADE")
 
 
+VA_ATTACHED = f"pgsp_va_att_{RUN}"
+
+
+@pytest.fixture(scope="module")
+def va_attached(obs, faults) -> str:
+    rows = FAULT_ROWS if faults else POLL_ROWS
+    obs.execute(f"ATTACH '{FILE_PREFIX}_va.duckdb' AS {VA_ATTACHED}")
+    for i in range(VA_TABLES):
+        obs.execute(f"CREATE TABLE {VA_ATTACHED}.t{i}(id BIGINT, body TEXT)")
+        obs.execute(
+            f"INSERT INTO {VA_ATTACHED}.t{i} "
+            f"SELECT g, repeat(md5(g::text), 6) "
+            f"FROM generate_series(1, {rows}) g")
+    yield VA_ATTACHED
+    obs.execute(f"DETACH {VA_ATTACHED}")
+
+
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
-def test_recompute_stats_progress(obs, faults, va_schema, driver):
+def test_recompute_stats_progress(obs, faults, va_attached, driver):
     requires_faults(faults)
-    table = f"{va_schema}.t0"
-    relid = relid_of(obs, table)
+    table = f"{va_attached}.t0"
+    relid = obs.execute(
+        f"SELECT table_oid FROM duckdb_tables() "
+        f"WHERE database_name = '{va_attached}' AND table_name = 't0'"
+    ).fetchone()[0]
     obs.execute(
         f"INSERT INTO {table} SELECT g, repeat(md5(g::text), 6) "
         f"FROM generate_series(1, 10000) g")
@@ -584,20 +604,20 @@ def test_cancel_create_index(obs, faults, src, driver):
 
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
-def test_cancel_recompute_stats(obs, faults, va_schema, driver):
+def test_cancel_recompute_stats(obs, faults, va_attached, driver):
     requires_faults(faults)
     for i in range(VA_TABLES):
         obs.execute(
-            f"INSERT INTO {va_schema}.t{i} "
+            f"INSERT INTO {va_attached}.t{i} "
             f"SELECT g, repeat(md5(g::text), 6) "
             f"FROM generate_series(1, 10000) g")
     assert_cancelled(
         obs, fault_name=ANALYZE_FAULT, use_fault=faults,
         run=lambda: driver.execute(
-            f"VACUUM (RECOMPUTE_STATS_SCHEMA) {va_schema}"),
+            f"VACUUM (RECOMPUTE_STATS_SCHEMA) {va_attached}.main"),
         pid_sql="SELECT pid FROM pg_stat_progress_analyze",
         empty_sql="SELECT count(*) FROM pg_stat_progress_analyze")
-    driver.execute(f"VACUUM (RECOMPUTE_STATS_TABLE) {va_schema}.t0")
+    driver.execute(f"VACUUM (RECOMPUTE_STATS_TABLE) {va_attached}.t0")
 
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)

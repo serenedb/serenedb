@@ -1211,7 +1211,7 @@ skipif postgres
 > +-----------+-------+
 > | heap      | Table |
 > | inverted  | Index |
-> | secondary | Index |
+> | iresearch | Table |
 > +-----------+-------+
 > (3 rows)
 

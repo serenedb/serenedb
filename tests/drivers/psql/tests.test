@@ -1202,8 +1202,6 @@ skipif postgres
 > +------+-------+---------+-------------+
 > (0 rows)
 
-# serened access methods: heap and iresearch back tables, secondary and
-# inverted back indexes. PG ships btree/gin/... as well.
 skipif postgres
 \dA
 ----
@@ -1213,10 +1211,9 @@ skipif postgres
 > +-----------+-------+
 > | heap      | Table |
 > | inverted  | Index |
-> | iresearch | Table |
 > | secondary | Index |
 > +-----------+-------+
-> (4 rows)
+> (3 rows)
 
 # serened's pg_opclass surfaces the `ivf` and `hnsw` builtins (inverted AM,
 # FLOAT[]) plus every CREATE TEXT SEARCH DICTIONARY as an inverted-AM opclass.

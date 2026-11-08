@@ -34,6 +34,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace sdb::catalog {
 
@@ -46,8 +47,7 @@ class Log {
     Lsn end = 0;
   };
 
-  using CatalogPart =
-    absl::FunctionRef<std::span<const uint8_t>(std::span<const uint8_t>)>;
+  using CatalogPart = absl::FunctionRef<std::span<uint8_t>(std::span<uint8_t>)>;
 
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
   static constexpr std::string_view kHistoryFile = "history";
@@ -55,6 +55,12 @@ class Log {
   static std::optional<Lsn> ChunkBegin(std::string_view name);
   static std::string ChunkName(Lsn begin);
   static std::optional<Lsn> HistoryCut(const std::filesystem::path& dir);
+  static std::vector<duckdb::unique_ptr<duckdb::FileHandle>> LockChunks(
+    duckdb::FileSystem& fs, const std::filesystem::path& dir);
+  static void Read(
+    duckdb::FileSystem& fs, const std::filesystem::path& dir,
+    absl::FunctionRef<void(Lsn, std::span<uint8_t>)> history,
+    absl::FunctionRef<void(const Range&, std::span<uint8_t>)> apply);
 
   Log(duckdb::FileSystem& fs, std::filesystem::path dir);
 

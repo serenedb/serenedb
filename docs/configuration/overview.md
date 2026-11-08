@@ -296,7 +296,7 @@ Authentication, authorization and what the server is allowed to reach.
 | `enable_macro_dependencies` | Enable created MACROs to create dependencies on the referenced objects (such as tables) | `BOOLEAN` | `GLOBAL` | `true` |
 | `hba` | Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. A rule that lets the `postgres` superuser in without a password over local and loopback (127.0.0.1, ::1) connections always comes first, so a bad ruleset cannot lock the superuser out; other roles follow the ruleset. An empty value restores the default (SCRAM for every role). Server-global. | `VARCHAR` | `GLOBAL` |  |
 | `scram_iterations` | Sets the iteration count for SCRAM secret generation. | `INTEGER` | `SESSION` | `4096` |
-| `secret_directory` | Set the directory to which persistent secrets are stored | `VARCHAR` | `GLOBAL` | `<datadir>/secrets` |
+| `secret_directory` | Not used: persistent secrets are stored in the server's log with the rest of the catalog. | `VARCHAR` | `GLOBAL` | `<datadir>/secrets` |
 
 ### Logging, metrics and profiling
 

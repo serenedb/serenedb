@@ -20,10 +20,13 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <span>
 #include <string>
 #include <vector>
@@ -47,12 +50,22 @@ std::vector<uint8_t> SequenceRecord(const BaseCatalog& catalog,
 std::vector<uint8_t> SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
                                   const duckdb::vector<std::string>& entries);
 
-std::span<const uint8_t> CatalogPart(std::span<const uint8_t> payload);
+std::span<uint8_t> CatalogPart(std::span<uint8_t> payload);
 
-void ReplayRecord(duckdb::ClientContext& context, const Log::Range& range,
-                  std::span<uint8_t> payload);
+using ReplayTarget = absl::FunctionRef<BaseCatalog*(duckdb::idx_t)>;
 
-void ReplayCatalogPart(duckdb::ClientContext& context,
+BaseCatalog* InstanceCatalog(duckdb::ClientContext& context, duckdb::idx_t id);
+
+void ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
+                  const Log::Range& range, std::span<uint8_t> payload);
+
+void ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
                        std::span<uint8_t> catalog);
+
+using LoggedDatabases =
+  irs::containers::FlatHashMap<duckdb::idx_t, duckdb::Identifier>;
+
+void ReadDatabases(duckdb::ClientContext& context, std::span<uint8_t> catalog,
+                   LoggedDatabases& databases);
 
 }  // namespace sdb::catalog

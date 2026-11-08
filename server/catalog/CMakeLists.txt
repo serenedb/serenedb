@@ -8,6 +8,7 @@ target_sources(
         database_directory.cpp
         dependency.cpp
         entry_set.cpp
+        foreign_database.cpp
         log.cpp
         record.cpp
         schema.cpp

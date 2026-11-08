@@ -78,6 +78,9 @@ void RequireLog(const ReplicationLsnEntry& entry) {
 void CheckDependencies(SessionTransaction& transaction) {
   const auto view = transaction.View();
   for (const auto& change : transaction.Changes()) {
+    if (change.Subject().ParentCatalog().GetAttached().IsReadOnly()) {
+      continue;
+    }
     switch (change.kind) {
       case ChangeKind::Create:
       case ChangeKind::Alter:
@@ -698,6 +701,9 @@ void TransactionManager::RefreshStartTime(duckdb::Transaction& transaction) {
 }
 
 void TransactionManager::Checkpoint(duckdb::ClientContext& context, bool) {
+  if (db.IsReadOnly()) {
+    return;
+  }
   if (search::IsBackupActive()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("cannot checkpoint while a backup is in progress"),

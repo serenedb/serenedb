@@ -100,6 +100,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> JobCatalogEntry::AlterEntry(
 }
 
 void JobCatalogEntry::ScheduleAtCommit(duckdb::ClientContext& context) const {
+  if (catalog.GetAttached().IsReadOnly()) {
+    return;
+  }
   auto& serene = catalog.Cast<SereneDBCatalog>();
   SessionOf(context, catalog).DeferToCommit([&serene, oid = oid] {
     auto* jobs = JobScheduler::Instance();

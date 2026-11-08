@@ -32,6 +32,7 @@
 
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
+#include "catalog/foreign_database.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/catalog/functions/functions.h"
@@ -41,14 +42,19 @@ namespace sdb::connector {
 namespace {
 
 duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
-  duckdb::optional_ptr<duckdb::StorageExtensionInfo>, duckdb::ClientContext&,
-  duckdb::AttachedDatabase&, const duckdb::string&, duckdb::AttachInfo& info,
-  duckdb::AttachOptions&) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-    ERR_MSG("cannot attach \"", info.path,
-            "\" as a SereneDB database: a SereneDB database is created "
-            "with CREATE DATABASE"));
+  duckdb::optional_ptr<duckdb::StorageExtensionInfo>,
+  duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
+  const duckdb::string&, duckdb::AttachInfo& info,
+  duckdb::AttachOptions& options) {
+  if (options.access_mode != duckdb::AccessMode::READ_ONLY) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot attach \"", info.path,
+              "\" as a SereneDB database: a SereneDB database is created "
+              "with CREATE DATABASE"),
+      ERR_HINT("Attach the data directory of another server with READ_ONLY."));
+  }
+  return catalog::AttachForeignDatabase(context, db, info, options);
 }
 
 }  // namespace

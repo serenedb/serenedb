@@ -8,5 +8,6 @@ target_sources(
         fs_directory.cpp
         memory_directory.cpp
         mmap_directory.cpp
+        overlay_directory.cpp
         store_utils.cpp
 )

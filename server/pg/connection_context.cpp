@@ -482,7 +482,8 @@ void ConnectionContext::OnTransactionPreCommit(duckdb::MetaTransaction& meta) {
   }
   std::vector<std::reference_wrapper<duckdb::AttachedDatabase>> written;
   for (auto& db : meta.OpenedTransactions()) {
-    if (db.get().IsTemporary() || !catalog::IsSereneDB(db.get().GetCatalog())) {
+    if (db.get().IsTemporary() || db.get().IsReadOnly() ||
+        !catalog::IsSereneDB(db.get().GetCatalog())) {
       continue;
     }
     if (auto opened = meta.TryGetTransaction(db);

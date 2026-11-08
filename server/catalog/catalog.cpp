@@ -63,6 +63,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
+#include "catalog/foreign_database.h"
 #include "catalog/record.h"
 #include "catalog/transaction.h"
 #include "connector/duckdb_physical_search_delete.h"
@@ -183,14 +184,24 @@ void SereneDBCatalog::Initialize(bool) {
   MountSystemSchemas(*this);
 }
 
+void SereneDBCatalog::FinalizeLoad(
+  duckdb::optional_ptr<duckdb::ClientContext> context) {
+  if (_foreign) {
+    SDB_ASSERT(context);
+    ReplayForeignDatabase(*context, *this, *_foreign);
+  }
+}
+
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
-  std::vector<duckdb::Identifier> servers;
-  _servers.ScanCommitted(
-    [&](duckdb::CatalogEntry& entry) { servers.push_back(entry.name); });
-  for (const auto& server : servers) {
-    duckdb::DatabaseManager::Get(context).DetachDatabase(
-      context, server, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!_foreign) {
+    std::vector<duckdb::Identifier> servers;
+    _servers.ScanCommitted(
+      [&](duckdb::CatalogEntry& entry) { servers.push_back(entry.name); });
+    for (const auto& server : servers) {
+      duckdb::DatabaseManager::Get(context).DetachDatabase(
+        context, server, duckdb::OnEntryNotFound::RETURN_NULL);
+    }
   }
   BaseCatalog::OnDetach(context);
 }
@@ -606,8 +617,9 @@ std::shared_ptr<const CatalogSnapshot> CatalogSnapshots::Get(
 duckdb::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> SereneDBDatabases(
   duckdb::DatabaseManager& manager) {
   auto databases = manager.GetDatabases();
-  std::erase_if(databases,
-                [](const auto& db) { return !IsSereneDB(db->GetCatalog()); });
+  std::erase_if(databases, [](const auto& db) {
+    return !IsSereneDB(db->GetCatalog()) || db->IsReadOnly();
+  });
   return databases;
 }
 

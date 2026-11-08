@@ -44,14 +44,23 @@ INSERT INTO es.sfx_logs VALUES ('1', 'hello', '{"msg":"hello"}');
 statement ok
 CALL es_refresh('sfx_logs');
 
-statement ok
-CHECKPOINT postgres;
+connection holder
+query
+SELECT pg_backup_start('sfx') IS NOT NULL AS started;
+----
+started
+t
 
 system ok
-rm -rf $__TEST_DIR__/sfx_snap && mkdir $__TEST_DIR__/sfx_snap && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfx_snap/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfx_snap/catalog.wal
+rm -rf $__TEST_DIR__/sfx_snap && mkdir -p $__TEST_DIR__/sfx_snap/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/log $__TEST_DIR__/sfx_snap/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/[0-9]* $__TEST_DIR__/sfx_snap/engine_v1/
 
+connection holder
 statement ok
-CREATE SERVER sfx_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfx_snap/5');
+SELECT * FROM pg_backup_stop();
+
+connection default
+statement ok
+CREATE SERVER sfx_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfx_snap');
 
 
 statement error

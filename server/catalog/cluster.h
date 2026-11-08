@@ -60,8 +60,10 @@ class ClusterCatalog final : public BaseCatalog {
   std::string GetCatalogType() final { return "cluster"; }
   bool InMemory() final { return true; }
   std::string GetDBPath() final { return {}; }
+  static constexpr duckdb::idx_t kRecordId = 0;
+
   bool Durable() const final { return true; }
-  duckdb::idx_t RecordId() const final { return 0; }
+  duckdb::idx_t RecordId() const final { return kRecordId; }
 
   const DataDirectory& Layout() const noexcept { return _layout; }
 

@@ -62,13 +62,17 @@ std::string SerializeSecret(const duckdb::CatalogEntry& entry) {
                      stream.GetPosition()};
 }
 
-void ReplaySecret(duckdb::ClientContext& context,
+void ReplaySecret(duckdb::ClientContext& context, ReplayTarget target,
                   duckdb::Deserializer& object) {
   const auto kind =
     static_cast<ChangeKind>(object.ReadProperty<uint8_t>(100, "kind"));
   const duckdb::Identifier name{object.ReadProperty<std::string>(101, "name")};
   auto bytes = object.ReadPropertyWithDefault<std::string>(102, "secret");
-  auto& cluster = ClusterOf(context);
+  auto* owner = target(ClusterCatalog::kRecordId);
+  if (!owner) {
+    return;
+  }
+  auto& cluster = owner->Cast<ClusterCatalog>();
   auto& set = cluster.Secrets(true);
   const auto transaction = cluster.GetCatalogTransaction(context);
   DeclareModified(transaction, cluster);
@@ -87,22 +91,6 @@ void ReplaySecret(duckdb::ClientContext& context,
     transaction,
     MakeSecretEntry(cluster, std::move(secret),
                     duckdb::SecretManager::LOCAL_FILE_STORAGE_NAME, true));
-}
-
-BaseCatalog& ReplayCatalog(duckdb::ClientContext& context, duckdb::idx_t id) {
-  auto& cluster = ClusterOf(context);
-  if (cluster.RecordId() == id) {
-    return cluster;
-  }
-  for (const auto& db :
-       SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
-    if (auto& catalog = db->GetCatalog().Cast<SereneDBCatalog>();
-        catalog.Durable() && catalog.RecordId() == id) {
-      return catalog;
-    }
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                  ERR_MSG("the log names a missing catalog ", id));
 }
 
 duckdb::unique_ptr<duckdb::AlterInfo> DeserializeAlter(
@@ -148,47 +136,68 @@ void QualifyInLoggedSchema(BaseCatalog& catalog,
     catalog.GetName(), std::move(path), std::move(name)));
 }
 
-void ReplayChange(duckdb::ClientContext& context,
+struct LoggedChange {
+  duckdb::idx_t catalog = 0;
+  ChangeKind kind = ChangeKind::Create;
+  duckdb::unique_ptr<duckdb::CreateInfo> info;
+  std::string alter;
+  duckdb::idx_t oid = 0;
+  duckdb::idx_t owner = 0;
+  duckdb::LogicalDependencyList dependencies;
+  duckdb::vector<duckdb::idx_t> constraints;
+};
+
+LoggedChange ReadChange(duckdb::Deserializer& object) {
+  return {
+    .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
+    .kind = static_cast<ChangeKind>(object.ReadProperty<uint8_t>(101, "kind")),
+    .info =
+      object.ReadPropertyWithDefault<duckdb::unique_ptr<duckdb::CreateInfo>>(
+        102, "info"),
+    .alter = object.ReadPropertyWithDefault<std::string>(103, "alter"),
+    .oid = object.ReadPropertyWithDefault<duckdb::idx_t>(104, "oid"),
+    .owner = object.ReadPropertyWithDefault<duckdb::idx_t>(107, "owner"),
+    .dependencies =
+      object.ReadPropertyWithExplicitDefault<duckdb::LogicalDependencyList>(
+        108, "dependencies", duckdb::LogicalDependencyList{}),
+    .constraints =
+      object.ReadPropertyWithExplicitDefault<duckdb::vector<duckdb::idx_t>>(
+        109, "constraints", duckdb::vector<duckdb::idx_t>{}),
+  };
+}
+
+void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
                   duckdb::Deserializer& object) {
-  auto& catalog =
-    ReplayCatalog(context, object.ReadProperty<duckdb::idx_t>(100, "catalog"));
-  const auto kind =
-    static_cast<ChangeKind>(object.ReadProperty<uint8_t>(101, "kind"));
-  auto info =
-    object.ReadPropertyWithDefault<duckdb::unique_ptr<duckdb::CreateInfo>>(
-      102, "info");
-  auto alter = object.ReadPropertyWithDefault<std::string>(103, "alter");
-  const auto oid = object.ReadPropertyWithDefault<duckdb::idx_t>(104, "oid");
-  const auto owner =
-    object.ReadPropertyWithDefault<duckdb::idx_t>(107, "owner");
-  auto dependencies =
-    object.ReadPropertyWithExplicitDefault<duckdb::LogicalDependencyList>(
-      108, "dependencies", duckdb::LogicalDependencyList{});
-  const auto constraints =
-    object.ReadPropertyWithExplicitDefault<duckdb::vector<duckdb::idx_t>>(
-      109, "constraints", duckdb::vector<duckdb::idx_t>{});
+  auto change = ReadChange(object);
+  auto* owner = target(change.catalog);
+  if (!owner) {
+    return;
+  }
+  auto& catalog = *owner;
+  const auto oid = change.oid;
   const auto transaction = catalog.GetCatalogTransaction(context);
-  switch (kind) {
+  switch (change.kind) {
     case ChangeKind::Create:
-      if (owner) {
-        LoggedTable(catalog, transaction, owner)
-          .CreateTrigger(transaction, info->Cast<duckdb::CreateTriggerInfo>());
+      if (change.owner) {
+        LoggedTable(catalog, transaction, change.owner)
+          .CreateTrigger(transaction,
+                         change.info->Cast<duckdb::CreateTriggerInfo>());
         return;
       }
-      QualifyInLoggedSchema(catalog, transaction, *info);
-      catalog.ReplayCreate(context, std::move(info));
+      QualifyInLoggedSchema(catalog, transaction, *change.info);
+      catalog.ReplayCreate(context, std::move(change.info));
       return;
     case ChangeKind::Alter: {
-      auto info = DeserializeAlter(context, alter);
+      auto info = DeserializeAlter(context, change.alter);
       info->bind_mode = duckdb::AlterBindMode::SKIP_BINDING;
       catalog.Alter(context, *info);
-      if (!dependencies.Set().empty()) {
+      if (!change.dependencies.Set().empty()) {
         auto& table = LoggedTable(catalog, transaction, oid);
         catalog.Oids().RemoveDependents(table, table.oid);
-        table.dependencies = std::move(dependencies);
+        table.dependencies = std::move(change.dependencies);
         catalog.Oids().AddDependents(table, table.oid);
       }
-      if (!constraints.empty()) {
+      if (const auto& constraints = change.constraints; !constraints.empty()) {
         const auto& current =
           LoggedTable(catalog, transaction, oid).GetConstraints();
         SDB_ENSURE(current.size() == constraints.size(), "the log gives table ",
@@ -205,8 +214,8 @@ void ReplayChange(duckdb::ClientContext& context,
     case ChangeKind::Drop: {
       auto entry = catalog.LookupOid(transaction, oid);
       SDB_ENSURE(entry, "the log drops a missing entry ", oid);
-      if (owner) {
-        LoggedTable(catalog, transaction, owner)
+      if (change.owner) {
+        LoggedTable(catalog, transaction, change.owner)
           .DropTrigger(transaction, entry->name, false);
         return;
       }
@@ -220,15 +229,18 @@ void ReplayChange(duckdb::ClientContext& context,
                   ERR_MSG("the log holds an unknown catalog change"));
 }
 
-void ReplaySection(duckdb::ClientContext& context, Lsn begin,
-                   duckdb::Deserializer& object) {
-  auto& catalog =
-    ReplayCatalog(context, object.ReadProperty<duckdb::idx_t>(100, "catalog"));
+void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
+                   Lsn begin, duckdb::Deserializer& object) {
+  const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
   const auto oid = object.ReadProperty<duckdb::idx_t>(101, "table");
   auto entries =
     object.ReadProperty<duckdb::vector<std::string>>(102, "entries");
+  auto* catalog = target(id);
+  if (!catalog) {
+    return;
+  }
   auto table =
-    catalog.FindRelation(catalog.GetCatalogTransaction(context), oid);
+    catalog->FindRelation(catalog->GetCatalogTransaction(context), oid);
   if (!table) {
     return;
   }
@@ -249,9 +261,9 @@ void WriteSection(duckdb::Serializer::List& list, duckdb::idx_t catalog,
   });
 }
 
-void ReplayLsn(duckdb::ClientContext& context, duckdb::Deserializer& object) {
-  auto& catalog =
-    ReplayCatalog(context, object.ReadProperty<duckdb::idx_t>(100, "catalog"));
+void ReplayLsn(duckdb::ClientContext& context, ReplayTarget target,
+               duckdb::Deserializer& object) {
+  const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
   const auto oid = object.ReadProperty<duckdb::idx_t>(101, "oid");
   const auto type = object.ReadProperty<duckdb::CatalogType>(102, "type");
   const auto name = object.ReadPropertyWithDefault<std::string>(103, "name");
@@ -260,6 +272,11 @@ void ReplayLsn(duckdb::ClientContext& context, duckdb::Deserializer& object) {
     .remote_lsn = object.ReadProperty<uint64_t>(105, "remote_lsn"),
     .assign = object.ReadPropertyWithDefault<bool>(106, "assign"),
   };
+  auto* owner = target(id);
+  if (!owner) {
+    return;
+  }
+  auto& catalog = *owner;
   const auto transaction = catalog.GetCatalogTransaction(context);
   auto entry = catalog.LookupOid(transaction, oid);
   if (!entry || entry->type != type) {
@@ -272,10 +289,9 @@ void ReplayLsn(duckdb::ClientContext& context, duckdb::Deserializer& object) {
   ApplyLsnUpdate(update);
 }
 
-void ReplaySequence(duckdb::ClientContext& context,
+void ReplaySequence(duckdb::ClientContext& context, ReplayTarget target,
                     duckdb::Deserializer& object) {
-  auto& catalog =
-    ReplayCatalog(context, object.ReadProperty<duckdb::idx_t>(100, "catalog"));
+  const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
   const auto oid = object.ReadProperty<duckdb::idx_t>(101, "oid");
   const auto usage_count =
     object.ReadPropertyWithDefault<uint64_t>(102, "usage_count");
@@ -283,7 +299,11 @@ void ReplaySequence(duckdb::ClientContext& context,
   const auto last_value =
     object.ReadPropertyWithDefault<duckdb::optional<int64_t>>(104,
                                                               "last_value");
-  auto entry = catalog.LookupOid(catalog.GetCatalogTransaction(context), oid);
+  auto* catalog = target(id);
+  if (!catalog) {
+    return;
+  }
+  auto entry = catalog->LookupOid(catalog->GetCatalogTransaction(context), oid);
   if (entry && entry->type == duckdb::CatalogType::SEQUENCE_ENTRY) {
     entry->Cast<duckdb::SequenceCatalogEntry>().ReplayValue(
       usage_count, counter, last_value);
@@ -368,7 +388,7 @@ std::vector<uint8_t> SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
   return Join({}, Written(stream));
 }
 
-std::span<const uint8_t> CatalogPart(std::span<const uint8_t> payload) {
+std::span<uint8_t> CatalogPart(std::span<uint8_t> payload) {
   return payload.subspan(sizeof(uint32_t), CatalogSize(payload));
 }
 
@@ -517,40 +537,87 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
   return Join(Written(catalog), Written(search));
 }
 
-void ReplayCatalogPart(duckdb::ClientContext& context,
+BaseCatalog* InstanceCatalog(duckdb::ClientContext& context, duckdb::idx_t id) {
+  auto& cluster = ClusterOf(context);
+  if (cluster.RecordId() == id) {
+    return &cluster;
+  }
+  for (const auto& db :
+       SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+    if (auto& catalog = db->GetCatalog().Cast<SereneDBCatalog>();
+        catalog.Durable() && catalog.RecordId() == id) {
+      return &catalog;
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                  ERR_MSG("the log names a missing catalog ", id));
+}
+
+void ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
                        std::span<uint8_t> catalog) {
+  duckdb::MemoryStream stream{catalog.data(), catalog.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Set<duckdb::ClientContext&>(context);
+  deserializer.Begin();
+  deserializer.ReadList(100, "changes",
+                        [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+                          list.ReadObject([&](duckdb::Deserializer& object) {
+                            ReplayChange(context, target, object);
+                          });
+                        });
+  deserializer.ReadList(101, "lsns",
+                        [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+                          list.ReadObject([&](duckdb::Deserializer& object) {
+                            ReplayLsn(context, target, object);
+                          });
+                        });
+  deserializer.ReadList(102, "sequences",
+                        [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+                          list.ReadObject([&](duckdb::Deserializer& object) {
+                            ReplaySequence(context, target, object);
+                          });
+                        });
+  deserializer.ReadList(103, "secrets",
+                        [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+                          list.ReadObject([&](duckdb::Deserializer& object) {
+                            ReplaySecret(context, target, object);
+                          });
+                        });
+  deserializer.End();
+}
+
+void ReadDatabases(duckdb::ClientContext& context, std::span<uint8_t> catalog,
+                   LoggedDatabases& databases) {
+  if (catalog.empty()) {
+    return;
+  }
   duckdb::MemoryStream stream{catalog.data(), catalog.size()};
   duckdb::BinaryDeserializer deserializer{stream};
   deserializer.Set<duckdb::ClientContext&>(context);
   deserializer.Begin();
   deserializer.ReadList(
     100, "changes", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-      list.ReadObject(
-        [&](duckdb::Deserializer& object) { ReplayChange(context, object); });
+      list.ReadObject([&](duckdb::Deserializer& object) {
+        const auto change = ReadChange(object);
+        if (change.catalog != ClusterCatalog::kRecordId) {
+          return;
+        }
+        if (change.kind == ChangeKind::Create &&
+            change.info->type == duckdb::CatalogType::DATABASE_ENTRY) {
+          databases.insert_or_assign(change.info->oid,
+                                     change.info->GetQualifiedName().Name());
+        } else if (change.kind == ChangeKind::Drop) {
+          databases.erase(change.oid);
+        }
+      });
     });
-  deserializer.ReadList(
-    101, "lsns", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-      list.ReadObject(
-        [&](duckdb::Deserializer& object) { ReplayLsn(context, object); });
-    });
-  deserializer.ReadList(
-    102, "sequences", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-      list.ReadObject(
-        [&](duckdb::Deserializer& object) { ReplaySequence(context, object); });
-    });
-  deserializer.ReadList(
-    103, "secrets", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-      list.ReadObject(
-        [&](duckdb::Deserializer& object) { ReplaySecret(context, object); });
-    });
-  deserializer.End();
 }
 
-void ReplayRecord(duckdb::ClientContext& context, const Log::Range& range,
-                  std::span<uint8_t> payload) {
+void ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
+                  const Log::Range& range, std::span<uint8_t> payload) {
   const auto size = CatalogSize(payload);
   if (size != 0) {
-    ReplayCatalogPart(context, payload.subspan(sizeof(uint32_t), size));
+    ReplayCatalogPart(context, target, payload.subspan(sizeof(uint32_t), size));
   }
   const auto search = payload.subspan(sizeof(uint32_t) + size);
   if (search.empty()) {
@@ -563,7 +630,7 @@ void ReplayRecord(duckdb::ClientContext& context, const Log::Range& range,
   deserializer.ReadList(100, "search",
                         [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
                           list.ReadObject([&](duckdb::Deserializer& object) {
-                            ReplaySection(context, range.begin, object);
+                            ReplaySection(context, target, range.begin, object);
                           });
                         });
   deserializer.End();

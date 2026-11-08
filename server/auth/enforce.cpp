@@ -581,7 +581,8 @@ class Enforcer {
         if (info.type == CatalogType::DATABASE_ENTRY) {
           auto database = duckdb::DatabaseManager::Get(_context).GetDatabase(
             info.GetQualifiedName().Name());
-          if (database && catalog::IsSereneDB(database->GetCatalog())) {
+          if (database && catalog::IsSereneDB(database->GetCatalog()) &&
+              !database->IsReadOnly()) {
             RequireDatabaseUnused(*database);
           }
         }
@@ -741,7 +742,8 @@ class Enforcer {
       return;
     }
     const auto& index = *bind.relation.inverted_index;
-    if (!catalog::IsSereneDB(index.catalog)) {
+    if (!catalog::IsSereneDB(index.catalog) ||
+        index.catalog.GetAttached().IsReadOnly()) {
       RequireServerUsage(index.catalog.GetName());
     }
     if (!bind.IsViewBacked()) {
@@ -764,7 +766,8 @@ class Enforcer {
       CheckIndexScan(get);
       return;
     }
-    if (!catalog::IsSereneDB(table->catalog)) {
+    if (!catalog::IsSereneDB(table->catalog) ||
+        table->catalog.GetAttached().IsReadOnly()) {
       RequireServerUsage(table->catalog.GetName());
     }
     if (Unowned(*table)) {
@@ -1503,7 +1506,8 @@ class Enforcer {
 
   void RequireDatabaseNotBeingCreated(const duckdb::Identifier& name) {
     auto database = duckdb::DatabaseManager::Get(_context).GetDatabase(name);
-    if (!database || !catalog::IsSereneDB(database->GetCatalog())) {
+    if (!database || !catalog::IsSereneDB(database->GetCatalog()) ||
+        database->IsReadOnly()) {
       return;
     }
     if (!ClusterEntry(CatalogType::DATABASE_ENTRY, name.GetIdentifierName())) {

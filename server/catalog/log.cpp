@@ -237,6 +237,26 @@ std::string Log::ChunkName(Lsn begin) {
   return absl::StrFormat("%016x%s", begin, kChunkSuffix);
 }
 
+std::vector<duckdb::unique_ptr<duckdb::FileHandle>> Log::LockChunks(
+  duckdb::FileSystem& fs, const std::filesystem::path& dir) {
+  std::vector<duckdb::unique_ptr<duckdb::FileHandle>> locks;
+  for (const auto& entry : std::filesystem::directory_iterator{dir}) {
+    if (ChunkBegin(entry.path().filename().string())) {
+      locks.push_back(fs.OpenFile(
+        entry.path().string(),
+        duckdb::FileFlags::FILE_FLAGS_READ | duckdb::FileLockType::READ_LOCK));
+    }
+  }
+  return locks;
+}
+
+void Log::Read(
+  duckdb::FileSystem& fs, const std::filesystem::path& dir,
+  absl::FunctionRef<void(Lsn, std::span<uint8_t>)> history,
+  absl::FunctionRef<void(const Range&, std::span<uint8_t>)> apply) {
+  ScanLog(fs, dir, history, apply);
+}
+
 std::optional<Lsn> Log::HistoryCut(const std::filesystem::path& dir) {
   auto fs = duckdb::FileSystem::CreateLocal();
   const auto history = ReadHistory(*fs, dir / kHistoryFile);

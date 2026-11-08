@@ -42,18 +42,26 @@ SELECT count(*) > 0 AS ticked FROM ${__DATABASE__}.public.sfi_ticks;
 ticked
 t
 
-statement ok
-CHECKPOINT postgres;
+connection holder
+query
+SELECT pg_backup_start('sfi') IS NOT NULL AS started;
+----
+started
+t
 
 system ok
-rm -rf $__TEST_DIR__/sfi_copy && mkdir $__TEST_DIR__/sfi_copy && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfi_copy/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfi_copy/catalog.wal
+rm -rf $__TEST_DIR__/sfi_copy && mkdir -p $__TEST_DIR__/sfi_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/log $__TEST_DIR__/sfi_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/[0-9]* $__TEST_DIR__/sfi_copy/engine_v1/
+
+connection holder
+statement ok
+SELECT * FROM pg_backup_stop();
 
 statement ok
 CREATE TABLE sfi_files AS
 SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfi_copy/**');
 
 statement ok
-CREATE SERVER sfi_copy FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfi_copy/5');
+CREATE SERVER sfi_copy FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfi_copy');
 
 query
 SELECT a FROM sfi_dup.main.t;
@@ -65,6 +73,12 @@ query
 SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'sfi_tick';
 ----
 jobs
+1
+
+query
+SELECT count(*) AS servers FROM sfi_copy.pg_catalog.pg_foreign_server WHERE srvname = 'sfi_dup';
+----
+servers
 1
 
 statement ok
@@ -120,7 +134,7 @@ INSERT INTO sfi_big SELECT i FROM range(300000, 300100) t(i);
 
 connection pg database=postgres
 statement ok
-CHECKPOINT postgres;
+CHECKPOINT;
 
 connection watcher
 statement ok

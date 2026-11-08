@@ -9,11 +9,21 @@ CREATE INDEX sfsp_docs_idx ON postgres.public.sfsp_docs USING inverted(id, body)
 statement ok
 INSERT INTO postgres.public.sfsp_docs VALUES (1, 'alpha'), (2, 'beta');
 
-statement ok
-CHECKPOINT postgres;
+connection holder
+query
+SELECT pg_backup_start('sfsp') IS NOT NULL AS started;
+----
+started
+t
 
 system ok
-rm -rf $__TEST_DIR__/sfsp_snap && mkdir $__TEST_DIR__/sfsp_snap && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfsp_snap/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfsp_snap/catalog.wal
+rm -rf $__TEST_DIR__/sfsp_snap && mkdir -p $__TEST_DIR__/sfsp_snap/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/log $__TEST_DIR__/sfsp_snap/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/[0-9]* $__TEST_DIR__/sfsp_snap/engine_v1/
+
+connection holder
+statement ok
+SELECT * FROM pg_backup_stop();
+
+connection default
 
 statement ok
 CREATE SCHEMA sfsp_s;
@@ -28,7 +38,7 @@ statement ok
 SET search_path = sfsp_s, public;
 
 statement ok
-CREATE SERVER sfsp_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfsp_snap/5');
+CREATE SERVER sfsp_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfsp_snap');
 
 query
 SHOW search_path;
@@ -43,7 +53,7 @@ v
 42
 
 statement ok
-ATTACH '${__TEST_DIR__}/sfsp_snap/5' AS sfsp_session (TYPE serenedb, READ_ONLY);
+ATTACH '${__TEST_DIR__}/sfsp_snap' AS sfsp_session (TYPE serenedb, READ_ONLY);
 
 query
 SHOW search_path;

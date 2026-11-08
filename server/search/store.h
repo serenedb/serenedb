@@ -139,7 +139,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   // removes the directory once the last of them lets go. Never set on
   // shutdown or detach, where the directory must survive.
   void MarkDropped() noexcept {
-    if (_writer) {
+    if (_writer && !_read_only) {
       _dropped.store(true, std::memory_order_release);
     }
   }

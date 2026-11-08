@@ -110,7 +110,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto result = duckdb::make_uniq<JobsState>();
   const auto holds_jobs = [](duckdb::AttachedDatabase& database) {
-    return catalog::IsSereneDB(database.GetCatalog());
+    return catalog::IsSereneDB(database.GetCatalog()) && !database.IsReadOnly();
   };
   for (auto& schema :
        duckdb::Catalog::GetAllSchemas(context, false, holds_jobs)) {

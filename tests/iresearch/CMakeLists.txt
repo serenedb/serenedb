@@ -165,6 +165,7 @@ add_executable(
     store/directory_cleaner_tests.cpp
     store/directory_test_case.cpp
     store/memory_index_output_tests.cpp
+    store/overlay_directory_tests.cpp
     store/store_utils_tests.cpp
     utils/bit_packing_tests.cpp
     utils/bit_utils_tests.cpp

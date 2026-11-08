@@ -43,6 +43,7 @@
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/overlay_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -206,8 +207,8 @@ void Store::Open() {
   _dir = std::move(opened.directory);
   _absent = opened.absent;
   _on_disk = opened.on_disk;
-  if (_read_only) {
-    return;
+  if (_read_only && _on_disk) {
+    _dir = std::make_unique<irs::OverlayDirectory>(std::move(_dir));
   }
 
   irs::IndexWriterOptions writer_options;
@@ -326,6 +327,7 @@ bool Store::Settle() {
 }
 
 bool Store::PersistSegments(Lsn before) {
+  SDB_ASSERT(!_read_only);
   const auto unsynced = _table->UnsyncedSegments(before);
   if (unsynced.empty()) {
     return false;
@@ -409,6 +411,7 @@ void Store::ScheduleCooling() {
 
 void Store::CommitStorage(std::string entry,
                           absl::FunctionRef<void(Tick, Tick, Lsn)> apply) {
+  SDB_ASSERT(!_read_only);
   catalog::Transactions::Get().CommitStorage(
     [&] {
       std::vector<uint8_t> record;
@@ -544,7 +547,7 @@ void Store::ApplyOptions(const catalog::InvertedIndexSettings& options) {
 }
 
 void Store::StartTasks() {
-  if (!_writer) {
+  if (!_writer || _read_only) {
     return;
   }
 #ifdef SDB_DEV

@@ -23,8 +23,10 @@
 #include <absl/functional/function_ref.h>
 
 #include <atomic>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <filesystem>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
@@ -51,6 +53,12 @@ class LogicalMergeInto;
 }  // namespace duckdb
 namespace sdb::catalog {
 
+struct ForeignLog {
+  std::filesystem::path dir;
+  duckdb::idx_t database = 0;
+  std::vector<duckdb::unique_ptr<duckdb::FileHandle>> locks;
+};
+
 class SereneDBCatalog final : public BaseCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
@@ -60,6 +68,14 @@ class SereneDBCatalog final : public BaseCatalog {
     : BaseCatalog{db, true},
       _directory{std::move(directory)},
       _durable{durable} {}
+
+  SereneDBCatalog(duckdb::AttachedDatabase& db,
+                  std::shared_ptr<DatabaseDirectory> directory,
+                  ForeignLog foreign)
+    : BaseCatalog{db, true},
+      _directory{std::move(directory)},
+      _durable{false},
+      _foreign{std::make_unique<ForeignLog>(std::move(foreign))} {}
 
   const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
     return _directory;
@@ -99,10 +115,11 @@ class SereneDBCatalog final : public BaseCatalog {
   void LogSequenceValue(const duckdb::SequenceValue& value) final;
   bool IsDropped() const { return _detached.load(std::memory_order_acquire); }
   bool Durable() const final { return _durable; }
-  bool InMemory() final { return !_durable; }
+  bool InMemory() final { return !_durable && !_foreign; }
   std::string GetDBPath() final;
 
   void Initialize(bool load_builtin) final;
+  void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
 
   void OnDetach(duckdb::ClientContext& context) final;
 
@@ -178,6 +195,7 @@ class SereneDBCatalog final : public BaseCatalog {
   EntrySet _servers{true, _oids};
   EntrySet _subscriptions{true, _oids};
   bool _durable;
+  std::unique_ptr<ForeignLog> _foreign;
   std::atomic_bool _detached{false};
 };
 

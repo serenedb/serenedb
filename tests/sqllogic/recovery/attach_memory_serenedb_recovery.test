@@ -16,6 +16,7 @@ statement error
 ATTACH '' AS amsr_nowal (TYPE serenedb, recovery_mode 'NO_WAL_WRITES');
 ----
 db error: ERROR: cannot attach "" as a SereneDB database: a SereneDB database is created with CREATE DATABASE
+HINT: Attach the data directory of another server with READ_ONLY.
 
 
 query

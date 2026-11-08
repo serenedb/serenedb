@@ -129,7 +129,7 @@ std::string_view EntryNoun(duckdb::CatalogType type) {
 }  // namespace
 
 std::shared_ptr<DependentIndex> SharedDependents(duckdb::AttachedDatabase& db) {
-  if (db.IsSystem()) {
+  if (db.IsSystem() || db.IsReadOnly()) {
     return std::make_shared<DependentIndex>();
   }
   return duckdb::Catalog::GetSystemCatalog(db.GetDatabase())

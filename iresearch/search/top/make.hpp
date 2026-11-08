@@ -52,12 +52,10 @@ namespace irs::top {
 template<template<typename...> typename Shape, typename... Parts,
          typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
-  if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., irs::detail::TableFilter*>>(
-      ctx.table, std::forward<Args>(args)...);
-  }
-  return memory::make_managed<Shape<Parts..., utils::Empty>>(
-    utils::Empty{}, std::forward<Args>(args)...);
+  return irs::detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
+    return memory::make_managed<Shape<Parts..., decltype(table)>>(
+      table, std::forward<Args>(args)...);
+  });
 }
 
 inline uint64_t PrunedCandidates(uint64_t docs, const Context& ctx) noexcept {
@@ -67,14 +65,6 @@ inline uint64_t PrunedCandidates(uint64_t docs, const Context& ctx) noexcept {
   const auto k = static_cast<double>(ctx.k);
   return std::min(docs, static_cast<uint64_t>(
                           k * (1 + std::log(static_cast<double>(docs) / k))));
-}
-
-template<typename Make>
-Root::ptr MakePrepared(const Context& ctx, Make&& make) {
-  if (ctx.table != nullptr) {
-    return make(ctx.table);
-  }
-  return make(utils::Empty{});
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);

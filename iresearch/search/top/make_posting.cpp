@@ -38,7 +38,7 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
   const auto& own = *posting.state.reader;
   const auto args = posting.Args(&ctx.fetcher);
   if (meta.docs_count == 1) {
-    return MakePrepared(ctx, [&](auto table) -> Root::ptr {
+    return irs::detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
       auto root = memory::make_managed<SinglePosting<decltype(table)>>(table);
       root->Prepare(meta, segment, own, args);
       return root;
@@ -53,7 +53,7 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
       });
   }
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    return MakePrepared(ctx, [&](auto table) -> Root::ptr {
+    return irs::detail::WithTable(ctx.table, [&](auto table) -> Root::ptr {
       auto root =
         memory::make_managed<Posting<Input, utils::Empty, decltype(table)>>(
           table, std::piecewise_construct, std::forward_as_tuple());

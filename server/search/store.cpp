@@ -46,6 +46,7 @@
 #include <iresearch/store/overlay_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -442,6 +443,7 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot, bool durable) {
   }
   hot->Reader(*ReaderOptions().db, docs);
   OwnSegment written;
+  irs::RefTrackingDirectory tracked{*_dir};
   uint64_t id = 0;
   {
     absl::MutexLock lock{&hot->Mutex()};
@@ -456,7 +458,10 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot, bool durable) {
         written.segment.meta.docs_mask =
           std::make_shared<const irs::DocumentMask>(
             irs::DocumentMaskBuilder{entry.docs_mask}.Finish());
-        irs::index_utils::FlushIndexSegment(*_dir, written.segment, true);
+        irs::index_utils::FlushIndexSegment(tracked, written.segment, true);
+        SDB_IF_FAILURE("search_cleanup_during_cooling") {
+          irs::directory_utils::RemoveAllUnreferenced(*_dir);
+        }
         const std::array<std::string_view, 1> files{written.segment.filename};
         if (durable && !_dir->sync(files)) {
           THROW_SQL_ERROR(

@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok
+CREATE TABLE ccr_rows (id INTEGER PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX ccr_rows_body ON ccr_rows USING inverted (body);
+
+
+statement ok
+INSERT INTO ccr_rows VALUES (1, 'one'), (2, 'two'), (3, 'three');
+
+
+connection loser
+statement ok
+BEGIN;
+
+
+connection loser
+statement ok
+INSERT INTO ccr_rows VALUES (10, 'lost');
+
+
+connection winner
+statement ok
+INSERT INTO ccr_rows VALUES (10, 'won');
+
+
+connection loser
+statement error
+COMMIT;
+----
+db error: ERROR: duplicate key value violates unique constraint "ccr_rows_pkey"
+DETAIL: Key (id)=(10) already exists.
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_cleanup_during_cooling';
+
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) ccr_rows;
+
+
+connection default
+statement ok
+SET sdb_faults = '-search_cleanup_during_cooling';
+
+
+connection default
+query
+SELECT id, body FROM ccr_rows ORDER BY id;
+----
+id	body
+1	one
+2	two
+3	three
+10	won
+
+
+connection default
+statement ok
+CHECKPOINT;
+
+
+connection victim
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection victim
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM ccr_rows ORDER BY id;
+----
+id	body
+1	one
+2	two
+3	three
+10	won
+
+
+connection after_restart
+query
+SELECT id FROM ccr_rows_body WHERE body @@ 'won';
+----
+id
+10

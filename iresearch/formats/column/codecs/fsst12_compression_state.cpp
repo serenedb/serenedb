@@ -23,6 +23,8 @@
 #include <algorithm>
 #include <duckdb/common/bitpacking.hpp>
 
+#include "iresearch/formats/column/codecs/string_compression_function.hpp"
+#include "iresearch/formats/column/codecs/string_compression_loops.tpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 
 namespace irs::codecs::text {
@@ -117,6 +119,12 @@ void Fsst12CompressionState::FinalizeCompress() {
       .symtab = symtab,
     },
     *_out);
+}
+
+const StringCompressionFunction& Fsst12CompressionFunction() {
+  static constexpr auto kFunction =
+    CompressionFunctionOf<Fsst12CompressionState>(ByteCodec::Fsst12);
+  return kFunction;
 }
 
 }  // namespace irs::codecs::text

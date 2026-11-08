@@ -22,7 +22,10 @@
 
 #include <algorithm>
 #include <duckdb/common/bitpacking.hpp>
+#include <memory>
 
+#include "iresearch/formats/column/codecs/string_compression_function.hpp"
+#include "iresearch/formats/column/codecs/string_compression_loops.tpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 
 namespace irs::codecs::text {
@@ -31,7 +34,39 @@ namespace {
 constexpr uint64_t kEncodeExpansion = 2;
 constexpr uint64_t kEncodeSlack = 8;
 
+struct FsstAnalyzeState final : StringAnalyzeState {
+  const Segment* trial = nullptr;
+};
+
+std::unique_ptr<StringAnalyzeState> FsstInitAnalyze(const AnalyzeInput& input) {
+  auto state = std::make_unique<FsstAnalyzeState>();
+  state->config = {.choice = {input.shape, ByteCodec::Fsst}};
+  return state;
+}
+
+bool FsstAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
+  auto& state = base.Cast<FsstAnalyzeState>();
+  state.trial = &input.window.TrialCompress(state.config);
+  return true;
+}
+
+uint64_t FsstFinalAnalyze(StringAnalyzeState& state) {
+  return state.Cast<FsstAnalyzeState>().trial->Size();
+}
+
 }  // namespace
+
+const StringCompressionFunction& FsstCompressionFunction() {
+  static constexpr auto kFunction = [] {
+    auto function =
+      CompressionFunctionOf<FsstCompressionState>(ByteCodec::Fsst);
+    function.init_analyze = &FsstInitAnalyze;
+    function.analyze = &FsstAnalyze;
+    function.final_analyze = &FsstFinalAnalyze;
+    return function;
+  }();
+  return kFunction;
+}
 
 void FsstCompressionState::FinalizeCompress() {
   if (_rows.SegmentShape() == Shape::Dedup) {

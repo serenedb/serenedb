@@ -1,6 +1,7 @@
 target_sources(
     iresearch
     PRIVATE
+        column/codecs/blob_compression_state.cpp
         column/codecs/fsst.cpp
         column/codecs/fsst12.cpp
         column/codecs/fsst12_compression_state.cpp
@@ -15,6 +16,7 @@ target_sources(
         column/codecs/segment_buffer.cpp
         column/codecs/segment_dictionary.cpp
         column/codecs/segment_rows.cpp
+        column/codecs/string_compression_function.cpp
         column/codecs/string_compressor.cpp
         column/codecs/string_picker.cpp
         column/codecs/string_scan.cpp

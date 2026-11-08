@@ -24,7 +24,7 @@
 #include <duckdb/common/types.hpp>
 #include <memory>
 #include <optional>
-#include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/blob_compression_state.tpp"
@@ -58,38 +58,32 @@ class StringCompressor {
       _estimators{estimators},
       _buffers{buffers} {}
 
-  PooledSegment Cut(const Config& config, const StringAccumulator& acc,
-                    uint64_t begin);
-
-  void Compress(const Config& config, const StringAccumulator& acc,
-                uint64_t begin, SegmentSink sink);
-
-  void SealChunks(const Config& config, std::span<const WriteChunk> chunks,
-                  SegmentSink sink);
-
-  PooledSegment TrialCompress(const Config& config,
-                              const StringAccumulator& acc, uint64_t begin,
-                              uint64_t end);
-
- private:
-  struct States {
-    std::optional<BlobCompressionState<Lz4>> lz4;
-    std::optional<BlobCompressionState<Lz4Hc>> lz4_hc;
-    std::optional<BlobCompressionState<Zstd>> zstd;
-    std::optional<BlobCompressionState<Zxc>> zxc;
-    std::optional<FsstCompressionState> fsst;
-    std::optional<FsstPlusCompressionState> fsst_plus;
-    std::optional<OnPairCompressionState> onpair;
-    std::optional<Fsst12CompressionState> fsst12;
-  };
-
-  template<typename F>
-  auto With(const Config& config, F&& f);
-
   template<typename State>
-  State& Get(std::optional<State>& slot);
+  State& StateOf() {
+    auto& slot = std::get<std::optional<State>>(_states);
+    if (!slot) {
+      if constexpr (Sorted(State::kCodec)) {
+        slot.emplace(_type, _dedup, _estimators, _params.segment_target);
+      } else {
+        slot.emplace(_type, _dedup, _estimators);
+      }
+    }
+    return *slot;
+  }
 
   PooledSegment Acquire();
+
+  uint32_t Target() const noexcept { return _params.segment_target; }
+
+ private:
+  using States = std::tuple<std::optional<BlobCompressionState<Lz4>>,
+                            std::optional<BlobCompressionState<Lz4Hc>>,
+                            std::optional<BlobCompressionState<Zstd>>,
+                            std::optional<BlobCompressionState<Zxc>>,
+                            std::optional<FsstCompressionState>,
+                            std::optional<FsstPlusCompressionState>,
+                            std::optional<OnPairCompressionState>,
+                            std::optional<Fsst12CompressionState>>;
 
   const ColCodecParams& _params;
   const duckdb::LogicalType& _type;

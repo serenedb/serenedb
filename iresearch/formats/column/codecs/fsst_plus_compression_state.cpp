@@ -28,6 +28,8 @@
 #include <duckdb/common/types.hpp>
 #include <limits>
 
+#include "iresearch/formats/column/codecs/string_compression_function.hpp"
+#include "iresearch/formats/column/codecs/string_compression_loops.tpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 
 namespace irs::codecs::text {
@@ -220,6 +222,12 @@ void FsstPlusCompressionState::Cleave(uint32_t first_entry) {
       _ids[first_entry + i] = id;
     }
   }
+}
+
+const StringCompressionFunction& FsstPlusCompressionFunction() {
+  static constexpr auto kFunction =
+    CompressionFunctionOf<FsstPlusCompressionState>(ByteCodec::FsstPlus);
+  return kFunction;
 }
 
 }  // namespace irs::codecs::text

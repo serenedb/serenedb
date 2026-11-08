@@ -26,6 +26,7 @@
 #include <string_view>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/string_compression_function.hpp"
 #include "iresearch/formats/column/codecs/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_picker.hpp"
@@ -86,7 +87,9 @@ SealOutcome SealSegments(const StringAccumulator& acc,
     sink(choice, std::move(stats), rows, bytes);
   };
   if (named) {
-    compressor.Compress(text::NamedConfig(*named, params), acc, 0, emit);
+    const auto config = text::NamedConfig(*named, params);
+    text::GetStringCompressionFunction(config).compress(compressor, config, acc,
+                                                        0, emit);
     return outcome;
   }
   text::StringPicker picker{acc, params, tuning, compressor};
@@ -102,7 +105,8 @@ SealOutcome SealSegments(const StringAccumulator& acc,
   emit(config.choice, std::move(*first->stats), first->rows,
        first->bytes.View());
   first.reset();
-  compressor.Compress(config, acc, rest, emit);
+  text::GetStringCompressionFunction(config).compress(compressor, config, acc,
+                                                      rest, emit);
   return outcome;
 }
 
@@ -113,13 +117,14 @@ SealOutcome SealSegments(std::span<const WriteChunk> chunks,
                          duckdb::BufferManager& buffers, SegmentSink sink) {
   text::StringCompressor compressor{params, type, tuning.estimators, buffers};
   SealOutcome outcome{.sealed = true};
-  compressor.SealChunks(text::NamedConfig(named, params), chunks,
-                        [&](StringChoice choice, duckdb::BaseStatistics stats,
-                            uint64_t rows, std::string_view bytes) {
-                          outcome.all_dedup =
-                            outcome.all_dedup && choice.shape == Shape::Dedup;
-                          sink(choice, std::move(stats), rows, bytes);
-                        });
+  const auto config = text::NamedConfig(named, params);
+  text::GetStringCompressionFunction(config).compress_chunks(
+    compressor, config, chunks,
+    [&](StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
+        std::string_view bytes) {
+      outcome.all_dedup = outcome.all_dedup && choice.shape == Shape::Dedup;
+      sink(choice, std::move(stats), rows, bytes);
+    });
   return outcome;
 }
 

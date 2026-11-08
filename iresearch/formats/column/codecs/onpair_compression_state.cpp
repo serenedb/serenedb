@@ -23,6 +23,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "iresearch/formats/column/codecs/string_compression_function.hpp"
+#include "iresearch/formats/column/codecs/string_compression_loops.tpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 
 namespace irs::codecs::text {
@@ -113,6 +115,12 @@ void OnPairCompressionState::Pack(std::span<const duckdb::string_t> entries,
     *out++ = static_cast<char>(acc & 0xFF);
   }
   std::memset(out, 0, kOnPairPadding);
+}
+
+const StringCompressionFunction& OnPairCompressionFunction() {
+  static constexpr auto kFunction =
+    CompressionFunctionOf<OnPairCompressionState>(ByteCodec::OnPair);
+  return kFunction;
 }
 
 }  // namespace irs::codecs::text

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 
+#include "iresearch/formats/column/codecs/string_compression_function.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
@@ -67,7 +68,8 @@ Segment& StringWindow::TrialCompress(const Config& config) {
     return *seg;
   }
   auto& seg =
-    *_owned.emplace_back(_compressor.TrialCompress(config, _acc, _begin, _end));
+    *_owned.emplace_back(GetStringCompressionFunction(config).trial_compress(
+      _compressor, config, _acc, _begin, _end));
   _encoded.emplace_back(&seg);
   return seg;
 }

@@ -234,6 +234,17 @@ jobs:
             python3 scripts/ci/ci.py upload "$f" "artifacts/packages-${LOCATION}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/$f"
           done
 
+      - name: Upload packages to GitHub
+        if: always() && steps.package.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-${{ inputs.LOCATION }}-${{ github.run_number }}
+          path: |
+            serenedb_*.deb
+            serenedb-*-linux-amd64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v7

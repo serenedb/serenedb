@@ -328,18 +328,20 @@ bool Store::Settle() {
 
 bool Store::PersistSegments(Lsn before) {
   SDB_ASSERT(!_read_only);
-  const auto unsynced = _table->UnsyncedSegments(before);
+  auto unsynced = _table->UnsyncedSegments(before);
   if (unsynced.empty()) {
     return false;
   }
-  for (const auto& segment : unsynced) {
-    std::vector<std::string_view> files{segment.files.begin(),
-                                        segment.files.end()};
-    files.emplace_back(segment.meta_file);
+  SDB_PARK_ONCE_ON_FAILURE("search_persist_before_sync");
+  for (const auto& unit : unsynced) {
+    const auto& segment = unit->segment;
+    std::vector<std::string_view> files{segment.meta.files.begin(),
+                                        segment.meta.files.end()};
+    files.emplace_back(segment.filename);
     if (!_dir->sync(files)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                       ERR_MSG("failed to sync the files of segment '",
-                              segment.meta_file, "'"));
+                              segment.filename, "'"));
     }
   }
   SyncSegments();
@@ -347,12 +349,12 @@ bool Store::PersistSegments(Lsn before) {
   catalog::Transactions::Get().CommitStorage(
     [&] {
       duckdb::vector<std::string> entries;
-      for (const auto& segment : unsynced) {
-        if (_table->Unsynced(segment.id)) {
-          logged.push_back(segment.id);
-          entries.push_back(LogCooled({.id = segment.id,
-                                       .meta_file = segment.meta_file,
-                                       .docs = segment.docs}));
+      for (const auto& unit : unsynced) {
+        if (_table->Unsynced(unit->id)) {
+          logged.push_back(unit->id);
+          entries.push_back(LogCooled({.id = unit->id,
+                                       .meta_file = unit->segment.filename,
+                                       .docs = unit->docs}));
         }
       }
       std::vector<uint8_t> record;
@@ -362,6 +364,11 @@ bool Store::PersistSegments(Lsn before) {
       return record;
     },
     [&](Tick, Tick, Lsn lsn) { _table->Synced(logged, lsn); });
+  unsynced.clear();
+  if (const auto cleanup = CleanupUnsafe(); !cleanup.res.ok()) {
+    SDB_WARN(SEARCH, "cleaning up table ", _id, " after persisting ",
+             logged.size(), " segment(s) failed: ", cleanup.res.message());
+  }
   return true;
 }
 
@@ -603,6 +610,7 @@ ResultWithTime Store::CleanupUnsafe() {
     _table->Collect(catalog::Transactions::Get().OldestSnapshot());
   }
   auto result = _durability.Cleanup(*_dir);
+  SDB_PARK_ONCE_ON_FAILURE("search_cleanup_after_remove");
   const auto time_ms = MillisSince(begin);
   _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};

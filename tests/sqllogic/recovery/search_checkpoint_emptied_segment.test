@@ -1,0 +1,120 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ckpt_emptied;
+
+
+statement ok
+CREATE TABLE ckpt_emptied.public.docs (id INTEGER, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX docs_idx ON ckpt_emptied.public.docs USING inverted (body);
+
+
+statement ok
+INSERT INTO ckpt_emptied.public.docs SELECT i, 'base' FROM range(0, 1000) r(i);
+
+
+query
+SELECT count(*) AS n FROM ckpt_emptied.public.docs_idx WHERE body @@ 'base';
+----
+n
+1000
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS n FROM ckpt_emptied.public.docs;
+----
+n
+1000
+
+
+connection default
+statement ok
+DELETE FROM ckpt_emptied.public.docs;
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_persist_before_sync';
+
+
+connection checkpointer
+statement async ok
+CHECKPOINT ckpt_emptied;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_persist_before_sync:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_cleanup_after_remove';
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_cleanup_after_remove:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_cleanup_after_remove:release';
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_persist_before_sync:release';
+
+
+connection checkpointer
+wait
+
+
+system ok
+test -z "$(find ${SDB_DATADIR}/engine_v1 -type f -name '_*')"
+
+
+connection victim
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection victim
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM ckpt_emptied.public.docs;
+----
+n
+0
+
+
+connection after_restart
+statement ok
+INSERT INTO ckpt_emptied.public.docs VALUES (1, 'after');
+
+
+connection after_restart
+query
+SELECT id, body FROM ckpt_emptied.public.docs_idx WHERE body @@ 'after';
+----
+id	body
+1	after

@@ -907,18 +907,16 @@ void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
   _retired.erase(hot.get());
 }
 
-std::vector<UnsyncedSegment> Table::UnsyncedSegments(Lsn before) const {
-  std::vector<UnsyncedSegment> segments;
+std::vector<std::shared_ptr<const TableUnit>> Table::UnsyncedSegments(
+  Lsn before) const {
+  std::vector<std::shared_ptr<const TableUnit>> units;
   for (const auto& unit : State()->units) {
     if (unit->hot || unit->replaced_at != 0 || unit->first_lsn >= before) {
       continue;
     }
-    segments.push_back({.id = unit->id,
-                        .meta_file = unit->segment.filename,
-                        .files = unit->segment.meta.files,
-                        .docs = unit->docs});
+    units.push_back(unit);
   }
-  return segments;
+  return units;
 }
 
 bool Table::Unsynced(uint64_t id) const {

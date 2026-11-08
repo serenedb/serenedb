@@ -6,6 +6,9 @@ hash-threshold 100
 # typed columnstore column (BIGINT / STRUCT(hi, lo)); store_pk = 'none'
 # stores no PK at all.
 
+statement ok
+SET preserve_insertion_order = true;
+
 statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 2, 'anchin reads manga'

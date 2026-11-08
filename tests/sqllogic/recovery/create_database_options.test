@@ -10,6 +10,10 @@ CREATE DATABASE plain_db;
 
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 CREATE TABLE opt_db.public.t AS SELECT i FROM range(300000) r(i);
 
 
@@ -44,10 +48,11 @@ opt_options	plain_options
 
 query
 SELECT (SELECT string_agg(DISTINCT compression, ',') FROM pragma_storage_info('opt_db.public.t') WHERE column_name = 'i') AS opt_codec,
+       (SELECT max(count) FROM pragma_storage_info('opt_db.public.t') WHERE column_name = 'i') AS opt_max_rows,
        (SELECT string_agg(DISTINCT compression, ',') FROM pragma_storage_info('plain_db.public.t') WHERE column_name = 'i') AS plain_codec;
 ----
-opt_codec	plain_codec
-Uncompressed	BitPacking
+opt_codec	opt_max_rows	plain_codec
+Uncompressed	2047	BitPacking
 
 
 statement error option "storage_version" not recognized

@@ -10,6 +10,9 @@ hash-threshold 100
 # wired in a follow-up; today such queries surface a "not yet supported"
 # error.
 
+statement ok
+SET preserve_insertion_order = true;
+
 statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 2, 'anchin reads manga'

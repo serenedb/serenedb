@@ -23,19 +23,16 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <iterator>
 #include <limits>
-#include <span>
 
 #include "iresearch/formats/column/codecs/lz4.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
 namespace {
 
 constexpr double kLevelTolerance = 0.02;
 constexpr double kWideFramesGain = 0.03;
-constexpr uint8_t kFlushLevels[] = {1};
-constexpr uint8_t kMergeLevels[] = {1, 4, 6};
 constexpr auto kLeaf = static_cast<size_t>(ByteCodec::Lz4);
 
 bool Cheap(const Config& config) noexcept {
@@ -44,11 +41,10 @@ bool Cheap(const Config& config) noexcept {
 
 }  // namespace
 
-Estimate AnalyzeLz4(StringWindow& window, Shape shape, WriteTier tier,
+Estimate AnalyzeLz4(StringWindow& window, Shape shape, const Ladder& ladder,
                     bool tune, TunedParameters& tuned) {
-  const std::span<const uint8_t> levels =
-    tier == WriteTier::Flush ? std::span<const uint8_t>{kFlushLevels}
-                             : std::span<const uint8_t>{kMergeLevels};
+  const auto levels = ladder.levels;
+  SDB_ASSERT(!levels.empty() && levels.size() <= kMaxLadderLevels);
   Config config{.choice = {shape, ByteCodec::Lz4}};
   if (!tune) {
     config.level = absl::c_linear_search(levels, tuned.level[kLeaf])
@@ -58,7 +54,7 @@ Estimate AnalyzeLz4(StringWindow& window, Shape shape, WriteTier tier,
     return {config, Cheap(config) ? window.Encode(config).Size()
                                   : window.Price(config)};
   }
-  uint64_t prices[std::size(kMergeLevels)];
+  uint64_t prices[kMaxLadderLevels];
   uint64_t lowest = std::numeric_limits<uint64_t>::max();
   for (size_t i = 0; i < levels.size(); ++i) {
     config.level = levels[i];
@@ -81,7 +77,7 @@ Estimate AnalyzeLz4(StringWindow& window, Shape shape, WriteTier tier,
       best = {candidate, bytes};
     }
   };
-  if (tier != WriteTier::Flush) {
+  if (ladder.local) {
     prefer(FrameLayout::Local, 0.0);
   }
   prefer(FrameLayout::Wide, kWideFramesGain);

@@ -44,6 +44,13 @@ struct Estimate {
   uint64_t bytes = 0;
 };
 
+inline constexpr size_t kMaxLadderLevels = 4;
+
+struct Ladder {
+  std::span<const uint8_t> levels;
+  bool local = false;
+};
+
 class StringWindow {
  public:
   StringWindow(const StringAccumulator& acc, SegmentEncoder& encoder,

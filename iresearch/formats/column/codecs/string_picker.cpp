@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/codecs/string_picker.hpp"
 
 #include <limits>
+#include <span>
 
 #include "iresearch/formats/column/codecs/fsst_analysis.hpp"
 #include "iresearch/formats/column/codecs/lz4_analysis.hpp"
@@ -37,8 +38,44 @@ constexpr uint64_t kPlainMinSaving = 4096;
 constexpr uint64_t kDedupMinRepeat = 2;
 constexpr uint64_t kLz4MaxRatio = 255;
 constexpr uint64_t kTuneMinEntries = 2;
-constexpr double kFsstPreference = 0.05;
 constexpr uint8_t kLz4Fast = 1;
+
+using Analyze = Estimate (*)(StringWindow&, Shape, const Ladder&, bool,
+                             TunedParameters&);
+
+struct LeafCandidate {
+  Analyze analyze;
+  Ladder ladder;
+};
+
+struct TierCandidates {
+  std::span<const LeafCandidate> leaves;
+  double fsst_preference = 0;
+};
+
+constexpr uint8_t kLz4FlushLevels[] = {1};
+constexpr uint8_t kLz4MergeLevels[] = {1, 4, 6};
+constexpr uint8_t kZxcLevels[] = {1, 3};
+
+constexpr LeafCandidate kFlushLeaves[] = {
+  {&AnalyzeLz4, {.levels = kLz4FlushLevels}},
+};
+
+constexpr LeafCandidate kMergeLeaves[] = {
+  {&AnalyzeLz4, {.levels = kLz4MergeLevels, .local = true}},
+  {&AnalyzeZxc, {.levels = kZxcLevels, .local = true}},
+};
+
+constexpr TierCandidates kFlushCandidates{
+  .leaves = kFlushLeaves,
+  .fsst_preference = 0.05,
+};
+
+constexpr TierCandidates kMergeCandidates{.leaves = kMergeLeaves};
+
+const TierCandidates& CandidatesOf(WriteTier tier) noexcept {
+  return tier == WriteTier::Flush ? kFlushCandidates : kMergeCandidates;
+}
 
 bool Repeats(uint64_t entries, uint64_t values) noexcept {
   return entries * kDedupMinRepeat <= values;
@@ -119,10 +156,10 @@ Segment* StringPicker::Pick(Segment& first, bool drift) {
       best = candidate;
     }
   };
+  const auto& candidates = CandidatesOf(_params.tier);
   consider(AnalyzeFsst(window, shape));
-  consider(AnalyzeLz4(window, shape, _params.tier, tune, tuned));
-  if (_params.tier != WriteTier::Flush) {
-    consider(AnalyzeZxc(window, shape, tune, tuned));
+  for (const auto& leaf : candidates.leaves) {
+    consider(leaf.analyze(window, shape, leaf.ladder, tune, tuned));
   }
   if (tune) {
     tuned.done = true;
@@ -133,12 +170,12 @@ Segment* StringPicker::Pick(Segment& first, bool drift) {
       picked = seg;
     }
   }
-  if (_params.tier == WriteTier::Flush &&
+  if (candidates.fsst_preference > 0 &&
       picked->config.choice.leaf != ByteCodec::Fsst) {
     if (auto* fsst = window.Encoded({.choice = {shape, ByteCodec::Fsst}});
-        fsst &&
-        static_cast<double>(fsst->Size()) <=
-          static_cast<double>(picked->Size()) * (1.0 + kFsstPreference)) {
+        fsst && static_cast<double>(fsst->Size()) <=
+                  static_cast<double>(picked->Size()) *
+                    (1.0 + candidates.fsst_preference)) {
       picked = fsst;
     }
   }

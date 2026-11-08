@@ -23,11 +23,10 @@
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/formats/column/codecs/string_window.hpp"
-#include "iresearch/index/column_info.hpp"
 
 namespace irs::codecs::text {
 
-Estimate AnalyzeLz4(StringWindow& window, Shape shape, WriteTier tier,
+Estimate AnalyzeLz4(StringWindow& window, Shape shape, const Ladder& ladder,
                     bool tune, TunedParameters& tuned);
 
 }  // namespace irs::codecs::text

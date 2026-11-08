@@ -23,33 +23,35 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <iterator>
 #include <limits>
+
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
 namespace {
 
 constexpr double kLevelTolerance = 0.02;
 constexpr double kWideFramesGain = 0.03;
-constexpr uint8_t kLevels[] = {1, 3};
 constexpr auto kLeaf = static_cast<size_t>(ByteCodec::Zxc);
 
 }  // namespace
 
-Estimate AnalyzeZxc(StringWindow& window, Shape shape, bool tune,
-                    TunedParameters& tuned) {
+Estimate AnalyzeZxc(StringWindow& window, Shape shape, const Ladder& ladder,
+                    bool tune, TunedParameters& tuned) {
+  const auto levels = ladder.levels;
+  SDB_ASSERT(!levels.empty() && levels.size() <= kMaxLadderLevels);
   Config config{.choice = {shape, ByteCodec::Zxc}};
   if (!tune) {
-    config.level = absl::c_linear_search(kLevels, tuned.level[kLeaf])
+    config.level = absl::c_linear_search(levels, tuned.level[kLeaf])
                      ? tuned.level[kLeaf]
-                     : kLevels[0];
+                     : levels.front();
     config.layout = tuned.layout[kLeaf];
     return {config, window.Price(config)};
   }
-  uint64_t prices[std::size(kLevels)];
+  uint64_t prices[kMaxLadderLevels];
   uint64_t lowest = std::numeric_limits<uint64_t>::max();
-  for (size_t i = 0; i < std::size(kLevels); ++i) {
-    config.level = kLevels[i];
+  for (size_t i = 0; i < levels.size(); ++i) {
+    config.level = levels[i];
     prices[i] = window.Price(config);
     lowest = std::min(lowest, prices[i]);
   }
@@ -58,7 +60,7 @@ Estimate AnalyzeZxc(StringWindow& window, Shape shape, bool tune,
          static_cast<double>(lowest) * (1.0 + kLevelTolerance)) {
     ++rung;
   }
-  config.level = kLevels[rung];
+  config.level = levels[rung];
   Estimate best{config, prices[rung]};
   const auto prefer = [&](FrameLayout layout, double gain) {
     auto candidate = best.config;
@@ -69,7 +71,9 @@ Estimate AnalyzeZxc(StringWindow& window, Shape shape, bool tune,
       best = {candidate, bytes};
     }
   };
-  prefer(FrameLayout::Local, 0.0);
+  if (ladder.local) {
+    prefer(FrameLayout::Local, 0.0);
+  }
   prefer(FrameLayout::Wide, kWideFramesGain);
   tuned.level[kLeaf] = best.config.level;
   tuned.layout[kLeaf] = best.config.layout;

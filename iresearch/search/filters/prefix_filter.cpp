@@ -41,48 +41,36 @@
 namespace irs {
 namespace {
 
-class ByPrefixIterator : public WrappedTermIterator {
+class ByPrefixIterator : public SeekFirstTermIterator<ByPrefixIterator> {
  public:
   ByPrefixIterator(const TermReader& reader, bytes_view prefix)
-    : WrappedTermIterator{reader.IteratorUntil(UpperBoundOf(prefix))},
+    : SeekFirstTermIterator{reader.IteratorUntil(UpperBoundOf(prefix))},
       _prefix{prefix} {}
 
+  bool Start() { return SeekResult::End != _impl->seek_ge(_prefix); }
+
   bool next() final {
-    if (_started) {
-      if (!_impl->next()) {
-        return false;
-      }
-    } else {
-      _started = true;
-      if (SeekResult::End == _impl->seek_ge(_prefix)) {
-        return false;
-      }
-    }
-    return PrefixAcceptor{_prefix}(_impl->value());
+    return Step() && PrefixAcceptor{_prefix}(_impl->value());
   }
 
  private:
   bytes_view _prefix;
-  bool _started{false};
 };
 
-class ByPrefixesIterator : public WrappedTermIterator {
+class ByPrefixesIterator : public SeekFirstTermIterator<ByPrefixesIterator> {
  public:
   ByPrefixesIterator(const TermReader& reader,
                      std::span<const bstring> prefixes)
-    : WrappedTermIterator{reader.iterator()}, _prefixes{prefixes} {}
+    : SeekFirstTermIterator{reader.iterator()}, _prefixes{prefixes} {}
+
+  bool Start() {
+    return !_prefixes.empty() &&
+           SeekResult::End != _impl->seek_ge(_prefixes.front());
+  }
 
   bool next() final {
-    if (_started) {
-      if (!_impl->next()) {
-        return false;
-      }
-    } else {
-      _started = true;
-      if (_prefixes.empty() ||
-          SeekResult::End == _impl->seek_ge(_prefixes.front())) {
-        return false;
-      }
+    if (!Step()) {
+      return false;
     }
     while (true) {
       const auto term = _impl->value();
@@ -103,7 +91,6 @@ class ByPrefixesIterator : public WrappedTermIterator {
  private:
   std::span<const bstring> _prefixes;
   size_t _current{0};
-  bool _started{false};
 };
 
 struct PrefixesAcceptor {

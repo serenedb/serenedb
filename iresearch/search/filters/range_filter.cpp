@@ -41,39 +41,33 @@ bool IsEmptyRange(const ByRangeOptions::range_type& rng) noexcept {
           rng.max_type != BoundType::Inclusive);
 }
 
-class ByRangeIterator : public WrappedTermIterator {
+class ByRangeIterator : public SeekFirstTermIterator<ByRangeIterator> {
  public:
   ByRangeIterator(const TermReader& reader,
                   const ByRangeFilterOptions::range_type& range)
-    : WrappedTermIterator{reader.IteratorUntil(
+    : SeekFirstTermIterator{reader.IteratorUntil(
         range.max_type == BoundType::Unbounded ? bytes_view{}
                                                : bytes_view{range.max})},
       _range{&range} {}
 
-  bool next() final {
-    bool res = false;
-    if (_started) {
-      res = _impl->next();
-    } else {
-      _started = true;
-      switch (_range->min_type) {
-        case BoundType::Unbounded:
-          res = _impl->next();
-          break;
-        case BoundType::Inclusive:
-          res = seek_min<true>(*_impl, _range->min);
-          break;
-        case BoundType::Exclusive:
-          res = seek_min<false>(*_impl, _range->min);
-          break;
-      }
+  bool Start() {
+    switch (_range->min_type) {
+      case BoundType::Unbounded:
+        return _impl->next();
+      case BoundType::Inclusive:
+        return seek_min<true>(*_impl, _range->min);
+      case BoundType::Exclusive:
+        return seek_min<false>(*_impl, _range->min);
     }
-    return res && RangeMaxAcceptor{_range}(_impl->value());
+    SDB_UNREACHABLE();
+  }
+
+  bool next() final {
+    return Step() && RangeMaxAcceptor{_range}(_impl->value());
   }
 
  private:
   const ByRangeFilterOptions::range_type* _range;
-  bool _started{false};
 };
 
 }  // namespace

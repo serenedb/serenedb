@@ -51,7 +51,6 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/file_output.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -201,9 +200,8 @@ irs::DirectoryReader LoadIndex(duckdb::DatabaseInstance& db,
                                std::span<const IndexFile> files) {
   const auto root = absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "docs");
   for (const auto& file : files) {
-    auto out = irs::FileOutput::Open(fs, root, file.name, {}, false);
-    out->WriteData(file.bytes.data(), file.bytes.size());
-    out->Close();
+    fs.AddFile(absl::StrCat(root, "/", file.name), file.bytes.data(),
+               file.bytes.size());
   }
   return irs::DirectoryReader{
     db, fs, root, {}, [](duckdb::BinaryDeserializer& payload) {

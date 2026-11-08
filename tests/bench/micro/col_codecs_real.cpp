@@ -317,7 +317,7 @@ struct Built {
   uint64_t ours = 0;
 };
 
-Built ColBuild(irs::Directory& dir, const ColArm& arm) {
+void ColBuild(irs::Directory& dir, const ColArm& arm) {
   const auto& data = Data();
   irs::ColWriter w{dir, kSeg, CsDb(), Tier()};
   auto& cw = w.OpenColumn(
@@ -331,13 +331,28 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
     pos += data.counts[i];
   }
   w.Commit(pos);
+}
+
+Built Measure(irs::Directory& dir, const ColArm& arm) {
+  const auto& data = Data();
+  irs::ColReader reader{dir, std::string{kSeg}, CsDb(),
+                        irs::IOAdvice::SEQUENTIAL};
+  const auto* col = reader.Column(kField);
+  if (col == nullptr) {
+    std::fprintf(stderr, "col_codecs_real: column missing\n");
+    std::abort();
+  }
+  const auto data_blocks = col->DataBlocks();
+  const auto validity_blocks = col->Validity()
+                                 ? col->Validity()->DataBlocks()
+                                 : std::span<const irs::ColumnBlockMeta>{};
   if (std::getenv("SDB_BENCH_BREAKDOWN") &&
       data.type.InternalType() == duckdb::PhysicalType::VARCHAR) {
     auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
     std::vector<uint8_t> file(in->Length());
     in->ReadData(file.data(), file.size());
     uint64_t parts[7]{};
-    for (const auto& block : cw.Meta().data) {
+    for (const auto& block : data_blocks) {
       if (!block.codec || block.byte_size == 0 ||
           !duckdb::IsSereneDBCompressionType(block.codec->type)) {
         continue;
@@ -377,20 +392,20 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
         }
       }
     };
-    mix(cw.Meta().data);
-    mix(cw.Meta().validity);
+    mix(data_blocks);
+    mix(validity_blocks);
     std::fprintf(stderr, "hash %s %016llx\n", arm.name,
                  static_cast<unsigned long long>(hash));
   }
   Built built;
-  for (const auto& block : cw.Meta().data) {
+  for (const auto& block : data_blocks) {
     built.bytes += block.byte_size;
     if (block.codec &&
         block.codec->type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
       built.ours += block.tuple_count;
     }
   }
-  for (const auto& block : cw.Meta().validity) {
+  for (const auto& block : validity_blocks) {
     built.bytes += block.byte_size;
   }
   return built;
@@ -603,7 +618,8 @@ ColSeg& GetColSeg(const ColArm* arm) {
   if (!slot) {
     slot = std::make_unique<ColSeg>();
     MakeSegDirectory(*slot, *arm);
-    const auto built = ColBuild(*slot->dir, *arm);
+    ColBuild(*slot->dir, *arm);
+    const auto built = Measure(*slot->dir, *arm);
     slot->bytes = built.bytes;
     slot->ours = built.ours;
     OpenReader(*slot);
@@ -625,12 +641,14 @@ void Counters(benchmark::State& state, const ColSeg& seg) {
 }
 
 void ColSeal(benchmark::State& state, const ColArm* arm) {
-  Built built;
   for (auto _ : state) {
     irs::MemoryDirectory dir{};
-    built = ColBuild(dir, *arm);
+    ColBuild(dir, *arm);
     benchmark::DoNotOptimize(&dir);
   }
+  irs::MemoryDirectory dir{};
+  ColBuild(dir, *arm);
+  const auto built = Measure(dir, *arm);
   Counters(state, built.bytes, built.ours);
 }
 

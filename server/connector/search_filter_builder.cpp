@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <re2/regexp.h>
@@ -71,6 +72,8 @@
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
+#include <utf8proc_wrapper.hpp>
+#include <vector>
 
 #include "comparison_op.hpp"
 #include "connector/common.h"
@@ -1451,6 +1454,91 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSEndsWithLike(
                 duckdb::Value(std::move(pattern)))));
 }
 
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWithLike(
+  std::string_view literal) {
+  std::string pattern;
+  pattern.reserve(literal.size() * 2 + 1);
+  AppendEscapedLikePattern(literal, pattern);
+  pattern.push_back('%');
+  return MakeTSQueryCall(
+    kTSQLike, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                duckdb::Value(std::move(pattern)))));
+}
+
+const irs::containers::FlatHashMap<int32_t, std::vector<int32_t>>&
+LowercasePreimages() {
+  static const auto kPreimages = [] {
+    irs::containers::FlatHashMap<int32_t, std::vector<int32_t>> preimages;
+    for (int32_t cp = 0; cp <= 0x10FFFF; ++cp) {
+      if (cp >= 0xD800 && cp <= 0xDFFF) {
+        continue;
+      }
+      const auto lower = duckdb::Utf8Proc::CodepointToLower(cp);
+      if (lower == cp) {
+        continue;
+      }
+      auto& members = preimages[lower];
+      if (members.empty()) {
+        members.push_back(lower);
+      }
+      members.push_back(cp);
+    }
+    return preimages;
+  }();
+  return kPreimages;
+}
+
+void AppendRegexpCodepoint(int32_t cp, std::string& out) {
+  if (cp < 0x80 && absl::ascii_isalnum(static_cast<unsigned char>(cp))) {
+    out.push_back(static_cast<char>(cp));
+    return;
+  }
+  absl::StrAppend(&out, "\\x{", absl::Hex(cp), "}");
+}
+
+void AppendCaseless(int32_t cp, std::string& out) {
+  const auto lower = duckdb::Utf8Proc::CodepointToLower(cp);
+  const auto& preimages = LowercasePreimages();
+  const auto it = preimages.find(lower);
+  if (it == preimages.end()) {
+    AppendRegexpCodepoint(lower, out);
+    return;
+  }
+  out.push_back('[');
+  for (const auto member : it->second) {
+    AppendRegexpCodepoint(member, out);
+  }
+  out.push_back(']');
+}
+
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSILike(
+  std::string_view literal) {
+  std::string regexp = "(?s)";
+  regexp.reserve(literal.size() * 4 + regexp.size());
+  bool escaped = false;
+  for (size_t i = 0; i < literal.size();) {
+    int size = 0;
+    const auto cp = duckdb::Utf8Proc::UTF8ToCodepoint(literal.data() + i, size,
+                                                      literal.size() - i);
+    i += size;
+    if (escaped) {
+      AppendCaseless(cp, regexp);
+      escaped = false;
+    } else if (cp == '\\') {
+      escaped = true;
+    } else if (cp == '%') {
+      regexp += ".*";
+    } else if (cp == '_') {
+      regexp += '.';
+    } else {
+      AppendCaseless(cp, regexp);
+    }
+  }
+  return MakeTSQueryCall(
+    kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                  duckdb::Value(std::move(regexp)))));
+}
+
 bool AnchoredAtText(re2::Regexp* re, bool start) {
   while (re->op() == re2::kRegexpCapture || re->op() == re2::kRegexpConcat) {
     re =
@@ -1496,6 +1584,13 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
                   duckdb::Value(TSRegexpPattern(literal)))));
 }
 
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSFullRegexp(
+  std::string_view literal) {
+  return MakeTSQueryCall(
+    kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                  duckdb::Value(literal))));
+}
+
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
   std::string_view literal) {
   return MakeTSQueryCall(
@@ -1503,29 +1598,49 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
                 duckdb::Value(literal))));
 }
 
-using AnalyzerPredicate = bool (*)(irs::TypeInfo::type_id);
-
-bool IsKeywordAnalyzer(irs::TypeInfo::type_id t) {
-  return t == irs::Type<irs::KeywordTokenizer>::id();
-}
-
-bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
-  return t == irs::Type<irs::KeywordTokenizer>::id() ||
-         t == irs::Type<irs::analysis::WildcardTokenizer>::id();
-}
-
-const irs::containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
-  kBuiltinBuilder = {
-    {"contains", &BuildTSContainsLike},
-    {"^@", &BuildTSStartsWith},
-    {"starts_with", &BuildTSStartsWith},
-    {"prefix", &BuildTSStartsWith},
-    {"suffix", &BuildTSEndsWithLike},
-    {"ends_with", &BuildTSEndsWithLike},
-    {"regexp_matches", &BuildTSRegexp},
-    {"regexp_like", &BuildTSRegexp},
-    {"~~", &BuildTSLike},
+struct StringBuiltin {
+  StringBuiltinBuilder keyword;
+  StringBuiltinBuilder wildcard;
+  bool like_pattern = false;
+  bool per_term = false;
 };
+
+const irs::containers::FlatHashMap<std::string_view, StringBuiltin>
+  kBuiltinBuilder = {
+    {"contains", {&BuildTSContainsLike, &BuildTSContainsLike}},
+    {"^@", {&BuildTSStartsWith, &BuildTSStartsWithLike}},
+    {"starts_with", {&BuildTSStartsWith, &BuildTSStartsWithLike}},
+    {"prefix", {&BuildTSStartsWith, &BuildTSStartsWithLike}},
+    {"suffix", {&BuildTSEndsWithLike, &BuildTSEndsWithLike}},
+    {"ends_with", {&BuildTSEndsWithLike, &BuildTSEndsWithLike}},
+    {"regexp_matches", {&BuildTSRegexp, &BuildTSRegexp}},
+    {"regexp_like", {&BuildTSRegexp, &BuildTSRegexp}},
+    {"regexp_full_match", {&BuildTSFullRegexp, &BuildTSFullRegexp}},
+    {"~~", {&BuildTSLike, &BuildTSLike, true, true}},
+    {"~~*", {&BuildTSILike, &BuildTSILike, true}},
+};
+
+const irs::containers::FlatHashMap<std::string_view, std::string_view>
+  kNegatedPatternFunction = {
+    {"!~~", "~~"},
+    {"!~~*", "~~*"},
+    {"not_like_escape", "like_escape"},
+    {"not_ilike_escape", "ilike_escape"},
+};
+
+std::optional<bool> RegexpCaseInsensitive(std::string_view options) {
+  bool insensitive = false;
+  for (const char option : options) {
+    if (option == 'i') {
+      insensitive = true;
+    } else if (option == 'c') {
+      insensitive = false;
+    } else {
+      return std::nullopt;
+    }
+  }
+  return insensitive;
+}
 
 absl::Status FromFunctionExpression(
   BoolTarget filter, const FilterContext& ctx,
@@ -1549,8 +1664,15 @@ absl::Status FromFunctionExpression(
     return FromInetNetworkOp(filter, ctx, *inet);
   }
 
+  FilterContext pattern_ctx = ctx;
+  if (const auto negated = kNegatedPatternFunction.find(name);
+      negated != kNegatedPatternFunction.end()) {
+    name = negated->second;
+    pattern_ctx.negated = !ctx.negated;
+  }
+
   std::string_view escape = "\\";
-  if (name == "like_escape") {
+  if (name == "like_escape" || name == "ilike_escape") {
     SDB_ASSERT(args.size() == 3);
     const auto* escape_val = TryGetConstant(*args[2]);
     if (!escape_val || escape_val->IsNull() ||
@@ -1565,13 +1687,31 @@ absl::Status FromFunctionExpression(
     }
     escape = escape_str;
     args = args.subspan(0, 2);
-    name = "~~";
+    name = name == "like_escape" ? "~~" : "~~*";
+  }
+
+  bool case_insensitive = false;
+  if (args.size() == 3 &&
+      (name == "regexp_matches" || name == "regexp_full_match")) {
+    const auto* options_val = TryGetConstant(*args[2]);
+    if (!options_val || options_val->IsNull() ||
+        options_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+      return absl::InvalidArgumentError(
+        absl::StrCat(name, " options must be a non-null VARCHAR constant"));
+    }
+    const auto insensitive =
+      RegexpCaseInsensitive(duckdb::StringValue::Get(*options_val));
+    if (!insensitive) {
+      return absl::UnimplementedError(
+        absl::StrCat(name, ": only the 'c' and 'i' options are indexed"));
+    }
+    case_insensitive = *insensitive;
+    args = args.subspan(0, 2);
   }
 
   if (args.size() == 2) {
-    auto builtin = kBuiltinBuilder.find(name);
-    if (auto builder =
-          builtin != kBuiltinBuilder.end() ? builtin->second : nullptr) {
+    if (const auto builtin = kBuiltinBuilder.find(name);
+        builtin != kBuiltinBuilder.end()) {
       if (args[0]->GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
         return absl::UnimplementedError(
           absl::StrCat(func.Function().GetName().GetIdentifierName(),
@@ -1585,15 +1725,15 @@ absl::Status FromFunctionExpression(
           absl::StrCat(name, " must be a non-null VARCHAR constant"));
       }
       std::string pattern{duckdb::StringValue::Get(*pattern_val)};
-      auto validator = &IsKeywordAnalyzer;
-
-      if (builder == &BuildTSLike) {
+      if (builtin->second.like_pattern) {
         pattern = LikeEscapePattern(pattern, escape);
         if (LikePatternEndsWithEscape(pattern)) {
           return absl::InvalidArgumentError(
             "LIKE pattern must not end with escape character");
         }
-        validator = &IsLikeCompatibleAnalyzer;
+      }
+      if (case_insensitive) {
+        pattern.insert(0, "(?i)");
       }
 
       const auto* column_info = FindColumnInfoForExpr(ctx, *args[0]);
@@ -1604,12 +1744,24 @@ absl::Status FromFunctionExpression(
       if (auto s = RequireLeafValues(*column_info); !s.ok()) {
         return s;
       }
-      if (!validator(column_info->tokenizer.analyzer->type())) {
+      const auto& analyzer = *column_info->tokenizer.analyzer;
+      StringBuiltinBuilder builder = nullptr;
+      if (analyzer.type() == irs::Type<irs::KeywordTokenizer>::id()) {
+        builder = builtin->second.keyword;
+      } else if (analyzer.type() ==
+                   irs::Type<irs::analysis::WildcardTokenizer>::id() &&
+                 (builtin->second.per_term ||
+                  irs::utils::downCast<irs::analysis::WildcardTokenizer>(
+                    analyzer)
+                    .KeepsWholeValues())) {
+        builder = builtin->second.wildcard;
+      }
+      if (!builder) {
         return absl::InvalidArgumentError(
           absl::StrCat(name, ": column analyzer not supported"));
       }
       auto inner = builder(pattern);
-      FromTSQueryMatch(filter, ctx, *args[0], *inner);
+      FromTSQueryMatch(filter, pattern_ctx, *args[0], *inner);
       return absl::OkStatus();
     }
   }

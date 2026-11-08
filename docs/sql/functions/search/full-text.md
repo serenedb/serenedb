@@ -137,6 +137,8 @@ Match indexed tokens against a SQL `LIKE` pattern.
 
 **How it works.** `ts_like` is applied to the *indexed* term form, not the raw text, so it is not tokenized further — match it against a column whose dictionary stores whole values (such as a `keyword`-style category column). It is the inverted-index analogue of SQL `LIKE`: a row matches when any of its indexed tokens satisfies the pattern. On a `BYTEA` column it compares bytes, as `LIKE` does there: `_` matches exactly one byte and `%` any run of bytes.
 
+On a `VARCHAR` column indexed with `keyword()` or with [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md) over `keyword()`, the SQL forms need no `@@`: `LIKE`, `ILIKE` and their `NOT` forms, with or without `ESCAPE`, `~`, `~*`, `!~*`, `SIMILAR TO`, `regexp_matches` and `regexp_full_match` (with no options, or only `'c'` and `'i'`), `starts_with`, `prefix`, `ends_with`, `suffix` and `contains` are answered from the index and return the same rows as on the table.
+
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
 | `category @@ ts_like('sci%')` | `1`, `2` | `sci-fi` starts with `sci`. |

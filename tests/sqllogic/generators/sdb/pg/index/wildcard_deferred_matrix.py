@@ -24,7 +24,13 @@ def word():
         return rng.choice(["abc", "abcabc", "aabbcc", "xyzabc", "cba", "ABC", "AbC"])
     if kind == 6:
         return f"{rng.choice(['x', 'xy', 'xyz'])}{rng.randrange(10)}{rng.choice(['%', '_', ''])}z"
+    if kind == 7:
+        return "".join(rng.choice(CASED) for _ in range(rng.randrange(2, 8)))
     return "".join(rng.choice(ALPHA) for _ in range(rng.randrange(6, 14)))
+
+
+CASED = ["a", "A", "b", "B", "c", "C", "i", "I", "İ", "ı", "k", "K", "K",
+         "s", "S", "ß", "ẞ", "σ", "ς", "Σ", "é", "É", "x", "\n"]
 
 
 ROWS = 700
@@ -35,10 +41,14 @@ lists = [[word() for _ in range(rng.randrange(0, 4))] for _ in range(ROWS)]
 LIKES = ["user-%", "%-abc", "%abc%", "abc", "a_c", "a_c%", "%a_c", "user-_-%",
          "user-__-%", "%/v_/%", "/api/%/abc", "admin\\_%", "%\\%", "%\\_x",
          "x_%z", "%z", "%", "_", "__", "___", "a%c", "a%b%c", "%9%", "%0_",
-         "%ab", "ab%", "abcabc", "%cabc%", "%9\\%z", "xyz%", "%a%a%"]
+         "%ab", "ab%", "abcabc", "%cabc%", "%9\\%z", "xyz%", "%a%a%",
+         "%İ%", "%i%", "%I%", "%k%", "%K%", "%ß%", "%ss%", "%Σ%", "%ς%",
+         "%é%", "AB%", "%C", "%A_C%", "%\n%", "_\n%"]
 REGEXPS = [".*abc.*", "user-[0-9]+-.*", "user-[0-9]{3}-[a-z]{3}", "(abc|cba)",
            "a.c", "[a-c]{3}", "/api/v[0-2]/(users|items)", "admin_[0-9]+",
            "x[yz]*[0-9].?z", ".*[%_].*", "[0-9]+", ".*9.*", "(ab)+c?", "a.*c"]
+PARTIAL_REGEXPS = ["abc", "^user-", "abc$", "^a.c$", "[0-9]{2}", "(ab|AB)c",
+                   "ß", "σ", "k", "i", "^AB"]
 
 
 def ok_escape(p):
@@ -55,12 +65,39 @@ def predicates(column, scope, sql_like=True):
         if not sql_like:
             continue
         preds.append((f"{column} LIKE '{q}'{esc}", truth_like))
-        if not ok_escape(p):
-            preds.append((f"{column} ILIKE '{q}'", f"{{v}} ILIKE '{q}'"))
+        preds.append((f"{column} NOT LIKE '{q}'{esc}",
+                      f"{{v}} NOT LIKE '{q}'{esc}"))
+        truth_ilike = f"{{v}} ILIKE '{q}'{esc}"
+        preds.append((f"{column} ILIKE '{q}'{esc}", truth_ilike))
+        preds.append((f"{column} NOT ILIKE '{q}'{esc}",
+                      f"{{v}} NOT ILIKE '{q}'{esc}"))
+        hashed = q.replace("\\", "#")
+        if ok_escape(p) and "#" not in p:
+            preds.append((f"{column} ILIKE '{hashed}' ESCAPE '#'", truth_ilike))
     for r in REGEXPS:
         q = lit(r)
         preds.append((f"{column} @@ ts_regexp('{q}')",
                       f"regexp_full_match({{v}}, '{q}')"))
+        if not sql_like:
+            continue
+        preds.append((f"{column} SIMILAR TO '{q}'",
+                      f"{{v}} SIMILAR TO '{q}'"))
+        preds.append((f"regexp_full_match({column}, '{q}', 'i')",
+                      f"regexp_full_match({{v}}, '{q}', 'i')"))
+    if sql_like:
+        for r in PARTIAL_REGEXPS:
+            q = lit(r)
+            truth = f"regexp_matches({{v}}, '{q}')"
+            truth_i = f"regexp_matches({{v}}, '{q}', 'i')"
+            preds.append((f"{column} ~ '{q}'", truth))
+            preds.append((f"{column} ~* '{q}'", truth_i))
+            preds.append((f"{column} !~* '{q}'", f"NOT {truth_i}"))
+            preds.append((f"regexp_matches({column}, '{q}', 'ci')", truth_i))
+        for s in ["abc", "user-", "AB", "ß", "%", "_x", ""]:
+            q = lit(s)
+            for fn in ("starts_with", "prefix", "ends_with", "suffix",
+                       "contains"):
+                preds.append((f"{fn}({column}, '{q}')", f"{fn}({{v}}, '{q}')"))
     return [(idx, scope(truth)) for idx, truth in preds]
 
 
@@ -147,6 +184,12 @@ for name in ("wdm_words", "wdm_words_pos"):
     t.part()
     t.section(f"Words, {DICTS[name]}: a row matches when one of its words does.")
     run(f"{name}_idx", "wdm_w", "msg", any_word, sql_like=False)
+    t.section(f"Words, {DICTS[name]}: the SQL forms other than LIKE match the whole value.")
+    for pred, truth in predicates("msg", whole):
+        if "@@" in pred or "LIKE '" in pred.replace("ILIKE '", ""):
+            continue
+        t.same_rows(f"SELECT id FROM {name}_idx WHERE {pred}",
+                    f"SELECT id FROM wdm_w WHERE {truth}")
 
 t.part()
 t.section("VARCHAR[]: a row matches when one of its elements does.")

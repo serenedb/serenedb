@@ -48,6 +48,9 @@ enum class ChangeKind : uint8_t {
 class EntrySet;
 class OidIndex;
 
+void ForEachSubject(const duckdb::CatalogEntry& version,
+                    absl::FunctionRef<void(duckdb::idx_t)> visit);
+
 struct Dependent {
   duckdb::idx_t oid = 0;
   OidIndex* index = nullptr;

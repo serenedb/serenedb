@@ -33,6 +33,114 @@ INSERT INTO chc_keep (v) SELECT 'a' FROM range(10);
 
 
 statement ok
+CREATE VIEW chc_base_v AS SELECT 1 AS x;
+
+
+statement ok
+CREATE VIEW chc_top_v AS SELECT x FROM chc_base_v;
+
+
+statement ok
+CREATE OR REPLACE VIEW chc_top_v AS SELECT 2 AS x;
+
+
+statement ok
+DROP VIEW chc_base_v;
+
+
+statement ok
+CREATE TABLE chc_owner (id INT);
+
+
+statement ok
+CREATE SEQUENCE chc_seq OWNED BY chc_owner.id;
+
+
+statement ok
+ALTER SEQUENCE chc_seq OWNED BY NONE;
+
+
+statement ok
+DROP TABLE chc_owner;
+
+
+statement ok
+CREATE SCHEMA chc_old;
+
+
+statement ok
+CREATE TABLE chc_old.chc_moved (id INT);
+
+
+statement ok
+INSERT INTO chc_old.chc_moved VALUES (7);
+
+
+statement ok
+ALTER TABLE chc_old.chc_moved SET SCHEMA public;
+
+
+statement ok
+DROP SCHEMA chc_old;
+
+
+statement ok
+CREATE TYPE chc_mood AS ENUM ('happy', 'sad');
+
+
+statement ok
+CREATE TABLE chc_typed (m chc_mood);
+
+
+statement ok
+ALTER TABLE chc_typed ALTER COLUMN m TYPE VARCHAR;
+
+
+statement ok
+DROP TYPE chc_mood;
+
+
+statement ok
+CREATE ROLE chc_role;
+
+
+statement ok
+GRANT SELECT ON chc_keep TO chc_role;
+
+
+statement ok
+REVOKE SELECT ON chc_keep FROM chc_role;
+
+
+statement ok
+DROP ROLE chc_role;
+
+
+statement ok
+CREATE VIEW chc_replaced AS SELECT 0 AS round;
+
+
+statement ok
+CREATE OR REPLACE VIEW chc_replaced AS SELECT 1 AS round;
+
+
+statement ok
+CREATE VIEW chc_model__tmp AS SELECT 1 AS run;
+
+
+statement ok
+ALTER VIEW chc_model__tmp RENAME TO chc_model;
+
+
+statement ok
+COMMENT ON TABLE chc_keep IS 'round 1';
+
+
+statement ok
+COMMENT ON COLUMN chc_keep.v IS 'v 1';
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -101,6 +209,86 @@ INSERT INTO chc_keep (v) SELECT 'b' FROM range(100000);
 
 
 statement ok
+COMMENT ON TABLE chc_keep IS 'round 2';
+
+
+statement ok
+COMMENT ON COLUMN chc_keep.v IS 'v 2';
+
+
+statement ok
+COMMENT ON TABLE chc_keep IS 'round 3';
+
+
+statement ok
+COMMENT ON COLUMN chc_keep.v IS 'v 3';
+
+
+statement ok
+CREATE OR REPLACE VIEW chc_replaced AS SELECT 2 AS round;
+
+
+statement ok
+CREATE OR REPLACE VIEW chc_replaced AS SELECT 3 AS round;
+
+
+statement ok
+CREATE OR REPLACE VIEW chc_replaced AS SELECT 4 AS round;
+
+
+statement ok
+CREATE OR REPLACE VIEW chc_replaced AS SELECT 5 AS round;
+
+
+statement ok
+CREATE VIEW chc_model__tmp AS SELECT 2 AS run;
+
+
+statement ok
+ALTER VIEW chc_model RENAME TO chc_model__backup;
+
+
+statement ok
+ALTER VIEW chc_model__tmp RENAME TO chc_model;
+
+
+statement ok
+DROP VIEW chc_model__backup;
+
+
+statement ok
+CREATE VIEW chc_model__tmp AS SELECT 3 AS run;
+
+
+statement ok
+ALTER VIEW chc_model RENAME TO chc_model__backup;
+
+
+statement ok
+ALTER VIEW chc_model__tmp RENAME TO chc_model;
+
+
+statement ok
+DROP VIEW chc_model__backup;
+
+
+statement ok
+CREATE VIEW chc_model__tmp AS SELECT 4 AS run;
+
+
+statement ok
+ALTER VIEW chc_model RENAME TO chc_model__backup;
+
+
+statement ok
+ALTER VIEW chc_model__tmp RENAME TO chc_model;
+
+
+statement ok
+DROP VIEW chc_model__backup;
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -152,7 +340,49 @@ chc_audit
 chc_fired
 chc_keep
 chc_keep_v
+chc_model
+chc_moved
+chc_replaced
 chc_sizes
+chc_top_v
+chc_typed
+
+
+connection after_crash
+query
+SELECT (SELECT x FROM chc_top_v) AS x, (SELECT round FROM chc_replaced) AS round, (SELECT run FROM chc_model) AS run, (SELECT id FROM chc_moved) AS moved;
+----
+x	round	run	moved
+2	5	4	7
+
+
+connection after_crash
+query
+SELECT obj_description('chc_keep'::regclass, 'pg_class') AS t, col_description('chc_keep'::regclass, 2) AS v;
+----
+t	v
+round 3	v 3
+
+
+connection after_crash
+query
+SELECT nextval('chc_seq') AS n;
+----
+n
+1
+
+
+connection after_crash
+statement ok
+INSERT INTO chc_typed VALUES ('happy');
+
+
+connection after_crash
+query
+SELECT count(*) AS roles FROM pg_roles WHERE rolname = 'chc_role';
+----
+roles
+0
 
 
 connection after_crash

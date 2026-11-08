@@ -113,13 +113,6 @@ void ForEachSubject(
   }
 }
 
-void ForEachSubject(const duckdb::CatalogEntry& version,
-                    absl::FunctionRef<void(duckdb::idx_t)> visit) {
-  ForEachSubject(
-    version,
-    [&](duckdb::idx_t oid, const duckdb::LogicalDependency*) { visit(oid); });
-}
-
 bool DependsOn(const duckdb::CatalogEntry& member, duckdb::idx_t subject,
                const duckdb::Identifier& catalog, bool local) {
   bool depends = false;
@@ -153,6 +146,13 @@ bool TriggersDependOn(duckdb::CatalogTransaction transaction,
 }
 
 }  // namespace
+
+void ForEachSubject(const duckdb::CatalogEntry& version,
+                    absl::FunctionRef<void(duckdb::idx_t)> visit) {
+  ForEachSubject(
+    version,
+    [&](duckdb::idx_t oid, const duckdb::LogicalDependency*) { visit(oid); });
+}
 
 void DependentIndex::Add(duckdb::idx_t subject, duckdb::idx_t dependent,
                          OidIndex& index) {

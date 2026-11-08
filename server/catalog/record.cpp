@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/btree_map.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <compare>
@@ -33,6 +34,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
+#include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
@@ -48,7 +50,9 @@
 #include "catalog/base_catalog.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/entry_set.h"
 #include "catalog/secret_store.h"
 #include "search/log_entry.h"
 
@@ -76,6 +80,8 @@ struct ChangeRecord {
   duckdb::idx_t oid = 0;
   duckdb::idx_t owner = 0;
   std::string body;
+  duckdb::vector<duckdb::idx_t> references;
+  std::string supersedes;
 };
 
 struct LsnRecord {
@@ -156,6 +162,8 @@ std::vector<uint8_t> WriteCatalogRecord(const CatalogRecord& record) {
         object.WritePropertyWithDefault<duckdb::idx_t>(103, "owner",
                                                        change.owner);
         object.WritePropertyWithDefault(104, "body", change.body);
+        object.WritePropertyWithDefault(105, "references", change.references);
+        object.WritePropertyWithDefault(106, "supersedes", change.supersedes);
       });
     });
   serializer.WriteList(
@@ -215,6 +223,11 @@ CatalogRecord ReadCatalogRecord(std::span<uint8_t> bytes) {
           .oid = object.ReadProperty<duckdb::idx_t>(102, "oid"),
           .owner = object.ReadPropertyWithDefault<duckdb::idx_t>(103, "owner"),
           .body = object.ReadPropertyWithDefault<std::string>(104, "body"),
+          .references =
+            object.ReadPropertyWithDefault<duckdb::vector<duckdb::idx_t>>(
+              105, "references"),
+          .supersedes =
+            object.ReadPropertyWithDefault<std::string>(106, "supersedes"),
         });
       });
     });
@@ -341,6 +354,76 @@ struct ChangeContent {
   duckdb::LogicalDependencyList dependencies;
   duckdb::vector<duckdb::idx_t> constraints;
 };
+
+duckdb::vector<duckdb::idx_t> References(const Change& change) {
+  const auto& subject = change.Subject();
+  duckdb::vector<duckdb::idx_t> references;
+  const auto add = [&](duckdb::idx_t oid) {
+    if (oid && oid != subject.oid) {
+      references.push_back(oid);
+    }
+  };
+  add(subject.ParentSchemaOid());
+  if (change.set->Members()) {
+    ForEachSubject(subject, add);
+  } else {
+    add(subject.permissions.owner);
+    for (const auto& item : subject.permissions.acl) {
+      add(item.grantee);
+      add(item.grantor);
+    }
+  }
+  for (const auto& defaults : subject.permissions.defaults) {
+    add(defaults.role);
+    for (const auto& item : defaults.acl) {
+      add(item.grantee);
+      add(item.grantor);
+    }
+  }
+  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
+    for (const auto& column :
+         subject.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+      for (const auto& item : column.Acl()) {
+        add(item.grantee);
+        add(item.grantor);
+      }
+    }
+  }
+  if (subject.type == duckdb::CatalogType::ROLE_ENTRY) {
+    for (const auto& membership : subject.Cast<RoleCatalogEntry>().MemberOf()) {
+      add(membership.role);
+      add(membership.grantor);
+    }
+  }
+  absl::c_sort(references);
+  references.erase(std::ranges::unique(references).begin(), references.end());
+  return references;
+}
+
+std::string Supersedes(const duckdb::AlterInfo& info) {
+  switch (info.type) {
+    case duckdb::AlterType::REPLACE_DEFINITION:
+      return "definition";
+    case duckdb::AlterType::SET_COMMENT:
+      return "comment";
+    case duckdb::AlterType::SET_COLUMN_COMMENT:
+      return absl::StrCat("comment:", info.Cast<duckdb::SetColumnCommentInfo>()
+                                        .column_name.GetIdentifierName());
+    default:
+      return {};
+  }
+}
+
+bool Commutes(std::string_view earlier, std::string_view later) {
+  constexpr std::string_view kComment = "comment";
+  if (earlier == kComment) {
+    return true;
+  }
+  if (earlier.starts_with(kComment)) {
+    return later.starts_with(kComment);
+  }
+  return later == kComment;
+}
 
 std::string ChangeBody(const Change& change) {
   if (change.kind == ChangeKind::Drop) {
@@ -599,6 +682,10 @@ std::vector<Log::HistoryEntry> CompactHistory(
   }
   std::vector<Life> lives;
   std::vector<size_t> change_life;
+  std::vector<const ChangeRecord*> changes;
+  std::vector<bool> folded;
+  irs::containers::FlatHashMap<Key, std::vector<size_t>> superseded;
+  irs::containers::FlatHashMap<duckdb::idx_t, std::vector<size_t>> referencing;
   irs::containers::FlatHashMap<Key, size_t> live;
   irs::containers::FlatHashMap<duckdb::idx_t, std::vector<size_t>> contained;
   irs::containers::FlatHashMap<Key, std::vector<size_t>> owned;
@@ -639,6 +726,24 @@ std::vector<Log::HistoryEntry> CompactHistory(
     for (const auto& change : record.changes) {
       const auto at = change_life.size();
       const Key key{change.catalog, change.oid};
+      changes.push_back(&change);
+      folded.push_back(false);
+      auto& pending = superseded[key];
+      std::erase_if(pending, [&](size_t earlier) {
+        const auto& kept = changes[earlier]->supersedes;
+        if (kept == change.supersedes) {
+          folded[earlier] = true;
+          return true;
+        }
+        return change.kind != ChangeKind::Alter ||
+               !Commutes(kept, change.supersedes);
+      });
+      if (!change.supersedes.empty()) {
+        pending.push_back(at);
+      }
+      for (const auto oid : change.references) {
+        referencing[oid].push_back(at);
+      }
       switch (change.kind) {
         case ChangeKind::Create: {
           const auto life = lives.size();
@@ -709,37 +814,39 @@ std::vector<Log::HistoryEntry> CompactHistory(
   for (auto& life : lives) {
     life.eliminated = life.end != kNoLife;
   }
+  const auto gone = [&](size_t life) {
+    return life != kNoLife && lives[life].eliminated;
+  };
+  const auto references = [&](size_t at, const Life& life) {
+    return at > life.create && at < life.end && !folded[at] &&
+           !gone(change_life[at]) &&
+           (life.key.first == ClusterCatalog::kRecordId ||
+            changes[at]->catalog == life.key.first);
+  };
   for (bool changed = true; changed;) {
     changed = false;
-    std::vector<size_t> surviving;
-    for (size_t at = 0; at < change_life.size(); ++at) {
-      const auto life = change_life[at];
-      if (life == kNoLife || !lives[life].eliminated) {
-        surviving.push_back(at);
-      }
-    }
     for (auto& life : lives) {
       if (!life.eliminated) {
         continue;
       }
-      const auto it = absl::c_upper_bound(surviving, life.create);
-      if (it != surviving.end() && *it < life.end) {
+      if (const auto it = referencing.find(life.key.second);
+          it != referencing.end() && absl::c_any_of(it->second, [&](size_t at) {
+            return references(at, life);
+          })) {
         life.eliminated = false;
         changed = true;
       }
     }
   }
-  const auto gone = [&](size_t life) {
-    return life != kNoLife && lives[life].eliminated;
-  };
 
   std::vector<CatalogRecord> kept(records.size());
   size_t at = 0;
   for (size_t r = 0; r < records.size(); ++r) {
     for (auto& change : records[r].changes) {
-      if (!gone(change_life[at++])) {
+      if (!gone(change_life[at]) && !folded[at]) {
         kept[r].changes.push_back(std::move(change));
       }
+      ++at;
     }
   }
   for (auto& [key, slot] : lsns) {
@@ -812,13 +919,21 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
   CatalogRecord record;
   for (const auto* change : changes) {
     auto& subject = change->Subject();
-    record.changes.push_back({
+    auto& written = record.changes.emplace_back(ChangeRecord{
       .catalog = Owner(subject).RecordId(),
       .kind = change->kind,
       .oid = subject.oid,
       .owner = change->set->Owner(),
       .body = ChangeBody(*change),
     });
+    if (change->kind == ChangeKind::Drop) {
+      continue;
+    }
+    written.references = References(*change);
+    if (change->kind == ChangeKind::Alter) {
+      auto alter = change->alter;
+      written.supersedes = Supersedes(*DeserializeAlter(context, alter));
+    }
   }
   for (const auto& update : transaction.LsnUpdates()) {
     record.lsns.push_back({

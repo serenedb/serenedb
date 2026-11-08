@@ -211,11 +211,6 @@ void Restore(const catalog::DataDirectory& layout,
     if (begin > cut.log_size) {
       Remove(path);
     } else if (next == chunks.end() || next->first > cut.log_size) {
-      if (std::filesystem::file_size(path) < cut.log_size - begin) {
-        Fail("the copy is incomplete:", path,
-             absl::StrCat("it has ", std::filesystem::file_size(path),
-                          " bytes, the log needs ", cut.log_size - begin));
-      }
       TruncateFile(path, cut.log_size - begin);
     } else if (std::filesystem::file_size(path) < next->first - begin) {
       Fail("the copy is incomplete:", path,

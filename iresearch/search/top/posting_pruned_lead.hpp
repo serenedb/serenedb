@@ -22,7 +22,6 @@
 
 #include <limits>
 
-#include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
@@ -129,17 +128,9 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     }
     Base::ForEachBlock(max, [&](doc_id_t* docs, uint32_t len) IRS_FORCE_INLINE {
       ABSL_CACHELINE_ALIGNED doc_id_t kept_docs[doc_limits::kBlockSize];
-      ABSL_CACHELINE_ALIGNED uint32_t kept_freqs[doc_limits::kBlockSize];
       ABSL_CACHELINE_ALIGNED score_t kept_scores[doc_limits::kBlockSize];
       const auto kept =
-        irs::detail::FilterFreqs(docs, _freqs.data + (docs - std::begin(_docs)),
-                                 len, least, kept_docs, kept_freqs);
-      if (kept != 0) {
-        _provider.freq.value = kept_freqs;
-        FetchAndScore(*_score.fetcher, _score.score, kept_docs, kept_scores,
-                      kept);
-        _provider.freq.value = _freqs.data;
-      }
+        this->ScoreKept(docs, len, least, kept_docs, kept_scores);
       visit(kept_docs, kept, kept_scores, len);
     });
   }

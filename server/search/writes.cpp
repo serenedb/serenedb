@@ -21,6 +21,7 @@
 #include "search/writes.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/functional/any_invocable.h>
 
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
@@ -28,6 +29,7 @@
 #include <duckdb/common/sql_identifier.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/parallel/task_executor.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -218,9 +220,9 @@ void ForEachChunkKey(
 // Every key the rows of `w` hold more than once, or that a live row of
 // `existing` holds, for unique key `spec`: the rows are `segments`, read
 // through their term dictionaries, and `keys`, sorted.
-std::optional<std::string> FindDuplicate(
+std::optional<std::string> FindDuplicateIn(
   const KeySpec& spec, std::span<const KeyProbe::Segment> segments,
-  std::span<const std::string> keys, KeyProbe& existing) {
+  std::span<const std::string> keys, const KeyProbe& existing, KeyRange range) {
   std::optional<std::string> found;
   size_t next = 0;
   const auto settle = [&](std::string_view key, size_t rows) {
@@ -237,21 +239,23 @@ std::optional<std::string> FindDuplicate(
     }
     return rows;
   };
-  ForEachSegmentKey(segments, spec.key.field,
-                    [&](std::string_view key, size_t rows) {
-                      while (next != keys.size() && keys[next] < key) {
-                        const auto run = take_run();
-                        if (!settle(keys[next], run)) {
-                          return false;
-                        }
-                        next += run;
-                      }
-                      while (next != keys.size() && keys[next] == key) {
-                        ++rows;
-                        ++next;
-                      }
-                      return settle(key, rows);
-                    });
+  ForEachSegmentKey(
+    segments, spec.key.field,
+    [&](std::string_view key, size_t rows) {
+      while (next != keys.size() && keys[next] < key) {
+        const auto run = take_run();
+        if (!settle(keys[next], run)) {
+          return false;
+        }
+        next += run;
+      }
+      while (next != keys.size() && keys[next] == key) {
+        ++rows;
+        ++next;
+      }
+      return settle(key, rows);
+    },
+    range);
   while (!found && next != keys.size()) {
     const auto run = take_run();
     if (settle(keys[next], run)) {
@@ -259,6 +263,56 @@ std::optional<std::string> FindDuplicate(
     }
   }
   return found;
+}
+
+struct DuplicateCheck final : duckdb::BaseExecutorTask {
+  DuplicateCheck(duckdb::TaskExecutor& executor,
+                 absl::AnyInvocable<void()> check)
+    : BaseExecutorTask{executor}, check{std::move(check)} {}
+
+  void ExecuteTask() final { check(); }
+
+  absl::AnyInvocable<void()> check;
+};
+
+std::optional<std::string> FindDuplicate(
+  duckdb::ClientContext& context, const KeySpec& spec,
+  std::span<const KeyProbe::Segment> segments,
+  std::span<const std::string> keys, const KeyProbe& existing) {
+  constexpr uint64_t kMinKeysPerCheck = 1 << 16;
+  constexpr uint64_t kChecksPerThread = 4;
+  const auto total = SegmentKeyCount(segments, spec.key.field) + keys.size();
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(context);
+  const auto parts = std::min<uint64_t>(
+    kChecksPerThread * static_cast<uint64_t>(scheduler.NumberOfThreads()),
+    total / kMinKeysPerCheck);
+  if (parts < 2) {
+    return FindDuplicateIn(spec, segments, keys, existing, {});
+  }
+  const auto bounds = SplitSegmentKeys(segments, spec.key.field, keys, parts);
+  std::vector<std::optional<std::string>> found(bounds.size() + 1);
+  duckdb::TaskExecutor executor{scheduler, context.GetSchedulerAccount()};
+  for (size_t part = 0; part != found.size(); ++part) {
+    const KeyRange range{
+      .from = part == 0 ? std::string_view{} : bounds[part - 1],
+      .to = part == bounds.size() ? std::string_view{} : bounds[part]};
+    const auto begin =
+      range.from.empty() ? keys.begin() : absl::c_lower_bound(keys, range.from);
+    const auto end =
+      range.to.empty() ? keys.end() : absl::c_lower_bound(keys, range.to);
+    executor.ScheduleTask(duckdb::make_uniq<DuplicateCheck>(
+      executor,
+      [&, range, slice = std::span{begin, end}, &result = found[part]] {
+        result = FindDuplicateIn(spec, segments, slice, existing, range);
+      }));
+  }
+  executor.WorkOnTasks();
+  for (auto& duplicate : found) {
+    if (duplicate) {
+      return std::move(duplicate);
+    }
+  }
+  return std::nullopt;
 }
 
 void TakeRemovals(std::vector<std::shared_ptr<const irs::DocRemoval>>& removals,
@@ -940,7 +994,8 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     }
     auto& keys = fresh[spec];
     absl::c_sort(keys);
-    if (auto duplicate = FindDuplicate(key_spec, segments, keys, existing)) {
+    if (auto duplicate =
+          FindDuplicate(context, key_spec, segments, keys, existing)) {
       ThrowDuplicateOrConflict(context, w, snapshot, key_spec, *duplicate);
     }
   }
@@ -1054,7 +1109,8 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
         }
       }
       absl::c_sort(keys);
-      if (auto duplicate = FindDuplicate(spec, segments, keys, fresh)) {
+      if (auto duplicate =
+            FindDuplicate(context, spec, segments, keys, fresh)) {
         ThrowDuplicateOrConflict(context, w, snapshot, spec, *duplicate);
       }
     }

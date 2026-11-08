@@ -139,8 +139,8 @@ class KeyProbe {
 
   // Visits the live rows holding `key` until `visit` returns false.
   void ForEach(std::string_view key,
-               absl::FunctionRef<bool(const KeyHolder&)> visit);
-  bool Exists(std::string_view key);
+               absl::FunctionRef<bool(const KeyHolder&)> visit) const;
+  bool Exists(std::string_view key) const;
 
  private:
   struct Source {
@@ -156,11 +156,24 @@ class KeyProbe {
   std::vector<Hot> _hots;
 };
 
+struct KeyRange {
+  std::string_view from;
+  std::string_view to;
+};
+
 // The keys of the live rows of `segments` under `field`, in ascending order:
 // `visit` sees each key with the number of live rows holding it, and stops the
 // walk by returning false.
 void ForEachSegmentKey(
   std::span<const KeyProbe::Segment> segments, irs::field_id field,
-  absl::FunctionRef<bool(std::string_view key, size_t rows)> visit);
+  absl::FunctionRef<bool(std::string_view key, size_t rows)> visit,
+  KeyRange range = {});
+
+uint64_t SegmentKeyCount(std::span<const KeyProbe::Segment> segments,
+                         irs::field_id field);
+
+std::vector<std::string> SplitSegmentKeys(
+  std::span<const KeyProbe::Segment> segments, irs::field_id field,
+  std::span<const std::string> keys, size_t parts);
 
 }  // namespace sdb::search

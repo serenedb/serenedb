@@ -378,7 +378,7 @@ void KeyProbe::AddLive(const LiveUnits& live, const LiveUnits* since) {
 }
 
 void KeyProbe::ForEach(std::string_view key,
-                       absl::FunctionRef<bool(const KeyHolder&)> visit) {
+                       absl::FunctionRef<bool(const KeyHolder&)> visit) const {
   bool more = true;
   for (const auto& source : _segments) {
     source.field->ReadDocs(Bytes(key), [&](irs::doc_id_t doc) {
@@ -408,7 +408,7 @@ void KeyProbe::ForEach(std::string_view key,
   }
 }
 
-bool KeyProbe::Exists(std::string_view key) {
+bool KeyProbe::Exists(std::string_view key) const {
   bool found = false;
   ForEach(key, [&](const KeyHolder&) {
     found = true;
@@ -419,60 +419,138 @@ bool KeyProbe::Exists(std::string_view key) {
 
 void ForEachSegmentKey(
   std::span<const KeyProbe::Segment> segments, irs::field_id field,
-  absl::FunctionRef<bool(std::string_view key, size_t rows)> visit) {
+  absl::FunctionRef<bool(std::string_view key, size_t rows)> visit,
+  KeyRange range) {
   struct Cursor {
     const KeyProbe::Segment* segment = nullptr;
-    const irs::TermReader* reader = nullptr;
     irs::DocumentMask::Iterator mask;
     irs::SeekTermIterator::ptr terms;
+    irs::TermPostings::ptr postings;
   };
   std::vector<Cursor> cursors;
   cursors.reserve(segments.size());
+  std::vector<size_t> heap;
+  heap.reserve(segments.size());
   for (const auto& segment : segments) {
     const auto* reader = KeyField(*segment.sub, field);
     if (!reader) {
       continue;
     }
     auto terms = reader->iterator();
-    if (terms && terms->next()) {
+    if (!terms) {
+      continue;
+    }
+    const bool positioned =
+      range.from.empty()
+        ? terms->next()
+        : terms->seek_ge(Bytes(range.from)) != irs::SeekResult::End;
+    if (positioned) {
+      heap.push_back(cursors.size());
       cursors.push_back({.segment = &segment,
-                         .reader = reader,
                          .mask = segment.sub->MaskedDocs(),
                          .terms = std::move(terms)});
     }
   }
-  std::string least;
-  while (!cursors.empty()) {
-    least.assign(Chars(cursors.front().terms->value()));
-    for (const auto& cursor : cursors) {
-      const auto term = Chars(cursor.terms->value());
-      if (term < least) {
-        least.assign(term);
-      }
-    }
-    size_t rows = 0;
-    for (auto& cursor : cursors) {
-      if (Chars(cursor.terms->value()) != least) {
-        continue;
-      }
-      const auto& masks = cursor.segment->masks;
-      const auto first = cursor.segment->first;
-      cursor.reader->ReadDocs(Bytes(least), [&](irs::doc_id_t doc) {
-        if (doc - irs::doc_limits::min() >= first &&
-            !cursor.mask.Contains(doc) && !masks.Contains(doc)) {
-          ++rows;
-        }
-        return true;
-      });
-      if (!cursor.terms->next()) {
-        cursor.terms.reset();
-      }
-    }
-    std::erase_if(cursors, [](const Cursor& cursor) { return !cursor.terms; });
-    if (rows != 0 && !visit(least, rows)) {
+  const auto later = [&](size_t lhs, size_t rhs) {
+    return cursors[lhs].terms->value() > cursors[rhs].terms->value();
+  };
+  absl::c_make_heap(heap, later);
+  std::vector<size_t> at;
+  at.reserve(cursors.size());
+  irs::doc_id_t docs[irs::doc_limits::kBlockSize];
+  while (!heap.empty()) {
+    const auto least = cursors[heap.front()].terms->value();
+    if (!range.to.empty() && Chars(least) >= range.to) {
       return;
     }
+    at.clear();
+    do {
+      absl::c_pop_heap(heap, later);
+      at.push_back(heap.back());
+      heap.pop_back();
+    } while (!heap.empty() && cursors[heap.front()].terms->value() == least);
+    size_t rows = 0;
+    for (const auto i : at) {
+      auto& cursor = cursors[i];
+      const auto first = cursor.segment->first;
+      const auto& masks = cursor.segment->masks;
+      cursor.postings = cursor.terms->ReusePostings(irs::IndexFeatures::None,
+                                                    std::move(cursor.postings));
+      while (const auto n = cursor.postings->NextDocs(docs, nullptr)) {
+        for (uint32_t d = 0; d != n; ++d) {
+          const auto doc = docs[d];
+          if (doc - irs::doc_limits::min() >= first &&
+              !cursor.mask.Contains(doc) && !masks.Contains(doc)) {
+            ++rows;
+          }
+        }
+      }
+    }
+    if (rows != 0 && !visit(Chars(least), rows)) {
+      return;
+    }
+    for (const auto i : at) {
+      if (cursors[i].terms->next()) {
+        heap.push_back(i);
+        absl::c_push_heap(heap, later);
+      }
+    }
   }
+}
+
+uint64_t SegmentKeyCount(std::span<const KeyProbe::Segment> segments,
+                         irs::field_id field) {
+  uint64_t count = 0;
+  for (const auto& segment : segments) {
+    if (const auto* reader = KeyField(*segment.sub, field)) {
+      count += reader->size();
+    }
+  }
+  return count;
+}
+
+std::vector<std::string> SplitSegmentKeys(
+  std::span<const KeyProbe::Segment> segments, irs::field_id field,
+  std::span<const std::string> keys, size_t parts) {
+  constexpr uint64_t kSamplesPerPart = 64;
+  constexpr uint64_t kSampleRunBytes = 256;
+  const auto total = SegmentKeyCount(segments, field) + keys.size();
+  const auto wanted = parts * kSamplesPerPart;
+  std::vector<std::string> samples;
+  samples.reserve(wanted * 2);
+  for (const auto& segment : segments) {
+    const auto* reader = KeyField(*segment.sub, field);
+    if (!reader || reader->size() == 0) {
+      continue;
+    }
+    const auto share = std::max<uint64_t>(1, wanted * reader->size() / total);
+    reader->SampleTerms(share * kSampleRunBytes,
+                        [&](std::span<const irs::bytes_view> run) {
+                          for (const auto term : run) {
+                            samples.emplace_back(Chars(term));
+                          }
+                        });
+  }
+  if (!keys.empty()) {
+    const auto share = std::max<uint64_t>(1, wanted * keys.size() / total);
+    const auto stride = std::max<uint64_t>(1, keys.size() / share);
+    for (size_t i = 0; i < keys.size(); i += stride) {
+      samples.push_back(keys[i]);
+    }
+  }
+  absl::c_sort(samples);
+  samples.erase(std::ranges::unique(samples).begin(), samples.end());
+  std::vector<std::string> bounds;
+  if (samples.empty()) {
+    return bounds;
+  }
+  for (size_t part = 1; part < parts; ++part) {
+    auto& bound = samples[part * samples.size() / parts];
+    if (!bound.empty() && (bounds.empty() || bounds.back() < bound)) {
+      bounds.push_back(std::move(bound));
+    }
+  }
+  return bounds;
 }
 
 }  // namespace sdb::search

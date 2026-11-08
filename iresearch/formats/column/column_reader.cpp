@@ -205,7 +205,7 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
                   });
                 });
   }
-  s.WritePropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  s.WritePropertyWithDefault(7, "distinct", meta.distinct);
 }
 
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
@@ -257,7 +257,7 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
         meta.variant_rgs.push_back(std::move(rg));
       });
     });
-  d.ReadPropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  d.ReadPropertyWithDefault(7, "distinct", meta.distinct);
   return meta;
 }
 
@@ -896,7 +896,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       });
       break;
   }
-  col->_hyperloglog = std::move(meta.hyperloglog);
+  col->_distinct = std::move(meta.distinct);
   return col;
 }
 

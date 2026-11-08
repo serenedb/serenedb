@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/types/variant.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
@@ -25,8 +27,11 @@
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
 
+#include "catalog/entry/search_table.h"
+#include "connector/constraint_keys.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
+#include "search/key_spec.h"
 
 namespace sdb::connector {
 namespace {
@@ -64,26 +69,61 @@ duckdb::string_t AsStringT(irs::bytes_view bytes) {
           static_cast<uint32_t>(bytes.size())};
 }
 
+uint64_t KeyDistinct(const ScanBindData& bind,
+                     const irs::DirectoryReader& reader, ColumnId column) {
+  if (!bind.relation.IsSearchTable() || !bind.relation.inverted_config) {
+    return 0;
+  }
+  const auto& specs =
+    bind.relation.table_entry->Cast<catalog::SearchTableEntry>().KeySpecs();
+  for (const auto& key : bind.relation.ScannedIndex().constraint_keys) {
+    if (key.columns.size() != 1 || key.columns.front() != column) {
+      continue;
+    }
+    const auto spec = absl::c_find_if(specs, [&](const search::KeySpec& spec) {
+      return spec.key.field == key.field;
+    });
+    if (spec == specs.end() || spec->kind == search::KeyKind::Unique) {
+      return reader.live_docs_count();
+    }
+    if (const auto* terms =
+          reader.GetTermRange(key.field, kConstraintKeyDict)) {
+      return terms->distinct;
+    }
+  }
+  return 0;
+}
+
 duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
   const ScanBindData& bind, const irs::DirectoryReader& reader,
   duckdb::idx_t column_index) {
   if (column_index >= bind.columns.ids.size()) {
     return nullptr;
   }
-  const auto* stored =
-    StoredColumnStats(bind, reader, bind.columns.ids[column_index]);
+  const auto column = bind.columns.ids[column_index];
+  const auto* stored = StoredColumnStats(bind, reader, column);
   const auto* bounds = KeywordTermRange(bind, reader, column_index);
-  if (!bounds) {
-    return stored ? stored->ToUnique() : nullptr;
+  auto stats = stored ? stored->ToUnique() : nullptr;
+  if (bounds) {
+    if (!stats) {
+      stats = duckdb::StringStats::CreateUnknown(duckdb::LogicalType::VARCHAR)
+                .ToUnique();
+    }
+    duckdb::StringStats::SetMin(*stats, AsStringT(bounds->min),
+                                duckdb::StringStatsType::EXACT_STATS);
+    duckdb::StringStats::SetMax(*stats, AsStringT(bounds->max),
+                                duckdb::StringStatsType::EXACT_STATS);
   }
-  auto stats =
-    stored ? stored->ToUnique()
-           : duckdb::StringStats::CreateUnknown(duckdb::LogicalType::VARCHAR)
-               .ToUnique();
-  duckdb::StringStats::SetMin(*stats, AsStringT(bounds->min),
-                              duckdb::StringStatsType::EXACT_STATS);
-  duckdb::StringStats::SetMax(*stats, AsStringT(bounds->max),
-                              duckdb::StringStatsType::EXACT_STATS);
+  if (stats && stats->GetDistinctCount() == 0) {
+    auto distinct = KeyDistinct(bind, reader, column);
+    if (distinct == 0 && bounds) {
+      distinct = bounds->distinct;
+    }
+    if (distinct != 0) {
+      stats->SetDistinctCount(
+        std::min<uint64_t>(distinct, reader.live_docs_count()));
+    }
+  }
   return stats;
 }
 

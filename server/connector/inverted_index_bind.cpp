@@ -51,6 +51,7 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <span>
 #include <string>
 #include <utility>
@@ -63,6 +64,7 @@
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
+#include "pg/connection_context.h"
 #include "pg/types/logical.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -87,7 +89,7 @@ constexpr std::string_view kQueryBitsField = "query_bits";
 constexpr std::string_view kMField = "m";
 constexpr std::string_view kEfConstructionField = "ef_construction";
 constexpr std::string_view kCompressionField = "compression";
-constexpr std::string_view kHyperLogLogField = "hyperloglog";
+constexpr std::string_view kDistinctField = "distinct";
 
 constexpr std::string_view kL2Metric = "l2";
 constexpr std::string_view kL1Metric = "l1";
@@ -293,6 +295,33 @@ duckdb::CompressionType ParseCompressionOption(
   auto parsed = ParseCompressionName(owner_label, str);
   ValidateColumnCompression(context, owner_label, parsed, value_type);
   return parsed;
+}
+
+irs::DistinctStats ParseDistinctOption(duckdb::ClientContext& context,
+                                       std::string_view owner_label,
+                                       std::string_view key,
+                                       const duckdb::Value& v,
+                                       const duckdb::LogicalType& value_type) {
+  const auto name =
+    GetIndexStringOption(catalog::kIncludedKind, owner_label, key, v);
+  const auto mode = magic_enum::enum_cast<irs::DistinctStats>(
+    name, magic_enum::case_insensitive);
+  if (!mode) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", owner_label, "': ", catalog::kIncludedKind,
+              " option '", key, "' must be 'none', 'sampled' or 'exact', got '",
+              name, "'"));
+  }
+  if (*mode != irs::DistinctStats::None &&
+      (value_type.id() == duckdb::LogicalTypeId::BOOLEAN ||
+       value_type.id() == duckdb::LogicalTypeId::BIT)) {
+    ConnectionContext::Get(context).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_WARNING),
+      ERR_MSG("Column '", owner_label, "': distinct statistics of a ",
+              value_type.ToString(), " column do not help query planning")));
+  }
+  return *mode;
 }
 
 std::string DescribeKnownOpclassTypes() {
@@ -672,15 +701,16 @@ void ApplyIncludedOpclass(
     if (key == kCompressionField) {
       entry.column_options.compression = ParseCompressionOption(
         context, catalog::kIncludedKind, owner_label, key, raw_val, value_type);
-    } else if (key == kHyperLogLogField) {
-      entry.column_options.hyperloglog =
-        GetIndexBoolOption(catalog::kIncludedKind, owner_label, key, raw_val);
+    } else if (key == kDistinctField) {
+      entry.column_options.distinct =
+        ParseDistinctOption(context, owner_label, key, raw_val, value_type);
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Column '", owner_label, "': unknown included option '", key,
                 "'. Accepted options: compression (string, default 'auto'), "
-                "hyperloglog (bool, default false)"));
+                "distinct (string: 'none', 'sampled' or 'exact', default "
+                "'none')"));
     }
   }
 }

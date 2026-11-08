@@ -57,7 +57,7 @@ Tables and inverted indexes also compact in the background by default (see [Back
 
 ### Recomputing statistics — `RECOMPUTE_STATS_*`
 
-`RECOMPUTE_STATS_*` recomputes the index statistics used for relevance scoring and planning:
+`RECOMPUTE_STATS_*` recomputes the planner statistics of the attached DuckDB tables in scope, as `ANALYZE` does there. It skips SereneDB tables and their indexes: their relevance and planner statistics follow their rows as they are written and compacted, so there is nothing to recompute:
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_009" />
 

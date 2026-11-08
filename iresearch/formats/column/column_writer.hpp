@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
@@ -32,6 +31,7 @@
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
@@ -44,6 +44,10 @@ struct WriteChunk {
   duckdb::idx_t count;
 };
 
+void UpdateDistinct(duckdb::DistinctStatistics& distinct, DistinctStats mode,
+                    const duckdb::Vector& values, duckdb::idx_t count,
+                    duckdb::Vector& hashes);
+
 struct StagedColumn {
   field_id id;
   duckdb::LogicalType type;
@@ -54,7 +58,8 @@ class ColumnWriter final {
  public:
   ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
                bool skip_validity, uint32_t row_group_size,
-               duckdb::CompressionType forced, bool hyperloglog, bool deferred);
+               duckdb::CompressionType forced, DistinctStats distinct,
+               bool deferred);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -82,7 +87,7 @@ class ColumnWriter final {
   std::vector<WriteChunk> Snapshot(uint64_t rows) const;
   size_t StagedBytes() const noexcept;
 
-  void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
+  void SetDistinct(duckdb::shared_ptr<duckdb::DistinctStatistics> distinct);
 
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
@@ -153,8 +158,8 @@ class ColumnWriter final {
   uint64_t _staged_rows = 0;
   uint64_t _row_start = 0;
   bool _deferred = false;
-  bool _hll_auto = false;
-  duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
+  DistinctStats _distinct = DistinctStats::None;
+  duckdb::Vector _distinct_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
   ColumnMeta _meta;

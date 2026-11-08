@@ -567,8 +567,8 @@ void ColumnWriter::SealColumn(const duckdb::LogicalType& type,
 ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
                            duckdb::LogicalType type, bool skip_validity,
                            uint32_t row_group_size,
-                           duckdb::CompressionType forced, bool hyperloglog,
-                           bool deferred)
+                           duckdb::CompressionType forced,
+                           DistinctStats distinct, bool deferred)
   : _owner{&owner},
     _id{id},
     _type{std::move(type)},
@@ -588,9 +588,9 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
   }
   _meta.id = _id;
   _meta.type = _type;
-  if (hyperloglog) {
-    _meta.hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
-    _hll_auto = true;
+  if (distinct != DistinctStats::None) {
+    _meta.distinct = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
+    _distinct = distinct;
   }
 }
 
@@ -711,15 +711,10 @@ void ColumnWriter::SealRowGroup() {
     return;
   }
   std::span<WriteChunk> chunks{_staged.data(), _staged_chunks};
-  if (_hll_auto && _meta.hyperloglog) {
-    if (!_hll_hashes.GetBufferRef()) {
-      _hll_hashes.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
-                             STANDARD_VECTOR_SIZE);
-    }
+  if (_distinct != DistinctStats::None) {
     for (auto& chunk : chunks) {
-      duckdb::VectorOperations::Hash(chunk.data, _hll_hashes, chunk.count);
-      duckdb::FlatVector::SetSize(_hll_hashes, chunk.count);
-      _meta.hyperloglog->Update(chunk.data, _hll_hashes);
+      UpdateDistinct(*_meta.distinct, _distinct, chunk.data, chunk.count,
+                     _distinct_hashes);
     }
   }
   if (!_deferred) {
@@ -772,9 +767,25 @@ size_t ColumnWriter::StagedBytes() const noexcept {
   return bytes;
 }
 
-void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
-  _meta.hyperloglog = std::move(hll);
-  _hll_auto = false;
+void ColumnWriter::SetDistinct(
+  duckdb::shared_ptr<duckdb::DistinctStatistics> distinct) {
+  _meta.distinct = std::move(distinct);
+  _distinct = DistinctStats::None;
+}
+
+void UpdateDistinct(duckdb::DistinctStatistics& distinct, DistinctStats mode,
+                    const duckdb::Vector& values, duckdb::idx_t count,
+                    duckdb::Vector& hashes) {
+  SDB_ASSERT(mode != DistinctStats::None);
+  if (!hashes.GetBufferRef()) {
+    hashes.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
+                      STANDARD_VECTOR_SIZE);
+  }
+  if (mode == DistinctStats::Exact) {
+    distinct.Update(values, count, hashes);
+  } else {
+    distinct.UpdateSample(values, count, hashes);
+  }
 }
 
 }  // namespace irs

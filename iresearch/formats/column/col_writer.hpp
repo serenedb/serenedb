@@ -75,7 +75,7 @@ class ColWriter final {
                            bool skip_validity, uint32_t row_group_size,
                            duckdb::CompressionType compression =
                              duckdb::CompressionType::COMPRESSION_AUTO,
-                           bool hyperloglog = false);
+                           DistinctStats distinct = DistinctStats::None);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -113,7 +113,7 @@ class ColWriter final {
   ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
                                    bool skip_validity, uint32_t row_group_size,
                                    duckdb::CompressionType forced,
-                                   bool hyperloglog);
+                                   DistinctStats distinct);
 
   Directory* _dir;
   std::string _segment_name;

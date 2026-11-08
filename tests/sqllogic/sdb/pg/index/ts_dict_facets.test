@@ -365,7 +365,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ───────╮
 │ Groups: #0            │
 │ Aggregates: count(#0) │
-│ ~3 rows               │
+│ ~2 rows               │
 ╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: ft_idx         │
@@ -417,7 +417,7 @@ QUERY PLAN
 │ Groups: #0                │
 │ Aggregates: count_star(), │
 │             sum(#1)       │
-│ ~3 rows                   │
+│ ~2 rows                   │
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: ft_idx             │
@@ -1243,7 +1243,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────╮
 │ Groups: #0, #1           │
 │ Aggregates: count_star() │
-│ ~4 rows                  │
+│ ~3 rows                  │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gsf_idx           │

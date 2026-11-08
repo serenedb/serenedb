@@ -23,10 +23,12 @@
 
 #include "directory_reader_impl.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 
-#include <duckdb/common/types/hyperloglog.hpp>
+#include <cmath>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
 #include <ranges>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -38,6 +40,34 @@
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
+namespace {
+
+struct SegmentTerms {
+  bytes_view min;
+  bytes_view max;
+  uint64_t terms = 0;
+  uint64_t docs = 0;
+};
+
+uint64_t DistinctOfOverlapping(const SegmentTerms& largest, uint64_t sum) {
+  const auto distinct = static_cast<double>(largest.terms);
+  const auto docs = static_cast<double>(largest.docs);
+  const auto occupied = [&](double values) {
+    return -values * std::expm1(-docs / values);
+  };
+  auto high = static_cast<double>(sum);
+  if (largest.terms >= largest.docs || occupied(high) <= distinct) {
+    return sum;
+  }
+  auto low = distinct;
+  while (high - low > 0.5) {
+    const auto mid = (low + high) / 2;
+    (occupied(mid) < distinct ? low : high) = mid;
+  }
+  return static_cast<uint64_t>(std::llround(high));
+}
+
+}  // namespace
 
 struct DirectoryReaderImpl::Init {
   Init(const Directory& dir, const DirectoryMeta& meta,
@@ -63,10 +93,13 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
 
   struct Accumulator {
     duckdb::unique_ptr<duckdb::BaseStatistics> stats;
-    duckdb::unique_ptr<duckdb::HyperLogLog> hyperloglog;
+    duckdb::unique_ptr<duckdb::DistinctStatistics> distinct;
     uint64_t live_docs = 0;
   };
   irs::containers::FlatHashMap<field_id, Accumulator> col2stats;
+  irs::containers::FlatHashMap<std::pair<field_id, DictRef>,
+                               std::vector<SegmentTerms>>
+    field_terms;
 
   auto& refs = dir.attributes().refs();
   for (const auto [index_segment, reader] :
@@ -83,13 +116,11 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
         if (field->size() == 0) {
           continue;
         }
-        const auto [it, emplaced] =
-          term_ranges.try_emplace(std::pair{id, field->meta().dict},
-                                  FieldTermRange{field->min(), field->max()});
-        if (!emplaced) {
-          it->second.min = std::min(it->second.min, field->min());
-          it->second.max = std::max(it->second.max, field->max());
-        }
+        field_terms[std::pair{id, field->meta().dict}].push_back(
+          {.min = field->min(),
+           .max = field->max(),
+           .terms = field->size(),
+           .docs = field->docs_count()});
       }
     }
 
@@ -98,18 +129,18 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
       continue;
     }
     for (const auto& column : col_reader->Columns()) {
-      auto& [stats, hyperloglog, live_docs] = col2stats[column->Id()];
+      auto& [stats, distinct, live_docs] = col2stats[column->Id()];
       live_docs += segment.live_docs_count;
       if (!stats) {
         stats = column->MergedStatistics().ToUnique();
       } else {
         stats->Merge(column->MergedStatistics());
       }
-      if (const auto* src_hyperloglog = column->HyperLogLog()) {
-        if (!hyperloglog) {
-          hyperloglog = src_hyperloglog->Copy();
+      if (const auto* src = column->Distinct()) {
+        if (!distinct) {
+          distinct = src->Copy();
         } else {
-          hyperloglog->Merge(*src_hyperloglog);
+          distinct->Merge(*src);
         }
       }
     }
@@ -119,15 +150,39 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
     file_refs.emplace_back(refs.add(meta.filename));
   }
 
+  for (auto& [key, segments] : field_terms) {
+    absl::c_sort(segments,
+                 [](const SegmentTerms& lhs, const SegmentTerms& rhs) {
+                   return lhs.min < rhs.min;
+                 });
+    FieldTermRange range{.min = segments.front().min,
+                         .max = segments.front().max};
+    const SegmentTerms* largest = nullptr;
+    uint64_t sum = 0;
+    for (const auto& segment : segments) {
+      if (largest && segment.min > range.max) {
+        range.distinct += DistinctOfOverlapping(*largest, sum);
+        largest = nullptr;
+        sum = 0;
+      }
+      range.max = std::max(range.max, segment.max);
+      if (!largest || segment.terms > largest->terms) {
+        largest = &segment;
+      }
+      sum += segment.terms;
+    }
+    range.distinct += DistinctOfOverlapping(*largest, sum);
+    term_ranges.emplace(key, range);
+  }
+
   for (auto& [field, merged] : col2stats) {
-    auto& [stats, hyperloglog, live_docs] = merged;
+    auto& [stats, distinct, live_docs] = merged;
     if (live_docs < live_docs_count) {
       stats->SetHasNull();
     }
-    if (hyperloglog) {
-      const auto cnt =
-        std::min<uint64_t>(hyperloglog->Count(), live_docs_count);
-      stats->SetDistinctCount(cnt);
+    if (distinct) {
+      stats->SetDistinctCount(
+        std::min<uint64_t>(distinct->GetCount(), live_docs_count));
     }
     column_stats[field] = std::move(stats);
   }

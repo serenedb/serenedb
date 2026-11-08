@@ -2380,20 +2380,29 @@ TEST_F(ColumnReaderTest, VariantGatherDenseThenAppend) {
   }
 }
 
-// Per-column HyperLogLog distinct-count sketch: built by hashing rows at seal
-// time, persisted in the footer, recovered + queryable on read.
-TEST_F(ColumnReaderTest, HyperLogLogDistinctCount) {
+// Per-column distinct statistics: built from the rows at seal time, persisted
+// in the footer, recovered + queryable on read.
+TEST_F(ColumnReaderTest, DistinctStatistics) {
   constexpr uint64_t kRows = 20000;
   constexpr uint64_t kDistinct = 1000;  // values cycle 0..999
   constexpr uint32_t kRgSize = 4096;
-  constexpr irs::field_id kA = 40;
+  constexpr irs::field_id kExact = 40;
+  constexpr irs::field_id kSampled = 41;
+  constexpr irs::field_id kNone = 42;
 
   irs::MemoryDirectory dir{};
   {
     irs::ColWriter w{dir, "seg", Db()};
-    auto& cwA = w.OpenColumn(
-      kA, duckdb::LogicalType::BIGINT, /*skip_validity=*/true, kRgSize,
-      duckdb::CompressionType::COMPRESSION_AUTO, /*hyperloglog=*/true);
+    auto& exact = w.OpenColumn(kExact, duckdb::LogicalType::BIGINT,
+                               /*skip_validity=*/true, kRgSize,
+                               duckdb::CompressionType::COMPRESSION_AUTO,
+                               irs::DistinctStats::Exact);
+    auto& sampled = w.OpenColumn(kSampled, duckdb::LogicalType::BIGINT,
+                                 /*skip_validity=*/true, kRgSize,
+                                 duckdb::CompressionType::COMPRESSION_AUTO,
+                                 irs::DistinctStats::Sampled);
+    auto& none = w.OpenColumn(kNone, duckdb::LogicalType::BIGINT,
+                              /*skip_validity=*/true, kRgSize);
     uint64_t pos = 0;
     while (pos < kRows) {
       const auto take =
@@ -2404,24 +2413,36 @@ TEST_F(ColumnReaderTest, HyperLogLogDistinctCount) {
         d[k] = static_cast<int64_t>((pos + k) % kDistinct);
       }
       duckdb::FlatVector::SetSize(v, take);
-      cwA.Append(v, take);
+      exact.Append(v, take);
+      sampled.Append(v, take);
+      none.Append(v, take);
       pos += take;
     }
     w.Commit(0);
   }
 
   irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
-  const auto* ca = r.Column(kA);
-  ASSERT_NE(ca, nullptr);
-  const auto* hll = ca->HyperLogLog();
-  ASSERT_NE(hll, nullptr);
-  const auto est = hll->Count();
-  // This verifies the sketch is built, persisted, and recovered as a real
-  // distinct-counter -- not HLL precision (that's duckdb::HyperLogLog's). A
-  // generous band still catches the real failures: no dedup (~kRows) or an
-  // empty/unserialized sketch (~0).
-  EXPECT_GE(est, static_cast<uint64_t>(kDistinct / 2));
-  EXPECT_LE(est, static_cast<uint64_t>(kDistinct * 2));
+  ASSERT_NE(r.Column(kNone), nullptr);
+  EXPECT_EQ(r.Column(kNone)->Distinct(), nullptr);
+  // A generous band checks the statistics are built, persisted and recovered
+  // as a real distinct counter, not the sketch's precision: no dedup gives
+  // ~kRows, an empty or unserialized sketch ~0.
+  const auto in_band = [](uint64_t estimate) {
+    return estimate >= kDistinct / 2 && estimate <= kDistinct * 2;
+  };
+  ASSERT_NE(r.Column(kExact), nullptr);
+  const auto* exact = r.Column(kExact)->Distinct();
+  ASSERT_NE(exact, nullptr);
+  EXPECT_EQ(exact->total_count.load(), kRows);
+  EXPECT_EQ(exact->sample_count.load(), kRows);
+  EXPECT_TRUE(in_band(exact->GetCount())) << exact->GetCount();
+  ASSERT_NE(r.Column(kSampled), nullptr);
+  const auto* sampled = r.Column(kSampled)->Distinct();
+  ASSERT_NE(sampled, nullptr);
+  EXPECT_EQ(sampled->total_count.load(), kRows);
+  EXPECT_GT(sampled->sample_count.load(), 0);
+  EXPECT_LT(sampled->sample_count.load(), kRows);
+  EXPECT_TRUE(in_band(sampled->GetCount())) << sampled->GetCount();
 }
 
 // Norm column: per-doc uint32 FTS norm, bit-packed per row group, with sparse

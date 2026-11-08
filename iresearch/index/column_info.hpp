@@ -178,12 +178,18 @@ struct AnnInfo {
   friend bool operator==(const AnnInfo&, const AnnInfo&) = default;
 };
 
+enum class DistinctStats : uint8_t {
+  None,
+  Sampled,
+  Exact,
+};
+
 struct ColumnOptions {
   bool skip_validity = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   std::optional<AnnInfo> ann_info;
-  bool hyperloglog = false;
+  DistinctStats distinct = DistinctStats::None;
 };
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;

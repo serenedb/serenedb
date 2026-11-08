@@ -24,10 +24,8 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -44,40 +42,33 @@
 namespace irs {
 namespace {
 
-class HyperLogLogMerger {
+class DistinctMerger {
  public:
-  void Begin() {
-    _hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
-    if (!_hashes.GetBufferRef()) {
-      _hashes.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
-                         STANDARD_VECTOR_SIZE);
-    }
+  void Begin(DistinctStats mode) {
+    _mode = mode;
+    _distinct = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
   }
 
   bool MergeStored(const ColumnReader& col) {
-    if (const auto* src = col.HyperLogLog()) {
-      _hyperloglog->Merge(*src);
+    if (const auto* src = col.Distinct()) {
+      _distinct->Merge(*src);
       return true;
     }
     return false;
   }
 
   void MergeValues(const duckdb::Vector& values, duckdb::idx_t count) {
-    UpdateFrom(values, count);
+    UpdateDistinct(*_distinct, _mode, values, count, _hashes);
   }
 
-  duckdb::shared_ptr<duckdb::HyperLogLog> Take() {
-    SDB_ASSERT(_hyperloglog);
-    return std::move(_hyperloglog);
+  duckdb::shared_ptr<duckdb::DistinctStatistics> Take() {
+    SDB_ASSERT(_distinct);
+    return std::move(_distinct);
   }
 
  private:
-  void UpdateFrom(const duckdb::Vector& input, duckdb::idx_t count) {
-    duckdb::VectorOperations::Hash(input, _hashes, count);
-    _hyperloglog->Update(input, _hashes);
-  }
-
-  duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
+  DistinctStats _mode = DistinctStats::None;
+  duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
 
@@ -113,7 +104,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     }
   }
 
-  HyperLogLogMerger hyperloglog;
+  DistinctMerger distinct_merger;
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
   std::vector<std::vector<std::optional<std::vector<duckdb::sel_t>>>>
     kept_cache(sources.size());
@@ -144,7 +135,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
-                        row_group_size, opts.compression, false);
+                        row_group_size, opts.compression);
     if (field_options) {
       for (const auto ann : field_options->AnnFields(field_id_v)) {
         output
@@ -153,8 +144,9 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       }
     }
 
-    if (opts.hyperloglog) {
-      hyperloglog.Begin();
+    const bool distinct = opts.distinct != DistinctStats::None;
+    if (distinct) {
+      distinct_merger.Begin(opts.distinct);
     }
 
     ColumnReader::VectorScratch batch_scratch{first_col->Type()};
@@ -177,8 +169,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                  "schema evolution between merge sources not supported");
       const bool has_mask = HasRemovals(s.reader->Meta());
 
-      const bool stored_hll =
-        opts.hyperloglog && !has_mask && hyperloglog.MergeStored(*col);
+      const bool stored_distinct =
+        distinct && !has_mask && distinct_merger.MergeStored(*col);
 
       auto state = col->InitScan(*source_ctxs[si]);
       cw.PadNullsTo(out_doc);
@@ -195,8 +187,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
           auto& batch = batch_scratch.Reset();
           col->Scan(state, batch, take);
           cw.Append(batch, take);
-          if (opts.hyperloglog && !stored_hll) {
-            hyperloglog.MergeValues(batch, take);
+          if (distinct && !stored_distinct) {
+            distinct_merger.MergeValues(batch, take);
           }
           out_doc += take;
         } else {
@@ -215,8 +207,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
             col->Scan(state, batch, take);
             duckdb::Vector selected{batch, sel, kept};
             cw.Append(out_doc, selected, kept);
-            if (opts.hyperloglog) {
-              hyperloglog.MergeValues(selected, kept);
+            if (distinct) {
+              distinct_merger.MergeValues(selected, kept);
             }
             out_doc += kept;
           }
@@ -231,8 +223,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
     cw.PadNullsTo(out_doc);
 
-    if (opts.hyperloglog) {
-      cw.SetHyperLogLog(hyperloglog.Take());
+    if (distinct) {
+      cw.SetDistinct(distinct_merger.Take());
     }
   }
   return true;

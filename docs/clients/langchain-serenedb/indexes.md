@@ -23,7 +23,7 @@ This page covers the classes that describe that index, the store methods that bu
 | [`MetadataColumnIndex`](#metadatacolumnindex) | One typed metadata column to index. |
 | [`JsonFieldIndex`](#jsonfieldindex) | One JSON metadata sub-field to index. |
 | [`apply_vector_index()`](#apply_vector_index) and friends | Build, drop and inspect the index. |
-| [Recomputing index statistics](#statistics) | Running `VACUUM (RECOMPUTE_STATS_TABLE)` yourself. |
+| [Index statistics](#statistics) | Kept current by SereneDB, with nothing to run. |
 
 ## One index per collection {#one-index}
 
@@ -172,27 +172,9 @@ store.apply_vector_index(IVFIndex())
 
 See [`drop_vector_index()`](#drop_vector_index) and [`apply_vector_index()`](#apply_vector_index).
 
-### Recomputing index statistics {#statistics}
+### Index statistics {#statistics}
 
-Relevance scoring and query planning use per-term statistics that the index maintains. After a large shift in data distribution they can be recomputed with `VACUUM (RECOMPUTE_STATS_TABLE)`, which is a separate operation from rebuilding the index.
-
-The integration does not wrap this, so run it through any PostgreSQL client -- including [`serened psql`](../serened-psql.md):
-
-```sql
-VACUUM (RECOMPUTE_STATS_TABLE) "public"."my_docs";
-```
-
-or on a psycopg connection of your own:
-
-```python
-import psycopg
-
-with psycopg.connect("host=127.0.0.1 port=7890 user=postgres dbname=postgres") as conn:
-    conn.autocommit = True  # VACUUM cannot run inside a transaction
-    conn.execute('VACUUM (RECOMPUTE_STATS_TABLE) "public"."my_docs";')
-```
-
-Recomputing statistics is optional tuning -- it does not affect which rows match, only how they are scored and planned. See [Manual maintenance with `VACUUM`](../../sql/indexes/inverted/maintenance.md#manual-maintenance-with-vacuum) for the full family of operations.
+Relevance scoring and query planning use statistics that SereneDB keeps current as rows are written and compacted, so they need no recomputing after a shift in data distribution, and the integration has nothing to wrap. See [Manual maintenance with `VACUUM`](../../sql/indexes/inverted/maintenance.md#manual-maintenance-with-vacuum) for the operations a table does accept.
 
 ### `is_valid_index()` {#is_valid_index}
 

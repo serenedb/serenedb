@@ -1,9 +1,8 @@
-# Per-column `hyperloglog` option on INCLUDE columns. When enabled,
-# the columnstore writer tracks the column's NDV in a HyperLogLog that is
-# persisted per segment, unioned across segments at scan time, and exposed
-# to the optimizer as approx_unique (used for join-order cardinality
-# estimates). Off by default; the estimate is approximate by design, so
-# assertions use ranges instead of exact values.
+# Per-column `distinct` option on INCLUDE columns: 'exact' counts every row,
+# 'sampled' a sample of each vector. The statistics are persisted per segment,
+# merged across segments at scan time and exposed to the optimizer as
+# approx_unique. Off by default ('none'); the estimate is approximate by design,
+# so assertions use ranges instead of exact values.
 
 hash-threshold 100
 
@@ -21,8 +20,8 @@ SELECT i, i % 100, 'tag-' || (i % 7)::VARCHAR, i FROM range(10000) t(i);
 
 statement ok
 CREATE INDEX dc_t_idx ON dc_t USING inverted(pk)
-  INCLUDE (v included (hyperloglog = true),
-           s included (hyperloglog = true),
+  INCLUDE (v included (distinct = 'exact'),
+           s included (distinct = 'sampled'),
            plain);
 
 # --- 1. NDV exposed for opted-in columns (true NDV: v=100, s=7) ----------
@@ -83,10 +82,13 @@ SELECT COUNT(*), COUNT(DISTINCT v) FROM dc_t_idx;
 count	count
 30000	1000
 
-# --- 5. Non-boolean value rejected at parse time --------------------------
+# --- 5. Unknown mode rejected at parse time -------------------------------
 statement error
 CREATE INDEX dc_bad ON dc_t USING inverted(pk)
-  INCLUDE (v included (hyperloglog = 'banana'));
+  INCLUDE (v included (distinct = 'banana'));
+----
+db error: ERROR: Column 'v': included option 'distinct' must be 'none', 'sampled' or 'exact', got 'banana'
+
 
 # --- 6. Unknown included option still rejected ----------------------------
 statement error
@@ -94,15 +96,15 @@ CREATE INDEX dc_bad2 ON dc_t USING inverted(pk)
   INCLUDE (v included (ndv = true));
 
 # --- 7. NDV survives consolidation. Clean segments reuse the persisted
-#       per-segment sketch (the merge writer unions the HyperLogLogs instead
-#       of re-hashing); a segment carrying deletes can't reuse its sketch
-#       (an HLL can't subtract), so the merge rebuilds it from survivors. ---
+#       per-segment statistics instead of re-hashing; a segment carrying
+#       deletes can't reuse them (a sketch can't subtract), so the merge
+#       rebuilds them from survivors. ------------------------------------
 statement ok
 CREATE TABLE dc_compact (pk INTEGER PRIMARY KEY, v BIGINT)
 
 statement ok
 CREATE INDEX dc_compact_idx ON dc_compact USING inverted(pk)
-  INCLUDE (v included (hyperloglog = true))
+  INCLUDE (v included (distinct = 'exact'))
 
 # Three segments with overlapping values; union NDV = 7 ({1..7}).
 statement ok

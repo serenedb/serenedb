@@ -22,6 +22,7 @@ CAUSES = {
     "serial_sequence": "serial creates a bigint sequence where PostgreSQL creates an integer one",
     "server_credentials": "pg_foreign_server shows options that carry credentials, so only a superuser reads it",
     "system_columns": "pg_attribute lists no system columns",
+    "table_am": "SereneDB tables use the iresearch access method, not heap",
     "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
     "toast": "SereneDB has no TOAST tables",
     "typmod": "Type modifiers are dropped or rejected",
@@ -407,7 +408,7 @@ WHERE table_schema IN {quoted(scope)}{differing}
 ORDER BY table_schema::text COLLATE "C", table_name::text COLLATE "C", column_name::text COLLATE "C"'''
 
 
-check(pg_class(MAIN))
+check(pg_class(MAIN), "table_am")
 check(pg_attribute(MAIN))
 check(pg_attribute_types(MAIN, """
   AND attname::text @NOT IN ('c_char', 'c_numeric_plain', 'c_varchar', 'city', 'code', 'email', 'sku', 'status',
@@ -480,7 +481,7 @@ WHERE rolname IN ('postgres', 'conf_reader')
 ORDER BY rolname::text COLLATE "C"''')
 check("""SELECT oid, amname, amhandler::text AS amhandler, amtype
 FROM pg_catalog.pg_am
-WHERE amname NOT IN ('secondary', 'inverted', 'iresearch')
+WHERE amname NOT IN ('inverted', 'iresearch')
   AND oid @NOT IN (403, 405, 783, 2742, 3580, 4000)
 ORDER BY oid""", "index_am")
 check('''SELECT rngtypid::regtype::text AS rngtypid, rngsubtype::regtype::text AS rngsubtype,
@@ -751,8 +752,8 @@ DIFFERING_COLUMNS = {
 
 
 def indexdefs(relation):
-    return [f"replace(pg_catalog.pg_get_indexdef('{relation}'::regclass), ' USING secondary ', ' USING btree ') AS indexdef",
-            f"replace(pg_catalog.pg_get_indexdef('{relation}'::regclass, 0, true), ' USING secondary ', ' USING btree ') "
+    return [f"replace(pg_catalog.pg_get_indexdef('{relation}'::regclass), ' USING inverted ', ' USING btree ') AS indexdef",
+            f"replace(pg_catalog.pg_get_indexdef('{relation}'::regclass, 0, true), ' USING inverted ', ' USING btree ') "
             "AS indexdef_pretty"]
 
 
@@ -942,7 +943,7 @@ check('''SELECT q.c1::regclass::text AS oid, q.c2::regclass::text AS oid, q.c3 A
   q.c38 AS partition_key FROM (
 select c.oid,c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr, pg_catalog.pg_get_partkeydef(c.oid) as partition_key from pg_catalog.pg_class c left outer join pg_catalog.pg_description d on d.objoid=c.oid and d.objsubid=0 and d.classoid='pg_class'::regclass where c.relnamespace='app'::regnamespace::oid and c.relkind not in ('i','I','c') order by c.relname
 ) q(c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29, c30, c31, c32, c33, c34, c35, c36, c37, c38)
-ORDER BY q.c3::text COLLATE "C"''')
+ORDER BY q.c3::text COLLATE "C"''', "table_am")
 check('''SELECT q.c1::regtype::text AS oid, q.c2::regtype::text AS oid, q.c3 AS typname,
   q.c4::regnamespace::text AS typnamespace, pg_catalog.pg_get_userbyid(q.c5) AS typowner, q.c6 AS typlen,
   q.c7 AS typbyval, q.c8 AS typtype, q.c9 AS typcategory, q.c10 AS typispreferred, q.c11 AS typisdefined,
@@ -997,7 +998,7 @@ DJANGO_INDEXES = ("SELECT indexname, array_agg(attname ORDER BY arridx), indisun
                   "pg_catalog.pg_table_is_visible(c.oid) ) s2 GROUP BY indexname, indisunique, indisprimary, amname, "
                   "exprdef, attoptions")
 check(f'''SELECT q.c1 AS indexname, q.c2 AS array_agg, q.c3 AS indisunique, q.c4 AS indisprimary,
-  replace(q.c6, 'secondary', 'btree') AS amname, q.c7 AS exprdef, q.c8 AS attoptions FROM (
+  replace(q.c6, 'inverted', 'btree') AS amname, q.c7 AS exprdef, q.c8 AS attoptions FROM (
 {DJANGO_INDEXES}
 ) q(c1, c2, c3, c4, c5, c6, c7, c8)
 WHERE q.c1 @NOT IN {plain_indexes("public.orders")}
@@ -1048,7 +1049,7 @@ SELECT ns.nspname, t.oid, t.typname, t.typtype, t.typnotnull, t.elemtypoid FROM 
 WHERE q.typname @NOT IN ('_geometry', '_union', '_variant', 'geometry', 'union', 'variant')
 ORDER BY q.typname::text COLLATE "C"''', "duckdb_types")
 check(f'''SELECT q.schemaname, q.tablename, q.indexname, q.tablespace,
-  replace(q.indexdef, ' USING secondary ', ' USING btree ') AS indexdef FROM (
+  replace(q.indexdef, ' USING inverted ', ' USING btree ') AS indexdef FROM (
 SELECT schemaname, tablename, indexname, tablespace, indexdef FROM pg_indexes WHERE schemaname IN ('public', 'app')
 ) q
 WHERE q.indexname @NOT IN {plain_indexes()}
@@ -1283,7 +1284,7 @@ check("""SELECT q.to_table, q."column", q.primary_key, q."name", q.on_update, q.
 SELECT t2.oid::regclass::text AS to_table, a1.attname AS column, a2.attname AS primary_key, c.conname AS name, c.confupdtype AS on_update, c.confdeltype AS on_delete, c.convalidated AS valid, c.condeferrable AS deferrable, c.condeferred AS deferred, c.conkey, c.confkey, c.conrelid, c.confrelid FROM pg_constraint c JOIN pg_class t1 ON c.conrelid = t1.oid JOIN pg_class t2 ON c.confrelid = t2.oid JOIN pg_attribute a1 ON a1.attnum = c.conkey[1] AND a1.attrelid = t1.oid JOIN pg_attribute a2 ON a2.attnum = c.confkey[1] AND a2.attrelid = t2.oid JOIN pg_namespace t3 ON c.connamespace = t3.oid WHERE c.contype = 'f' AND t1.relname = 'order_items' AND t3.nspname = ANY (current_schemas(false)) ORDER BY c.conname
 ) q""")
 check('''SELECT q.relname, q.indisunique, array_to_string((q.indkey)::int2[], ' ') AS indkey, q.oid::regclass::text AS oid,
-  q.comment, q.indisvalid, replace(q.pg_get_indexdef, ' USING secondary ', ' USING btree ') AS pg_get_indexdef FROM (
+  q.comment, q.indisvalid, replace(q.pg_get_indexdef, ' USING inverted ', ' USING btree ') AS pg_get_indexdef FROM (
 SELECT distinct i.relname, d.indisunique, d.indkey, pg_get_indexdef(d.indexrelid), t.oid, pg_catalog.obj_description(i.oid, 'pg_class') AS comment, d.indisvalid FROM pg_class t INNER JOIN pg_index d ON t.oid = d.indrelid INNER JOIN pg_class i ON d.indexrelid = i.oid LEFT JOIN pg_namespace n ON n.oid = t.relnamespace WHERE i.relkind IN ('i', 'I') AND d.indisprimary = 'f' AND t.relname = 'orders' AND n.nspname = ANY (current_schemas(false)) ORDER BY i.relname
 ) q
 WHERE q.relname @NOT IN ('orders_amount_desc_idx', 'orders_customer_idx')
@@ -1381,7 +1382,7 @@ SQLALCHEMY_INDEXES = ("SELECT pg_catalog.pg_index.indrelid, cls_idx.relname AS r
                       "('public.orders'::regclass::oid) AND NOT pg_catalog.pg_index.indisprimary ORDER BY "
                       "pg_catalog.pg_index.indrelid, cls_idx.relname")
 check(f'''SELECT q.indrelid::regclass::text AS indrelid, q.relname_index, q.indisunique, q.has_constraint, q.reloptions,
-  replace(q.amname, 'secondary', 'btree') AS amname, q.filter_definition, q.indnkeyatts, q.indnullsnotdistinct,
+  replace(q.amname, 'inverted', 'btree') AS amname, q.filter_definition, q.indnkeyatts, q.indnullsnotdistinct,
   array_to_string((q.indoption)::int2[], ' ') AS indoption FROM (
 {SQLALCHEMY_INDEXES}
 ) q
@@ -1454,7 +1455,7 @@ def psql_relation(relation, verbose=False):
     projection = (
         "q.relchecks, q.relkind, q.relhasindex, q.relhasrules, q.relhastriggers, q.relrowsecurity,\n"
         f"  q.relforcerowsecurity, q.relhasoids, q.relispartition,{options_column} q.reltablespace, q.reloftype, q.relpersistence,\n"
-        "  q.relreplident, replace(q.amname, 'secondary', 'btree') AS amname")
+        "  q.relreplident, replace(q.amname, 'inverted', 'btree') AS amname")
     return f"""SELECT {projection} FROM (
 SELECT c.relchecks, c.relkind, c.relhasindex, c.relhasrules, c.relhastriggers, c.relrowsecurity, c.relforcerowsecurity, false AS relhasoids, c.relispartition, {options}c.reltablespace, CASE WHEN c.reloftype = 0 THEN '' ELSE c.reloftype::pg_catalog.regtype::pg_catalog.text END, c.relpersistence, c.relreplident, am.amname
 FROM pg_catalog.pg_class c
@@ -1598,7 +1599,7 @@ ORDER BY pg_catalog.pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT', c.oid::pg_ca
 
 def psql_indexes(relation, differing=""):
     return f'''SELECT q.relname, q.indisprimary, q.indisunique, q.indisclustered, q.indisvalid,
-  replace(q.pg_get_indexdef, ' USING secondary ', ' USING btree ') AS pg_get_indexdef, q.pg_get_constraintdef,
+  replace(q.pg_get_indexdef, ' USING inverted ', ' USING btree ') AS pg_get_indexdef, q.pg_get_constraintdef,
   q.contype, q.condeferrable, q.condeferred, q.indisreplident, q.reltablespace FROM (
 SELECT c2.relname, i.indisprimary, i.indisunique, i.indisclustered, i.indisvalid, pg_catalog.pg_get_indexdef(i.indexrelid, 0, true),
   pg_catalog.pg_get_constraintdef(con.oid, true), contype, condeferrable, condeferred, i.indisreplident, c2.reltablespace
@@ -1631,7 +1632,7 @@ for relation, differing, causes in (
         ("public.orders", "('status')", ("typmod",))):
     schema, name = relation.split(".")
     check(psql_lookup(name, schema))
-    check(psql_relation(relation))
+    check(psql_relation(relation), "table_am")
     if relation == "public.orders":
         check(psql_columns(relation, PSQL_COLUMNS.replace(" q.pg_get_expr,", ""), f"\nWHERE q.attname @NOT IN {differing}"),
               *causes)
@@ -1656,7 +1657,7 @@ WHERE a.attrelid = 'public.orders_customer_idx'::regclass AND a.attnum > 0 AND N
 ORDER BY a.attnum
 ) q""")
 check("""SELECT q.indisunique, q.indisprimary, q.indisclustered, q.indisvalid, q.condeferrable, q.condeferred,
-  q.indisreplident, q.indnullsnotdistinct, replace(q.amname, 'secondary', 'btree') AS amname, q.relname, q.pg_get_expr FROM (
+  q.indisreplident, q.indnullsnotdistinct, replace(q.amname, 'inverted', 'btree') AS amname, q.relname, q.pg_get_expr FROM (
 SELECT i.indisunique, i.indisprimary, i.indisclustered, i.indisvalid,
   (NOT i.indimmediate) AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = i.indrelid AND conindid = i.indexrelid AND contype IN ('p','u','x') AND condeferrable) AS condeferrable,
   (NOT i.indimmediate) AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = i.indrelid AND conindid = i.indexrelid AND contype IN ('p','u','x') AND condeferred) AS condeferred,
@@ -1798,7 +1799,7 @@ ORDER BY 1, 2
 ) q
 ORDER BY q."Name"::text COLLATE "C"''')
 check(psql_lookup("customers", "public"))
-check(psql_relation("public.customers", verbose=True))
+check(psql_relation("public.customers", verbose=True), "table_am")
 check(psql_columns("public.customers", PSQL_COLUMNS.replace(" q.pg_get_expr,", "") + ", q.attstorage,\n  q.attcompression, "
                    "q.attstattarget, q.col_description", "\nWHERE q.attname @NOT IN ('email')", PSQL_TABLE_EXTRAS),
       "typmod")

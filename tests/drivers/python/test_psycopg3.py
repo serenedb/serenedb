@@ -844,6 +844,41 @@ def test_engine_warning_reaches_the_client_as_a_notice():
         c.close()
 
 
+def test_distinct_statistics_on_a_boolean_or_bit_column_warn():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    try:
+        with c.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS distinct_warn")
+            cur.execute(
+                "CREATE TABLE distinct_warn "
+                "(id INT PRIMARY KEY, flag BOOLEAN, bits BIT, v BIGINT)"
+            )
+            cur.execute(
+                "CREATE INDEX distinct_warn_idx ON distinct_warn USING inverted(id) "
+                "INCLUDE (flag included (distinct = 'exact'), "
+                "bits included (distinct = 'sampled'), "
+                "v included (distinct = 'exact'))"
+            )
+        assert diags == [
+            (
+                "WARNING",
+                "Column 'flag': distinct statistics of a BOOLEAN column "
+                "do not help query planning",
+            ),
+            (
+                "WARNING",
+                "Column 'bits': distinct statistics of a BIT column "
+                "do not help query planning",
+            ),
+        ], diags
+    finally:
+        with c.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS distinct_warn")
+        c.close()
+
+
 def test_unenforced_setting_warns_when_its_value_changes():
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     notices: list[str] = []

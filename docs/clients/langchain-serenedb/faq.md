@@ -90,7 +90,7 @@ store.drop_vector_index()
 store.apply_vector_index(IVFIndex())
 ```
 
-If what you actually wanted was fresher relevance statistics, that is a separate operation you can run yourself — see [Recomputing index statistics](./indexes.md#statistics).
+Relevance statistics never need a refresh: SereneDB keeps them current, see [Index statistics](./indexes.md#statistics).
 
 ### Why does `concurrently=True` still lock the table? {#concurrently}
 

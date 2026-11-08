@@ -41,6 +41,8 @@ They are set in the dictionary's `WITH` clause; see the [feature flags](../creat
 
 Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. A column listed both in `USING inverted (...)` and in `INCLUDE (...)` is searchable and stored, which lets [phrase queries](../../indexes/inverted/full-text-search.md#phrases-without-positions) on it work without `position`; an indexed expression gets the same when it is listed a second time with `included()` to store its value, as in `USING inverted (id, (lower(body)) words, (lower(body)) included())`. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`, for example `INCLUDE (payload included (compression = 'alp'))`.
 
+Each may also set `distinct` to keep a count of the column's distinct values, which the query planner uses to estimate joins and equality filters on it: `'exact'` counts every value, `'sampled'` counts a sample of the values and extrapolates, at a fraction of the cost, and `'none'`, the default, keeps no count. A count on a `BOOLEAN` or `BIT` column does not improve plans, so setting one there raises a warning. A table's own columns get a distinct count without the option where their keys and indexes give one: a single-column primary key or unique constraint has as many values as rows, and a foreign key or an index without a tokenizing dictionary counts the distinct values it holds.
+
 ## Index options
 
 The trailing `WITH (...)` clause sets index-level options.

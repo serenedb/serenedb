@@ -59,13 +59,13 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 |---|---|---|
 | Flush | `FLUSH_INDEX` · `FLUSH_TABLE` · `FLUSH_SCHEMA` · `FLUSH_DATABASE` · `FLUSH_ALL` | Write the rows a table holds in memory to its on-disk segments |
 | Compact | `COMPACT_INDEX` · `COMPACT_TABLE` · `COMPACT_SCHEMA` · `COMPACT_DATABASE` · `COMPACT_ALL` | Merge segments to reclaim space and speed queries |
-| Recompute statistics | `RECOMPUTE_STATS_COLUMN` · `RECOMPUTE_STATS_TABLE` · `RECOMPUTE_STATS_SCHEMA` · `RECOMPUTE_STATS_DATABASE` · `RECOMPUTE_STATS_ALL` | Rebuild the term statistics used by relevance scoring and planning |
+| Recompute statistics | `RECOMPUTE_STATS_COLUMN` · `RECOMPUTE_STATS_TABLE` · `RECOMPUTE_STATS_SCHEMA` · `RECOMPUTE_STATS_DATABASE` · `RECOMPUTE_STATS_ALL` | Recompute the planner statistics of attached DuckDB tables; skips SereneDB tables and indexes |
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_002" />
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_003" />
 
-Recompute statistics after large changes in data distribution so that [relevance scores](./ranking.md) and planning stay accurate.
+The [relevance scores](./ranking.md) and planner statistics of a table and its indexes follow the rows as they are written and compacted, so they never need recomputing.
 
 ## Refreshing view-backed indexes
 

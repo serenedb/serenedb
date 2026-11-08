@@ -23,11 +23,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <duckdb/common/allocator.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <limits>
@@ -109,7 +109,7 @@ struct ColumnMeta {
   std::vector<ColumnBlockMeta> validity;
   std::vector<ColumnMeta> children;
   std::vector<VariantRgMeta> variant_rgs;
-  duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
+  duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
   uint64_t write_list_running = 0;
 };
 
@@ -179,8 +179,8 @@ class ColumnReader {
     return _offsets[block];
   }
   bool NullsInData() const noexcept;
-  const duckdb::HyperLogLog* HyperLogLog() const noexcept {
-    return _hyperloglog.get();
+  const duckdb::DistinctStatistics* Distinct() const noexcept {
+    return _distinct.get();
   }
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
@@ -376,7 +376,7 @@ class ColumnReader {
   std::unique_ptr<ColumnReader> _validity;
   std::vector<std::unique_ptr<ColumnReader>> _children;
   uint64_t _array_size = 0;
-  duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
+  duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
 
  private:

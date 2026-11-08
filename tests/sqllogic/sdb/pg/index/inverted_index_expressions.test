@@ -1392,7 +1392,7 @@ statement error
 CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
     id, (a + b) included (bogus='value'));
 ----
-db error: ERROR: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), hyperloglog (bool, default false)
+db error: ERROR: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), distinct (string: 'none', 'sampled' or 'exact', default 'none')
 
 
 statement error

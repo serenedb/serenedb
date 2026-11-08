@@ -1,0 +1,85 @@
+statement ok
+CREATE TABLE dds_parent (id INT PRIMARY KEY, code VARCHAR UNIQUE, tag VARCHAR);
+
+
+statement ok
+CREATE TABLE dds_child (id INT PRIMARY KEY, parent INT REFERENCES dds_parent (id), label VARCHAR);
+
+
+statement ok
+CREATE INDEX dds_child_label ON dds_child USING inverted (label);
+
+
+statement ok
+INSERT INTO dds_parent SELECT i, 'c' || i, 'tag-' || (i % 7) FROM range(1000) t(i);
+
+
+statement ok
+INSERT INTO dds_child SELECT i, i % 100, 'l' || (i % 13) FROM range(5000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dds_child;
+
+
+query
+SELECT (stats(id)).approx_unique AS id, (stats(code)).approx_unique AS code FROM dds_parent LIMIT 1;
+----
+id	code
+1000	1000
+
+
+query
+SELECT stats(tag)::VARCHAR NOT LIKE '%approx_unique%' AS none FROM dds_parent LIMIT 1;
+----
+none
+t
+
+
+query
+SELECT (stats(parent)).approx_unique AS parent, (stats(label)).approx_unique AS label FROM dds_child LIMIT 1;
+----
+parent	label
+100	13
+
+
+statement ok
+INSERT INTO dds_child SELECT i, 100 + i % 50, 'l' || (i % 13) FROM range(5000, 6000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dds_child;
+
+
+statement ok
+INSERT INTO dds_child SELECT i, i % 100, 'm' || (i % 5) FROM range(6000, 7000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dds_child;
+
+
+query
+SELECT (stats(id)).approx_unique AS id, (stats(parent)).approx_unique AS parent, (stats(label)).approx_unique AS label FROM dds_child LIMIT 1;
+----
+id	parent	label
+7000	150	18
+
+
+statement ok
+VACUUM (COMPACT_TABLE) dds_child;
+
+
+query
+SELECT (stats(parent)).approx_unique AS parent, (stats(label)).approx_unique AS label FROM dds_child LIMIT 1;
+----
+parent	label
+150	18
+
+
+statement ok
+DROP TABLE dds_child;
+
+
+statement ok
+DROP TABLE dds_parent;

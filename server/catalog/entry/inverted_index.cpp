@@ -264,14 +264,14 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
-    bool hyperloglog = false;
+    auto distinct = irs::DistinctStats::None;
     for (const auto& key : keys) {
       const auto* included =
         key.column_id == id ? FindEntry(key.field_id) : nullptr;
       if (!included || !included->IsStored()) {
         continue;
       }
-      hyperloglog |= included->column_options.hyperloglog;
+      distinct = std::max(distinct, included->column_options.distinct);
       if (declared == duckdb::CompressionType::COMPRESSION_AUTO) {
         declared = included->column_options.compression;
       }
@@ -284,7 +284,7 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
         }
       }
     }
-    return {.compression = declared, .hyperloglog = hyperloglog};
+    return {.compression = declared, .distinct = distinct};
   }
   // The pk column is written for every row of every segment, so its validity
   // bitmap is always full. So is a sub-field's: it is only written where its

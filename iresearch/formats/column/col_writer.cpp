@@ -116,26 +116,28 @@ void ColWriter::SetFieldOptions(
   _field_options = field_options;
 }
 
-ColumnWriter& ColWriter::OpenColumnInternal(
-  field_id id, duckdb::LogicalType type, bool skip_validity,
-  uint32_t row_group_size, duckdb::CompressionType forced, bool hyperloglog) {
+ColumnWriter& ColWriter::OpenColumnInternal(field_id id,
+                                            duckdb::LogicalType type,
+                                            bool skip_validity,
+                                            uint32_t row_group_size,
+                                            duckdb::CompressionType forced,
+                                            DistinctStats distinct) {
   SDB_ASSERT(row_group_size != 0);
   if (auto it = _by_id.find(id); it != _by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(
       existing._type == type && existing._row_group_size == row_group_size &&
         existing._skip_validity == skip_validity &&
-        existing._forced == forced &&
-        (existing._meta.hyperloglog != nullptr) == hyperloglog,
+        existing._forced == forced && existing._distinct == distinct,
       "ColWriter::OpenColumn: re-opened id ", id, " with mismatched settings");
     return existing;
   }
   if (!_deferred) {
     EnsureOut();
   }
-  auto col = std::make_unique<ColumnWriter>(*this, id, std::move(type),
-                                            skip_validity, row_group_size,
-                                            forced, hyperloglog, _deferred);
+  auto col =
+    std::make_unique<ColumnWriter>(*this, id, std::move(type), skip_validity,
+                                   row_group_size, forced, distinct, _deferred);
   auto* ptr = col.get();
   _by_id.emplace(id, ptr);
   _columns.push_back(std::move(col));
@@ -151,7 +153,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   }
   auto& cw =
     OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
-                       opts.compression, opts.hyperloglog);
+                       opts.compression, opts.distinct);
   if (_field_options) {
     for (const auto ann : _field_options->AnnFields(id)) {
       AttachAnn(id, *_field_options->GetColumnOptions(ann).ann_info);
@@ -163,9 +165,9 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     bool skip_validity, uint32_t row_group_size,
                                     duckdb::CompressionType compression,
-                                    bool hyperloglog) {
+                                    DistinctStats distinct) {
   return OpenColumnInternal(id, std::move(type), skip_validity, row_group_size,
-                            compression, hyperloglog);
+                            compression, distinct);
 }
 
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,

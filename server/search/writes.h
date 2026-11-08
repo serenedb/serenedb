@@ -204,7 +204,8 @@ class Writes {
   // referenced table does not hold, and the statement that removed the last
   // row holding a key a foreign key references. Runs once the statement has
   // handed its rows over.
-  void CheckKeys(duckdb::ClientContext& context, const Store& store);
+  void CheckKeys(duckdb::ClientContext& context, const Store& store,
+                 Tick snapshot);
 
   // Refuses the rows of `table`, the whole table, whose reference key `spec`
   // the referenced table does not hold; the commit checks them again if the
@@ -243,7 +244,8 @@ class Writes {
                        const KeySpec& spec, std::span<const std::string> keys);
   void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
                         bool commit);
-  void CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w);
+  void CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
+                   Tick snapshot);
   std::shared_ptr<const TableState> VerifyAllReferences(
     duckdb::ClientContext& context, const catalog::SearchTableEntry& table,
     const KeySpec& spec);

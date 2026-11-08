@@ -63,6 +63,16 @@ void ReleaseWriter(StoreWrites& w) noexcept {
                              " already exists."));
 }
 
+[[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
+                                           const StoreWrites& w, Tick snapshot,
+                                           const KeySpec& spec,
+                                           std::string_view key) {
+  for (const auto& removal : w.changes.removals) {
+    w.store->GetTable().CheckConflicts(snapshot, *removal);
+  }
+  ThrowDuplicate(context, spec, key);
+}
+
 [[noreturn]] void ThrowMissingReference(duckdb::ClientContext& context,
                                         const catalog::SearchTableEntry& table,
                                         const KeySpec& spec,
@@ -855,7 +865,8 @@ void Writes::CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
   }
 }
 
-void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
+void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
+                       Tick snapshot) {
   absl::MutexLock all{&_mutex};
   const auto found = _writes.find(store.GetId());
   if (found == _writes.end()) {
@@ -930,7 +941,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     auto& keys = fresh[spec];
     absl::c_sort(keys);
     if (auto duplicate = FindDuplicate(key_spec, segments, keys, existing)) {
-      ThrowDuplicate(context, key_spec, *duplicate);
+      ThrowDuplicateOrConflict(context, w, snapshot, key_spec, *duplicate);
     }
   }
   for (const auto& row : keyed) {
@@ -1013,7 +1024,8 @@ void Writes::VerifyReferences(duckdb::ClientContext& context,
     {.table = &table, .spec = spec, .referenced = std::move(referenced)});
 }
 
-void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
+void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
+                         Tick snapshot) {
   if (w.keys.empty() && !w.removed_rows && !w.changes.truncate) {
     return;
   }
@@ -1043,7 +1055,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       }
       absl::c_sort(keys);
       if (auto duplicate = FindDuplicate(spec, segments, keys, fresh)) {
-        ThrowDuplicate(context, spec, *duplicate);
+        ThrowDuplicateOrConflict(context, w, snapshot, spec, *duplicate);
       }
     }
   }
@@ -1239,7 +1251,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context, Tick snapshot) {
   }
   for (auto& [store_id, w] : _writes) {
     if (w.prepared) {
-      CatchUpKeys(context, w);
+      CatchUpKeys(context, w, snapshot);
       SDB_PARK_ONCE_ON_FAILURE("search_commit_prepared");
     }
   }
@@ -1274,7 +1286,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context,
   }
   for (auto& [store_id, w] : _writes) {
     if (w.prepared) {
-      CatchUpKeys(context, w);
+      CatchUpKeys(context, w, snapshot);
       sections.push_back({.table = w.table, .entries = std::move(w.log)});
     }
   }

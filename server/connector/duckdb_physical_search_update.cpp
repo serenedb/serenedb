@@ -23,6 +23,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/config.hpp>
@@ -258,7 +259,9 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
-  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store);
+  SDB_PARK_ONCE_ON_FAILURE("search_update_before_key_check");
+  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store,
+                                        gstate.sdb_txn->Snapshot());
   return duckdb::SinkFinalizeType::READY;
 }
 

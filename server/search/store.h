@@ -310,7 +310,7 @@ class Store final : public std::enable_shared_from_this<Store>,
                      std::span<const irs::DocMap> maps, Lsn lsn);
   void ReplayState(std::span<const StateUnit> units, Lsn lsn);
   void InvertReplayed(duckdb::ClientContext& context);
-  void FinishReplay();
+  bool FinishReplay();
 
   void Cool(bool all);
   void Cover(Lsn target);

@@ -273,7 +273,7 @@ class Table final {
                      std::span<const irs::DocMap> maps, Lsn lsn);
   void ReplayState(std::span<const StateUnit> units, Lsn lsn);
   uint64_t ReplayTop() const noexcept { return _replay_top; }
-  void FinishReplay();
+  bool FinishReplay();
 
  private:
   enum class Scope : uint8_t {

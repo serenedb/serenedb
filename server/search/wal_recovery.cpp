@@ -87,8 +87,9 @@ void RecoverSearchStorages(
   for (auto& table : tables) {
     executor.ScheduleTask(
       duckdb::make_uniq<FinishReplayTask>(executor, [&replayed_tables, table] {
-        table->FinishReplay();
-        replayed_tables.fetch_add(1, std::memory_order_relaxed);
+        if (table->FinishReplay()) {
+          replayed_tables.fetch_add(1, std::memory_order_relaxed);
+        }
         if (const auto status = table->CleanupUnsafe().res; !status.ok()) {
           SDB_WARN(SEARCH, "cleanup of search table '", table->GetId(),
                    "' after log replay failed: ", status.message());

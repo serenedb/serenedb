@@ -1227,14 +1227,15 @@ void Store::InvertReplayed(duckdb::ClientContext& context) {
   }
 }
 
-void Store::FinishReplay() {
+bool Store::FinishReplay() {
   EnsureOpen();
   if (!_table) {
-    return;
+    return false;
   }
   _writer->ReserveSegmentId(_table->ReplayTop());
-  _table->FinishReplay();
+  const bool replayed_records = _table->FinishReplay();
   ClaimColumnOids(_table->View(catalog::Transactions::Get().LastCommit(), {}));
+  return replayed_records;
 }
 
 }  // namespace sdb::search

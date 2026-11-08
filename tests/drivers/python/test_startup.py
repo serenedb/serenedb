@@ -88,7 +88,7 @@ def test_info_timeline(tmp_path: Path) -> None:
 
     second = _run_until_ready(datadir)
     assert "Created database directory" not in second.output(), second.output()
-    assert "search index recovery" not in second.output(), second.output()
+    assert "search recovery" not in second.output(), second.output()
 
 
 def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
@@ -109,8 +109,8 @@ def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("search index recovery: replayed the WAL into 1 of 1 inverted "
-            "index(es)" in restarted.output()), restarted.output()
+    assert ("search recovery: replayed the log into 1 of 1 search table(s) in "
+            in restarted.output()), restarted.output()
 
 
 def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
@@ -130,8 +130,8 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("search index recovery: replayed the WAL into 1 of 2 search "
-            "table(s) in " in restarted.output()), restarted.output()
+    assert ("search recovery: replayed the log into 1 of 2 search table(s) in "
+            in restarted.output()), restarted.output()
 
 
 def test_terminate_while_starting(tmp_path: Path) -> None:

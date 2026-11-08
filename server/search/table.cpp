@@ -1047,9 +1047,10 @@ void Table::ReplayState(std::span<const StateUnit> units, Lsn lsn) {
   }
 }
 
-void Table::FinishReplay() {
+bool Table::FinishReplay() {
   absl::MutexLock lock{&_state_mutex};
   _needed = std::exchange(_replay_needed, kNoLsn);
+  const bool replayed_records = _needed != kNoLsn;
   auto next = std::make_shared<TableState>(*State());
   for (auto& [id, replayed] : _replay) {
     auto unit = std::make_shared<TableUnit>();
@@ -1095,6 +1096,7 @@ void Table::FinishReplay() {
   }
   _replay.clear();
   Publish(std::move(next));
+  return replayed_records;
 }
 
 }  // namespace sdb::search

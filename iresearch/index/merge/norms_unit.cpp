@@ -56,7 +56,6 @@ size_t KeepLive(GenericDocsMask& mask, doc_id_t first,
               for (const auto offset : live) {
                 values[kept++] = from[offset];
               }
-              return true;
             });
   return kept;
 }

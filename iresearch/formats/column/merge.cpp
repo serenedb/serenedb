@@ -42,8 +42,6 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -94,16 +92,13 @@ bool BlocksRelocatable(const ColumnReader& column) {
     return true;
   }
   return absl::c_all_of(column.DataBlocks(), [](const ColumnBlockMeta& block) {
-    switch (const auto type = block.codec->type) {
-      case duckdb::CompressionType::COMPRESSION_CONSTANT:
-      case duckdb::CompressionType::COMPRESSION_EMPTY:
-      case duckdb::CompressionType::COMPRESSION_DICTIONARY:
-      case duckdb::CompressionType::COMPRESSION_FSST:
-      case duckdb::CompressionType::COMPRESSION_DICT_FSST:
-        return true;
-      default:
-        return duckdb::IsSereneDBCompressionType(type);
-    }
+    const auto type = block.codec->type;
+    SDB_ASSERT(type != duckdb::CompressionType::COMPRESSION_CONSTANT &&
+               type != duckdb::CompressionType::COMPRESSION_EMPTY &&
+               type != duckdb::CompressionType::COMPRESSION_DICTIONARY &&
+               type != duckdb::CompressionType::COMPRESSION_FSST);
+    return type == duckdb::CompressionType::COMPRESSION_DICT_FSST ||
+           duckdb::IsSereneDBCompressionType(type);
   });
 }
 
@@ -212,9 +207,7 @@ bool ColumnMerger::VisitRows(field_id column, uint64_t begin, uint64_t end,
           std::min<duckdb::idx_t>(stop - pos, STANDARD_VECTOR_SIZE);
         auto& batch = batch_scratch.Reset();
         col->Scan(state, batch, take);
-        if (!visit(si, source_begin + pos, batch, take)) {
-          return true;
-        }
+        visit(si, source_begin + pos, batch, take);
         pos += take;
       }
       continue;
@@ -245,21 +238,10 @@ bool ColumnMerger::VisitRows(field_id column, uint64_t begin, uint64_t end,
       col->Scan(state, batch, take);
       scanned = pos + take;
       duckdb::Vector selected{batch, sel, kept};
-      if (!visit(si, at, selected, kept)) {
-        return true;
-      }
+      visit(si, at, selected, kept);
     }
   }
   return true;
-}
-
-uint64_t ColumnMerger::Rows(field_id column) const {
-  uint64_t rows = 0;
-  for (const auto& s : _sources) {
-    const auto* col = ColumnOf(s, column);
-    rows += col ? col->RowCount() : 0;
-  }
-  return rows;
 }
 
 struct ColumnMerger::OrderedInput {
@@ -580,15 +562,12 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
   const auto append = [&](uint64_t at, const duckdb::Vector& values,
                           duckdb::idx_t count) {
     cw.Append(at - begin, values, count);
-    return true;
   };
-  if (!(_order
-          ? VisitOrdered(column, begin, end, progress, append)
-          : VisitRows(column, begin, end, {}, progress,
-                      [&](size_t, uint64_t at, const duckdb::Vector& values,
-                          duckdb::idx_t count) {
-                        return append(at, values, count);
-                      }))) {
+  if (!(_order ? VisitOrdered(column, begin, end, progress, append)
+               : VisitRows(
+                   column, begin, end, {}, progress,
+                   [&](size_t, uint64_t at, const duckdb::Vector& values,
+                       duckdb::idx_t count) { append(at, values, count); }))) {
     return false;
   }
   cw.PadNullsTo(end - begin);
@@ -650,7 +629,6 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
         if (hyperloglog) {
           count_distinct(values, count);
         }
-        return true;
       });
   } else {
     std::vector<bool> stored(_sources.size());
@@ -673,7 +651,6 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
                          if (hyperloglog && !stored[si]) {
                            count_distinct(values, count);
                          }
-                         return true;
                        });
   }
   if (!merged) {

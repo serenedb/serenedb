@@ -218,7 +218,6 @@ void KeyOrder::ConcatOrder() {
                   _order->Set(next - doc_limits::min(), i);
                   id_map[window + doc] = next++;
                 }
-                return true;
               });
   }
   _order->Finish();
@@ -328,7 +327,6 @@ void KeyOrder::Place(const duckdb::PresortedMerge& merge, size_t partition,
                   span.first = std::min(span.first, part.next);
                   span.last = part.next++;
                 }
-                return true;
               });
   }
 }

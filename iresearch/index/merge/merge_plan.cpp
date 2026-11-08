@@ -139,7 +139,6 @@ doc_id_t ComputeDocIds(ManagedVector<doc_id_t>& doc_id_map,
               for (const auto doc : live) {
                 out[doc] = next_id++;
               }
-              return true;
             });
   return next_id;
 }

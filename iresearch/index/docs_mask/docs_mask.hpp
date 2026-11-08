@@ -307,18 +307,15 @@ inline doc_id_t LiveEnd(const SubReader& segment) noexcept {
 }
 
 template<typename Visit>
-bool VisitLive(GenericDocsMask& mask, doc_id_t begin, doc_id_t end,
+void VisitLive(GenericDocsMask& mask, doc_id_t begin, doc_id_t end,
                Visit&& visit) {
   uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
   for (auto window = begin; window < end;) {
     const auto count = std::min<doc_id_t>(end - window, detail::kWindowDocs);
     const auto alive = mask.FillLive(window, count, live);
-    if (!visit(window, std::span<const uint32_t>{live, alive})) {
-      return false;
-    }
+    visit(window, std::span<const uint32_t>{live, alive});
     window += count;
   }
-  return true;
 }
 
 }  // namespace irs

@@ -114,8 +114,6 @@ class ColumnMerger {
                  std::span<const std::shared_ptr<ReadContext>> ctxs,
                  const MergeProgress& progress, Visit&& visit);
 
-  uint64_t Rows(field_id column) const;
-
   void OpenOrdered(OrderedInput& in, size_t si, field_id column, uint64_t live);
 
   void LoadOrdered(OrderedInput& in, size_t si);

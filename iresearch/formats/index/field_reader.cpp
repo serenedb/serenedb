@@ -212,6 +212,9 @@ void FieldReader::prepare(const ReaderState& state) {
     _single_inline.resize(_single_inline.size() + kSlack);
   }
   FillCopies();
+  if (!_base && _block_count != 0) {
+    _in->Prefetch(PageOffset(0), PageOffset(_block_count) - PageOffset(0));
+  }
   const auto decoded = DecodedBytes();
   _buffers->ReserveMemory(decoded);
   _reserved = decoded;

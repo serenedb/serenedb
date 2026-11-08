@@ -1380,6 +1380,30 @@ TEST_P(TermDictTest, small_fields_are_copied_at_open) {
   }
 }
 
+TEST_P(TermDictTest, a_cold_open_loads_the_whole_dictionary) {
+  std::vector<irs::bstring> keys;
+  for (size_t i = 0; i != 300000; ++i) {
+    keys.push_back(Bytes(absl::StrCat("key-", i * 7919 % 1000003)));
+  }
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries({Bytes("x"), Bytes("y"), Bytes("z")})},
+    {.id = 2, .entries = MakeEntries(keys)},
+  };
+  Write(fields);
+  if (_reader->Base()) {
+    GTEST_SKIP() << "a mapped input reads its dictionary in place";
+  }
+  auto& cache = duckdb::BlockCache::Get(dir().Db());
+  cache.SetEnabled(false);
+  cache.SetEnabled(true);
+  Open(dir());
+  const auto begin = _reader->PageOffset(0);
+  const auto end = _reader->PageOffset(_reader->BlockCount());
+  ASSERT_LT(begin, end);
+  EXPECT_TRUE(_reader->Input().Resident(begin, end - begin));
+  AssertField(Blocks(*Get(2)), fields[1].entries);
+}
+
 TEST_P(TermDictTest, open_readers_count_against_the_memory_limit) {
   const auto& buffers = duckdb::BufferManager::GetBufferManager(dir().Db());
   const auto used = [&](duckdb::MemoryTag tag) {

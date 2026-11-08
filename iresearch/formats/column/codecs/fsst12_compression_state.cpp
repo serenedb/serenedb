@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/fsst_state.hpp"
+#include "iresearch/formats/column/codecs/fsst12_compression_state.hpp"
 
 #include <algorithm>
 #include <duckdb/common/bitpacking.hpp>
@@ -33,7 +33,7 @@ constexpr uint64_t kEncodeSlack = 8;
 
 }  // namespace
 
-void FsstState::Finish() {
+void Fsst12CompressionState::FinalizeCompress() {
   if (_rows.SegmentShape() == Shape::Dedup) {
     _rows.Sort(_sort);
   }
@@ -85,7 +85,7 @@ void FsstState::Finish() {
   encode(suffixes + kEncodeSlack);
   if (done != entries.size()) {
     encode(kEncodeExpansion * suffixes + kEncodeSlack);
-    SDB_ENSURE(done == entries.size(), "fsst: compression ran out of space");
+    SDB_ENSURE(done == entries.size(), "fsst12: compression ran out of space");
   }
   size_t off = 0;
   uint32_t max_enc = 0;

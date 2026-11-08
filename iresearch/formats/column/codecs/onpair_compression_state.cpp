@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/onpair_state.hpp"
+#include "iresearch/formats/column/codecs/onpair_compression_state.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -27,7 +27,7 @@
 
 namespace irs::codecs::text {
 
-void OnPairState::Finish() {
+void OnPairCompressionState::FinalizeCompress() {
   if (_rows.SegmentShape() == Shape::Dedup) {
     _rows.Sort(_sort);
   }
@@ -84,9 +84,9 @@ void OnPairState::Finish() {
     *_out);
 }
 
-void OnPairState::Pack(std::span<const duckdb::string_t> entries,
-                       std::span<const uint32_t> lengths, size_t first,
-                       size_t end, uint64_t region) {
+void OnPairCompressionState::Pack(std::span<const duckdb::string_t> entries,
+                                  std::span<const uint32_t> lengths,
+                                  size_t first, size_t end, uint64_t region) {
   const auto bits = _codec.Bits();
   uint64_t count = 0;
   for (auto e = first; e < end; ++e) {

@@ -28,7 +28,7 @@
 
 namespace irs::codecs::text {
 
-uint64_t StringWindow::Price(const Config& config) {
+uint64_t StringWindow::Analyze(const Config& config) {
   if (const auto* seg = Encoded(config)) {
     return seg->Size();
   }
@@ -62,11 +62,12 @@ uint64_t StringWindow::Price(const Config& config) {
   SDB_UNREACHABLE();
 }
 
-Segment& StringWindow::Encode(const Config& config) {
+Segment& StringWindow::TrialCompress(const Config& config) {
   if (auto* seg = Encoded(config)) {
     return *seg;
   }
-  auto& seg = *_owned.emplace_back(_encoder.Encode(config, _acc, _begin, _end));
+  auto& seg =
+    *_owned.emplace_back(_compressor.TrialCompress(config, _acc, _begin, _end));
   _encoded.emplace_back(&seg);
   return seg;
 }

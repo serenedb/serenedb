@@ -43,18 +43,18 @@ namespace irs::codecs::text {
 inline constexpr uint64_t kLocalDictionaryPacking = 2;
 
 template<typename Codec>
-class BlobState {
+class BlobCompressionState {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  BlobState(const duckdb::LogicalType& type, DedupScratch& dedup,
-            EstimatorState& estimators)
+  BlobCompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
+                       EstimatorState& estimators)
     : _rows{type, dedup, estimators.codes},
       _history{estimators.history[static_cast<size_t>(kCodec)]} {}
 
-  void Begin(const Config& config, uint64_t first_row, size_t distinct,
-             Segment& out) {
+  void InitCompression(const Config& config, uint64_t first_row,
+                       size_t distinct, Segment& out) {
     _rows.Begin(config, first_row, distinct);
     Configure(config.level, config.layout);
     _frame.clear();
@@ -63,13 +63,13 @@ class BlobState {
     _frames.clear();
   }
 
-  IRS_FORCE_INLINE void AddValue(const duckdb::string_t* value) {
+  IRS_FORCE_INLINE void Compress(const duckdb::string_t* value) {
     _rows.AddValue(value, [&](const duckdb::string_t& entry, uint32_t id) {
       Append(entry, id);
     });
   }
 
-  IRS_FORCE_INLINE void AddCode(
+  IRS_FORCE_INLINE void Compress(
     uint32_t code, std::span<const duckdb::string_t* const> values) {
     _rows.AddCode(
       code, values,
@@ -80,7 +80,7 @@ class BlobState {
     return _rows.EstimateDue(target) && _rows.Estimate() + Estimate() >= target;
   }
 
-  void Finish() {
+  void FinalizeCompress() {
     const auto rows = _rows.View();
     SDB_ASSERT(_packed + _frame.size() == rows.raw);
     const auto lengths = _rows.Lengths();
@@ -204,7 +204,7 @@ class BlobState {
     for (auto i = _frames.size(); i < _spans.size(); ++i) {
       const auto raw = Slice(i);
       const auto at = Written();
-      const auto n = Compress(raw);
+      const auto n = CompressFrame(raw);
       _frames.push_back({static_cast<uint32_t>(_spans[i].first),
                          static_cast<uint32_t>(raw.size()),
                          static_cast<uint32_t>(at), static_cast<uint32_t>(n)});
@@ -243,7 +243,7 @@ class BlobState {
            first_plain + Scale(sampled_first, sampled_raw, rest_raw);
   }
 
-  size_t Compress(std::string_view raw) {
+  size_t CompressFrame(std::string_view raw) {
     const auto bound = Codec::Bound(raw.size());
     auto* out = _out->bytes.Extend(bound);
     const auto n = _codec->Compress(raw.data(), raw.size(), out, bound);

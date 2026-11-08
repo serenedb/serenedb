@@ -30,8 +30,8 @@
 #include "iresearch/formats/column/codecs/blob_frames.hpp"
 #include "iresearch/formats/column/codecs/blob_pricer.tpp"
 #include "iresearch/formats/column/codecs/lz4.hpp"
-#include "iresearch/formats/column/codecs/segment_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_rows.hpp"
+#include "iresearch/formats/column/codecs/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/formats/column/codecs/zxc.hpp"
@@ -40,10 +40,10 @@ namespace irs::codecs::text {
 
 class StringWindow {
  public:
-  StringWindow(const StringAccumulator& acc, SegmentEncoder& encoder,
+  StringWindow(const StringAccumulator& acc, StringCompressor& compressor,
                Segment& first, const NumericTuning& codes)
     : _acc{acc},
-      _encoder{encoder},
+      _compressor{compressor},
       _codes{codes},
       _begin{first.begin},
       _end{first.begin + first.rows},
@@ -52,9 +52,9 @@ class StringWindow {
   StringWindow(const StringWindow&) = delete;
   StringWindow& operator=(const StringWindow&) = delete;
 
-  uint64_t Price(const Config& config);
+  uint64_t Analyze(const Config& config);
 
-  Segment& Encode(const Config& config);
+  Segment& TrialCompress(const Config& config);
 
   std::span<Segment* const> Encodings() const noexcept { return _encoded; }
 
@@ -90,7 +90,7 @@ class StringWindow {
   const FrameSpans& Split(Measured& rows, FrameShape frame);
 
   const StringAccumulator& _acc;
-  SegmentEncoder& _encoder;
+  StringCompressor& _compressor;
   const NumericTuning& _codes;
   uint64_t _begin;
   uint64_t _end;

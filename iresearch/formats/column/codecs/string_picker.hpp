@@ -21,8 +21,8 @@
 #pragma once
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/segment_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_rows.hpp"
+#include "iresearch/formats/column/codecs/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 
@@ -34,8 +34,8 @@ Config NamedConfig(const StringChoice& named,
 class StringPicker {
  public:
   StringPicker(const StringAccumulator& acc, const ColCodecParams& params,
-               StringTuning& tuning, SegmentEncoder& encoder)
-    : _acc{acc}, _params{params}, _tuning{tuning}, _encoder{encoder} {}
+               StringTuning& tuning, StringCompressor& compressor)
+    : _acc{acc}, _params{params}, _tuning{tuning}, _compressor{compressor} {}
 
   PooledSegment First();
 
@@ -44,12 +44,12 @@ class StringPicker {
 
   bool Drifted(const Segment& seg) const noexcept;
 
-  PooledSegment Pick(PooledSegment first, bool drift);
+  PooledSegment DetectBestCompressionMethod(PooledSegment first, bool drift);
 
   const StringAccumulator& _acc;
   const ColCodecParams& _params;
   StringTuning& _tuning;
-  SegmentEncoder& _encoder;
+  StringCompressor& _compressor;
 };
 
 }  // namespace irs::codecs::text

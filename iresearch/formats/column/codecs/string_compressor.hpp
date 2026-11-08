@@ -27,12 +27,12 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/blob_state.tpp"
-#include "iresearch/formats/column/codecs/fsst12_state.hpp"
-#include "iresearch/formats/column/codecs/fsst_plus_state.hpp"
-#include "iresearch/formats/column/codecs/fsst_state.hpp"
+#include "iresearch/formats/column/codecs/blob_compression_state.tpp"
+#include "iresearch/formats/column/codecs/fsst12_compression_state.hpp"
+#include "iresearch/formats/column/codecs/fsst_compression_state.hpp"
+#include "iresearch/formats/column/codecs/fsst_plus_compression_state.hpp"
 #include "iresearch/formats/column/codecs/lz4.hpp"
-#include "iresearch/formats/column/codecs/onpair_state.hpp"
+#include "iresearch/formats/column/codecs/onpair_compression_state.hpp"
 #include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
@@ -48,10 +48,11 @@ struct SegmentRecycler {
 
 using PooledSegment = std::unique_ptr<Segment, SegmentRecycler>;
 
-class SegmentEncoder {
+class StringCompressor {
  public:
-  SegmentEncoder(const ColCodecParams& params, const duckdb::LogicalType& type,
-                 EstimatorState& estimators, duckdb::BufferManager& buffers)
+  StringCompressor(const ColCodecParams& params,
+                   const duckdb::LogicalType& type, EstimatorState& estimators,
+                   duckdb::BufferManager& buffers)
     : _params{params},
       _type{type},
       _estimators{estimators},
@@ -66,19 +67,20 @@ class SegmentEncoder {
   void SealChunks(const Config& config, std::span<const WriteChunk> chunks,
                   SegmentSink sink);
 
-  PooledSegment Encode(const Config& config, const StringAccumulator& acc,
-                       uint64_t begin, uint64_t end);
+  PooledSegment TrialCompress(const Config& config,
+                              const StringAccumulator& acc, uint64_t begin,
+                              uint64_t end);
 
  private:
   struct States {
-    std::optional<BlobState<Lz4>> lz4;
-    std::optional<BlobState<Lz4Hc>> lz4_hc;
-    std::optional<BlobState<Zstd>> zstd;
-    std::optional<BlobState<Zxc>> zxc;
-    std::optional<FsstState> fsst;
-    std::optional<FsstPlusState> fsst_plus;
-    std::optional<OnPairState> onpair;
-    std::optional<Fsst12State> fsst12;
+    std::optional<BlobCompressionState<Lz4>> lz4;
+    std::optional<BlobCompressionState<Lz4Hc>> lz4_hc;
+    std::optional<BlobCompressionState<Zstd>> zstd;
+    std::optional<BlobCompressionState<Zxc>> zxc;
+    std::optional<FsstCompressionState> fsst;
+    std::optional<FsstPlusCompressionState> fsst_plus;
+    std::optional<OnPairCompressionState> onpair;
+    std::optional<Fsst12CompressionState> fsst12;
   };
 
   template<typename F>

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/segment_encoder.hpp"
+#include "iresearch/formats/column/codecs/string_compressor.hpp"
 
 #include <duckdb/common/vector/vector_iterator.hpp>
 
@@ -33,14 +33,14 @@ IRS_NO_INLINE void CutRows(State& state, const Config& config,
                            uint32_t target, Segment& seg) {
   const std::span<const uint32_t> codes = acc.codes;
   const std::span<const duckdb::string_t* const> values = acc.values;
-  state.Begin(config, begin, values.size(), seg);
+  state.InitCompression(config, begin, values.size(), seg);
   for (auto row = begin; row < codes.size();) {
-    state.AddCode(codes[row++], values);
+    state.Compress(codes[row++], values);
     if (state.Full(target)) {
       break;
     }
   }
-  state.Finish();
+  state.FinalizeCompress();
 }
 
 template<typename State>
@@ -48,20 +48,20 @@ IRS_NO_INLINE void SealRows(State& state, const Config& config,
                             std::span<const WriteChunk> chunks, uint32_t target,
                             Segment& seg, SegmentSink sink) {
   const auto seal = [&] {
-    state.Finish();
+    state.FinalizeCompress();
     sink(seg.config.choice, std::move(*seg.stats), seg.rows, seg.bytes.View());
   };
   uint64_t row = 0;
   uint64_t first = 0;
-  state.Begin(config, first, 0, seg);
+  state.InitCompression(config, first, 0, seg);
   for (const auto& chunk : chunks) {
     for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
-      state.AddValue(entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
+      state.Compress(entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
       ++row;
       if (state.Full(target)) {
         seal();
         first = row;
-        state.Begin(config, first, 0, seg);
+        state.InitCompression(config, first, 0, seg);
       }
     }
   }
@@ -82,22 +82,22 @@ IRS_NO_INLINE void CompressRows(State& state, const Config& config,
 }
 
 template<typename State>
-IRS_NO_INLINE void EncodeRows(State& state, const Config& config,
-                              const StringAccumulator& acc, uint64_t begin,
-                              uint64_t end, Segment& seg) {
+IRS_NO_INLINE void CompressRange(State& state, const Config& config,
+                                 const StringAccumulator& acc, uint64_t begin,
+                                 uint64_t end, Segment& seg) {
   const std::span<const uint32_t> codes = acc.codes;
   const std::span<const duckdb::string_t* const> values = acc.values;
-  state.Begin(config, begin, values.size(), seg);
+  state.InitCompression(config, begin, values.size(), seg);
   for (auto row = begin; row < end; ++row) {
-    state.AddCode(codes[row], values);
+    state.Compress(codes[row], values);
   }
-  state.Finish();
+  state.FinalizeCompress();
 }
 
 }  // namespace
 
 template<typename F>
-auto SegmentEncoder::With(const Config& config, F&& f) {
+auto StringCompressor::With(const Config& config, F&& f) {
   switch (config.choice.leaf) {
     case ByteCodec::Lz4:
       if (EffectiveLevel<Lz4>(config.level) > 1) {
@@ -121,7 +121,7 @@ auto SegmentEncoder::With(const Config& config, F&& f) {
 }
 
 template<typename State>
-State& SegmentEncoder::Get(std::optional<State>& slot) {
+State& StringCompressor::Get(std::optional<State>& slot) {
   if (!slot) {
     if constexpr (Sorted(State::kCodec)) {
       slot.emplace(_type, _dedup, _estimators, _params.segment_target);
@@ -132,9 +132,9 @@ State& SegmentEncoder::Get(std::optional<State>& slot) {
   return *slot;
 }
 
-PooledSegment SegmentEncoder::Cut(const Config& config,
-                                  const StringAccumulator& acc,
-                                  uint64_t begin) {
+PooledSegment StringCompressor::Cut(const Config& config,
+                                    const StringAccumulator& acc,
+                                    uint64_t begin) {
   auto seg = Acquire();
   With(config, [&](auto& state) {
     CutRows(state, config, acc, begin, _params.segment_target, *seg);
@@ -142,9 +142,9 @@ PooledSegment SegmentEncoder::Cut(const Config& config,
   return seg;
 }
 
-void SegmentEncoder::Compress(const Config& config,
-                              const StringAccumulator& acc, uint64_t begin,
-                              SegmentSink sink) {
+void StringCompressor::Compress(const Config& config,
+                                const StringAccumulator& acc, uint64_t begin,
+                                SegmentSink sink) {
   if (begin >= acc.Rows()) {
     return;
   }
@@ -154,25 +154,26 @@ void SegmentEncoder::Compress(const Config& config,
   });
 }
 
-void SegmentEncoder::SealChunks(const Config& config,
-                                std::span<const WriteChunk> chunks,
-                                SegmentSink sink) {
+void StringCompressor::SealChunks(const Config& config,
+                                  std::span<const WriteChunk> chunks,
+                                  SegmentSink sink) {
   const auto seg = Acquire();
   With(config, [&](auto& state) {
     SealRows(state, config, chunks, _params.segment_target, *seg, sink);
   });
 }
 
-PooledSegment SegmentEncoder::Encode(const Config& config,
-                                     const StringAccumulator& acc,
-                                     uint64_t begin, uint64_t end) {
+PooledSegment StringCompressor::TrialCompress(const Config& config,
+                                              const StringAccumulator& acc,
+                                              uint64_t begin, uint64_t end) {
   auto seg = Acquire();
-  With(config,
-       [&](auto& state) { EncodeRows(state, config, acc, begin, end, *seg); });
+  With(config, [&](auto& state) {
+    CompressRange(state, config, acc, begin, end, *seg);
+  });
   return seg;
 }
 
-PooledSegment SegmentEncoder::Acquire() {
+PooledSegment StringCompressor::Acquire() {
   if (_free.empty()) {
     auto* seg = _pool.emplace_back(std::make_unique<Segment>(_buffers)).get();
     _free.reserve(_pool.size());

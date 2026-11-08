@@ -93,8 +93,9 @@ AnalyzeResult FinalAnalyze(StringWindow& window, Shape shape,
   SDB_ASSERT(!levels.empty() && levels.size() <= kMaxLevels);
   const auto leaf = static_cast<size_t>(method.leaf);
   const auto score = [&](const Config& config) {
-    return config.level <= method.max_trial_level ? window.Encode(config).Size()
-                                                  : window.Price(config);
+    return config.level <= method.max_trial_level
+             ? window.TrialCompress(config).Size()
+             : window.Analyze(config);
   };
   Config config{.choice = {shape, method.leaf}};
   if (!tune) {
@@ -108,7 +109,7 @@ AnalyzeResult FinalAnalyze(StringWindow& window, Shape shape,
   uint64_t best_score = std::numeric_limits<uint64_t>::max();
   for (size_t i = 0; i < levels.size(); ++i) {
     config.level = levels[i];
-    scores[i] = window.Price(config);
+    scores[i] = window.Analyze(config);
     best_score = std::min(best_score, scores[i]);
   }
   size_t level = 0;
@@ -121,7 +122,7 @@ AnalyzeResult FinalAnalyze(StringWindow& window, Shape shape,
   const auto analyze_layout = [&](FrameLayout layout, double min_gain) {
     auto candidate = best.config;
     candidate.layout = layout;
-    const auto candidate_score = window.Price(candidate);
+    const auto candidate_score = window.Analyze(candidate);
     if (static_cast<double>(candidate_score) <
         static_cast<double>(best.score) * (1.0 - min_gain)) {
       best = {candidate, candidate_score};
@@ -134,7 +135,7 @@ AnalyzeResult FinalAnalyze(StringWindow& window, Shape shape,
   tuned.level[leaf] = best.config.level;
   tuned.layout[leaf] = best.config.layout;
   if (best.config.level <= method.max_trial_level) {
-    best.score = window.Encode(best.config).Size();
+    best.score = window.TrialCompress(best.config).Size();
   }
   return best;
 }
@@ -174,9 +175,9 @@ PooledSegment StringPicker::First() {
   if (_acc.Rows() == 0) {
     return {};
   }
-  auto first = _encoder.Cut(Current(), _acc, 0);
+  auto first = _compressor.Cut(Current(), _acc, 0);
   if (const bool drift = !due && Drifted(*first); due || drift) {
-    return Pick(std::move(first), drift);
+    return DetectBestCompressionMethod(std::move(first), drift);
   }
   return first;
 }
@@ -200,21 +201,22 @@ bool StringPicker::Drifted(const Segment& seg) const noexcept {
   return ratio > reference * kDrift || ratio * kDrift < reference;
 }
 
-PooledSegment StringPicker::Pick(PooledSegment first, bool drift) {
+PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
+                                                        bool drift) {
   const auto input = first->input;
-  StringWindow window{_acc, _encoder, *first, _tuning.estimators.codes};
-  const auto& dedup = window.Encode(Fast(Shape::Dedup));
+  StringWindow window{_acc, _compressor, *first, _tuning.estimators.codes};
+  const auto& dedup = window.TrialCompress(Fast(Shape::Dedup));
   auto shape = Shape::Dedup;
   if (PlainWins(dedup, kHeaderSize + Packed(dedup.rows, dedup.max_len) +
                          dedup.input / kLz4MaxRatio) &&
-      PlainWins(dedup, window.Encode(Fast(Shape::Plain)).Size())) {
+      PlainWins(dedup, window.TrialCompress(Fast(Shape::Plain)).Size())) {
     shape = Shape::Plain;
   }
   auto& tuned = _tuning.tuned;
   const bool tune = dedup.entries >= kTuneMinEntries && !tuned.done;
   const auto& tier = MethodsOf(_params.tier);
   const Config fsst_config{.choice = {shape, ByteCodec::Fsst}};
-  auto& fsst = window.Encode(fsst_config);
+  auto& fsst = window.TrialCompress(fsst_config);
   AnalyzeResult best{fsst_config, fsst.Size()};
   for (const auto& method : tier.methods) {
     if (const auto result = FinalAnalyze(window, shape, method, tune, tuned);
@@ -225,7 +227,7 @@ PooledSegment StringPicker::Pick(PooledSegment first, bool drift) {
   if (tune) {
     tuned.done = true;
   }
-  auto* picked = &window.Encode(best.config);
+  auto* picked = &window.TrialCompress(best.config);
   for (auto* seg : window.Encodings()) {
     if (seg->config.choice.shape == shape && seg->Size() < picked->Size()) {
       picked = seg;

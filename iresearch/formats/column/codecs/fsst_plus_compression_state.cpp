@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/fsst_plus_state.hpp"
+#include "iresearch/formats/column/codecs/fsst_plus_compression_state.hpp"
 
 #include <absl/strings/match.h>
 
@@ -54,7 +54,7 @@ void AppendU32(std::string& out, uint32_t value) {
 
 }  // namespace
 
-void FsstPlusState::Finish() {
+void FsstPlusCompressionState::FinalizeCompress() {
   if (_rows.SegmentShape() == Shape::Dedup) {
     _rows.Sort(_sort);
   }
@@ -141,7 +141,7 @@ void FsstPlusState::Finish() {
     *_out);
 }
 
-void FsstPlusState::Cleave(uint32_t first_entry) {
+void FsstPlusCompressionState::Cleave(uint32_t first_entry) {
   const auto n = static_cast<uint32_t>(_codes.size());
   if (n < 2) {
     return;

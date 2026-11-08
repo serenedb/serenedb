@@ -24,6 +24,9 @@ INSERT INTO wal_upd_t VALUES
 statement ok
 CREATE INDEX wal_upd_idx ON wal_upd_t USING inverted(a, b upd_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_upd_t;
+
 query
 SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('old cat');
 ----

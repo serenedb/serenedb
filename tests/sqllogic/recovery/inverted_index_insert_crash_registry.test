@@ -22,6 +22,9 @@ INSERT INTO reg_t VALUES (1, 'alpha bravo charlie');
 statement ok
 CREATE INDEX reg_idx ON reg_t USING inverted(a, b reg_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) reg_t;
+
 query
 SELECT a FROM reg_idx WHERE b @@ ts_phrase('alpha bravo');
 ----

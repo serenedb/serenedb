@@ -114,6 +114,10 @@ statement ok
 INSERT INTO ows.st VALUES (2, 'two');
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) ows.st;
+
+connection after_crash
 query
 SELECT count(*) AS rows, count(DISTINCT rowid) AS rowids FROM ows.st;
 ----

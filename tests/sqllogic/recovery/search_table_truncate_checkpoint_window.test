@@ -102,6 +102,10 @@ statement ok
 INSERT INTO tcw VALUES (4, 'd');
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) tcw;
+
+connection after_crash
 query
 SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcw;
 ----

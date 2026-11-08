@@ -28,6 +28,12 @@ statement ok
 CREATE INDEX wal_mi_b_idx ON wal_mi_b USING inverted(id, txt mi_dict);
 
 statement ok
+VACUUM (FLUSH_TABLE) wal_mi_a;
+
+statement ok
+VACUUM (FLUSH_TABLE) wal_mi_b;
+
+statement ok
 INSERT INTO wal_mi_a VALUES (2, 'ayylmao two'), (3, 'ayylmao three');
 
 statement ok

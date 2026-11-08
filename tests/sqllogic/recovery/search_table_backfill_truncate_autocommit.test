@@ -11,6 +11,9 @@ statement ok
 INSERT INTO bfa VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 statement ok
+VACUUM (FLUSH_TABLE) bfa;
+
+statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
 
 connection builder
@@ -43,6 +46,10 @@ SET sdb_faults = '-pause_search_backfill_before_swap';
 wait
 
 connection default
+statement ok
+VACUUM (FLUSH_TABLE) bfa;
+
+connection default
 query
 SELECT count(*) AS n FROM bfa;
 ----
@@ -59,6 +66,10 @@ n
 connection default
 statement ok
 INSERT INTO bfa VALUES (4, 'd');
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) bfa;
 
 connection default
 query

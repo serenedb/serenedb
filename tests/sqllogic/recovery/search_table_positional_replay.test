@@ -59,6 +59,10 @@ n
 10000
 
 connection after_long_run
+statement ok
+VACUUM (FLUSH_TABLE) rp;
+
+connection after_long_run
 query
 SELECT (SELECT count(*) FROM (SELECT id, v FROM rp EXCEPT ALL SELECT id, v FROM rp_ref)) + (SELECT count(*) FROM (SELECT id, v FROM rp_ref EXCEPT ALL SELECT id, v FROM rp)) AS diff;
 ----
@@ -109,6 +113,10 @@ n	left
 8000	0
 
 connection after_overlap
+statement ok
+VACUUM (FLUSH_TABLE) rp;
+
+connection after_overlap
 query
 SELECT (SELECT count(*) FROM (SELECT id, v FROM rp EXCEPT ALL SELECT id, v FROM rp_ref)) + (SELECT count(*) FROM (SELECT id, v FROM rp_ref EXCEPT ALL SELECT id, v FROM rp)) AS diff;
 ----
@@ -149,6 +157,10 @@ SELECT count(*) AS n, count(*) FILTER (WHERE v = 'u') AS u, count(DISTINCT id) A
 ----
 n	u	ids
 7200	800	7200
+
+connection after_update
+statement ok
+VACUUM (FLUSH_TABLE) rp;
 
 connection after_update
 query
@@ -194,6 +206,10 @@ SELECT count(*) AS n, count(DISTINCT id) AS ids FROM rp;
 ----
 n	ids
 7200	7200
+
+connection after_race
+statement ok
+VACUUM (FLUSH_TABLE) rp;
 
 connection after_race
 query
@@ -255,6 +271,10 @@ SELECT count(*) AS n FROM rp WHERE id % 3 = 0 OR id % 11 = 4;
 ----
 n
 0
+
+connection after_third_crash
+statement ok
+VACUUM (FLUSH_TABLE) rp;
 
 connection after_third_crash
 query

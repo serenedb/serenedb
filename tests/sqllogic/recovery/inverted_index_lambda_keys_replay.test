@@ -47,6 +47,11 @@ INSERT INTO lr VALUES (40002, ['Blue', 'Yellow']);
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) lr;
+
+
+connection after_crash
 query
 SELECT count(*) FROM lr_idx WHERE (list_reduce(tags, lambda a, b: a || ' ' || b)) @@ ts_phrase('Bulk');
 ----

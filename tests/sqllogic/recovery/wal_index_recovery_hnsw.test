@@ -24,6 +24,9 @@ statement ok
 CREATE INDEX wal_hnsw_idx ON wal_hnsw_t
   USING inverted(emb hnsw (metric = 'l2'));
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_hnsw_t;
+
 # Plan check: ANN top-K served by the graph in the inverted index.
 query
 EXPLAIN SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;

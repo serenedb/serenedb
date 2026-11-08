@@ -16,6 +16,10 @@ statement ok
 INSERT INTO melstroi_casino.slots VALUES (1, 'jackpot'), (2, 'lose');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) melstroi_casino.slots;
+
+
 connection pudge
 statement ok
 BEGIN;
@@ -90,6 +94,11 @@ n
 connection after_crash
 statement ok
 INSERT INTO melstroi_casino.slots VALUES (3, 'jackpot');
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) melstroi_casino.slots;
 
 
 connection after_crash

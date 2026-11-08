@@ -26,6 +26,9 @@ CREATE INDEX wal_pano_idx ON wal_pano_t
   USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
 
 statement ok
+VACUUM (FLUSH_TABLE) wal_pano_t;
+
+statement ok
 SET sdb_ivf_search_nprobe = 1000;
 
 query

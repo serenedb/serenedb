@@ -40,6 +40,9 @@ VACUUM (FLUSH_TABLE) gnusi_t;
 statement ok
 INSERT INTO gnusi_t VALUES (3, 'phase2 charlie'), (4, 'phase2 delta');
 
+statement ok
+VACUUM (FLUSH_TABLE) gnusi_t;
+
 query
 SELECT count(*) FROM gnusi_idx WHERE body @@ ts_phrase('phase1 alpha');
 ----

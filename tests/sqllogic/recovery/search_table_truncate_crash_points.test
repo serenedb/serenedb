@@ -103,6 +103,10 @@ ids
 
 connection after_txn
 statement ok
+VACUUM (FLUSH_TABLE) tcp;
+
+connection after_txn
+statement ok
 DELETE FROM tcp WHERE id = 8;
 
 connection after_txn

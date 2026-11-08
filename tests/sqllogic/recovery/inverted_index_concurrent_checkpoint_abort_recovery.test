@@ -114,6 +114,11 @@ n
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) melstroi.public.pudge;
+
+
+connection after_crash
 query
 SELECT (SELECT count(*) FROM melstroi.public.pudge_hook) AS docs, (SELECT count(*) FROM melstroi.public.pudge_hook WHERE body @@ 'during') AS during, (SELECT count(*) FROM melstroi.public.pudge_hook WHERE body @@ 'base') AS base;
 ----

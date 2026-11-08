@@ -24,6 +24,9 @@ statement ok
 CREATE INDEX wal_sq8_idx ON wal_sq8_t
   USING inverted(emb ivf (metric = 'l2', quant = 'sq8'));
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_sq8_t;
+
 # Pre-crash row reads from the on-disk .cs + SQ8 codes.
 query
 SELECT pk FROM wal_sq8_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;

@@ -15,6 +15,9 @@ CREATE INDEX wal_wild_list_idx ON wal_wild_list_t
   USING inverted(tags wal_wild_list_dict)
   INCLUDE (tags);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_wild_list_t;
+
 query
 SELECT pk FROM wal_wild_list_idx WHERE tags @@ ts_like('%mega_on%') ORDER BY pk;
 ----

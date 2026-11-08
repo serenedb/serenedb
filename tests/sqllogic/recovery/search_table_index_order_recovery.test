@@ -29,6 +29,10 @@ statement ok
 INSERT INTO sio VALUES (1, 'running fast'), (2, 'run home');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) sio;
+
+
 query
 SELECT id FROM sio WHERE body @@ 'run' ORDER BY id;
 ----

@@ -25,6 +25,9 @@ INSERT INTO ni_t VALUES
 statement ok
 CREATE INDEX ni_idx ON ni_t USING inverted(id, note ni_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) ni_t;
+
 # Update only the non-indexed column. The index should not see anything.
 statement ok
 UPDATE ni_t SET meta = 'changed_one' WHERE id = 1;

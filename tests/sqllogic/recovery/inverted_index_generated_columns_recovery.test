@@ -16,6 +16,10 @@ statement ok
 INSERT INTO iigc_t (a, b, c) VALUES (1, 'red', 'x'), (2, 'blue', 'y'), (3, 'red', 'x');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) iigc_t;
+
+
 query
 SELECT (SELECT count(*) FROM iigc_b WHERE b @@ 'red') AS r, (SELECT count(*) FROM iigc_c WHERE c @@ 'x') AS x;
 ----

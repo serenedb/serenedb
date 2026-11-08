@@ -45,6 +45,10 @@ DELETE FROM vjling_ward WHERE id % 3 = 0;
 
 
 statement ok
+VACUUM (FLUSH_TABLE) vjling_ward;
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -84,6 +88,11 @@ SELECT count(*) AS n FROM vjling_ward;
 ----
 n
 1333
+
+
+connection after_second_crash
+statement ok
+VACUUM (FLUSH_TABLE) vjling_ward;
 
 
 connection after_second_crash

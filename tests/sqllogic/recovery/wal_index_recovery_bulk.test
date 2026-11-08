@@ -17,6 +17,9 @@ INSERT INTO wal_bulk_t SELECT i, 'seed row ' || i FROM range(0, 50) AS t(i);
 statement ok
 CREATE INDEX wal_bulk_idx ON wal_bulk_t USING inverted(a, b bulk_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_bulk_t;
+
 query
 SELECT COUNT(*) FROM wal_bulk_idx WHERE b @@ ts_phrase('seed');
 ----

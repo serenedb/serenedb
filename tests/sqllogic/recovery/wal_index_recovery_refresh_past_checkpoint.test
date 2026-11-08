@@ -44,6 +44,9 @@ CHECKPOINT;
 statement ok
 INSERT INTO rpc_t SELECT i, 'mid_' || i FROM range(1000, 3000) AS t(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) rpc_t;
+
 query
 SELECT COUNT(*) FROM rpc_idx;
 ----

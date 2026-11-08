@@ -284,6 +284,14 @@ statement ok
 INSERT INTO dm.ser (v) VALUES ('r3');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) dm.st;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) dm.st_inv;
+
+
 connection pending
 statement ok
 BEGIN;

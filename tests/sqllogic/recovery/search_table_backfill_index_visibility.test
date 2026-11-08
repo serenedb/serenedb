@@ -9,6 +9,9 @@ statement ok
 INSERT INTO biv SELECT i, 't' || (i % 5) FROM generate_series(1, 5000) g(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) biv;
+
+statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
 
 connection builder
@@ -65,6 +68,10 @@ statement ok
 SET sdb_faults = '-pause_search_backfill_before_swap';
 
 wait
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) biv;
 
 connection default
 query

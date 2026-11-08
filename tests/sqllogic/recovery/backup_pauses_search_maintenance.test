@@ -64,6 +64,10 @@ INSERT INTO bpm_t SELECT i, 'alpha' FROM generate_series(101, 200) s(i);
 
 
 statement ok
+VACUUM (FLUSH_INDEX) bpm_idx;
+
+
+statement ok
 SET sdb_faults = 'search_compaction_before_selection';
 
 
@@ -155,6 +159,10 @@ RESET sdb_faults;
 
 statement ok
 INSERT INTO bpm_s SELECT i, 'alpha' FROM generate_series(201, 300) s(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) bpm_s;
 
 
 connection index_compactor

@@ -88,6 +88,10 @@ statement ok
 INSERT INTO doc_rb VALUES (4, 'delta', 'd', 400)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) doc_rb
+
+
 query
 SELECT pk, label, tag FROM doc_rb_idx ORDER BY pk
 ----
@@ -182,6 +186,11 @@ INSERT INTO doc_pre VALUES (4, 'delta four', 'd', 400)
 
 
 connection pre_after
+statement ok
+VACUUM (FLUSH_TABLE) doc_pre
+
+
+connection pre_after
 query
 SELECT pk, label, tag FROM doc_pre_idx ORDER BY pk
 ----
@@ -264,6 +273,11 @@ pk	body	label	tag
 
 # Index must serve a query that hits the post-recovery row (through cs
 # INCLUDE columns).
+connection post_after
+statement ok
+VACUUM (FLUSH_TABLE) doc_post
+
+
 connection post_after
 query
 SELECT label, tag FROM doc_post_idx WHERE body @@ ts_phrase('beta')

@@ -166,6 +166,11 @@ INSERT INTO stcf_shared VALUES (2, -1);
 
 
 connection restarted
+statement ok
+VACUUM (FLUSH_TABLE) stcf_shared;
+
+
+connection restarted
 query
 SELECT id, a FROM stcf_shared ORDER BY id;
 ----
@@ -177,6 +182,11 @@ id	a
 connection restarted
 statement ok
 INSERT INTO stcf_defaults (id, a) VALUES (2, 2);
+
+
+connection restarted
+statement ok
+VACUUM (FLUSH_TABLE) stcf_defaults;
 
 
 connection restarted
@@ -194,12 +204,22 @@ INSERT INTO stcf_generated (id, a) VALUES (2, 2);
 
 
 connection restarted
+statement ok
+VACUUM (FLUSH_TABLE) stcf_generated;
+
+
+connection restarted
 query
 SELECT id, s FROM stcf_generated ORDER BY id;
 ----
 id	s
 1	10
 2	20
+
+
+connection restarted_app database=stcf_app
+statement ok
+VACUUM (FLUSH_TABLE) stcf_t;
 
 
 connection restarted_app database=stcf_app

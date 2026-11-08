@@ -29,6 +29,10 @@ statement ok
 INSERT INTO commit_fail_docs VALUES (600, 'after');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) commit_fail_docs;
+
+
 query
 SELECT count(*) AS n FROM commit_fail_docs;
 ----

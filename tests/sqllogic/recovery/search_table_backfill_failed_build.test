@@ -18,6 +18,10 @@ statement ok
 INSERT INTO bff VALUES (1, 'alpha'), (2, 'beta');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) bff;
+
+
 # Fails the columnstore scan the rebuild reads its rows through.
 statement ok
 SET sdb_faults = 'SearchIncludeFetchFault';
@@ -54,6 +58,10 @@ id	tag
 # Writes still work: no claim or floor was left held.
 statement ok
 INSERT INTO bff VALUES (3, 'gamma');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) bff;
 
 
 # The retry succeeds. If the failed build had leaked its BuildClaim this would

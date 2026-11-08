@@ -84,6 +84,10 @@ statement ok
 CREATE INDEX irb_ok_inv ON irb_t USING inverted(id, body irb_dict);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) irb_t;
+
+
 # ----------------------------------------------------------------------
 # A metadata alter on each of the kept indexes, rolled back. The version
 # being undone did not create the index, so the record must go back to
@@ -195,6 +199,11 @@ INSERT INTO irb_t VALUES (3, 30, 'echo foxtrot', 'note three');
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) irb_t;
+
+
+connection after_crash
 query
 SELECT id FROM irb_ok_inv WHERE body @@ ts_phrase('echo');
 ----
@@ -229,6 +238,11 @@ CREATE INDEX irb_rb_sec ON irb_t (rank);
 connection after_crash
 statement ok
 CREATE INDEX irb_rb_inv ON irb_t USING inverted(id, note irb_dict);
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) irb_t;
 
 
 connection after_crash

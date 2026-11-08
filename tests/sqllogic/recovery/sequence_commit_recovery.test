@@ -100,6 +100,11 @@ DELETE FROM seq_search WHERE a = 3;
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) seq_search;
+
+
+connection after_crash
 query ok
 SELECT a FROM seq_search ORDER BY a;
 ----

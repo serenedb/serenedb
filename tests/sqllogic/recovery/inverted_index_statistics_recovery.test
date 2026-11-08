@@ -28,6 +28,9 @@ CREATE INDEX stat_rec_idx ON stat_rec
     USING inverted(id)
     INCLUDE (small, big, s included (hyperloglog = true))
 
+statement ok
+VACUUM (FLUSH_TABLE) stat_rec
+
 
 # --- pre-restart: the stats the optimizer sees ---
 

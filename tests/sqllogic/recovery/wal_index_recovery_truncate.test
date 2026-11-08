@@ -25,6 +25,9 @@ INSERT INTO babsky_t VALUES (1, 'seed alpha bravo'), (2, 'seed charlie delta');
 statement ok
 CREATE INDEX babsky_idx ON babsky_t USING inverted(id, body babsky_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) babsky_t;
+
 # Sanity: seed rows searchable before we touch anything.
 query
 SELECT id FROM babsky_idx WHERE body @@ ts_phrase('alpha bravo');

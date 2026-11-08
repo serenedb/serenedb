@@ -25,6 +25,9 @@ statement ok
 CREATE INDEX wal_tq_idx ON wal_tq_t
   USING inverted(emb ivf (metric = 'l2', quant = 'tq', nb_bits = 5));
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_tq_t;
+
 # Pre-crash row reads from the on-disk .cs + TurboQuant codes.
 query
 SELECT pk FROM wal_tq_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;

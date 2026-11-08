@@ -19,6 +19,9 @@ INSERT INTO wal_mc_t VALUES (1, 'seeded alpha', 100, 1000000);
 statement ok
 CREATE INDEX wal_mc_idx ON wal_mc_t USING inverted(pk, name mc_dict, score, ts);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_mc_t;
+
 # All 3 columns searchable pre-crash
 query
 SELECT pk FROM wal_mc_idx WHERE name @@ ts_phrase('seeded');

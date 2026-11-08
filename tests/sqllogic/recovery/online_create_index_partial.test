@@ -63,10 +63,18 @@ INSERT INTO ocp_race VALUES (200001, 'fresh_live', true), (200002, 'fresh_dead',
 
 
 statement ok
+VACUUM (FLUSH_TABLE) ocp_race;
+
+
+statement ok
 SET sdb_faults = '-pause_create_index_mid_build';
 
 
 wait
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ocp_race;
 
 
 # Live rows: 100000 initial even

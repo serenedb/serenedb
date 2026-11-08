@@ -28,6 +28,9 @@ INSERT INTO past_t SELECT i, 'test' || i FROM range(0, 1000) AS t(i);
 statement ok
 CREATE INDEX past_idx ON past_t USING inverted(value1, value2 past_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) past_t;
+
 # More rows that the backfill never saw — these are what recovery must replay.
 statement ok
 INSERT INTO past_t SELECT i, 'test' || i FROM range(1000, 2000) AS t(i);

@@ -151,6 +151,11 @@ wait
 
 
 connection new2
+statement ok
+VACUUM (FLUSH_TABLE) t;
+
+
+connection new2
 query
 SELECT COUNT(*) >= 1 FROM t WHERE r = 'foo';
 ----
@@ -179,6 +184,14 @@ INSERT INTO t VALUES ('one'), ('two'), ('three');
 connection new2
 statement ok
 INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+# Force the inverted index to flush pending commits before the PHRASE lookup.
+# Without this, the background commit thread's latency makes the lookup race
+# with the INSERTs.
+connection new2
+statement ok
+VACUUM (FLUSH_TABLE) t;
 
 
 connection new2

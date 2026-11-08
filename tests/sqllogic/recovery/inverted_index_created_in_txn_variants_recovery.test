@@ -199,6 +199,11 @@ INSERT INTO iciv_new VALUES (4, 'red');
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) iciv_new;
+
+
+connection after_crash
 query
 SELECT count(*) AS n FROM iciv_new_idx WHERE body @@ 'red';
 ----

@@ -47,6 +47,10 @@ SET sdb_faults = 'search_commit_prepared:release';
 wait
 
 
+statement ok
+VACUUM (FLUSH_TABLE) pk_race;
+
+
 query
 SELECT i, t FROM pk_race ORDER BY i;
 ----
@@ -100,6 +104,10 @@ SET sdb_faults = 'search_commit_prepared:release';
 wait
 
 
+statement ok
+VACUUM (FLUSH_TABLE) pk_gone;
+
+
 # The delete stands.
 query
 SELECT i, t FROM pk_gone ORDER BY i;
@@ -150,6 +158,10 @@ SET sdb_faults = 'search_commit_prepared:release';
 
 
 wait
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pk_both;
 
 
 query

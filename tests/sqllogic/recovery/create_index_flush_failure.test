@@ -47,6 +47,10 @@ statement ok
 INSERT INTO cif_t VALUES (4, 'fourth');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) cif_t;
+
+
 query
 SELECT id, value FROM cif_idx ORDER BY id;
 ----

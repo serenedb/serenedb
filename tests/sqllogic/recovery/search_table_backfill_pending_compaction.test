@@ -86,6 +86,11 @@ wait
 
 
 connection default
+statement ok
+VACUUM (FLUSH_TABLE) bpc;
+
+
+connection default
 query
 SELECT count(*) AS n, sum(v) AS s, max(pg_typeof(v)::TEXT) AS t FROM bpc;
 ----

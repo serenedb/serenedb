@@ -31,6 +31,10 @@ statement count 1
 INSERT INTO dcr_t VALUES (3, 'echo foxtrot', 30);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) dcr_t;
+
+
 query
 SELECT id, extra FROM dcr_idx WHERE body @@ ts_phrase('echo');
 ----
@@ -72,6 +76,11 @@ db error: ERROR: Table with name dcr_tag_idx does not exist!<slt:ignore>
 connection after_crash
 statement count 1
 INSERT INTO dcr_t VALUES (4, 'golf hotel', 40);
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) dcr_t;
 
 
 connection after_crash

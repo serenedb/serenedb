@@ -28,6 +28,10 @@ CREATE INDEX ws_inv_idx ON ws_t USING inverted(id, body ws_dict);
 statement ok
 CREATE INDEX ws_score_idx ON ws_t(score);
 
+statement ok
+VACUUM (FLUSH_TABLE) ws_t;
+
+
 # Mix of writes that hit the inverted columns AND the secondary index.
 statement ok
 INSERT INTO ws_t VALUES

@@ -27,6 +27,9 @@ statement ok
 CREATE INDEX wal_geo_src_idx ON wal_geo_src_t
   USING inverted(geo wal_geo_src_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_geo_src_t;
+
 # Plan: filter served by inverted-index posting; the `geo` projection reads
 # the force-included cs column (`geo (i)` / `pk (l)`), no RocksDB fallback.
 query

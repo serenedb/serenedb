@@ -501,6 +501,11 @@ INSERT INTO fdr_st (id) VALUES (-2);
 
 
 connection restarted_again
+statement ok
+VACUUM (FLUSH_TABLE) fdr_st;
+
+
+connection restarted_again
 query
 SELECT * FROM fdr_st ORDER BY id;
 ----

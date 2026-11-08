@@ -23,6 +23,9 @@ CREATE INDEX rd_idx ON rd_t USING inverted(id, body rd_dict);
 statement ok
 INSERT INTO rd_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) rd_t;
+
 query
 SELECT COUNT(*) FROM rd_idx;
 ----

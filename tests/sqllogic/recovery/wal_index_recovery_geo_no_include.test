@@ -23,6 +23,9 @@ statement ok
 CREATE INDEX wal_geo_ni_idx ON wal_geo_ni_t
   USING inverted(geo wal_geo_ni_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_geo_ni_t;
+
 # Plan: filter served by inverted-index posting + analyzer-output cs aux
 # column; `geo` projection falls back to RocksDB lookup (no INCLUDE).
 query

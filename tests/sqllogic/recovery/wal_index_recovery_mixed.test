@@ -25,6 +25,10 @@ INSERT INTO wal_mix_t VALUES
 statement ok
 CREATE INDEX wal_mix_idx ON wal_mix_t USING inverted(a, b mix_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_mix_t;
+
+
 # pk=2: only delete → must disappear
 statement ok
 DELETE FROM wal_mix_t WHERE a = 2;

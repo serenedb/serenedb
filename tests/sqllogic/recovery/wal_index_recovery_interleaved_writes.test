@@ -31,6 +31,10 @@ INSERT INTO iw_idx_t VALUES (1, 'pre seed one'), (2, 'pre seed two');
 statement ok
 CREATE INDEX iw_idx ON iw_idx_t USING inverted(id, body iw_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) iw_idx_t;
+
+
 # === START of WAL window: indexed writes first ===
 statement ok
 INSERT INTO iw_idx_t VALUES

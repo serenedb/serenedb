@@ -691,6 +691,16 @@ INSERT INTO dsr_all.public.s VALUES (1, 'alpha');
 
 connection after_table_with_index
 statement ok
+VACUUM (FLUSH_TABLE) dsr_all.public.t;
+
+
+connection after_table_with_index
+statement ok
+VACUUM (FLUSH_TABLE) dsr_all.public.s;
+
+
+connection after_table_with_index
+statement ok
 INSERT INTO dsr_oids SELECT 'dsr_all', oid FROM pg_database WHERE datname = 'dsr_all';
 
 

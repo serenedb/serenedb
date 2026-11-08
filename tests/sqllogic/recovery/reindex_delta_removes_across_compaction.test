@@ -59,6 +59,11 @@ VACUUM (COMPACT_INDEX) rdrc_idx;
 
 connection default
 statement ok
+VACUUM (FLUSH_INDEX) rdrc_idx;
+
+
+connection default
+statement ok
 SET sdb_faults = 'reindex_delta_removes_resolved:release';
 
 

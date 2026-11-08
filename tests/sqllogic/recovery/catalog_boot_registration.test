@@ -94,6 +94,10 @@ count
 1
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) bootreg.t;
+
+connection after_crash
 query
 SELECT count(*) FROM bootreg.bootreg_inv WHERE a @@ ts_like('row');
 ----

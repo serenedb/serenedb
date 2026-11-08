@@ -24,6 +24,9 @@ CREATE INDEX var_rec_idx ON var_rec_t
 statement ok
 INSERT INTO var_rec_t VALUES (1, 'alpha bravo', 42::variant);
 
+statement ok
+VACUUM (FLUSH_TABLE) var_rec_t;
+
 query
 SELECT id, payload FROM var_rec_idx WHERE body @@ ts_phrase('alpha');
 ----

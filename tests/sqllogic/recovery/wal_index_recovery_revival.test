@@ -23,6 +23,10 @@ INSERT INTO rv_t VALUES
 statement ok
 CREATE INDEX rv_idx ON rv_t USING inverted(id, body rv_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) rv_t;
+
+
 # Scenario A: pk=2 — delete then re-insert with new content (revival).
 statement ok
 DELETE FROM rv_t WHERE id = 2;

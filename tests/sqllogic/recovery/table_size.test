@@ -30,6 +30,10 @@ statement ok
 CREATE INDEX t_idx ON t USING inverted(name test_english);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) t;
+
+
 query
 SELECT pg_relation_size('t'::regclass) > 0 AS table_has_size;
 ----

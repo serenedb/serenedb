@@ -48,13 +48,16 @@ INSERT INTO u
   UNION ALL
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
 
+statement ok
+VACUUM (FLUSH_TABLE) u;
+
 query
 SELECT value FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
   AND metric = 'num_segments';
 ----
 value
-1
+2
 
 query
 SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
@@ -84,13 +87,16 @@ INSERT INTO u
   UNION ALL
   SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y);
 
+statement ok
+VACUUM (FLUSH_TABLE) u;
+
 query
 SELECT value FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
   AND metric = 'num_segments';
 ----
 value
-1
+2
 
 query
 SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
@@ -113,6 +119,9 @@ INSERT INTO u
   SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y)
   UNION ALL
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
+
+statement ok
+VACUUM (FLUSH_TABLE) u;
 
 query
 SELECT value > 2 AS parallel FROM sdb_metrics
@@ -149,6 +158,9 @@ INSERT INTO u
   SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet')
   UNION ALL
   SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y);
+
+statement ok
+VACUUM (FLUSH_TABLE) u;
 
 query
 SELECT value > 2 AS parallel FROM sdb_metrics
@@ -185,6 +197,9 @@ INSERT INTO u VALUES (5, 's5'), (7, 's7');
 
 statement ok
 COMMIT;
+
+statement ok
+VACUUM (FLUSH_TABLE) u;
 
 query
 SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;

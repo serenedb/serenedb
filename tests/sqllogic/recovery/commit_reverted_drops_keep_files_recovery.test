@@ -13,6 +13,10 @@ CREATE INDEX crd_docs_idx ON crd_docs USING inverted (body);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) crd_docs;
+
+
+statement ok
 SET debug_force_commit_failure = true;
 
 
@@ -56,6 +60,11 @@ INSERT INTO crd_docs VALUES (4, 'beta');
 
 connection victim
 statement ok
+VACUUM (FLUSH_TABLE) crd_docs;
+
+
+connection victim
+statement ok
 SET sdb_faults = 'shutdown_on_packet';
 
 
@@ -70,6 +79,11 @@ SELECT count(*) AS n FROM crd_docs;
 ----
 n
 4
+
+
+connection after_restart
+statement ok
+VACUUM (FLUSH_TABLE) crd_docs;
 
 
 connection after_restart

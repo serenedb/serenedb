@@ -59,6 +59,11 @@ id
 
 onlyif serenedb
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) rek;
+
+onlyif serenedb
+connection after_crash
 query
 SELECT id, lower(body) AS l, n + 1 AS m FROM rek_idx ORDER BY id;
 ----
@@ -84,6 +89,11 @@ SELECT id FROM rek_idx WHERE lower(body) @@ 'fox' ORDER BY id;
 id
 1
 2
+
+onlyif serenedb
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) rekj;
 
 onlyif serenedb
 connection after_crash

@@ -86,6 +86,10 @@ statement ok
 INSERT INTO gc_fresh VALUES (9, 'nine');
 
 connection after
+statement ok
+VACUUM (FLUSH_TABLE) gc_fresh;
+
+connection after
 query
 SELECT a, b FROM gc_fresh ORDER BY a;
 ----
@@ -95,6 +99,10 @@ a	b
 connection after
 statement ok
 INSERT INTO gc_idle VALUES (200, 'more');
+
+connection after
+statement ok
+VACUUM (FLUSH_TABLE) gc_idle;
 
 connection after
 query

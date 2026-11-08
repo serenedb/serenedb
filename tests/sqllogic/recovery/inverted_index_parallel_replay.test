@@ -163,6 +163,11 @@ INSERT INTO pr_c SELECT g, 'row ' || g || ' foxtrot', g FROM generate_series(600
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) pr_c;
+
+
+connection after_crash
 query
 SELECT count(*) FROM pr_c_idx WHERE body @@ ts_like('foxtrot');
 ----

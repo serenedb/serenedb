@@ -36,6 +36,10 @@ INSERT INTO mc SELECT i, 'c' || i FROM generate_series(20000, 29999) g(i);
 
 connection compactor
 statement ok
+VACUUM (FLUSH_TABLE) mc;
+
+connection compactor
+statement ok
 VACUUM (COMPACT_TABLE) mc;
 
 connection compactor
@@ -59,6 +63,10 @@ SELECT count(*) AS n, sum(id) AS s FROM mc;
 ----
 n	s
 27143	421417857
+
+connection after_chain
+statement ok
+VACUUM (FLUSH_TABLE) mc;
 
 connection after_chain
 query

@@ -55,6 +55,14 @@ statement ok
 CREATE INDEX plain_docs_idx ON plain_docs USING inverted(id, body en_prune);
 
 
+statement ok
+VACUUM (FLUSH_TABLE) prune_docs;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) plain_docs;
+
+
 # === Positive: shapes that should engage score pruning ===
 
 # Single term -> PruningIterator path.

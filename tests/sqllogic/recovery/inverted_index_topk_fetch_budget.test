@@ -58,6 +58,9 @@ statement ok
 INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
 FROM range(52000, 54000) t(i)
 
+statement ok
+VACUUM (FLUSH_TABLE) fb
+
 
 statement ok
 SET sdb_faults = 'TopKFetchBudget';

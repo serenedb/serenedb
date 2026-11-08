@@ -69,6 +69,11 @@ INSERT INTO sacr VALUES (4, 'w', NULL);
 
 
 connection restarted
+statement ok
+VACUUM (FLUSH_TABLE) sacr;
+
+
+connection restarted
 query
 SELECT id, b, n FROM sacr ORDER BY id;
 ----

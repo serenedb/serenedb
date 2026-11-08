@@ -45,6 +45,11 @@ n
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) pudge_hooks;
+
+
+connection after_crash
 query
 SELECT (SELECT count(*) FROM pudge_hooks_b) AS docs, (SELECT count(*) FROM pudge_hooks_b WHERE b @@ 'hook3') AS three;
 ----
@@ -73,6 +78,11 @@ SELECT count(*) AS n FROM pudge_hooks;
 ----
 n
 2000
+
+
+connection after_second_crash
+statement ok
+VACUUM (FLUSH_TABLE) pudge_hooks;
 
 
 connection after_second_crash

@@ -70,6 +70,15 @@ CREATE INDEX mt_gamma_score_idx ON mt_gamma(qty);
 statement ok
 CREATE INDEX mt_epsilon_inv ON mt_epsilon USING inverted(id, body mt_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) mt_alpha;
+
+statement ok
+VACUUM (FLUSH_TABLE) mt_beta;
+
+statement ok
+VACUUM (FLUSH_TABLE) mt_epsilon;
+
 # === Block search commits and start the heavy interleaved workload. ===
 # mt_epsilon must NOT receive any writes — it stays caught up.
 

@@ -27,6 +27,10 @@ connection default
 statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
+connection refresher
+statement ok
+VACUUM (FLUSH_TABLE) trw;
+
 connection default
 statement ok
 SET sdb_faults = 'crash_on_packet';

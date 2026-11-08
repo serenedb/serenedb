@@ -59,6 +59,12 @@ statement ok
 INSERT INTO sdc_twin SELECT i, md5(i::TEXT) FROM generate_series(2001, 2100) s(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) sdc;
+
+statement ok
+VACUUM (FLUSH_TABLE) sdc_twin;
+
+statement ok
 VACUUM (COMPACT_TABLE) sdc;
 
 statement ok
@@ -76,6 +82,9 @@ COMMIT;
 
 statement ok
 INSERT INTO sdc SELECT i, md5(i::TEXT) FROM generate_series(3001, 3010) s(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) sdc;
 
 statement ok
 VACUUM (COMPACT_TABLE) sdc;
@@ -99,6 +108,14 @@ INSERT INTO sdc SELECT i, md5(i::TEXT) FROM generate_series(2101, 2200) s(i);
 connection after_restart
 statement ok
 INSERT INTO sdc_twin SELECT i, md5(i::TEXT) FROM generate_series(2101, 2200) s(i);
+
+connection after_restart
+statement ok
+VACUUM (FLUSH_TABLE) sdc;
+
+connection after_restart
+statement ok
+VACUUM (FLUSH_TABLE) sdc_twin;
 
 connection after_restart
 statement ok

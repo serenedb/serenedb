@@ -42,6 +42,10 @@ statement ok
 INSERT INTO tco VALUES (3, 'new');
 
 connection writer
+statement ok
+VACUUM (FLUSH_TABLE) tco;
+
+connection writer
 query
 SELECT id, body FROM tco ORDER BY id;
 ----

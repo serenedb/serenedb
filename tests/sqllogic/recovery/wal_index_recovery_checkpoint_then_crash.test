@@ -25,6 +25,9 @@ CREATE INDEX ck_idx ON ck_t USING inverted(id, body ck_dict);
 statement ok
 INSERT INTO ck_t SELECT i, 'base_' || i FROM range(0, 2000) AS t(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) ck_t;
+
 # Checkpoint: store WAL truncated, iteration bumped, index durable to baseline.
 statement ok
 CHECKPOINT;

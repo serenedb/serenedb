@@ -50,10 +50,18 @@ DELETE FROM oci_gap WHERE x = 250000;
 
 
 statement ok
+VACUUM (FLUSH_TABLE) oci_gap;
+
+
+statement ok
 SET sdb_faults = '-pause_create_index_mid_build';
 
 
 wait
+
+
+statement ok
+VACUUM (FLUSH_TABLE) oci_gap;
 
 
 query ok retry 20 backoff 500ms

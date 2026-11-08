@@ -67,6 +67,11 @@ n
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) melstroi_logs;
+
+
+connection after_crash
 query
 SELECT (SELECT count(*) FROM melstroi_logs_b) AS docs, (SELECT count(*) FROM melstroi_logs_b WHERE b @@ 'w1') AS one;
 ----

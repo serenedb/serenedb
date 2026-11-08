@@ -103,6 +103,10 @@ statement count 8000
 UPDATE pud SET b = 'u1_' || a;
 
 
+statement ok
+VACUUM (FLUSH_TABLE) pud;
+
+
 query
 SELECT count(*) AS n,
        count(*) FILTER (WHERE b = 'u1_' || a) AS updated,
@@ -124,6 +128,10 @@ UPDATE pud SET b = 'few_' || a WHERE a < 40;
 
 statement ok
 UPDATE pud_plain SET b = 'few_' || a WHERE a < 40;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pud;
 
 
 query
@@ -154,6 +162,10 @@ statement count 4000
 UPDATE pud_plain SET b = 'u2_' || pud_plain.a FROM pud_src WHERE pud_plain.a = pud_src.a;
 
 
+statement ok
+VACUUM (FLUSH_TABLE) pud;
+
+
 query
 SELECT count(*) AS n, count(DISTINCT a) AS d, count(*) FILTER (WHERE b LIKE 'u2!_%' ESCAPE '!') AS updated FROM pud;
 ----
@@ -174,6 +186,10 @@ DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND pud.a % 4 = 0;
 
 statement count 2000
 DELETE FROM pud_plain USING pud_src WHERE pud_plain.a = pud_src.a AND pud_plain.a % 4 = 0;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pud;
 
 
 query
@@ -227,6 +243,10 @@ n	d	ok
 
 statement ok
 DELETE FROM pud_plain WHERE a % 8 = 2;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pud;
 
 
 query

@@ -50,6 +50,9 @@ DELETE FROM bt WHERE pk IN (-1, -2);
 statement ok
 COMMIT;
 
+statement ok
+VACUUM (FLUSH_TABLE) bt;
+
 # 3 pre-existing + 200000 bulk + 2 serial-insert - 2 serial-delete = 200003.
 query
 SELECT count(*) FROM bt;

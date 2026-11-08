@@ -52,6 +52,24 @@ statement ok
 INSERT INTO cw2 VALUES (1, 'a'), (2, 'b');
 
 statement ok
+VACUUM (FLUSH_TABLE) cwi;
+
+statement ok
+VACUUM (FLUSH_TABLE) cwd;
+
+statement ok
+VACUUM (FLUSH_TABLE) cwt;
+
+statement ok
+VACUUM (FLUSH_TABLE) cwb;
+
+statement ok
+VACUUM (FLUSH_TABLE) cw1;
+
+statement ok
+VACUUM (FLUSH_TABLE) cw2;
+
+statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
 
 connection writer
@@ -179,6 +197,30 @@ statement ok
 SET sdb_faults = 'pause_search_commit_before_irs:release';
 
 wait
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) cwi;
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) cwd;
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) cwt;
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) cwb;
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) cw1;
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) cw2;
 
 connection default
 query

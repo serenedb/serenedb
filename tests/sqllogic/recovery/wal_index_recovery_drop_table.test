@@ -30,6 +30,13 @@ CREATE INDEX dt_keep_idx ON dt_keep USING inverted(id, body dt_dict);
 statement ok
 CREATE INDEX dt_drop_idx ON dt_drop USING inverted(id, body dt_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) dt_keep;
+
+statement ok
+VACUUM (FLUSH_TABLE) dt_drop;
+
+
 # Writes to BOTH tables that never reach iresearch.
 statement ok
 INSERT INTO dt_keep VALUES (3, 'keep after fault charlie');

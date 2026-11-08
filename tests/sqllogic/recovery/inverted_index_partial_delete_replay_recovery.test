@@ -49,6 +49,11 @@ n
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) pdr;
+
+
+connection after_crash
 query
 SELECT (SELECT count(*) FROM pdr_idx) AS total,
        (SELECT count(*) FROM pdr_idx WHERE body @@ 'm3') AS three,

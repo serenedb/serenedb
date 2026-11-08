@@ -74,6 +74,10 @@ statement ok
 VACUUM (COMPACT_TABLE) tcm;
 
 connection default
+statement ok
+VACUUM (FLUSH_TABLE) tcm;
+
+connection default
 query
 SELECT count(*) AS n FROM tcm;
 ----
@@ -136,6 +140,10 @@ n
 connection after_crash
 statement ok
 INSERT INTO tcm VALUES (8, 'h');
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) tcm;
 
 connection after_crash
 query

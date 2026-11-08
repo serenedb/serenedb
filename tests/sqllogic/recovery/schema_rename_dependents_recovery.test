@@ -69,6 +69,14 @@ INSERT INTO srd2.child VALUES (30, 2);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) srd2.st;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) srd2.st_numbered;
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -159,6 +167,11 @@ n	d
 connection after_crash
 statement count 1
 INSERT INTO srd2.st_numbered VALUES ('numbered four');
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) srd2.st_numbered;
 
 
 connection after_crash

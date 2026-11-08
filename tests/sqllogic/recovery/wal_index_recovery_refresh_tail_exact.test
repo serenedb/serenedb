@@ -25,6 +25,9 @@ CREATE INDEX rt_idx ON rt_t USING inverted(id, body rt_dict);
 statement ok
 INSERT INTO rt_t SELECT i, 'durable_' || i FROM range(0, 4000) AS t(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) rt_t;
+
 query
 SELECT COUNT(*) FROM rt_idx;
 ----

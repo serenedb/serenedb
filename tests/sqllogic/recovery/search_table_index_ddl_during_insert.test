@@ -49,6 +49,10 @@ SET sdb_faults = 'search_insert_sink_before_config:release';
 wait
 
 connection default
+statement ok
+VACUUM (FLUSH_TABLE) sti;
+
+connection default
 query
 SELECT count(*) AS n FROM sti_body WHERE body @@ 'fox';
 ----
@@ -105,6 +109,10 @@ wait
 
 connection default
 statement ok
+VACUUM (FLUSH_TABLE) sti;
+
+connection default
+statement ok
 VACUUM (COMPACT_TABLE) sti;
 
 connection default
@@ -117,6 +125,10 @@ n	late
 connection default
 statement ok
 CREATE INDEX sti_body ON sti USING inverted (body dic_sti);
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) sti;
 
 connection default
 query

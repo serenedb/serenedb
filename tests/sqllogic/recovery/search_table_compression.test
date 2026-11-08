@@ -5,6 +5,9 @@ CREATE TABLE search_declared (a INTEGER PRIMARY KEY, v_uncompressed TEXT USING C
 statement ok
 INSERT INTO search_declared SELECT a, repeat('u' || a, 20), repeat('z' || a, 20), 'v' || (a % 7), a // 100, a, a / 10.0, a * 0.1234567891, a % 3 = 0 FROM range(5000) t(a);
 
+statement ok
+VACUUM (FLUSH_TABLE) search_declared;
+
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_declared') WHERE column_name LIKE 'v\_%' GROUP BY column_name ORDER BY column_name;
 ----
@@ -35,6 +38,9 @@ statement ok
 INSERT INTO search_forced_uncompressed SELECT a, repeat('u' || a, 20) FROM range(5000) t(a);
 
 statement ok
+VACUUM (FLUSH_TABLE) search_forced_uncompressed;
+
+statement ok
 RESET GLOBAL force_compression;
 
 query
@@ -58,6 +64,9 @@ CREATE TABLE search_forced_zstd (a INTEGER PRIMARY KEY, v TEXT)
 
 statement ok
 INSERT INTO search_forced_zstd SELECT a, repeat('z' || a, 20) FROM range(5000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) search_forced_zstd;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -85,6 +94,9 @@ statement ok
 INSERT INTO search_forced_dict_fsst SELECT a, 'v' || (a % 7) FROM range(5000) t(a);
 
 statement ok
+VACUUM (FLUSH_TABLE) search_forced_dict_fsst;
+
+statement ok
 RESET GLOBAL force_compression;
 
 query
@@ -108,6 +120,9 @@ CREATE TABLE search_forced_rle (a INTEGER PRIMARY KEY, v INTEGER)
 
 statement ok
 INSERT INTO search_forced_rle SELECT a, a // 100 FROM range(5000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) search_forced_rle;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -135,6 +150,9 @@ statement ok
 INSERT INTO search_forced_bitpacking SELECT a, a FROM range(5000) t(a);
 
 statement ok
+VACUUM (FLUSH_TABLE) search_forced_bitpacking;
+
+statement ok
 RESET GLOBAL force_compression;
 
 query
@@ -158,6 +176,9 @@ CREATE TABLE search_forced_alp (a INTEGER PRIMARY KEY, v DOUBLE)
 
 statement ok
 INSERT INTO search_forced_alp SELECT a, a / 10.0 FROM range(5000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) search_forced_alp;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -185,6 +206,9 @@ statement ok
 INSERT INTO search_forced_alprd SELECT a, a * 0.1234567891 FROM range(5000) t(a);
 
 statement ok
+VACUUM (FLUSH_TABLE) search_forced_alprd;
+
+statement ok
 RESET GLOBAL force_compression;
 
 query
@@ -208,6 +232,9 @@ CREATE TABLE search_forced_roaring (a INTEGER PRIMARY KEY, v BOOLEAN)
 
 statement ok
 INSERT INTO search_forced_roaring SELECT a, a % 3 = 0 FROM range(5000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) search_forced_roaring;
 
 statement ok
 RESET GLOBAL force_compression;

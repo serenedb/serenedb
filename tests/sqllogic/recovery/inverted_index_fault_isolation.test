@@ -32,6 +32,11 @@ statement ok
 INSERT INTO doc VALUES (3, 'beta three', 'c', 300, 'x-three')
 
 
+statement ok
+VACUUM (FLUSH_TABLE) doc
+
+
+# Baseline: no fault armed, every shape works.
 query
 SELECT label, tag FROM doc_idx
   WHERE body @@ ts_phrase('alpha')

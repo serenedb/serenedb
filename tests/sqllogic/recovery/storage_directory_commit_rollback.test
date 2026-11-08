@@ -66,6 +66,14 @@ CREATE INDEX sdl_v_inv ON sdl_v USING inverted (body);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sdl_t;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sdl_s;
+
+
+statement ok
 INSERT INTO sdl_oids
   SELECT index_name, index_oid FROM duckdb_indexes()
   WHERE database_name = current_database() AND index_name IN ('sdl_t_inv', 'sdl_v_inv')

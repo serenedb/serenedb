@@ -23,6 +23,10 @@ CREATE INDEX walk_docs_l2 ON walk_docs
 
 
 statement ok
+VACUUM (FLUSH_TABLE) walk_docs;
+
+
+statement ok
 SET sdb_hnsw_ef_search = 16;
 
 
@@ -72,6 +76,10 @@ INSERT INTO corner_docs
 statement ok
 CREATE INDEX corner_docs_l2 ON corner_docs
   USING inverted(id, far, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+VACUUM (FLUSH_TABLE) corner_docs;
 
 
 statement ok

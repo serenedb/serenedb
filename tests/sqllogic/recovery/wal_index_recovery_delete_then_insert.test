@@ -27,6 +27,9 @@ CREATE INDEX del_then_insert_idx ON del_then_insert_t
   USING inverted(a, b del_then_insert_dict);
 
 statement ok
+VACUUM (FLUSH_TABLE) del_then_insert_t;
+
+statement ok
 INSERT INTO del_then_insert_t VALUES (1, 'stale token apple');
 
 statement ok

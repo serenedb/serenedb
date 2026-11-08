@@ -12,6 +12,10 @@ statement ok
 INSERT INTO papich_stream VALUES (1, 'arthas'), (2, 'dota');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) papich_stream;
+
+
 connection donsimon
 statement ok
 BEGIN;
@@ -86,6 +90,11 @@ papich_stream
 connection after_crash
 statement ok
 INSERT INTO papich_stream VALUES (3, 'arthas');
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) papich_stream;
 
 
 connection after_crash

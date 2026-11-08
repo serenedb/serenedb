@@ -25,6 +25,9 @@ CREATE INDEX uni_rec_idx ON uni_rec_t
 statement ok
 INSERT INTO uni_rec_t VALUES (1, 'alpha bravo', union_value(num := 42));
 
+statement ok
+VACUUM (FLUSH_TABLE) uni_rec_t;
+
 query
 SELECT id, payload FROM uni_rec_idx WHERE body @@ ts_phrase('alpha');
 ----

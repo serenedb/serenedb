@@ -29,6 +29,10 @@ SET sdb_faults = '-pause_search_commit_before_build_truncate:parked';
 
 connection default
 statement ok
+VACUUM (FLUSH_TABLE) trc;
+
+connection default
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 connection default
@@ -51,6 +55,10 @@ n
 connection after_crash
 statement ok
 INSERT INTO trc VALUES (4, 'd');
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) trc;
 
 connection after_crash
 query

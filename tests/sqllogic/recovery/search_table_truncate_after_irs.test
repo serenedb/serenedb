@@ -36,6 +36,10 @@ statement ok
 SET sdb_faults = 'pause_search_commit_before_build_truncate:release';
 
 connection default
+statement ok
+VACUUM (FLUSH_TABLE) tai;
+
+connection default
 query
 SELECT count(*) AS n FROM tai;
 ----
@@ -73,6 +77,10 @@ n
 connection after_crash
 statement ok
 INSERT INTO tai VALUES (4, 'd');
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) tai;
 
 connection after_crash
 query

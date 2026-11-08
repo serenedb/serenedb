@@ -81,6 +81,10 @@ statement ok
 INSERT INTO t2 VALUES (10, 'hello'), (11, 'world');
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) t2;
+
+connection after_crash
 query
 SELECT id FROM i2 WHERE body @@ 'hello';
 ----

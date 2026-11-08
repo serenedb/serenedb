@@ -18,6 +18,9 @@ statement ok
 INSERT INTO bft VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 statement ok
+VACUUM (FLUSH_TABLE) bft;
+
+statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
 
 connection builder
@@ -69,6 +72,9 @@ n
 1
 
 wait
+
+statement ok
+VACUUM (FLUSH_TABLE) bft;
 
 query
 SELECT count(*) AS n FROM bft;

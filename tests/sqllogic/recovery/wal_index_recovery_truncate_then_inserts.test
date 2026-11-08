@@ -24,6 +24,9 @@ SELECT x, 'pre truncate row ' || x::TEXT FROM generate_series(1, 500) AS t(x);
 statement ok
 CREATE INDEX mironov_idx ON mironov_t USING inverted(id, body mironov_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) mironov_t;
+
 # Sanity: pre-truncate rows are searchable.
 query
 SELECT count(*) FROM mironov_idx WHERE body @@ ts_phrase('pre truncate');

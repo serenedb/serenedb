@@ -23,6 +23,9 @@ INSERT INTO di_t VALUES (1, 'seed alpha bravo'), (2, 'seed charlie delta');
 statement ok
 CREATE INDEX di_idx ON di_t USING inverted(id, body di_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) di_t;
+
 # Sanity: the seed row is searchable before we touch anything.
 query
 SELECT id FROM di_idx WHERE body @@ ts_phrase('alpha bravo');
@@ -83,6 +86,10 @@ id	body
 connection di_after
 statement ok
 CREATE INDEX di_idx ON di_t USING inverted(id, body di_dict);
+
+connection di_after
+statement ok
+VACUUM (FLUSH_TABLE) di_t;
 
 connection di_after
 query

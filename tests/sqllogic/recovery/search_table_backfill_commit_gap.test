@@ -11,6 +11,9 @@ statement ok
 INSERT INTO bcg VALUES (1, 'keep'), (2, 'gone');
 
 statement ok
+VACUUM (FLUSH_TABLE) bcg;
+
+statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
 
 connection builder
@@ -50,6 +53,10 @@ statement ok
 SET sdb_faults = 'pause_search_commit_before_build_truncate:release';
 
 wait
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) bcg;
 
 connection default
 query

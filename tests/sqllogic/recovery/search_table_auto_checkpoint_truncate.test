@@ -76,6 +76,9 @@ VACUUM (FLUSH_TABLE) act;
 statement ok
 DELETE FROM act WHERE id % 2 = 0;
 
+statement ok
+VACUUM (FLUSH_TABLE) act;
+
 query
 SELECT count(*) AS n, sum(id) AS s, min(id) AS lo, max(id) AS hi FROM act;
 ----

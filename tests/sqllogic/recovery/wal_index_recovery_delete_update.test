@@ -22,6 +22,9 @@ statement ok
 INSERT INTO du_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) du_t;
+
+statement ok
 DELETE FROM du_t WHERE id < 100;
 
 statement ok

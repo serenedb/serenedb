@@ -26,6 +26,9 @@ CREATE INDEX abramov_body_idx ON abramov_t USING inverted(id, body abramov_dict)
 statement ok
 CREATE INDEX abramov_tag_idx ON abramov_t USING inverted(id, tag abramov_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) abramov_t;
+
 # Sanity: both shards return seed rows.
 query
 SELECT id FROM abramov_body_idx WHERE body @@ ts_phrase('alpha');

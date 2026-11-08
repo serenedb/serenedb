@@ -64,6 +64,10 @@ statement ok
 INSERT INTO rcik_inv VALUES (3, true, 'red'), (4, false, 'red');
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) rcik_inv;
+
+connection after_crash
 query
 SELECT id FROM rcik_inv_idx WHERE body @@ 'red' ORDER BY id;
 ----
@@ -87,6 +91,10 @@ a	c
 connection after_crash
 statement ok
 INSERT INTO rcik_gen (id, a, body) VALUES (3, 3, 'red');
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) rcik_gen;
 
 connection after_crash
 query

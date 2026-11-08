@@ -10,6 +10,9 @@ RESET sdb_faults;
 statement ok
 INSERT INTO s_wal VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
+statement ok
+VACUUM (FLUSH_TABLE) s_wal;
+
 query
 SELECT a, b FROM s_wal ORDER BY a;
 ----
@@ -42,6 +45,10 @@ a	b
 3	three
 4	four
 5	five
+
+connection after_commit
+statement ok
+VACUUM (FLUSH_TABLE) s_wal;
 
 
 ###############################################################################
@@ -83,6 +90,10 @@ statement ok
 INSERT INTO s_wal_pk VALUES (1, 'one'), (2, 'two'), (3, 'three');
 
 connection before_commit
+statement ok
+VACUUM (FLUSH_TABLE) s_wal_pk;
+
+connection before_commit
 query
 SELECT id, b FROM s_wal_pk ORDER BY id;
 ----
@@ -121,6 +132,10 @@ SELECT b FROM s_wal_pk WHERE id = 4;
 ----
 b
 four
+
+connection pk_after_commit
+statement ok
+VACUUM (FLUSH_TABLE) s_wal_pk;
 
 
 # --- 3b. Crash BEFORE the WAL commit -> lost (no record written). ---
@@ -191,6 +206,10 @@ SELECT y FROM ctas_after WHERE x = 9999;
 ----
 y
 v9999
+
+connection ctas_after_conn
+statement ok
+VACUUM (FLUSH_TABLE) ctas_after;
 
 connection ctas_after_conn
 statement ok
@@ -315,6 +334,10 @@ SELECT b FROM del_t WHERE id = 3;
 ----
 b
 three
+
+connection del_after
+statement ok
+VACUUM (FLUSH_TABLE) del_t;
 
 connection del_after
 statement ok
@@ -537,6 +560,10 @@ n
 connection trunc_after
 statement ok
 INSERT INTO trunc_t VALUES (7, 'seven');
+
+connection trunc_after
+statement ok
+VACUUM (FLUSH_TABLE) trunc_t;
 
 connection trunc_after
 query

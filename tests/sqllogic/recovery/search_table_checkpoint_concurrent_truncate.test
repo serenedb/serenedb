@@ -16,6 +16,9 @@ INSERT INTO cct_rows VALUES (1);
 statement ok
 INSERT INTO cct VALUES (1, 'a'), (2, 'b');
 
+statement ok
+VACUUM (FLUSH_TABLE) cct;
+
 connection reader
 statement ok
 BEGIN;

@@ -61,6 +61,10 @@ n	d	lo	hi
 60011	60011	2	1000009
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) wil;
+
+connection after_crash
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE id = 1) AS deleted_one, count(*) FILTER (WHERE body = 'small') AS small_rows FROM wil;
 ----

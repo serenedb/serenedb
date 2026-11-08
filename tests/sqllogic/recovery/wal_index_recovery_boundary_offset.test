@@ -39,6 +39,9 @@ CREATE INDEX bo_idx ON bo_t USING inverted(id, body bo_dict);
 statement ok
 INSERT INTO bo_t VALUES (1, 'alpha bravo charlie');
 
+statement ok
+VACUUM (FLUSH_TABLE) bo_t;
+
 query
 SELECT COUNT(*) FROM bo_idx;
 ----

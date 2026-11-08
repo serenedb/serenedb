@@ -35,6 +35,10 @@ statement ok
 COMMIT;
 
 
+statement ok
+VACUUM (FLUSH_TABLE) repro_st;
+
+
 query
 SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM repro_st;
 ----
@@ -60,6 +64,10 @@ INSERT INTO repro_st VALUES (1000, 'inline');
 
 statement ok
 COMMIT;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) repro_st;
 
 
 query
@@ -90,6 +98,10 @@ INSERT INTO repro_st SELECT i, 'serial' || repeat('x', 200) FROM range(10000, 15
 
 statement ok
 COMMIT;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) repro_st;
 
 
 query
@@ -130,6 +142,11 @@ TRUNCATE repro_rf;
 
 
 connection s2
+statement ok
+VACUUM (FLUSH_TABLE) repro_rf;
+
+
+connection s2
 query
 SELECT count(*) AS n FROM repro_rf;
 ----
@@ -140,6 +157,11 @@ n
 connection s1
 statement ok
 COMMIT;
+
+
+connection s2
+statement ok
+VACUUM (FLUSH_TABLE) repro_rf;
 
 
 connection s2

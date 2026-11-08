@@ -24,6 +24,9 @@ INSERT INTO wal_del_t VALUES
 statement ok
 CREATE INDEX wal_del_idx ON wal_del_t USING inverted(a, b del_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_del_t;
+
 query
 SELECT a FROM wal_del_idx WHERE b @@ ts_phrase('apple');
 ----

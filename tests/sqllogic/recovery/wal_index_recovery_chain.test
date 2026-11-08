@@ -24,6 +24,9 @@ INSERT INTO chain_t SELECT i, 'seed_' || i FROM range(0, 3000) AS t(i);
 statement ok
 CREATE INDEX chain_idx ON chain_t USING inverted(a, b chain_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) chain_t;
+
 # Initial sanity
 query
 SELECT a FROM chain_idx WHERE b @@ ts_phrase('seed_42');

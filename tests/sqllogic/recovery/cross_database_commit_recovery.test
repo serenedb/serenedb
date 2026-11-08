@@ -34,6 +34,12 @@ statement ok
 COMMIT;
 
 statement ok
+VACUUM (FLUSH_TABLE) xcr_local;
+
+statement ok
+VACUUM (FLUSH_TABLE) xcr_other.public.xcr_remote;
+
+statement ok
 INSERT INTO xcr_local SELECT i, 'tail' || i FROM range(200000, 200100) t(i);
 
 statement ok
@@ -123,6 +129,14 @@ SELECT (SELECT count(*) FROM xcr_local WHERE id = 400000) AS l, (SELECT count(*)
 ----
 l	r
 1	1
+
+connection after_decided
+statement ok
+VACUUM (FLUSH_TABLE) xcr_local;
+
+connection after_decided
+statement ok
+VACUUM (FLUSH_TABLE) xcr_other.public.xcr_remote;
 
 connection after_decided
 query

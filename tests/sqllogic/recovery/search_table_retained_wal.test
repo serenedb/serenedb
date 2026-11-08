@@ -26,6 +26,10 @@ INSERT INTO st_retained.public.counts VALUES (1);
 
 
 statement ok
+VACUUM (FLUSH_TABLE) st_retained.public.docs;
+
+
+statement ok
 CHECKPOINT st_retained;
 
 

@@ -86,6 +86,11 @@ n	s
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) mc;
+
+
+connection after_crash
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE id % 7 = 3) AS deleted FROM mc;
 ----

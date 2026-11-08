@@ -38,6 +38,9 @@ DELETE FROM dtr WHERE id <= 20000;
 statement ok
 INSERT INTO dtr SELECT g, 'row ' || g || ' charlie' FROM generate_series(1, 20000) g;
 
+statement ok
+VACUUM (FLUSH_TABLE) dtr;
+
 query
 SELECT count(*) FROM dtr;
 ----
@@ -113,6 +116,10 @@ count
 connection after_crash
 statement ok
 INSERT INTO dtr SELECT g, 'row ' || g || ' delta' FROM generate_series(30001, 31000) g;
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) dtr;
 
 connection after_crash
 query

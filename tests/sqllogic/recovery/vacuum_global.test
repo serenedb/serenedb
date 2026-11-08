@@ -85,6 +85,10 @@ statement ok
 INSERT INTO public.docs VALUES (4, 'beta three');
 
 
+statement ok
+VACUUM (FLUSH_ALL);
+
+
 query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
 ----

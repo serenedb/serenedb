@@ -37,6 +37,9 @@ INSERT INTO wal_hy_t VALUES
     (1, 'red running shoes',     'lightweight trail gear', [100,0,0]::FLOAT[3], [10,0,0,0]::FLOAT[4]),
     (2, 'blue swimming goggles', 'water sport equipment',  [0,100,0]::FLOAT[3], [0,10,0,0]::FLOAT[4]);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_hy_t;
+
 # Pre-crash sanity: text and vector both resolve from the committed segment.
 query
 SELECT pk FROM wal_hy_idx WHERE title @@ 'red' ORDER BY pk;

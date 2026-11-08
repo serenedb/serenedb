@@ -45,6 +45,21 @@ statement ok
 INSERT INTO cpx VALUES (1, 'a'), (2, 'b');
 
 statement ok
+VACUUM (FLUSH_TABLE) cpb;
+
+statement ok
+VACUUM (FLUSH_TABLE) cpd;
+
+statement ok
+VACUUM (FLUSH_TABLE) cpt;
+
+statement ok
+VACUUM (FLUSH_TABLE) cpa;
+
+statement ok
+VACUUM (FLUSH_TABLE) cpx;
+
+statement ok
 INSERT INTO cpt VALUES (3, 'c');
 
 connection writer
@@ -83,6 +98,10 @@ n	lo	hi
 connection after_bulk
 statement ok
 INSERT INTO cpb VALUES (3, 'c');
+
+connection after_bulk
+statement ok
+VACUUM (FLUSH_TABLE) cpb;
 
 connection after_bulk
 query
@@ -161,6 +180,10 @@ statement ok
 INSERT INTO cpt VALUES (5, 'e');
 
 connection after_clear
+statement ok
+VACUUM (FLUSH_TABLE) cpt;
+
+connection after_clear
 query
 SELECT id, body FROM cpt ORDER BY id;
 ----
@@ -213,6 +236,14 @@ SELECT
 ----
 cpa	cpx
 1,2,3	9
+
+connection after_mixed
+statement ok
+VACUUM (FLUSH_TABLE) cpa;
+
+connection after_mixed
+statement ok
+VACUUM (FLUSH_TABLE) cpx;
 
 connection after_mixed
 query

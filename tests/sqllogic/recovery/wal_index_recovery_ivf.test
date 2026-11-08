@@ -24,6 +24,9 @@ statement ok
 CREATE INDEX wal_ivf_idx ON wal_ivf_t
   USING inverted(emb ivf (metric = 'l2'));
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_ivf_t;
+
 # Plan check: ANN top-K served by the IVF index in the inverted index.
 query
 EXPLAIN SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;

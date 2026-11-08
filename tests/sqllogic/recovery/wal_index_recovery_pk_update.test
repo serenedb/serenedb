@@ -27,6 +27,9 @@ INSERT INTO pku_t VALUES
 statement ok
 CREATE INDEX pku_idx ON pku_t USING inverted(id, name pku_dict, data pku_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) pku_t;
+
 # Sanity: pre-PK-update everything findable
 query
 SELECT id FROM pku_idx WHERE name @@ ts_phrase('alpha');

@@ -104,6 +104,10 @@ statement ok
 RESET sdb_faults;
 
 
+statement ok
+VACUUM (FLUSH_TABLE) ckpt_pk;
+
+
 query
 SELECT i, t FROM ckpt_pk ORDER BY i;
 ----

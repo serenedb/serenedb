@@ -30,6 +30,9 @@ statement ok
 CREATE INDEX oni_inv_idx ON oni_inv_t USING inverted(id, body oni_dict);
 
 statement ok
+VACUUM (FLUSH_TABLE) oni_inv_t;
+
+statement ok
 INSERT INTO oni_plain_a SELECT i, 'plain_a_' || i FROM range(0, 1000) AS t(i);
 
 statement ok

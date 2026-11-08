@@ -62,6 +62,11 @@ n
 
 
 connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) build_fail;
+
+
+connection after_crash
 query
 SELECT (SELECT count(*) FROM build_fail_idx) AS total,
        (SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid

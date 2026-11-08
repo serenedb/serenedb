@@ -21,6 +21,12 @@ statement ok
 INSERT INTO xt_other.public.xt_remote VALUES (1, 'a'), (2, 'b');
 
 statement ok
+VACUUM (FLUSH_TABLE) xt_local;
+
+statement ok
+VACUUM (FLUSH_TABLE) xt_other.public.xt_remote;
+
+statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
 
 connection truncator
@@ -59,6 +65,14 @@ INSERT INTO xt_local VALUES (1, 'a'), (2, 'b');
 connection after_autocommit
 statement ok
 INSERT INTO xt_other.public.xt_remote VALUES (1, 'a'), (2, 'b');
+
+connection after_autocommit
+statement ok
+VACUUM (FLUSH_TABLE) xt_local;
+
+connection after_autocommit
+statement ok
+VACUUM (FLUSH_TABLE) xt_other.public.xt_remote;
 
 connection mixed
 statement ok

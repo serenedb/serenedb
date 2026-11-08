@@ -19,6 +19,10 @@ INSERT INTO rmc_kept VALUES (7, 'keep');
 
 
 statement ok
+VACUUM (FLUSH_TABLE) rmc_kept;
+
+
+statement ok
 CREATE TABLE rmc_oids AS
   SELECT table_oid AS oid FROM duckdb_tables()
   WHERE database_name = current_database() AND table_name = 'rmc_gone';
@@ -77,6 +81,11 @@ CREATE TABLE rmc_gone (id BIGINT PRIMARY KEY, tag TEXT);
 connection after_crash
 statement ok
 INSERT INTO rmc_gone VALUES (2, 'beta');
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) rmc_gone;
 
 
 connection after_crash

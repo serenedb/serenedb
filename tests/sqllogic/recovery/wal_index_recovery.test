@@ -14,6 +14,10 @@ INSERT INTO wal_rec_t VALUES (1, 'alpha bravo charlie');
 statement ok
 CREATE INDEX wal_rec_idx ON wal_rec_t USING inverted(a, b wal_dict);
 
+# Seed row must be searchable before we break anything
+statement ok
+VACUUM (FLUSH_TABLE) wal_rec_t;
+
 query
 SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('alpha bravo');
 ----

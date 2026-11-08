@@ -37,6 +37,10 @@ INSERT INTO ni2_other_b SELECT i, i * 10, 'b_' || i FROM range(0, 100) AS t(i);
 statement ok
 CREATE INDEX ni2_main_idx ON ni2_main USING inverted(id, body ni2_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) ni2_main;
+
+
 # Interleave writes: lots of unrelated activity surrounding the inverted
 # inserts. Recovery must filter to ni2_main only.
 statement ok

@@ -43,6 +43,10 @@ SET sdb_faults = 'pause_search_backfill_before_publish:release';
 wait
 
 connection default
+statement ok
+VACUUM (FLUSH_TABLE) bfs;
+
+connection default
 query
 SELECT count(*) AS n FROM bfs;
 ----
@@ -90,6 +94,10 @@ statement ok
 SET sdb_faults = 'pause_search_backfill_before_publish:release';
 
 wait
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) bfu;
 
 connection default
 query

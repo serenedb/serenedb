@@ -25,6 +25,9 @@ INSERT INTO tu1 VALUES (1, 'a'), (2, 'b');
 statement ok
 TRUNCATE tu1;
 
+statement ok
+VACUUM (FLUSH_TABLE) tu1;
+
 query
 SELECT count(*) AS n FROM tu1;
 ----
@@ -60,6 +63,9 @@ SELECT count(*) AS n FROM tu3;
 ----
 n
 0
+
+statement ok
+VACUUM (FLUSH_TABLE) tu3;
 
 query
 SELECT count(*) AS n FROM tu3;

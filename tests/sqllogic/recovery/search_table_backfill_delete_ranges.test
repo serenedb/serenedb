@@ -12,6 +12,9 @@ statement ok
 INSERT INTO bdr SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(0, 50000) r(i);
 
 statement ok
+VACUUM (FLUSH_TABLE) bdr;
+
+statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
 
 connection builder
@@ -32,9 +35,17 @@ DELETE FROM bdr WHERE id < 20000 OR id % 1000 = 7;
 
 connection default
 statement ok
+VACUUM (FLUSH_TABLE) bdr;
+
+connection default
+statement ok
 SET sdb_faults = '-pause_search_backfill_before_swap';
 
 wait
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) bdr;
 
 connection default
 query

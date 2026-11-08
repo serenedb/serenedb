@@ -114,6 +114,10 @@ label
 t
 
 
+statement ok
+VACUUM (FLUSH_TABLE) bcw_docs;
+
+
 query
 SELECT id, body FROM bcw_docs ORDER BY id;
 ----

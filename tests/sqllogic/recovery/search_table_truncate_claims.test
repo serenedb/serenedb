@@ -106,6 +106,10 @@ statement ok
 INSERT INTO tcl VALUES (5, 'e');
 
 connection writer
+statement ok
+VACUUM (FLUSH_TABLE) tcl;
+
+connection writer
 query
 SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcl;
 ----

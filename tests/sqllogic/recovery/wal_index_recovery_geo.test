@@ -33,6 +33,9 @@ CREATE INDEX wal_geo_idx ON wal_geo_t
   USING inverted(geo wal_geo_dict)
   INCLUDE (geo);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_geo_t;
+
 # Plan check: geo distance + projection both served by the inverted index.
 query
 EXPLAIN SELECT pk FROM wal_geo_idx

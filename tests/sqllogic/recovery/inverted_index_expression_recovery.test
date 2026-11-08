@@ -32,6 +32,9 @@ CREATE INDEX xr_part ON xr_base USING inverted(id, (upper(body)) xr_dict) WHERE 
 statement ok
 CREATE INDEX xr_plain ON xr_base USING inverted(id, body xr_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) xr_base;
+
 query
 SELECT count(*) FROM xr_expr WHERE upper(body) @@ ts_like('BRAVO');
 ----
@@ -101,6 +104,10 @@ count
 connection after_crash
 statement ok
 INSERT INTO xr_base SELECT g, 'aa ' || g || ' bravo', (g % 3 = 0) FROM generate_series(10, 18) g;
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) xr_base;
 
 connection after_crash
 query

@@ -22,6 +22,9 @@ statement ok
 CREATE INDEX wal_wild_ni_idx ON wal_wild_ni_t
   USING inverted(b wal_wild_ni_dict);
 
+statement ok
+VACUUM (FLUSH_TABLE) wal_wild_ni_t;
+
 # Plan: ts_like filter consults analyzer-output cs aux column;
 # `b` projection falls back to RocksDB lookup (no INCLUDE).
 query

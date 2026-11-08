@@ -23,6 +23,10 @@ CREATE INDEX bsz_small_idx ON bsz_small USING inverted (body);
 
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 INSERT INTO bsz_small SELECT i, 'w' || (i % 7) FROM range(100000) t(i);
 
 
@@ -36,6 +40,10 @@ VACUUM (FLUSH_TABLE) bsz_small;
 
 statement ok
 VACUUM (FLUSH_TABLE) bsz_default;
+
+
+statement ok
+RESET threads;
 
 
 query

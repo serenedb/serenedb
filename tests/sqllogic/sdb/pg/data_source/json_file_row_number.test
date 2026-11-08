@@ -1,6 +1,10 @@
 hash-threshold 100
 control substitution on
 
+statement ok
+SET preserve_insertion_order = true;
+
+
 # Demonstrates the file_row_number byte offset emitted by read_json /
 # read_json_objects.  This is the value stored as the lookup key when an
 # inverted index is built over a read_json view body, and the value passed

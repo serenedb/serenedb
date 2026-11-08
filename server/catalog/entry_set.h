@@ -215,7 +215,8 @@ class EntrySet {
 
   void CheckNoLaterDependent(const duckdb::SnapshotView& view,
                              const duckdb::Identifier& name, duckdb::idx_t oid,
-                             const duckdb::CatalogEntry& dropped);
+                             const duckdb::CatalogEntry& dropped,
+                             const duckdb::Identifier& catalog, bool local);
 
  private:
   duckdb::CatalogEntry& Push(duckdb::CatalogTransaction transaction,

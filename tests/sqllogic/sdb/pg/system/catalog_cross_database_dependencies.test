@@ -606,3 +606,57 @@ n
 
 statement ok
 DROP TABLE cxd_def
+
+
+statement ok
+DROP DATABASE IF EXISTS cxd_quiet
+
+
+statement ok
+CREATE DATABASE cxd_quiet
+
+
+connection cxd_quiet_c database=cxd_quiet
+statement ok
+BEGIN
+
+
+connection cxd_quiet_c database=cxd_quiet
+statement ok
+DROP SCHEMA public
+
+
+connection default
+statement ok
+CREATE TABLE cxd_unrelated (a INTEGER)
+
+
+connection cxd_quiet_c database=cxd_quiet
+statement ok
+COMMIT
+
+
+connection cxd_quiet_c database=cxd_quiet
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'public'
+----
+n
+0
+
+
+connection default
+statement ok
+DROP TABLE cxd_unrelated
+
+
+connection default
+query
+SELECT count(*) FILTER (WHERE pg_terminate_backend(pid)) AS terminated FROM pg_stat_activity WHERE datname = 'cxd_quiet'
+----
+terminated
+1
+
+
+connection default
+statement ok
+DROP DATABASE cxd_quiet

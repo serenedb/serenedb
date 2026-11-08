@@ -390,7 +390,9 @@ void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
       }
     }
     if (const auto slot = dependent.index->Newest(dependent.oid); slot.set) {
-      slot.set->CheckNoLaterDependent(view, slot.name, dependent.oid, dropped);
+      slot.set->CheckNoLaterDependent(view, slot.name, dependent.oid, dropped,
+                                      _database.GetName(),
+                                      dependent.index == this);
     }
   }
 }
@@ -425,7 +427,9 @@ void EntrySet::CheckSubjectLive(const duckdb::Identifier& name,
 void EntrySet::CheckNoLaterDependent(const duckdb::SnapshotView& view,
                                      const duckdb::Identifier& name,
                                      duckdb::idx_t oid,
-                                     const duckdb::CatalogEntry& dropped) {
+                                     const duckdb::CatalogEntry& dropped,
+                                     const duckdb::Identifier& catalog,
+                                     bool local) {
   absl::ReaderMutexLock lock{&_mutex};
   const auto it = _entries.find(name);
   if (it == _entries.end()) {
@@ -441,9 +445,13 @@ void EntrySet::CheckNoLaterDependent(const duckdb::SnapshotView& view,
     }
     bool depends = false;
     if (version->oid == oid) {
-      ForEachSubject(*version, [&](duckdb::idx_t subject) {
-        depends |= subject == dropped.oid;
-      });
+      if (dropped.type == duckdb::CatalogType::ROLE_ENTRY) {
+        ForEachSubject(*version, [&](duckdb::idx_t subject) {
+          depends |= subject == dropped.oid;
+        });
+      } else {
+        depends = DependsOn(*version, dropped.oid, catalog, local);
+      }
     }
     if (depends) {
       THROW_SQL_ERROR(

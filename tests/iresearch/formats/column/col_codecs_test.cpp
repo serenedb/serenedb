@@ -1165,7 +1165,7 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     EXPECT_EQ(outcome.all_dedup, choice.shape == Shape::Dedup);
     EXPECT_GT(segments, 1u);
     EXPECT_EQ(rows, 20000u);
-    EXPECT_FALSE(tuning.pick);
+    EXPECT_FALSE(tuning.reuse.pick);
   }
 }
 
@@ -1211,8 +1211,8 @@ TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
   const auto mixed = seal(5, 15);
   EXPECT_GT(mixed.size(), 1u);
   EXPECT_TRUE(all(mixed, Shape::Plain)) << ::testing::PrintToString(mixed);
-  ASSERT_TRUE(tuning.pick);
-  EXPECT_EQ(tuning.pick->choice.shape, Shape::Plain);
+  ASSERT_TRUE(tuning.reuse.pick);
+  EXPECT_EQ(tuning.reuse.pick->choice.shape, Shape::Plain);
 
   RoundTrip(duckdb::CompressionType::COMPRESSION_AUTO,
             {.segment_target = 16 * 1024}, 3 * kSwitch, DEFAULT_ROW_GROUP_SIZE,
@@ -1506,8 +1506,8 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   const auto levels = [](const irs::codecs::StringTuning& tuning) {
     std::vector<int> out;
     for (size_t leaf = 0; leaf < irs::codecs::kByteCodecCount; ++leaf) {
-      out.push_back(tuning.level[leaf]);
-      out.push_back(static_cast<int>(tuning.layout[leaf]));
+      out.push_back(tuning.tuned.level[leaf]);
+      out.push_back(static_cast<int>(tuning.tuned.layout[leaf]));
     }
     return out;
   };
@@ -3236,7 +3236,7 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   std::vector<uint32_t> gaps;
   for (int rg = 0; rg < 32; ++rg) {
     seal(steady, tuning);
-    gaps.push_back(tuning.clock.gap);
+    gaps.push_back(tuning.reuse.clock.gap);
   }
   std::vector<uint32_t> expected{1};
   expected.resize(3, 2);
@@ -3244,8 +3244,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   expected.resize(15, 8);
   expected.resize(32, 16);
   EXPECT_EQ(gaps, expected);
-  ASSERT_TRUE(tuning.pick);
-  EXPECT_EQ(tuning.pick->choice.shape, Shape::Plain);
+  ASSERT_TRUE(tuning.reuse.pick);
+  EXPECT_EQ(tuning.reuse.pick->choice.shape, Shape::Plain);
 
   const Value repeated = [](uint64_t g) -> std::optional<std::string> {
     std::mt19937_64 rng{g + 1};
@@ -3253,20 +3253,20 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   };
   const auto changed = Chunks(4096, repeated);
   seal(changed, tuning);
-  EXPECT_EQ(tuning.clock.gap, 1u);
-  ASSERT_TRUE(tuning.pick);
-  EXPECT_EQ(tuning.pick->choice.shape, Shape::Dedup);
+  EXPECT_EQ(tuning.reuse.clock.gap, 1u);
+  ASSERT_TRUE(tuning.reuse.pick);
+  EXPECT_EQ(tuning.reuse.pick->choice.shape, Shape::Dedup);
   gaps.clear();
   for (int rg = 0; rg < 4; ++rg) {
     seal(changed, tuning);
-    gaps.push_back(tuning.clock.gap);
+    gaps.push_back(tuning.reuse.clock.gap);
   }
   EXPECT_EQ(gaps, (std::vector<uint32_t>{1, 2, 2, 4}));
 
   seal(steady, tuning);
-  EXPECT_EQ(tuning.clock.gap, 1u);
-  ASSERT_TRUE(tuning.pick);
-  EXPECT_EQ(tuning.pick->choice.shape, Shape::Plain);
+  EXPECT_EQ(tuning.reuse.clock.gap, 1u);
+  ASSERT_TRUE(tuning.reuse.pick);
+  EXPECT_EQ(tuning.reuse.pick->choice.shape, Shape::Plain);
 }
 
 TEST_F(ColCodecsTest, AutoFollowsAChangeBetweenRowGroups) {
@@ -3349,8 +3349,9 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
                       .codec_params = {.tier = irs::WriteTier::Merge}});
       AppendValues(cw, 120000, value);
       ASSERT_TRUE(cw.Meta().write_string_tuning);
-      const auto zxc = cw.Meta().write_string_tuning->level[static_cast<size_t>(
-        irs::codecs::ByteCodec::Zxc)];
+      const auto zxc =
+        cw.Meta().write_string_tuning->tuned.level[static_cast<size_t>(
+          irs::codecs::ByteCodec::Zxc)];
       EXPECT_EQ(tier == irs::WriteTier::Merge, zxc != 0);
       ASSERT_TRUE(w.Commit(0));
     }

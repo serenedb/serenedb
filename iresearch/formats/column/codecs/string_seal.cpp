@@ -78,7 +78,7 @@ SealOutcome SealSegments(const StringAccumulator& acc,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          duckdb::BufferManager& buffers, SegmentSink sink) {
-  text::SegmentEncoder encoder{params, type, tuning, buffers};
+  text::SegmentEncoder encoder{params, type, tuning.estimators, buffers};
   SealOutcome outcome{.sealed = true};
   const auto emit = [&](StringChoice choice, duckdb::BaseStatistics stats,
                         uint64_t rows, std::string_view bytes) {
@@ -112,7 +112,7 @@ SealOutcome SealSegments(std::span<const WriteChunk> chunks,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          duckdb::BufferManager& buffers, SegmentSink sink) {
-  text::SegmentEncoder encoder{params, type, tuning, buffers};
+  text::SegmentEncoder encoder{params, type, tuning.estimators, buffers};
   SealOutcome outcome{.sealed = true};
   encoder.SealChunks(text::NamedConfig(named, params), chunks,
                      [&](StringChoice choice, duckdb::BaseStatistics stats,

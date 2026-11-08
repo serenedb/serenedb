@@ -58,16 +58,28 @@ struct Config {
 
 }  // namespace text
 
-struct StringTuning {
+struct ReusePolicy {
   std::optional<text::Config> pick;
-  double bytes_per_input = 0;
-  bool levels_tuned = false;
   CalibrationClock clock;
-  uint64_t last_distinct = 0;
+  double bytes_per_input = 0;
+};
+
+struct TunedParameters {
+  bool done = false;
   uint8_t level[kByteCodecCount]{};
   FrameLayout layout[kByteCodecCount]{};
+};
+
+struct EstimatorState {
   RatioHistory history[kByteCodecCount][2]{};
   NumericTuning codes;
+};
+
+struct StringTuning {
+  ReusePolicy reuse;
+  TunedParameters tuned;
+  EstimatorState estimators;
+  uint64_t last_distinct = 0;
 };
 
 }  // namespace irs::codecs

@@ -124,9 +124,9 @@ template<typename State>
 State& SegmentEncoder::Get(std::optional<State>& slot) {
   if (!slot) {
     if constexpr (Sorted(State::kCodec)) {
-      slot.emplace(_type, _dedup, _tuning, _params.segment_target);
+      slot.emplace(_type, _dedup, _estimators, _params.segment_target);
     } else {
-      slot.emplace(_type, _dedup, _tuning);
+      slot.emplace(_type, _dedup, _estimators);
     }
   }
   return *slot;

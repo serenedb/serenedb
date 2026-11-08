@@ -28,6 +28,6 @@
 namespace irs::codecs::text {
 
 Estimate AnalyzeLz4(StringWindow& window, Shape shape, WriteTier tier,
-                    bool tune, StringTuning& tuning);
+                    bool tune, TunedParameters& tuned);
 
 }  // namespace irs::codecs::text

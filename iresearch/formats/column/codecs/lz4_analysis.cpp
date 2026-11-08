@@ -45,16 +45,16 @@ bool Cheap(const Config& config) noexcept {
 }  // namespace
 
 Estimate AnalyzeLz4(StringWindow& window, Shape shape, WriteTier tier,
-                    bool tune, StringTuning& tuning) {
+                    bool tune, TunedParameters& tuned) {
   const std::span<const uint8_t> levels =
     tier == WriteTier::Flush ? std::span<const uint8_t>{kFlushLevels}
                              : std::span<const uint8_t>{kMergeLevels};
   Config config{.choice = {shape, ByteCodec::Lz4}};
   if (!tune) {
-    config.level = absl::c_linear_search(levels, tuning.level[kLeaf])
-                     ? tuning.level[kLeaf]
+    config.level = absl::c_linear_search(levels, tuned.level[kLeaf])
+                     ? tuned.level[kLeaf]
                      : levels.front();
-    config.layout = tuning.layout[kLeaf];
+    config.layout = tuned.layout[kLeaf];
     return {config, Cheap(config) ? window.Encode(config).Size()
                                   : window.Price(config)};
   }
@@ -85,8 +85,8 @@ Estimate AnalyzeLz4(StringWindow& window, Shape shape, WriteTier tier,
     prefer(FrameLayout::Local, 0.0);
   }
   prefer(FrameLayout::Wide, kWideFramesGain);
-  tuning.level[kLeaf] = best.config.level;
-  tuning.layout[kLeaf] = best.config.layout;
+  tuned.level[kLeaf] = best.config.level;
+  tuned.layout[kLeaf] = best.config.layout;
   if (Cheap(best.config)) {
     best.bytes = window.Encode(best.config).Size();
   }

@@ -70,7 +70,8 @@ Config NamedConfig(const StringChoice& named,
 }
 
 Segment* StringPicker::First() {
-  const bool due = !_tuning.pick || _tuning.clock.Due();
+  auto& reuse = _tuning.reuse;
+  const bool due = !reuse.pick || reuse.clock.Due();
   if (_acc.Rows() == 0) {
     return nullptr;
   }
@@ -82,8 +83,8 @@ Segment* StringPicker::First() {
 }
 
 Config StringPicker::Current() const noexcept {
-  if (_tuning.pick) {
-    return *_tuning.pick;
+  if (_tuning.reuse.pick) {
+    return *_tuning.reuse.pick;
   }
   return Fast(Repeats(_acc.values.size(), _acc.Rows() - _acc.null_count)
                 ? Shape::Dedup
@@ -96,13 +97,13 @@ bool StringPicker::Drifted(const Segment& seg) const noexcept {
   }
   const auto ratio =
     static_cast<double>(seg.Size()) / static_cast<double>(seg.input);
-  return ratio > _tuning.bytes_per_input * kDrift ||
-         ratio * kDrift < _tuning.bytes_per_input;
+  const auto reference = _tuning.reuse.bytes_per_input;
+  return ratio > reference * kDrift || ratio * kDrift < reference;
 }
 
 Segment* StringPicker::Pick(Segment& first, bool drift) {
   const auto input = first.input;
-  StringWindow window{_acc, _encoder, first, _tuning.codes};
+  StringWindow window{_acc, _encoder, first, _tuning.estimators.codes};
   const auto& dedup = window.Encode(Fast(Shape::Dedup));
   auto shape = Shape::Dedup;
   if (PlainWins(dedup, kHeaderSize + Packed(dedup.rows, dedup.max_len) +
@@ -110,7 +111,8 @@ Segment* StringPicker::Pick(Segment& first, bool drift) {
       PlainWins(dedup, window.Encode(Fast(Shape::Plain)).Size())) {
     shape = Shape::Plain;
   }
-  const bool tune = dedup.entries >= kTuneMinEntries && !_tuning.levels_tuned;
+  auto& tuned = _tuning.tuned;
+  const bool tune = dedup.entries >= kTuneMinEntries && !tuned.done;
   Estimate best{.bytes = std::numeric_limits<uint64_t>::max()};
   const auto consider = [&](const Estimate& candidate) {
     if (candidate.bytes < best.bytes) {
@@ -118,12 +120,12 @@ Segment* StringPicker::Pick(Segment& first, bool drift) {
     }
   };
   consider(AnalyzeFsst(window, shape));
-  consider(AnalyzeLz4(window, shape, _params.tier, tune, _tuning));
+  consider(AnalyzeLz4(window, shape, _params.tier, tune, tuned));
   if (_params.tier != WriteTier::Flush) {
-    consider(AnalyzeZxc(window, shape, tune, _tuning));
+    consider(AnalyzeZxc(window, shape, tune, tuned));
   }
   if (tune) {
-    _tuning.levels_tuned = true;
+    tuned.done = true;
   }
   auto* picked = &window.Encode(best.config);
   for (auto* seg : window.Encodings()) {
@@ -140,12 +142,12 @@ Segment* StringPicker::Pick(Segment& first, bool drift) {
       picked = fsst;
     }
   }
-  const bool kept =
-    _tuning.pick && _tuning.pick->choice == picked->config.choice;
-  _tuning.clock.Settle(kept && !drift);
-  _tuning.pick = picked->config;
+  auto& reuse = _tuning.reuse;
+  const bool kept = reuse.pick && reuse.pick->choice == picked->config.choice;
+  reuse.clock.Settle(kept && !drift);
+  reuse.pick = picked->config;
   if (input != 0) {
-    _tuning.bytes_per_input =
+    reuse.bytes_per_input =
       static_cast<double>(picked->Size()) / static_cast<double>(input);
   }
   window.Keep(*picked);

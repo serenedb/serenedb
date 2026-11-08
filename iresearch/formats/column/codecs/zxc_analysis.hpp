@@ -27,6 +27,6 @@
 namespace irs::codecs::text {
 
 Estimate AnalyzeZxc(StringWindow& window, Shape shape, bool tune,
-                    StringTuning& tuning);
+                    TunedParameters& tuned);
 
 }  // namespace irs::codecs::text

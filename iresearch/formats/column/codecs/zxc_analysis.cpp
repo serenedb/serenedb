@@ -37,13 +37,13 @@ constexpr auto kLeaf = static_cast<size_t>(ByteCodec::Zxc);
 }  // namespace
 
 Estimate AnalyzeZxc(StringWindow& window, Shape shape, bool tune,
-                    StringTuning& tuning) {
+                    TunedParameters& tuned) {
   Config config{.choice = {shape, ByteCodec::Zxc}};
   if (!tune) {
-    config.level = absl::c_linear_search(kLevels, tuning.level[kLeaf])
-                     ? tuning.level[kLeaf]
+    config.level = absl::c_linear_search(kLevels, tuned.level[kLeaf])
+                     ? tuned.level[kLeaf]
                      : kLevels[0];
-    config.layout = tuning.layout[kLeaf];
+    config.layout = tuned.layout[kLeaf];
     return {config, window.Price(config)};
   }
   uint64_t prices[std::size(kLevels)];
@@ -71,8 +71,8 @@ Estimate AnalyzeZxc(StringWindow& window, Shape shape, bool tune,
   };
   prefer(FrameLayout::Local, 0.0);
   prefer(FrameLayout::Wide, kWideFramesGain);
-  tuning.level[kLeaf] = best.config.level;
-  tuning.layout[kLeaf] = best.config.layout;
+  tuned.level[kLeaf] = best.config.level;
+  tuned.layout[kLeaf] = best.config.layout;
   return best;
 }
 

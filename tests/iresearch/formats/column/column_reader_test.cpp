@@ -3533,7 +3533,7 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
 
 uint32_t LargestCalibrationGap(const irs::ColumnMeta& meta) {
   uint32_t gap =
-    meta.write_string_tuning ? meta.write_string_tuning->clock.gap : 0;
+    meta.write_string_tuning ? meta.write_string_tuning->reuse.clock.gap : 0;
   for (const auto& child : meta.children) {
     gap = std::max(gap, LargestCalibrationGap(child));
   }

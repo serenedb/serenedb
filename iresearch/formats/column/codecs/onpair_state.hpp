@@ -38,9 +38,9 @@ class OnPairState {
   static constexpr ByteCodec kCodec = ByteCodec::OnPair;
 
   OnPairState(const duckdb::LogicalType& type, DedupScratch& dedup,
-              StringTuning& tuning, uint32_t target)
-    : _rows{type, dedup, tuning.codes},
-      _history{tuning.history[static_cast<size_t>(kCodec)]},
+              EstimatorState& estimators, uint32_t target)
+    : _rows{type, dedup, estimators.codes},
+      _history{estimators.history[static_cast<size_t>(kCodec)]},
       _target{target} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct,

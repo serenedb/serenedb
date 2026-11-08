@@ -21,7 +21,8 @@
 #pragma once
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/string_picker.hpp"
+#include "iresearch/formats/column/codecs/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/string_window.hpp"
 #include "iresearch/index/column_info.hpp"
 
 namespace irs::codecs::text {

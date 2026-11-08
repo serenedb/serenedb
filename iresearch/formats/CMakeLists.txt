@@ -4,6 +4,7 @@ target_sources(
         column/codecs/fsst.cpp
         column/codecs/fsst12.cpp
         column/codecs/fsst12_state.cpp
+        column/codecs/fsst_analysis.cpp
         column/codecs/fsst_plus.cpp
         column/codecs/fsst_plus_state.cpp
         column/codecs/fsst_state.cpp
@@ -20,6 +21,7 @@ target_sources(
         column/codecs/string_picker.cpp
         column/codecs/string_scan.cpp
         column/codecs/string_seal.cpp
+        column/codecs/string_window.cpp
         column/codecs/zstd.cpp
         column/codecs/zxc.cpp
         column/codecs/zxc_analysis.cpp

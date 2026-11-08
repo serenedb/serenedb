@@ -20,13 +20,13 @@
 
 #include "iresearch/formats/column/codecs/string_picker.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <limits>
 
+#include "iresearch/formats/column/codecs/fsst_analysis.hpp"
 #include "iresearch/formats/column/codecs/lz4_analysis.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/codecs/string_window.hpp"
 #include "iresearch/formats/column/codecs/zxc_analysis.hpp"
 
 namespace irs::codecs::text {
@@ -57,41 +57,7 @@ Config Fast(Shape shape) noexcept {
   return {.choice = {shape, ByteCodec::Lz4}, .level = kLz4Fast};
 }
 
-Estimate AnalyzeFsst(StringWindow& window, Shape shape) {
-  const Config config{.choice = {shape, ByteCodec::Fsst}};
-  return {config, window.Encode(config).Size()};
-}
-
 }  // namespace
-
-uint64_t StringWindow::Price(const Config& config) {
-  if (const auto* seg = Encoded(config)) {
-    return seg->Size();
-  }
-  return _encoder.Price(config, _acc, _begin, _end);
-}
-
-Segment& StringWindow::Encode(const Config& config) {
-  if (auto* seg = Encoded(config)) {
-    return *seg;
-  }
-  return *_encoded.emplace_back(_encoder.Encode(config, _acc, _begin, _end));
-}
-
-Segment* StringWindow::Encoded(const Config& config) const noexcept {
-  const auto it = absl::c_find_if(
-    _encoded, [&](const Segment* seg) { return seg->config == config; });
-  return it == _encoded.end() ? nullptr : *it;
-}
-
-void StringWindow::Keep(const Segment& kept) {
-  for (auto* seg : _encoded) {
-    if (seg != &kept) {
-      _encoder.Release(seg);
-    }
-  }
-  _encoded.clear();
-}
 
 Config NamedConfig(const StringChoice& named,
                    const ColCodecParams& params) noexcept {
@@ -101,6 +67,18 @@ Config NamedConfig(const StringChoice& named,
     .layout = params.tier == WriteTier::Flush ? FrameLayout::FirstFrame
                                               : FrameLayout::Local,
   };
+}
+
+Segment* StringPicker::First() {
+  const bool due = !_tuning.pick || _tuning.clock.Due();
+  if (_acc.Rows() == 0) {
+    return nullptr;
+  }
+  auto* first = _encoder.Cut(Current(), _acc, 0);
+  if (const bool drift = !due && Drifted(*first); due || drift) {
+    return Pick(*first, drift);
+  }
+  return first;
 }
 
 Config StringPicker::Current() const noexcept {

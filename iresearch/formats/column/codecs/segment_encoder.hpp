@@ -27,6 +27,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/blob_pricer.tpp"
 #include "iresearch/formats/column/codecs/blob_state.tpp"
 #include "iresearch/formats/column/codecs/fsst12_state.hpp"
 #include "iresearch/formats/column/codecs/fsst_plus_state.hpp"
@@ -48,6 +49,9 @@ class SegmentEncoder {
 
   Segment* Cut(const Config& config, const StringAccumulator& acc,
                uint64_t begin);
+
+  void Compress(const Config& config, const StringAccumulator& acc,
+                uint64_t begin, SegmentSink sink);
 
   void SealChunks(const Config& config, std::span<const WriteChunk> chunks,
                   SegmentSink sink);
@@ -72,11 +76,21 @@ class SegmentEncoder {
     std::optional<Fsst12State> fsst12;
   };
 
+  struct Pricers {
+    std::optional<BlobPricer<Lz4>> lz4;
+    std::optional<BlobPricer<Lz4Hc>> lz4_hc;
+    std::optional<BlobPricer<Zstd>> zstd;
+    std::optional<BlobPricer<Zxc>> zxc;
+  };
+
   template<typename F>
   auto With(const Config& config, F&& f);
 
   template<typename State>
   State& Get(std::optional<State>& slot);
+
+  template<typename Codec>
+  BlobPricer<Codec>& Pricer(std::optional<BlobPricer<Codec>>& slot);
 
   const Profile& Measure(const StringAccumulator& acc, Shape shape,
                          uint64_t begin, uint64_t end);
@@ -89,6 +103,7 @@ class SegmentEncoder {
   duckdb::BufferManager& _buffers;
   DedupScratch _dedup;
   States _states;
+  Pricers _pricers;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;
   Profile _profile;

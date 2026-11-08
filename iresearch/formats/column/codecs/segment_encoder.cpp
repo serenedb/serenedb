@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <duckdb/common/vector/vector_iterator.hpp>
-#include <type_traits>
 
 #include "iresearch/utils/assert.hpp"
 
@@ -69,6 +68,17 @@ IRS_NO_INLINE void SealRows(State& state, const Config& config,
   }
   if (row != first) {
     seal();
+  }
+}
+
+template<typename State>
+IRS_NO_INLINE void CompressRows(State& state, const Config& config,
+                                const StringAccumulator& acc, uint64_t begin,
+                                uint32_t target, Segment& seg,
+                                SegmentSink sink) {
+  for (auto row = begin; row < acc.Rows(); row = seg.begin + seg.rows) {
+    CutRows(state, config, acc, row, target, seg);
+    sink(seg.config.choice, std::move(*seg.stats), seg.rows, seg.bytes.View());
   }
 }
 
@@ -123,6 +133,15 @@ State& SegmentEncoder::Get(std::optional<State>& slot) {
   return *slot;
 }
 
+template<typename Codec>
+BlobPricer<Codec>& SegmentEncoder::Pricer(
+  std::optional<BlobPricer<Codec>>& slot) {
+  if (!slot) {
+    slot.emplace(_tuning.codes);
+  }
+  return *slot;
+}
+
 Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
                              uint64_t begin) {
   auto* seg = Acquire();
@@ -130,6 +149,19 @@ Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
     CutRows(state, config, acc, begin, _params.segment_target, *seg);
   });
   return seg;
+}
+
+void SegmentEncoder::Compress(const Config& config,
+                              const StringAccumulator& acc, uint64_t begin,
+                              SegmentSink sink) {
+  if (begin >= acc.Rows()) {
+    return;
+  }
+  auto* seg = Acquire();
+  With(config, [&](auto& state) {
+    CompressRows(state, config, acc, begin, _params.segment_target, *seg, sink);
+  });
+  Release(seg);
 }
 
 void SegmentEncoder::SealChunks(const Config& config,
@@ -155,13 +187,26 @@ uint64_t SegmentEncoder::Price(const Config& config,
                                const StringAccumulator& acc, uint64_t begin,
                                uint64_t end) {
   const auto& profile = Measure(acc, config.choice.shape, begin, end);
-  return With(config, [&](auto& state) -> uint64_t {
-    if constexpr (Sorted(std::remove_reference_t<decltype(state)>::kCodec)) {
-      SDB_UNREACHABLE();
-    } else {
-      return state.Price(profile, config.level, config.layout, begin);
-    }
-  });
+  const auto price = [&](auto& slot) {
+    return Pricer(slot).Price(profile, config.level, config.layout, begin);
+  };
+  switch (config.choice.leaf) {
+    case ByteCodec::Lz4:
+      if (EffectiveLevel<Lz4>(config.level) > 1) {
+        return price(_pricers.lz4_hc);
+      }
+      return price(_pricers.lz4);
+    case ByteCodec::Zstd:
+      return price(_pricers.zstd);
+    case ByteCodec::Zxc:
+      return price(_pricers.zxc);
+    case ByteCodec::Fsst:
+    case ByteCodec::FsstPlus:
+    case ByteCodec::OnPair:
+    case ByteCodec::Fsst12:
+      break;
+  }
+  SDB_UNREACHABLE();
 }
 
 const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,

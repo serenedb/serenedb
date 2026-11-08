@@ -20,10 +20,6 @@
 
 #pragma once
 
-#include <cstdint>
-#include <span>
-#include <vector>
-
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/segment_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_rows.hpp"
@@ -31,42 +27,6 @@
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 
 namespace irs::codecs::text {
-
-struct Estimate {
-  Config config;
-  uint64_t bytes = 0;
-};
-
-class StringWindow {
- public:
-  StringWindow(const StringAccumulator& acc, SegmentEncoder& encoder,
-               Segment& first)
-    : _acc{acc},
-      _encoder{encoder},
-      _begin{first.begin},
-      _end{first.begin + first.rows},
-      _encoded{&first} {}
-
-  StringWindow(const StringWindow&) = delete;
-  StringWindow& operator=(const StringWindow&) = delete;
-
-  uint64_t Price(const Config& config);
-
-  Segment& Encode(const Config& config);
-
-  Segment* Encoded(const Config& config) const noexcept;
-
-  std::span<Segment* const> Encodings() const noexcept { return _encoded; }
-
-  void Keep(const Segment& kept);
-
- private:
-  const StringAccumulator& _acc;
-  SegmentEncoder& _encoder;
-  uint64_t _begin;
-  uint64_t _end;
-  std::vector<Segment*> _encoded;
-};
 
 Config NamedConfig(const StringChoice& named,
                    const ColCodecParams& params) noexcept;
@@ -77,15 +37,15 @@ class StringPicker {
                StringTuning& tuning, SegmentEncoder& encoder)
     : _acc{acc}, _params{params}, _tuning{tuning}, _encoder{encoder} {}
 
-  Config Current() const noexcept;
+  Segment* First();
 
-  bool Due() noexcept { return !_tuning.pick || _tuning.clock.Due(); }
+ private:
+  Config Current() const noexcept;
 
   bool Drifted(const Segment& seg) const noexcept;
 
   Segment* Pick(Segment& first, bool drift);
 
- private:
   const StringAccumulator& _acc;
   const ColCodecParams& _params;
   StringTuning& _tuning;

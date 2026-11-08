@@ -79,29 +79,31 @@ SealOutcome SealSegments(const StringAccumulator& acc,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          duckdb::BufferManager& buffers, SegmentSink sink) {
   text::SegmentEncoder encoder{params, type, tuning, buffers};
-  text::StringPicker picker{acc, params, tuning, encoder};
   SealOutcome outcome{.sealed = true};
-  const bool due = !named && picker.Due();
-  auto config = named ? text::NamedConfig(*named, params) : picker.Current();
-  for (uint64_t row = 0; row < acc.Rows();) {
-    auto* seg = encoder.Cut(config, acc, row);
-    if (row == 0 && !named) {
-      if (const bool drift = !due && picker.Drifted(*seg); due || drift) {
-        seg = picker.Pick(*seg, drift);
-        config = seg->config;
-      }
-      if (seg->Size() > PlainStorageBytes(*seg)) {
-        encoder.Release(seg);
-        return {};
-      }
-    }
-    row = seg->begin + seg->rows;
-    outcome.all_dedup =
-      outcome.all_dedup && seg->config.choice.shape == Shape::Dedup;
-    sink(seg->config.choice, std::move(*seg->stats), seg->rows,
-         seg->bytes.View());
-    encoder.Release(seg);
+  const auto emit = [&](StringChoice choice, duckdb::BaseStatistics stats,
+                        uint64_t rows, std::string_view bytes) {
+    outcome.all_dedup = outcome.all_dedup && choice.shape == Shape::Dedup;
+    sink(choice, std::move(stats), rows, bytes);
+  };
+  if (named) {
+    encoder.Compress(text::NamedConfig(*named, params), acc, 0, emit);
+    return outcome;
   }
+  text::StringPicker picker{acc, params, tuning, encoder};
+  auto* first = picker.First();
+  if (!first) {
+    return outcome;
+  }
+  if (first->Size() > PlainStorageBytes(*first)) {
+    encoder.Release(first);
+    return {};
+  }
+  const auto config = first->config;
+  const auto rest = first->begin + first->rows;
+  emit(config.choice, std::move(*first->stats), first->rows,
+       first->bytes.View());
+  encoder.Release(first);
+  encoder.Compress(config, acc, rest, emit);
   return outcome;
 }
 

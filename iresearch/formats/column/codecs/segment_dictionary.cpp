@@ -34,7 +34,7 @@ namespace {
 constexpr ZDICT_fastCover_params_t kTrainParams{
   .k = 256,
   .d = 8,
-  .f = 18,
+  .f = 16,
   .nbThreads = 1,
   .splitPoint = 1.0,
   .accel = 10,

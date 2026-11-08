@@ -1,0 +1,328 @@
+hash-threshold 1000
+
+statement ok
+SET disabled_optimizers = 'late_materialization';
+
+
+statement ok
+CREATE TABLE shapes (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement count 60000
+INSERT INTO shapes
+SELECT i, concat_ws(' ', 'doc',
+  CASE WHEN i >= 10000 AND i < 20000 THEN repeat('run ', 1 + (hash(i, 1) % 3)::INTEGER) END,
+  CASE WHEN hash(i, 2) % 1000 < 500 THEN repeat('half ', 1 + (hash(i, 3) % 3)::INTEGER) END,
+  CASE WHEN hash(i, 4) % 1000 < 300 THEN repeat('dense ', 1 + (hash(i, 5) % 3)::INTEGER) END,
+  CASE WHEN hash(i, 6) % 1000 < 50 THEN repeat('mid ', 1 + (hash(i, 7) % 3)::INTEGER) END,
+  CASE WHEN hash(i, 8) % 1000 < 10 THEN repeat('sparse ', 1 + (hash(i, 9) % 3)::INTEGER) END,
+  CASE WHEN hash(i, 10) % 1000 < 1 THEN repeat('rare ', 1 + (hash(i, 11) % 3)::INTEGER) END,
+  CASE WHEN i IN (5000, 10000) THEN 'edge' END,
+  CASE WHEN i >= 30000 AND i < 40000 AND i % 37 <> 0 THEN repeat('holes ', 1 + (hash(i, 12) % 3)::INTEGER) END,
+  CASE WHEN hash(i, 13) % 1000 < CASE WHEN i >= 45000 AND i < 50000 THEN 500 ELSE 5 END THEN repeat('cluster ', 1 + (hash(i, 14) % 3)::INTEGER) END,
+  CASE WHEN hash(i, 15) % 1000 < 900 THEN 'common' END,
+  CASE WHEN hash(i, 16) % 1000 < 400 THEN repeat('burst ', CASE WHEN i >= 2000 AND i < 3000 THEN 8 ELSE 1 END) END,
+  NULLIF(repeat('pad ', (hash(i, 17) % 24)::INTEGER), ''))
+FROM generate_series(0, 59999) AS g(i);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY shapes_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE INDEX shapes_idx ON shapes USING inverted(id, body shapes_dict);
+
+
+statement ok
+CREATE MACRO shapes_same(q, k) AS TABLE
+  SELECT p.n = e.n
+     AND abs(p.low - e.low) <= 1e-4 * greatest(1, abs(e.low))
+     AND abs(p.total - e.total) <= 1e-4 * greatest(1, abs(e.total)) AS same
+  FROM (SELECT count(*) AS n, min(s) AS low, sum(s) AS total FROM (
+          SELECT BM25(shapes_idx.tableoid) AS s FROM shapes_idx
+          WHERE body @@ to_tsquery(q)
+          ORDER BY s DESC
+          LIMIT k)) AS p,
+       (SELECT count(*) AS n, min(s) AS low, sum(s) AS total FROM (
+          SELECT BM25(shapes_idx.tableoid) AS s FROM shapes_idx
+          WHERE body @@ to_tsquery(q)
+          ORDER BY s DESC, id
+          LIMIT k)) AS e;
+
+
+query
+EXPLAIN SELECT BM25(shapes_idx.tableoid) AS s FROM shapes_idx WHERE body @@ to_tsquery('rare OR mid') ORDER BY s DESC LIMIT 10;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: shapes_idx                     │
+│ Lookup: search                        │
+│ Index Filter:                         │
+│ ╭─ Or ──────────────────╮             │
+│ ╰───────────┬───────────╯             │
+│ ╭─ Terms ───┴───────────╮             │
+│ │ Field: body(string)   │             │
+│ │ Values: 'mid', 'rare' │             │
+│ ╰───────────────────────╯             │
+│ Score: bm25(k1=1.2, b=0.75)           │
+│ Top: 10, optimized                    │
+│ Projections: sdb_inverted_index_score │
+│ ~12,000 rows                          │
+╰───────────────────────────────────────╯
+
+
+query
+SELECT q, k, same FROM (
+  SELECT 'rare OR mid' AS q, 10 AS k, same FROM shapes_same('rare OR mid', 10)
+  UNION ALL SELECT 'run OR rare', 10, same FROM shapes_same('run OR rare', 10)
+  UNION ALL SELECT 'run OR holes OR sparse', 10, same FROM shapes_same('run OR holes OR sparse', 10)
+  UNION ALL SELECT 'run OR holes OR sparse', 100, same FROM shapes_same('run OR holes OR sparse', 100)
+  UNION ALL SELECT 'cluster OR half', 10, same FROM shapes_same('cluster OR half', 10)
+  UNION ALL SELECT 'edge OR dense', 10, same FROM shapes_same('edge OR dense', 10)
+  UNION ALL SELECT 'burst OR mid OR rare', 10, same FROM shapes_same('burst OR mid OR rare', 10)
+  UNION ALL SELECT 'common OR rare', 10, same FROM shapes_same('common OR rare', 10)
+  UNION ALL SELECT 'run OR cluster', 100, same FROM shapes_same('run OR cluster', 100)
+  UNION ALL SELECT 'run OR sparse OR rare', 1, same FROM shapes_same('run OR sparse OR rare', 1)
+  UNION ALL SELECT '+rare +dense', 10, same FROM shapes_same('+rare +dense', 10)
+  UNION ALL SELECT '+sparse +half', 10, same FROM shapes_same('+sparse +half', 10)
+  UNION ALL SELECT '+run +mid', 10, same FROM shapes_same('+run +mid', 10)
+  UNION ALL SELECT '+edge +common', 10, same FROM shapes_same('+edge +common', 10)
+  UNION ALL SELECT '+holes +sparse', 10, same FROM shapes_same('+holes +sparse', 10)
+  UNION ALL SELECT '+mid +dense +half', 100, same FROM shapes_same('+mid +dense +half', 100)
+  UNION ALL SELECT '+rare mid', 10, same FROM shapes_same('+rare mid', 10)
+  UNION ALL SELECT '+edge half dense', 1, same FROM shapes_same('+edge half dense', 1)
+  UNION ALL SELECT '+rare half', 1, same FROM shapes_same('+rare half', 1)
+  UNION ALL SELECT '+sparse rare cluster', 10, same FROM shapes_same('+sparse rare cluster', 10)
+  UNION ALL SELECT '+mid sparse holes', 10, same FROM shapes_same('+mid sparse holes', 10)
+  UNION ALL SELECT '+half burst', 100, same FROM shapes_same('+half burst', 100)
+  UNION ALL SELECT '+mid -dense', 10, same FROM shapes_same('+mid -dense', 10)
+  UNION ALL SELECT '+rare -half', 10, same FROM shapes_same('+rare -half', 10)
+  UNION ALL SELECT 'sparse half -mid', 10, same FROM shapes_same('sparse half -mid', 10)
+  UNION ALL SELECT '+rare +(mid OR sparse)', 10, same FROM shapes_same('+rare +(mid OR sparse)', 10)
+  UNION ALL SELECT '+dense +(edge OR rare)', 10, same FROM shapes_same('+dense +(edge OR rare)', 10)
+  UNION ALL SELECT '"pad pad" OR rare', 10, same FROM shapes_same('"pad pad" OR rare', 10)
+  UNION ALL SELECT '+"pad pad" +mid', 10, same FROM shapes_same('+"pad pad" +mid', 10)
+  UNION ALL SELECT '+"mid mid"~1 +half', 10, same FROM shapes_same('+"mid mid"~1 +half', 10)
+  UNION ALL SELECT '+half "dense dense"', 10, same FROM shapes_same('+half "dense dense"', 10)
+  UNION ALL SELECT '+"pad pad"~1 +mid', 10, same FROM shapes_same('+"pad pad"~1 +mid', 10)
+  UNION ALL SELECT '+"pad pad" +half', 100, same FROM shapes_same('+"pad pad" +half', 100)
+  UNION ALL SELECT '+mid +"dense dense" +half', 10, same FROM shapes_same('+mid +"dense dense" +half', 10)
+  UNION ALL SELECT 'run OR half OR rare', 1000, same FROM shapes_same('run OR half OR rare', 1000)
+  UNION ALL SELECT 'run OR dense', 10, same FROM shapes_same('run OR dense', 10)
+  UNION ALL SELECT 'run OR dense', 1000, same FROM shapes_same('run OR dense', 1000)
+  UNION ALL SELECT 'holes OR run OR mid', 1, same FROM shapes_same('holes OR run OR mid', 1)
+  UNION ALL SELECT 'common OR run', 10, same FROM shapes_same('common OR run', 10)
+  UNION ALL SELECT 'half OR dense OR mid OR sparse', 10, same FROM shapes_same('half OR dense OR mid OR sparse', 10)
+  UNION ALL SELECT 'half OR dense OR mid OR sparse', 1000, same FROM shapes_same('half OR dense OR mid OR sparse', 1000)
+  UNION ALL SELECT '+half mid', 10, same FROM shapes_same('+half mid', 10)
+  UNION ALL SELECT '+dense sparse', 10, same FROM shapes_same('+dense sparse', 10)
+  UNION ALL SELECT '+common rare', 10, same FROM shapes_same('+common rare', 10)
+  UNION ALL SELECT '+mid half dense', 100, same FROM shapes_same('+mid half dense', 100)
+  UNION ALL SELECT '+edge rare', 10, same FROM shapes_same('+edge rare', 10)
+  UNION ALL SELECT '+rare run', 10, same FROM shapes_same('+rare run', 10)
+)
+ORDER BY q, k;
+----
+q	k	same
+"pad pad" OR rare	10	t
++"mid mid"~1 +half	10	t
++"pad pad" +half	100	t
++"pad pad" +mid	10	t
++"pad pad"~1 +mid	10	t
++common rare	10	t
++dense +(edge OR rare)	10	t
++dense sparse	10	t
++edge +common	10	t
++edge half dense	1	t
++edge rare	10	t
++half "dense dense"	10	t
++half burst	100	t
++half mid	10	t
++holes +sparse	10	t
++mid +"dense dense" +half	10	t
++mid +dense +half	100	t
++mid -dense	10	t
++mid half dense	100	t
++mid sparse holes	10	t
++rare +(mid OR sparse)	10	t
++rare +dense	10	t
++rare -half	10	t
++rare half	1	t
++rare mid	10	t
++rare run	10	t
++run +mid	10	t
++sparse +half	10	t
++sparse rare cluster	10	t
+burst OR mid OR rare	10	t
+cluster OR half	10	t
+common OR rare	10	t
+common OR run	10	t
+edge OR dense	10	t
+half OR dense OR mid OR sparse	10	t
+half OR dense OR mid OR sparse	1000	t
+holes OR run OR mid	1	t
+rare OR mid	10	t
+run OR cluster	100	t
+run OR dense	10	t
+run OR dense	1000	t
+run OR half OR rare	1000	t
+run OR holes OR sparse	10	t
+run OR holes OR sparse	100	t
+run OR rare	10	t
+run OR sparse OR rare	1	t
+sparse half -mid	10	t
+
+
+statement ok
+CREATE MACRO shapes_same_ranged(q, upto, k) AS TABLE
+  SELECT p.n = e.n
+     AND abs(p.low - e.low) <= 1e-4 * greatest(1, abs(e.low))
+     AND abs(p.total - e.total) <= 1e-4 * greatest(1, abs(e.total)) AS same
+  FROM (SELECT count(*) AS n, min(s) AS low, sum(s) AS total FROM (
+          SELECT BM25(shapes_idx.tableoid) AS s FROM shapes_idx
+          WHERE body @@ to_tsquery(q) AND id @@ (ts_lt(upto) ^ 2.0)
+          ORDER BY s DESC
+          LIMIT k)) AS p,
+       (SELECT count(*) AS n, min(s) AS low, sum(s) AS total FROM (
+          SELECT BM25(shapes_idx.tableoid) AS s FROM shapes_idx
+          WHERE body @@ to_tsquery(q) AND id @@ (ts_lt(upto) ^ 2.0)
+          ORDER BY s DESC, id
+          LIMIT k)) AS e;
+
+
+statement ok
+CREATE MACRO shapes_same_or_ranged(q, upto, k) AS TABLE
+  SELECT p.n = e.n
+     AND abs(p.low - e.low) <= 1e-4 * greatest(1, abs(e.low))
+     AND abs(p.total - e.total) <= 1e-4 * greatest(1, abs(e.total)) AS same
+  FROM (SELECT count(*) AS n, min(s) AS low, sum(s) AS total FROM (
+          SELECT BM25(shapes_idx.tableoid) AS s FROM shapes_idx
+          WHERE body @@ to_tsquery(q) OR id @@ (ts_lt(upto) ^ 0.5)
+          ORDER BY s DESC
+          LIMIT k)) AS p,
+       (SELECT count(*) AS n, min(s) AS low, sum(s) AS total FROM (
+          SELECT BM25(shapes_idx.tableoid) AS s FROM shapes_idx
+          WHERE body @@ to_tsquery(q) OR id @@ (ts_lt(upto) ^ 0.5)
+          ORDER BY s DESC, id
+          LIMIT k)) AS e;
+
+
+query
+SELECT
+  (SELECT same FROM shapes_same_ranged('mid', 30000, 10)) AS mid_below,
+  (SELECT same FROM shapes_same_ranged('+mid +half', 30000, 10)) AS mid_half_below,
+  (SELECT same FROM shapes_same_ranged('mid OR rare', 30000, 10)) AS mid_or_rare_below,
+  (SELECT same FROM shapes_same_ranged('mid', 100000, 10)) AS mid_all,
+  (SELECT same FROM shapes_same_or_ranged('mid', 30000, 10)) AS mid_or_below,
+  (SELECT same FROM shapes_same_or_ranged('mid OR rare', 100000, 100)) AS mid_or_rare_or_all;
+----
+mid_below	mid_half_below	mid_or_rare_below	mid_all	mid_or_below	mid_or_rare_or_all
+t	t	t	t	t	t
+
+
+statement ok
+DELETE FROM shapes WHERE id % 97 = 0;
+
+
+statement ok
+CREATE MACRO shapes_excluded(must, mustnot) AS TABLE
+  SELECT list(id ORDER BY id) AS ids FROM shapes
+  WHERE regexp_matches(body, '\b' || must || '\b')
+    AND NOT regexp_matches(body, '\b' || mustnot || '\b');
+
+
+query
+SELECT
+  (SELECT list(id ORDER BY id) FROM shapes_idx WHERE body @@ to_tsquery('+rare -run')) =
+  (SELECT ids FROM shapes_excluded('rare', 'run')) AS rare_run,
+  (SELECT list(id ORDER BY id) FROM shapes_idx WHERE body @@ to_tsquery('+cluster -run')) =
+  (SELECT ids FROM shapes_excluded('cluster', 'run')) AS cluster_run,
+  (SELECT list(id ORDER BY id) FROM shapes_idx WHERE body @@ to_tsquery('+cluster -edge')) =
+  (SELECT ids FROM shapes_excluded('cluster', 'edge')) AS cluster_edge,
+  (SELECT list(id ORDER BY id) FROM shapes_idx WHERE body @@ to_tsquery('+sparse -holes')) =
+  (SELECT ids FROM shapes_excluded('sparse', 'holes')) AS sparse_holes,
+  (SELECT list(id ORDER BY id) FROM shapes_idx WHERE body @@ to_tsquery('+mid -run')) =
+  (SELECT ids FROM shapes_excluded('mid', 'run')) AS mid_run,
+  (SELECT list(id ORDER BY id) FROM shapes_idx WHERE body @@ to_tsquery('+half -edge')) =
+  (SELECT ids FROM shapes_excluded('half', 'edge')) AS half_edge;
+----
+rare_run	cluster_run	cluster_edge	sparse_holes	mid_run	half_edge
+t	t	t	t	t	t
+
+
+statement ok
+CREATE TABLE early (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement count 60000
+INSERT INTO early
+SELECT i, concat_ws(' ', 'doc',
+  CASE WHEN hash(i, 24) % 1000 < 1 THEN 'mark' END,
+  CASE WHEN hash(i, 21) % 1000 < 10 THEN 'zephyr' END,
+  NULLIF(repeat('pad ', (hash(i, 22) % 8)::INTEGER), ''),
+  CASE WHEN i < 30000 AND hash(i, 23) % 1000 < 400 THEN 'early' END,
+  CASE WHEN i < 30000 AND hash(i, 25) % 1000 < 400 THEN 'late' END)
+FROM generate_series(0, 59999) AS g(i);
+
+
+statement ok
+CREATE INDEX early_idx ON early USING inverted(id, body shapes_dict);
+
+
+query
+SELECT
+  (SELECT list(id ORDER BY id) FROM early_idx
+   WHERE body @@ ts_phrase('zephyr early')) =
+  (SELECT list(id ORDER BY id) FROM early
+   WHERE regexp_matches(body, '\bzephyr\s+early\b')) AS phrase,
+  (SELECT list(id ORDER BY id) FROM early_idx
+   WHERE body @@ to_tsquery('+doc +"zephyr early"')) =
+  (SELECT list(id ORDER BY id) FROM early
+   WHERE regexp_matches(body, '\bzephyr\s+early\b')) AS probed,
+  (SELECT list(id ORDER BY id) FROM early_idx
+   WHERE body @@ to_tsquery('+mark +"zephyr early"')) IS NOT DISTINCT FROM
+  (SELECT list(id ORDER BY id) FROM early
+   WHERE regexp_matches(body, '\bmark\b')
+     AND regexp_matches(body, '\bzephyr\s+early\b')) AS probed_by_mark,
+  (SELECT count(*) FROM early_idx WHERE body @@ to_tsquery('+mark +"zephyr early"')) =
+  (SELECT count(*) FROM early
+   WHERE regexp_matches(body, '\bmark\b')
+     AND regexp_matches(body, '\bzephyr\s+early\b')) AS counted_by_mark,
+  (SELECT count(*) FROM early_idx WHERE body @@ to_tsquery('+doc +"zephyr early"')) =
+  (SELECT count(*) FROM early
+   WHERE regexp_matches(body, '\bzephyr\s+early\b')) AS counted;
+----
+phrase	probed	probed_by_mark	counted_by_mark	counted
+t	t	t	t	t
+
+
+statement ok
+CREATE MACRO early_same(q, k) AS TABLE
+  SELECT p.n = e.n
+     AND abs(coalesce(p.low - e.low, 0)) <= 1e-4 * greatest(1, abs(coalesce(e.low, 0)))
+     AND abs(coalesce(p.total - e.total, 0)) <= 1e-4 * greatest(1, abs(coalesce(e.total, 0))) AS same
+  FROM (SELECT count(*) AS n, min(s) AS low, sum(s) AS total FROM (
+          SELECT BM25(early_idx.tableoid) AS s FROM early_idx
+          WHERE body @@ to_tsquery(q)
+          ORDER BY s DESC
+          LIMIT k)) AS p,
+       (SELECT count(*) AS n, min(s) AS low, sum(s) AS total FROM (
+          SELECT BM25(early_idx.tableoid) AS s FROM early_idx
+          WHERE body @@ to_tsquery(q)
+          ORDER BY s DESC, id
+          LIMIT k)) AS e;
+
+
+query
+SELECT
+  (SELECT same FROM early_same('"zephyr early"', 10)) AS phrase,
+  (SELECT same FROM early_same('+doc +"zephyr early"', 10)) AS probed,
+  (SELECT same FROM early_same('+mark +"zephyr early"', 10)) AS probed_by_mark,
+  (SELECT same FROM early_same('+mark +"zephyr early late"~1', 10)) AS sloppy_by_mark,
+  (SELECT same FROM early_same('+doc +"zephyr early late"~1', 10)) AS sloppy_by_doc;
+----
+phrase	probed	probed_by_mark	sloppy_by_mark	sloppy_by_doc
+t	t	t	t	t

@@ -74,8 +74,6 @@ struct MergeRecord {
   int64_t finished_us = 0;
   irs::MergeStats stats;
   std::string error;
-
-  bool Queued() const noexcept { return started_us == 0; }
 };
 
 class MergeRegistry {

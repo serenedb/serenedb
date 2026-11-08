@@ -109,7 +109,9 @@ hits
 
 
 query
-SELECT origin, outcome, cardinality(inputs) AS inputs, input_docs, output_docs,
+SELECT origin, outcome, cardinality(inputs) AS inputs, input_docs, input_live_docs,
+       input_bytes > 0 AS input_sized, output IS NOT NULL AS has_output, output_docs,
+       output_bytes > 0 AND output_bytes < input_bytes AS output_sized,
        finished >= started AS ordered,
        prepare_ms >= 0 AND norms_ms >= 0 AND columns_ms >= 0
          AND columns_commit_ms >= 0 AND ann_ms >= 0 AND postings_ms >= 0
@@ -120,9 +122,9 @@ FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc')
 ORDER BY id
 ----
-origin	outcome	inputs	input_docs	output_docs	ordered	steps_timed	within_total	error
-sql	merged	2	200	200	t	t	t	NULL
-sql	merged	2	200	200	t	t	t	NULL
+origin	outcome	inputs	input_docs	input_live_docs	input_sized	has_output	output_docs	output_sized	ordered	steps_timed	within_total	error
+sql	merged	2	200	200	t	t	200	t	t	t	t	NULL
+sql	merged	2	200	200	t	t	200	t	t	t	t	NULL
 
 
 query

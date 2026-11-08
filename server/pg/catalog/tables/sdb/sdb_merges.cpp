@@ -75,18 +75,13 @@ class SdbMerges final : public SystemTableScan<kSdbMergesSql> {
     Col<"merge_id">(&MergeRecord::id),
     Col<"relation_id">(&MergeRecord::relation_id),
     Col<"origin">([](const auto& r) { return irs::SnakeCaseName(r.origin); }),
-    Col<"state">([](const auto& r) {
-      return std::string_view{r.Queued() ? "queued" : "running"};
-    }),
+    Col<"state">([](const auto&) { return std::string_view{"running"}; }),
     Col<"queued">([](const auto& r) { return At(r.queued_us); }),
     Col<"started">([](const auto& r) { return At(r.started_us); }),
     Col<"elapsed_ms">([](const auto& r) {
-      if (r.Queued()) {
-        return std::optional<double>{};
-      }
-      return std::optional<double>{
-        static_cast<double>(absl::ToUnixMicros(absl::Now()) - r.started_us) /
-        1000};
+      return static_cast<double>(absl::ToUnixMicros(absl::Now()) -
+                                 r.started_us) /
+             1000;
     }),
     kMergeInputColumns, Col<"estimated_bytes">([](const auto& r) {
       return r.stats.input_live_bytes;

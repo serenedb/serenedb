@@ -100,13 +100,14 @@ statement ok
 SET sdb_faults = '-irs::MergeUnit';
 
 query
-SELECT count(*) AS failed
+SELECT cardinality(inputs) AS inputs, input_docs, input_live_docs, input_bytes > 0 AS input_sized,
+       output IS NULL AS no_output, output_docs, output_bytes, error
 FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'vme')
   AND origin = 'vacuum' AND outcome = 'failed';
 ----
-failed
-1
+inputs	input_docs	input_live_docs	input_sized	no_output	output_docs	output_bytes	error
+4	400	400	t	t	0	0	intentional debug error
 
 query
 SELECT count(*) AS segments FROM sdb_segments('vme');

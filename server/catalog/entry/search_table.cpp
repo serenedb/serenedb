@@ -40,6 +40,7 @@
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
@@ -175,6 +176,15 @@ void BindOptions(duckdb::ClientContext& context, WithOptions& options,
     }
     options.insert_or_assign(name, OptionConstant(value));
   }
+  auto block_size = duckdb::Value::UINTEGER(DEFAULT_BLOCK_ALLOC_SIZE);
+  if (const auto constant = FindConstant(options, kBlockSizeSetting)) {
+    block_size = connector::ValidateSetting(context, kBlockSizeSetting,
+                                            constant->GetLiteral().ToValue());
+  } else if (session_defaults) {
+    block_size = duckdb::Value::UINTEGER(static_cast<uint32_t>(
+      duckdb::Settings::Get<duckdb::DefaultBlockSizeSetting>(context)));
+  }
+  options.insert_or_assign(kBlockSizeSetting, OptionConstant(block_size));
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
     search::ParseScorerExpression(
       nullptr, constant->GetLiteral().ToValue().GetValue<std::string>());
@@ -580,8 +590,11 @@ std::vector<TableOption> SearchTableEntry::ExplicitOptions() const {
   std::vector<TableOption> explicit_options;
   for (const auto name : kSearchTableOptions) {
     auto value = Option(name);
-    if (value.IsNull() || (absl::c_contains(kSearchTableSettings, name) &&
-                           value == BuiltinSetting(db, name))) {
+    if (value.IsNull() ||
+        (absl::c_contains(kSearchTableSettings, name) &&
+         value == BuiltinSetting(db, name)) ||
+        (name == kBlockSizeSetting &&
+         _options.block_size == DEFAULT_BLOCK_ALLOC_SIZE)) {
       continue;
     }
     explicit_options.push_back({.name = name, .value = std::move(value)});

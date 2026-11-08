@@ -301,7 +301,11 @@ class IndexWriter : private util::Noncopyable {
       return CommitImpl(position);
     }
 
-    std::span<const FlushedSegment> FlushAndFsync();
+    std::span<const FlushedSegment> FlushAndFsync() {
+      return FlushSegments(true);
+    }
+
+    std::span<const FlushedSegment> FlushSegments(bool sync);
 
     void Abort() noexcept;
 

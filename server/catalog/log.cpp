@@ -153,6 +153,75 @@ void ForEachHistoryEntry(std::span<uint8_t> bytes, Apply&& apply) {
   }
 }
 
+struct Scanned {
+  std::vector<Lsn> obsolete;
+  std::vector<Lsn> live;
+  Lsn end = 0;
+  Lsn torn = 0;
+  size_t torn_from = 0;
+  size_t torn_to = 0;
+};
+
+Scanned ScanLog(
+  duckdb::FileSystem& fs, const std::filesystem::path& dir,
+  absl::FunctionRef<void(Lsn, std::span<uint8_t>)> history,
+  absl::FunctionRef<void(const Log::Range&, std::span<uint8_t>)> apply) {
+  Scanned scanned;
+  auto past = ReadHistory(fs, dir / Log::kHistoryFile);
+  if (!past.bytes.empty()) {
+    ForEachHistoryEntry(past.bytes, history);
+  }
+  std::vector<Lsn> begins;
+  for (const auto& entry : std::filesystem::directory_iterator{dir}) {
+    if (const auto begin = Log::ChunkBegin(entry.path().filename().string())) {
+      begins.push_back(*begin);
+    }
+  }
+  absl::c_sort(begins);
+  size_t first = 0;
+  while (first + 1 < begins.size() && begins[first + 1] <= past.cut) {
+    scanned.obsolete.push_back(begins[first++]);
+  }
+  scanned.end = first < begins.size() ? begins[first] : past.cut;
+  SDB_ENSURE(scanned.end <= past.cut || past.bytes.empty(), "log '",
+             dir.string(), "': the chunk at ", scanned.end, " is missing");
+  bool stop = false;
+  for (auto i = first; i < begins.size(); ++i) {
+    const auto begin = begins[i];
+    if (stop || begin != scanned.end) {
+      scanned.obsolete.push_back(begin);
+      stop = true;
+      continue;
+    }
+    auto bytes = ReadAll(fs, dir / Log::ChunkName(begin));
+    const bool last = i + 1 == begins.size();
+    const auto content =
+      last ? bytes.size()
+           : std::min<size_t>(bytes.size(),
+                              static_cast<size_t>(begins[i + 1] - begin));
+    const auto parsed = ParseRecords(
+      std::span{bytes}.first(content),
+      [&](size_t from, size_t to, std::span<uint8_t> payload) {
+        apply(Log::Range{.begin = begin + from, .end = begin + to}, payload);
+      });
+    scanned.end = begin + parsed;
+    scanned.live.push_back(begin);
+    if (last || parsed != content) {
+      auto dirty = bytes.size();
+      while (dirty > parsed && bytes[dirty - 1] == 0) {
+        --dirty;
+      }
+      if (dirty > parsed) {
+        scanned.torn = begin;
+        scanned.torn_from = parsed;
+        scanned.torn_to = dirty;
+      }
+      stop = true;
+    }
+  }
+  return scanned;
+}
+
 }  // namespace
 
 std::optional<Lsn> Log::ChunkBegin(std::string_view name) {
@@ -204,63 +273,21 @@ void Log::Replay(
   absl::FunctionRef<void(Lsn, std::span<uint8_t>)> history,
   absl::FunctionRef<void(const Range&, std::span<uint8_t>)> apply) {
   absl::MutexLock files{&_files_mutex};
-  auto past = ReadHistory(_fs, _dir / kHistoryFile);
-  if (!past.bytes.empty()) {
-    ForEachHistoryEntry(past.bytes, history);
+  const auto scanned = ScanLog(_fs, _dir, history, apply);
+  for (const auto begin : scanned.obsolete) {
+    std::filesystem::remove(ChunkPath(begin));
   }
-  std::vector<Lsn> begins;
-  for (const auto& entry : std::filesystem::directory_iterator{_dir}) {
-    if (const auto begin = ChunkBegin(entry.path().filename().string())) {
-      begins.push_back(*begin);
-    }
-  }
-  absl::c_sort(begins);
-  bool removed = false;
-  while (begins.size() > 1 && begins[1] <= past.cut) {
-    std::filesystem::remove(ChunkPath(begins.front()));
-    begins.erase(begins.begin());
-    removed = true;
-  }
+  bool removed = !scanned.obsolete.empty();
   absl::btree_map<Lsn, std::shared_ptr<Chunk>> chunks;
-  Lsn end = begins.empty() ? past.cut : begins.front();
-  SDB_ENSURE(end <= past.cut || past.bytes.empty(), "log '", _dir.string(),
-             "': the chunk at ", end, " is missing");
-  bool stop = false;
-  for (const auto begin : begins) {
-    if (stop || begin != end) {
-      std::filesystem::remove(ChunkPath(begin));
-      stop = removed = true;
-      continue;
-    }
-    auto chunk = OpenChunk(begin, false);
-    std::vector<uint8_t> bytes(static_cast<size_t>(chunk->file->GetFileSize()));
-    if (!bytes.empty()) {
-      chunk->file->Read(bytes.data(), bytes.size(), 0);
-    }
-    const auto next = absl::c_upper_bound(begins, begin);
-    const auto content =
-      next == begins.end()
-        ? bytes.size()
-        : std::min<size_t>(bytes.size(), static_cast<size_t>(*next - begin));
-    const auto parsed = ParseRecords(
-      std::span{bytes}.first(content),
-      [&](size_t from, size_t to, std::span<uint8_t> payload) {
-        apply(Range{.begin = begin + from, .end = begin + to}, payload);
-      });
-    end = begin + parsed;
-    if (next == begins.end() || parsed != content) {
-      auto dirty = bytes.size();
-      while (dirty > parsed && bytes[dirty - 1] == 0) {
-        --dirty;
-      }
-      if (dirty > parsed) {
-        ZeroFill(*chunk->file, parsed, dirty);
-        chunk->file->Sync();
-      }
-      stop = true;
-    }
-    chunks.emplace(begin, std::move(chunk));
+  for (const auto begin : scanned.live) {
+    chunks.emplace(begin, OpenChunk(begin, false));
   }
+  if (scanned.torn_to > scanned.torn_from) {
+    auto& torn = *chunks.at(scanned.torn)->file;
+    ZeroFill(torn, scanned.torn_from, scanned.torn_to);
+    torn.Sync();
+  }
+  const auto end = scanned.end;
   if (chunks.empty()) {
     chunks.emplace(end, OpenChunk(end, true));
     removed = true;

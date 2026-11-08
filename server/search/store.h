@@ -156,6 +156,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   }
   Table& GetTable() noexcept { return *_table; }
   const Table& GetTable() const noexcept { return *_table; }
+  Tick LastWrite() const noexcept { return _table ? _table->LastWrite() : 0; }
+  bool Unsettled() const { return _table && _table->Unsettled(); }
   irs::IndexWriter& Writer() noexcept { return *_writer; }
   std::vector<OwnSegment> OpenFlushed(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) const;
@@ -202,6 +204,8 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   void Commit(const irs::ProgressReportCallback& progress = nullptr);
   void CoolAll();
+  void MakeSearchable(Tick snapshot);
+  bool Settle();
   [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
                                            uint32_t target_segments);
 
@@ -312,7 +316,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   void InvertReplayed(duckdb::ClientContext& context);
   bool FinishReplay();
 
-  void Cool(bool all);
+  void Cool(bool all, bool durable = true);
   void Cover(Lsn target);
 
   // One REINDEX at a time per index, across all connections: claim the
@@ -358,7 +362,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   void EnsureOpen();
   void ClaimColumnOids(const irs::DirectoryReader& reader) const;
   void SyncSegments() const;
-  void CoolOne(const std::shared_ptr<HotContext>& hot);
+  void CoolOne(const std::shared_ptr<HotContext>& hot, bool durable);
+  bool PersistSegments(Lsn before);
   bool OwnerDropped() const noexcept {
     return Dropped() || _directory->Dropped();
   }

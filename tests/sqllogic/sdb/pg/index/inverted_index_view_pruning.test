@@ -13,7 +13,7 @@ statement ok
 SET late_materialization_lookup_max_rows = 0;
 
 statement ok
-SET preserve_insertion_order = true;
+SET SESSION preserve_insertion_order = true;
 
 statement count 5
 COPY (SELECT 1 AS id, 'pudge goes mid'     AS body, 'alpha' AS unused1, 100 AS unused2, 'X' AS unused3

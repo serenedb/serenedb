@@ -461,7 +461,7 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     context.InterruptCheck();
     if (action == Action::Flush) {
       if (step.search_data) {
-        step.search_data->CoolAll();
+        step.search_data->Settle();
       }
     } else if (step.storage) {
       CompactInvertedStorage(*step.storage, *step.field_options, context,

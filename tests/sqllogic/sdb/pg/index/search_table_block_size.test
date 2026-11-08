@@ -87,31 +87,8 @@ db error: ERROR: option "block_size" cannot be changed with ALTER TABLE
 
 
 statement ok
-SET block_size = 32768;
-
-
-statement ok
-CREATE TABLE bsz_session (id BIGINT);
-
-
-statement ok
-RESET block_size;
-
-
-query
-SELECT reloptions FROM pg_class WHERE relname = 'bsz_session';
-----
-reloptions
-{block_size=32768}
-
-
-statement ok
 DROP TABLE bsz_small;
 
 
 statement ok
 DROP TABLE bsz_default;
-
-
-statement ok
-DROP TABLE bsz_session;

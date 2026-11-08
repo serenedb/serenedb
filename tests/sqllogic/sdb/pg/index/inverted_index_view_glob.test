@@ -25,7 +25,7 @@ CREATE TEXT SEARCH DICTIONARY view_glob_en AS
     WITH (frequency, position, norm);
 
 statement ok
-SET preserve_insertion_order = true;
+SET SESSION preserve_insertion_order = true;
 
 
 # Three-file fixture -- distinct rows per file with varying widths so the

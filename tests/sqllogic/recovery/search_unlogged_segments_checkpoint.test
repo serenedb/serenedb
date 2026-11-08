@@ -1,0 +1,76 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE susc (id INT, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX susc_idx ON susc USING inverted (id);
+
+
+statement ok
+INSERT INTO susc SELECT i, 'row ' || i FROM range(1000) t(i);
+
+
+query
+SELECT count(*) AS n FROM susc WHERE id = 7;
+----
+n
+1
+
+
+statement ok
+INSERT INTO susc SELECT i, 'row ' || i FROM range(1000, 1500) t(i);
+
+
+query
+SELECT count(*) AS n FROM susc WHERE id = 1200;
+----
+n
+1
+
+
+statement ok
+DELETE FROM susc WHERE id = 7;
+
+
+statement ok
+CHECKPOINT;
+
+
+query
+SELECT (SELECT value FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND relation_id = 'susc'::regclass) AS buffered,
+       (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_size_on_disk') < 4096 AS small_log;
+----
+buffered	small_log
+0	t
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, sum(id) AS s FROM susc;
+----
+n	s
+1499	1124243
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM susc WHERE id IN (7, 1200);
+----
+n
+1

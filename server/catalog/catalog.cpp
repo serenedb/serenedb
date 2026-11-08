@@ -30,6 +30,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -633,9 +634,11 @@ void ForEachSearchStorage(
   });
 }
 
-duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(duckdb::ClientContext&) {
+duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
+  duckdb::ClientContext& context) {
   duckdb::DatabaseSize size;
-  size.block_size = DEFAULT_BLOCK_ALLOC_SIZE;
+  size.block_size =
+    duckdb::Settings::Get<duckdb::DefaultBlockSizeSetting>(context);
   ReadDatabase(GetName().GetIdentifierName(),
                [&](const DatabaseCatalogEntry& database) {
                  const auto& options = database.Options();

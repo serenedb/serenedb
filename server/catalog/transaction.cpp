@@ -434,17 +434,29 @@ void Transactions::MaintainLog(duckdb::ClientContext& context, Lsn end) {
   }
   if (end - _log->Oldest() <=
         duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size ||
-      _log->NewestChunk() <= _log->Oldest() || search::IsBackupActive() ||
-      _truncating.exchange(true, std::memory_order_acq_rel) ||
-      !BackgroundScheduler::gInstance) {
+      _log->NewestChunk() <= _log->Oldest()) {
+    return;
+  }
+  TruncateInBackground(false);
+}
+
+void Transactions::SettleLog() {
+  if (_log) {
+    TruncateInBackground(true);
+  }
+}
+
+void Transactions::TruncateInBackground(bool switch_chunk) {
+  if (search::IsBackupActive() || !BackgroundScheduler::gInstance ||
+      _truncating.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
   BackgroundScheduler::instance()
-    .Run([this] {
+    .Run([this, switch_chunk] {
       absl::Cleanup done = [this] {
         _truncating.store(false, std::memory_order_release);
       };
-      if (const auto status = TruncateLog(false); !status.ok()) {
+      if (const auto status = TruncateLog(switch_chunk); !status.ok()) {
         SDB_WARN(GENERAL, "log truncation failed: ", status.message());
       }
     })

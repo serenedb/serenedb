@@ -1,0 +1,91 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE srus (id INT, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX srus_idx ON srus USING inverted (id);
+
+
+statement ok
+INSERT INTO srus SELECT i, 'row ' || i FROM range(1000) t(i);
+
+
+statement ok
+SET VARIABLE srus_appended = (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_appended_bytes');
+
+
+query
+SELECT value AS buffered FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND relation_id = 'srus'::regclass;
+----
+buffered
+1000
+
+
+query
+SELECT count(*) AS n FROM srus WHERE id = 7;
+----
+n
+1
+
+
+query
+SELECT (SELECT value FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND relation_id = 'srus'::regclass) AS buffered,
+       (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_appended_bytes') - getvariable('srus_appended') AS appended;
+----
+buffered	appended
+0	0
+
+
+statement ok
+INSERT INTO srus VALUES (5000, 'late row');
+
+
+query
+SELECT id, body FROM srus WHERE id = 5000;
+----
+id	body
+5000	late row
+
+
+statement ok
+DELETE FROM srus WHERE id = 7;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, sum(id) AS s FROM srus;
+----
+n	s
+1000	504493
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM srus WHERE id = 7;
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT id, body FROM srus WHERE id = 5000;
+----
+id	body
+5000	late row

@@ -192,7 +192,7 @@ query
 SELECT database_size <> '0 bytes', block_size > 0 FROM pragma_database_size() WHERE database_name = current_database();
 ----
 ?column?	?column?
-t	f
+t	t
 
 
 statement ok

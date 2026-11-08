@@ -43,7 +43,9 @@ Compaction is on by default, for tables and inverted indexes on views alike: eve
 
 The session settings of the same names hold the defaults a new table or index takes.
 
-- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a table and `ALTER INDEX ... SET` for an index on a view. Segments are then merged only when you ask for it.
+The same background task settles a table that received no writes since its previous run: it writes the rows the table holds in memory to segments and merges them, so a table left alone ends up in a few large segments.
+
+- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a table and `ALTER INDEX ... SET` for an index on a view. Segments are then merged only when you ask for it, the table is not settled in the background, and the rows it holds in memory reach its segments at a checkpoint or with `VACUUM (FLUSH_TABLE)`.
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
 - **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` -- see [below](#manual-maintenance-with-vacuum).
 
@@ -88,7 +90,7 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 
 - **Compaction cadence** -- `compaction_interval` governs how aggressively segments merge; the files merged segments replace are deleted after each compaction.
 - **Row-group size** -- `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
-- **Block size** -- `block_size` sets the size in bytes of the blocks a table's columns are compressed in: a power of two from 16384 to 262144 (the default). It is fixed at `CREATE TABLE`, and its default comes from the database's `BLOCK_SIZE` and then the `block_size` setting.
+- **Block size** -- `block_size` sets the size in bytes of the blocks a table's columns are compressed in: a power of two from 16384 to 262144 (the default). It is fixed at `CREATE TABLE`, and its default comes from the database's `BLOCK_SIZE` and then the `default_block_size` setting.
 - **Build then index** -- for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Whole-relation aggregates** -- `count(*)` over a search table or an index relation (`FROM my_index`) without a `WHERE` clause is answered from the document counts, without reading any document. `min` and `max` of numeric and temporal `INCLUDE`d columns and of keyword columns are answered the same way while the relation holds no deleted documents; deleted documents are dropped by compaction, and until then `min` and `max` read the documents. `EXPLAIN` shows no index scan for an aggregate answered this way.
 - **Top-K** -- set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> ... LIMIT k`.
@@ -119,6 +121,10 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 ## Durability {#durability}
 
 A commit is durable once the server's write-ahead log holds it; one log serves every database. The log grows until it reaches [`checkpoint_threshold`](../../../configuration/overview.md) (16 MiB by default); the server then has each search table write the rows the oldest log files hold into its own files and removes those log files, while writes go on. `CHECKPOINT` does the same at once. After a crash, the server replays the log.
+
+A server left idle settles on its own: once every table has written the rows it held in memory to segments (see [Background compaction](#background-compaction)) and nothing commits, the server removes the log files it no longer needs, so the log stays small and a restart replays little.
+
+A query that uses an inverted index sees every row committed before it, including the rows a table still holds in memory: it writes those rows to segments first, without adding to the log. These segments are made durable by the next checkpoint or replaced by compaction; after a crash, their rows are replayed from the log.
 
 ## Session settings {#session-settings}
 

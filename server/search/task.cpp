@@ -51,6 +51,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/transaction.h"
 #include "scheduler/background_scheduler.h"
 #include "search/store.h"
 #include "server/utils/lifecycle.h"
@@ -186,6 +187,7 @@ struct Target {
   Clock::time_point compaction_at;
   Clock::duration backoff{};
   uint64_t generation = 0;
+  Tick last_write = 0;
   bool cascade = false;
   bool compacting = false;
 };
@@ -193,11 +195,24 @@ struct Target {
 struct Targets {
   absl::Mutex mutex;
   std::vector<std::shared_ptr<Target>> all ABSL_GUARDED_BY(mutex);
+  std::atomic<bool> settle_log{false};
 };
 
 Targets& GetTargets() {
   static Targets targets;
   return targets;
+}
+
+void SettleIfIdle(Target& target) {
+  const auto store = target.store.lock();
+  if (!store) {
+    return;
+  }
+  const auto write = store->LastWrite();
+  if (write == target.last_write && store->Settle()) {
+    GetTargets().settle_log.store(true, std::memory_order_release);
+  }
+  target.last_write = write;
 }
 
 yaclib::Future<> Compact(std::shared_ptr<Target> target) {
@@ -207,6 +222,7 @@ yaclib::Future<> Compact(std::shared_ptr<Target> target) {
   bool produced = false;
   try {
     if (!ShouldStop()) {
+      SettleIfIdle(*target);
       auto runs = LaunchCompactionFanout(s, engine, target->store);
       if (!runs.empty()) {
         co_await yaclib::Await(runs.begin(), runs.end());
@@ -276,16 +292,23 @@ void AddMaintenanceTarget(const std::shared_ptr<Store>& store) {
 yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
   auto& s = BackgroundScheduler::instance();
   auto& targets = GetTargets();
+  duckdb::transaction_t settled_commit = 0;
   try {
     while (!ShouldStop()) {
       const auto now = Clock::now();
       auto next = now + kPoll;
       std::vector<std::shared_ptr<Target>> compact;
+      bool settle_log = false;
       {
         absl::MutexLock lock{&targets.mutex};
         std::erase_if(targets.all, [](const auto& target) {
           return target->store.expired();
         });
+        settle_log = targets.settle_log.load(std::memory_order_acquire) &&
+                     absl::c_none_of(targets.all, [](const auto& target) {
+                       const auto store = target->store.lock();
+                       return store && store->Unsettled();
+                     });
         for (const auto& target : targets.all) {
           const auto store = target->store.lock();
           if (!store) {
@@ -315,6 +338,14 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
       }
       for (auto& target : compact) {
         jobs.Consume(Compact(std::move(target)));
+      }
+      if (settle_log) {
+        const auto commit = catalog::Transactions::Get().LastCommit();
+        if (commit == settled_commit) {
+          targets.settle_log.store(false, std::memory_order_release);
+          catalog::Transactions::Get().SettleLog();
+        }
+        settled_commit = commit;
       }
       co_await s.Delay(std::clamp<Clock::duration>(
         next - Clock::now(), std::chrono::milliseconds{1}, kPoll));

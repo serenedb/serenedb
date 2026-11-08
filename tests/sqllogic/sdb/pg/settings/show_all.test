@@ -48,7 +48,6 @@ azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use. This memory is allocated once, never freed, and cannot be reduced.
-block_size	262144	Default columnstore block size in bytes for newly created tables. Their WITH (block_size = ...) and their database's BLOCK_SIZE override it. Default: 262'144.
 bytea_output	hex	Sets the output format for bytea.
 ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
 cache_local_files	off	Whether the external file cache also caches local files. Remote files are always cached.
@@ -397,7 +396,6 @@ azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use. This memory is allocated once, never freed, and cannot be reduced.
-block_size	262144	Default columnstore block size in bytes for newly created tables. Their WITH (block_size = ...) and their database's BLOCK_SIZE override it. Default: 262'144.
 bytea_output	hex	Sets the output format for bytea.
 ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
 cache_local_files	off	Whether the external file cache also caches local files. Remote files are always cached.

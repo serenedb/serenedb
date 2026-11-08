@@ -2,7 +2,7 @@ hash-threshold 100
 control substitution on
 
 statement ok
-SET preserve_insertion_order = true;
+SET SESSION preserve_insertion_order = true;
 
 
 # Demonstrates the file_row_number byte offset emitted by read_json /

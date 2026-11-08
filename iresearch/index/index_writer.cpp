@@ -674,13 +674,13 @@ void IndexWriter::Document::Finish() noexcept {
 }
 
 std::span<const IndexWriter::FlushedSegment>
-IndexWriter::Transaction::FlushAndFsync() {
+IndexWriter::Transaction::FlushSegments(bool sync) {
   auto* segment = _active.Segment();
   if (segment == nullptr) {
     return {};
   }
   SDB_ASSERT(_exclusive_segment,
-             "FlushAndFsync would report segments holding another "
+             "FlushSegments would report segments holding another "
              "transaction's documents; acquire the batch with "
              "exclusive_segment");
   Flush();
@@ -696,13 +696,13 @@ IndexWriter::Transaction::FlushAndFsync() {
   files.reserve(flushed.size() * (flushed.front().meta.files.size() + 1));
   for (auto& entry : flushed) {
     SDB_ASSERT(!entry.meta_on_disk,
-               "FlushAndFsync called twice on one transaction");
+               "FlushSegments called twice on one transaction");
     SDB_ASSERT(!entry.meta.files.empty());
     index_utils::FlushIndexSegment(segment->dir, entry, false);
     files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
     files.emplace_back(entry.filename);
   }
-  if (!segment->dir.sync(files)) {
+  if (sync && !segment->dir.sync(files)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("Failed to sync ", files.size(), " file(s) of ",
                             flushed.size(), " flushed segment(s)"));

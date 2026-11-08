@@ -7,7 +7,7 @@ hash-threshold 100
 # stores no PK at all.
 
 statement ok
-SET preserve_insertion_order = true;
+SET SESSION preserve_insertion_order = true;
 
 statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body

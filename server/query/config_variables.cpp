@@ -1165,30 +1165,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      kBlockSizeSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Default columnstore block size in bytes for newly created tables. "
-        "Their WITH (block_size = ...) and their database's BLOCK_SIZE "
-        "override it. Default: 262'144.",
-        [] { return duckdb::Value::UINTEGER(DEFAULT_BLOCK_ALLOC_SIZE); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto n = value.GetValue<uint32_t>();
-          if (!duckdb::IsPowerOfTwo(n) ||
-              n < duckdb::Storage::MIN_BLOCK_ALLOC_SIZE ||
-              n > duckdb::Storage::MAX_BLOCK_ALLOC_SIZE) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("invalid value for parameter "
-                      "\"block_size\": \"",
-                      value.ToString(), "\" (must be a power of two from ",
-                      duckdb::Storage::MIN_BLOCK_ALLOC_SIZE, " to ",
-                      duckdb::Storage::MAX_BLOCK_ALLOC_SIZE, ")"));
-          }
-        },
-      },
-    },
-    {
       kReindexIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
@@ -1670,6 +1646,20 @@ void RegisterConfigVariables(duckdb::DBConfig& config) {
 duckdb::Value ValidateSetting(duckdb::ClientContext& context,
                               std::string_view name,
                               const duckdb::Value& value) {
+  if (name == kBlockSizeSetting) {
+    auto result = value.CastAs(context, duckdb::LogicalType::UINTEGER);
+    const auto n = result.GetValue<uint32_t>();
+    if (!duckdb::IsPowerOfTwo(n) || n < duckdb::Storage::MIN_BLOCK_ALLOC_SIZE ||
+        n > duckdb::Storage::MAX_BLOCK_ALLOC_SIZE) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid value for parameter \"block_size\": \"",
+                result.ToString(), "\" (must be a power of two from ",
+                duckdb::Storage::MIN_BLOCK_ALLOC_SIZE, " to ",
+                duckdb::Storage::MAX_BLOCK_ALLOC_SIZE, ")"));
+    }
+    return result;
+  }
   duckdb::ExtensionOption option;
   duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(
     duckdb::Identifier{name}, option);

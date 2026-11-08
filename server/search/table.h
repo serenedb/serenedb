@@ -132,6 +132,13 @@ struct TableState {
   std::vector<std::shared_ptr<const TableUnit>> units;
 };
 
+struct UnsyncedSegment {
+  uint64_t id = 0;
+  std::string meta_file;
+  std::vector<std::string> files;
+  irs::doc_id_t docs = 0;
+};
+
 struct OwnSegment {
   irs::IndexSegment segment;
   std::shared_ptr<const irs::SegmentReaderImpl> reader;
@@ -227,6 +234,7 @@ class Table final {
   std::shared_ptr<HotContext> AcquireHot(irs::IndexWriter& writer);
   void ReleaseHot(const std::shared_ptr<HotContext>& hot, bool retire);
   void Retire(Lsn before);
+  void RetireVisible(Tick snapshot);
 
   std::shared_ptr<const irs::DocRemoval> Resolve(
     const std::shared_ptr<const irs::DocRemoval>& removal) const;
@@ -253,6 +261,11 @@ class Table final {
               Lsn lsn);
   bool HasRetiredHot() const;
   void AwaitRetiredReleased();
+
+  std::vector<UnsyncedSegment> UnsyncedSegments(Lsn before) const;
+  bool Unsynced(uint64_t id) const;
+  void Synced(std::span<const uint64_t> ids, Lsn lsn);
+  bool Unsettled() const;
 
   std::vector<StateUnit> StateUnits() const;
   void StateLogged(Lsn lsn);

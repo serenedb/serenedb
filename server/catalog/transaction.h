@@ -198,6 +198,7 @@ class Transactions final {
   absl::Status TruncateLog(
     bool switch_chunk,
     duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT);
+  void SettleLog();
   [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
     duckdb::ClientContext& context) {
     return _checkpoints.Close(context);
@@ -232,6 +233,7 @@ class Transactions final {
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_commit_mutex);
   void Publish(duckdb::transaction_t commit, bool wait);
   void MaintainLog(duckdb::ClientContext& context, Lsn end);
+  void TruncateInBackground(bool switch_chunk);
 
   duckdb::transaction_t Oldest() const
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_snapshots_mutex);

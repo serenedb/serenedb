@@ -302,6 +302,67 @@ void Store::CoolAll() {
   }
 }
 
+void Store::MakeSearchable(Tick snapshot) {
+  if (!_table) {
+    return;
+  }
+  _table->RetireVisible(snapshot);
+  for (;;) {
+    Cool(false, false);
+    if (!_table->HasRetiredHot()) {
+      return;
+    }
+    _table->AwaitRetiredReleased();
+  }
+}
+
+bool Store::Settle() {
+  if (!_table || !_table->Unsettled()) {
+    return false;
+  }
+  CoolAll();
+  PersistSegments(kNoLsn);
+  return true;
+}
+
+bool Store::PersistSegments(Lsn before) {
+  const auto unsynced = _table->UnsyncedSegments(before);
+  if (unsynced.empty()) {
+    return false;
+  }
+  for (const auto& segment : unsynced) {
+    std::vector<std::string_view> files{segment.files.begin(),
+                                        segment.files.end()};
+    files.emplace_back(segment.meta_file);
+    if (!_dir->sync(files)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("failed to sync the files of segment '",
+                              segment.meta_file, "'"));
+    }
+  }
+  SyncSegments();
+  std::vector<uint64_t> logged;
+  catalog::Transactions::Get().CommitStorage(
+    [&] {
+      duckdb::vector<std::string> entries;
+      for (const auto& segment : unsynced) {
+        if (_table->Unsynced(segment.id)) {
+          logged.push_back(segment.id);
+          entries.push_back(LogCooled({.id = segment.id,
+                                       .meta_file = segment.meta_file,
+                                       .docs = segment.docs}));
+        }
+      }
+      std::vector<uint8_t> record;
+      if (!entries.empty() && !_in_memory && !OwnerDropped()) {
+        record = catalog::SearchRecord(_db_id, _id, entries);
+      }
+      return record;
+    },
+    [&](Tick, Tick, Lsn lsn) { _table->Synced(logged, lsn); });
+  return true;
+}
+
 std::vector<OwnSegment> Store::OpenFlushed(
   std::span<const irs::IndexWriter::FlushedSegment> flushed) const {
   std::vector<OwnSegment> segments;
@@ -361,7 +422,7 @@ void Store::CommitStorage(std::string entry,
     apply);
 }
 
-void Store::CoolOne(const std::shared_ptr<HotContext>& hot) {
+void Store::CoolOne(const std::shared_ptr<HotContext>& hot, bool durable) {
   irs::doc_id_t docs = 0;
   for (const auto& unit : _table->State()->units) {
     if (unit->hot == hot) {
@@ -375,7 +436,7 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot) {
   {
     absl::MutexLock lock{&hot->Mutex()};
     id = hot->Id();
-    const auto flushed = hot->Trx().FlushAndFsync();
+    const auto flushed = hot->Trx().FlushSegments(durable);
     SDB_ASSERT(flushed.size() <= 1);
     if (!flushed.empty()) {
       const auto& entry = flushed.front();
@@ -387,7 +448,7 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot) {
             irs::DocumentMaskBuilder{entry.docs_mask}.Finish());
         irs::index_utils::FlushIndexSegment(*_dir, written.segment, true);
         const std::array<std::string_view, 1> files{written.segment.filename};
-        if (!_dir->sync(files)) {
+        if (durable && !_dir->sync(files)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_IO_ERROR),
             ERR_MSG("failed to sync '", written.segment.filename, "'"));
@@ -397,23 +458,30 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot) {
                                                     ReaderOptions());
     }
   }
-  SyncSegments();
   SDB_PARK_ONCE_ON_FAILURE("pause_search_cooling");
-  CommitStorage(
-    LogCooled({.id = id, .meta_file = written.segment.filename, .docs = docs}),
-    [&](Tick, Tick, Lsn lsn) { _table->Cooled(hot, std::move(written), lsn); });
+  if (durable) {
+    SyncSegments();
+    CommitStorage(
+      LogCooled(
+        {.id = id, .meta_file = written.segment.filename, .docs = docs}),
+      [&](Tick, Tick, Lsn lsn) {
+        _table->Cooled(hot, std::move(written), lsn);
+      });
+  } else {
+    _table->Cooled(hot, std::move(written), kNoLsn);
+  }
   absl::MutexLock lock{&hot->Mutex()};
   hot->Trx().Abort();
 }
 
-void Store::Cool(bool all) {
+void Store::Cool(bool all, bool durable) {
   if (!_table) {
     return;
   }
   const auto taken = _table->TakeCoolable(all ? 0 : _segment_memory_max, all);
   for (const auto& hot : taken) {
     try {
-      CoolOne(hot);
+      CoolOne(hot, durable);
     } catch (const std::exception& e) {
       SDB_FATAL(SEARCH, "search table ", _id,
                 ": could not write the rows it holds in memory: ",
@@ -443,6 +511,7 @@ void Store::Cover(Lsn target) {
     return;
   }
   CoolRetired(target);
+  PersistSegments(target);
   catalog::Transactions::Get().CommitState(
     [&] {
       if (OwnerDropped()) {

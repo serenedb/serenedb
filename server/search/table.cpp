@@ -571,6 +571,16 @@ void Table::Retire(Lsn before) {
   }
 }
 
+void Table::RetireVisible(Tick snapshot) {
+  const auto state = State();
+  absl::MutexLock lock{&_hot_mutex};
+  for (const auto& unit : state->units) {
+    if (unit->hot && VisibleEnd(*unit, snapshot) != 0) {
+      _retired.insert(unit->hot.get());
+    }
+  }
+}
+
 std::shared_ptr<const irs::DocRemoval> Table::Resolve(
   const std::shared_ptr<const irs::DocRemoval>& removal) const {
   const auto state = State();
@@ -850,7 +860,10 @@ void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
                    Lsn lsn) {
   {
     absl::MutexLock lock{&_state_mutex};
-    Logged(lsn);
+    const bool logged = lsn != kNoLsn;
+    if (logged) {
+      Logged(lsn);
+    }
     auto next = std::make_shared<TableState>(*State());
     auto& units = next->units;
     const auto it = absl::c_find_if(
@@ -862,7 +875,9 @@ void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
     } else {
       auto unit = std::make_shared<TableUnit>(**it);
       unit->hot.reset();
-      unit->first_lsn = kNoLsn;
+      if (logged) {
+        unit->first_lsn = kNoLsn;
+      }
       unit->meta_ref =
         irs::directory_utils::Reference(_dir, written.segment.filename);
       unit->docs = written.reader->Meta().docs_count;
@@ -892,12 +907,57 @@ void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
   _retired.erase(hot.get());
 }
 
+std::vector<UnsyncedSegment> Table::UnsyncedSegments(Lsn before) const {
+  std::vector<UnsyncedSegment> segments;
+  for (const auto& unit : State()->units) {
+    if (unit->hot || unit->replaced_at != 0 || unit->first_lsn >= before) {
+      continue;
+    }
+    segments.push_back({.id = unit->id,
+                        .meta_file = unit->segment.filename,
+                        .files = unit->segment.meta.files,
+                        .docs = unit->docs});
+  }
+  return segments;
+}
+
+bool Table::Unsynced(uint64_t id) const {
+  const auto state = State();
+  const auto* unit = FindUnit(*state, id);
+  return unit && !unit->hot && unit->replaced_at == 0 &&
+         unit->first_lsn != kNoLsn;
+}
+
+void Table::Synced(std::span<const uint64_t> ids, Lsn lsn) {
+  if (ids.empty()) {
+    return;
+  }
+  absl::MutexLock lock{&_state_mutex};
+  Logged(lsn);
+  auto next = std::make_shared<TableState>(*State());
+  for (auto& unit : next->units) {
+    if (!unit->hot && unit->first_lsn != kNoLsn &&
+        absl::c_linear_search(ids, unit->id)) {
+      auto synced = std::make_shared<TableUnit>(*unit);
+      synced->first_lsn = kNoLsn;
+      unit = std::move(synced);
+    }
+  }
+  Publish(std::move(next));
+}
+
+bool Table::Unsettled() const {
+  return absl::c_any_of(State()->units, [](const auto& unit) {
+    return unit->hot || (unit->first_lsn != kNoLsn && unit->replaced_at == 0);
+  });
+}
+
 std::vector<StateUnit> Table::StateUnits() const {
   const auto state = State();
   std::vector<StateUnit> units;
   units.reserve(state->units.size());
   for (const auto& unit : state->units) {
-    if (unit->hot || unit->replaced_at != 0) {
+    if (unit->hot || unit->replaced_at != 0 || unit->first_lsn != kNoLsn) {
       continue;
     }
     units.push_back(
@@ -918,7 +978,7 @@ Lsn Table::NeededFrom() const {
   absl::MutexLock lock{&_state_mutex};
   auto needed = _needed;
   for (const auto& unit : State()->units) {
-    if (unit->hot) {
+    if (unit->replaced_at == 0) {
       needed = std::min(needed, unit->first_lsn);
     }
   }

@@ -125,7 +125,7 @@ SELECT
      AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mr_t')) AS t_segments;
 ----
 s_segments	t_segments
-4	4
+3	3
 
 connection after_crash
 statement ok

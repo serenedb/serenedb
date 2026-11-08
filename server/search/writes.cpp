@@ -1146,7 +1146,7 @@ irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
   }
   const bool indexed = store.HasIndexes();
   if (indexed) {
-    store.CoolAll();
+    store.MakeSearchable(snapshot);
   }
   if (!w) {
     return store.View(snapshot, {});

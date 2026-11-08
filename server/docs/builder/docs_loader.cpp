@@ -419,7 +419,7 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
       return;
     }
     auto& store = *table->Storage();
-    store.CoolAll();
+    store.Settle();
     const auto path = store.Path();
     const auto add = [&](std::string_view file) {
       image.push_back(

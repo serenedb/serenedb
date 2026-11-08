@@ -2,7 +2,7 @@ hash-threshold 100
 control substitution on
 
 statement ok
-SET preserve_insertion_order = true;
+SET SESSION preserve_insertion_order = true;
 
 
 # View bodies with non-default reader parameters. CREATE INDEX must always

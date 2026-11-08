@@ -47,7 +47,14 @@ class Log {
     Lsn end = 0;
   };
 
+  struct HistoryEntry {
+    Lsn lsn = 0;
+    std::vector<uint8_t> catalog;
+  };
+
   using CatalogPart = absl::FunctionRef<std::span<uint8_t>(std::span<uint8_t>)>;
+  using Compact =
+    absl::FunctionRef<std::vector<HistoryEntry>(std::vector<HistoryEntry>)>;
 
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
   static constexpr std::string_view kHistoryFile = "history";
@@ -73,7 +80,7 @@ class Log {
 
   Lsn Append(std::span<const uint8_t> payload);
 
-  void Truncate(Lsn below, CatalogPart part);
+  void Truncate(Lsn below, CatalogPart part, Compact compact);
 
   Lsn Link(const std::filesystem::path& dir);
 

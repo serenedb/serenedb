@@ -500,7 +500,7 @@ Lsn Log::Append(std::span<const uint8_t> payload) {
   return range.end;
 }
 
-void Log::Truncate(Lsn below, CatalogPart part) {
+void Log::Truncate(Lsn below, CatalogPart part, Compact compact) {
   absl::MutexLock files{&_files_mutex};
   std::vector<std::shared_ptr<Chunk>> dropped;
   Lsn cut = 0;
@@ -520,10 +520,11 @@ void Log::Truncate(Lsn below, CatalogPart part) {
     return;
   }
   auto past = ReadHistory(_fs, _dir / kHistoryFile);
-  std::vector<uint8_t> history(kHistoryHeader);
+  std::vector<HistoryEntry> entries;
   if (!past.bytes.empty()) {
-    history.insert(history.end(), past.bytes.begin() + kHistoryHeader,
-                   past.bytes.end());
+    ForEachHistoryEntry(past.bytes, [&](Lsn lsn, std::span<uint8_t> catalog) {
+      entries.push_back({.lsn = lsn, .catalog{catalog.begin(), catalog.end()}});
+    });
   }
   for (size_t i = 0; i < dropped.size(); ++i) {
     const auto& chunk = *dropped[i];
@@ -535,15 +536,19 @@ void Log::Truncate(Lsn below, CatalogPart part) {
     const auto parsed =
       ParseRecords(bytes, [&](size_t, size_t to, std::span<uint8_t> payload) {
         const auto catalog = part(payload);
-        if (catalog.empty()) {
-          return;
+        if (!catalog.empty()) {
+          entries.push_back({.lsn = chunk.begin + to,
+                             .catalog{catalog.begin(), catalog.end()}});
         }
-        Store<Lsn>(history, chunk.begin + to);
-        Store<uint32_t>(history, static_cast<uint32_t>(catalog.size()));
-        history.insert(history.end(), catalog.begin(), catalog.end());
       });
     SDB_ENSURE(parsed == bytes.size(), "log '", _dir.string(),
                "': the chunk at ", chunk.begin, " ends early");
+  }
+  std::vector<uint8_t> history(kHistoryHeader);
+  for (const auto& entry : compact(std::move(entries))) {
+    Store<Lsn>(history, entry.lsn);
+    Store<uint32_t>(history, static_cast<uint32_t>(entry.catalog.size()));
+    history.insert(history.end(), entry.catalog.begin(), entry.catalog.end());
   }
   std::memcpy(history.data() + sizeof(uint32_t), &cut, sizeof(Lsn));
   const auto crc =

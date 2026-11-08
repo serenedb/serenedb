@@ -1,0 +1,186 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE chc_sizes (phase TEXT, size BIGINT);
+
+
+statement ok
+CREATE TABLE chc_keep (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE VIEW chc_keep_v AS SELECT id, v FROM chc_keep;
+
+
+statement ok
+CREATE TABLE chc_audit (id INT);
+
+
+statement ok
+CREATE TABLE chc_fired (id INT);
+
+
+statement ok
+CREATE TRIGGER chc_fire AFTER INSERT ON chc_fired FOR EACH ROW INSERT INTO chc_audit VALUES (NEW.id);
+
+
+statement ok
+INSERT INTO chc_keep (v) SELECT 'a' FROM range(10);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO chc_sizes SELECT 'base', size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/history');
+
+
+statement ok
+CREATE TABLE chc_stage_1 (a INT, b TEXT);
+
+
+statement ok
+CREATE INDEX chc_stage_1_idx ON chc_stage_1 (b);
+
+
+statement ok
+CREATE TRIGGER chc_stage_1_fire AFTER INSERT ON chc_stage_1 FOR EACH ROW INSERT INTO chc_audit VALUES (NEW.a);
+
+
+statement ok
+INSERT INTO chc_stage_1 VALUES (1, 'x');
+
+
+statement ok
+DROP TABLE chc_stage_1;
+
+
+statement ok
+CREATE TABLE chc_stage_2 (a INT, b TEXT);
+
+
+statement ok
+DROP TABLE chc_stage_2;
+
+
+statement ok
+CREATE DATABASE chc_db;
+
+
+statement ok
+CREATE TABLE chc_db.public.t (id INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE INDEX chc_db_idx ON chc_db.public.t (v);
+
+
+statement ok
+CREATE SEQUENCE chc_db.public.s;
+
+
+statement ok
+DROP DATABASE chc_db;
+
+
+statement ok
+CREATE SECRET chc_secret (TYPE s3, KEY_ID 'k', SECRET 's');
+
+
+statement ok
+DROP SECRET chc_secret;
+
+
+statement ok
+INSERT INTO chc_keep (v) SELECT 'b' FROM range(100000);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO chc_sizes SELECT 'churn', size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/history');
+
+
+query
+SELECT (SELECT size FROM chc_sizes WHERE phase = 'churn') - (SELECT size FROM chc_sizes WHERE phase = 'base') < 64 AS bounded;
+----
+bounded
+t
+
+
+statement ok
+INSERT INTO chc_fired VALUES (1);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, max(id) AS last FROM chc_keep;
+----
+n	last
+100010	100010
+
+
+connection after_crash
+query
+INSERT INTO chc_keep (v) VALUES ('c') RETURNING id > 100010 AS fresh;
+----
+fresh
+t
+
+
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'chc\_%' ESCAPE '\' AND relkind IN ('r', 'v') ORDER BY relname;
+----
+relname
+chc_audit
+chc_fired
+chc_keep
+chc_keep_v
+chc_sizes
+
+
+connection after_crash
+query
+SELECT count(*) AS dbs FROM pg_database WHERE datname = 'chc_db';
+----
+dbs
+0
+
+
+connection after_crash
+query
+SELECT count(*) AS secrets FROM duckdb_secrets() WHERE name = 'chc_secret';
+----
+secrets
+0
+
+
+connection after_crash
+statement ok
+INSERT INTO chc_fired VALUES (2);
+
+
+connection after_crash
+query
+SELECT id FROM chc_audit ORDER BY id;
+----
+id
+1
+1
+2

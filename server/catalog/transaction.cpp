@@ -501,7 +501,7 @@ absl::Status Transactions::TruncateLog(bool switch_chunk,
     return absl::AbortedError(
       "Checkpoint aborted before truncate because of debug_checkpoint_abort");
   }
-  _log->Truncate(target, &CatalogPart);
+  _log->Truncate(target, &CatalogPart, &CompactHistory);
   return absl::OkStatus();
 }
 

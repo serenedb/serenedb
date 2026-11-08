@@ -58,10 +58,10 @@ bool IsRemote(std::string_view path) {
 
 bool TryCreateDirectory(const std::filesystem::path& path) {
   auto& fs = StorageFileSystem();
-  if (!fs.CreateDirectoryExtended(path.string(), {})) {
+  if (!fs.CreateDirectoryExtended(path.native(), {})) {
     return false;
   }
-  fs.SyncDirectory(path.parent_path().string());
+  fs.SyncDirectory(path.parent_path().native());
   return true;
 }
 
@@ -138,7 +138,7 @@ void CreateDirectories(const std::filesystem::path& path) {
   auto& fs = StorageFileSystem();
   std::vector<std::filesystem::path> missing;
   for (auto directory = path;
-       !directory.empty() && !fs.DirectoryExists(directory.string());
+       !directory.empty() && !fs.DirectoryExists(directory.native());
        directory = directory.parent_path()) {
     missing.push_back(directory);
   }
@@ -296,7 +296,7 @@ void DatabaseDirectory::MarkDropped() noexcept {
   std::vector<std::string> beside;
   const auto add = [&](std::string_view tablespace) {
     auto directory = absl::StrCat(tablespace, "/", _oid);
-    if (directory != _path.string() && !absl::c_contains(beside, directory)) {
+    if (directory != _path.native() && !absl::c_contains(beside, directory)) {
       beside.push_back(std::move(directory));
     }
   };
@@ -316,7 +316,7 @@ std::string DatabaseDirectory::DataFile() const {
 std::unique_ptr<StorageDirectory> DatabaseDirectory::StorageOf(
   std::string_view tablespace, duckdb::idx_t oid) const {
   return std::make_unique<StorageDirectory>(
-    tablespace.empty() ? absl::StrCat(_path.string(), "/", oid)
+    tablespace.empty() ? absl::StrCat(_path.native(), "/", oid)
                        : absl::StrCat(tablespace, "/", _oid, "/", oid),
     _storage);
 }

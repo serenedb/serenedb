@@ -4543,6 +4543,7 @@ TEST_P(DirectoryTestCase, hint_prefetches_the_cold_remainder) {
   };
   Recording recording{.in = in.get(), .prefetched = {}};
 
+  irs::file_utils::PollResidency(uint64_t{1} << 32);
   irs::file_utils::InvalidateResidency();
   irs::file_utils::Hint(recording, kPage, 10 * kPage);
   EXPECT_EQ((Ranges{{kPage, 11 * kPage}}), recording.prefetched);

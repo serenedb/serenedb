@@ -1169,37 +1169,53 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
   }
 }
 
-TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
+TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
   using irs::codecs::Shape;
+  constexpr uint64_t kSwitch = 10 * STANDARD_VECTOR_SIZE;
   const Value value = [](uint64_t g) -> std::optional<std::string> {
     if (g % 11 == 0) {
       return std::nullopt;
     }
-    if (g < 20000) {
+    if (g < kSwitch) {
       return Pseudo(g, 24);
     }
     return "status-" + std::to_string(g % 4);
   };
-  const auto chunks = Chunks(60000, value);
-  irs::codecs::StringAccumulator acc;
-  Accumulate(acc, chunks);
+  const auto chunks = Chunks(3 * kSwitch, value);
   irs::codecs::StringTuning tuning;
-  std::vector<Shape> shapes;
-  const auto outcome = irs::codecs::SealSegments(
-    acc, nullptr, irs::ColCodecParams{.segment_target = 16 * 1024},
-    duckdb::LogicalType::VARCHAR, tuning, Db().GetBufferManager(),
-    [&](irs::codecs::StringChoice choice, duckdb::BaseStatistics, uint64_t,
-        std::string_view) { shapes.push_back(choice.shape); });
-  ASSERT_TRUE(outcome.sealed);
-  ASSERT_GT(shapes.size(), 2u);
-  EXPECT_EQ(shapes.front(), Shape::Plain);
-  EXPECT_EQ(shapes.back(), Shape::Dedup);
-  EXPECT_FALSE(outcome.all_dedup);
+  const auto seal = [&](size_t first, size_t end) {
+    irs::codecs::StringAccumulator acc;
+    for (auto c = first; c < end; ++c) {
+      acc.Add(*chunks[c]);
+    }
+    std::vector<Shape> shapes;
+    const auto outcome = irs::codecs::SealSegments(
+      acc, nullptr, irs::ColCodecParams{.segment_target = 16 * 1024},
+      duckdb::LogicalType::VARCHAR, tuning, Db().GetBufferManager(),
+      [&](irs::codecs::StringChoice choice, duckdb::BaseStatistics, uint64_t,
+          std::string_view) { shapes.push_back(choice.shape); });
+    EXPECT_TRUE(outcome.sealed);
+    return shapes;
+  };
+  const auto all = [](const std::vector<Shape>& shapes, Shape shape) {
+    return !shapes.empty() &&
+           absl::c_all_of(shapes, [&](Shape s) { return s == shape; });
+  };
+  const auto distinct = seal(0, 10);
+  EXPECT_GT(distinct.size(), 1u);
+  EXPECT_TRUE(all(distinct, Shape::Plain))
+    << ::testing::PrintToString(distinct);
+  const auto repeated = seal(10, 30);
+  EXPECT_TRUE(all(repeated, Shape::Dedup))
+    << ::testing::PrintToString(repeated);
+  const auto mixed = seal(5, 15);
+  EXPECT_GT(mixed.size(), 1u);
+  EXPECT_TRUE(all(mixed, Shape::Plain)) << ::testing::PrintToString(mixed);
   ASSERT_TRUE(tuning.choice.has_value());
-  EXPECT_EQ(tuning.choice->shape, Shape::Dedup);
+  EXPECT_EQ(tuning.choice->shape, Shape::Plain);
 
   RoundTrip(duckdb::CompressionType::COMPRESSION_AUTO,
-            {.segment_target = 16 * 1024}, 60000, DEFAULT_ROW_GROUP_SIZE,
+            {.segment_target = 16 * 1024}, 3 * kSwitch, DEFAULT_ROW_GROUP_SIZE,
             value);
 }
 

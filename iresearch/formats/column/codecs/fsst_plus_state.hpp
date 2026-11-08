@@ -51,8 +51,6 @@ class FsstPlusState {
     out.bytes.Truncate(0);
   }
 
-  void Retrain() noexcept { _codec.Reset(); }
-
   IRS_FORCE_INLINE void AddValue(const duckdb::string_t* value) {
     _rows.AddValue(value, [](const duckdb::string_t&, uint32_t) {});
   }

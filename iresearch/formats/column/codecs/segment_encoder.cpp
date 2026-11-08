@@ -30,13 +30,6 @@ namespace irs::codecs::text {
 namespace {
 
 template<typename State>
-void RetrainState(std::optional<State>& state) noexcept {
-  if (state) {
-    state->Retrain();
-  }
-}
-
-template<typename State>
 IRS_NO_INLINE void CutRows(State& state, const Config& config,
                            const StringAccumulator& acc, uint64_t begin,
                            uint32_t target, Segment& seg) {
@@ -169,12 +162,6 @@ uint64_t SegmentEncoder::Price(const Config& config,
       return state.Price(profile, config.level, config.layout, begin);
     }
   });
-}
-
-void SegmentEncoder::Retrain() noexcept {
-  RetrainState(_states.fsst);
-  RetrainState(_states.fsst_plus);
-  RetrainState(_states.fsst12);
 }
 
 const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,

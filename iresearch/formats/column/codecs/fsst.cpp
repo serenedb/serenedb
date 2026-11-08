@@ -146,11 +146,6 @@ const duckdb::CompressionFunction& DictFsstFunction() {
   return kFunction;
 }
 
-void FsstEncoder::Reset() noexcept {
-  _encoder.reset();
-  _table_size = 0;
-}
-
 FsstEncoded FsstEncoder::Encode(std::span<const duckdb::string_t> strings,
                                 std::span<const uint32_t> skip, char* out,
                                 size_t capacity, std::span<uint32_t> lengths) {

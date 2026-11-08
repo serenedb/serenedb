@@ -58,8 +58,6 @@ class SegmentEncoder {
   uint64_t Price(const Config& config, const StringAccumulator& acc,
                  uint64_t begin, uint64_t end);
 
-  void Retrain() noexcept;
-
   void Release(Segment* seg) { _free.push_back(seg); }
 
  private:

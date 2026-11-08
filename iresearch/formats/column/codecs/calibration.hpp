@@ -52,7 +52,7 @@ class Calibration {
 
   Config CutConfig() const noexcept;
 
-  bool Drifted(const Segment& seg, bool full) const noexcept;
+  bool Drifted(const Segment& seg) const noexcept;
 
   Segment* Calibrate(Segment* cut, bool retune, bool drift);
 

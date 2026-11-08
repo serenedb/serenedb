@@ -125,9 +125,8 @@ Config Calibration::CutConfig() const noexcept {
   };
 }
 
-bool Calibration::Drifted(const Segment& seg, bool full) const noexcept {
-  if (seg.input == 0 ||
-      (!full && seg.Size() * kDriftMinFraction < _params.segment_target)) {
+bool Calibration::Drifted(const Segment& seg) const noexcept {
+  if (seg.input == 0) {
     return false;
   }
   const auto ratio =

@@ -56,8 +56,6 @@ class Fsst12Encoder {
     return {reinterpret_cast<const char*>(_table.data()), _table_size};
   }
 
-  void Reset() noexcept;
-
  private:
   std::unique_ptr<duckdb_fsst12_encoder_t, Fsst12Free> _encoder;
   std::vector<unsigned char> _table;

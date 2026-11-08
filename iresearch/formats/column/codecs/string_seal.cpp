@@ -87,18 +87,12 @@ SealOutcome SealSegments(const StringAccumulator& acc,
   while (row < acc.Rows()) {
     auto* seg = encoder.Cut(calibration.CutConfig(), acc, row);
     const auto end = seg->begin + seg->rows;
-    if (!named) {
-      const bool scheduled = first && due;
-      const bool drift =
-        !scheduled && calibration.Drifted(*seg, first || end < acc.Rows());
-      const bool retune = drift && !first;
-      if (retune) {
-        encoder.Retrain();
+    if (first && !named) {
+      const bool drift = !due && calibration.Drifted(*seg);
+      if (due || drift) {
+        seg = calibration.Calibrate(seg, !tuning.levels_tuned, drift);
       }
-      if (scheduled || drift) {
-        seg = calibration.Calibrate(seg, !tuning.levels_tuned || retune, drift);
-      }
-      if (first && seg->Size() > PlainStorageBytes(*seg)) {
+      if (seg->Size() > PlainStorageBytes(*seg)) {
         encoder.Release(seg);
         return {};
       }

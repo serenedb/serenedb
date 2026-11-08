@@ -32,7 +32,6 @@
 #include "catalog/boot.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/secret_store.h"
-#include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -222,11 +221,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   inverted.name = catalog::kInvertedIndexTypeName;
   inverted.create_plan = &connector::SereneDBCreateIndexPlan;
   db.config.GetIndexTypes().RegisterIndexType(inverted);
-
-  // Register filesystem for COPY FROM STDIN support.
-  // Intercepts "/dev/stdin" and reads from PG CopyData messages.
-  auto& fs = duckdb::FileSystem::GetFileSystem(db);
-  fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
   // Parse and cache system functions/views for serving from our attached
   // catalog.

@@ -50,6 +50,7 @@
 #include "backup/backup_session.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "docs/docs_bootstrap.h"
 #include "docs/docs_shell_backend.h"
 #include "duckdb_shell.hpp"
@@ -337,6 +338,8 @@ int main(int argc, char* argv[]) {
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);
   server::query::RegisterServerExtensions(engine.instance());
+  duckdb::FileSystem::GetFileSystem(engine.instance())
+    .RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
   sdb::app::InitProcess(argv[0]);
   SDB_DEBUG(STARTUP, "executable memory: ", remap.remapped >> 20,

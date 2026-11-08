@@ -104,7 +104,8 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   // CopyData framing), so it never reaches this CopyFunction. If it somehow
   // does, the session failed to route it -- fail clearly rather than emit an
   // unframed PGCOPY stream into a send buffer that expects CopyData.
-  if (file_path == "/dev/stdout") {
+  if (file_path == "/dev/stdout" &&
+      ConnectionContext::Get(context).GetSendBuffer()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("COPY ... TO STDOUT (FORMAT binary) must be routed through the "
@@ -212,7 +213,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   duckdb::vector<duckdb::LogicalType>& expected_types) {
   auto result = duckdb::make_uniq<PgBinaryCopyFromBindData>(
     expected_types, input.info.file_path);
-  result->ordered = BindCopyFrom(context, input, true);
+  result->ordered = BindCopyFrom(context, input);
   return result;
 }
 

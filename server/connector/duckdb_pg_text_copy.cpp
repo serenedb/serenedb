@@ -147,7 +147,8 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   // CopyData framing), so it never reaches this CopyFunction. If it somehow
   // does, the session failed to route it -- fail clearly rather than emit an
   // unframed text stream into a send buffer that expects CopyData.
-  if (file_path == "/dev/stdout") {
+  if (file_path == "/dev/stdout" &&
+      ConnectionContext::Get(context).GetSendBuffer()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("COPY ... TO STDOUT (FORMAT text) must be routed through the "
@@ -264,7 +265,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   auto result = duckdb::make_uniq<PgTextCopyFromBindData>(
     expected_types, input.info.file_path, opts.delim, std::move(opts.null_str),
     opts.header);
-  result->ordered = BindCopyFrom(context, input, false);
+  result->ordered = BindCopyFrom(context, input);
   return result;
 }
 

@@ -39,9 +39,8 @@ void ConfigureShellDBConfig(duckdb::DBConfig& config);
 
 // Post-construct fill on a live DatabaseInstance: every connector
 // function/cast/optimiser registration, the SereneDBCreateIndexPlan
-// index-type loop, the SereneDBCopyFileSystem subsystem install, and the
-// pg::InitSystemFunctions / pg::InitSystemViews caches. Called from
-// serened main() right after DuckDBEngine::Initialize().
+// index-type loop, and the pg::InitSystemFunctions / pg::InitSystemViews
+// caches. Called from serened main() right after DuckDBEngine::Initialize().
 void RegisterServerExtensions(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::server::query

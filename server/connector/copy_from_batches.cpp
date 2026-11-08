@@ -52,20 +52,6 @@ constexpr std::string_view kCopyStdinPath = "/dev/stdin";
 constexpr size_t kOrderedRun = 16;
 constexpr uint64_t kCopyFileRangeBytes = 8 << 20;
 
-pg::CopyInBatches& RequireCopyInBatches(duckdb::ClientContext& context,
-                                        bool binary) {
-  const std::string_view format = binary ? "binary" : "text";
-  auto* batches =
-    ConnectionContext::Get(context).GetSideChannel<pg::CopyInBatches>();
-  if (!batches) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("COPY ... FROM STDIN (FORMAT ", format,
-                            ") requires a PG wire connection (transport not "
-                            "attached)"));
-  }
-  return *batches;
-}
-
 class CopyFileReader {
  public:
   CopyFileReader(duckdb::ClientContext& context,
@@ -479,10 +465,7 @@ void ScanRanges(duckdb::ClientContext& context,
 }  // namespace
 
 bool BindCopyFrom(duckdb::ClientContext& context,
-                  duckdb::CopyFromFunctionBindInput& input, bool binary) {
-  if (input.info.file_path == kCopyStdinPath) {
-    RequireCopyInBatches(context, binary);
-  }
+                  duckdb::CopyFromFunctionBindInput& input) {
   const auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
     context, input.info.GetQualifiedName(),
     duckdb::OnEntryNotFound::RETURN_NULL);
@@ -501,9 +484,10 @@ bool BindCopyFrom(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
   duckdb::ClientContext& context, const std::string& path,
   pg::CopyInTarget target, bool ordered) {
-  if (path == kCopyStdinPath) {
-    auto& queue = RequireCopyInBatches(context, target.binary);
-    return duckdb::make_uniq<BatchesGlobalState>(context, queue,
+  if (auto* queue =
+        ConnectionContext::Get(context).GetSideChannel<pg::CopyInBatches>();
+      queue && path == kCopyStdinPath) {
+    return duckdb::make_uniq<BatchesGlobalState>(context, *queue,
                                                  std::move(target), ordered);
   }
   const auto flags = target.binary

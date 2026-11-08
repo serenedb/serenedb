@@ -39,6 +39,7 @@
 #include "iresearch/search/detail/landings.hpp"
 #include "iresearch/search/detail/masked_leaf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
+#include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -335,6 +336,22 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
       ScoreLeaf();
     }
     visit(docs, len, Scores() + (docs - std::begin(_docs)));
+  }
+
+  IRS_FORCE_INLINE uint32_t ScoreKept(const doc_id_t* docs, uint32_t len,
+                                      uint32_t least, doc_id_t* kept_docs,
+                                      score_t* kept_scores) {
+    ABSL_CACHELINE_ALIGNED uint32_t kept_freqs[doc_limits::kBlockSize];
+    const auto kept =
+      irs::detail::FilterFreqs(docs, _freqs.data + (docs - std::begin(_docs)),
+                               len, least, kept_docs, kept_freqs);
+    if (kept != 0) {
+      _provider.freq.value = kept_freqs;
+      FetchAndScore(*_score.fetcher, _score.score, kept_docs, kept_scores,
+                    kept);
+      _provider.freq.value = _freqs.data;
+    }
+    return kept;
   }
 
   template<typename Visitor>

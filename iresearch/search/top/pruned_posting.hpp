@@ -181,17 +181,11 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
     const auto least =
       _least_score > _threshold ? _least_freq : RaiseLeastFreq();
     ABSL_CACHELINE_ALIGNED doc_id_t kept_docs[doc_limits::kBlockSize];
-    ABSL_CACHELINE_ALIGNED uint32_t kept_freqs[doc_limits::kBlockSize];
     ABSL_CACHELINE_ALIGNED score_t kept_scores[doc_limits::kBlockSize];
-    const auto* const freqs = _freqs.data + (docs - std::begin(_docs));
-    const auto kept =
-      irs::detail::FilterFreqs(docs, freqs, len, least, kept_docs, kept_freqs);
+    const auto kept = this->ScoreKept(docs, len, least, kept_docs, kept_scores);
     if (kept == 0) {
       return;
     }
-    _provider.freq.value = kept_freqs;
-    FetchAndScore(*_score.fetcher, _score.score, kept_docs, kept_scores, kept);
-    _provider.freq.value = _freqs.data;
     visit(kept_docs, kept, kept_scores);
   }
 

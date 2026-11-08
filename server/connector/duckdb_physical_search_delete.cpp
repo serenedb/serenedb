@@ -146,7 +146,7 @@ SereneDBSearchDelete::GetLocalSinkState(
 }
 
 duckdb::SinkResultType SereneDBSearchDelete::Sink(
-  duckdb::ExecutionContext& /*context*/, duckdb::DataChunk& chunk,
+  duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
@@ -155,6 +155,10 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   const auto num_rows = chunk.size();
+  if (const auto& progress = duckdb::ClientConfig::GetConfig(context.client)
+                               .sink_progress_callback) {
+    progress(num_rows, chunk.GetAllocationSize());
+  }
 
   search::AddRowPositions(lstate.positions, chunk.data[_rowid.input_col_idx]);
 

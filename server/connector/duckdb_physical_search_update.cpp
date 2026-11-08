@@ -180,6 +180,10 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   const auto num_rows = chunk.size();
+  if (const auto& progress = duckdb::ClientConfig::GetConfig(context.client)
+                               .sink_progress_callback) {
+    progress(num_rows, chunk.GetAllocationSize());
+  }
 
   search::AddRowPositions(lstate.positions,
                           chunk.data[gstate.rowid.input_col_idx]);

@@ -165,6 +165,10 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
+  if (const auto& progress = duckdb::ClientConfig::GetConfig(context.client)
+                               .sink_progress_callback) {
+    progress(num_rows, chunk.GetAllocationSize());
+  }
   if (_table) {
     duckdb::DataTable::VerifyRowConstraints(context.client, *_table,
                                             _constraints, chunk);

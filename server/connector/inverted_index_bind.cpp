@@ -1288,10 +1288,13 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     ValidateInvertedIndexKey(label, value_type, opclass);
 
     if (const auto [it, first] = field_keys.try_emplace(record.field_id, i);
-        !first &&
-        entry.column_opclasses[it->second] == entry.column_opclasses[i] &&
-        entry.column_opclass_options[it->second] ==
-          entry.column_opclass_options[i]) {
+        !first && entry.column_opclasses[it->second].empty() &&
+        entry.column_opclasses[i].empty() &&
+        !duckdb::TypeVisitor::Contains(
+          value_type, [](const duckdb::LogicalType& type) {
+            return type.id() == duckdb::LogicalTypeId::VARCHAR ||
+                   type.id() == duckdb::LogicalTypeId::BLOB;
+          })) {
       keys.emplace_back(std::move(record));
       continue;
     }

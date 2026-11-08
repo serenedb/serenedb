@@ -75,7 +75,9 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/dependency.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/record.h"
 #include "catalog/schema.h"
@@ -317,6 +319,17 @@ SearchTableEntry::SearchTableEntry(
     }
   }
   auto& base = info.Base();
+  if (base.oid == 0 && !FindConstant(base.options, kRowGroupSizeSetting)) {
+    ReadDatabase(catalog.GetName().GetIdentifierName(),
+                 [&](const DatabaseCatalogEntry& database) {
+                   const auto& defaults = database.Options();
+                   if (const auto it = defaults.find(kRowGroupSizeSetting);
+                       it != defaults.end()) {
+                     base.options.insert_or_assign(kRowGroupSizeSetting,
+                                                   OptionConstant(it->second));
+                   }
+                 });
+  }
   BindOptions(*transaction.context, base.options, base.oid == 0);
   _options = ResolveOptions(base.options);
   const bool fresh = !_storage;

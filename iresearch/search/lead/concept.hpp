@@ -115,9 +115,6 @@ template<Type Node>
 uint64_t Count(Node& node, doc_id_t min, doc_id_t max) {
   if constexpr (requires { node.Count(min, max); }) {
     return node.Count(min, max);
-  } else if constexpr (LeafType<Node>) {
-    return CountLeaves(node, min, max,
-                       [](const doc_id_t*, uint32_t len) { return len; });
   } else {
     uint64_t total = 0;
     for (auto doc = SeekBelow(node, min, max); doc < max;

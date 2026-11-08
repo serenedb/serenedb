@@ -20,7 +20,6 @@
 
 #include "iresearch/formats/column/codecs/segment_encoder.hpp"
 
-#include <algorithm>
 #include <duckdb/common/vector/vector_iterator.hpp>
 
 #include "iresearch/utils/assert.hpp"
@@ -133,15 +132,6 @@ State& SegmentEncoder::Get(std::optional<State>& slot) {
   return *slot;
 }
 
-template<typename Codec>
-BlobPricer<Codec>& SegmentEncoder::Pricer(
-  std::optional<BlobPricer<Codec>>& slot) {
-  if (!slot) {
-    slot.emplace(_tuning.codes);
-  }
-  return *slot;
-}
-
 Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
                              uint64_t begin) {
   auto* seg = Acquire();
@@ -181,87 +171,6 @@ Segment* SegmentEncoder::Encode(const Config& config,
   With(config,
        [&](auto& state) { EncodeRows(state, config, acc, begin, end, *seg); });
   return seg;
-}
-
-uint64_t SegmentEncoder::Price(const Config& config,
-                               const StringAccumulator& acc, uint64_t begin,
-                               uint64_t end) {
-  const auto& profile = Measure(acc, config.choice.shape, begin, end);
-  const auto price = [&](auto& slot) {
-    return Pricer(slot).Price(profile, config.level, config.layout, begin);
-  };
-  switch (config.choice.leaf) {
-    case ByteCodec::Lz4:
-      if (EffectiveLevel<Lz4>(config.level) > 1) {
-        return price(_pricers.lz4_hc);
-      }
-      return price(_pricers.lz4);
-    case ByteCodec::Zstd:
-      return price(_pricers.zstd);
-    case ByteCodec::Zxc:
-      return price(_pricers.zxc);
-    case ByteCodec::Fsst:
-    case ByteCodec::FsstPlus:
-    case ByteCodec::OnPair:
-    case ByteCodec::Fsst12:
-      break;
-  }
-  SDB_UNREACHABLE();
-}
-
-const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,
-                                       Shape shape, uint64_t begin,
-                                       uint64_t end) {
-  auto& p = _profile;
-  if (_measured && p.shape == shape && _profile_begin == begin &&
-      _profile_end == end) {
-    return p;
-  }
-  _measured = true;
-  _profile_begin = begin;
-  _profile_end = end;
-  p.shape = shape;
-  p.rows = end - begin;
-  p.runs = 0;
-  p.raw = 0;
-  p.max_len = 0;
-  p.values = acc.values;
-  const auto add = [&](uint32_t code) {
-    const auto size = static_cast<uint32_t>(acc.values[code - 1]->GetSize());
-    p.raw += size;
-    p.max_len = std::max(p.max_len, size);
-  };
-  if (shape == Shape::Plain) {
-    p.codes = std::span{acc.codes}.subspan(begin, end - begin);
-    for (const auto code : p.codes) {
-      if (code != 0) {
-        add(code);
-      }
-    }
-    return p;
-  }
-  _profile_codes.clear();
-  _dedup.Begin(acc.values.size());
-  uint32_t last = 0;
-  for (auto row = begin; row < end; ++row) {
-    const auto code = acc.codes[row];
-    uint32_t local = 0;
-    if (code != 0) {
-      const auto mapped =
-        _dedup.Local(code, static_cast<uint32_t>(_profile_codes.size()) + 1);
-      local = mapped.local;
-      if (mapped.fresh) {
-        _profile_codes.push_back(code);
-        add(code);
-      }
-    }
-    if (row == begin || local != last) {
-      ++p.runs;
-    }
-    last = local;
-  }
-  p.codes = _profile_codes;
-  return p;
 }
 
 Segment* SegmentEncoder::Acquire() {

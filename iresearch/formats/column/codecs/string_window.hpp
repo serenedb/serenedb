@@ -21,13 +21,21 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/blob_frames.hpp"
+#include "iresearch/formats/column/codecs/blob_pricer.tpp"
+#include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/segment_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/zstd.hpp"
+#include "iresearch/formats/column/codecs/zxc.hpp"
 
 namespace irs::codecs::text {
 
@@ -39,9 +47,10 @@ struct Estimate {
 class StringWindow {
  public:
   StringWindow(const StringAccumulator& acc, SegmentEncoder& encoder,
-               Segment& first)
+               Segment& first, const NumericTuning& codes)
     : _acc{acc},
       _encoder{encoder},
+      _codes{codes},
       _begin{first.begin},
       _end{first.begin + first.rows},
       _encoded{&first} {}
@@ -60,11 +69,42 @@ class StringWindow {
   void Keep(const Segment& kept);
 
  private:
+  struct Spans {
+    FrameShape frame;
+    FrameSpans spans;
+  };
+
+  struct Measured {
+    bool done = false;
+    bool assembled = false;
+    Profile profile;
+    std::vector<uint32_t> codes;
+    std::string bytes;
+    std::vector<Spans> spans;
+  };
+
+  struct Pricers {
+    std::optional<BlobPricer<Lz4>> lz4;
+    std::optional<BlobPricer<Lz4Hc>> lz4_hc;
+    std::optional<BlobPricer<Zstd>> zstd;
+    std::optional<BlobPricer<Zxc>> zxc;
+  };
+
+  Measured& Rows(Shape shape);
+
+  std::string_view Bytes(Measured& rows);
+
+  const FrameSpans& Split(Measured& rows, FrameShape frame);
+
   const StringAccumulator& _acc;
   SegmentEncoder& _encoder;
+  const NumericTuning& _codes;
   uint64_t _begin;
   uint64_t _end;
   std::vector<Segment*> _encoded;
+  DedupScratch _dedup;
+  Measured _measured[2];
+  Pricers _pricers;
 };
 
 }  // namespace irs::codecs::text

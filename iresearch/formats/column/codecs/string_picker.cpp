@@ -102,7 +102,7 @@ bool StringPicker::Drifted(const Segment& seg) const noexcept {
 
 Segment* StringPicker::Pick(Segment& first, bool drift) {
   const auto input = first.input;
-  StringWindow window{_acc, _encoder, first};
+  StringWindow window{_acc, _encoder, first, _tuning.codes};
   const auto& dedup = window.Encode(Fast(Shape::Dedup));
   auto shape = Shape::Dedup;
   if (PlainWins(dedup, kHeaderSize + Packed(dedup.rows, dedup.max_len) +

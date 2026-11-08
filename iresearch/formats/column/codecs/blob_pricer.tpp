@@ -32,6 +32,7 @@
 #include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
 
@@ -43,7 +44,8 @@ class BlobPricer {
 
   explicit BlobPricer(const NumericTuning& codes) noexcept : _codes{codes} {}
 
-  uint64_t Price(const Profile& p, uint8_t level, FrameLayout layout,
+  uint64_t Price(const Profile& p, std::string_view bytes,
+                 const FrameSpans& spans, uint8_t level, FrameLayout layout,
                  uint64_t begin) {
     if (!_codec || _level != level) {
       _codec.emplace(level);
@@ -51,51 +53,45 @@ class BlobPricer {
     } else {
       _codec->Clear();
     }
-    _spans.Reset(FrameShapeOf<Codec>(layout));
-    for (uint64_t i = 0; i < p.codes.size(); ++i) {
-      _spans.Add(i, EntryOf(p, i).GetSize());
-    }
-    _spans.Close();
     uint64_t data = 0;
-    if (!_spans.empty()) {
+    if (!spans.empty()) {
       const bool whole =
-        layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames;
+        layout == FrameLayout::Local && spans.size() >= kLocalMinFrames;
+      SDB_ASSERT(!whole || bytes.size() == p.raw);
+      const auto frame = [&](size_t i) {
+        return whole ? bytes.substr(spans[i].offset, spans[i].raw)
+                     : Assemble(p, spans[i].first, spans[i].end);
+      };
       bool trained = false;
       if (whole) {
-        Assemble(p, 0, p.codes.size());
         _sizes.clear();
-        for (const auto& span : _spans.All()) {
+        for (const auto& span : spans.All()) {
           _sizes.push_back(span.raw);
         }
-        trained = _codec->Train(_frame, _sizes);
+        trained = _codec->Train(bytes, _sizes);
       }
-      const auto frame = [&](size_t i) {
-        return whole ? std::string_view{_frame}.substr(_spans[i].offset,
-                                                       _spans[i].raw)
-                     : Assemble(p, _spans[i].first, _spans[i].end);
-      };
       if (trained) {
         data += _codec->Stored().size();
       }
       const auto first = frame(0);
       data += CompressedSize<Codec>(first, _scratch, *_codec);
-      if (!trained && _spans.Shape().first != 0 && !first.empty() &&
-          _spans.size() > 1) {
+      if (!trained && spans.Shape().first != 0 && !first.empty() &&
+          spans.size() > 1) {
         _codec->Use(first);
       }
       uint64_t sampled_raw = 0;
       uint64_t sampled = 0;
-      _spans.Sample([&](size_t j) { return Jitter(begin, j); },
-                    [&](size_t i) {
-                      const auto raw = frame(i);
-                      sampled_raw += raw.size();
-                      sampled += CompressedSize<Codec>(raw, _scratch, *_codec);
-                    });
-      data += Scale(sampled, sampled_raw, p.raw - _spans[0].raw);
+      spans.Sample([&](size_t j) { return Jitter(begin, j); },
+                   [&](size_t i) {
+                     const auto raw = frame(i);
+                     sampled_raw += raw.size();
+                     sampled += CompressedSize<Codec>(raw, _scratch, *_codec);
+                   });
+      data += Scale(sampled, sampled_raw, p.raw - spans[0].raw);
     }
     const auto entry_count = p.codes.size() + (p.shape == Shape::Dedup ? 1 : 0);
     Header h;
-    return LayOut(h, data, _spans.size(), Packed(entry_count, p.max_len), 0,
+    return LayOut(h, data, spans.size(), Packed(entry_count, p.max_len), 0,
                   CodesBytes(p.shape, p.rows, p.codes.size(), p.runs, _codes),
                   0);
   }
@@ -121,7 +117,6 @@ class BlobPricer {
   const NumericTuning& _codes;
   std::optional<typename Codec::Compressor> _codec;
   uint8_t _level = 0;
-  FrameSpans _spans;
   std::string _frame;
   std::string _scratch;
   std::vector<size_t> _sizes;

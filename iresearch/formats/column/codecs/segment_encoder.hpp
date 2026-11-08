@@ -27,7 +27,6 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/blob_pricer.tpp"
 #include "iresearch/formats/column/codecs/blob_state.tpp"
 #include "iresearch/formats/column/codecs/fsst12_state.hpp"
 #include "iresearch/formats/column/codecs/fsst_plus_state.hpp"
@@ -59,9 +58,6 @@ class SegmentEncoder {
   Segment* Encode(const Config& config, const StringAccumulator& acc,
                   uint64_t begin, uint64_t end);
 
-  uint64_t Price(const Config& config, const StringAccumulator& acc,
-                 uint64_t begin, uint64_t end);
-
   void Release(Segment* seg) { _free.push_back(seg); }
 
  private:
@@ -76,24 +72,11 @@ class SegmentEncoder {
     std::optional<Fsst12State> fsst12;
   };
 
-  struct Pricers {
-    std::optional<BlobPricer<Lz4>> lz4;
-    std::optional<BlobPricer<Lz4Hc>> lz4_hc;
-    std::optional<BlobPricer<Zstd>> zstd;
-    std::optional<BlobPricer<Zxc>> zxc;
-  };
-
   template<typename F>
   auto With(const Config& config, F&& f);
 
   template<typename State>
   State& Get(std::optional<State>& slot);
-
-  template<typename Codec>
-  BlobPricer<Codec>& Pricer(std::optional<BlobPricer<Codec>>& slot);
-
-  const Profile& Measure(const StringAccumulator& acc, Shape shape,
-                         uint64_t begin, uint64_t end);
 
   Segment* Acquire();
 
@@ -103,14 +86,8 @@ class SegmentEncoder {
   duckdb::BufferManager& _buffers;
   DedupScratch _dedup;
   States _states;
-  Pricers _pricers;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;
-  Profile _profile;
-  std::vector<uint32_t> _profile_codes;
-  uint64_t _profile_begin = 0;
-  uint64_t _profile_end = 0;
-  bool _measured = false;
 };
 
 }  // namespace irs::codecs::text

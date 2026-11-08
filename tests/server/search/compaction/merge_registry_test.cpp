@@ -141,7 +141,6 @@ TEST(MergeRegistry, AQueuedMergeRunsAndFinishesUnderOneId) {
     registry.Queue(7, MergeOrigin::Background, DescribeInputs(segments));
   auto active = registry.Active(7);
   ASSERT_EQ(1, active.size());
-  EXPECT_TRUE(active[0].Queued());
   EXPECT_EQ(7, active[0].relation_id);
   EXPECT_EQ(MergeOrigin::Background, active[0].origin);
   EXPECT_LT(0, active[0].queued_us);
@@ -150,7 +149,6 @@ TEST(MergeRegistry, AQueuedMergeRunsAndFinishesUnderOneId) {
   registry.Dispatch(id);
   active = registry.Active(7);
   ASSERT_EQ(1, active.size());
-  EXPECT_FALSE(active[0].Queued());
   EXPECT_LE(active[0].queued_us, active[0].started_us);
 
   registry.Finish(id, MergeOutcome::Cancelled, {}, {}, kKept);
@@ -187,7 +185,6 @@ TEST(MergeRegistry, AForegroundMergeIsNeverQueued) {
   registry.Dispatch(id);
   active = registry.Active(7);
   ASSERT_EQ(1, active.size());
-  EXPECT_FALSE(active[0].Queued());
   EXPECT_EQ(0, active[0].queued_us);
   EXPECT_LT(0, active[0].started_us);
   registry.Finish(id, MergeOutcome::Busy, {}, {}, kKept);

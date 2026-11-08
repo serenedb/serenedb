@@ -46,8 +46,20 @@ enum class FrameLayout : uint8_t {
   Local = 2,
 };
 
+namespace text {
+
+struct Config {
+  StringChoice choice{};
+  uint8_t level = 0;
+  FrameLayout layout = FrameLayout::FirstFrame;
+
+  bool operator==(const Config&) const = default;
+};
+
+}  // namespace text
+
 struct StringTuning {
-  std::optional<StringChoice> choice;
+  std::optional<text::Config> pick;
   double bytes_per_input = 0;
   bool levels_tuned = false;
   CalibrationClock clock;

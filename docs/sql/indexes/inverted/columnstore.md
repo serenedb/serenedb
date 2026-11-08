@@ -16,7 +16,7 @@ A list or map column stores each distinct value of a row group once. Columns who
 
 ## Codecs
 
-A column's codec is either picked automatically (`auto`, the default: each segment takes the smallest of the candidates measured on its own rows) or named explicitly. Numeric columns use the transactional codecs and, under `auto`, the columnstore's [numeric codec](#numeric-columns); text columns use the columnstore's own string codecs, which differ in their *shape* (a dictionary of distinct values with row codes, or one entry per row) and their *leaf* (how the entry bytes are encoded):
+A column's codec is either picked automatically (`auto`, the default: a row group takes the smallest of the candidates measured on its first rows; while one codec keeps winning, later row groups reuse it and measure only now and then, and a row group whose data compresses differently is measured again) or named explicitly. Numeric columns use the transactional codecs and, under `auto`, the columnstore's [numeric codec](#numeric-columns); text columns use the columnstore's own string codecs, which differ in their *shape* (a dictionary of distinct values with row codes, or one entry per row) and their *leaf* (how the entry bytes are encoded):
 
 | Codec | Types | Shape and leaf |
 | :--- | :--- | :--- |

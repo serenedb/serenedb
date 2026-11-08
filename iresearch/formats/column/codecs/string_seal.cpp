@@ -26,9 +26,9 @@
 #include <string_view>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/calibration.hpp"
 #include "iresearch/formats/column/codecs/segment_encoder.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/codecs/string_picker.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -79,31 +79,28 @@ SealOutcome SealSegments(const StringAccumulator& acc,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          duckdb::BufferManager& buffers, SegmentSink sink) {
   text::SegmentEncoder encoder{params, type, tuning, buffers};
-  text::Calibration calibration{acc, named, params, tuning, encoder};
+  text::StringPicker picker{acc, params, tuning, encoder};
   SealOutcome outcome{.sealed = true};
-  uint64_t row = 0;
-  bool first = true;
-  const bool due = !named && (!tuning.choice || tuning.clock.Due());
-  while (row < acc.Rows()) {
-    auto* seg = encoder.Cut(calibration.CutConfig(), acc, row);
-    const auto end = seg->begin + seg->rows;
-    if (first && !named) {
-      const bool drift = !due && calibration.Drifted(*seg);
-      if (due || drift) {
-        seg = calibration.Calibrate(seg, !tuning.levels_tuned, drift);
+  const bool due = !named && picker.Due();
+  auto config = named ? text::NamedConfig(*named, params) : picker.Current();
+  for (uint64_t row = 0; row < acc.Rows();) {
+    auto* seg = encoder.Cut(config, acc, row);
+    if (row == 0 && !named) {
+      if (const bool drift = !due && picker.Drifted(*seg); due || drift) {
+        seg = picker.Pick(*seg, drift);
+        config = seg->config;
       }
       if (seg->Size() > PlainStorageBytes(*seg)) {
         encoder.Release(seg);
         return {};
       }
     }
+    row = seg->begin + seg->rows;
     outcome.all_dedup =
       outcome.all_dedup && seg->config.choice.shape == Shape::Dedup;
     sink(seg->config.choice, std::move(*seg->stats), seg->rows,
          seg->bytes.View());
     encoder.Release(seg);
-    row = end;
-    first = false;
   }
   return outcome;
 }

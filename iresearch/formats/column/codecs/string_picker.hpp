@@ -28,59 +28,68 @@
 #include "iresearch/formats/column/codecs/segment_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
+#include "iresearch/formats/column/codecs/string_tuning.hpp"
 
 namespace irs::codecs::text {
 
-struct LeafPlan {
-  ByteCodec leaf;
-  std::span<const uint8_t> ladder;
+struct Estimate {
+  Config config;
+  uint64_t bytes = 0;
+};
+
+class StringWindow {
+ public:
+  StringWindow(const StringAccumulator& acc, SegmentEncoder& encoder,
+               Segment& first)
+    : _acc{acc},
+      _encoder{encoder},
+      _begin{first.begin},
+      _end{first.begin + first.rows},
+      _encoded{&first} {}
+
+  StringWindow(const StringWindow&) = delete;
+  StringWindow& operator=(const StringWindow&) = delete;
+
+  uint64_t Price(const Config& config);
+
+  Segment& Encode(const Config& config);
+
+  Segment* Encoded(const Config& config) const noexcept;
+
+  std::span<Segment* const> Encodings() const noexcept { return _encoded; }
+
+  void Keep(const Segment& kept);
+
+ private:
+  const StringAccumulator& _acc;
+  SegmentEncoder& _encoder;
+  uint64_t _begin;
+  uint64_t _end;
+  std::vector<Segment*> _encoded;
 };
 
 Config NamedConfig(const StringChoice& named,
                    const ColCodecParams& params) noexcept;
 
-class Calibration {
+class StringPicker {
  public:
-  Calibration(const StringAccumulator& acc, const StringChoice* named,
-              const ColCodecParams& params, StringTuning& tuning,
-              SegmentEncoder& encoder)
-    : _acc{acc},
-      _named{named},
-      _params{params},
-      _tuning{tuning},
-      _encoder{encoder} {}
+  StringPicker(const StringAccumulator& acc, const ColCodecParams& params,
+               StringTuning& tuning, SegmentEncoder& encoder)
+    : _acc{acc}, _params{params}, _tuning{tuning}, _encoder{encoder} {}
 
-  Config CutConfig() const noexcept;
+  Config Current() const noexcept;
+
+  bool Due() noexcept { return !_tuning.pick || _tuning.clock.Due(); }
 
   bool Drifted(const Segment& seg) const noexcept;
 
-  Segment* Calibrate(Segment* cut, bool retune, bool drift);
+  Segment* Pick(Segment& first, bool drift);
 
  private:
-  struct Candidate {
-    Config config;
-    uint64_t bytes = 0;
-  };
-
-  Candidate Tune(Shape shape, const LeafPlan& plan, bool retune);
-
-  uint64_t PriceOf(Config config);
-
-  Segment* Smallest(Shape shape, Segment* best) const noexcept;
-
-  Segment* Cached(const Config& config) const noexcept;
-
-  Segment* Trial(Config config);
-
   const StringAccumulator& _acc;
-  const StringChoice* _named;
   const ColCodecParams& _params;
   StringTuning& _tuning;
   SegmentEncoder& _encoder;
-  std::vector<Segment*> _live;
-  uint64_t _begin = 0;
-  uint64_t _end = 0;
-  Candidate _smallest;
 };
 
 }  // namespace irs::codecs::text

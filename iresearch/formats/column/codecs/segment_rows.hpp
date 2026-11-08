@@ -84,14 +84,6 @@ class DedupScratch {
   uint32_t _epoch = 0;
 };
 
-struct Config {
-  StringChoice choice{};
-  uint8_t level = 0;
-  FrameLayout layout = FrameLayout::FirstFrame;
-
-  bool operator==(const Config&) const = default;
-};
-
 struct Segment {
   explicit Segment(duckdb::BufferManager& buffers) noexcept : bytes{buffers} {}
 

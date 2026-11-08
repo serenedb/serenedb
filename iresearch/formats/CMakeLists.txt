@@ -1,7 +1,6 @@
 target_sources(
     iresearch
     PRIVATE
-        column/codecs/calibration.cpp
         column/codecs/fsst.cpp
         column/codecs/fsst12.cpp
         column/codecs/fsst12_state.cpp
@@ -9,6 +8,7 @@ target_sources(
         column/codecs/fsst_plus_state.cpp
         column/codecs/fsst_state.cpp
         column/codecs/lz4.cpp
+        column/codecs/lz4_analysis.cpp
         column/codecs/numeric.cpp
         column/codecs/onpair.cpp
         column/codecs/onpair_state.cpp
@@ -17,10 +17,12 @@ target_sources(
         column/codecs/segment_dictionary.cpp
         column/codecs/segment_encoder.cpp
         column/codecs/segment_rows.cpp
+        column/codecs/string_picker.cpp
         column/codecs/string_scan.cpp
         column/codecs/string_seal.cpp
         column/codecs/zstd.cpp
         column/codecs/zxc.cpp
+        column/codecs/zxc_analysis.cpp
         column/col_file_writer.cpp
         column/col_reader.cpp
         column/col_writer.cpp

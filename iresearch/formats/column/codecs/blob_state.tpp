@@ -153,9 +153,6 @@ class BlobState {
                sampled += CompressedSize(raw);
              });
       data += Scale(sampled, sampled_raw, p.raw - _spans[0].raw);
-      auto& hist = _history[static_cast<size_t>(p.shape)];
-      hist.raw += p.raw;
-      hist.comp += data;
     }
     const auto entry_count = p.codes.size() + (p.shape == Shape::Dedup ? 1 : 0);
     Header h;

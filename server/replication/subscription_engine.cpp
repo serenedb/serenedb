@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -495,10 +496,6 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
                "' cannot start: ", ex.what());
     }
     if (!client) {
-      {
-        absl::MutexLock lock{&_mu};
-        ++StatsLocked(subscription).apply_error_count;
-      }
       if (!co_await Backoff(
             subscription, exec,
             std::chrono::milliseconds{WalRetrieveRetryIntervalMillis()})) {
@@ -508,16 +505,19 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
     }
     co_await client->RunClient();
     co_await yaclib::On(exec);
-    const bool disable = client->DisableRequested();
-    if (disable) {
-      SDB_WARN(REPLICATION, "subscription \"", name,
-               "\" has been disabled because of an error");
+    const auto disable_subscription = [&] {
       try {
         Disable(database, subscription, name);
       } catch (const std::exception& ex) {
         SDB_WARN(REPLICATION, "subscription '", name,
                  "' disable failed: ", ex.what());
       }
+    };
+    const bool disable = client->DisableRequested();
+    if (disable) {
+      SDB_WARN(REPLICATION, "subscription \"", name,
+               "\" has been disabled because of an error");
+      disable_subscription();
     }
     bool restart = false;
     bool retry_now = false;
@@ -558,7 +558,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
           }
         } else if (client->SyncFailed()) {
           ++stats.sync_error_count;
-        } else if (!client->Transient()) {
+        } else if (client->Streaming() && !client->Transient()) {
           ++stats.apply_error_count;
         }
       }
@@ -571,6 +571,12 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
         delay = kTransientRetry * (1u << state.transient_failures);
       } else {
         state.transient_failures = 0;
+      }
+    }
+    SDB_IF_FAILURE("subscription_disable_after_failed_start") {
+      if (client->Connected() && !client->Streaming()) {
+        disable_subscription();
+        break;
       }
     }
     if (restart) {

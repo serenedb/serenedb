@@ -214,6 +214,7 @@ yaclib::Task<> PgReplicationClient::RunClient() {
       streaming = false;
     }
     streaming = streaming && co_await Guarded(StartReplication());
+    _streaming.store(streaming, std::memory_order_release);
     co_await RunJob(Job::Stream);
     if (streaming) {
       auto feedback = FeedbackLoop();

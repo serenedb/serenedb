@@ -99,7 +99,9 @@ void ColWriter::EnsureOut() {
     return;
   }
   _out = _dir->create(_filename);
-  _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
+  _write_ctx = std::make_unique<WriteContext>(
+    *_db, *_out,
+    _field_options ? _field_options->block_size : DEFAULT_BLOCK_ALLOC_SIZE);
 }
 
 bool ColWriter::Empty() const noexcept {
@@ -320,6 +322,9 @@ bool ColWriter::Commit(uint64_t target_row,
           });
         });
     }
+    footer.WritePropertyWithDefault<uint64_t>(kColFieldBlockSize, "block_size",
+                                              _write_ctx->GetBlockAllocSize(),
+                                              DEFAULT_BLOCK_ALLOC_SIZE);
   });
   _out.reset();
   _committed = true;

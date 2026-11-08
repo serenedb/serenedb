@@ -100,7 +100,7 @@ FROM articles_idx          -- the index, by name
 WHERE body @@ 'search';    -- @@ match on an indexed column
 ```
 
-On a regular table, a `TSQUERY` predicate (`@@`, `ST_*`, range functions) only resolves **against an inverted-indexed column inside the index relation** — issuing it against the table raises an error. A table created `WITH (storage = 'search')` also answers `@@` on itself, for the columns its inverted indexes cover. [Vector kNN](./vector-search.md) reads the index the same way: `ORDER BY emb <-> $q LIMIT k` against the base table still answers, but from a full scan of the table.
+A `TSQUERY` predicate (`@@`, `ST_*`, range functions) needs **a column an inverted index covers**: it resolves against the table itself and against the index relation, and raises an error on any other column. [Vector kNN](./vector-search.md) reads the index the same way: `ORDER BY emb <-> $q LIMIT k` against the base table still answers, but from a full scan of the table.
 
 <DocCallout type="tip">
 

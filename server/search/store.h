@@ -406,6 +406,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   // A search table's columns and layout; empty for an inverted index.
   std::optional<irs::containers::FlatHashSet<irs::field_id>> _table_columns;
   uint32_t _row_group_size = 0;
+  uint32_t _block_size = 0;
   catalog::CompressionByColumn _compression;
   mutable absl::Mutex _layout_mutex;
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);

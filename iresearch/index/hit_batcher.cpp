@@ -86,7 +86,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     _ctx.reset();
     return;
   }
-  if (_ctx) {
+  if (_ctx && _ctx->GetBlockAllocSize() == col_reader->BlockAllocSize()) {
     _ctx->Reset(*col_reader);
   } else {
     _ctx = std::make_unique<irs::ReadContext>(*col_reader);

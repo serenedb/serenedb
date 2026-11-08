@@ -57,6 +57,8 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/cluster.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
@@ -633,6 +635,15 @@ void ForEachSearchStorage(
 
 duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(duckdb::ClientContext&) {
   duckdb::DatabaseSize size;
+  size.block_size = DEFAULT_BLOCK_ALLOC_SIZE;
+  ReadDatabase(GetName().GetIdentifierName(),
+               [&](const DatabaseCatalogEntry& database) {
+                 const auto& options = database.Options();
+                 if (const auto it = options.find(kBlockSizeSetting);
+                     it != options.end()) {
+                   size.block_size = it->second.GetValue<duckdb::idx_t>();
+                 }
+               });
   ForEachSearchStorage(
     *this,
     [&](SearchTableEntry& table) {

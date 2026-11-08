@@ -154,6 +154,7 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _durability{db_id, absl::StrCat("search table ", id)},
     _table_columns{TableColumns(columns)},
     _row_group_size{options.row_group_size},
+    _block_size{options.block_size},
     _compression{DeclaredCompression(columns)} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
@@ -870,6 +871,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
   merged->pk = catalog::PkColumnKind::None;
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
+  merged->block_size = _block_size;
   merged->declared_compression = _compression;
   merged->table_columns = *_table_columns;
   merged->constraint_keys = std::move(constraint_keys);

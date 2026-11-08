@@ -37,9 +37,10 @@ namespace irs {
 class BlockManager : public duckdb::BlockManager {
  public:
   BlockManager(duckdb::DatabaseInstance& db,
+               duckdb::optional_idx block_alloc_size,
                duckdb::idx_t block_header_size) noexcept
     : duckdb::BlockManager{duckdb::BufferManager::GetBufferManager(db),
-                           DEFAULT_BLOCK_ALLOC_SIZE, block_header_size},
+                           block_alloc_size, block_header_size},
       _db{&db},
       _allocator{&duckdb::BlockAllocator::Get(db)} {}
 

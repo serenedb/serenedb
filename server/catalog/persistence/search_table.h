@@ -33,6 +33,7 @@ struct SearchTableOptions {
   uint64_t compaction_max_segments_bytes{5368709120};
   uint64_t compaction_floor_segment_bytes{2097152};
   std::string optimize_top_k;
+  uint32_t block_size{262144};
 
   bool operator==(const SearchTableOptions& rhs) const = default;
 };

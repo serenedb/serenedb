@@ -149,7 +149,7 @@ OTLP data is stored by these rules:
 
 The five metric tables exist because the OTLP metric shapes do not share a column set — a gauge carries one `DOUBLE PRECISION`, a histogram carries bucket arrays, a summary carries quantile pairs.
 
-Each table is created `WITH (storage = 'search')` and gets one inverted index covering what dashboards filter, group and facet on. Columns outside the index are still stored and retrievable; they are read with a columnstore scan.
+Each table gets one inverted index covering what dashboards filter, group and facet on. Columns outside the index are still stored and retrievable; they are read with a columnstore scan.
 
 ## Your own schema
 

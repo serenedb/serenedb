@@ -199,6 +199,7 @@ using AnnFieldsByColumn =
 class IndexFieldOptions {
  public:
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  uint32_t block_size = DEFAULT_BLOCK_ALLOC_SIZE;
   AnnFieldsByColumn anns;
 
   std::span<const field_id> AnnFields(field_id column) const noexcept {

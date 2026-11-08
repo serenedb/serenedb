@@ -88,6 +88,7 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 
 - **Compaction cadence** -- `compaction_interval` governs how aggressively segments merge; the files merged segments replace are deleted after each compaction.
 - **Row-group size** -- `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
+- **Block size** -- `block_size` sets the size in bytes of the blocks a table's columns are compressed in: a power of two from 16384 to 262144 (the default). It is fixed at `CREATE TABLE`, and its default comes from the database's `BLOCK_SIZE` and then the `block_size` setting.
 - **Build then index** -- for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Whole-relation aggregates** -- `count(*)` over a search table or an index relation (`FROM my_index`) without a `WHERE` clause is answered from the document counts, without reading any document. `min` and `max` of numeric and temporal `INCLUDE`d columns and of keyword columns are answered the same way while the relation holds no deleted documents; deleted documents are dropped by compaction, and until then `min` and `max` read the documents. `EXPLAIN` shows no index scan for an aggregate answered this way.
 - **Top-K** -- set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> ... LIMIT k`.
@@ -106,7 +107,7 @@ Lower `segment_memory_max` to cap the segment part of that peak, raise it for la
 
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
-  WITH (storage = 'search', segment_memory_max = 134217728);  -- 128 MB
+  WITH (segment_memory_max = 134217728);  -- 128 MB
 ```
 
 <DocCallout type="tip">

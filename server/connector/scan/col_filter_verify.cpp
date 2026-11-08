@@ -54,7 +54,7 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
   const auto* col_reader = seg.GetColReader();
   SDB_ENSURE(col_reader != nullptr,
              "`.col` table filter requires a columnstore segment");
-  if (_ctx) {
+  if (_ctx && _ctx->GetBlockAllocSize() == col_reader->BlockAllocSize()) {
     _ctx->Reset(*col_reader);
   } else {
     _ctx = std::make_unique<irs::ReadContext>(*col_reader);

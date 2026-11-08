@@ -66,6 +66,7 @@
 #include "pg/catalog/oids.h"
 #include "pg/catalog/utils/acl.h"
 #include "pg/connection_context.h"
+#include "query/config.h"
 
 namespace sdb::catalog {
 namespace {
@@ -451,6 +452,9 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
   duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info) {
+  for (auto& [name, value] : info.options) {
+    value = connector::ValidateSetting(transaction.GetContext(), name, value);
+  }
   DeclareModified(transaction, *this);
   AssignObjectOid(*this, info);
   auto entry = duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);

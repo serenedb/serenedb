@@ -199,6 +199,7 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
     result.optimize_top_k =
       constant->GetLiteral().ToValue().GetValue<std::string>();
   }
+  result.block_size = OptionValue<uint32_t>(options, kBlockSizeSetting);
   return result;
 }
 
@@ -319,16 +320,18 @@ SearchTableEntry::SearchTableEntry(
     }
   }
   auto& base = info.Base();
-  if (base.oid == 0 && !FindConstant(base.options, kRowGroupSizeSetting)) {
-    ReadDatabase(catalog.GetName().GetIdentifierName(),
-                 [&](const DatabaseCatalogEntry& database) {
-                   const auto& defaults = database.Options();
-                   if (const auto it = defaults.find(kRowGroupSizeSetting);
-                       it != defaults.end()) {
-                     base.options.insert_or_assign(kRowGroupSizeSetting,
-                                                   OptionConstant(it->second));
-                   }
-                 });
+  if (base.oid == 0) {
+    ReadDatabase(
+      catalog.GetName().GetIdentifierName(),
+      [&](const DatabaseCatalogEntry& database) {
+        const auto& defaults = database.Options();
+        for (const auto name : {kRowGroupSizeSetting, kBlockSizeSetting}) {
+          const auto it = defaults.find(name);
+          if (it != defaults.end() && !FindConstant(base.options, name)) {
+            base.options.insert_or_assign(name, OptionConstant(it->second));
+          }
+        }
+      });
   }
   BindOptions(*transaction.context, base.options, base.oid == 0);
   _options = ResolveOptions(base.options);
@@ -592,6 +595,9 @@ duckdb::Value SearchTableEntry::Option(std::string_view name) const {
   }
   if (name == kRowGroupSizeSetting) {
     return duckdb::Value::UINTEGER(_options.row_group_size);
+  }
+  if (name == kBlockSizeSetting) {
+    return duckdb::Value::UINTEGER(_options.block_size);
   }
   if (name == kSegmentMemoryMaxSetting) {
     return duckdb::Value::UBIGINT(_options.segment_memory_max);

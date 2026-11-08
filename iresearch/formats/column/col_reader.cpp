@@ -155,6 +155,7 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db, IOAdvice advice)
   : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, advice)} {
   if (!_ctx.HasIn()) {
+    _ctx.SetBlockAllocSize(DEFAULT_BLOCK_ALLOC_SIZE);
     return;
   }
   auto fin = _ctx.In().Dup();
@@ -188,6 +189,8 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
             _norm_columns.push_back(std::move(column));
           });
         });
+      _ctx.SetBlockAllocSize(footer.ReadPropertyWithExplicitDefault<uint64_t>(
+        kColFieldBlockSize, "block_size", DEFAULT_BLOCK_ALLOC_SIZE));
       footer.Unset<duckdb::DatabaseInstance>();
     });
 }

@@ -51,6 +51,7 @@ inline constexpr std::string_view kFormatExt = "col";
 
 inline constexpr duckdb::field_id_t kColFieldColumns = 0;
 inline constexpr duckdb::field_id_t kColFieldNormColumns = 1;
+inline constexpr duckdb::field_id_t kColFieldBlockSize = 2;
 
 inline std::string FileName(std::string_view segment_name) {
   return absl::StrCat(segment_name, ".", kFormatExt);
@@ -80,6 +81,9 @@ class ColReader final {
     return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
+  duckdb::idx_t BlockAllocSize() const noexcept {
+    return _ctx.GetBlockAllocSize();
+  }
 
  private:
   duckdb::DatabaseInstance* _db;

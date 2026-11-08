@@ -36,6 +36,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -1159,6 +1160,30 @@ constexpr std::pair<std::string_view, VariableDescription>
                                     "\" (must be a positive multiple of the "
                                     "vector size ",
                                     STANDARD_VECTOR_SIZE, ")"));
+          }
+        },
+      },
+    },
+    {
+      kBlockSizeSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "Default columnstore block size in bytes for newly created tables. "
+        "Their WITH (block_size = ...) and their database's BLOCK_SIZE "
+        "override it. Default: 262'144.",
+        [] { return duckdb::Value::UINTEGER(DEFAULT_BLOCK_ALLOC_SIZE); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          const auto n = value.GetValue<uint32_t>();
+          if (!duckdb::IsPowerOfTwo(n) ||
+              n < duckdb::Storage::MIN_BLOCK_ALLOC_SIZE ||
+              n > duckdb::Storage::MAX_BLOCK_ALLOC_SIZE) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+              ERR_MSG("invalid value for parameter "
+                      "\"block_size\": \"",
+                      value.ToString(), "\" (must be a power of two from ",
+                      duckdb::Storage::MIN_BLOCK_ALLOC_SIZE, " to ",
+                      duckdb::Storage::MAX_BLOCK_ALLOC_SIZE, ")"));
           }
         },
       },

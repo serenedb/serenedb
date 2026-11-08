@@ -150,7 +150,7 @@ A server restored from a [backup](../../../operations/backup.md) starts with eve
 - Prepared transactions (`two_phase`) are not replicated as such; they are applied when they commit.
 - A change that violates a local constraint other than a unique key fails the apply, and the worker retries it until the conflict is fixed locally or the transaction is skipped with `SKIP`.
 - Changes are applied to the local table with the published table's schema and name; there is no routing of rows into local partitions.
-- On a search table (`WITH (storage = 'search')`) the table's triggers never fire on apply, because a search table does not take `ENABLE REPLICA TRIGGER` or `ENABLE ALWAYS TRIGGER`.
+- A table's triggers never fire on apply, because a table does not take `ENABLE REPLICA TRIGGER` or `ENABLE ALWAYS TRIGGER`.
 - `pg_subscription_rel` shows only the states `i` and `r`, because the pending tables are copied from one snapshot and the stream starts after all of them; `pg_stat_subscription` has no table synchronization or parallel apply rows.
 - The counters in `pg_stat_subscription_stats` are kept in memory and start from zero when the server restarts; `confl_update_origin_differs` and `confl_delete_origin_differs` stay zero.
 - `local_lsn` in `pg_replication_origin_status` is always `0/0`, and a subscription's origin can only be dropped with the subscription.

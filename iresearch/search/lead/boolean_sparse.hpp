@@ -82,12 +82,46 @@ class BooleanSparse {
   }
 
   uint64_t Count(doc_id_t min, doc_id_t max)
-    requires(!kProbes && !kOptional && LeafType<Lead>)
+    requires(!kScored && !kInherited)
   {
-    return CountLeaves(
-      _lead, min, max, [&](const doc_id_t* docs, uint32_t len) {
-        return len - detail::CountExcluded(_excludes, docs, len);
-      });
+    if constexpr (!kProbes && !kOptional && LeafType<Lead>) {
+      return CountLeaves(
+        _lead, min, max, [&](const doc_id_t* docs, uint32_t len) {
+          return len - detail::CountExcluded(_excludes, docs, len);
+        });
+    } else {
+      uint64_t total = 0;
+      for (auto doc = _lead.Seek(min); doc < max;) {
+        if (!Aligned(doc)) {
+          continue;
+        }
+        total += static_cast<uint64_t>(detail::Kept(_excludes, doc));
+        doc = _lead.Next();
+      }
+      return total;
+    }
+  }
+
+  uint32_t Gather(doc_id_t& doc, doc_id_t max, doc_id_t* IRS_RESTRICT out,
+                  uint32_t cap)
+    requires(!kScored && !kInherited)
+  {
+    uint32_t n = 0;
+    while (doc < max && n != cap) {
+      if (!Aligned(doc)) {
+        continue;
+      }
+      out[n] = doc;
+      n += static_cast<uint32_t>(detail::Kept(_excludes, doc));
+      doc = _lead.Next();
+    }
+    if (n != 0) {
+      _doc = out[n - 1];
+    }
+    if (doc < max) {
+      doc = Converge(doc, max);
+    }
+    return n;
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
@@ -143,23 +177,31 @@ class BooleanSparse {
     }
   }
 
+  IRS_FORCE_INLINE bool Aligned(doc_id_t& doc) {
+    if constexpr (kProbes) {
+      const auto probe = _probes.Probe(doc);
+      if (probe != doc) {
+        doc = _lead.Seek(probe);
+        return false;
+      }
+    }
+    if constexpr (kDecides) {
+      const auto probe = _optional.Probe(doc);
+      if (probe != doc) {
+        doc = _lead.Seek(probe);
+        return false;
+      }
+    }
+    return !detail::SkipSpan(_excludes, _lead, doc);
+  }
+
   IRS_FORCE_INLINE doc_id_t Converge(doc_id_t doc, doc_id_t max) {
     while (doc < max) {
-      if constexpr (kProbes) {
-        const auto probe = _probes.Probe(doc);
-        if (probe != doc) {
-          doc = _lead.Seek(probe);
-          continue;
-        }
+      if (!Aligned(doc)) {
+        continue;
       }
-      if constexpr (kDecides) {
-        const auto probe = _optional.Probe(doc);
-        if (probe != doc) {
-          doc = _lead.Seek(probe);
-          continue;
-        }
-      }
-      if (detail::SkipExcluded(_excludes, _lead, doc)) {
+      if (!detail::Kept(_excludes, doc)) {
+        doc = _lead.Next();
         continue;
       }
       return _doc = doc;

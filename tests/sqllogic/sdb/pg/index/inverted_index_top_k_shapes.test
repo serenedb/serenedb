@@ -253,6 +253,33 @@ rare_run	cluster_run	cluster_edge	sparse_holes	mid_run	half_edge
 t	t	t	t	t	t
 
 
+query
+SELECT
+  (SELECT count(*) FROM shapes_idx WHERE body @@ to_tsquery('half dense -mid')) =
+  (SELECT count(*) FROM shapes
+   WHERE (regexp_matches(body, '\bhalf\b') OR regexp_matches(body, '\bdense\b'))
+     AND NOT regexp_matches(body, '\bmid\b')) AS union_counted,
+  (SELECT list(id ORDER BY id) FROM shapes_idx WHERE body @@ to_tsquery('half dense -mid')) =
+  (SELECT list(id ORDER BY id) FROM shapes
+   WHERE (regexp_matches(body, '\bhalf\b') OR regexp_matches(body, '\bdense\b'))
+     AND NOT regexp_matches(body, '\bmid\b')) AS union_listed,
+  (SELECT count(*) FROM shapes_idx WHERE body @@ to_tsquery('+half +dense -mid')) =
+  (SELECT count(*) FROM shapes
+   WHERE regexp_matches(body, '\bhalf\b') AND regexp_matches(body, '\bdense\b')
+     AND NOT regexp_matches(body, '\bmid\b')) AS conjunction_counted,
+  (SELECT list(id ORDER BY id) FROM shapes_idx WHERE body @@ to_tsquery('+half +dense -mid')) =
+  (SELECT list(id ORDER BY id) FROM shapes
+   WHERE regexp_matches(body, '\bhalf\b') AND regexp_matches(body, '\bdense\b')
+     AND NOT regexp_matches(body, '\bmid\b')) AS conjunction_listed,
+  (SELECT count(*) FROM shapes_idx WHERE body @@ to_tsquery('common rare -half')) =
+  (SELECT count(*) FROM shapes
+   WHERE (regexp_matches(body, '\bcommon\b') OR regexp_matches(body, '\brare\b'))
+     AND NOT regexp_matches(body, '\bhalf\b')) AS dense_union_counted;
+----
+union_counted	union_listed	conjunction_counted	conjunction_listed	dense_union_counted
+t	t	t	t	t
+
+
 statement ok
 CREATE TABLE early (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 

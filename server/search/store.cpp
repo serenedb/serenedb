@@ -365,10 +365,13 @@ bool Store::PersistSegments(Lsn before) {
       return record;
     },
     [&](Tick, Tick, Lsn lsn) { _table->Synced(logged, lsn); });
+  const bool superseded = logged.size() != unsynced.size();
   unsynced.clear();
-  if (const auto cleanup = CleanupUnsafe(); !cleanup.res.ok()) {
-    SDB_WARN(SEARCH, "cleaning up table ", _id, " after persisting ",
-             logged.size(), " segment(s) failed: ", cleanup.res.message());
+  if (superseded) {
+    if (const auto cleanup = CleanupUnsafe(); !cleanup.res.ok()) {
+      SDB_WARN(SEARCH, "cleaning up table ", _id, " after persisting ",
+               logged.size(), " segment(s) failed: ", cleanup.res.message());
+    }
   }
   return true;
 }

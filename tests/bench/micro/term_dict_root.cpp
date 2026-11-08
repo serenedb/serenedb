@@ -216,17 +216,15 @@ void Open(Data& data) {
   data.field = data.fields->fields(1).front();
   const auto& impl =
     static_cast<const irs::term_dict::TermReaderImpl&>(*data.field);
-  std::vector<bytes_view> separators;
   if (!impl.Small()) {
+    irs::term_dict::SeparatorBuffer buffer;
     for (size_t block = 1; block < impl.GetRoot().Blocks(); ++block) {
-      separators.push_back(
-        impl.GetRoot().Separator(block).substr(impl.KeyPrefix().size()));
+      data.decoded.arena.append(impl.GetRoot()
+                                  .Separator(block, buffer)
+                                  .substr(impl.KeyPrefix().size()));
+      data.decoded.offsets.push_back(
+        static_cast<uint32_t>(data.decoded.arena.size()));
     }
-  }
-  for (const auto separator : separators) {
-    data.decoded.arena.append(separator);
-    data.decoded.offsets.push_back(
-      static_cast<uint32_t>(data.decoded.arena.size()));
   }
   const auto decoded = irs::term_dict::Slice(data.decoded);
   data.separators.clear();

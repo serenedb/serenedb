@@ -26,6 +26,7 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <span>
 #include <variant>
 #include <vector>
@@ -261,6 +262,16 @@ class ArtRoot : public SeparatorRoot {
   uint64_t _visits = 0;
 };
 
+class Root;
+
+struct SeparatorBuffer {
+  bstring key;
+  const Root* root = nullptr;
+  size_t block = 0;
+  const byte_type* next = nullptr;
+  bool restart = false;
+};
+
 class Root {
   IRS_FORCE_INLINE decltype(auto) Visit(auto&& visitor) const noexcept {
     if (const auto* tree = std::get_if<TreeRoot>(&_root)) [[likely]] {
@@ -273,29 +284,42 @@ class Root {
   }
 
  public:
+  static constexpr size_t kGroup = 16;
+
   Root() = default;
   Root(SeparatorsView separators, bool fixed);
 
-  size_t Blocks() const noexcept {
-    return Visit([](const auto& root) { return root.Blocks(); });
-  }
-  size_t Find(Probe key) const noexcept {
-    return Visit([&](const auto& root) { return root.Find(key); });
-  }
-  size_t FindFrom(size_t from, Probe key) const noexcept {
-    return Visit([&](const auto& root) { return root.FindFrom(from, key); });
-  }
-  bool NotAfter(size_t block, Probe key) const noexcept {
-    return Visit([&](const auto& root) { return root.NotAfter(block, key); });
-  }
-  bytes_view Separator(size_t block) const noexcept {
-    return Visit([&](const auto& root) { return root.Separator(block); });
-  }
+  size_t Blocks() const noexcept { return _count + 1; }
+  size_t Find(Probe key) const noexcept;
+  size_t FindFrom(size_t from, Probe key) const noexcept;
+  size_t FindFrom(size_t from, Probe key, SeparatorBuffer& buffer) const;
+  bool NotAfter(size_t block, Probe key) const noexcept;
+  bytes_view Separator(size_t block, SeparatorBuffer& buffer) const;
   size_t MemoryBytes() const noexcept {
-    return Visit([](const auto& root) { return root.MemoryBytes(); });
+    return Visit([](const auto& root) { return root.MemoryBytes(); }) +
+           (_restarts ? SeparatorBytes(*_restarts) + sizeof(Separators) : 0) +
+           _packed.capacity() + _groups.capacity() * sizeof(uint32_t);
   }
 
  private:
+  bytes_view Restart(size_t group) const noexcept {
+    return SeparatorAt(Slice(*_restarts), group);
+  }
+  struct Scanned {
+    size_t count;
+    bool exhausted;
+  };
+
+  size_t Groups() const noexcept { return _groups.size() - 1; }
+  size_t Scan(size_t group, bytes_view key) const noexcept;
+  static Scanned ScanFrom(const byte_type* p, const byte_type* end,
+                          size_t count, size_t matched,
+                          bytes_view key) noexcept;
+
+  std::unique_ptr<Separators> _restarts;
+  bstring _packed;
+  std::vector<uint32_t> _groups;
+  size_t _count = 0;
   std::variant<TreeRoot, EytzingerRoot, ArtRoot> _root;
 };
 

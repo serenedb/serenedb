@@ -611,10 +611,64 @@ size_t ArtRoot::Find(Probe probe) const noexcept {
   }
 }
 
-Root::Root(SeparatorsView separators, bool fixed) {
-  const size_t count = SeparatorCount(separators);
+namespace {
+
+IRS_FORCE_INLINE uint32_t ReadPacked(const byte_type*& p) noexcept {
+  uint32_t value = 0;
+  uint32_t shift = 0;
+  byte_type b = 0;
+  do {
+    b = *p++;
+    value |= uint32_t{b & 0x7Fu} << shift;
+    shift += 7;
+  } while ((b & 0x80) != 0);
+  return value;
+}
+
+IRS_FORCE_INLINE int Order(bytes_view lhs, bytes_view rhs,
+                           size_t matched) noexcept {
+  if (matched == lhs.size()) {
+    return matched == rhs.size() ? 0 : -1;
+  }
+  if (matched == rhs.size()) {
+    return 1;
+  }
+  return lhs[matched] < rhs[matched] ? -1 : 1;
+}
+
+}  // namespace
+
+Root::Root(SeparatorsView separators, bool fixed)
+  : _restarts{std::make_unique<Separators>()},
+    _count{SeparatorCount(separators)} {
+  auto& restarts = *_restarts;
+  const size_t groups = (_count + kGroup - 1) / kGroup;
+  restarts.offsets.reserve(groups + 1);
+  _groups.reserve(groups + 1);
+  const auto push = [&](byte_type b) { _packed.push_back(b); };
+  for (size_t group = 0; group != groups; ++group) {
+    const size_t first = group * kGroup;
+    restarts.arena.append(SeparatorAt(separators, first));
+    restarts.offsets.push_back(static_cast<uint32_t>(restarts.arena.size()));
+    _groups.push_back(static_cast<uint32_t>(_packed.size()));
+    const size_t end = std::min(first + kGroup, _count);
+    for (size_t i = first + 1; i < end; ++i) {
+      const auto previous = SeparatorAt(separators, i - 1);
+      const auto current = SeparatorAt(separators, i);
+      const size_t shared = CommonPrefixLength(previous, current);
+      WriteVarint(static_cast<uint32_t>(shared), push);
+      WriteVarint(static_cast<uint32_t>(current.size() - shared), push);
+      _packed.append(current.substr(shared));
+    }
+  }
+  _groups.push_back(static_cast<uint32_t>(_packed.size()));
+  restarts.arena.shrink_to_fit();
+  _packed.shrink_to_fit();
+
+  const auto view = Slice(restarts);
+  const size_t count = SeparatorCount(view);
   if (fixed) {
-    if (ArtRoot art{separators};
+    if (ArtRoot art{view};
         2 * art.Visits() <= TreeRoot::Height(count) * count) {
       _root.emplace<ArtRoot>(std::move(art));
       return;
@@ -622,19 +676,168 @@ Root::Root(SeparatorsView separators, bool fixed) {
   }
   size_t ties = 0;
   if (count > 1) {
-    const size_t skip = SharedPrefix(separators).size();
-    uint64_t last = HeadAt(SeparatorAt(separators, 0), skip);
+    const size_t skip = SharedPrefix(view).size();
+    uint64_t last = HeadAt(SeparatorAt(view, 0), skip);
     for (size_t i = 1; i != count; ++i) {
-      const uint64_t head = HeadAt(SeparatorAt(separators, i), skip);
+      const uint64_t head = HeadAt(SeparatorAt(view, i), skip);
       ties += head == last ? 1 : 0;
       last = head;
     }
   }
   if (2 * ties > count) {
-    _root.emplace<EytzingerRoot>(separators);
+    _root.emplace<EytzingerRoot>(view);
   } else {
-    _root.emplace<TreeRoot>(separators);
+    _root.emplace<TreeRoot>(view);
   }
+}
+
+size_t Root::Find(Probe probe) const noexcept {
+  const size_t restarts =
+    Visit([&](const auto& root) { return root.Find(probe); });
+  return restarts == 0 ? 0 : Scan(restarts - 1, KeyOf(probe));
+}
+
+size_t Root::FindFrom(size_t from, Probe probe) const noexcept {
+  if (from > _count) {
+    return from;
+  }
+  if (from != 0) {
+    const size_t group = (from - 1) / kGroup;
+    const auto key = KeyOf(probe);
+    if ((group + 1 == Groups() || key < Restart(group + 1)) &&
+        Restart(group) <= key) {
+      return std::max(from, Scan(group, key));
+    }
+  }
+  return std::max(from, Find(probe));
+}
+
+size_t Root::FindFrom(size_t from, Probe probe, SeparatorBuffer& buffer) const {
+  if (from == 0 || from > _count) {
+    return FindFrom(from, probe);
+  }
+  const size_t group = (from - 1) / kGroup;
+  const bool resume = buffer.root == this && buffer.block != 0 &&
+                      buffer.block <= from &&
+                      (buffer.block - 1) / kGroup == group;
+  if (!resume && (from - 1) % kGroup != 0) {
+    return FindFrom(from, probe);
+  }
+  const auto key = KeyOf(probe);
+  const auto current = Separator(from, buffer);
+  const size_t matched = CommonPrefixLength(current, key);
+  if (Order(current, key, matched) > 0) {
+    return from;
+  }
+  const auto scanned = ScanFrom(
+    buffer.next, _packed.data() + _groups[group + 1], from, matched, key);
+  if (!scanned.exhausted || group + 1 == Groups() || key < Restart(group + 1)) {
+    return scanned.count;
+  }
+  return std::max(from, Find(probe));
+}
+
+size_t Root::Scan(size_t group, bytes_view key) const noexcept {
+  return ScanFrom(_packed.data() + _groups[group],
+                  _packed.data() + _groups[group + 1], group * kGroup + 1,
+                  CommonPrefixLength(Restart(group), key), key)
+    .count;
+}
+
+Root::Scanned Root::ScanFrom(const byte_type* p, const byte_type* end,
+                             size_t count, size_t matched,
+                             bytes_view key) noexcept {
+  while (p != end) {
+    const uint32_t shared = ReadPacked(p);
+    const uint32_t size = ReadPacked(p);
+    const bytes_view suffix{p, size};
+    p += size;
+    if (shared < matched) {
+      return {.count = count, .exhausted = false};
+    }
+    if (shared == matched) {
+      const auto rest = key.substr(matched);
+      const size_t common = CommonPrefixLength(suffix, rest);
+      if (common != size &&
+          (common == rest.size() || suffix[common] > rest[common])) {
+        return {.count = count, .exhausted = false};
+      }
+      matched += common;
+    }
+    ++count;
+  }
+  return {.count = count, .exhausted = true};
+}
+
+bool Root::NotAfter(size_t block, Probe probe) const noexcept {
+  SDB_ASSERT(block != 0 && block <= _count);
+  const size_t index = block - 1;
+  const size_t group = index / kGroup;
+  const auto key = KeyOf(probe);
+  const auto restart = Restart(group);
+  size_t matched = CommonPrefixLength(restart, key);
+  int order = Order(restart, key, matched);
+  const auto* p = _packed.data() + _groups[group];
+  for (size_t i = group * kGroup + 1; i <= index; ++i) {
+    const uint32_t shared = ReadPacked(p);
+    const uint32_t size = ReadPacked(p);
+    const bytes_view suffix{p, size};
+    p += size;
+    if (shared < matched) {
+      order = 1;
+      matched = shared;
+    } else if (shared == matched) {
+      const auto rest = key.substr(matched);
+      const size_t common = CommonPrefixLength(suffix, rest);
+      order = Order(suffix, rest, common);
+      matched += common;
+    }
+  }
+  return order <= 0;
+}
+
+bytes_view Root::Separator(size_t block, SeparatorBuffer& buffer) const {
+  SDB_ASSERT(block != 0 && block <= _count);
+  const size_t group = (block - 1) / kGroup;
+  const bool resume = buffer.root == this && buffer.block != 0 &&
+                      buffer.block <= block &&
+                      (buffer.block - 1) / kGroup == group;
+  if (resume && buffer.block == block) {
+    return buffer.restart ? Restart(group) : bytes_view{buffer.key};
+  }
+  if (!resume && (block - 1) % kGroup == 0) {
+    buffer.root = this;
+    buffer.block = block;
+    buffer.next = _packed.data() + _groups[group];
+    buffer.restart = true;
+    return Restart(group);
+  }
+  const byte_type* p = nullptr;
+  size_t from = 0;
+  if (resume) {
+    if (buffer.restart) {
+      buffer.key.assign(Restart(group));
+    }
+    p = buffer.next;
+    from = buffer.block;
+  } else {
+    buffer.key.assign(Restart(group));
+    p = _packed.data() + _groups[group];
+    from = group * kGroup + 1;
+  }
+  auto& key = buffer.key;
+  for (; from != block; ++from) {
+    const uint32_t shared = ReadPacked(p);
+    const uint32_t size = ReadPacked(p);
+    key.resize(shared);
+    key.append(p, size);
+    p += size;
+  }
+  buffer.root = this;
+  buffer.block = block;
+  buffer.next = p;
+  buffer.restart = false;
+  return key;
 }
 
 }  // namespace irs::term_dict

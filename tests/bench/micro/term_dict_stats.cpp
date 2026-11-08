@@ -1246,6 +1246,68 @@ Table SegmentTable(std::span<const Dict> dicts) {
   return {};
 }
 
+struct SeparatorStats {
+  std::string_view root = "-";
+  uint64_t count = 0;
+  uint64_t bytes = 0;
+  uint64_t shared = 0;
+  uint64_t front = 0;
+};
+
+uint32_t VarintSize(uint64_t value) {
+  uint32_t size = 1;
+  for (; value >= 0x80; value >>= 7) {
+    ++size;
+  }
+  return size;
+}
+
+SeparatorStats MeasureSeparators(const td::TermReaderImpl& reader,
+                                 uint32_t width) {
+  SeparatorStats stats;
+  if (reader.Small()) {
+    return stats;
+  }
+  td::Separators restarts;
+  irs::bstring last;
+  td::SeparatorBuffer buffer;
+  for (uint32_t block = 1; block < reader.Blocks(); ++block) {
+    const auto separator = reader.GetRoot().Separator(block, buffer);
+    const size_t shared =
+      irs::CommonPrefixLength(irs::bytes_view{last}, separator);
+    const size_t suffix = separator.size() - shared;
+    stats.front += VarintSize(shared) + VarintSize(suffix) + suffix;
+    stats.bytes += separator.size();
+    stats.shared += shared;
+    if (stats.count++ % td::Root::kGroup == 0) {
+      restarts.arena.append(separator);
+      restarts.offsets.push_back(static_cast<uint32_t>(restarts.arena.size()));
+    }
+    last.assign(separator);
+  }
+  const auto view = td::Slice(restarts);
+  const size_t count = td::SeparatorCount(view);
+  if (width != 0) {
+    if (td::ArtRoot art{view};
+        2 * art.Visits() <= td::TreeRoot::Height(count) * count) {
+      stats.root = "art";
+      return stats;
+    }
+  }
+  const auto first = td::SeparatorAt(view, 0);
+  const size_t skip =
+    irs::CommonPrefixLength(first, td::SeparatorAt(view, count - 1));
+  size_t ties = 0;
+  uint64_t head = td::HeadAt(first, skip);
+  for (size_t i = 1; i != count; ++i) {
+    const uint64_t next = td::HeadAt(td::SeparatorAt(view, i), skip);
+    ties += next == head ? 1 : 0;
+    head = next;
+  }
+  stats.root = 2 * ties > count ? "eytzinger" : "tree";
+  return stats;
+}
+
 void Segment(const irs::Directory& dir, const irs::SegmentMeta& meta,
              const Options& options, Outputs& out) {
   irs::IdxReader heads_idx{dir, meta.name, nullptr};
@@ -1280,11 +1342,15 @@ void Segment(const irs::Directory& dir, const irs::SegmentMeta& meta,
     for (const auto record : dict.records) {
       records += record;
     }
-    absl::FPrintF(out.dicts.get(), "%s,%u,%d,%d,%u,%u,%u,%u,%u,%u,%u\n",
-                  meta.name, head.id, static_cast<int>(head.layout),
-                  static_cast<int>(head.member), head.term_count, head.width,
-                  dict.blocks, head.first_block, head.last_block,
-                  dict.suffix_bytes, records);
+    const auto& reader = *dict.reader;
+    const auto separators = MeasureSeparators(reader, head.width);
+    absl::FPrintF(
+      out.dicts.get(), "%s,%u,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u\n",
+      meta.name, head.id, static_cast<int>(head.layout),
+      static_cast<int>(head.member), head.term_count, head.width, dict.blocks,
+      head.first_block, head.last_block, dict.suffix_bytes, records,
+      reader.Small() ? 0 : reader.GetRoot().MemoryBytes(), separators.root,
+      separators.count, separators.bytes, separators.shared, separators.front);
     if (head.width == 0) {
       Simulate(meta.name, dict, shared, options, out);
     } else if (options.fsst) {
@@ -1405,7 +1471,9 @@ int Main(int argc, char** argv) {
                          ",written,pages_bytes,padding,raw_fits,raw_size"));
   out.dicts = OpenCsv(options.out / "dicts.csv",
                       "segment,field,layout,member,terms,width,blocks,"
-                      "first_block,last_block,suffix_bytes,record_bytes");
+                      "first_block,last_block,suffix_bytes,record_bytes,"
+                      "root_bytes,root,separators,separator_key_bytes,"
+                      "separator_shared,separator_front_bytes");
   out.fsst = OpenCsv(
     options.out / "fsst.csv",
     "segment,field,member,terms,term_bytes,prefix,actual_blocks,"

@@ -108,7 +108,7 @@ class FieldReader final {
     uint32_t count = 0;
   };
 
-  void Bind(const TermsMeta& terms);
+  Separators Bind(const TermsMeta& terms);
   void FillCopies();
 
   std::deque<TermReaderImpl> _keyed;
@@ -121,7 +121,6 @@ class FieldReader final {
   const byte_type* _base = nullptr;
   IResourceManager* _rm;
   std::vector<SpanningBlock> _spans;
-  Separators _separators;
   InlinePages _inline_pages;
   containers::NodeHashMap<uint64_t, bstring> _copies;
   std::vector<byte_type> _single_inline;

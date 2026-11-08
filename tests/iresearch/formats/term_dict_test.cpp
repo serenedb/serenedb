@@ -4019,6 +4019,86 @@ TEST(TermDictRootTest, root_matches_upper_bound) {
   AssertRoots<ChosenRoot<true>>();
 }
 
+TEST(TermDictRootTest, root_rebuilds_separators_in_any_order) {
+  const auto make = [](std::string_view scheme) {
+    std::vector<irs::bstring> separators;
+    for (size_t i = 0; i != 300; ++i) {
+      separators.emplace_back(
+        Bytes(absl::StrCat(scheme, "://host", i / 40, ".example.com/",
+                           std::string(i % 7, 'a'), i)));
+    }
+    absl::c_sort(separators);
+    return separators;
+  };
+  const auto flatten = [](const std::vector<irs::bstring>& separators) {
+    irs::term_dict::Separators owned;
+    for (const auto& separator : separators) {
+      owned.arena.append(separator);
+      owned.offsets.push_back(static_cast<uint32_t>(owned.arena.size()));
+    }
+    return owned;
+  };
+  const auto separators = make("https");
+  const auto others = make("ftp");
+  const auto owned = flatten(separators);
+  const auto owned_others = flatten(others);
+  const irs::term_dict::Root root{irs::term_dict::Slice(owned), false};
+  const irs::term_dict::Root other{irs::term_dict::Slice(owned_others), false};
+  std::vector<size_t> order;
+  for (size_t block = 1; block <= separators.size(); ++block) {
+    order.push_back(block);
+  }
+  for (size_t block = separators.size(); block != 0; --block) {
+    order.push_back(block);
+  }
+  for (size_t block = 1; block <= separators.size(); block += 1 + block % 5) {
+    order.push_back(block);
+    order.push_back(block);
+  }
+  irs::term_dict::SeparatorBuffer own;
+  irs::term_dict::SeparatorBuffer shared;
+  for (const size_t block : order) {
+    SCOPED_TRACE(testing::Message("block ") << block);
+    ASSERT_EQ(irs::bytes_view{separators[block - 1]},
+              root.Separator(block, own));
+    ASSERT_EQ(irs::bytes_view{separators[block - 1]},
+              root.Separator(block, shared));
+    ASSERT_EQ(irs::bytes_view{others[block - 1]},
+              other.Separator(block, shared));
+  }
+  const std::vector<irs::bytes_view> views{separators.begin(),
+                                           separators.end()};
+  const std::vector<irs::bytes_view> other_views{others.begin(), others.end()};
+  for (const size_t from : order) {
+    const auto& separator = separators[from - 1];
+    std::vector<irs::bstring> probes{
+      separator,
+      separator + irs::byte_type{0},
+      separator.substr(0, separator.size() - 1),
+      separators[std::min(from + 3, separators.size()) - 1],
+      separators[std::min(from + 40, separators.size()) - 1] +
+        irs::byte_type{0xFF},
+      separators[from / 2],
+    };
+    for (const auto& probe : probes) {
+      SCOPED_TRACE(testing::Message("from ")
+                   << from << " probe "
+                   << irs::ViewCast<char>(irs::bytes_view{probe}));
+      const irs::term_dict::PaddedKey padded{probe};
+      const size_t expected = std::max<size_t>(
+        from,
+        absl::c_upper_bound(views, irs::bytes_view{probe}) - views.begin());
+      ASSERT_EQ(expected, root.FindFrom(from, padded.View(), own));
+      ASSERT_EQ(expected, root.FindFrom(from, padded.View(), shared));
+      ASSERT_EQ(expected, root.FindFrom(from, padded.View()));
+      const size_t in_other = std::max<size_t>(
+        from, absl::c_upper_bound(other_views, irs::bytes_view{probe}) -
+                other_views.begin());
+      ASSERT_EQ(in_other, other.FindFrom(from, padded.View(), shared));
+    }
+  }
+}
+
 TEST(TermDictRootTest, padded_mismatch_ignores_bytes_past_size) {
   for (size_t size = 0; size != 2 * sizeof(uint64_t); ++size) {
     const irs::bstring key(size, irs::byte_type{'k'});

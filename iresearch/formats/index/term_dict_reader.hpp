@@ -141,10 +141,12 @@ class TermReaderImpl final : public TermReader {
   uint32_t FirstEntry() const noexcept { return _first_entry; }
   uint32_t FirstRecord() const noexcept { return _first_record; }
   uint32_t LastEntry() const noexcept { return _last_entry; }
-  bytes_view BlockPrefix(size_t block) const noexcept {
-    const bytes_view lower = block == 0 ? MinKey() : _root.Separator(block);
+  bytes_view BlockPrefix(size_t block, SeparatorBuffer& lower_key,
+                         SeparatorBuffer& upper_key) const {
+    const bytes_view lower =
+      block == 0 ? MinKey() : _root.Separator(block, lower_key);
     const bytes_view upper =
-      block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1);
+      block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1, upper_key);
     return lower.substr(0, CommonPrefixLength(lower, upper));
   }
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;

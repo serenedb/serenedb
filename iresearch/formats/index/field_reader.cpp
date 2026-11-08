@@ -92,7 +92,7 @@ void FieldReader::FillCopies() {
   _pending.shrink_to_fit();
 }
 
-void FieldReader::Bind(const TermsMeta& terms) {
+Separators FieldReader::Bind(const TermsMeta& terms) {
   _block_count = terms.blocks;
   _first_page = terms.first_page;
   _inline_offset = terms.inline_offset;
@@ -119,11 +119,11 @@ void FieldReader::Bind(const TermsMeta& terms) {
     Corrupted("block directory");
   }
 
-  const auto separators =
-    ViewCast<byte_type>(std::string_view{terms.separators});
+  const auto encoded = ViewCast<byte_type>(std::string_view{terms.separators});
+  Separators separators;
   if (blocks != 0) {
-    _separators = DecodeSeparators(separators, blocks - 1);
-  } else if (!separators.empty()) {
+    separators = DecodeSeparators(encoded, blocks - 1);
+  } else if (!encoded.empty()) {
     Corrupted("separators");
   }
   if (terms.inline_starts.empty() != (_inline_size == 0)) {
@@ -140,7 +140,8 @@ void FieldReader::Bind(const TermsMeta& terms) {
                            : Copy(_inline_offset, _inline_size + kSlack).data();
   }
   Account(_spans.capacity() * sizeof(SpanningBlock) +
-          SeparatorBytes(_separators) + _inline_pages.MemoryBytes());
+          _inline_pages.MemoryBytes());
+  return separators;
 }
 
 void FieldReader::prepare(const ReaderState& state) {
@@ -155,9 +156,7 @@ void FieldReader::prepare(const ReaderState& state) {
 
   _base = _in->ReadStable(0, _in->Length());
   const auto& heads = terms.fields;
-  if (!heads.empty()) {
-    Bind(terms);
-  }
+  const auto separators = heads.empty() ? Separators{} : Bind(terms);
 
   IndexFeatures features = IndexFeatures::None;
   for (const auto& head : heads) {
@@ -184,7 +183,7 @@ void FieldReader::prepare(const ReaderState& state) {
       prefix.clear();
       AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
       _dicts.push_back(
-        &_keyed.emplace_back(*this, head, prefix, *_in, _separators));
+        &_keyed.emplace_back(*this, head, prefix, *_in, separators));
     }
     ++_by_id
         .try_emplace(

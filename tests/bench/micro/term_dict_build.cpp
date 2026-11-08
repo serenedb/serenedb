@@ -189,6 +189,8 @@ struct Shape {
   uint64_t blocks = 0;
   uint64_t idx_bytes = 0;
   std::array<uint64_t, 3> kinds{};
+  uint64_t root_bytes = 0;
+  uint64_t separator_bytes = 0;
   bool fsst = false;
   std::string error;
 };
@@ -218,6 +220,16 @@ Shape Inspect(const irs::Directory& dir, std::span<const bstring> keys) {
   if (readers.empty()) {
     shape.error = "no field";
     return shape;
+  }
+  if (readers.front()->size() > 1) {
+    const auto& impl =
+      static_cast<const irs::term_dict::TermReaderImpl&>(*readers.front());
+    shape.root_bytes = impl.GetRoot().MemoryBytes();
+    irs::term_dict::SeparatorBuffer buffer;
+    for (uint32_t block = 1; block < impl.Blocks(); ++block) {
+      shape.separator_bytes +=
+        impl.GetRoot().Separator(block, buffer).size() + sizeof(uint32_t);
+    }
   }
   for (size_t i = 0; i < keys.size(); i += kCheckStep) {
     if (readers.front()->Lookup(keys[i]).docs_count != 1) {
@@ -266,6 +278,9 @@ void Build(benchmark::State& state, const std::filesystem::path& path,
   state.counters["fixed"] = static_cast<double>(shape.kinds[1]);
   state.counters["var_fsst"] = static_cast<double>(shape.kinds[2]);
   state.counters["fsst"] = shape.fsst ? 1 : 0;
+  state.counters["root_bytes"] = static_cast<double>(shape.root_bytes);
+  state.counters["separator_bytes"] =
+    static_cast<double>(shape.separator_bytes);
 }
 
 // Looks up existing keys (or keys just after them, `miss`) in a one-field

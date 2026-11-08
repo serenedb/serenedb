@@ -1,8 +1,9 @@
 """An Azure Blob Storage endpoint in the test process, for the Azure client without a real store.
 
 Path-style URLs under one storage account, containers that exist on first use, block blobs
-staged and committed by block lists, ranged reads with conditions, blob listings, same-account
-copies, single and batched deletes. Requests are not authenticated, except that while
+staged and committed by block lists, Data Lake files created, appended in order and flushed,
+ranged reads with conditions, blob listings, same-account copies, single and batched deletes.
+Requests are not authenticated, except that while
 `sas_signatures` is set, a request whose SAS signature is not one of them is refused with 403
 AuthenticationFailed, as an expired SAS is. It counts requests by kind.
 
@@ -39,6 +40,7 @@ class FakeAzure(FakeStore):
         self.sas_signatures: set[str] | None = None
         self.blobs: dict[tuple[str, str], _Blob] = {}
         self.staged: dict[tuple[str, str], dict[str, bytes]] = {}
+        self.appended: dict[tuple[str, str], bytearray] = {}
 
     @property
     def endpoint(self) -> str:
@@ -47,7 +49,7 @@ class FakeAzure(FakeStore):
     @property
     def connection_string(self) -> str:
         return (f"DefaultEndpointsProtocol=http;AccountName={ACCOUNT};AccountKey={KEY};"
-                f"BlobEndpoint={self.endpoint};")
+                f"BlobEndpoint={self.endpoint};DfsEndpoint={self.endpoint};")
 
     def sas_connection_string(self, signature: str) -> str:
         return (f"BlobEndpoint={self.endpoint};SharedAccessSignature=sv=2022-11-02&ss=b&srt=sco"
@@ -191,6 +193,20 @@ class _Handler(Handler):
             return
         container, name, query = self._target()
         body = self._body()
+        if query.get("resource", [""])[0] == "file":
+            self.fake.count("CREATE_FILE")
+            with self.fake.lock:
+                exists = self._occupied(container, name)
+                if not exists:
+                    blob = _Blob(b"")
+                    self.fake.blobs[(container, name)] = blob
+                    self.fake.appended[(container, name)] = bytearray()
+            if exists:
+                self._error(409, "PathAlreadyExists")
+                return
+            self._reply(201, headers={"ETag": blob.etag, "Last-Modified": http_date(blob.modified),
+                                      "x-ms-request-server-encrypted": "true"})
+            return
         comp = query.get("comp", [""])[0]
         if comp == "block":
             self.fake.count("PUT_BLOCK")
@@ -236,6 +252,39 @@ class _Handler(Handler):
                                       "x-ms-copy-id": str(uuid.uuid4()), "x-ms-copy-status": "success"})
             return
         self._error(400, "InvalidQueryParameterValue")
+
+    def do_PATCH(self) -> None:
+        if self._forbidden():
+            return
+        container, name, query = self._target()
+        body = self._body()
+        action = query.get("action", [""])[0]
+        position = int(query.get("position", ["0"])[0])
+        if action not in ("append", "flush"):
+            self._error(400, "InvalidQueryParameterValue")
+            return
+        self.fake.count(action.upper())
+        with self.fake.lock:
+            appended = self.fake.appended.get((container, name))
+            if appended is None:
+                error = (404, "PathNotFound")
+            elif position != len(appended):
+                error = (400, "InvalidAppendPosition" if action == "append" else "InvalidFlushPosition")
+            else:
+                error = None
+                if action == "append":
+                    appended.extend(body)
+                else:
+                    blob = _Blob(bytes(appended))
+                    self.fake.blobs[(container, name)] = blob
+        if error is not None:
+            self._error(*error)
+            return
+        if action == "append":
+            self._reply(202, headers={"x-ms-request-server-encrypted": "true"})
+            return
+        self._reply(200, headers={"ETag": blob.etag, "Last-Modified": http_date(blob.modified),
+                                  "x-ms-request-server-encrypted": "true"})
 
     def do_DELETE(self) -> None:
         if self._forbidden():

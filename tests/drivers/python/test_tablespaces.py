@@ -1106,6 +1106,24 @@ def test_a_partitioned_copy_to_s3_checks_its_target_with_one_listing(tmp_path: P
             server.stop()
 
 
+def test_a_copy_to_a_dfs_file_reads_back(tmp_path: Path) -> None:
+    target = f"abfss://files/copied-{tmp_path.name}/numbers.csv"
+    with FakeAzure() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL azure_write_block_size = 262144")
+                conn.execute("CREATE PERSISTENT SECRET dfs_store (TYPE azure, "
+                             f"CONNECTION_STRING '{fake.connection_string}', SCOPE 'abfss://files')")
+                conn.execute(f"COPY (SELECT i FROM range(100000) t(i)) TO '{target}' (FORMAT csv, HEADER)")
+                assert conn.execute(f"SELECT count(*), sum(i) FROM read_csv('{target}')").fetchone() == (
+                    100000, 4999950000)
+        finally:
+            server.stop()
+    assert fake.requests["APPEND"] > 1 and fake.requests["FLUSH"] > 0, fake.requests
+
+
 @pytest.mark.parametrize("kind", ["s3", "azure"])
 def test_a_restart_lists_each_directory_one_level_deep(tmp_path: Path, kind: str) -> None:
     prefix = f"listed-{tmp_path.name}"

@@ -420,9 +420,14 @@ bool TryClaimIResearchConjunctImpl(
       deferred->declined_parameter = true;
       return false;
     }
+    auto substituted =
+      SubstituteParameters(conjunct->Copy(), /*with_values=*/false);
+    if (!substituted) {
+      deferred->declined_parameter = true;
+      return false;
+    }
     try {
-      auto shaped = NormalizeClaimShape(
-        context, SubstituteParameters(conjunct->Copy(), /*with_values=*/false));
+      auto shaped = NormalizeClaimShape(context, std::move(substituted));
       connector::FilterScorers shaped_scorers;
       const auto column_getter = deferred->Recording(getter);
       const auto expression_getter = deferred->Recording(expr_getter);
@@ -2058,6 +2063,9 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
     const auto& param = expr->Cast<duckdb::BoundParameterExpression>();
     auto value = with_values ? param.ParameterData()->GetValue()
                              : ShapeValue(param.GetReturnType());
+    if (!with_values && value.IsNull()) {
+      return nullptr;
+    }
     if (value.type() != param.GetReturnType()) {
       value = value.DefaultCastAs(param.GetReturnType());
     }
@@ -2077,11 +2085,15 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
       }
     }
   }
+  bool unshaped = false;
   duckdb::ExpressionIterator::EnumerateChildren(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
-      child = SubstituteParameters(std::move(child), with_values);
+      if (!unshaped) {
+        child = SubstituteParameters(std::move(child), with_values);
+        unshaped = !child;
+      }
     });
-  return expr;
+  return unshaped ? nullptr : std::move(expr);
 }
 
 std::optional<RowForm> RowFormOf(const duckdb::Expression& conjunct) {

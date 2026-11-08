@@ -696,6 +696,11 @@ bool InMemorySegment(const irs::SubReader& segment) {
     ->InMemory();
 }
 
+std::optional<uint64_t> UniqueMatchBound(const ScanBindData& scan,
+                                         const irs::Filter& filter) {
+  return UniqueMatches(filter, UniqueTermFields(scan));
+}
+
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
                                   const search::StoreSnapshot& snapshot) {

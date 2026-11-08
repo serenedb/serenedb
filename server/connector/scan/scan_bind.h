@@ -347,6 +347,9 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
 
 bool InMemorySegment(const irs::SubReader& segment);
 
+std::optional<uint64_t> UniqueMatchBound(const ScanBindData& scan,
+                                         const irs::Filter& filter);
+
 inline const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk,
   const irs::Scorer* scorer) {

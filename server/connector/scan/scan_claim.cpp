@@ -744,6 +744,12 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);
   }
+  if (where) {
+    if (const auto rows = UniqueMatchBound(bind, *where);
+        rows && *rows <= STANDARD_VECTOR_SIZE) {
+      parallel = 1;
+    }
+  }
   g.workers = static_cast<uint32_t>(std::clamp<uint64_t>(
     std::min(threads, parallel), 1, std::numeric_limits<uint32_t>::max()));
   g.joinable = std::make_unique<std::atomic_uint32_t[]>(g.workers);

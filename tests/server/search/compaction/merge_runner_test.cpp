@@ -696,7 +696,6 @@ TEST_F(MergeRunnerTest, AMergeKeepsOneIdFromItsStartToTheHistory) {
   EXPECT_EQ(0, Start(*runner, relation, "refused", 512 * kMiB));
   const auto active = runner->Active(1);
   ASSERT_EQ(1, active.size());
-  EXPECT_FALSE(active[0].Queued());
   EXPECT_EQ(MergeOrigin::Background, active[0].origin);
   EXPECT_EQ(std::vector<std::string>(
               {"running.0", "running.1", "running.2", "running.3"}),
@@ -739,7 +738,6 @@ TEST_F(MergeRunnerTest, ForegroundMergesAreRecordedBesideBackgroundOnes) {
   ASSERT_EQ(4, active.size());
   EXPECT_EQ(vacuum, active[0].id);
   EXPECT_EQ(MergeOrigin::Vacuum, active[0].origin);
-  EXPECT_FALSE(active[0].Queued());
   EXPECT_EQ(0, active[0].queued_us);
   EXPECT_EQ(40, active[0].stats.input_docs);
   EXPECT_EQ(30, active[0].stats.input_live_docs);

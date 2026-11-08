@@ -372,6 +372,11 @@ class PgWireSession
   void DescribePortal(Portal& portal);
   PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan,
                       std::span<const duckdb::Value> values);
+  duckdb::unique_ptr<duckdb::PreparedStatement> PrepareInternal(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement,
+    duckdb::optional_ptr<
+      const duckdb::case_insensitive_map_t<duckdb::LogicalType>>
+      hints = nullptr);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
                          std::string_view statement_name);
 

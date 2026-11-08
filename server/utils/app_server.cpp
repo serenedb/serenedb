@@ -107,6 +107,7 @@ void AppServer::wait() {
   lifecycle::WaitForShutdown();
   SDB_INFO(GENERAL, "received shutdown signal, beginning shut down sequence");
 #ifdef SDB_FAULT_INJECTION
+  SDB_PARK_ONCE_ON_FAILURE("hold_shutdown");
   duckdb::FaultPoints::Clear();
 #endif
 }

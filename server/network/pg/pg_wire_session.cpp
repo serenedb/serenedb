@@ -455,6 +455,13 @@ bool PgWireSession<Kind>::SetupConnection() {
   SDB_IF_FAILURE("setup_connection_throw") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
+  if (lifecycle::IsStopping()) {
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_CANNOT_CONNECT_NOW),
+                     ERR_MSG("the database system is shutting down")));
+    return false;
+  }
   duckdb::idx_t database_id = 0;
   duckdb::Permissions permissions;
   if (!catalog::ReadDatabase(
@@ -1689,7 +1696,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     RejectBinaryCopyOptions(*copy.info);
   }
   auto inner = ExtractCopyToQuery(copy);
-  auto prepared = _conn->Prepare(std::move(inner));
+  auto prepared = PrepareInternal(std::move(inner));
   ThrowIfError(*prepared);
   // The wire collector runs the extracted INNER query, so the generic COPY
   // staging in PendingQueryEnsured never sees this statement.
@@ -1762,10 +1769,10 @@ template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
   auto probe = statement->Copy();
-  auto prepared = _conn->Prepare(std::move(statement));
+  auto prepared = PrepareInternal(std::move(statement));
   ThrowIfError(*prepared);
   auto inner = ExtractCopyToQuery(probe->Cast<duckdb::CopyStatement>());
-  auto inner_prepared = _conn->Prepare(std::move(inner));
+  auto inner_prepared = PrepareInternal(std::move(inner));
   ThrowIfError(*inner_prepared);
 
   WriteCopyOutResponse(this->_send, IsBinaryWireFormat(format),
@@ -2097,7 +2104,10 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // non-temporary expansion (ALTER ADD COLUMN ... DEFAULT <volatile>) keeps all
   // its statements and runs as a compound at Execute.
   while (extracted.size() > 1 && IsTemporaryCreate(*extracted.front())) {
-    auto result = _conn->Query(std::move(extracted.front()));
+    auto result = [&] {
+      const auto internal = _connection_ctx->InternalStatements();
+      return _conn->Query(std::move(extracted.front()));
+    }();
     if (result->HasError()) {
       _proto.statements.Undefine(statement_name);
       result->GetErrorObject().Throw();
@@ -2107,6 +2117,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   if (extracted.size() == 1) {
     // The temp-DDL scaffolding above ran full query lifecycles whose statement
     // end released the Parse-time snapshot.
+    _connection_ctx->RefreshCatalogEpoch();
     const auto bind_epoch = _connection_ctx->CatalogEpoch();
     const duckdb::Identifier alias{statement_name};
     auto prepared = _conn->Prepare(std::move(extracted[0]),
@@ -2242,7 +2253,7 @@ void PgWireSession<Kind>::RevalidatePlan(Statement& stmt) {
   stmt.ReleaseUnusedPlan();
   const auto& hints = stmt.TypeHints();
   auto prepared =
-    _conn->Prepare(std::move(rebind), hints.empty() ? nullptr : &hints);
+    PrepareInternal(std::move(rebind), hints.empty() ? nullptr : &hints);
   if (prepared->HasError()) {
     // The statement keeps its source, so the next Bind retries the re-plan
     // (PG's revalidation likewise fails per attempt, not once and for all).
@@ -2453,11 +2464,22 @@ PlanPtr PgWireSession<Kind>::ResolvePlan(
                         ? DeclaredNumericParamType(*plan, stmt, i, values)
                         : ResolveExpectedType(*plan, stmt.TypeHints(), i));
   }
-  auto resolved = _conn->Prepare(stmt.Source()->Copy(), &hints);
+  auto resolved = PrepareInternal(stmt.Source()->Copy(), &hints);
   if (resolved->HasError()) {
     return plan;
   }
   return PlanPtr{std::move(resolved)};
+}
+
+template<SocketKind Kind>
+duckdb::unique_ptr<duckdb::PreparedStatement>
+PgWireSession<Kind>::PrepareInternal(
+  duckdb::unique_ptr<duckdb::SQLStatement> statement,
+  duckdb::optional_ptr<
+    const duckdb::case_insensitive_map_t<duckdb::LogicalType>>
+    hints) {
+  const auto internal = _connection_ctx->InternalStatements();
+  return _conn->Prepare(std::move(statement), hints);
 }
 
 template<SocketKind Kind>
@@ -2714,12 +2736,12 @@ yaclib::Task<> PgWireSession<Kind>::ExecuteCompound(Portal& portal) {
   const auto& body = portal.stmt->GetCompound();
   duckdb::vector<duckdb::Value> no_params;
   for (duckdb::idx_t i = 0; i + 1 < body.size(); ++i) {
-    auto prepared = _conn->Prepare(body[i]->Copy());
+    auto prepared = PrepareInternal(body[i]->Copy());
     ThrowIfError(*prepared);
     ClosingPending pending;
     co_await DriveToResult(*prepared, no_params, pending, nullptr);
   }
-  auto last = _conn->Prepare(body.back()->Copy());
+  auto last = PrepareInternal(body.back()->Copy());
   ThrowIfError(*last);
   portal.plan = std::move(last);
   co_return {};
@@ -3128,6 +3150,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
       lifecycle::BeginShutdown();
       co_return {};
     }
+    SDB_IF_FAILURE("begin_shutdown_on_packet") { lifecycle::BeginShutdown(); }
 
     if (type == PQ_MSG_FLUSH) {
       _frames.Consume(frame);

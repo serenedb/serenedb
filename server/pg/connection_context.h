@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -192,6 +193,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   bool IsStableSnapshot() const;
 
   uint64_t CatalogEpoch() const noexcept { return _catalog_epoch; }
+  void RefreshCatalogEpoch() noexcept;
 
   std::optional<std::string> Get(std::string_view key);
 
@@ -215,6 +217,10 @@ class ConnectionContext final : public duckdb::ClientContext {
     return _had_query_in_transaction;
   }
   void MarkQueryInTransaction() noexcept { _had_query_in_transaction = true; }
+  [[nodiscard]] auto InternalStatements() noexcept {
+    ++_internal_statements;
+    return absl::Cleanup{[this] { --_internal_statements; }};
+  }
   void MarkStatementDml() noexcept { _statement_is_dml = true; }
 
   bool TryDropSearchReader(duckdb::idx_t database_id, duckdb::idx_t shard_id);
@@ -262,7 +268,6 @@ class ConnectionContext final : public duckdb::ClientContext {
     std::optional<duckdb::Value> commit_restore;
   };
 
-  void RefreshCatalogEpoch() noexcept;
   void EndTransaction() noexcept;
 
   void OnSet(std::string_view name, bool is_local, duckdb::Value old_value);
@@ -291,6 +296,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   std::shared_ptr<catalog::SessionTransaction> _transaction;
   duckdb::transaction_t _transaction_owner = duckdb::MAX_TRANSACTION_ID;
   utils::DrainGate::Pass _commit_pass;
+  uint32_t _internal_statements = 0;
   bool _query_in_transaction = false;
   bool _had_query_in_transaction = false;
   bool _statement_is_dml = false;

@@ -89,3 +89,26 @@ def test_prepared_statements_survive_concurrent_alters(tmp_path: Path) -> None:
             assert docs == rows
     finally:
         server.stop()
+
+
+def test_replanned_statement_counts_one_transaction(tmp_path: Path) -> None:
+    server = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                     log_path=str(tmp_path / "serened.log"))
+    try:
+        server.start()
+        with _connect(server) as tusk:
+            tusk.execute("CREATE DATABASE vjling_counted")
+            commits = "SELECT xact_commit FROM pg_stat_database WHERE datname = 'vjling_counted'"
+            with psycopg.connect(server.dsn(database="vjling_counted"), autocommit=True) as counted:
+                counted.execute("SELECT 1", prepare=True)
+                first = tusk.execute(commits).fetchone()[0]
+                counted.execute("SELECT 1", prepare=True)
+                quiet = tusk.execute(commits).fetchone()[0]
+                tusk.execute("CREATE TABLE vjling_epoch (i INTEGER)")
+                counted.execute("SELECT 2")
+                moved = tusk.execute(commits).fetchone()[0]
+                counted.execute("SELECT 1", prepare=True)
+                replanned = tusk.execute(commits).fetchone()[0]
+                assert replanned - moved == quiet - first
+    finally:
+        server.stop()

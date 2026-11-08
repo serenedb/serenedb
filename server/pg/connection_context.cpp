@@ -440,7 +440,9 @@ void ConnectionContext::OnQueryBegin() {
       !transaction.IsAutoCommit()) {
     transaction.ActiveTransaction().RefreshStartTime();
   }
-  _query_in_transaction = true;
+  if (_internal_statements == 0) {
+    _query_in_transaction = true;
+  }
   _progress->BeginQuery(GetCurrentQuery());
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = _progress->metrics;

@@ -711,11 +711,6 @@ namespace {
     case duckdb::AlterTableType::FOREIGN_KEY_CONSTRAINT:
       change = "a foreign key";
       break;
-    case duckdb::AlterTableType::ADD_FIELD:
-    case duckdb::AlterTableType::REMOVE_FIELD:
-    case duckdb::AlterTableType::RENAME_FIELD:
-      change = "changing a struct field";
-      break;
     case duckdb::AlterTableType::SET_PARTITIONED_BY:
       change = "SET PARTITIONED BY";
       break;

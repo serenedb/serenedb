@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_entry/collate_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/coordinate_system_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/copy_function_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp>
@@ -40,6 +41,7 @@
 #include <duckdb/common/exception/catalog_exception.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_aggregate_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_collation_info.hpp>
 #include <duckdb/parser/parsed_data/create_coordinate_system_info.hpp>
@@ -172,6 +174,67 @@ void ResolveDependencyOids(duckdb::CatalogTransaction transaction,
     resolved.AddDependency(dependency);
   }
   dependencies = std::move(resolved);
+}
+
+bool ChangesStructField(const duckdb::AlterInfo& info) {
+  if (info.type != duckdb::AlterType::ALTER_TABLE) {
+    return false;
+  }
+  switch (info.Cast<duckdb::AlterTableInfo>().alter_table_type) {
+    case duckdb::AlterTableType::ADD_FIELD:
+    case duckdb::AlterTableType::REMOVE_FIELD:
+    case duckdb::AlterTableType::RENAME_FIELD:
+      return true;
+    default:
+      return false;
+  }
+}
+
+duckdb::unique_ptr<duckdb::AlterInfo> StructFieldRetype(
+  const duckdb::TableCatalogEntry& table, const duckdb::AlterTableInfo& alter) {
+  duckdb::StructFieldRemap remap;
+  duckdb::Identifier column;
+  bool tolerate_missing = false;
+  switch (alter.alter_table_type) {
+    case duckdb::AlterTableType::ADD_FIELD: {
+      const auto& add = alter.Cast<duckdb::AddFieldInfo>();
+      column = add.column_path[0];
+      const auto& definition = table.GetColumn(table.GetColumnIndex(column));
+      remap = duckdb::BuildAddFieldRemap(definition.Type(), definition.Name(),
+                                         add.column_path, add.new_field);
+      tolerate_missing = add.if_field_not_exists;
+      break;
+    }
+    case duckdb::AlterTableType::REMOVE_FIELD: {
+      const auto& remove = alter.Cast<duckdb::RemoveFieldInfo>();
+      column = remove.column_path[0];
+      const auto index = table.GetColumnIndex(column, remove.if_column_exists);
+      if (!index.IsValid()) {
+        return nullptr;
+      }
+      remap = duckdb::BuildRemoveFieldRemap(table.GetColumn(index).Type(),
+                                            remove.column_path);
+      tolerate_missing = remove.if_column_exists;
+      break;
+    }
+    default: {
+      const auto& rename = alter.Cast<duckdb::RenameFieldInfo>();
+      column = rename.column_path[0];
+      remap = duckdb::BuildRenameFieldRemap(
+        table.GetColumn(table.GetColumnIndex(column)).Type(),
+        rename.column_path, rename.new_name.GetIdentifierName());
+      break;
+    }
+  }
+  if (remap.error.HasError()) {
+    if (tolerate_missing) {
+      return nullptr;
+    }
+    remap.error.Throw();
+  }
+  return duckdb::make_uniq<duckdb::ChangeColumnTypeInfo>(
+    alter.GetAlterEntryData(), duckdb::vector<duckdb::Identifier>{column},
+    std::move(remap.new_type), std::move(remap.remap_expression));
 }
 
 }  // namespace
@@ -836,6 +899,15 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
     DeclareModified(transaction, catalog,
                     duckdb::DatabaseModificationType::ALTER_TABLE);
     Move(transaction, set, type, *entry, target->Cast<Schema>(), info);
+    return;
+  }
+  if (entry->type == duckdb::CatalogType::TABLE_ENTRY &&
+      ChangesStructField(info)) {
+    auto retype = StructFieldRetype(entry->Cast<duckdb::TableCatalogEntry>(),
+                                    info.Cast<duckdb::AlterTableInfo>());
+    if (retype) {
+      Alter(transaction, *retype);
+    }
     return;
   }
   const bool replay = info.bind_mode == duckdb::AlterBindMode::SKIP_BINDING;

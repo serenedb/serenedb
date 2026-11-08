@@ -134,8 +134,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::vector<duckdb::ColumnSegmentInfo>& result) final;
 
   static duckdb::vector<duckdb::ColumnSegmentInfo> ColumnSegmentRows(
-    const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
-    duckdb::column_t key_column);
+    const duckdb::QueryContext& context, const irs::DirectoryReader& reader,
+    const duckdb::TableCatalogEntry& table, duckdb::column_t key_column,
+    bool segment_info);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;

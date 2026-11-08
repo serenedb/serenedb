@@ -819,8 +819,9 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   const auto key_column =
     keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID
                  : table.GetColumns().LogicalToPhysical(keys.front()).index;
-  result =
-    SearchTableEntry::ColumnSegmentRows(snapshot->reader, table, key_column);
+  result = SearchTableEntry::ColumnSegmentRows(
+    context, snapshot->reader, table, key_column,
+    state.options.include_segment_info);
   return true;
 }
 

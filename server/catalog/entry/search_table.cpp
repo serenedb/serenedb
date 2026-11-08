@@ -25,6 +25,7 @@
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -63,6 +64,7 @@
 #include <duckdb/storage/table/row_group_collection.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -345,6 +347,7 @@ void SearchTableEntry::ApplyKeys() const {
 namespace {
 
 void AppendIResearchBlockRows(
+  const duckdb::QueryContext& context, irs::ReadContext* read,
   const irs::ColumnReader& node, duckdb::idx_t column_id,
   std::vector<duckdb::idx_t>& path, std::string_view type_name, size_t segment,
   uint64_t row_base, const duckdb::virtual_column_map_t& virtual_columns,
@@ -383,33 +386,46 @@ void AppendIResearchBlockRows(
     info.persistent = true;
     info.block_id = INVALID_BLOCK;
     info.block_offset = meta.file_offset;
+    if (read && meta.codec && meta.codec->get_segment_info) {
+      const auto opened = node.OpenSegment(block, *read);
+      std::vector<std::string> modes;
+      for (const auto& [mode, count] :
+           meta.codec->get_segment_info(context, *opened)) {
+        modes.push_back(absl::StrCat(mode, ": ", count));
+      }
+      info.segment_info = absl::StrJoin(modes, ", ");
+    }
   }
 }
 
-void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
+void WalkIResearchColumn(const duckdb::QueryContext& context,
+                         irs::ReadContext* read, const irs::ColumnReader& node,
+                         duckdb::idx_t column_id,
                          std::vector<duckdb::idx_t>& path, size_t segment,
                          uint64_t row_base,
                          const duckdb::virtual_column_map_t& virtual_columns,
                          duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
-  AppendIResearchBlockRows(node, column_id, path, node.Type().ToString(),
-                           segment, row_base, virtual_columns, out);
+  AppendIResearchBlockRows(context, read, node, column_id, path,
+                           node.Type().ToString(), segment, row_base,
+                           virtual_columns, out);
   if (const auto* validity = node.Validity()) {
     path.emplace_back(0);
-    AppendIResearchBlockRows(*validity, column_id, path, "VALIDITY", segment,
-                             row_base, virtual_columns, out);
+    AppendIResearchBlockRows(context, read, *validity, column_id, path,
+                             "VALIDITY", segment, row_base, virtual_columns,
+                             out);
     path.pop_back();
   }
   if (duckdb::StructType::IsStruct(node.Type())) {
     for (size_t i = 0; i < node.StructFieldCount(); ++i) {
       path.emplace_back(i + 1);
-      WalkIResearchColumn(node.StructField(i), column_id, path, segment,
-                          row_base, virtual_columns, out);
+      WalkIResearchColumn(context, read, node.StructField(i), column_id, path,
+                          segment, row_base, virtual_columns, out);
       path.pop_back();
     }
   } else if (const auto* child = node.Child()) {
     path.emplace_back(1);
-    WalkIResearchColumn(*child, column_id, path, segment, row_base,
-                        virtual_columns, out);
+    WalkIResearchColumn(context, read, *child, column_id, path, segment,
+                        row_base, virtual_columns, out);
     path.pop_back();
   }
 }
@@ -417,8 +433,9 @@ void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
 }  // namespace
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
-  const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
-  duckdb::column_t key_column) {
+  const duckdb::QueryContext& context, const irs::DirectoryReader& reader,
+  const duckdb::TableCatalogEntry& table, duckdb::column_t key_column,
+  bool segment_info) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
   const auto locate = [&](irs::field_id id) -> std::optional<duckdb::idx_t> {
     if (id == connector::kGeneratedPKId) {
@@ -436,14 +453,19 @@ duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
   for (size_t segment = 0; segment < reader.size(); ++segment) {
     const auto& sub = reader[segment];
     if (const auto* columns = sub.GetColReader()) {
+      std::optional<irs::ReadContext> read;
+      if (segment_info) {
+        read.emplace(*columns);
+      }
       for (const auto& column : columns->Columns()) {
         const auto column_id = locate(column->Id());
         if (!column_id) {
           continue;
         }
         std::vector<duckdb::idx_t> path{*column_id};
-        WalkIResearchColumn(*column, *column_id, path, segment, start,
-                            virtual_columns, result);
+        WalkIResearchColumn(context, read ? &*read : nullptr, *column,
+                            *column_id, path, segment, start, virtual_columns,
+                            result);
       }
     }
     start += sub.docs_count();
@@ -452,7 +474,8 @@ duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
 }
 
 bool SearchTableEntry::ScanColumnSegmentInfo(
-  const duckdb::QueryContext&, duckdb::ColumnSegmentInfoScanState& state,
+  const duckdb::QueryContext& context,
+  duckdb::ColumnSegmentInfoScanState& state,
   duckdb::vector<duckdb::ColumnSegmentInfo>& result) {
   if (state.position++ != 0) {
     return false;
@@ -461,7 +484,9 @@ bool SearchTableEntry::ScanColumnSegmentInfo(
   if (!reader) {
     return false;
   }
-  result = ColumnSegmentRows(reader, *this, duckdb::COLUMN_IDENTIFIER_ROW_ID);
+  result =
+    ColumnSegmentRows(context, reader, *this, duckdb::COLUMN_IDENTIFIER_ROW_ID,
+                      state.options.include_segment_info);
   return true;
 }
 

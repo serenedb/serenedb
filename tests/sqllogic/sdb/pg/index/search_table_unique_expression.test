@@ -67,7 +67,7 @@ INSERT INTO ue_users VALUES (7, NULL, 1), (8, NULL, 2);
 
 
 statement ok
-CHECKPOINT;
+VACUUM (FLUSH_TABLE) ue_users;
 
 
 statement ok

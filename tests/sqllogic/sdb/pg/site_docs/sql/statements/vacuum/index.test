@@ -68,6 +68,15 @@ SELECT count(*) FROM articles_idx WHERE body @@ ts_phrase('fox');
 count
 1
 
+statement ok
+VACUUM (FLUSH_TABLE) articles;
+
+query
+SELECT count(*) FROM articles_idx WHERE body @@ ts_phrase('fox');
+----
+count
+1
+
 # DOCS_TEST: example_008
 statement ok
 DROP TABLE IF EXISTS articles;

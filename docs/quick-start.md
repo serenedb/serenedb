@@ -126,6 +126,6 @@ Query types:
 Going further:
 
 - [Indexing External Data](sql/indexes/inverted/external-data.md) — zero-ETL search over a Parquet / CSV / JSON / Iceberg data lake
-- [Maintenance & Introspection](sql/indexes/inverted/maintenance.md) — refresh, compaction and inspecting indexes
+- [Maintenance & Introspection](sql/indexes/inverted/maintenance.md) — flushing, compaction and inspecting indexes
 - [Migrating from Elasticsearch](sql/indexes/inverted/migrating-from-elasticsearch.md) — feature mapping, including aggregations
 - [AI Functions](sql/functions/ai.md) — generate embeddings with `ai_embed`

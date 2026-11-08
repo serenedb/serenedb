@@ -9,11 +9,11 @@ import RailroadSource from './diagram.js';
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-`VACUUM` serves two roles in SereneDB. On standard tables it is a PostgreSQL-compatible no-op, accepted so that existing tooling keeps working. It is also extended with options that maintain SereneDB's [inverted indexes](../create_index/index.md).
+`VACUUM` serves two roles in SereneDB. Without options it is a PostgreSQL-compatible no-op, accepted so that existing tooling keeps working. It is also extended with options that maintain tables and their [inverted indexes](../create_index/index.md).
 
 ## Standard `VACUUM` and `ANALYZE`
 
-On a standard table `VACUUM` does no work — it is accepted purely for PostgreSQL compatibility.
+Without options `VACUUM` does no work — it is accepted purely for PostgreSQL compatibility.
 
 The bare form:
 
@@ -33,15 +33,17 @@ Targeting a specific table, optionally with a column list, is also accepted and 
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_005" />
 
-## Inverted Index Maintenance
+## Table and Index Maintenance
 
-SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into three families.
+SereneDB extends `VACUUM` with options that maintain tables and their [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into three families.
 
-### Refreshing — `REFRESH_*`
+### Flushing — `FLUSH_*`
 
-Inverted indexes are eventually consistent: rows you `INSERT`, `UPDATE` or `DELETE` may not be visible to queries until the index is refreshed. `REFRESH_*` publishes pending writes to readers. After writing to an indexed table, refresh it so the new rows become searchable:
+Rows you `INSERT`, `UPDATE` or `DELETE` are visible to queries, full-text search included, as soon as the transaction commits. A table holds its most recent writes in memory and writes them to its on-disk segments later. `FLUSH_*` writes them now; `FLUSH_INDEX` flushes the table the index belongs to. It does not change query results:
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_007" />
+
+`CHECKPOINT` writes them too, for every table of the instance; `FLUSH_*` writes only the objects it names.
 
 ### Compacting — `COMPACT_*`
 
@@ -63,17 +65,17 @@ Inverted indexes and search tables also compact in the background by default (se
 
 Each option applies at the scope named by its suffix and takes the matching object name as its argument:
 
-| Scope | `REFRESH` | `COMPACT` | `RECOMPUTE_STATS` | Argument |
+| Scope | `FLUSH` | `COMPACT` | `RECOMPUTE_STATS` | Argument |
 |---|---|---|---|---|
-| Index | `REFRESH_INDEX` | `COMPACT_INDEX` | — | index name |
-| Table | `REFRESH_TABLE` | `COMPACT_TABLE` | `RECOMPUTE_STATS_TABLE` | table name |
-| Schema | `REFRESH_SCHEMA` | `COMPACT_SCHEMA` | `RECOMPUTE_STATS_SCHEMA` | `[database.]schema` |
-| Database | `REFRESH_DATABASE` | `COMPACT_DATABASE` | `RECOMPUTE_STATS_DATABASE` | database name |
-| Everything | `REFRESH_ALL` | `COMPACT_ALL` | `RECOMPUTE_STATS_ALL` | *(none)* |
+| Index | `FLUSH_INDEX` | `COMPACT_INDEX` | — | index name |
+| Table | `FLUSH_TABLE` | `COMPACT_TABLE` | `RECOMPUTE_STATS_TABLE` | table name |
+| Schema | `FLUSH_SCHEMA` | `COMPACT_SCHEMA` | `RECOMPUTE_STATS_SCHEMA` | `[database.]schema` |
+| Database | `FLUSH_DATABASE` | `COMPACT_DATABASE` | `RECOMPUTE_STATS_DATABASE` | database name |
+| Everything | `FLUSH_ALL` | `COMPACT_ALL` | `RECOMPUTE_STATS_ALL` | *(none)* |
 
 `RECOMPUTE_STATS` additionally accepts a column scope, `RECOMPUTE_STATS_COLUMN`, whose argument is `[schema.]table.column`.
 
-Object names may be qualified, for example `VACUUM (REFRESH_TABLE) mydb.public.articles`. The `*_ALL` scopes are instance-wide and take no argument.
+Object names may be qualified, for example `VACUUM (FLUSH_TABLE) mydb.public.articles`. The `*_ALL` scopes are instance-wide and take no argument.
 
 ### Combining options
 
@@ -87,8 +89,7 @@ The `vacuum_rebuild_indexes` setting that governs index rebuilds is fixed at sta
 
 ## Reclaiming Space
 
-The `VACUUM` statement does not reclaim space.
-To reclaim space, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database--to).
+`VACUUM` without options does not reclaim space. `COMPACT_*` rewrites a table's segments without the rows deleted from it. In an attached DuckDB database file, use the `CHECKPOINT` statement, or create a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database--to).
 
 ## Syntax
 

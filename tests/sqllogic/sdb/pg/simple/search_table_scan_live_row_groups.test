@@ -22,7 +22,7 @@ INSERT INTO slr SELECT * FROM slr_d ORDER BY id;
 
 
 statement ok
-CHECKPOINT;
+VACUUM (FLUSH_TABLE) slr;
 
 
 query
@@ -215,7 +215,7 @@ INSERT INTO slr SELECT i, 1000 + (i - 262144) // 4096, i % 7, NULL FROM range(26
 
 
 statement ok
-CHECKPOINT;
+VACUUM (FLUSH_TABLE) slr;
 
 
 query
@@ -283,7 +283,7 @@ INSERT INTO slp SELECT i, i // 2048, i % 7 FROM range(1310720) t(i);
 
 
 statement ok
-CHECKPOINT;
+VACUUM (FLUSH_TABLE) slp;
 
 
 statement ok
@@ -291,7 +291,7 @@ INSERT INTO slp SELECT i, i // 2048, i % 7 FROM range(1310720, 2621440) t(i);
 
 
 statement ok
-CHECKPOINT;
+VACUUM (FLUSH_TABLE) slp;
 
 
 query

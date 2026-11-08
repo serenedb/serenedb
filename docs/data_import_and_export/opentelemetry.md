@@ -387,11 +387,7 @@ On a column indexed without a dictionary, such as `service_name` or `severity_te
 
 ## Visibility
 
-A row of a search table is visible to queries once its transaction commits; full-text matches with `@@` find it after the next refresh, governed by `refresh_interval` (1 s by default). Force the refresh when you need determinism, for example in tests:
-
-```sql
-VACUUM (REFRESH_TABLE) otel_logs;
-```
+A row is visible to queries, full-text matches with `@@` included, once its transaction commits.
 
 ## Retention
 

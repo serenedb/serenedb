@@ -91,7 +91,7 @@ class Dml:
         self.statement(f"CREATE TABLE {self.ref} (id BIGINT, grp INT, v TEXT);")
         for _ in range(4):
             self.insert()
-            self.statement("CHECKPOINT;")
+            self.statement(f"VACUUM (FLUSH_TABLE) {self.table};")
         self.check()
         for _ in range(ops):
             x = self.rng.random()
@@ -112,7 +112,7 @@ class Dml:
                 self.rng.choice([self.delete, self.update])("w1")
                 if self.rng.random() < 0.3:
                     self.insert("w2")
-                    self.statement("CHECKPOINT;", "w2")
+                    self.statement(f"VACUUM (FLUSH_TABLE) {self.table};", "w2")
                 if self.rng.random() < 0.7:
                     self.compact("w2")
                 self.statement(

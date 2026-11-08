@@ -21,6 +21,7 @@
 #include "connector/duckdb_vacuum_function.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -65,6 +66,7 @@ enum class Scope : uint8_t {
 
 enum class Action : uint8_t {
   Compact,
+  Flush,
   RecomputeStats,
 };
 
@@ -80,6 +82,11 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"compact_table", {Action::Compact, Scope::Table}},
     {"compact_index", {Action::Compact, Scope::Index}},
     {"compact_all", {Action::Compact, Scope::All}},
+    {"flush_database", {Action::Flush, Scope::Database}},
+    {"flush_schema", {Action::Flush, Scope::Schema}},
+    {"flush_table", {Action::Flush, Scope::Table}},
+    {"flush_index", {Action::Flush, Scope::Index}},
+    {"flush_all", {Action::Flush, Scope::All}},
     {"recompute_stats_table", {Action::RecomputeStats, Scope::Table}},
     {"recompute_stats_schema", {Action::RecomputeStats, Scope::Schema}},
     {"recompute_stats_database", {Action::RecomputeStats, Scope::Database}},
@@ -160,16 +167,16 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
     case Scope::Database: {
       if (!bind.schema.empty() || !bind.catalog.empty()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("VACUUM (COMPACT_DATABASE) "
-                                "expects a single database name"));
+                        ERR_MSG("VACUUM (", absl::AsciiStrToUpper(bind.option),
+                                ") expects a single database name"));
       }
       out.database = bind.name;
     } break;
     case Scope::Schema: {
       if (!bind.catalog.empty()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("VACUUM (COMPACT_SCHEMA) expects "
-                                "[<database>.]<schema>"));
+                        ERR_MSG("VACUUM (", absl::AsciiStrToUpper(bind.option),
+                                ") expects [<database>.]<schema>"));
       }
       out.database = bind.schema;
       out.schema = bind.name;
@@ -343,13 +350,12 @@ bool MayMaintain(ConnectionContext& conn_ctx, const duckdb::Permissions& perm,
   return false;
 }
 
-void DispatchCompact(duckdb::ClientContext& context,
-                     ConnectionContext& conn_ctx, Scope scope,
-                     const ResolvedName& target,
-                     pg::ProgressMetrics* progress) {
+void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
+                    Action action, Scope scope, const ResolvedName& target,
+                    pg::ProgressMetrics* progress) {
   std::vector<InvertedStep> steps;
 
-  constexpr std::string_view verb = "compact";
+  const std::string_view verb = action == Action::Flush ? "flush" : "compact";
   auto walk = [&](duckdb::Catalog& database, std::string_view schema) {
     for (const duckdb::TableCatalogEntry& table :
          CollectMaintainTargets(context, database, schema)) {
@@ -453,7 +459,11 @@ void DispatchCompact(duckdb::ClientContext& context,
   }
   for (auto& step : steps) {
     context.InterruptCheck();
-    if (step.storage) {
+    if (action == Action::Flush) {
+      if (step.search_data) {
+        step.search_data->CoolAll();
+      }
+    } else if (step.storage) {
       CompactInvertedStorage(*step.storage, *step.field_options, context,
                              progress);
     } else if (const auto& search = step.search_data) {
@@ -633,7 +643,9 @@ void VacuumExecute(duckdb::ClientContext& context,
 
   switch (verb->action) {
     case Action::Compact:
-      DispatchCompact(context, conn_ctx, verb->scope, target, progress);
+    case Action::Flush:
+      DispatchStores(context, conn_ctx, verb->action, verb->scope, target,
+                     progress);
       break;
     case Action::RecomputeStats:
       DispatchRecomputeStats(context, conn_ctx, verb->scope, target, progress);

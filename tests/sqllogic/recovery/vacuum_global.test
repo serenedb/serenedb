@@ -135,6 +135,37 @@ VACUUM (RECOMPUTE_STATS_ALL);
 
 
 statement ok
+CREATE TABLE public.vg (id INTEGER) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO public.vg VALUES (1), (2), (3);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_buffered_docs') AS buffered, max(value) FILTER (WHERE metric = 'num_segments') AS segments
+FROM sdb_metrics WHERE relation_id = 'public.vg'::regclass;
+----
+buffered	segments
+0	1
+
+
+query
+SELECT count(*) FROM s1.notes_idx WHERE body @@ ts_phrase('beta');
+----
+count
+1
+
+
+statement ok
+DROP TABLE public.vg;
+
+
+statement ok
 DROP TABLE public.docs;
 
 

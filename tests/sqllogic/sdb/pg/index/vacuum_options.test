@@ -256,6 +256,69 @@ statement ok
 VACUUM (RECOMPUTE_STATS_DATABASE) ${__DATABASE__};
 
 
+statement ok
+CREATE TABLE public.vf (id INTEGER, v INTEGER) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO public.vf VALUES (1, 10), (2, 20);
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_buffered_docs') AS buffered, max(value) FILTER (WHERE metric = 'num_segments') AS segments
+FROM sdb_metrics WHERE relation_id = 'public.vf'::regclass;
+----
+buffered	segments
+2	0
+
+
+statement ok
+VACUUM (FLUSH_TABLE) public.vf;
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_buffered_docs') AS buffered, max(value) FILTER (WHERE metric = 'num_segments') AS segments
+FROM sdb_metrics WHERE relation_id = 'public.vf'::regclass;
+----
+buffered	segments
+0	1
+
+
+query
+SELECT id, v FROM public.vf ORDER BY id;
+----
+id	v
+1	10
+2	20
+
+
+statement ok
+INSERT INTO public.docs VALUES (13, 'theta flush');
+
+
+statement ok
+VACUUM (FLUSH_INDEX) docs_idx;
+
+
+statement ok
+VACUUM (FLUSH_SCHEMA) public;
+
+
+statement ok
+VACUUM (FLUSH_SCHEMA) ${__DATABASE__}.s2;
+
+
+statement ok
+VACUUM (FLUSH_DATABASE) ${__DATABASE__};
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('theta');
+----
+count
+4
+
+
 # ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------
@@ -291,6 +354,12 @@ VACUUM (RECOMPUTE_STATS_TABLE);
 db error: ERROR: VACUUM (recompute_stats_table) requires an object name
 
 
+statement error
+VACUUM (FLUSH_TABLE);
+----
+db error: ERROR: VACUUM (flush_table) requires an object name
+
+
 # recompute_stats_column needs <table>.<column>, not a bare identifier.
 statement error
 VACUUM (RECOMPUTE_STATS_COLUMN) docs;
@@ -311,6 +380,12 @@ VACUUM (RECOMPUTE_STATS_ALL) docs;
 db error: ERROR: VACUUM (recompute_stats_all) does not take an argument
 
 
+statement error
+VACUUM (FLUSH_ALL) docs;
+----
+db error: ERROR: VACUUM (flush_all) does not take an argument
+
+
 # Over-qualified database / schema arguments.
 statement error
 VACUUM (COMPACT_DATABASE) ${__DATABASE__}.public;
@@ -322,6 +397,18 @@ statement error
 VACUUM (COMPACT_SCHEMA) ${__DATABASE__}.public.docs;
 ----
 db error: ERROR: VACUUM (COMPACT_SCHEMA) expects [<database>.]<schema>
+
+
+statement error
+VACUUM (FLUSH_DATABASE) ${__DATABASE__}.public;
+----
+db error: ERROR: VACUUM (FLUSH_DATABASE) expects a single database name
+
+
+statement error
+VACUUM (FLUSH_TABLE) nope_table;
+----
+db error: ERROR: relation "nope_table" does not exist<slt:ignore>
 
 
 # Catalog lookup failures, one per scope.
@@ -372,6 +459,10 @@ db error: ERROR: VACUUM SereneDB option 'compact_table' cannot be combined with 
 # Cleanup
 statement ok
 DROP TABLE public.docs;
+
+
+statement ok
+DROP TABLE public.vf;
 
 
 statement ok

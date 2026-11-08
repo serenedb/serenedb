@@ -47,13 +47,11 @@ The trailing `WITH (...)` clause sets index-level options.
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
-| `refresh_interval` | `1000` | Background refresh interval in milliseconds; `0` disables it |
 | `compaction_interval` | `1000` | Background compaction interval in milliseconds; `0` disables it |
-| `cleanup_interval_step` | `1` | Automatic refreshes between cleanup passes, which delete the files no segment uses anymore; `0` disables the periodic passes, leaving cleanup to background compaction |
 | `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns and for norm columns; there is no separate norm setting. Must be a multiple of the vector size (2048). A scan claims one row group per worker, so a smaller value spreads one segment over more threads at the cost of more per-unit setup |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
 
-An index on a search table (`CREATE TABLE … WITH (storage = 'search')`) takes none of these options. It has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it, and the table keeps the score bounds that `optimize_top_k` prunes with. So `CREATE INDEX` rejects all five on a search table, with an error that names the option, such as `row_group_size is a table option`. Set them on the table instead; see [Background intervals](../../indexes/inverted/maintenance.md#background-intervals).
+These options apply to an index over a view. An index on a table takes none of them. It has no storage or background tasks of its own: the table's options run compaction for every index on it, and the table keeps the score bounds that `optimize_top_k` prunes with. So `CREATE INDEX` rejects them on a table, with an error that names the option, such as `row_group_size is a table option`. Set them on the table instead; see [Background intervals](../../indexes/inverted/maintenance.md#background-intervals).
 
 ## Partial indexes
 

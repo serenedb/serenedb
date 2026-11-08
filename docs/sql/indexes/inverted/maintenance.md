@@ -55,6 +55,7 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 
 | Operation | Forms | Effect |
 |---|---|---|
+| Flush | `FLUSH_INDEX` · `FLUSH_TABLE` · `FLUSH_SCHEMA` · `FLUSH_DATABASE` · `FLUSH_ALL` | Write the rows a table holds in memory to its on-disk segments |
 | Compact | `COMPACT_INDEX` · `COMPACT_TABLE` · `COMPACT_SCHEMA` · `COMPACT_DATABASE` · `COMPACT_ALL` | Merge segments to reclaim space and speed queries |
 | Recompute statistics | `RECOMPUTE_STATS_COLUMN` · `RECOMPUTE_STATS_TABLE` · `RECOMPUTE_STATS_SCHEMA` · `RECOMPUTE_STATS_DATABASE` · `RECOMPUTE_STATS_ALL` | Rebuild the term statistics used by relevance scoring and planning |
 

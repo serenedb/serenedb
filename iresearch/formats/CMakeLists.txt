@@ -4,12 +4,10 @@ target_sources(
         column/codecs/fsst.cpp
         column/codecs/fsst12.cpp
         column/codecs/fsst12_state.cpp
-        column/codecs/fsst_analysis.cpp
         column/codecs/fsst_plus.cpp
         column/codecs/fsst_plus_state.cpp
         column/codecs/fsst_state.cpp
         column/codecs/lz4.cpp
-        column/codecs/lz4_analysis.cpp
         column/codecs/numeric.cpp
         column/codecs/onpair.cpp
         column/codecs/onpair_state.cpp
@@ -24,7 +22,6 @@ target_sources(
         column/codecs/string_window.cpp
         column/codecs/zstd.cpp
         column/codecs/zxc.cpp
-        column/codecs/zxc_analysis.cpp
         column/col_file_writer.cpp
         column/col_reader.cpp
         column/col_writer.cpp

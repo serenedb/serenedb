@@ -20,15 +20,16 @@
 
 #include "iresearch/formats/column/codecs/string_picker.hpp"
 
+#include <absl/algorithm/container.h>
+
+#include <algorithm>
 #include <limits>
 #include <span>
 
-#include "iresearch/formats/column/codecs/fsst_analysis.hpp"
-#include "iresearch/formats/column/codecs/lz4_analysis.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_window.hpp"
-#include "iresearch/formats/column/codecs/zxc_analysis.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
 namespace {
@@ -39,17 +40,24 @@ constexpr uint64_t kDedupMinRepeat = 2;
 constexpr uint64_t kLz4MaxRatio = 255;
 constexpr uint64_t kTuneMinEntries = 2;
 constexpr uint8_t kLz4Fast = 1;
+constexpr double kLevelTolerance = 0.02;
+constexpr double kWideFramesGain = 0.03;
+constexpr size_t kMaxLevels = 4;
 
-using Analyze = Estimate (*)(StringWindow&, Shape, const Ladder&, bool,
-                             TunedParameters&);
-
-struct LeafCandidate {
-  Analyze analyze;
-  Ladder ladder;
+struct AnalyzeResult {
+  Config config;
+  uint64_t score = std::numeric_limits<uint64_t>::max();
 };
 
-struct TierCandidates {
-  std::span<const LeafCandidate> leaves;
+struct CompressionMethod {
+  ByteCodec leaf = ByteCodec::Lz4;
+  std::span<const uint8_t> levels;
+  bool local = false;
+  uint8_t max_trial_level = 0;
+};
+
+struct TierMethods {
+  std::span<const CompressionMethod> methods;
   double fsst_preference = 0;
 };
 
@@ -57,24 +65,78 @@ constexpr uint8_t kLz4FlushLevels[] = {1};
 constexpr uint8_t kLz4MergeLevels[] = {1, 4, 6};
 constexpr uint8_t kZxcLevels[] = {1, 3};
 
-constexpr LeafCandidate kFlushLeaves[] = {
-  {&AnalyzeLz4, {.levels = kLz4FlushLevels}},
+constexpr CompressionMethod kFlushMethods[] = {
+  {.leaf = ByteCodec::Lz4, .levels = kLz4FlushLevels, .max_trial_level = 1},
 };
 
-constexpr LeafCandidate kMergeLeaves[] = {
-  {&AnalyzeLz4, {.levels = kLz4MergeLevels, .local = true}},
-  {&AnalyzeZxc, {.levels = kZxcLevels, .local = true}},
+constexpr CompressionMethod kMergeMethods[] = {
+  {
+    .leaf = ByteCodec::Lz4,
+    .levels = kLz4MergeLevels,
+    .local = true,
+    .max_trial_level = 1,
+  },
+  {.leaf = ByteCodec::Zxc, .levels = kZxcLevels, .local = true},
 };
 
-constexpr TierCandidates kFlushCandidates{
-  .leaves = kFlushLeaves,
-  .fsst_preference = 0.05,
-};
+constexpr TierMethods kFlush{.methods = kFlushMethods, .fsst_preference = 0.05};
+constexpr TierMethods kMerge{.methods = kMergeMethods};
 
-constexpr TierCandidates kMergeCandidates{.leaves = kMergeLeaves};
+const TierMethods& MethodsOf(WriteTier tier) noexcept {
+  return tier == WriteTier::Flush ? kFlush : kMerge;
+}
 
-const TierCandidates& CandidatesOf(WriteTier tier) noexcept {
-  return tier == WriteTier::Flush ? kFlushCandidates : kMergeCandidates;
+AnalyzeResult FinalAnalyze(StringWindow& window, Shape shape,
+                           const CompressionMethod& method, bool tune,
+                           TunedParameters& tuned) {
+  const auto levels = method.levels;
+  SDB_ASSERT(!levels.empty() && levels.size() <= kMaxLevels);
+  const auto leaf = static_cast<size_t>(method.leaf);
+  const auto score = [&](const Config& config) {
+    return config.level <= method.max_trial_level ? window.Encode(config).Size()
+                                                  : window.Price(config);
+  };
+  Config config{.choice = {shape, method.leaf}};
+  if (!tune) {
+    config.level = absl::c_linear_search(levels, tuned.level[leaf])
+                     ? tuned.level[leaf]
+                     : levels.front();
+    config.layout = tuned.layout[leaf];
+    return {config, score(config)};
+  }
+  uint64_t scores[kMaxLevels];
+  uint64_t best_score = std::numeric_limits<uint64_t>::max();
+  for (size_t i = 0; i < levels.size(); ++i) {
+    config.level = levels[i];
+    scores[i] = window.Price(config);
+    best_score = std::min(best_score, scores[i]);
+  }
+  size_t level = 0;
+  while (static_cast<double>(scores[level]) >
+         static_cast<double>(best_score) * (1.0 + kLevelTolerance)) {
+    ++level;
+  }
+  config.level = levels[level];
+  AnalyzeResult best{config, scores[level]};
+  const auto analyze_layout = [&](FrameLayout layout, double min_gain) {
+    auto candidate = best.config;
+    candidate.layout = layout;
+    const auto candidate_score = window.Price(candidate);
+    if (static_cast<double>(candidate_score) <
+        static_cast<double>(best.score) * (1.0 - min_gain)) {
+      best = {candidate, candidate_score};
+    }
+  };
+  if (method.local) {
+    analyze_layout(FrameLayout::Local, 0.0);
+  }
+  analyze_layout(FrameLayout::Wide, kWideFramesGain);
+  tuned.level[leaf] = best.config.level;
+  tuned.layout[leaf] = best.config.layout;
+  if (best.config.level <= method.max_trial_level) {
+    best.score = window.Encode(best.config).Size();
+  }
+  return best;
 }
 
 bool Repeats(uint64_t entries, uint64_t values) noexcept {
@@ -150,16 +212,15 @@ PooledSegment StringPicker::Pick(PooledSegment first, bool drift) {
   }
   auto& tuned = _tuning.tuned;
   const bool tune = dedup.entries >= kTuneMinEntries && !tuned.done;
-  Estimate best{.bytes = std::numeric_limits<uint64_t>::max()};
-  const auto consider = [&](const Estimate& candidate) {
-    if (candidate.bytes < best.bytes) {
-      best = candidate;
+  const auto& tier = MethodsOf(_params.tier);
+  const Config fsst_config{.choice = {shape, ByteCodec::Fsst}};
+  auto& fsst = window.Encode(fsst_config);
+  AnalyzeResult best{fsst_config, fsst.Size()};
+  for (const auto& method : tier.methods) {
+    if (const auto result = FinalAnalyze(window, shape, method, tune, tuned);
+        result.score < best.score) {
+      best = result;
     }
-  };
-  const auto& candidates = CandidatesOf(_params.tier);
-  consider(AnalyzeFsst(window, shape));
-  for (const auto& leaf : candidates.leaves) {
-    consider(leaf.analyze(window, shape, leaf.ladder, tune, tuned));
   }
   if (tune) {
     tuned.done = true;
@@ -170,14 +231,11 @@ PooledSegment StringPicker::Pick(PooledSegment first, bool drift) {
       picked = seg;
     }
   }
-  if (candidates.fsst_preference > 0 &&
-      picked->config.choice.leaf != ByteCodec::Fsst) {
-    if (auto* fsst = window.Encoded({.choice = {shape, ByteCodec::Fsst}});
-        fsst && static_cast<double>(fsst->Size()) <=
-                  static_cast<double>(picked->Size()) *
-                    (1.0 + candidates.fsst_preference)) {
-      picked = fsst;
-    }
+  if (tier.fsst_preference > 0 &&
+      picked->config.choice.leaf != ByteCodec::Fsst &&
+      static_cast<double>(fsst.Size()) <=
+        static_cast<double>(picked->Size()) * (1.0 + tier.fsst_preference)) {
+    picked = &fsst;
   }
   auto& reuse = _tuning.reuse;
   const bool kept = reuse.pick && reuse.pick->choice == picked->config.choice;

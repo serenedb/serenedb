@@ -50,10 +50,9 @@ uint64_t StringWindow::Price(const Config& config) {
         return price(_pricers.lz4_hc);
       }
       return price(_pricers.lz4);
-    case ByteCodec::Zstd:
-      return price(_pricers.zstd);
     case ByteCodec::Zxc:
       return price(_pricers.zxc);
+    case ByteCodec::Zstd:
     case ByteCodec::Fsst:
     case ByteCodec::FsstPlus:
     case ByteCodec::OnPair:

@@ -34,22 +34,9 @@
 #include "iresearch/formats/column/codecs/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
-#include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/codecs/zxc.hpp"
 
 namespace irs::codecs::text {
-
-struct Estimate {
-  Config config;
-  uint64_t bytes = 0;
-};
-
-inline constexpr size_t kMaxLadderLevels = 4;
-
-struct Ladder {
-  std::span<const uint8_t> levels;
-  bool local = false;
-};
 
 class StringWindow {
  public:
@@ -68,8 +55,6 @@ class StringWindow {
   uint64_t Price(const Config& config);
 
   Segment& Encode(const Config& config);
-
-  Segment* Encoded(const Config& config) const noexcept;
 
   std::span<Segment* const> Encodings() const noexcept { return _encoded; }
 
@@ -93,9 +78,10 @@ class StringWindow {
   struct Pricers {
     std::optional<BlobPricer<Lz4>> lz4;
     std::optional<BlobPricer<Lz4Hc>> lz4_hc;
-    std::optional<BlobPricer<Zstd>> zstd;
     std::optional<BlobPricer<Zxc>> zxc;
   };
+
+  Segment* Encoded(const Config& config) const noexcept;
 
   Measured& Rows(Shape shape);
 

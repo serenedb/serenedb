@@ -831,6 +831,41 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
   }
 }
 
+TEST_F(ColNumericCodecTest,
+       CompactionReturnsToTheNumericCodecWhenTheDataChanges) {
+  constexpr uint32_t kRowGroup = 2048;
+  constexpr uint64_t kRandom = 40 * kRowGroup;
+  constexpr uint64_t kRows = kRandom + 16 * kRowGroup;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    if (g < kRandom) {
+      return static_cast<int64_t>(Mix(g));
+    }
+    return static_cast<int64_t>(g % 1000) * 1'000'003;
+  };
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::LogicalType::BIGINT, {.tier = irs::WriteTier::Merge},
+        kRows, kRowGroup, gen);
+  Verify(dir, duckdb::LogicalType::BIGINT, kRows, gen);
+
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  uint64_t row = 0;
+  uint64_t changed = 0;
+  for (const auto& block : col->DataBlocks()) {
+    const bool numeric =
+      block.codec->type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC;
+    if (row < kRandom) {
+      EXPECT_FALSE(numeric) << "row " << row;
+    } else {
+      ++changed;
+      EXPECT_TRUE(numeric) << "row " << row;
+    }
+    row += block.tuple_count;
+  }
+  EXPECT_GT(changed, 0u);
+}
+
 TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
   constexpr uint64_t kRows = 60000;
   const Gen clustered = [](uint64_t g) {

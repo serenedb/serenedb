@@ -318,16 +318,24 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
   };
   bool due = tuning.Due();
   const bool flush = _codec_params.tier == WriteTier::Flush;
-  if (flush && !due && !tuning.pick) {
-    fn = PickCodec(type, chunks, tuning.rival, state, &score);
-    if (fn->type != tuning.rival) {
+  const bool held = !due && !tuning.pick;
+  const auto rival = tuning.rival;
+  const auto follow = [&] {
+    if (fn->type != rival) {
       due = true;
     } else if (tuning.Drifted(static_cast<double>(score), rows)) {
       tuning.clock.Restart();
     }
+  };
+  if (flush && held) {
+    fn = PickCodec(type, chunks, rival, state, &score);
+    follow();
   }
   if (due || !flush) {
     measure();
+    if (!flush && held) {
+      follow();
+    }
   }
   if (due || tuning.pick) {
     const auto sealer = codecs::NumericSealer::Make(type, row_count);

@@ -73,7 +73,7 @@ class StringWindow {
 
   std::span<Segment* const> Encodings() const noexcept { return _encoded; }
 
-  void Keep(const Segment& kept);
+  PooledSegment Take(const Segment& seg);
 
  private:
   struct Spans {
@@ -109,6 +109,7 @@ class StringWindow {
   uint64_t _begin;
   uint64_t _end;
   std::vector<Segment*> _encoded;
+  std::vector<PooledSegment> _owned;
   DedupScratch _dedup;
   Measured _measured[2];
   Pricers _pricers;

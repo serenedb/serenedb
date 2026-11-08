@@ -106,15 +106,15 @@ Config NamedConfig(const StringChoice& named,
   };
 }
 
-Segment* StringPicker::First() {
+PooledSegment StringPicker::First() {
   auto& reuse = _tuning.reuse;
   const bool due = !reuse.pick || reuse.clock.Due();
   if (_acc.Rows() == 0) {
-    return nullptr;
+    return {};
   }
-  auto* first = _encoder.Cut(Current(), _acc, 0);
+  auto first = _encoder.Cut(Current(), _acc, 0);
   if (const bool drift = !due && Drifted(*first); due || drift) {
-    return Pick(*first, drift);
+    return Pick(std::move(first), drift);
   }
   return first;
 }
@@ -138,9 +138,9 @@ bool StringPicker::Drifted(const Segment& seg) const noexcept {
   return ratio > reference * kDrift || ratio * kDrift < reference;
 }
 
-Segment* StringPicker::Pick(Segment& first, bool drift) {
-  const auto input = first.input;
-  StringWindow window{_acc, _encoder, first, _tuning.estimators.codes};
+PooledSegment StringPicker::Pick(PooledSegment first, bool drift) {
+  const auto input = first->input;
+  StringWindow window{_acc, _encoder, *first, _tuning.estimators.codes};
   const auto& dedup = window.Encode(Fast(Shape::Dedup));
   auto shape = Shape::Dedup;
   if (PlainWins(dedup, kHeaderSize + Packed(dedup.rows, dedup.max_len) +
@@ -187,8 +187,7 @@ Segment* StringPicker::Pick(Segment& first, bool drift) {
     reuse.bytes_per_input =
       static_cast<double>(picked->Size()) / static_cast<double>(input);
   }
-  window.Keep(*picked);
-  return picked;
+  return picked == first.get() ? std::move(first) : window.Take(*picked);
 }
 
 }  // namespace irs::codecs::text

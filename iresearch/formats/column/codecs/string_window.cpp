@@ -67,7 +67,9 @@ Segment& StringWindow::Encode(const Config& config) {
   if (auto* seg = Encoded(config)) {
     return *seg;
   }
-  return *_encoded.emplace_back(_encoder.Encode(config, _acc, _begin, _end));
+  auto& seg = *_owned.emplace_back(_encoder.Encode(config, _acc, _begin, _end));
+  _encoded.emplace_back(&seg);
+  return seg;
 }
 
 Segment* StringWindow::Encoded(const Config& config) const noexcept {
@@ -76,13 +78,11 @@ Segment* StringWindow::Encoded(const Config& config) const noexcept {
   return it == _encoded.end() ? nullptr : *it;
 }
 
-void StringWindow::Keep(const Segment& kept) {
-  for (auto* seg : _encoded) {
-    if (seg != &kept) {
-      _encoder.Release(seg);
-    }
-  }
-  _encoded.clear();
+PooledSegment StringWindow::Take(const Segment& seg) {
+  const auto it = absl::c_find_if(
+    _owned, [&](const PooledSegment& owned) { return owned.get() == &seg; });
+  SDB_ASSERT(it != _owned.end());
+  return std::move(*it);
 }
 
 StringWindow::Measured& StringWindow::Rows(Shape shape) {

@@ -132,9 +132,10 @@ State& SegmentEncoder::Get(std::optional<State>& slot) {
   return *slot;
 }
 
-Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
-                             uint64_t begin) {
-  auto* seg = Acquire();
+PooledSegment SegmentEncoder::Cut(const Config& config,
+                                  const StringAccumulator& acc,
+                                  uint64_t begin) {
+  auto seg = Acquire();
   With(config, [&](auto& state) {
     CutRows(state, config, acc, begin, _params.segment_target, *seg);
   });
@@ -147,39 +148,39 @@ void SegmentEncoder::Compress(const Config& config,
   if (begin >= acc.Rows()) {
     return;
   }
-  auto* seg = Acquire();
+  const auto seg = Acquire();
   With(config, [&](auto& state) {
     CompressRows(state, config, acc, begin, _params.segment_target, *seg, sink);
   });
-  Release(seg);
 }
 
 void SegmentEncoder::SealChunks(const Config& config,
                                 std::span<const WriteChunk> chunks,
                                 SegmentSink sink) {
-  auto* seg = Acquire();
+  const auto seg = Acquire();
   With(config, [&](auto& state) {
     SealRows(state, config, chunks, _params.segment_target, *seg, sink);
   });
-  Release(seg);
 }
 
-Segment* SegmentEncoder::Encode(const Config& config,
-                                const StringAccumulator& acc, uint64_t begin,
-                                uint64_t end) {
-  auto* seg = Acquire();
+PooledSegment SegmentEncoder::Encode(const Config& config,
+                                     const StringAccumulator& acc,
+                                     uint64_t begin, uint64_t end) {
+  auto seg = Acquire();
   With(config,
        [&](auto& state) { EncodeRows(state, config, acc, begin, end, *seg); });
   return seg;
 }
 
-Segment* SegmentEncoder::Acquire() {
+PooledSegment SegmentEncoder::Acquire() {
   if (_free.empty()) {
-    return _pool.emplace_back(std::make_unique<Segment>(_buffers)).get();
+    auto* seg = _pool.emplace_back(std::make_unique<Segment>(_buffers)).get();
+    _free.reserve(_pool.size());
+    return {seg, {&_free}};
   }
   auto* seg = _free.back();
   _free.pop_back();
-  return seg;
+  return {seg, {&_free}};
 }
 
 }  // namespace irs::codecs::text

@@ -40,6 +40,14 @@
 
 namespace irs::codecs::text {
 
+struct SegmentRecycler {
+  std::vector<Segment*>* free = nullptr;
+
+  void operator()(Segment* seg) const noexcept { free->push_back(seg); }
+};
+
+using PooledSegment = std::unique_ptr<Segment, SegmentRecycler>;
+
 class SegmentEncoder {
  public:
   SegmentEncoder(const ColCodecParams& params, const duckdb::LogicalType& type,
@@ -49,8 +57,8 @@ class SegmentEncoder {
       _estimators{estimators},
       _buffers{buffers} {}
 
-  Segment* Cut(const Config& config, const StringAccumulator& acc,
-               uint64_t begin);
+  PooledSegment Cut(const Config& config, const StringAccumulator& acc,
+                    uint64_t begin);
 
   void Compress(const Config& config, const StringAccumulator& acc,
                 uint64_t begin, SegmentSink sink);
@@ -58,10 +66,8 @@ class SegmentEncoder {
   void SealChunks(const Config& config, std::span<const WriteChunk> chunks,
                   SegmentSink sink);
 
-  Segment* Encode(const Config& config, const StringAccumulator& acc,
-                  uint64_t begin, uint64_t end);
-
-  void Release(Segment* seg) { _free.push_back(seg); }
+  PooledSegment Encode(const Config& config, const StringAccumulator& acc,
+                       uint64_t begin, uint64_t end);
 
  private:
   struct States {
@@ -81,7 +87,7 @@ class SegmentEncoder {
   template<typename State>
   State& Get(std::optional<State>& slot);
 
-  Segment* Acquire();
+  PooledSegment Acquire();
 
   const ColCodecParams& _params;
   const duckdb::LogicalType& _type;

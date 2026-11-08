@@ -90,19 +90,18 @@ SealOutcome SealSegments(const StringAccumulator& acc,
     return outcome;
   }
   text::StringPicker picker{acc, params, tuning, encoder};
-  auto* first = picker.First();
+  auto first = picker.First();
   if (!first) {
     return outcome;
   }
   if (first->Size() > PlainStorageBytes(*first)) {
-    encoder.Release(first);
     return {};
   }
   const auto config = first->config;
   const auto rest = first->begin + first->rows;
   emit(config.choice, std::move(*first->stats), first->rows,
        first->bytes.View());
-  encoder.Release(first);
+  first.reset();
   encoder.Compress(config, acc, rest, emit);
   return outcome;
 }

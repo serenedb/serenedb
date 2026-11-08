@@ -37,14 +37,14 @@ class StringPicker {
                StringTuning& tuning, SegmentEncoder& encoder)
     : _acc{acc}, _params{params}, _tuning{tuning}, _encoder{encoder} {}
 
-  Segment* First();
+  PooledSegment First();
 
  private:
   Config Current() const noexcept;
 
   bool Drifted(const Segment& seg) const noexcept;
 
-  Segment* Pick(Segment& first, bool drift);
+  PooledSegment Pick(PooledSegment first, bool drift);
 
   const StringAccumulator& _acc;
   const ColCodecParams& _params;

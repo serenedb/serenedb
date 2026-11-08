@@ -68,12 +68,25 @@ void CollectNumeric(duckdb::BaseStatistics& stats, const WriteChunk& chunk) {
   writer.Merge(stats);
 }
 
+struct IntervalStatsWriter {
+  duckdb::BaseStatistics& stats;
+
+  void Update(duckdb::interval_t value) {
+    stats.SetHasNoNull();
+    stats.UpdateNumericStats<duckdb::interval_t>(value);
+  }
+  void SetHasNull() { stats.SetHasNull(); }
+};
+
 duckdb::BaseStatistics ChunkStatistics(const duckdb::LogicalType& type,
                                        const WriteChunk& chunk) {
   auto stats = duckdb::BaseStatistics::CreateEmpty(type);
   switch (duckdb::BaseStatistics::GetStatsType(type)) {
     case duckdb::StatisticsType::NUMERIC_STATS:
       switch (type.InternalType()) {
+        case duckdb::PhysicalType::BOOL:
+          CollectNumeric<bool>(stats, chunk);
+          return stats;
         case duckdb::PhysicalType::INT8:
           CollectNumeric<int8_t>(stats, chunk);
           return stats;
@@ -110,11 +123,17 @@ duckdb::BaseStatistics ChunkStatistics(const duckdb::LogicalType& type,
         case duckdb::PhysicalType::DOUBLE:
           CollectNumeric<double>(stats, chunk);
           return stats;
+        case duckdb::PhysicalType::INTERVAL: {
+          IntervalStatsWriter writer{stats};
+          Collect<duckdb::interval_t>(writer, chunk);
+          return stats;
+        }
         default:
           break;
       }
       break;
     case duckdb::StatisticsType::STRING_STATS:
+    case duckdb::StatisticsType::GEOMETRY_STATS:
       if (type.InternalType() == duckdb::PhysicalType::VARCHAR) {
         duckdb::StatsWriter<duckdb::string_t> writer{type};
         Collect<duckdb::string_t>(writer, chunk);

@@ -38,6 +38,10 @@ statement ok
 INSERT INTO s1.t VALUES (1, 'foo'), (2, 'bar'), (3, 'bas');
 
 
+statement ok
+CHECKPOINT;
+
+
 query
 SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
 ----

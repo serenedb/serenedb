@@ -140,9 +140,41 @@ big_stats
 {'has_no_null': true, 'has_null': false, 'max': 4611686018427387904, 'min': 1}
 
 
+statement ok
+CREATE TABLE vedernikoff_kinds (b BOOLEAN, i INTERVAL, g GEOMETRY)
+
+
+statement ok
+INSERT INTO vedernikoff_kinds VALUES (true, INTERVAL '1 day', 'POINT (30 10)'::GEOMETRY), (NULL, INTERVAL '2 hours', 'POINT (1 2)'::GEOMETRY)
+
+
+query
+SELECT stats(b)::VARCHAR AS b_stats FROM vedernikoff_kinds LIMIT 1;
+----
+b_stats
+{'has_no_null': true, 'has_null': true, 'max': true, 'min': true}
+
+
+query
+SELECT stats(i)::VARCHAR AS i_stats FROM vedernikoff_kinds LIMIT 1;
+----
+i_stats
+{'has_no_null': true, 'has_null': false, 'max': 1 day, 'min': '02:00:00'}
+
+
+query
+SELECT stats(g)::VARCHAR AS g_stats FROM vedernikoff_kinds LIMIT 1;
+----
+g_stats
+{'extent': {'x_max': 30, 'x_min': 1, 'y_max': 10, 'y_min': 2}, 'has_empty_geom': false, 'has_empty_part': false, 'has_no_null': true, 'has_non_empty_geom': true, 'has_non_empty_part': true, 'has_null': false}
+
+
 # Cleanup
 statement ok
 DROP INDEX vedernikoff_idx
 
 statement ok
 DROP TABLE vedernikoff
+
+statement ok
+DROP TABLE vedernikoff_kinds

@@ -162,7 +162,7 @@ DROP TABLE melstroi_churn_19;
 
 
 statement ok
-CREATE TEMP TABLE wal_size AS SELECT size AS grown FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+CREATE TEMP TABLE log_first AS SELECT min(file) AS oldest FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
 
 
 connection pudge
@@ -192,10 +192,15 @@ SET sdb_faults = '-compact_inside_ddl';
 
 connection default
 query
-SELECT size > (SELECT grown FROM wal_size) AS deferred FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+SELECT min(file) > (SELECT oldest FROM log_first) AS truncated FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
 ----
-deferred
+truncated
 t
+
+
+connection default
+statement ok
+CREATE TEMP TABLE log_second AS SELECT min(file) AS oldest FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
 
 
 connection pudge
@@ -220,9 +225,9 @@ SET sdb_faults = '-compact_inside_ddl';
 
 connection default
 query
-SELECT size < (SELECT grown FROM wal_size) AS rewritten FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+SELECT min(file) > (SELECT oldest FROM log_second) AS truncated FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
 ----
-rewritten
+truncated
 t
 
 

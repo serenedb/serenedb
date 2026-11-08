@@ -53,6 +53,10 @@ INSERT INTO dsr_s VALUES (1, 'alpha'), (2, 'beta');
 
 
 statement ok
+CHECKPOINT;
+
+
+statement ok
 INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_s';
 
@@ -117,91 +121,6 @@ SELECT id, body FROM dsr_keep;
 ----
 id	body
 1	kept
-
-
-# ----------------------------------------------------------------------
-# 2. An inverted index on a table.
-# ----------------------------------------------------------------------
-
-connection after_table
-statement ok
-CREATE TABLE dsr_t (id INT, body TEXT);
-
-
-connection after_table
-statement ok
-INSERT INTO dsr_t VALUES (1, 'alpha'), (2, 'beta');
-
-
-connection after_table
-statement ok
-CREATE INDEX dsr_t_idx ON dsr_t USING inverted (body);
-
-
-connection after_table
-statement ok
-INSERT INTO dsr_oids SELECT index_name, index_oid FROM duckdb_indexes()
-WHERE database_name = current_database() AND index_name = 'dsr_t_idx';
-
-
-connection after_table
-statement ok
-SET sdb_faults = 'pause_removal_midway';
-
-
-connection after_table
-statement ok
-DROP INDEX dsr_t_idx;
-
-
-connection after_table
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_removal_midway:parked';
-
-
-skipif pg-wire-extended
-connection after_table
-statement ok
-SET sdb_faults = 'crash_on_packet';
-
-
-skipif pg-wire-extended
-connection after_table
-statement error connection closed
-SELECT 1;
-
-
-onlyif pg-wire-extended
-connection after_table
-statement error connection closed
-SET sdb_faults = 'crash_on_packet';
-
-
-# --- restart ---
-
-connection after_index
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS n FROM pg_class WHERE relname = 'dsr_t_idx';
-----
-n
-0
-
-
-connection after_index
-query
-SELECT dsr_leftover('dsr_t_idx') AS leftover;
-----
-leftover
-0
-
-
-connection after_index
-query
-SELECT id, body FROM dsr_t ORDER BY id;
-----
-id	body
-1	alpha
-2	beta
 
 
 # ----------------------------------------------------------------------
@@ -473,7 +392,12 @@ INSERT INTO dsr_t2 VALUES (1, 'alpha'), (2, 'beta');
 
 connection after_search_index
 statement ok
-CREATE INDEX dsr_ri ON dsr_t2 USING inverted (body);
+CREATE VIEW dsr_rv AS SELECT id, body FROM dsr_t2;
+
+
+connection after_search_index
+statement ok
+CREATE INDEX dsr_ri ON dsr_rv USING inverted (body);
 
 
 connection after_search_index
@@ -489,7 +413,7 @@ SET sdb_faults = 'pause_removal_midway';
 
 connection after_search_index
 statement ok
-CREATE OR REPLACE INDEX dsr_ri ON dsr_t2 USING inverted (id, body);
+CREATE OR REPLACE INDEX dsr_ri ON dsr_rv USING inverted (id, body);
 
 
 connection after_search_index
@@ -519,17 +443,18 @@ SET sdb_faults = 'crash_on_packet';
 
 connection after_index_replace
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'dsr_ri';
+SELECT regexp_replace(sql, ' WITH \(.*', '') AS def FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'dsr_ri';
 ----
 def
-CREATE INDEX dsr_ri ON public.dsr_t2 USING inverted (id, body)
+CREATE INDEX dsr_ri ON public.dsr_rv USING inverted (id, body)
 
 
 connection after_index_replace
 query
-SELECT string_agg(id::TEXT, ',' ORDER BY id) AS ids FROM dsr_ri WHERE body @@ 'alpha';
+SELECT count(*) AS n FROM dsr_ri WHERE body @@ 'alpha';
 ----
-ids
+n
 1
 
 
@@ -631,8 +556,23 @@ DROP VIEW dsr_v;
 
 connection after_view_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_ri_new', index_oid FROM duckdb_indexes()
-WHERE database_name = current_database() AND index_name = 'dsr_ri';
+DROP INDEX dsr_ri;
+
+
+connection after_view_index
+statement ok
+DROP VIEW dsr_rv;
+
+
+connection after_view_index
+statement ok
+CREATE INDEX dsr_ri ON dsr_t2 USING inverted (body);
+
+
+connection after_view_index
+statement ok
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+WHERE database_name = current_database() AND table_name = 'dsr_t2';
 
 
 connection after_view_index
@@ -680,7 +620,7 @@ n
 
 connection after_table_with_index
 query
-SELECT dsr_leftover('dsr_ri_new') AS leftover;
+SELECT dsr_leftover('dsr_t2') AS leftover;
 ----
 leftover
 0

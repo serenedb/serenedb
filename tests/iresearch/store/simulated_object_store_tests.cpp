@@ -175,7 +175,7 @@ TEST(SimulatedObjectStoreTest, prefixes_list_move_and_remove) {
     entries.emplace_back(name, dir);
   }));
   const std::vector<std::pair<std::string, bool>> expected{
-    {"a", false}, {"b", false}, {"sub/c", false}};
+    {"a", false}, {"b", false}, {"sub", true}};
   EXPECT_EQ(expected, entries);
   EXPECT_TRUE(Vfs().DirectoryExists(root + "/none"));
 

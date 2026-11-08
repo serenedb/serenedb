@@ -91,7 +91,7 @@ void ListIndexFiles(duckdb::FileSystem& fs, std::string_view root,
                     absl::FunctionRef<void(std::string_view)> visitor) {
   fs.ListFiles(std::string{root},
                [&](const std::string& name, bool is_directory) {
-                 if (!is_directory && name.find('/') == std::string::npos) {
+                 if (!is_directory) {
                    visitor(name);
                  }
                });

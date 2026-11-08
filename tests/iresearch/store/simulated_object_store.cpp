@@ -22,6 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/btree_map.h>
+#include <absl/container/btree_set.h>
 #include <absl/strings/str_cat.h>
 #include <fast_float/fast_float.h>
 
@@ -372,11 +373,19 @@ bool SimulatedObjectStore::ListFilesExtended(
   Request(_list);
   const auto prefix = DirectoryPrefix(directory);
   absl::btree_map<std::string, std::shared_ptr<const Object>> listed;
+  absl::btree_set<std::string> directories;
   {
     absl::ReaderMutexLock lock{&_mutex};
     for (const auto& [name, object] : _objects) {
-      if (name.starts_with(prefix)) {
-        listed.emplace(name.substr(prefix.size()), object);
+      if (!name.starts_with(prefix)) {
+        continue;
+      }
+      const auto child = std::string_view{name}.substr(prefix.size());
+      if (const auto slash = child.find('/');
+          !options.recursive && slash != std::string_view::npos) {
+        directories.emplace(child.substr(0, slash));
+      } else {
+        listed.emplace(child, object);
       }
     }
   }
@@ -384,13 +393,20 @@ bool SimulatedObjectStore::ListFilesExtended(
     duckdb::OpenFileInfo file{name};
     file.extended_info =
       duckdb::make_shared_ptr<duckdb::ExtendedOpenFileInfo>();
-    auto& options = file.extended_info->options;
-    options.emplace("file_size", duckdb::Value::UBIGINT(object->bytes.size()));
-    options.emplace("etag", duckdb::Value{absl::StrCat(object->version)});
-    options.emplace("last_modified", duckdb::Value::TIMESTAMP(object->written));
+    auto& info = file.extended_info->options;
+    info.emplace("file_size", duckdb::Value::UBIGINT(object->bytes.size()));
+    info.emplace("etag", duckdb::Value{absl::StrCat(object->version)});
+    info.emplace("last_modified", duckdb::Value::TIMESTAMP(object->written));
     callback(file);
   }
-  return !listed.empty();
+  for (const auto& name : directories) {
+    duckdb::OpenFileInfo file{name};
+    file.extended_info =
+      duckdb::make_shared_ptr<duckdb::ExtendedOpenFileInfo>();
+    file.extended_info->options.emplace("type", duckdb::Value{"directory"});
+    callback(file);
+  }
+  return !listed.empty() || !directories.empty();
 }
 
 void SimulatedObjectStore::RemoveFiles(

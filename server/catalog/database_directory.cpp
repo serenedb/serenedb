@@ -243,26 +243,17 @@ void TablespaceDirectory::MarkDropped() noexcept {
 
 std::vector<StorageEntry> ListStorages(const std::string& root) {
   std::vector<StorageEntry> found;
-  irs::containers::FlatHashSet<std::string> seen;
   StorageFileSystem().ListFiles(
     root, [&](const std::string& name, bool is_directory) {
-      std::string_view entry = name;
-      bool directory = is_directory;
-      if (const auto slash = entry.find('/'); slash != std::string_view::npos) {
-        entry = entry.substr(0, slash);
-        directory = true;
-      }
-      std::string_view digits = entry;
-      if (!directory && !absl::ConsumeSuffix(&digits, kStorageMarker)) {
+      std::string_view digits = name;
+      if (!is_directory && !absl::ConsumeSuffix(&digits, kStorageMarker)) {
         return;
       }
-      const auto oid = OidFromName(digits);
-      if (!oid || !seen.emplace(entry).second) {
-        return;
+      if (const auto oid = OidFromName(digits)) {
+        found.push_back({.oid = *oid,
+                         .path = absl::StrCat(root, "/", name),
+                         .is_directory = is_directory});
       }
-      found.push_back({.oid = *oid,
-                       .path = absl::StrCat(root, "/", entry),
-                       .is_directory = directory});
     });
   return found;
 }

@@ -114,14 +114,12 @@ inline doc_id_t NextBit(const BitsetStorage& set, doc_id_t from) noexcept {
 }
 
 template<typename Apply>
-IRS_FORCE_INLINE uint32_t ApplyWindow(const BitsetStorage& set, doc_id_t min,
-                                      doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                                      Apply&& apply) noexcept {
+IRS_FORCE_INLINE void ApplyWindow(const BitsetStorage& set, doc_id_t min,
+                                  doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                                  Apply&& apply) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   const auto stop = std::min(max, set.End());
-  if (min >= stop) {
-    return 0;
-  }
+  SDB_ASSERT(min < stop);
   const auto* const bits = set.Words();
   const auto base = min - BitsetStorage::kMin;
   const auto at = [&](size_t offset) IRS_FORCE_INLINE {
@@ -141,9 +139,7 @@ IRS_FORCE_INLINE uint32_t ApplyWindow(const BitsetStorage& set, doc_id_t min,
   if (const auto rest = len % kBits; rest != 0) {
     apply(mask[full],
           at(base + size_t{full} * kBits) & (~uint64_t{0} >> (kBits - rest)));
-    return full + 1;
   }
-  return full;
 }
 
 inline void OrWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
@@ -151,17 +147,6 @@ inline void OrWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
   ApplyWindow(set, min, max, mask,
               [](uint64_t& word, uint64_t bits)
                 IRS_FORCE_INLINE { word |= bits; });
-}
-
-inline void AndWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
-                      uint64_t* IRS_RESTRICT mask) noexcept {
-  const auto words = WindowWords(min, max);
-  for (auto w = ApplyWindow(set, min, max, mask,
-                            [](uint64_t& word, uint64_t bits)
-                              IRS_FORCE_INLINE { word &= bits; });
-       w != words; ++w) {
-    mask[w] = 0;
-  }
 }
 
 inline void AndNotWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,

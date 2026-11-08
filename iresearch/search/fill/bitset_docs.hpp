@@ -40,11 +40,6 @@ class BitsetDocs {
     return _doc = detail::NextBit(_set, max);
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    detail::AndWindow(_set, min, max, mask);
-    return _doc = detail::NextBit(_set, max);
-  }
-
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     if (_doc >= max) {
       return _doc;

@@ -117,39 +117,6 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
     });
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    SDB_ASSERT(min < max);
-    AndCursor cursor{.words = mask};
-    if (Reach(min)) {
-      for (;;) {
-        const auto base = _cursor.base;
-        if (base + 1 >= max) {
-          break;
-        }
-        const uint64_t lo = std::max<doc_id_t>(min, base + 1) - min;
-        const uint64_t hi = std::min<doc_id_t>(_last, max - 1) - min;
-        if (_kind == Kind::Docs) {
-          const auto first = SeekIn(_at, min);
-          const auto* const end = _docs.data() + kBlock;
-          const auto* const it =
-            cursor.AndDocs(lo, hi, _docs.data() + first, end, min);
-          _at = static_cast<uint32_t>(it - _docs.data());
-        } else if (_kind == Kind::Bitset) {
-          cursor.And(lo, hi, static_cast<int64_t>(min) - base - 1, _bitset,
-                     _words);
-        } else {
-          cursor.Keep(lo, hi);
-        }
-        if (_last + 1 >= max || _left_in_list == 0) {
-          break;
-        }
-        Load(_last);
-      }
-    }
-    cursor.Settle(max - min);
-    return Seek(max);
-  }
-
   uint32_t Keep(const doc_id_t* in, uint32_t n, doc_id_t* out) {
     return Sift<true>(in, n, out);
   }

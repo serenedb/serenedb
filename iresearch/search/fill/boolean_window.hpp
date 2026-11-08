@@ -86,15 +86,6 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
     }
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask)
-    requires(!kScored)
-  {
-    const auto words = detail::WindowWords(min, max);
-    const auto next = Compute(min, max, words);
-    detail::FoldAnd(mask, _own.data(), words);
-    return next;
-  }
-
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask)
     requires(!kScored)
   {

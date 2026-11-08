@@ -345,16 +345,6 @@ class FillDocs : public irs::fill::Node {
     return next;
   }
 
-  irs::doc_id_t FillAnd(irs::doc_id_t min, irs::doc_id_t max,
-                        uint64_t* IRS_RESTRICT mask) final {
-    const auto words = irs::detail::WindowWords(min, max);
-    const auto next = _list.Window(min, max, _own.data());
-    for (size_t w = 0; w != words; ++w) {
-      mask[w] &= _own[w];
-    }
-    return next;
-  }
-
   irs::doc_id_t FillAndNot(irs::doc_id_t min, irs::doc_id_t max,
                            uint64_t* IRS_RESTRICT mask) final {
     const auto words = irs::detail::WindowWords(min, max);

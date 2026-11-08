@@ -486,10 +486,7 @@ class PostingLeaf {
   doc_id_t Scan(doc_id_t target) {
     const auto* const end = std::cend(_docs);
     const auto* const it = ScanNotBelow(end - _left_in_leaf, end, target);
-    if (it == end) {
-      _left_in_leaf = 0;
-      return _doc = doc_limits::eof();
-    }
+    SDB_ASSERT(it != end);
     _left_in_leaf = static_cast<uint32_t>(end - it) - 1;
     return _doc = *it;
   }

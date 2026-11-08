@@ -51,22 +51,6 @@ class AllDocs {
                       });
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
-    doc_id_t begin = 0;
-    doc_id_t end = 0;
-    if (!Span(min, max, begin, end)) {
-      detail::Clear(mask, detail::WindowWords(min, max));
-      return doc_limits::eof();
-    }
-    if (begin != min) {
-      detail::ClearInclusive(mask, 0, begin - min - 1);
-    }
-    if (end != max) {
-      detail::ClearInclusive(mask, end - min, max - min - 1);
-    }
-    return end > _last ? doc_limits::eof() : end;
-  }
-
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     doc_id_t begin = 0;
     doc_id_t end = 0;

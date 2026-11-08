@@ -57,9 +57,7 @@ class PhraseUnionMember : public UnionMember,
   bool Bounded() const noexcept { return _bound.Bounded(); }
 
   doc_id_t Seek(doc_id_t target) final {
-    if (target <= _doc) {
-      return _doc;
-    }
+    SDB_ASSERT(target > _doc);
     return Settle(_slots.Seek(target));
   }
 

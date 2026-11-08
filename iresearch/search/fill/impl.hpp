@@ -52,21 +52,6 @@ class Impl : public Node {
     }
   }
 
-  doc_id_t FillAnd(doc_id_t min, doc_id_t max,
-                   uint64_t* IRS_RESTRICT mask) final {
-    if constexpr (!Producer<Leaf>) {
-      SDB_UNREACHABLE();
-    } else if constexpr (kRestricts) {
-      return _leaf.FillAnd(min, max, mask);
-    } else {
-      const auto words = detail::WindowWords(min, max);
-      detail::Clear(_own.data(), words);
-      const auto next = _leaf.FillOr(min, max, _own.data());
-      detail::FoldAnd(mask, _own.data(), words);
-      return next;
-    }
-  }
-
   doc_id_t FillAndNot(doc_id_t min, doc_id_t max,
                       uint64_t* IRS_RESTRICT mask) final {
     if constexpr (!Producer<Leaf>) {
@@ -143,11 +128,6 @@ class Erased {
   IRS_FORCE_INLINE doc_id_t FillOr(doc_id_t min, doc_id_t max,
                                    uint64_t* IRS_RESTRICT mask) {
     return _node->FillOr(min, max, mask);
-  }
-
-  IRS_FORCE_INLINE doc_id_t FillAnd(doc_id_t min, doc_id_t max,
-                                    uint64_t* IRS_RESTRICT mask) {
-    return _node->FillAnd(min, max, mask);
   }
 
   IRS_FORCE_INLINE doc_id_t FillAndNot(doc_id_t min, doc_id_t max,

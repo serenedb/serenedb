@@ -69,15 +69,13 @@ class AndLeaves {
 
   uint32_t Keep(const doc_id_t* in, uint32_t n, doc_id_t* out,
                 size_t from = 0) {
+    SDB_ASSERT(from < _leaves.size());
     for (auto i = from; i != _leaves.size(); ++i) {
       n = _leaves[i].Keep(in, n, out);
       in = out;
       if (n == 0) {
         return 0;
       }
-    }
-    if (in != out) {
-      std::copy_n(in, n, out);
     }
     return n;
   }

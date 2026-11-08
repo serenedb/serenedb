@@ -57,6 +57,10 @@ db error: ERROR: Jobs are not supported in schema "main"
 
 
 statement ok
+DROP JOB IF EXISTS jt_ext.main.jt_babsky;
+
+
+statement ok
 DETACH jt_ext;
 
 

@@ -1,0 +1,47 @@
+control substitution on
+
+statement ok
+DETACH IF EXISTS tdf_ext;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS tdf_dict;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tdf_dict AS split_text(case := 'lower');
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/tdf_ext.duckdb' AS tdf_ext;
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY tdf_ext.main.tdf_dict AS split_text();
+----
+db error: ERROR: Text search dictionaries are not supported in schema "main"
+
+
+statement error
+SELECT ts_lexize('tdf_ext.main.tdf_dict', 'Quick Fox');
+----
+db error: ERROR: text search dictionary "tdf_ext.main.tdf_dict" does not exist
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS tdf_ext.main.tdf_dict;
+
+
+query
+SELECT ts_lexize('tdf_dict', 'Quick Fox') AS tokens;
+----
+tokens
+{quick,fox}
+
+
+statement ok
+DETACH tdf_ext;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tdf_dict;

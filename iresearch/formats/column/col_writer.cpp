@@ -240,9 +240,9 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   return out;
 }
 
-AnnFlushBound ColWriter::AnnBound(uint64_t rows) {
+AnnFlushBound ColWriter::AnnBound(uint64_t rows) const {
   AnnFlushBound total;
-  for (auto& entry : _ann_writers) {
+  for (const auto& entry : _ann_writers) {
     if (!entry->writer) {
       continue;
     }

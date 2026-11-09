@@ -46,7 +46,7 @@ class HnswWriter final : public AnnWriter {
 
   bool Empty() const noexcept final { return _graph.Empty(); }
 
-  AnnFlushBound FlushBound(uint64_t rows) final;
+  AnnFlushBound FlushBound(uint64_t rows) const final;
 
   void SetMergeSources(std::span<const MergeSource> sources) noexcept final {
     _merge_sources = sources;
@@ -80,10 +80,6 @@ class HnswWriter final : public AnnWriter {
   Codes _codes;
   bstring _stats_blob;
   std::unique_ptr<QuantizerWriter> _qw;
-  std::unique_ptr<QuantizerWriter> _bound_qw;
-  pcg32 _level_rng;
-  uint64_t _level_draws = 0;
-  uint64_t _upper_levels = 0;
   std::vector<float> _centroid;
   uint32_t _d = 0;
   uint32_t _record_size = 0;

@@ -240,7 +240,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   }
 
   size_t TrainSamples(size_t /*rows*/) const noexcept final {
-    return IsHalfFloat(_quant) ? 0 : kTrainStreaming;
+    return ScalarTrainSamples(_quant);
   }
 
   void Train(const float* vecs, size_t n) final {
@@ -756,6 +756,15 @@ std::shared_ptr<const QuantizerCodebook> ScalarQuantizerStats<M>::MakeCodebook(
 std::unique_ptr<QuantizerWriter> MakeScalarWriter(uint32_t d,
                                                   VectorQuantization quant) {
   return std::make_unique<ScalarQuantizerWriter>(d, quant);
+}
+
+size_t ScalarTrainSamples(VectorQuantization quant) noexcept {
+  return IsHalfFloat(quant) ? 0 : QuantizerWriter::kTrainStreaming;
+}
+
+uint32_t ScalarRecordSize(uint32_t d, VectorQuantization quant) {
+  return static_cast<uint32_t>(
+    faiss::ScalarQuantizer{d, FaissScalarType(quant)}.code_size);
 }
 
 std::shared_ptr<const QuantizerStats> MakeScalarStats(

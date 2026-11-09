@@ -1088,6 +1088,18 @@ TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
   }
 }
 
+TEST(HnswRandomLevelTest, UpperLevelsBoundCoversTheBuildsDraws) {
+  for (const uint32_t m : {2U, 3U, 4U, 6U, 8U, 16U, 32U, 64U, 128U, 256U}) {
+    pcg32 rng{irs::kHnswBuildSeed};
+    uint64_t upper = 0;
+    for (uint64_t rows = 1; rows <= uint64_t{1} << 18; ++rows) {
+      upper += irs::HnswRandomLevel(rng, m) - 1;
+      ASSERT_LE(upper, irs::HnswUpperLevelsBound(rows, m))
+        << "m=" << m << " rows=" << rows;
+    }
+  }
+}
+
 TEST(HnswVisitedTest, MembershipSurvivesGrowthAndTheSwitchToTheBitset) {
   for (const uint32_t nodes : {1000U, 40000U, 30000000U}) {
     for (const size_t visits : {size_t{0}, size_t{6000}, size_t{300000}}) {

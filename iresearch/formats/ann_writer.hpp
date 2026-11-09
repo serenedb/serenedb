@@ -53,7 +53,7 @@ class AnnWriter {
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
   void SetBudget(MemoryBudget* budget) noexcept { _budget = budget; }
 
-  virtual AnnFlushBound FlushBound(uint64_t rows) = 0;
+  virtual AnnFlushBound FlushBound(uint64_t rows) const = 0;
 
   virtual AnnKind Kind() const noexcept = 0;
 

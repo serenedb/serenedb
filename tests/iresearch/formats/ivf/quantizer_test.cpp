@@ -38,6 +38,7 @@
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/tracked.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -3594,5 +3595,85 @@ TEST(quantizer_kernel_test, fwht_matches_the_scalar_butterflies) {
     }
     quantizers::Fwht(got.data(), len);
     EXPECT_EQ(got, want) << len;
+  }
+}
+
+TEST(quantizer_sizes_test, quantized_kinds_match_their_writers) {
+  constexpr size_t kRows[] = {0, 1, 1000, 50000, 1000000};
+  for (const uint32_t d : {16U, 64U, 100U, 128U}) {
+    std::vector<AnnInfo::Quantizer> quants;
+    for (const auto kind :
+         {VectorQuantization::SQ8, VectorQuantization::SQ4,
+          VectorQuantization::USQ8, VectorQuantization::USQ4,
+          VectorQuantization::FP16, VectorQuantization::BF16}) {
+      quants.push_back({.kind = kind});
+    }
+    if (d % 8 == 0) {
+      quants.push_back({.kind = VectorQuantization::PQ, .pq_m = 8});
+    }
+    for (const uint32_t bits : {1U, 2U, 3U, 4U, 5U}) {
+      quants.push_back({.kind = VectorQuantization::TQ, .nb_bits = bits});
+    }
+    quants.push_back(
+      {.kind = VectorQuantization::TQ, .nb_bits = 1, .half_bit = true});
+    for (const uint32_t bits : {1U, 2U, 4U, 8U}) {
+      quants.push_back({.kind = VectorQuantization::RaBitQ, .nb_bits = bits});
+    }
+    for (const uint32_t bits : {1U, 2U}) {
+      quants.push_back({.kind = VectorQuantization::BQ, .nb_bits = bits});
+    }
+    quants.push_back(
+      {.kind = VectorQuantization::BQ, .nb_bits = 1, .half_bit = true});
+    for (const uint32_t bits : {0U, 1U, 2U, 4U, 8U}) {
+      quants.push_back({.kind = VectorQuantization::OSQ, .nb_bits = bits});
+    }
+    for (const auto& quant : quants) {
+      for (const auto metric :
+           {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
+        for (const bool row_major : {false, true}) {
+          auto writer = MakeQuantizerWriter(quant, d, metric, 0, row_major);
+          ASSERT_NE(nullptr, writer);
+          EXPECT_EQ(writer->BlockSetting().record_size,
+                    QuantizerRecordSize(quant, d, metric, row_major))
+            << magic_enum::enum_name(quant.kind) << " bits=" << quant.nb_bits
+            << " d=" << d << " row_major=" << row_major;
+          for (const auto rows : kRows) {
+            EXPECT_EQ(writer->TrainSamples(rows),
+                      QuantizerTrainSamples(quant, d, metric, rows, row_major))
+              << magic_enum::enum_name(quant.kind) << " d=" << d
+              << " rows=" << rows;
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST(quantizer_sizes_test, none_matches_its_trained_writer) {
+  constexpr AnnInfo::Quantizer kNone{.kind = VectorQuantization::None};
+  std::mt19937 rng{7};
+  std::normal_distribution<float> nd;
+  for (const uint32_t d : {16U, 64U}) {
+    for (const auto metric :
+         {VectorMetric::L2Sqr, VectorMetric::InnerProduct, VectorMetric::L1}) {
+      auto writer = MakeQuantizerWriter(kNone, d, metric);
+      ASSERT_NE(nullptr, writer);
+      for (const size_t rows : {0UL, 100UL, 1023UL, 1024UL, 1000000UL}) {
+        EXPECT_EQ(writer->TrainSamples(rows),
+                  QuantizerTrainSamples(kNone, d, metric, rows, false))
+          << "d=" << d << " rows=" << rows;
+      }
+      const auto train = writer->TrainSamples(1000000);
+      if (train != 0) {
+        std::vector<float> vecs(train * d);
+        for (auto& v : vecs) {
+          v = nd(rng);
+        }
+        writer->Train(vecs.data(), train);
+      }
+      EXPECT_EQ(writer->BlockSetting().record_size,
+                QuantizerRecordSize(kNone, d, metric, false))
+        << "d=" << d;
+    }
   }
 }

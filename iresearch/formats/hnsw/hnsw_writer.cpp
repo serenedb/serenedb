@@ -1236,31 +1236,22 @@ void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
 }  // namespace
 
 HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
-  : _info{std::move(info)}, _bases{bases}, _level_rng{kHnswBuildSeed} {}
+  : _info{std::move(info)}, _bases{bases} {}
 
-AnnFlushBound HnswWriter::FlushBound(uint64_t rows) {
+AnnFlushBound HnswWriter::FlushBound(uint64_t rows) const {
   const auto m = std::max(_info.m, 1U);
   const auto d = static_cast<uint32_t>(_info.d);
-  if (rows < _level_draws) {
-    _level_rng = pcg32{kHnswBuildSeed};
-    _level_draws = 0;
-    _upper_levels = 0;
-  }
-  for (; _level_draws < rows; ++_level_draws) {
-    _upper_levels += HnswRandomLevel(_level_rng, m) - 1;
-  }
+  const auto metric = EffectiveQuantMetric(_info.metric);
   const bool quant = _info.quant.kind != VectorQuantization::None;
-  if (quant && !_bound_qw) {
-    _bound_qw =
-      MakeQuantizerWriter(_info.quant, d, EffectiveQuantMetric(_info.metric), 0,
-                          /*row_major=*/true);
-  }
   const uint64_t floats = sizeof(float) * rows * d;
   const uint64_t graph =
     rows * (sizeof(uint8_t) + sizeof(uint64_t) + 2 * m * sizeof(uint32_t)) +
-    sizeof(uint64_t) + m * sizeof(uint32_t) * _upper_levels;
-  const uint64_t codes =
-    quant ? rows * _bound_qw->BlockSetting().record_size + 16 : 0;
+    sizeof(uint64_t) + m * sizeof(uint32_t) * HnswUpperLevelsBound(rows, m);
+  const uint64_t codes = quant
+                           ? rows * QuantizerRecordSize(_info.quant, d, metric,
+                                                        /*row_major=*/true) +
+                               16
+                           : 0;
   const bool rotated =
     quant ? RotatesCodes(_info, d) : RotationApplies(_info.metric, d);
   const uint64_t tails =
@@ -1270,7 +1261,8 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) {
     rotated ? sizeof(float) * PanoramaSampleRows(rows, d) * d : 0;
   uint64_t streamed = 0;
   if (quant) {
-    const auto train = _bound_qw->TrainSamples(rows);
+    const auto train =
+      QuantizerTrainSamples(_info.quant, d, metric, rows, /*row_major=*/true);
     streamed =
       2 * sizeof(float) * rows +
       sizeof(float) * std::min<uint64_t>(kHnswOriginalsWindow, rows) * d +

@@ -85,7 +85,7 @@ class ColWriter final {
 
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
-  AnnFlushBound AnnBound(uint64_t rows);
+  AnnFlushBound AnnBound(uint64_t rows) const;
 
   bool Commit(uint64_t target_row);
   bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);

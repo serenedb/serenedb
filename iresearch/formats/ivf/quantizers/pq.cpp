@@ -146,7 +146,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   }
 
   size_t TrainSamples(size_t rows) const noexcept final {
-    return std::min<size_t>(rows, kPqTrainResiduals);
+    return PqTrainSamples(rows, /*row_major=*/false);
   }
 
   void Train(const float* vecs, size_t n) final {
@@ -176,9 +176,8 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   PayloadBlockSetting BlockSetting() const noexcept final {
     return {
       .group_size = kFastScanBbs,
-      .record_size =
-        static_cast<uint32_t>(FastScanNsq(_pq.M) / 2 +
-                              (M == VectorMetric::L2Sqr ? sizeof(float) : 0)),
+      .record_size = PqRecordSize(M, static_cast<uint32_t>(_pq.M),
+                                  /*row_major=*/false),
       .alignment = M == VectorMetric::L2Sqr ? alignof(float) : 1U,
     };
   }
@@ -757,7 +756,7 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
   }
 
   size_t TrainSamples(size_t rows) const noexcept final {
-    return std::min<size_t>(rows, kPq8TrainRows);
+    return PqTrainSamples(rows, /*row_major=*/true);
   }
 
   void Train(const float* vecs, size_t n) final {
@@ -1518,6 +1517,21 @@ std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
   }
   return MakeWriterWithMetric<ProductQuantizerWriter>(metric, d, pq_m,
                                                       pq_niter);
+}
+
+size_t PqTrainSamples(size_t rows, bool row_major) noexcept {
+  return std::min<size_t>(rows, row_major ? kPq8TrainRows : kPqTrainResiduals);
+}
+
+uint32_t PqRecordSize(VectorMetric metric, uint32_t pq_m,
+                      bool row_major) noexcept {
+  const uint32_t m = pq_m == 0 ? 1 : pq_m;
+  if (row_major) {
+    return (m * kPq8Nbits + 7) / 8;
+  }
+  return static_cast<uint32_t>(
+    FastScanNsq(m) / 2 +
+    (EffectiveQuantMetric(metric) == VectorMetric::L2Sqr ? sizeof(float) : 0));
 }
 
 std::shared_ptr<const QuantizerStats> MakePqStats(

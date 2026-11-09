@@ -793,14 +793,23 @@ std::shared_ptr<const QuantizerCodebook> OsqQuantizerStats<M>::MakeCodebook(
                                                                       query);
 }
 
+uint32_t OsqBits(uint32_t nb_bits) noexcept {
+  return nb_bits == 0 ? kOSQDefaultBits : nb_bits;
+}
+
 }  // namespace
 
 std::unique_ptr<QuantizerWriter> MakeOsqWriter(VectorMetric metric, uint32_t d,
                                                uint32_t nb_bits,
                                                uint32_t query_bits) {
-  const uint32_t bits = nb_bits == 0 ? kOSQDefaultBits : nb_bits;
+  const uint32_t bits = OsqBits(nb_bits);
   return MakeWriterWithMetric<OsqQuantizerWriter>(
     metric, d, bits, query_bits == 0 ? OSQDefaultQueryBits(bits) : query_bits);
+}
+
+uint32_t OsqRecordSize(uint32_t d, uint32_t nb_bits) noexcept {
+  const uint32_t bits = OsqBits(nb_bits);
+  return MakeOsqLayout(d, bits, OSQDefaultQueryBits(bits)).record_size;
 }
 
 std::shared_ptr<const QuantizerStats> MakeOsqStats(

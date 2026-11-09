@@ -126,6 +126,14 @@ uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept {
                   kHnswMaxLevel);
 }
 
+uint64_t HnswUpperLevelsBound(uint64_t rows, uint32_t m) noexcept {
+  const double base = std::max(m, 2U);
+  const double expected = std::sqrt(base) / (base - 1);
+  return static_cast<uint64_t>(
+           std::ceil(2 * expected * static_cast<double>(rows))) +
+         kHnswMaxLevel;
+}
+
 void HnswSuffixNorms(const float* v, uint32_t d, uint32_t width, uint32_t first,
                      float* out) noexcept {
   float sum = 0.f;

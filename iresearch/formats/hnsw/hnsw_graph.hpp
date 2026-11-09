@@ -386,6 +386,8 @@ class HnswGraphWriter {
 
 uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept;
 
+uint64_t HnswUpperLevelsBound(uint64_t rows, uint32_t m) noexcept;
+
 template<VectorMetric M>
 void HnswComputeDistances(const float* q, const float* base, uint32_t d,
                           std::span<const uint32_t> ids,

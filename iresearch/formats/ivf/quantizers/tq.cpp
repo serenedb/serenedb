@@ -1769,6 +1769,16 @@ std::unique_ptr<QuantizerWriter> MakeTurboQuantWriter(VectorMetric metric,
                                                     row_major);
 }
 
+uint32_t TurboQuantRecordSize(VectorMetric metric, uint32_t d, uint32_t nb_bits,
+                              bool half_bit, bool row_major) noexcept {
+  const auto bits = MakeTurboQuantBits(nb_bits, half_bit);
+  SDB_ASSERT(bits);
+  return MakeTurboQuantLayout(
+           d, *bits, EffectiveQuantMetric(metric) == VectorMetric::L2Sqr,
+           row_major)
+    .record_size;
+}
+
 std::shared_ptr<const QuantizerStats> MakeTurboQuantStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
   bool row_major) {

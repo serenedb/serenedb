@@ -70,7 +70,7 @@ class IvfBuilder {
  public:
   explicit IvfBuilder(AnnInfo info) : _info{std::move(info)} {}
 
-  AnnFlushBound Bound(uint64_t rows, QuantizerWriter& qw) const;
+  AnnFlushBound Bound(uint64_t rows) const;
 
   BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
                    QuantizerWriter* qw, MemoryBudget* budget) const;
@@ -140,7 +140,7 @@ class IvfWriter final : public AnnWriter {
 
   bool Empty() const noexcept final { return !_built; }
 
-  AnnFlushBound FlushBound(uint64_t rows) final;
+  AnnFlushBound FlushBound(uint64_t rows) const final;
 
   yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
                          const AnnBuildEnv* env) final;
@@ -160,7 +160,6 @@ class IvfWriter final : public AnnWriter {
 
   AnnInfo _info;
   Result _result;
-  std::unique_ptr<QuantizerWriter> _bound_qw;
   bool _built = false;
   std::unique_ptr<IvfTermReader> _reader;
 };

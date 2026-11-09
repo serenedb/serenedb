@@ -737,6 +737,11 @@ std::unique_ptr<QuantizerWriter> MakeRaBitQWriter(VectorMetric metric,
                                                     row_major);
 }
 
+uint32_t RaBitQRecordSize(uint32_t d, uint32_t nb_bits,
+                          bool row_major) noexcept {
+  return MakeRaBitQLayout(d, nb_bits, row_major).record_size;
+}
+
 std::shared_ptr<const QuantizerStats> MakeRaBitQStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
   bool row_major) {

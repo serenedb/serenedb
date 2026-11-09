@@ -919,6 +919,11 @@ std::unique_ptr<QuantizerWriter> MakeBinaryWriter(VectorMetric metric,
                                                      half_bit, query_bits);
 }
 
+uint32_t BinaryRecordSize(uint32_t d, uint32_t nb_bits,
+                          bool half_bit) noexcept {
+  return MakeBqLayout(d, nb_bits, half_bit).record_size;
+}
+
 std::shared_ptr<const QuantizerStats> MakeBinaryStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats) {
   return MakeStatsWithMetric<BinaryQuantizerStats>(metric, d, stats);

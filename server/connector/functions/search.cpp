@@ -330,6 +330,9 @@ duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(
   if (!entry) {
     return nullptr;
   }
+  duckdb::Binder::RegisterEntryRead(
+    input.HasBinder() ? &input.GetBinder() : nullptr, input.GetClientContext(),
+    *entry);
   return &entry->Cast<catalog::TokenizerCatalogEntry>();
 }
 

@@ -25,6 +25,7 @@
 
 #include <cmath>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -78,6 +79,7 @@ void ClassifySegments(ScanGlobalState& g) {
   for (uint32_t si = 0; si < g.total_segments; ++si) {
     ClassifySegmentColFilters((*g.reader)[si], g, g.col_filters, init_states,
                               cls, false);
+    SDB_IF_FAILURE("classify_segments_keep_dead") { cls.segment_dead = false; }
     if (!cls.segment_dead) {
       g.segment_order.push_back(si);
     }

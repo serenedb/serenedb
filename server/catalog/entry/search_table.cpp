@@ -21,29 +21,44 @@
 #include "catalog/entry/search_table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/functional/any_invocable.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
+#include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/string_util.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/constraints/bound_check_constraint.hpp>
+#include <duckdb/planner/constraints/bound_not_null_constraint.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_binder/alter_binder.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
@@ -52,6 +67,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <optional>
 #include <string>
 #include <utility>
@@ -61,8 +77,10 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/full_scanner.h"
 #include "connector/primary_key.h"
 #include "connector/scan/scan_bind.h"
+#include "connector/search_table_backfill.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -76,6 +94,7 @@ constexpr std::string_view kEngineSearch = "search";
 
 using WithOptions =
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>;
+using Constraints = duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>;
 
 duckdb::optional_ptr<const duckdb::ConstantExpression> FindConstant(
   const WithOptions& options, std::string_view key) {
@@ -86,6 +105,11 @@ duckdb::optional_ptr<const duckdb::ConstantExpression> FindConstant(
     return nullptr;
   }
   return &it->second->Cast<duckdb::ConstantExpression>();
+}
+
+template<typename T>
+T OptionValue(const WithOptions& options, std::string_view name) {
+  return FindConstant(options, name)->GetLiteral().ToValue().GetValue<T>();
 }
 
 duckdb::unique_ptr<duckdb::ConstantExpression> OptionConstant(
@@ -117,28 +141,22 @@ void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
 }
 
 SearchTableOptions ResolveOptions(const WithOptions& options) {
-  const auto get = [&](std::string_view name) {
-    return FindConstant(options, name)
-      ->GetLiteral()
-      .ToValue()
-      .GetValue<uint32_t>();
-  };
-  const auto get64 = [&](std::string_view name) {
-    return FindConstant(options, name)
-      ->GetLiteral()
-      .ToValue()
-      .GetValue<uint64_t>();
-  };
   SearchTableOptions result{
-    .refresh_interval_ms = get(kRefreshIntervalSetting),
-    .compaction_interval_ms = get(kCompactionIntervalSetting),
-    .cleanup_interval_step = get(kCleanupIntervalStepSetting),
-    .row_group_size = get(kRowGroupSizeSetting),
-    .segment_memory_max = get64(kSegmentMemoryMaxSetting),
-    .compaction_max_segments = get(kCompactionMaxSegmentsSetting),
-    .compaction_max_segments_bytes = get64(kCompactionMaxSegmentsBytesSetting),
+    .refresh_interval_ms =
+      OptionValue<uint32_t>(options, kRefreshIntervalSetting),
+    .compaction_interval_ms =
+      OptionValue<uint32_t>(options, kCompactionIntervalSetting),
+    .cleanup_interval_step =
+      OptionValue<uint32_t>(options, kCleanupIntervalStepSetting),
+    .row_group_size = OptionValue<uint32_t>(options, kRowGroupSizeSetting),
+    .segment_memory_max =
+      OptionValue<uint64_t>(options, kSegmentMemoryMaxSetting),
+    .compaction_max_segments =
+      OptionValue<uint32_t>(options, kCompactionMaxSegmentsSetting),
+    .compaction_max_segments_bytes =
+      OptionValue<uint64_t>(options, kCompactionMaxSegmentsBytesSetting),
     .compaction_floor_segment_bytes =
-      get64(kCompactionFloorSegmentBytesSetting),
+      OptionValue<uint64_t>(options, kCompactionFloorSegmentBytesSetting),
   };
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
     result.optimize_top_k =
@@ -147,12 +165,58 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
   return result;
 }
 
+void RequireAlterableOption(std::string_view name) {
+  if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+    return;
+  }
+  if (absl::c_contains(kSearchTableOptions, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("option \"", name, "\" cannot be changed with ALTER TABLE"));
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("unrecognized parameter \"", name, "\""));
+}
+
+void SetOptions(duckdb::ClientContext& context, WithOptions& options,
+                const duckdb::SetTableOptionsInfo& info) {
+  for (const auto& [name, expr] : info.table_options) {
+    RequireAlterableOption(name);
+    if (!expr ||
+        expr->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("option \"", name, "\" expects a constant value"));
+    }
+    options[name] = OptionConstant(connector::ValidateSetting(
+      context, name,
+      expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue()));
+  }
+}
+
+void ResetOptions(duckdb::ClientContext& context, WithOptions& options,
+                  duckdb::ResetTableOptionsInfo& info) {
+  for (const auto& identifier : info.table_options) {
+    const auto& name = identifier.GetIdentifierName();
+    RequireAlterableOption(name);
+    duckdb::Value value;
+    if (const auto it = info.values.find(name); it != info.values.end()) {
+      value = it->second;
+    } else {
+      context.TryGetCurrentSetting(identifier, value);
+      info.values.emplace(name, value);
+    }
+    options[name] = OptionConstant(value);
+  }
+  SDB_IF_FAILURE("reset_options_without_values") { info.values.clear(); }
+}
+
 std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
   const duckdb::TableCatalogEntry& table) {
   std::vector<InvertedIndexKey> keys;
   InvertedIndexFields fields;
   for (const auto index : connector::primary_key::KeyColumns(table)) {
-    const auto column = table.GetColumn(index).Oid();
+    const auto column = connector::TableColumnId(table.GetColumn(index));
     fields.emplace(column, InvertedIndexField{{.indexed_term_dict = true}});
     keys.push_back({{.field_id = column, .column_id = column}, {}});
   }
@@ -344,6 +408,7 @@ SearchTableEntry::SearchTableEntry(
                               std::move(inherited_triggers)},
     _columns{std::move(info.Base().columns)},
     _storage{std::move(inherited_storage)} {
+  AssignColumnOids(catalog, _columns);
   auto& base = info.Base();
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
@@ -417,35 +482,6 @@ void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
                         row_base + sub.first_row, virtual_columns, out);
     path.pop_back();
   });
-}
-
-std::string_view AlterName(const duckdb::AlterTableInfo& alter) {
-  switch (alter.alter_table_type) {
-    case duckdb::AlterTableType::ADD_COLUMN:
-      return "ALTER TABLE ADD COLUMN";
-    case duckdb::AlterTableType::REMOVE_COLUMN:
-      return "ALTER TABLE DROP COLUMN";
-    case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
-      return "ALTER TABLE ALTER COLUMN TYPE";
-    case duckdb::AlterTableType::ADD_CONSTRAINT:
-      return "ALTER TABLE ADD CONSTRAINT";
-    case duckdb::AlterTableType::DROP_CONSTRAINT:
-      return "ALTER TABLE DROP CONSTRAINT";
-    case duckdb::AlterTableType::RENAME_CONSTRAINT:
-      return "ALTER TABLE RENAME CONSTRAINT";
-    case duckdb::AlterTableType::FOREIGN_KEY_CONSTRAINT:
-      return "a foreign key";
-    case duckdb::AlterTableType::ADD_FIELD:
-    case duckdb::AlterTableType::REMOVE_FIELD:
-    case duckdb::AlterTableType::RENAME_FIELD:
-      return "changing a struct field";
-    case duckdb::AlterTableType::SET_PARTITIONED_BY:
-      return "SET PARTITIONED BY";
-    case duckdb::AlterTableType::SET_SORTED_BY:
-      return "SET SORTED BY";
-    default:
-      return "this ALTER TABLE";
-  }
 }
 
 }  // namespace
@@ -524,7 +560,8 @@ duckdb::vector<duckdb::column_t> SearchTableEntry::GetRowIdColumns() const {
 
 void SearchTableEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
   if (transaction.HasContext()) {
-    _storage->ClaimLayout(transaction.GetContext(), name.GetIdentifierName());
+    _storage->ClaimLayout(transaction.GetContext(), name.GetIdentifierName(),
+                          search::TableChange::Layout);
   }
 }
 
@@ -551,10 +588,9 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
   duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info) {
-  const auto index = GetColumnIndex(info.column_name);
-  auto create = GetInfo();
+  auto definition = Definition();
   auto& column =
-    create->Cast<duckdb::CreateTableInfo>().columns.GetColumnMutable(index);
+    definition->columns.GetColumnMutable(GetColumnIndex(info.column_name));
   if (column.Generated()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("cannot SET COMPRESSION for generated column \"",
@@ -562,7 +598,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
   }
   column.SetCompressionType(info.compression_type);
   column.SetCompressionLevel(info.compression_level);
-  return Rebuilt(context, info, std::move(create));
+  return Altered(context, info, std::move(definition));
 }
 
 void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
@@ -619,12 +655,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
   options.insert_or_assign(kStorageOption,
                            OptionConstant(duckdb::Value{kEngineSearch}));
-  for (const auto name :
-       {kRefreshIntervalSetting, kCompactionIntervalSetting,
-        kCleanupIntervalStepSetting, kRowGroupSizeSetting,
-        kSegmentMemoryMaxSetting, kCompactionMaxSegmentsSetting,
-        kCompactionMaxSegmentsBytesSetting, kCompactionFloorSegmentBytesSetting,
-        kOptimizeTopKSetting}) {
+  for (const auto name : kSearchTableOptions) {
     if (const auto value = Option(name); !value.IsNull()) {
       options.insert_or_assign(name, OptionConstant(value));
     }
@@ -671,13 +702,9 @@ duckdb::TableFunction SearchTableEntry::GetScanFunction(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::Copy(
   duckdb::ClientContext& context) const {
-  auto info = GetInfo();
   auto binder = duckdb::Binder::CreateBinder(context);
-  auto bound = binder->BindCreateTableInfo(std::move(info));
-  auto result = duckdb::make_uniq<SearchTableEntry>(
-    catalog, ParentSchema(context), *bound,
-    catalog.GetCatalogTransaction(context), _storage, triggers);
-  return result;
+  auto bound = binder->BindCreateTableInfo(GetInfo());
+  return Successor(context, *bound);
 }
 
 duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
@@ -697,109 +724,390 @@ duckdb::TableStorageInfo SearchTableEntry::GetStorageInfo(
   return result;
 }
 
-duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Rebuilt(
-  duckdb::ClientContext& context, duckdb::AlterInfo& info,
-  duckdb::unique_ptr<duckdb::CreateInfo> create) const {
-  auto& schema = ParentSchema(context);
+void SearchTableEntry::RequireCurrentSchema() const {
+  if (_schema_epoch != _storage->SchemaEpoch()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+                    ERR_MSG("search table \"", name.GetIdentifierName(),
+                            "\" was altered by a concurrent transaction"),
+                    ERR_HINT("Retry the transaction."));
+  }
+}
+
+namespace {
+
+[[noreturn]] void ThrowUnsupportedAlter(const duckdb::AlterTableInfo& alter) {
+  std::string_view change = "this ALTER TABLE";
+  switch (alter.alter_table_type) {
+    case duckdb::AlterTableType::ADD_CONSTRAINT:
+      change = "ALTER TABLE ADD CONSTRAINT";
+      break;
+    case duckdb::AlterTableType::FOREIGN_KEY_CONSTRAINT:
+      change = "a foreign key";
+      break;
+    case duckdb::AlterTableType::ADD_FIELD:
+    case duckdb::AlterTableType::REMOVE_FIELD:
+    case duckdb::AlterTableType::RENAME_FIELD:
+      change = "changing a struct field";
+      break;
+    case duckdb::AlterTableType::SET_PARTITIONED_BY:
+      change = "SET PARTITIONED BY";
+      break;
+    case duckdb::AlterTableType::SET_SORTED_BY:
+      change = "SET SORTED BY";
+      break;
+    default:
+      break;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG(change, " on a search-backed table is not yet supported"));
+}
+
+[[noreturn]] void ThrowUndefinedConstraint(std::string_view constraint,
+                                           std::string_view table) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                  ERR_MSG("constraint \"", constraint, "\" of table ", table,
+                          " does not exist"));
+}
+
+void RequireTopLevelColumn(const duckdb::vector<duckdb::Identifier>& path,
+                           std::string_view nested_change) {
+  if (path.size() > 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(nested_change, " is not yet supported"));
+  }
+}
+
+bool IsReplay(const duckdb::AlterInfo& info) {
+  return info.bind_mode == duckdb::AlterBindMode::SKIP_BINDING;
+}
+
+bool IsNullConstant(duckdb::ClientContext& context,
+                    const duckdb::Expression& expr) {
+  return expr.IsFoldable() &&
+         duckdb::ExpressionExecutor::EvaluateScalar(context, expr).IsNull();
+}
+
+void AtCommit(duckdb::ClientContext& context,
+              absl::AnyInvocable<void()> action) {
+  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
+    connection->DeferToCommit(std::move(action));
+  } else {
+    action();
+  }
+}
+
+duckdb::shared_ptr<duckdb::Binder> SchemaBinder(
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& table) {
   auto binder = duckdb::Binder::CreateBinder(context);
-  auto bound =
-    binder->BindCreateTableInfo(std::move(create), schema, info.bind_mode);
-  info.new_dependencies = duckdb::make_uniq<duckdb::LogicalDependencyList>(
-    bound->Base().dependencies);
-  return duckdb::make_uniq<SearchTableEntry>(
-    catalog, schema, *bound, catalog.GetCatalogTransaction(context), _storage,
-    triggers);
+  binder->SetSearchPath(table.catalog, table.ParentSchema(context).name);
+  return binder;
+}
+
+bool IsNotNullOn(const duckdb::Constraint& constraint,
+                 duckdb::LogicalIndex column) {
+  return constraint.type == duckdb::ConstraintType::NOT_NULL &&
+         constraint.Cast<duckdb::NotNullConstraint>().index == column;
+}
+
+bool HasNotNull(const Constraints& constraints, duckdb::LogicalIndex column) {
+  return absl::c_any_of(constraints, [&](const auto& constraint) {
+    return IsNotNullOn(*constraint, column);
+  });
+}
+
+auto FindConstraint(Constraints& constraints, std::string_view name) {
+  return absl::c_find_if(constraints, [&](const auto& constraint) {
+    return constraint->constraint_name == name;
+  });
+}
+
+bool ConstraintUsesColumn(duckdb::ClientContext& context,
+                          const duckdb::TableCatalogEntry& table,
+                          const duckdb::Constraint& constraint,
+                          duckdb::LogicalIndex column) {
+  const auto& columns = table.GetColumns();
+  switch (constraint.type) {
+    case duckdb::ConstraintType::NOT_NULL:
+      return IsNotNullOn(constraint, column);
+    case duckdb::ConstraintType::CHECK:
+      return !columns.GetColumn(column).Generated() &&
+             SchemaBinder(context, table)
+               ->BindConstraint(constraint, table.name, columns)
+               ->Cast<duckdb::BoundCheckConstraint>()
+               .bound_columns.contains(columns.LogicalToPhysical(column));
+    case duckdb::ConstraintType::UNIQUE:
+      return absl::c_contains(
+        constraint.Cast<duckdb::UniqueConstraint>().GetLogicalIndexes(columns),
+        column);
+    default:
+      return false;
+  }
+}
+
+duckdb::optional_ptr<const duckdb::ColumnDefinition> GeneratedDependent(
+  const duckdb::ColumnList& columns, const duckdb::ColumnDefinition& column) {
+  const duckdb::IdentifierEquality same_name{columns.IsCaseSensitive()};
+  for (const auto& generated : columns.Logical()) {
+    if (!generated.Generated() || generated.Logical() == column.Logical()) {
+      continue;
+    }
+    duckdb::vector<std::string> dependencies;
+    generated.GetListOfDependencies(dependencies);
+    if (absl::c_any_of(dependencies, [&](const std::string& dependency) {
+          return same_name(duckdb::Identifier{dependency}, column.Name());
+        })) {
+      return &generated;
+    }
+  }
+  return nullptr;
+}
+
+bool ReferencesColumn(const duckdb::ParsedExpression& expression,
+                      const duckdb::Identifier& column,
+                      const duckdb::IdentifierEquality& same_name) {
+  bool references = false;
+  duckdb::ParsedExpressionIterator::VisitExpression<
+    duckdb::ColumnRefExpression>(
+    expression, [&](const duckdb::ColumnRefExpression& reference) {
+      references = references || same_name(reference.GetColumnName(), column);
+    });
+  return references;
+}
+
+duckdb::optional_ptr<const duckdb::IndexCatalogEntry> IndexOn(
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& table,
+  const duckdb::ColumnDefinition& column) {
+  const duckdb::IdentifierEquality same_name{
+    table.GetColumns().IsCaseSensitive()};
+  const auto uses_column = [&](const auto& expression) {
+    return ReferencesColumn(*expression, column.Name(), same_name);
+  };
+  duckdb::optional_ptr<const duckdb::IndexCatalogEntry> found;
+  table.ParentSchema(context).Scan(
+    context, duckdb::CatalogType::INDEX_ENTRY,
+    [&](duckdb::CatalogEntry& entry) {
+      const auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
+      if (!found && index.table_oid == table.oid &&
+          absl::c_any_of(index.parsed_expressions, uses_column)) {
+        found = &index;
+      }
+    });
+  return found;
+}
+
+void RequireRetypable(duckdb::ClientContext& context,
+                      const duckdb::TableCatalogEntry& table,
+                      duckdb::LogicalIndex index) {
+  const auto& column = table.GetColumns().GetColumn(index);
+  if (column.Generated()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Changing types of generated columns is not supported yet"));
+  }
+  if (const auto dependent = GeneratedDependent(table.GetColumns(), column)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+      ERR_MSG("This column is referenced by the generated column ",
+              dependent->Name().GetIdentifierName(),
+              ", so its type can not be changed"));
+  }
+  for (const auto& constraint : table.GetConstraints()) {
+    if (!ConstraintUsesColumn(context, table, *constraint, index)) {
+      continue;
+    }
+    if (constraint->type == duckdb::ConstraintType::CHECK) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("Cannot change the type of a column that has a "
+                              "CHECK constraint specified"));
+    }
+    if (constraint->type == duckdb::ConstraintType::UNIQUE) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("Cannot change the type of a column that has a UNIQUE or "
+                "PRIMARY KEY constraint specified"));
+    }
+  }
+  if (const auto dependent = IndexOn(context, table, column)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Cannot change the type of column \"",
+              column.Name().GetIdentifierName(), "\": index \"",
+              dependent->name.GetIdentifierName(), "\" depends on it"));
+  }
+}
+
+duckdb::ColumnList ColumnsWithout(const duckdb::ColumnList& columns,
+                                  duckdb::LogicalIndex dropped) {
+  duckdb::ColumnList result{false, columns.IsCaseSensitive()};
+  for (const auto& column : columns.Logical()) {
+    if (column.Logical() != dropped) {
+      result.AddColumn(column.Copy());
+    }
+  }
+  return result;
+}
+
+duckdb::unique_ptr<duckdb::Constraint> ShiftedAfterDrop(
+  const duckdb::Constraint& constraint, duckdb::LogicalIndex dropped) {
+  const auto shift = [&](duckdb::LogicalIndex index) {
+    return index.index > dropped.index ? duckdb::LogicalIndex{index.index - 1}
+                                       : index;
+  };
+  auto copy = constraint.Copy();
+  if (copy->type == duckdb::ConstraintType::NOT_NULL) {
+    auto& not_null = copy->Cast<duckdb::NotNullConstraint>();
+    not_null.index = shift(not_null.index);
+  } else if (copy->type == duckdb::ConstraintType::UNIQUE) {
+    auto& unique = copy->Cast<duckdb::UniqueConstraint>();
+    if (unique.HasIndex()) {
+      unique.SetIndex(shift(unique.GetIndex()));
+    }
+  }
+  return copy;
+}
+
+Constraints ConstraintsAfterDrop(duckdb::ClientContext& context,
+                                 const duckdb::TableCatalogEntry& table,
+                                 duckdb::LogicalIndex dropped) {
+  Constraints result;
+  for (const auto& constraint : table.GetConstraints()) {
+    if (!ConstraintUsesColumn(context, table, *constraint, dropped)) {
+      result.push_back(ShiftedAfterDrop(*constraint, dropped));
+    } else if (constraint->type == duckdb::ConstraintType::UNIQUE) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+        ERR_MSG(
+          "Cannot drop column ",
+          table.GetColumns().GetColumn(dropped).Name().GetIdentifierName(),
+          " because there is a ",
+          constraint->Cast<duckdb::UniqueConstraint>().IsPrimaryKey()
+            ? "PRIMARY KEY"
+            : "UNIQUE",
+          " constraint that depends on it"));
+    }
+  }
+  return result;
+}
+
+std::vector<irs::ColumnstoreProjection> ConstrainedColumns(
+  const duckdb::ColumnList& columns,
+  const duckdb::BoundConstraint& constraint) {
+  std::vector<irs::ColumnstoreProjection> projections;
+  const auto read = [&](duckdb::PhysicalIndex index) {
+    projections.push_back(irs::ColumnstoreProjection{
+      .output_slot = index.index,
+      .column_id = connector::TableColumnId(columns.GetColumn(index))});
+  };
+  if (constraint.type == duckdb::ConstraintType::NOT_NULL) {
+    read(constraint.Cast<duckdb::BoundNotNullConstraint>().index);
+  } else {
+    absl::c_for_each(
+      constraint.Cast<duckdb::BoundCheckConstraint>().bound_columns, read);
+  }
+  return projections;
+}
+
+}  // namespace
+
+duckdb::unique_ptr<duckdb::CreateTableInfo> SearchTableEntry::Definition()
+  const {
+  return duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTableInfo>(
+    GetInfo());
+}
+
+duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Successor(
+  duckdb::ClientContext& context, duckdb::BoundCreateTableInfo& bound) const {
+  auto successor = duckdb::make_uniq<SearchTableEntry>(
+    catalog, ParentSchema(context), bound,
+    catalog.GetCatalogTransaction(context), _storage, triggers);
+  successor->_schema_epoch = _schema_epoch;
+  return successor;
+}
+
+duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
+  duckdb::ClientContext& context, duckdb::AlterInfo& info,
+  duckdb::unique_ptr<duckdb::CreateTableInfo> definition,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>* bound_defaults)
+  const {
+  auto binder = duckdb::Binder::CreateBinder(context);
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> unused_defaults;
+  auto bound = binder->BindCreateTableInfo(
+    std::move(definition), ParentSchema(context),
+    bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
+  info.ResolveNewDependencies(bound->Base().dependencies);
+  return Successor(context, *bound);
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::ChangeColumns(
+  duckdb::ClientContext& context, const duckdb::AlterInfo& info,
+  duckdb::unique_ptr<SearchTableEntry> altered,
+  absl::FunctionRef<void(SearchTableEntry&)> change_rows) {
+  if (IsReplay(info)) {
+    _storage->SetTableColumns(altered->_columns);
+    return altered;
+  }
+  altered->BeginSchemaChange(context);
+  change_rows(*altered);
+  _storage->SyncPublished();
+  return altered;
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry>
+SearchTableEntry::AddVerifiedConstraint(duckdb::ClientContext& context,
+                                        duckdb::AlterInfo& info,
+                                        const duckdb::Constraint& constraint) {
+  auto definition = Definition();
+  definition->constraints.push_back(constraint.Copy());
+  auto altered = Altered(context, info, std::move(definition));
+  if (!IsReplay(info)) {
+    altered->BeginSchemaChange(context);
+    altered->VerifyExistingRows(
+      context, *SchemaBinder(context, *this)
+                  ->BindConstraint(constraint, name, altered->_columns));
+  }
+  return altered;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
   if (info.type == duckdb::AlterType::SET_COLUMN_COMMENT) {
-    auto& comment = info.Cast<duckdb::SetColumnCommentInfo>();
-    auto create = GetInfo();
-    create->Cast<duckdb::CreateTableInfo>()
-      .columns.GetColumnMutable(GetColumnIndex(comment.column_name))
-      .SetComment(comment.comment_value);
-    return Rebuilt(context, info, std::move(create));
+    return AlterColumnComment(context,
+                              info.Cast<duckdb::SetColumnCommentInfo>());
   }
   if (info.type != duckdb::AlterType::ALTER_TABLE) {
     return duckdb::TableCatalogEntry::AlterEntry(context, info);
   }
-  _storage->ClaimLayout(context, name.GetIdentifierName());
+  _storage->ClaimLayout(context, name.GetIdentifierName(),
+                        search::TableChange::Layout);
   auto& alter = info.Cast<duckdb::AlterTableInfo>();
   switch (alter.alter_table_type) {
     case duckdb::AlterTableType::RENAME_TABLE:
       return duckdb::TableCatalogEntry::AlterEntry(context, info);
-    case duckdb::AlterTableType::RENAME_COLUMN: {
-      auto& rename = alter.Cast<duckdb::RenameColumnInfo>();
-      GetColumnIndex(rename.old_name);
-      auto create = GetInfo();
-      auto& table = create->Cast<duckdb::CreateTableInfo>();
-      duckdb::TableCatalogEntry::RenameColumn(table.columns, table.constraints,
-                                              rename);
-      auto result = Rebuilt(context, info, std::move(create));
-      RenameTriggerColumns(context, rename);
-      return result;
-    }
-    case duckdb::AlterTableType::SET_DEFAULT: {
-      auto& set_default = alter.Cast<duckdb::SetDefaultInfo>();
-      if (set_default.column_path.size() > 1) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG(
-            "Setting a default value on a nested field is not yet supported"));
-      }
-      auto create = GetInfo();
-      auto& column =
-        create->Cast<duckdb::CreateTableInfo>().columns.GetColumnMutable(
-          GetColumnIndex(set_default.column_path[0]));
-      if (column.Generated()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG("cannot set a default for generated column \"",
-                                column.Name().GetIdentifierName(), "\""));
-      }
-      column.SetDefaultValue(
-        set_default.expression ? set_default.expression->Copy() : nullptr);
-      return Rebuilt(context, info, std::move(create));
-    }
+    case duckdb::AlterTableType::RENAME_COLUMN:
+      return AlterRenameColumn(context, alter.Cast<duckdb::RenameColumnInfo>());
+    case duckdb::AlterTableType::SET_DEFAULT:
+      return AlterColumnDefault(context, alter.Cast<duckdb::SetDefaultInfo>());
     case duckdb::AlterTableType::SET_NOT_NULL:
-    case duckdb::AlterTableType::DROP_NOT_NULL: {
-      const bool set =
-        alter.alter_table_type == duckdb::AlterTableType::SET_NOT_NULL;
-      auto& column_path = set
-                            ? alter.Cast<duckdb::SetNotNullInfo>().column_path
-                            : alter.Cast<duckdb::DropNotNullInfo>().column_path;
-      if (column_path.size() > 1) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG(set ? "Setting a NOT NULL constraint on a "
-                                      "nested field is not yet supported"
-                                    : "Dropping a NOT NULL constraint on a "
-                                      "nested field is not yet supported"));
-      }
-      const auto index = GetColumnIndex(column_path[0]);
-      auto create = GetInfo();
-      auto& constraints = create->Cast<duckdb::CreateTableInfo>().constraints;
-      const auto existing = absl::c_find_if(constraints, [&](const auto& c) {
-        return c->type == duckdb::ConstraintType::NOT_NULL &&
-               c->template Cast<duckdb::NotNullConstraint>().index == index;
-      });
-      if (set && existing == constraints.end()) {
-        constraints.push_back(
-          duckdb::make_uniq<duckdb::NotNullConstraint>(index));
-      } else if (!set && existing != constraints.end()) {
-        constraints.erase(existing);
-      }
-      return Rebuilt(context, info, std::move(create));
-    }
-    case duckdb::AlterTableType::ADD_CONSTRAINT: {
-      auto& constraint = *alter.Cast<duckdb::AddConstraintInfo>().constraint;
-      if (constraint.type != duckdb::ConstraintType::CHECK) {
-        break;
-      }
-      auto create = GetInfo();
-      create->Cast<duckdb::CreateTableInfo>().constraints.push_back(
-        constraint.Copy());
-      return Rebuilt(context, info, std::move(create));
-    }
+      return AlterSetNotNull(context, alter.Cast<duckdb::SetNotNullInfo>());
+    case duckdb::AlterTableType::DROP_NOT_NULL:
+      return AlterDropNotNull(context, alter.Cast<duckdb::DropNotNullInfo>());
+    case duckdb::AlterTableType::ADD_CONSTRAINT:
+      return AlterAddConstraint(context,
+                                alter.Cast<duckdb::AddConstraintInfo>());
+    case duckdb::AlterTableType::DROP_CONSTRAINT:
+      return AlterDropConstraint(context,
+                                 alter.Cast<duckdb::DropConstraintInfo>());
+    case duckdb::AlterTableType::RENAME_CONSTRAINT:
+      return AlterRenameConstraint(context,
+                                   alter.Cast<duckdb::RenameConstraintInfo>());
+    case duckdb::AlterTableType::ADD_COLUMN:
+      return AlterAddColumn(context, alter.Cast<duckdb::AddColumnInfo>());
+    case duckdb::AlterTableType::REMOVE_COLUMN:
+      return AlterDropColumn(context, alter.Cast<duckdb::RemoveColumnInfo>());
+    case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
+      return AlterColumnType(context,
+                             alter.Cast<duckdb::ChangeColumnTypeInfo>());
     case duckdb::AlterTableType::SET_COLUMN_COMPRESSION:
       return SetColumnCompression(
         context, alter.Cast<duckdb::SetColumnCompressionInfo>());
@@ -807,66 +1115,304 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
       return AlterOptions(context, alter);
     default:
-      break;
+      ThrowUnsupportedAlter(alter);
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG(AlterName(alter),
-                          " on a search-backed table is not yet supported"));
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterColumnComment(
+  duckdb::ClientContext& context, duckdb::SetColumnCommentInfo& info) {
+  auto definition = Definition();
+  definition->columns.GetColumnMutable(GetColumnIndex(info.column_name))
+    .SetComment(info.comment_value);
+  return Altered(context, info, std::move(definition));
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterRenameColumn(
+  duckdb::ClientContext& context, duckdb::RenameColumnInfo& info) {
+  GetColumnIndex(info.old_name);
+  auto definition = Definition();
+  RenameColumn(definition->columns, definition->constraints, info);
+  auto altered = Altered(context, info, std::move(definition));
+  RenameTriggerColumns(context, info);
+  return altered;
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterColumnDefault(
+  duckdb::ClientContext& context, duckdb::SetDefaultInfo& info) {
+  RequireTopLevelColumn(info.column_path,
+                        "Setting a default value on a nested field");
+  auto definition = Definition();
+  auto& column =
+    definition->columns.GetColumnMutable(GetColumnIndex(info.column_path[0]));
+  if (column.Generated()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot set a default for generated column \"",
+                            column.Name().GetIdentifierName(), "\""));
+  }
+  column.SetDefaultValue(info.expression ? info.expression->Copy() : nullptr);
+  return Altered(context, info, std::move(definition));
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterSetNotNull(
+  duckdb::ClientContext& context, duckdb::SetNotNullInfo& info) {
+  RequireTopLevelColumn(info.column_path,
+                        "Setting a NOT NULL constraint on a nested field");
+  const auto column = GetColumnIndex(info.column_path[0]);
+  if (_columns.GetColumn(column).Generated()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("Unsupported constraint for generated column!"));
+  }
+  if (HasNotNull(GetConstraints(), column)) {
+    return Altered(context, info, Definition());
+  }
+  return AddVerifiedConstraint(context, info,
+                               duckdb::NotNullConstraint{column});
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropNotNull(
+  duckdb::ClientContext& context, duckdb::DropNotNullInfo& info) {
+  RequireTopLevelColumn(info.column_path,
+                        "Dropping a NOT NULL constraint on a nested field");
+  const auto column = GetColumnIndex(info.column_path[0]);
+  if (const auto pk = GetPrimaryKey();
+      pk && ConstraintUsesColumn(context, *this, *pk, column)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
+      ERR_MSG("column \"", info.column_path[0].GetIdentifierName(),
+              "\" is in a primary key"));
+  }
+  auto definition = Definition();
+  std::erase_if(definition->constraints, [&](const auto& constraint) {
+    return IsNotNullOn(*constraint, column);
+  });
+  return Altered(context, info, std::move(definition));
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterAddConstraint(
+  duckdb::ClientContext& context, duckdb::AddConstraintInfo& info) {
+  if (info.constraint->type != duckdb::ConstraintType::CHECK) {
+    ThrowUnsupportedAlter(info);
+  }
+  return AddVerifiedConstraint(context, info, *info.constraint);
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropConstraint(
+  duckdb::ClientContext& context, duckdb::DropConstraintInfo& info) {
+  auto definition = Definition();
+  auto& constraints = definition->constraints;
+  const auto it = FindConstraint(constraints, info.constraint_name);
+  if (it == constraints.end()) {
+    if (info.if_constraint_not_found) {
+      return nullptr;
+    }
+    ThrowUndefinedConstraint(info.constraint_name, name.GetIdentifierName());
+  }
+  if ((*it)->type == duckdb::ConstraintType::UNIQUE) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("dropping a PRIMARY KEY or UNIQUE constraint "
+                            "of a search-backed table is not supported"));
+  }
+  constraints.erase(it);
+  return Altered(context, info, std::move(definition));
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry>
+SearchTableEntry::AlterRenameConstraint(duckdb::ClientContext& context,
+                                        duckdb::RenameConstraintInfo& info) {
+  auto definition = Definition();
+  auto& constraints = definition->constraints;
+  const auto it = FindConstraint(constraints, info.old_name);
+  if (it == constraints.end()) {
+    ThrowUndefinedConstraint(info.old_name, name.GetIdentifierName());
+  }
+  (*it)->constraint_name = info.new_name;
+  return Altered(context, info, std::move(definition));
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterAddColumn(
+  duckdb::ClientContext& context, duckdb::AddColumnInfo& info) {
+  auto& column = info.new_column;
+  if (info.if_column_not_exists && ColumnExists(column.Name())) {
+    return nullptr;
+  }
+  SchemaBinder(context, *this)->BindLogicalType(column.TypeMutable());
+  if (!column.CatalogOid()) {
+    column.SetCatalogOid(UnusedColumnOid());
+  }
+  auto definition = Definition();
+  definition->columns.AddColumn(column.Copy());
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> defaults;
+  return ChangeColumns(
+    context, info, Altered(context, info, std::move(definition), &defaults),
+    [&](SearchTableEntry& altered) {
+      _storage->AddTableColumns(altered._columns);
+      if (auto& value = defaults.back(); !IsNullConstant(context, *value)) {
+        Backfill(context, connector::TableColumnId(column), std::move(value));
+      }
+    });
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropColumn(
+  duckdb::ClientContext& context, duckdb::RemoveColumnInfo& info) {
+  const auto dropped =
+    GetColumnIndex(info.removed_column, info.if_column_exists);
+  if (!dropped.IsValid()) {
+    return nullptr;
+  }
+  if (GeneratedDependent(_columns, _columns.GetColumn(dropped))) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    ERR_MSG("Cannot drop column: column is a dependency of 1 "
+                            "or more generated column(s)"));
+  }
+  auto definition = Definition();
+  definition->columns = ColumnsWithout(_columns, dropped);
+  definition->constraints = ConstraintsAfterDrop(context, *this, dropped);
+  return ChangeColumns(context, info,
+                       Altered(context, info, std::move(definition)),
+                       [&](SearchTableEntry& altered) {
+                         altered.ReplaceStoreColumnsAtCommit(context);
+                       });
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterColumnType(
+  duckdb::ClientContext& context, duckdb::ChangeColumnTypeInfo& info) {
+  RequireTopLevelColumn(info.column_path,
+                        "Changing the type of a nested field");
+  auto binder = SchemaBinder(context, *this);
+  binder->BindLogicalType(info.target_type);
+  const auto changed = GetColumnIndex(info.column_path[0]);
+  RequireRetypable(context, *this, changed);
+  auto conversion = BindConversion(*binder, context, info);
+  if (!info.catalog_oid) {
+    info.catalog_oid = UnusedColumnOid();
+  }
+  auto definition = Definition();
+  auto& column = definition->columns.GetColumnMutable(changed);
+  column.SetType(info.target_type);
+  column.SetCatalogOid(info.catalog_oid);
+  return ChangeColumns(
+    context, info, Altered(context, info, std::move(definition)),
+    [&](SearchTableEntry& altered) {
+      _storage->AddTableColumns(altered._columns);
+      Backfill(context,
+               connector::TableColumnId(altered._columns.GetColumn(changed)),
+               std::move(conversion));
+      if (HasNotNull(GetConstraints(), changed)) {
+        altered.VerifyExistingRows(
+          context,
+          duckdb::BoundNotNullConstraint{_columns.LogicalToPhysical(changed)});
+      }
+      altered.ReplaceStoreColumnsAtCommit(context);
+    });
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
-  duckdb::ClientContext& context, duckdb::AlterTableInfo& alter) {
-  const auto require_alterable = [](std::string_view name) {
-    if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
-      return;
-    }
-    if (absl::c_contains(kSearchTableOptions, name)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("option \"", name, "\" cannot be changed with ALTER TABLE"));
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("unrecognized parameter \"", name, "\""));
-  };
-  auto create = GetInfo();
-  auto& options = create->Cast<duckdb::CreateTableInfo>().options;
-  if (alter.alter_table_type == duckdb::AlterTableType::SET_TABLE_OPTIONS) {
-    for (const auto& [name, expr] :
-         alter.Cast<duckdb::SetTableOptionsInfo>().table_options) {
-      require_alterable(name);
-      if (!expr ||
-          expr->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("option \"", name, "\" expects a constant value"));
-      }
-      options[name] = OptionConstant(connector::ValidateSetting(
-        context, name,
-        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue()));
-    }
+  duckdb::ClientContext& context, duckdb::AlterTableInfo& info) {
+  auto definition = Definition();
+  if (info.alter_table_type == duckdb::AlterTableType::SET_TABLE_OPTIONS) {
+    SetOptions(context, definition->options,
+               info.Cast<duckdb::SetTableOptionsInfo>());
   } else {
-    for (const auto& identifier :
-         alter.Cast<duckdb::ResetTableOptionsInfo>().table_options) {
-      const auto& name = identifier.GetIdentifierName();
-      require_alterable(name);
-      duckdb::Value value;
-      context.TryGetCurrentSetting(identifier, value);
-      options[name] = OptionConstant(value);
-    }
+    ResetOptions(context, definition->options,
+                 info.Cast<duckdb::ResetTableOptionsInfo>());
   }
   auto binder = duckdb::Binder::CreateBinder(context);
-  auto bound = binder->BindCreateTableInfo(std::move(create));
-  auto result = duckdb::make_uniq<SearchTableEntry>(
-    catalog, ParentSchema(context), *bound,
-    catalog.GetCatalogTransaction(context), _storage, triggers);
-  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-    connection->DeferToCommit([storage = _storage, options = result->_options] {
-      storage->ApplyOptions(options);
-    });
-  } else {
-    _storage->ApplyOptions(result->_options);
+  auto bound = binder->BindCreateTableInfo(std::move(definition));
+  auto altered = Successor(context, *bound);
+  AtCommit(context, [storage = _storage, options = altered->_options] {
+    storage->ApplyOptions(options);
+  });
+  return altered;
+}
+
+duckdb::unique_ptr<duckdb::Expression> SearchTableEntry::BindConversion(
+  duckdb::Binder& binder, duckdb::ClientContext& context,
+  duckdb::ChangeColumnTypeInfo& info) {
+  duckdb::vector<duckdb::LogicalIndex> referenced;
+  duckdb::AlterBinder expression_binder{binder, context, *this, referenced,
+                                        info.target_type};
+  auto expression = info.expression->Copy();
+  auto conversion = expression_binder.Bind(expression);
+  if (info.target_type == duckdb::LogicalType::UNKNOWN) {
+    info.target_type = conversion->GetReturnType();
   }
-  return result;
+  duckdb::ExpressionIterator::VisitExpressionMutable<
+    duckdb::BoundReferenceExpression>(
+    conversion, [&](duckdb::BoundReferenceExpression& reference, auto&) {
+      reference.IndexMutable() =
+        _columns.LogicalToPhysical(referenced[reference.Index()]).index;
+    });
+  return conversion;
+}
+
+duckdb::idx_t SearchTableEntry::UnusedColumnOid() const {
+  irs::containers::FlatHashSet<irs::field_id> stored;
+  for (const auto& segment : _storage->GetDirectoryReader()) {
+    if (const auto* columns = segment.GetColReader()) {
+      for (const auto& column : columns->Columns()) {
+        stored.insert(column->Id());
+      }
+    }
+  }
+  auto& oids = catalog.GetDatabase().GetDatabaseManager();
+  auto id = oids.NextOid();
+  while (stored.contains(id)) {
+    id = oids.NextOid();
+  }
+  return id;
+}
+
+void SearchTableEntry::BeginSchemaChange(duckdb::ClientContext& context) {
+  _storage->ClaimLayout(context, name.GetIdentifierName(),
+                        search::TableChange::Schema);
+  _schema_epoch = _storage->SchemaEpoch();
+  _storage->DrainPriorWriters(context);
+  _storage->Publish();
+}
+
+void SearchTableEntry::Backfill(
+  duckdb::ClientContext& context, irs::field_id field,
+  duckdb::unique_ptr<duckdb::Expression> value) const {
+  connector::SearchBackfillTarget target{
+    .shard = _storage,
+    .catalog = &catalog,
+    .table_id = oid,
+    .column_types = GetTypes(),
+    .group_bytes = connector::SearchBackfillGroupBytes(context),
+  };
+  for (const auto& column : _columns.Physical()) {
+    target.column_ids.emplace_back(connector::TableColumnId(column));
+  }
+  target.added_ids.emplace_back(field);
+  target.added.push_back(std::move(value));
+  connector::RunSearchTableBackfill(context, target, nullptr);
+}
+
+void SearchTableEntry::ReplaceStoreColumnsAtCommit(
+  duckdb::ClientContext& context) const {
+  AtCommit(context, [storage = _storage, columns = _columns.Copy()] {
+    storage->SetTableColumns(columns);
+  });
+}
+
+void SearchTableEntry::VerifyExistingRows(
+  duckdb::ClientContext& context,
+  const duckdb::BoundConstraint& constraint) const {
+  const auto projections = ConstrainedColumns(_columns, constraint);
+  duckdb::DataChunk chunk;
+  chunk.Initialize(duckdb::Allocator::Get(context), GetTypes());
+  irs::ColFilterStateCache filter_states;
+  duckdb::SelectionVector live_rows{STANDARD_VECTOR_SIZE +
+                                    irs::doc_limits::kDocsSlack};
+  for (const auto& segment : _storage->GetDirectoryReader()) {
+    connector::ScanLiveRows(context, segment, projections, filter_states,
+                            live_rows, chunk, [&](duckdb::DataChunk& rows) {
+                              context.InterruptCheck();
+                              duckdb::DataTable::VerifyRowConstraint(
+                                context, *this, constraint, rows);
+                              return true;
+                            });
+  }
 }
 
 }  // namespace sdb::catalog

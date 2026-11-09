@@ -38,8 +38,11 @@
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_sink_writer_base.h"
+#include "connector/key_terms.h"
+#include "connector/primary_key.h"
 #include "search/search_table_changes.h"
 #include "search/store.h"
+#include "search/wal_tail_keys.h"
 
 namespace sdb::search {
 
@@ -51,6 +54,17 @@ struct Slot {
 struct StoreWrites {
   std::shared_ptr<Store> store;
   const catalog::SearchTableEntry* table = nullptr;
+  // The declared key columns, resolved once with the writer. Empty for a table
+  // without a primary key, which is what turns certification off.
+  std::vector<connector::primary_key::KeySlot> pk_slots;
+  // This transaction's own keys, encoded once and kept: the pass under the
+  // commit lock puts the same set to what committed since, and cannot afford
+  // to build it again there.
+  std::vector<connector::KeyTerms> keys;
+  // How far the WAL has been certified, so the pass under the lock answers
+  // only for what committed after it.
+  WalTailCursor certified;
+  bool pre_certified = false;
   std::vector<Slot> slots;
   LocalTableChangesEntry changes;
   irs::IndexWriter::Transaction* buffer_trx = nullptr;
@@ -121,17 +135,8 @@ class Writes {
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
 
-  template<typename Factory>
-  const PinnedSearchTable& EnsureSearchTable(duckdb::idx_t database_id,
-                                             duckdb::idx_t store_id,
-                                             Factory&& make) {
-    auto& pinned =
-      _readers.try_emplace(std::pair{database_id, store_id}).first->second;
-    if (!pinned.reader) {
-      pinned = make();
-    }
-    return pinned;
-  }
+  const PinnedSearchTable& EnsureSearchTable(const Store& store);
+  const irs::DirectoryReader& PinnedReader(const Store& store) const;
 
   void ResetReaders() noexcept { _readers.clear(); }
 
@@ -166,6 +171,20 @@ class Writes {
 
   bool Empty() const noexcept { return _writes.empty(); }
 
+  // Refuses the commit when a row it writes carries the primary key of a row
+  // that already exists. Runs under the commit lock, taking one where it is
+  // handed none, because what it reads -- the published reader, the WAL tail,
+  // the segments committed transactions left unpublished -- only adds up to
+  // the whole truth while no other commit of this database can interleave.
+  void Certify(duckdb::AttachedDatabase& db, duckdb::ClientContext& context,
+               duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> held);
+
+  // The same question asked before the commit lock is taken, so the pass that
+  // holds it answers only for what committed in between. Runs once the rows
+  // are final: what a statement buffers is still arriving, and what the
+  // commit flushes is only a segment once `PrepareCommit` has flushed it.
+  void CertifyPrepared(StoreWrites& w, duckdb::ClientContext& context);
+
   void PrepareCommit(duckdb::ClientContext& context);
   void Stage(const irs::SourcePosition& position,
              duckdb::idx_t database) noexcept;
@@ -183,7 +202,6 @@ class Writes {
   };
 
   StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
-  const irs::DirectoryReader& PinnedReader(const Store& store) const;
 
   // Node-based: the entry is well past FlatHashMap's size cut-off, and the
   // buffer is held by reference across a statement, so the nodes must not

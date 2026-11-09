@@ -76,13 +76,20 @@ class Transaction : public Config {
   }
 
   void ClaimSearchLayout(std::shared_ptr<search::Store> table,
-                         duckdb::transaction_t owner, std::string_view name);
+                         duckdb::transaction_t owner, std::string_view name,
+                         search::TableChange change);
 
   void AddCreatedIndex(duckdb::idx_t database,
                        std::shared_ptr<search::Store> storage) {
     _created_indexes.emplace_back(database, std::move(storage));
   }
   void RefreshCreatedIndexes(duckdb::idx_t database);
+
+  // Refuses the commit when it would put a primary key a row already carries.
+  // Throws, which rolls the transaction back the way any pre-commit hook does.
+  void CertifySearchKeys(
+    duckdb::AttachedDatabase& db, duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock);
 
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
@@ -119,7 +126,7 @@ class Transaction : public Config {
   // tied to the view they were written through. Returns whether it dropped.
   bool TryDropSearchReader(duckdb::idx_t database_id, duckdb::idx_t shard_id);
 
-  void Destroy(duckdb::transaction_t owner) noexcept;
+  void Destroy(duckdb::transaction_t owner, bool committed) noexcept;
 
  private:
   // The cases a single snapshot serves a whole transaction: an explicit

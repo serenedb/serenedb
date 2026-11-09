@@ -1,0 +1,532 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE SCHEMA fdr_s;
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE FUNCTION fdr_def(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE FUNCTION fdr_add(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE FUNCTION fdr_set(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE FUNCTION fdr_chk(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE FUNCTION fdr_gen(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE FUNCTION fdr_idx(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 3';
+
+
+statement ok
+CREATE FUNCTION fdr_s.fdr_far(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE FUNCTION fdr_sdef(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE FUNCTION fdr_sadd(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE FUNCTION fdr_schk(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE FUNCTION fdr_sgen(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE TABLE fdr_t (id INT, a INT DEFAULT fdr_def(1), g INT GENERATED ALWAYS AS (fdr_gen(a)) STORED);
+
+
+statement ok
+ALTER TABLE fdr_t ADD COLUMN b INT DEFAULT fdr_add(2);
+
+
+statement ok
+ALTER TABLE fdr_t ADD COLUMN c INT;
+
+
+statement ok
+ALTER TABLE fdr_t ALTER COLUMN c SET DEFAULT fdr_set(3);
+
+
+statement ok
+ALTER TABLE fdr_t ADD CONSTRAINT fdr_t_chk CHECK (fdr_chk(id));
+
+
+statement ok
+CREATE INDEX fdr_t_idx ON fdr_t ((fdr_idx(a)));
+
+
+statement ok
+INSERT INTO fdr_t (id) VALUES (1);
+
+
+statement ok
+SET search_path = fdr_s, public;
+
+
+statement ok
+CREATE TABLE public.fdr_f (id INT, a INT CONSTRAINT fdr_f_chk CHECK (fdr_far(a)));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+CREATE TABLE fdr_st (id INT, a INT DEFAULT fdr_sdef(1), g INT GENERATED ALWAYS AS (fdr_sgen(a)) STORED)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+ALTER TABLE fdr_st ADD COLUMN b INT DEFAULT fdr_sadd(2);
+
+
+statement ok
+ALTER TABLE fdr_st ADD CONSTRAINT fdr_st_chk CHECK (fdr_schk(id));
+
+
+statement ok
+INSERT INTO fdr_st (id) VALUES (1);
+
+
+statement ok
+CREATE SEQUENCE fdr_seq START 100;
+
+
+statement ok
+CREATE TABLE fdr_q (id INT, n BIGINT DEFAULT nextval('fdr_seq'));
+
+
+statement ok
+ALTER TABLE fdr_q ADD COLUMN x INT;
+
+
+statement ok
+CREATE TYPE fdr_mood AS ENUM ('calm', 'busy');
+
+
+statement ok
+CREATE TABLE fdr_e (id INT, m TEXT DEFAULT CAST('calm' AS fdr_mood));
+
+
+statement ok
+ALTER TABLE fdr_e ADD COLUMN x INT;
+
+
+statement ok
+CREATE TABLE fdr_r (a serial, v INT);
+
+
+statement ok
+ALTER TABLE fdr_r RENAME COLUMN v TO w;
+
+
+statement ok
+CREATE TABLE fdr_r2 (v INT);
+
+
+statement ok
+ALTER TABLE fdr_r2 ADD COLUMN id serial;
+
+
+statement ok
+CREATE FUNCTION fdr_old(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE TABLE fdr_o (id INT);
+
+
+statement ok
+SET sdb_faults = 'alter_log_without_dependencies';
+
+
+statement ok
+ALTER TABLE fdr_o ADD COLUMN a INT DEFAULT fdr_old(1);
+
+
+statement ok
+SET sdb_faults = '-alter_log_without_dependencies';
+
+
+statement ok
+CREATE FUNCTION fdr_gone(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE TABLE fdr_x (a INT, g INT GENERATED ALWAYS AS (fdr_gone(a)) STORED);
+
+
+statement ok
+ALTER TABLE fdr_x ADD COLUMN z INT;
+
+
+statement ok
+ALTER TABLE fdr_x DROP COLUMN g;
+
+
+statement ok
+DROP FUNCTION fdr_gone(INT);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection restarted
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_def(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_def" because there are entries that depend on it.
+table "fdr_t" depends on macro function "fdr_def".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_add(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_add" because there are entries that depend on it.
+table "fdr_t" depends on macro function "fdr_add".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_set(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_set" because there are entries that depend on it.
+table "fdr_t" depends on macro function "fdr_set".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_chk(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_chk" because there are entries that depend on it.
+table "fdr_t" depends on macro function "fdr_chk".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_gen(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_gen" because there are entries that depend on it.
+table "fdr_t" depends on macro function "fdr_gen".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_idx(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_idx" because there are entries that depend on it.
+index "fdr_t_idx" depends on macro function "fdr_idx".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_s.fdr_far(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_far" because there are entries that depend on it.
+table "fdr_f" depends on macro function "fdr_far".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_sdef(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_sdef" because there are entries that depend on it.
+table "fdr_st" depends on macro function "fdr_sdef".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_sadd(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_sadd" because there are entries that depend on it.
+table "fdr_st" depends on macro function "fdr_sadd".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_schk(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_schk" because there are entries that depend on it.
+table "fdr_st" depends on macro function "fdr_schk".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP FUNCTION fdr_sgen(INT);
+----
+db error: ERROR: Cannot drop entry "fdr_sgen" because there are entries that depend on it.
+table "fdr_st" depends on macro function "fdr_sgen".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP SEQUENCE fdr_seq;
+----
+db error: ERROR: Cannot drop entry "fdr_seq" because there are entries that depend on it.
+table "fdr_q" depends on sequence "fdr_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP TYPE fdr_mood;
+----
+db error: ERROR: Cannot drop entry "fdr_mood" because there are entries that depend on it.
+table "fdr_e" depends on type "fdr_mood".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP SEQUENCE fdr_r_a_seq;
+----
+db error: ERROR: Cannot drop entry "fdr_r_a_seq" because there are entries that depend on it.
+table "fdr_r" depends on sequence "fdr_r_a_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement error
+DROP SEQUENCE fdr_r2_id_seq;
+----
+db error: ERROR: Cannot drop entry "fdr_r2_id_seq" because there are entries that depend on it.
+table "fdr_r2" depends on sequence "fdr_r2_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection restarted
+statement ok
+INSERT INTO fdr_o (id) VALUES (1);
+
+
+connection restarted
+query
+SELECT id, a FROM fdr_o;
+----
+id	a
+1	10
+
+
+connection restarted
+statement ok
+DROP SEQUENCE fdr_seq CASCADE;
+
+
+connection restarted
+statement ok
+DROP TYPE fdr_mood CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_def(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_add(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_set(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_chk(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_gen(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_idx(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP SCHEMA fdr_s CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_sdef(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_sadd(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_schk(INT) CASCADE;
+
+
+connection restarted
+statement ok
+DROP FUNCTION fdr_sgen(INT) CASCADE;
+
+
+connection restarted
+statement ok
+INSERT INTO fdr_t (id) VALUES (-1);
+
+
+connection restarted
+statement ok
+INSERT INTO fdr_f VALUES (1, -1);
+
+
+connection restarted
+statement ok
+INSERT INTO fdr_st (id) VALUES (-1);
+
+
+connection restarted
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection restarted
+statement error connection closed
+SELECT 1;
+
+
+connection restarted_again
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection restarted_again
+query
+SELECT * FROM fdr_t ORDER BY id;
+----
+id	a	b	c
+-1	NULL	NULL	NULL
+1	10	20	30
+
+
+connection restarted_again
+query
+SELECT table_name, column_name, column_default FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name IN ('fdr_t', 'fdr_st', 'fdr_q', 'fdr_e', 'fdr_x') ORDER BY table_name, ordinal_position;
+----
+table_name	column_name	column_default
+fdr_e	id	NULL
+fdr_e	m	NULL
+fdr_e	x	NULL
+fdr_q	id	NULL
+fdr_q	n	NULL
+fdr_q	x	NULL
+fdr_st	id	NULL
+fdr_st	a	NULL
+fdr_st	b	NULL
+fdr_t	id	NULL
+fdr_t	a	NULL
+fdr_t	b	NULL
+fdr_t	c	NULL
+fdr_x	a	NULL
+fdr_x	z	NULL
+
+
+connection restarted_again
+query
+SELECT count(*) AS checks FROM pg_constraint WHERE contype = 'c' AND conname LIKE 'fdr%';
+----
+checks
+0
+
+
+connection restarted_again
+query
+SELECT count(*) AS indexes FROM pg_indexes WHERE tablename = 'fdr_t';
+----
+indexes
+0
+
+
+connection restarted_again
+statement ok
+INSERT INTO fdr_t (id) VALUES (-2);
+
+
+connection restarted_again
+statement ok
+INSERT INTO fdr_f VALUES (2, -2);
+
+
+connection restarted_again
+statement ok
+INSERT INTO fdr_st (id) VALUES (-2);
+
+
+connection restarted_again
+statement ok
+VACUUM (REFRESH_TABLE) fdr_st;
+
+
+connection restarted_again
+query
+SELECT * FROM fdr_st ORDER BY id;
+----
+id	a	b
+-2	NULL	NULL
+-1	NULL	NULL
+1	10	20
+
+
+connection restarted_again
+query
+SELECT * FROM fdr_f ORDER BY id;
+----
+id	a
+1	-1
+2	-2

@@ -1,0 +1,46 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET enable_logging = true;
+
+
+statement ok
+SET logging_storage = 'memory';
+
+
+statement ok
+CREATE JOB jtf_notices AFTER 1 HOUR SUSPENDED
+  AS SELECT pg_cancel_backend(424242), pg_cancel_backend(424243);
+
+
+statement ok
+SET sdb_faults = 'log_notice_fails';
+
+
+statement ok
+EXECUTE JOB jtf_notices;
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS logged FROM duckdb_logs()
+WHERE message LIKE '%job "jtf_notices": PID 42424_ is not a PostgreSQL backend process%';
+----
+logged
+0
+
+
+query
+SELECT job_name, last_status FROM sdb_jobs() WHERE starts_with(job_name, 'jtf_') ORDER BY job_name;
+----
+job_name	last_status
+jtf_notices	success
+
+
+statement ok
+DROP JOB jtf_notices;

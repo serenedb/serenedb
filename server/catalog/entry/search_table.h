@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <array>
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -34,11 +36,15 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
+#include <duckdb/planner/expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
+#include <iresearch/types.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -191,19 +197,68 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   void ReplayAdoptSegments(duckdb::vector<std::string> segments) final;
 
   const auto& Storage() const noexcept { return _storage; }
+  void RequireCurrentSchema() const;
 
  private:
-  duckdb::unique_ptr<SearchTableEntry> Rebuilt(
+  duckdb::unique_ptr<duckdb::CreateTableInfo> Definition() const;
+  duckdb::unique_ptr<SearchTableEntry> Successor(
+    duckdb::ClientContext& context, duckdb::BoundCreateTableInfo& bound) const;
+  duckdb::unique_ptr<SearchTableEntry> Altered(
     duckdb::ClientContext& context, duckdb::AlterInfo& info,
-    duckdb::unique_ptr<duckdb::CreateInfo> create) const;
+    duckdb::unique_ptr<duckdb::CreateTableInfo> definition,
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>* bound_defaults =
+      nullptr) const;
+  duckdb::unique_ptr<duckdb::CatalogEntry> ChangeColumns(
+    duckdb::ClientContext& context, const duckdb::AlterInfo& info,
+    duckdb::unique_ptr<SearchTableEntry> altered,
+    absl::FunctionRef<void(SearchTableEntry&)> change_rows);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AddVerifiedConstraint(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info,
+    const duckdb::Constraint& constraint);
+
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterColumnComment(
+    duckdb::ClientContext& context, duckdb::SetColumnCommentInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterRenameColumn(
+    duckdb::ClientContext& context, duckdb::RenameColumnInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterColumnDefault(
+    duckdb::ClientContext& context, duckdb::SetDefaultInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterSetNotNull(
+    duckdb::ClientContext& context, duckdb::SetNotNullInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterDropNotNull(
+    duckdb::ClientContext& context, duckdb::DropNotNullInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterAddConstraint(
+    duckdb::ClientContext& context, duckdb::AddConstraintInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterDropConstraint(
+    duckdb::ClientContext& context, duckdb::DropConstraintInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterRenameConstraint(
+    duckdb::ClientContext& context, duckdb::RenameConstraintInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterAddColumn(
+    duckdb::ClientContext& context, duckdb::AddColumnInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterDropColumn(
+    duckdb::ClientContext& context, duckdb::RemoveColumnInfo& info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterColumnType(
+    duckdb::ClientContext& context, duckdb::ChangeColumnTypeInfo& info);
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterOptions(
-    duckdb::ClientContext& context, duckdb::AlterTableInfo& alter);
+    duckdb::ClientContext& context, duckdb::AlterTableInfo& info);
   duckdb::unique_ptr<duckdb::CatalogEntry> SetColumnCompression(
     duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info);
+
+  duckdb::unique_ptr<duckdb::Expression> BindConversion(
+    duckdb::Binder& binder, duckdb::ClientContext& context,
+    duckdb::ChangeColumnTypeInfo& info);
+  duckdb::idx_t UnusedColumnOid() const;
+
+  void BeginSchemaChange(duckdb::ClientContext& context);
+  void Backfill(duckdb::ClientContext& context, irs::field_id field,
+                duckdb::unique_ptr<duckdb::Expression> value) const;
+  void ReplaceStoreColumnsAtCommit(duckdb::ClientContext& context) const;
+  void VerifyExistingRows(duckdb::ClientContext& context,
+                          const duckdb::BoundConstraint& constraint) const;
 
   duckdb::ColumnList _columns;
   std::shared_ptr<search::Store> _storage;
   SearchTableOptions _options;
+  uint64_t _schema_epoch = 0;
 };
 
 }  // namespace sdb::catalog

@@ -34,6 +34,7 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/segment_reader.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/store/directory.hpp>
@@ -94,6 +95,11 @@ StorageDirectory OpenStorageDirectory(
   const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources);
 
+enum class TableChange : uint8_t {
+  Layout,
+  Schema,
+};
+
 // The iresearch index the server owns for a search table, for an inverted
 // index of a DuckDB table and for an inverted index of a view. Lives in the
 // SearchEngine registry keyed by its oid, not in the catalog snapshot.
@@ -140,6 +146,25 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::pair<irs::DirectoryReader, irs::SourcePosition> SnapshotWithPosition() {
     return _durability.Snapshot(*_writer);
   }
+
+  // The same pair for a caller that must not wait: a commit, which a refresh
+  // holding its own lock would otherwise hold up for as long as it runs.
+  // The position is read first and the reader after, so the reader is never
+  // older than the position it is paired with -- the other way round would
+  // leave a span of the WAL in neither tier, and a key written there would go
+  // unseen. A reader ahead of its position only costs re-reading what it
+  // already holds.
+  std::pair<irs::DirectoryReader, irs::SourcePosition> SnapshotToCertify()
+    const {
+    const auto position = _durability.PublishedPosition();
+    return {_writer->GetSnapshot(), position};
+  }
+
+  // Opens a segment this store's directory holds but its published reader does
+  // not show yet, named by the meta file a committed transaction recorded. The
+  // segment is read-only and lives as long as the handle: a certifier reads
+  // such a segment to answer for rows that are committed but unpublished.
+  irs::SegmentReader OpenSegment(std::string_view meta_file) const;
 
   std::shared_ptr<const FileManifest> GetFileManifest() const {
     return std::atomic_load(&_file_manifest);
@@ -235,10 +260,16 @@ class Store final : public std::enable_shared_from_this<Store>,
   void RemoveIndexConfig(duckdb::idx_t index_oid);
   void ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept;
 
-  void ClaimLayout(duckdb::ClientContext& context, std::string_view name);
+  void ClaimLayout(duckdb::ClientContext& context, std::string_view name,
+                   TableChange change);
   [[nodiscard]] bool AcquireLayout(duckdb::transaction_t owner,
-                                   std::string_view name);
-  void ReleaseLayout(duckdb::transaction_t owner) noexcept;
+                                   std::string_view name, TableChange change);
+  void ReleaseLayout(duckdb::transaction_t owner, bool committed) noexcept;
+
+  uint64_t SchemaEpoch() const noexcept { return _schema_epoch.load(); }
+  void AddTableColumns(const duckdb::ColumnList& columns);
+  void SetTableColumns(const duckdb::ColumnList& columns);
+  void SyncPublished();
 
   class [[nodiscard]] BuildClaim {
    public:
@@ -340,8 +371,14 @@ class Store final : public std::enable_shared_from_this<Store>,
     duckdb::idx_t oid;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
+  struct SchemaUndo {
+    uint64_t epoch = 0;
+    irs::containers::FlatHashSet<irs::field_id> table_columns;
+    catalog::CompressionByColumn compression;
+  };
   struct Layout {
     duckdb::transaction_t owner = kNoLayoutOwner;
+    std::optional<SchemaUndo> schema_undo;
     std::vector<IndexConfig> configs;
     std::vector<IndexConfig> retired;
     std::optional<duckdb::idx_t> building_index;
@@ -403,6 +440,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   catalog::CompressionByColumn _compression ABSL_GUARDED_BY(_layout_mutex);
   mutable absl::Mutex _layout_mutex;
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);
+  std::atomic<uint64_t> _schema_epoch{0};
   WriterGenerations _writers;
   absl::Mutex _truncate_mutex;
   irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_truncate_mutex);

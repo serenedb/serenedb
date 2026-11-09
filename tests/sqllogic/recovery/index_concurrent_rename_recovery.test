@@ -1,0 +1,72 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE icrr (id INT, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE icrr RENAME COLUMN b TO c;
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+CREATE INDEX icrr_b ON icrr USING inverted (b);
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Catalog write-write conflict on create with "icrr_b": table "icrr" was altered by a concurrent transaction
+
+
+connection s2
+statement ok
+CREATE INDEX icrr_c ON icrr USING inverted (c);
+
+
+connection s2
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection s2
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+INSERT INTO icrr VALUES (1, 'alpha');
+
+
+connection after_crash
+query ok retry 40 backoff 250ms
+SELECT id FROM icrr_c WHERE c @@ 'alpha';
+----
+id
+1
+
+
+connection after_crash
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'icrr' ORDER BY indexname;
+----
+indexname
+icrr_c

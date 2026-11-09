@@ -188,14 +188,14 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       duckdb::ExceptionType::CATALOG,
       absl::StrCat("role with OID ", job.owner, " does not exist")};
   }
-  auto connection = connector::MakeSystemConnection(
-    user, job.owner, job.catalog.GetIdentifierName(), job.database_oid);
-  absl::Cleanup log_notices = [&] {
-    connection.ctx->ConsumeNotices([&](auto& notice) {
-      SDB_WARN(GENERAL, "job \"", job.name.GetIdentifierName(),
-               "\": ", notice.errmsg);
-    });
-  };
+  connector::SystemConnection connection{
+    {.user = user,
+     .role = job.owner,
+     .database = job.catalog.GetIdentifierName(),
+     .database_id = job.database_oid},
+    {.what = "job", .name = job.name.GetIdentifierName()}};
+  connector::SetDefaultSearchPath(*connection.conn->context,
+                                  job.catalog.GetIdentifierName());
   context = connection.conn->context;
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));

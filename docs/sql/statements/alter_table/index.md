@@ -234,7 +234,7 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE` or `PRIMARY KEY` constraint
 
 ## `SET` / `RESET` storage options
 
-For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the background maintenance options it was created with, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back. `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. The current values are listed in `pg_class.reloptions`.
+For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the background maintenance options it was created with, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back; once `SET (refresh_interval = 0)` commits, rows committed after it are not refreshed in the background until `VACUUM (REFRESH_TABLE)`. `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. The current values are listed in `pg_class.reloptions`.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_036" />
 
@@ -258,7 +258,19 @@ Foreign keys are not triggers in SereneDB, so `DISABLE TRIGGER ALL` does not tur
 
 ## Search tables
 
-A search table's columns are fixed: `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `DROP CONSTRAINT` and adding a `PRIMARY KEY` or `UNIQUE` constraint are rejected. `ENABLE` / `DISABLE TRIGGER` is rejected in every form too, so the table's triggers stay enabled and never fire in a session whose `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md). Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `SET NOT NULL` / `DROP NOT NULL`, adding a `CHECK` constraint and `COMMENT ON COLUMN` change only the table's definition. A search table does not check `NOT NULL` and `CHECK` constraints when rows are written, whether they were declared at `CREATE TABLE` or added later. An `ALTER TABLE` of a search table holds it until its transaction ends, like a change of its indexes; see [Concurrent changes](../create_index/inverted.md#concurrent-changes).
+Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `DROP NOT NULL`, `DROP CONSTRAINT` and `RENAME CONSTRAINT` of a `CHECK` or `NOT NULL` constraint, and `COMMENT ON COLUMN` change only the table's definition.
+
+`ADD COLUMN` without a default, or with `DEFAULT NULL`, gives the existing rows `NULL`. With any other default, the existing rows get the default, evaluated per row, and the statement rewrites the table. A generated column can't be added.
+
+`DROP COLUMN` drops the indexes on the column and the `CHECK` constraints that use it. A column of the `PRIMARY KEY` can't be dropped.
+
+`ALTER COLUMN TYPE` rewrites the table, converting each value with the `USING` expression, or with a cast when there is none. It is refused for a column of the `PRIMARY KEY`, a column an index covers, a column a `CHECK` constraint or a generated column uses, and a generated column. If the column is `NOT NULL`, every converted value must be non-`NULL`.
+
+Adding a `PRIMARY KEY` or `UNIQUE` constraint, dropping one, and `ENABLE` / `DISABLE TRIGGER` in any form are rejected, so the table's triggers stay enabled and never fire in a session whose `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md).
+
+As on any table, every row written is checked against the `NOT NULL` and `CHECK` constraints. `SET NOT NULL` and adding a `CHECK` constraint fail if a row of the table violates the new constraint, rows not yet refreshed included.
+
+`ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `SET NOT NULL` and adding a `CHECK` constraint wait for the transactions that wrote to the table before them to end, and refresh the table. They are refused in a transaction that has already written to the table. While such an `ALTER TABLE` is uncommitted, and in transactions whose snapshot predates its commit, `INSERT` and `UPDATE` of the table fail with `search table "<name>" was altered by a concurrent transaction`; retry the transaction. An `ALTER TABLE` of a search table holds it until its transaction ends, like a change of its indexes; see [Concurrent changes](../create_index/inverted.md#concurrent-changes).
 
 <SqlLogicTest id="sql/statements/alter_table/index/search_table_triggers" />
 

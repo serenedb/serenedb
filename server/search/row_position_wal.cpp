@@ -27,7 +27,9 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace sdb::search {
@@ -95,6 +97,79 @@ std::shared_ptr<const irs::DocRemoval> ReplayRemoval(
     }
   }
   return replayed;
+}
+
+void RemovalLog::AddPositions(
+  std::shared_ptr<const duckdb::data_t> entry,
+  std::span<const duckdb::WALFrozenRowPositionGroup> groups) {
+  if (groups.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("Malformed doc removal: it names no segment"));
+  }
+  for (const auto& group : groups) {
+    _positions.groups.push_back(
+      {.segment = group.segment,
+       .docs =
+         irs::DocumentMask{{entry, group.docs.data()}, group.docs.size()}});
+  }
+}
+
+void RemovalLog::AddMaps(
+  std::shared_ptr<const duckdb::data_t> entry, uint64_t source,
+  std::span<const duckdb::WALFrozenRowPositionMap> maps) {
+  auto& doc_maps = _doc_maps[source];
+  doc_maps.clear();
+  doc_maps.reserve(maps.size());
+  for (const auto& map : maps) {
+    if (source >= map.target) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATA_CORRUPTED),
+        ERR_MSG("Malformed doc map: it does not lead to a newer segment"));
+    }
+    doc_maps.push_back({.source = source,
+                        .target = map.target,
+                        .mask = map.mask.empty()
+                                  ? nullptr
+                                  : std::make_shared<const irs::DocumentMask>(
+                                      std::shared_ptr<const irs::byte_type>{
+                                        entry, map.mask.data()},
+                                      map.mask.size()),
+                        .rank_begin = map.rank_begin,
+                        .rank_end = map.rank_end,
+                        .base = map.base});
+  }
+}
+
+void RemovalLog::Clear() noexcept {
+  _keys.clear();
+  _positions = {};
+  _doc_maps.clear();
+}
+
+void RemovalLog::Merge(RemovalLog&& other) {
+  _keys.insert(_keys.end(), other._keys.begin(), other._keys.end());
+  auto& groups = _positions.groups;
+  groups.insert(groups.end(),
+                std::make_move_iterator(other._positions.groups.begin()),
+                std::make_move_iterator(other._positions.groups.end()));
+  for (auto& [source, maps] : other._doc_maps) {
+    _doc_maps.insert_or_assign(source, std::move(maps));
+  }
+  other.Clear();
+}
+
+std::vector<int64_t> RemovalLog::TakeKeys() {
+  auto keys = std::move(_keys);
+  _keys.clear();
+  return keys;
+}
+
+std::shared_ptr<const irs::DocRemoval> RemovalLog::Resolve(
+  const irs::DirectoryReader& reader) && {
+  if (_positions.groups.empty()) {
+    return nullptr;
+  }
+  return ReplayRemoval(std::move(_positions), reader, _doc_maps);
 }
 
 }  // namespace sdb::search

@@ -1,0 +1,139 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rcand_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rcand_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rcand\_%''');
+
+
+statement ok
+CALL postgres_execute('rcand_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rcand_pub; DROP TABLE IF EXISTS rcand_rows; DROP TABLE IF EXISTS rcand_other; CREATE TABLE rcand_rows (id int PRIMARY KEY); CREATE TABLE rcand_other (id int); CREATE PUBLICATION rcand_pub FOR TABLE rcand_rows; END $$');
+
+
+statement ok
+CREATE TABLE rcand_rows (id INTEGER);
+
+
+statement ok
+CREATE SUBSCRIPTION rcand_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} options=''-c logical_decoding_work_mem=64kB''' PUBLICATION rcand_pub WITH (slot_name = 'rcand_sub', streaming = on);
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM pg_subscription_rel WHERE srsubstate = 'r';
+----
+n
+1
+
+
+connection pg_x
+statement ok
+BEGIN;
+
+
+connection pg_x
+statement ok
+CALL postgres_execute('rcand_${__DATABASE__}', 'INSERT INTO rcand_other SELECT generate_series(1, 20000)');
+
+
+connection pg_y
+statement ok
+BEGIN;
+
+
+connection pg_y
+statement ok
+CALL postgres_execute('rcand_${__DATABASE__}', 'INSERT INTO rcand_rows SELECT generate_series(1, 20000)');
+
+
+connection pg_x
+statement ok
+CALL postgres_execute('rcand_${__DATABASE__}', 'INSERT INTO rcand_rows SELECT generate_series(20001, 40000)');
+
+
+connection pg_y
+statement ok
+COMMIT;
+
+
+connection pg_z
+statement ok
+BEGIN;
+
+
+connection pg_z
+statement ok
+CALL postgres_execute('rcand_${__DATABASE__}', 'INSERT INTO rcand_rows SELECT generate_series(40001, 60000)');
+
+
+connection pg_x
+statement ok
+COMMIT;
+
+
+connection pg_z
+statement ok
+COMMIT;
+
+
+connection default
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi FROM rcand_rows;
+----
+n	ids	lo	hi
+60000	60000	1	60000
+
+
+statement ok
+ALTER SUBSCRIPTION rcand_sub DISABLE;
+
+
+query ok retry 120 backoff 250ms
+SELECT count(pid) AS n FROM pg_stat_subscription WHERE subname = 'rcand_sub';
+----
+n
+0
+
+
+statement ok
+ALTER SUBSCRIPTION rcand_sub SKIP (lsn = '7FFFFFFF/0');
+
+
+statement ok
+ALTER SUBSCRIPTION rcand_sub ENABLE;
+
+
+connection pg_w
+statement ok
+BEGIN;
+
+
+connection pg_w
+statement ok
+CALL postgres_execute('rcand_${__DATABASE__}', 'INSERT INTO rcand_rows SELECT generate_series(60001, 80000)');
+
+
+connection pg_w
+statement ok
+COMMIT;
+
+
+connection default
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n, count(DISTINCT id) AS ids, max(id) AS hi FROM rcand_rows;
+----
+n	ids	hi
+80000	80000	80000
+
+
+statement ok
+DROP SUBSCRIPTION rcand_sub;
+
+
+statement ok
+CALL postgres_execute('rcand_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rcand_pub; DROP TABLE rcand_rows; DROP TABLE rcand_other; END $$');
+
+
+statement ok
+DETACH rcand_${__DATABASE__};

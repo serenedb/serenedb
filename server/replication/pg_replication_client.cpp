@@ -729,11 +729,9 @@ yaclib::Task<> PgReplicationClient::Feeder() {
             break;
           }
           if (const auto spool = _spools.find(commit.xid);
-              (spool == _spools.end() || spool->second.Size() == 0) &&
+              spool != _spools.end() && spool->second.Size() == 0 &&
               commit.commit_lsn != _target.skip_lsn) {
-            if (spool != _spools.end()) {
-              _spools.erase(spool);
-            }
+            _spools.erase(spool);
             _subxacts.erase(commit.xid);
             break;
           }
@@ -781,12 +779,9 @@ yaclib::Task<> PgReplicationClient::Feeder() {
                   })) {
                 _eager_xid = _streamed_xid;
                 _txn_open = true;
-                if (!co_await Enqueue(StreamStopMessage{}) ||
-                    !co_await Enqueue(BeginMessage{.final_lsn = received,
-                                                   .xid = *_streamed_xid})) {
-                  ok = false;
-                  break;
-                }
+                ok = co_await Enqueue(StreamStopMessage{}) &&
+                     co_await Enqueue(BeginMessage{.final_lsn = received,
+                                                   .xid = *_streamed_xid});
               }
             }
             const auto xid = StreamedMessageXid(message);
@@ -800,7 +795,7 @@ yaclib::Task<> PgReplicationClient::Feeder() {
               }
             }
             spool.Append(message);
-            if (_eager_xid == _streamed_xid) {
+            if (ok && _eager_xid == _streamed_xid) {
               ok = co_await Enqueue(message, true, frame.recv_consume != 0);
             }
           } else {

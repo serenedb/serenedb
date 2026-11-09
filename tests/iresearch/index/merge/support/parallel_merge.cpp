@@ -27,14 +27,29 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 
 namespace tests::merge {
+namespace {
 
-ShuffledUnits::ShuffledUnits(bool shuffled)
-  : _armed{shuffled && duckdb::FaultPoints::Arm("irs::ExecuteMerge::Shuffle")} {
+bool ArmShuffle(bool shuffled) {
+#ifdef SDB_FAULT_INJECTION
+  return shuffled && duckdb::FaultPoints::Arm("irs::ExecuteMerge::Shuffle");
+#else
+  return false;
+#endif
 }
+
+void DisarmShuffle() {
+#ifdef SDB_FAULT_INJECTION
+  duckdb::FaultPoints::Disarm("irs::ExecuteMerge::Shuffle");
+#endif
+}
+
+}  // namespace
+
+ShuffledUnits::ShuffledUnits(bool shuffled) : _armed{ArmShuffle(shuffled)} {}
 
 ShuffledUnits::~ShuffledUnits() {
   if (_armed) {
-    duckdb::FaultPoints::Disarm("irs::ExecuteMerge::Shuffle");
+    DisarmShuffle();
   }
 }
 

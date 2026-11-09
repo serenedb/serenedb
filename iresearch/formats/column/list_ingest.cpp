@@ -148,9 +148,7 @@ void ListIngest::Add(const duckdb::Vector& vec, duckdb::idx_t off,
 }
 
 void ListIngest::CheckDistinct() {
-  const uint64_t codes =
-    (_next_code - _window_code) - (_null_codes - _window_nulls);
-  if (_dedup && codes * 10 > (_valid_rows - _window_valid) * 9) {
+  if (_dedup && _window_lists * 10 > _window_rows * 9) {
     _dedup = false;
     _off_chunks = 0;
     _sequence = true;
@@ -170,8 +168,6 @@ ListParts ListIngest::Take() {
   out.elem_count = _running - _elem_base;
   out.distinct = _next_code - _code_base;
   out.next_code = _next_code;
-  out.runs = _runs;
-  out.longest_run = std::max(_longest_run, _run);
   out.running = _running;
   _elems.clear();
   Forget();
@@ -185,11 +181,6 @@ void ListIngest::Reset(uint64_t code_base, uint64_t running) {
   _last_code = code_base;
   _running = running;
   _elem_base = running;
-  _valid_rows = 0;
-  _null_codes = 0;
-  _runs = 0;
-  _run = 0;
-  _longest_run = 0;
   _sequence = true;
   _dedup = true;
   _prev = kNoRep;
@@ -223,7 +214,7 @@ void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
       PushNull();
       continue;
     }
-    ++_valid_rows;
+    ++_window_rows;
     if constexpr (kCached) {
       if (idx < _source_codes.size() && _source_codes[idx] != 0) {
         _last_code = _source_codes[idx] - 1;
@@ -247,6 +238,7 @@ void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
       _sequence = false;
       continue;
     }
+    ++_window_lists;
     const auto first = static_cast<duckdb::sel_t>(entry.offset);
     _fresh.push_back(Fresh{rep, _picked.size()});
     _picked.append_range(std::views::iota(
@@ -261,7 +253,8 @@ bool ListIngest::Repetitive(const duckdb::UnifiedVectorFormat& parent,
                             const duckdb::Vector& child, duckdb::idx_t off,
                             duckdb::idx_t count) {
   _keys.SetChunk(ListKeys::kSource, child);
-  _probe.clear();
+  std::array<uint64_t, kProbeRows> probe;
+  size_t sampled = 0;
   const auto end = off + std::min(count, kProbeRows);
   for (duckdb::idx_t i = off; i < end; ++i) {
     const auto idx = parent.sel->get_index(i);
@@ -269,15 +262,16 @@ bool ListIngest::Repetitive(const duckdb::UnifiedVectorFormat& parent,
       continue;
     }
     const auto& entry = entries[idx];
-    _probe.emplace_back(_keys.Hash(entry.offset, entry.length));
+    probe[sampled++] = _keys.Hash(entry.offset, entry.length);
   }
-  if (_probe.empty()) {
+  if (sampled == 0) {
     return false;
   }
-  absl::c_sort(_probe);
+  const std::span<uint64_t> hashes{probe.data(), sampled};
+  absl::c_sort(hashes);
   const auto distinct =
-    static_cast<size_t>(std::ranges::unique(_probe).begin() - _probe.begin());
-  return distinct * 2 <= _probe.size();
+    static_cast<size_t>(std::ranges::unique(hashes).begin() - hashes.begin());
+  return distinct * 2 <= sampled;
 }
 
 void ListIngest::AddDistinct(const duckdb::UnifiedVectorFormat& parent,
@@ -292,7 +286,8 @@ void ListIngest::AddDistinct(const duckdb::UnifiedVectorFormat& parent,
       PushNull();
       continue;
     }
-    ++_valid_rows;
+    ++_window_rows;
+    ++_window_lists;
     const auto& entry = entries[idx];
     if (entry.offset != run_end) {
       AppendRange(child, run_begin, run_end - run_begin);

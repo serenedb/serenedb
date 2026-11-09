@@ -123,15 +123,28 @@ void SetInvalidRows(duckdb::Vector& vec, duckdb::idx_t begin,
 
 duckdb::CompressionType CodesCodec(const ListParts& parts,
                                    uint64_t rows) noexcept {
+  uint64_t runs = 0;
+  uint64_t run = 0;
+  uint64_t longest_run = 0;
+  for (size_t i = 0; i < parts.codes.size(); ++i) {
+    if (i != 0 && parts.codes[i] == parts.codes[i - 1]) {
+      ++run;
+      continue;
+    }
+    longest_run = std::max(longest_run, run);
+    run = 1;
+    ++runs;
+  }
+  longest_run = std::max(longest_run, run);
   const uint64_t width =
     duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(
       parts.distinct == 0 ? 0 : parts.distinct - 1);
   const uint64_t run_width =
-    duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(parts.longest_run);
+    duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(longest_run);
   const uint64_t bitpacked = rows * width;
-  const uint64_t runs = parts.runs * (width + run_width);
-  return runs < bitpacked ? duckdb::CompressionType::COMPRESSION_RLE
-                          : duckdb::CompressionType::COMPRESSION_BITPACKING;
+  const uint64_t run_bits = runs * (width + run_width);
+  return run_bits < bitpacked ? duckdb::CompressionType::COMPRESSION_RLE
+                              : duckdb::CompressionType::COMPRESSION_BITPACKING;
 }
 
 duckdb::CompressionType ForcedMethod(duckdb::DatabaseInstance& db,

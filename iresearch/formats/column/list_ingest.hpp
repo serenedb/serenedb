@@ -276,8 +276,6 @@ struct ListParts {
   uint64_t elem_count = 0;
   uint64_t distinct = 0;
   uint64_t next_code = 0;
-  uint64_t runs = 0;
-  uint64_t longest_run = 0;
   uint64_t running = 0;
 };
 
@@ -317,9 +315,8 @@ class ListIngest {
                duckdb::idx_t count);
 
   void OpenWindow() noexcept {
-    _window_code = _next_code;
-    _window_nulls = _null_codes;
-    _window_valid = _valid_rows;
+    _window_rows = 0;
+    _window_lists = 0;
   }
 
   bool Repetitive(const duckdb::UnifiedVectorFormat& parent,
@@ -327,21 +324,11 @@ class ListIngest {
                   const duckdb::Vector& child, duckdb::idx_t off,
                   duckdb::idx_t count);
 
-  IRS_FORCE_INLINE void PushCode(uint64_t code) {
-    if (_run == 0 || code != _run_code) {
-      _longest_run = std::max(_longest_run, _run);
-      _run_code = code;
-      _run = 0;
-      ++_runs;
-    }
-    ++_run;
-    _codes.push_back(code);
-  }
+  IRS_FORCE_INLINE void PushCode(uint64_t code) { _codes.push_back(code); }
 
   IRS_FORCE_INLINE void PushNull() {
     if (_sequence) {
       _last_code = _next_code++;
-      ++_null_codes;
       _ends.push_back(_running);
     }
     PushCode(_last_code);
@@ -403,17 +390,9 @@ class ListIngest {
   uint64_t _last_code = 0;
   uint64_t _running = 0;
   uint64_t _elem_base = 0;
-  uint64_t _valid_rows = 0;
-  uint64_t _null_codes = 0;
-  uint64_t _runs = 0;
-  uint64_t _run = 0;
-  uint64_t _run_code = 0;
-  uint64_t _longest_run = 0;
-  uint64_t _window_code = 0;
-  uint64_t _window_nulls = 0;
-  uint64_t _window_valid = 0;
+  uint64_t _window_rows = 0;
+  uint64_t _window_lists = 0;
   uint64_t _off_chunks = 0;
-  std::vector<uint64_t> _probe;
   bool _sequence = true;
   uint32_t _prev = kNoRep;
   std::vector<uint64_t> _codes;

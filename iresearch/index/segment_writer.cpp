@@ -177,9 +177,11 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   SDB_ASSERT(docs != 0);
   std::vector<std::unique_ptr<ColumnReader>> columns;
   std::vector<NormColumnSpec> norms;
+  size_t column_bytes = 0;
   if (_col_writer) {
     _fields.FinalizeNorms();
     norms = _col_writer->SealNorms(docs);
+    column_bytes = _col_writer->StagedBytes();
     for (auto& column : _col_writer->Snapshot(docs)) {
       columns.push_back(HotColumnReader::Make(_db, std::move(column), nullptr));
     }
@@ -197,14 +199,19 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   }
   meta.live_docs_count = meta.docs_count - RemovalCount(meta);
   meta.files = _dir.FlushTracked(meta.byte_size);
+  meta.byte_size += column_bytes + fields->Bytes();
   fields->Open(ReaderState{.dir = &_dir, .meta = &meta},
                field_writer.Features());
   IndexInput::ptr norms_in;
   if (!norms.empty()) {
     norms_in = _dir.open(FileName(_seg_name), IOAdvice::RANDOM);
   }
+  for (const auto& file : meta.files) {
+    _dir.remove(file);
+  }
+  meta.files.clear();
   return SegmentReaderImpl::OpenPiece(
-    _dir, meta, id,
+    meta, id,
     std::make_unique<ColReader>(_db, std::move(columns), std::move(norms_in),
                                 std::move(norms)),
     std::move(fields));

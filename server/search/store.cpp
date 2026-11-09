@@ -248,6 +248,16 @@ void Store::Open() {
   SetFileManifest(std::move(stamp.manifest));
   if (IsSearchTable()) {
     _table = std::make_unique<Table>(*_dir, ReaderOptions());
+    if (_writer) {
+      _piece_dir = std::make_unique<irs::MemoryDirectory>();
+      irs::IndexWriterOptions piece_options;
+      piece_options.ann_env = &AnnBuildEnv();
+      piece_options.reader_options = ReaderOptions();
+      piece_options.db = piece_options.reader_options.db;
+      piece_options.lock_repository = false;
+      _piece_writer = irs::IndexWriter::Make(*_piece_dir, irs::kOmCreate,
+                                             std::move(piece_options));
+    }
   }
   PublishSnapshot();
 }
@@ -293,85 +303,15 @@ StoreSnapshotPtr Store::Snapshot() const {
 
 irs::DirectoryReader Store::BuildSnapshot() {
   SDB_ASSERT(_table);
-  CoolAll();
+  WriteOut(kNoLsn);
   return _table->ColdView();
-}
-
-void Store::CoolAll() {
-  if (_table) {
-    CoolRetired(kNoLsn);
-  }
-}
-
-void Store::MakeSearchable(const TableState& state) {
-  if (!_table) {
-    return;
-  }
-  _table->RetireVisible(state);
-  for (;;) {
-    Cool(false, false);
-    if (!_table->HasRetiredHot()) {
-      return;
-    }
-    _table->AwaitRetiredReleased();
-  }
 }
 
 bool Store::Settle() {
   if (!_table || !_table->Unsettled()) {
     return false;
   }
-  CoolAll();
-  PersistSegments(kNoLsn);
-  return true;
-}
-
-bool Store::PersistSegments(Lsn before) {
-  SDB_ASSERT(!_read_only);
-  auto unsynced = _table->UnsyncedSegments(before);
-  if (unsynced.empty()) {
-    return false;
-  }
-  for (const auto& unit : unsynced) {
-    const auto& segment = unit->segment;
-    std::vector<std::string_view> files{segment.meta.files.begin(),
-                                        segment.meta.files.end()};
-    files.emplace_back(segment.filename);
-    if (!_dir->sync(files)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                      ERR_MSG("failed to sync the files of segment '",
-                              segment.filename, "'"));
-    }
-  }
-  SyncSegments();
-  std::vector<uint64_t> logged;
-  catalog::Transactions::Get().CommitStorage(
-    _table->CommitMutex(),
-    [&] {
-      duckdb::vector<std::string> entries;
-      for (const auto& unit : unsynced) {
-        if (_table->Unsynced(unit->id)) {
-          logged.push_back(unit->id);
-          entries.push_back(LogCooled({.id = unit->id,
-                                       .meta_file = unit->segment.filename,
-                                       .docs = unit->docs}));
-        }
-      }
-      std::vector<uint8_t> record;
-      if (!entries.empty() && !_in_memory && !OwnerDropped()) {
-        record = catalog::SearchRecord(_db_id, _id, entries);
-      }
-      return record;
-    },
-    [&](Tick, Lsn lsn) { _table->Synced(logged, lsn); });
-  const bool superseded = logged.size() != unsynced.size();
-  unsynced.clear();
-  if (superseded) {
-    if (const auto cleanup = CleanupUnsafe(); !cleanup.res.ok()) {
-      SDB_WARN(SEARCH, "cleaning up table ", _id, " after persisting ",
-               logged.size(), " segment(s) failed: ", cleanup.res.message());
-    }
-  }
+  WriteOut(kNoLsn);
   return true;
 }
 
@@ -390,21 +330,18 @@ std::vector<OwnSegment> Store::OpenFlushed(
   return segments;
 }
 
-void Store::ReleaseHot(const std::shared_ptr<HotContext>& hot) {
-  bool full = false;
-  {
-    absl::MutexLock lock{&hot->Mutex()};
-    full = _segment_memory_max != 0 && hot->Memory() >= _segment_memory_max;
-  }
-  _table->ReleaseHot(hot, full);
-  if (full) {
-    ScheduleCooling();
-  }
+Store::Piece Store::StartPiece() {
+  SDB_ASSERT(_piece_writer);
+  Piece piece{.trx = _piece_writer->GetBatch(/*exclusive_segment=*/true),
+              .id = _writer->NextSegmentId()};
+  piece.trx.SetHot(piece.id);
+  return piece;
 }
 
-void Store::ScheduleCooling() {
-  if (!BackgroundScheduler::gInstance ||
-      _cooling_scheduled.exchange(true, std::memory_order_acq_rel)) {
+void Store::WriteOutWhenFull() {
+  if (_table->PieceBytes() < _segment_memory_max ||
+      !BackgroundScheduler::gInstance ||
+      _write_out_scheduled.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
   BackgroundScheduler::instance()
@@ -413,10 +350,26 @@ void Store::ScheduleCooling() {
       if (!store) {
         return;
       }
-      store->_cooling_scheduled.store(false, std::memory_order_release);
-      store->Cool(false);
+      store->_write_out_scheduled.store(false, std::memory_order_release);
+      try {
+        store->MaintainPieces();
+      } catch (const std::exception& e) {
+        SDB_WARN(SEARCH, "table ", store->_id,
+                 ": writing out the rows it holds in memory failed: ",
+                 duckdb::ErrorData{e}.RawMessage());
+      }
     })
     .Detach();
+}
+
+void Store::MaintainPieces() {
+  if (!_piece_writer || OwnerDropped()) {
+    return;
+  }
+  absl::MutexLock lock{&_write_out_mutex};
+  if (_table->PieceBytes() >= _segment_memory_max) {
+    WriteOutLocked(kNoLsn);
+  }
 }
 
 void Store::CommitStorage(std::string entry,
@@ -436,102 +389,48 @@ void Store::CommitStorage(std::string entry,
     apply);
 }
 
-void Store::CoolOne(const std::shared_ptr<HotContext>& hot, bool durable) {
-  irs::doc_id_t docs = 0;
-  for (const auto& unit : _table->State()->units) {
-    if (unit->hot == hot) {
-      docs = unit->docs;
-      break;
-    }
-  }
-  hot->Reader(*ReaderOptions().db, docs);
-  OwnSegment written;
-  irs::RefTrackingDirectory tracked{*_dir};
-  uint64_t id = 0;
-  {
-    absl::MutexLock lock{&hot->Mutex()};
-    id = hot->Id();
-    const auto flushed = hot->Trx().FlushSegments(durable);
-    SDB_ASSERT(flushed.size() <= 1);
-    if (!flushed.empty()) {
-      const auto& entry = flushed.front();
-      written.segment.filename = entry.filename;
-      written.segment.meta = entry.meta;
-      if (!entry.docs_mask.Empty()) {
-        written.segment.meta.docs_mask =
-          std::make_shared<const irs::DocumentMask>(
-            irs::DocumentMaskBuilder{entry.docs_mask}.Finish());
-        irs::index_utils::FlushIndexSegment(tracked, written.segment, true);
-        SDB_IF_FAILURE("search_cleanup_during_cooling") {
-          irs::directory_utils::RemoveAllUnreferenced(*_dir);
-        }
-        const std::array<std::string_view, 1> files{written.segment.filename};
-        if (durable && !_dir->sync(files)) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_IO_ERROR),
-            ERR_MSG("failed to sync '", written.segment.filename, "'"));
-        }
-      }
-      written.reader = irs::SegmentReaderImpl::Open(*_dir, written.segment.meta,
-                                                    ReaderOptions());
-      hot->SetCooled(std::make_shared<const HotContext::CooledSegment>(
-        HotContext::CooledSegment{.filename = written.segment.filename,
-                                  .reader = written.reader}));
-    }
-  }
-  SDB_PARK_ONCE_ON_FAILURE("pause_search_cooling");
-  bool left = false;
-  if (durable) {
-    SyncSegments();
-    CommitStorage(
-      LogCooled(
-        {.id = id, .meta_file = written.segment.filename, .docs = docs}),
-      [&](Tick, Lsn lsn) {
-        left = _table->Cooled(hot, std::move(written), lsn);
-      });
-  } else {
-    {
-      absl::MutexLock lock{&_table->CommitMutex()};
-      left = _table->Cooled(hot, std::move(written), kNoLsn);
-    }
-    catalog::Transactions::Get().RequestCollect();
-  }
-  if (left) {
-    QueueReleaseCleanup(shared_from_this(),
-                        catalog::Transactions::Get().LastCommit());
-  }
-  absl::MutexLock lock{&hot->Mutex()};
-  hot->Trx().Abort();
-}
-
-void Store::Cool(bool all, bool durable) {
-  if (!_table) {
+void Store::WriteOut(Lsn before) {
+  if (!_table || !_piece_writer || OwnerDropped()) {
     return;
   }
-  const auto taken = _table->TakeCoolable(all ? 0 : _segment_memory_max, all);
-  for (const auto& hot : taken) {
-    try {
-      CoolOne(hot, durable);
-    } catch (const std::exception& e) {
-      SDB_FATAL(SEARCH, "table ", _id,
-                ": could not write the rows it holds in memory: ",
-                duckdb::ErrorData{e}.RawMessage());
-    }
-  }
-  if (!taken.empty()) {
-    NudgeCompaction();
-  }
+  absl::MutexLock lock{&_write_out_mutex};
+  WriteOutLocked(before);
 }
 
-void Store::CoolRetired(Lsn before) {
-  _table->Retire(before);
-  for (;;) {
-    Cool(before == kNoLsn);
-    if (!_table->HasRetiredHot()) {
-      return;
-    }
-    _table->AwaitRetiredReleased();
+void Store::WriteOutLocked(Lsn before) {
+  const auto pieces = _table->Pieces(before);
+  if (pieces.empty()) {
+    return;
   }
+  const auto field_options = CompactionOptions();
+  auto merged = irs::GetBlocking(_writer->WriteAsync(
+    _table->PieceView(pieces), field_options.get(), [] { return true; },
+    &AnnBuildEnv()));
+  SDB_IF_FAILURE("search_cleanup_during_write_out") {
+    irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_write_out");
+  std::vector<uint64_t> ids;
+  ids.reserve(pieces.size());
+  for (const auto& piece : pieces) {
+    ids.push_back(piece->id);
+  }
+  std::vector<ReplacedSegment> named;
+  std::vector<OwnSegment> segments;
+  if (merged.reader) {
+    named.push_back({.id = merged.reader->Id(),
+                     .meta_file = merged.segment.filename,
+                     .docs = merged.reader->Meta().docs_count});
+    segments.push_back(OwnSegment{.segment = std::move(merged.segment),
+                                  .reader = std::move(merged.reader)});
+  }
+  SyncSegments();
+  CommitStorage(LogReplace(ids, named, merged.maps), [&](Tick tick, Lsn lsn) {
+    _table->Replace(tick, lsn, ids, std::move(segments),
+                    std::move(merged.maps));
+    QueueReleaseCleanup(shared_from_this(), tick);
+  });
+  NudgeCompaction();
 }
 
 void Store::Cover(Lsn target) {
@@ -540,8 +439,7 @@ void Store::Cover(Lsn target) {
       _table->NeededFrom() >= target) {
     return;
   }
-  CoolRetired(target);
-  PersistSegments(target);
+  WriteOut(target);
   catalog::Transactions::Get().CommitState(
     _table->CommitMutex(),
     [&] {
@@ -788,7 +686,7 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
   };
   const auto target = std::max<uint32_t>(1, target_segments);
   GetSearchEngine().Maintenance().Enter(context).reset();
-  CoolAll();
+  WriteOut(kNoLsn);
   const ManualCompactionSlot slot;
   const irs::AnnBuildEnv* env = slot.AnnEnv();
   for (size_t pass = 0; pass < 8; ++pass) {
@@ -1231,11 +1129,10 @@ void Store::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
   }
 }
 
-void Store::ReplayHotRows(duckdb::Catalog& catalog,
-                          std::vector<connector::ColumnId> column_ids,
-                          uint64_t segment, irs::doc_id_t first,
-                          duckdb::unique_ptr<duckdb::DataChunk> chunk,
-                          Lsn lsn) {
+void Store::ReplayRows(duckdb::Catalog& catalog,
+                       std::vector<connector::ColumnId> column_ids,
+                       uint64_t segment, irs::doc_id_t first,
+                       duckdb::unique_ptr<duckdb::DataChunk> chunk, Lsn lsn) {
   EnsureOpen();
   if (!_table) {
     return;
@@ -1262,14 +1159,6 @@ void Store::ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn) {
   }
 }
 
-void Store::ReplayCooled(const ReplacedSegment& segment, Lsn lsn) {
-  EnsureOpen();
-  if (_table) {
-    _replayed_rows.erase(segment.id);
-    _table->ReplayCooled(segment, lsn);
-  }
-}
-
 void Store::ReplayTruncate(Lsn lsn) {
   EnsureOpen();
   if (_table) {
@@ -1282,6 +1171,9 @@ void Store::ReplayReplace(std::span<const uint64_t> replaced,
                           std::span<const irs::DocMap> maps, Lsn lsn) {
   EnsureOpen();
   if (_table) {
+    for (const auto id : replaced) {
+      _replayed_rows.erase(id);
+    }
     _table->ReplayReplace(replaced, segments, maps, lsn);
   }
 }
@@ -1303,30 +1195,13 @@ void Store::InvertReplayed(duckdb::ClientContext& context) {
       continue;
     }
     for (const auto& replayed : chunks) {
-      _table->ReplayHotRows(
-        *_writer, segment, replayed.first,
-        [&](irs::IndexWriter::Transaction& trx, HotKeys& keys) {
+      _table->ReplayPieceRows(
+        *_piece_writer, segment, replayed.first,
+        [&](irs::IndexWriter::Transaction& trx) {
           const auto sink = connector::MakeSearchTableInsertSink(
             trx, *this, *replayed.catalog, context);
           connector::WriteChunkToSearchSink(*sink, *replayed.chunk,
                                             replayed.column_ids, _id, context);
-          const auto& constraints = sink->ConstraintKeys();
-          auto& chunk = *replayed.chunk;
-          duckdb::Vector encoded{duckdb::LogicalType::BLOB, chunk.size()};
-          for (const auto& constraint : constraints) {
-            constraint.Encode(chunk, replayed.column_ids, encoded);
-            auto values = encoded.Values<duckdb::string_t>();
-            for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
-              const auto entry = values[row];
-              if (entry.IsValid()) {
-                const auto& value = entry.GetValue();
-                keys.Add(constraint.Key().field,
-                         {value.GetData(), value.GetSize()},
-                         static_cast<irs::doc_id_t>(irs::doc_limits::min() +
-                                                    replayed.first + row));
-              }
-            }
-          }
         });
     }
   }

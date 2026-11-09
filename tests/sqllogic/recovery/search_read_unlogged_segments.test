@@ -61,7 +61,7 @@ SELECT (SELECT value FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND rel
        (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_appended_bytes') - getvariable('srus_appended') AS appended;
 ----
 buffered	appended
-0	0
+1000	0
 
 
 statement ok

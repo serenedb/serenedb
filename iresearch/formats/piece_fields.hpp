@@ -87,6 +87,11 @@ class PieceTermReader final : public TermReader {
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
                                TermPostings::ptr reuse) const;
 
+  size_t Bytes() const noexcept {
+    return _terms.capacity() + _inline.capacity() +
+           _entries.capacity() * sizeof(Entry);
+  }
+
  private:
   struct Entry {
     uint32_t begin = 0;
@@ -117,6 +122,7 @@ class PieceFields final {
   PieceTermReader& Add(FieldMeta meta, uint32_t width);
   void Seal(PieceTermReader& reader, uint64_t docs, uint64_t total_freq);
   void Open(const ReaderState& state, IndexFeatures features);
+  size_t Bytes() const noexcept;
 
  private:
   struct Members {

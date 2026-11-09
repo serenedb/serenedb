@@ -345,35 +345,18 @@ void KeyProbe::Add(const Segment& segment) {
     _segments.push_back({.unit = segment.unit,
                          .field = field,
                          .mask = segment.sub->MaskedDocs(),
-                         .masks = segment.masks,
-                         .first = segment.first});
+                         .masks = segment.masks});
   }
 }
 
 void KeyProbe::AddLive(const LiveUnits& live, const LiveUnits* since) {
   for (const auto& unit : live.Units()) {
-    irs::doc_id_t first = 0;
-    if (since) {
-      if (const auto* before = since->Find(unit.unit->id)) {
-        if (before->visible >= unit.visible) {
-          continue;
-        }
-        first = before->visible;
-      }
+    if (since && since->Find(unit.unit->id)) {
+      continue;
     }
-    const RowMasks masks{.deleted = unit.deleted, .removed = unit.removed};
-    if (unit.unit->hot) {
-      Add(Hot{.unit = unit.unit->id,
-              .keys = &unit.unit->hot->Keys(),
-              .first = first,
-              .docs = unit.visible,
-              .masks = masks});
-    } else {
-      Add(Segment{.unit = unit.unit->id,
-                  .sub = unit.unit->reader.get(),
-                  .masks = masks,
-                  .first = first});
-    }
+    Add(Segment{.unit = unit.unit->id,
+                .sub = unit.unit->reader.get(),
+                .masks = {.deleted = unit.deleted, .removed = unit.removed}});
   }
 }
 
@@ -382,8 +365,7 @@ void KeyProbe::ForEach(std::string_view key,
   bool more = true;
   for (const auto& source : _segments) {
     source.field->ReadDocs(Bytes(key), [&](irs::doc_id_t doc) {
-      if (doc - irs::doc_limits::min() < source.first ||
-          source.mask.Contains(doc) || source.masks.Contains(doc)) {
+      if (source.mask.Contains(doc) || source.masks.Contains(doc)) {
         return true;
       }
       more = visit({.unit = source.unit, .doc = doc});
@@ -396,7 +378,7 @@ void KeyProbe::ForEach(std::string_view key,
   for (const auto& hot : _hots) {
     hot.keys->ForEach(_field, key, [&](irs::doc_id_t doc) {
       const auto row = doc - irs::doc_limits::min();
-      if (row < hot.first || row >= hot.docs || hot.masks.Contains(doc)) {
+      if (row >= hot.docs || hot.masks.Contains(doc)) {
         return true;
       }
       more = visit({.unit = hot.unit, .doc = doc});
@@ -472,15 +454,13 @@ void ForEachSegmentKey(
     size_t rows = 0;
     for (const auto i : at) {
       auto& cursor = cursors[i];
-      const auto first = cursor.segment->first;
       const auto& masks = cursor.segment->masks;
       cursor.postings = cursor.terms->ReusePostings(irs::IndexFeatures::None,
                                                     std::move(cursor.postings));
       while (const auto n = cursor.postings->NextDocs(docs, nullptr)) {
         for (uint32_t d = 0; d != n; ++d) {
           const auto doc = docs[d];
-          if (doc - irs::doc_limits::min() >= first &&
-              !cursor.mask.Contains(doc) && !masks.Contains(doc)) {
+          if (!cursor.mask.Contains(doc) && !masks.Contains(doc)) {
             ++rows;
           }
         }

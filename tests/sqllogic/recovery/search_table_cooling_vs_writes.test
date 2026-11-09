@@ -31,7 +31,7 @@ INSERT INTO rfi VALUES (3, 'c');
 
 
 statement ok
-SET sdb_faults = 'pause_search_cooling';
+SET sdb_faults = 'pause_search_write_out';
 
 
 connection cooler
@@ -41,7 +41,7 @@ VACUUM (COMPACT_TABLE) rfs;
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_cooling:parked';
+SET sdb_faults = '-pause_search_write_out:parked';
 
 
 connection truncator
@@ -51,7 +51,7 @@ TRUNCATE rfs;
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_cooling:release';
+SET sdb_faults = 'pause_search_write_out:release';
 
 
 wait
@@ -72,7 +72,7 @@ INSERT INTO rfs VALUES (4, 'd');
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_cooling';
+SET sdb_faults = 'pause_search_write_out';
 
 
 connection cooler
@@ -82,7 +82,7 @@ VACUUM (COMPACT_TABLE) rfi;
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_cooling:parked';
+SET sdb_faults = '-pause_search_write_out:parked';
 
 
 connection writer
@@ -97,7 +97,7 @@ DELETE FROM rfi WHERE id = 1;
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_cooling:release';
+SET sdb_faults = 'pause_search_write_out:release';
 
 
 wait

@@ -484,6 +484,11 @@ class IndexWriter : private util::Noncopyable {
                   const MergeWriter::FlushProgress& progress,
                   const AnnBuildEnv* env) -> yaclib::Future<Merged>;
 
+  auto WriteAsync(DirectoryReader source,
+                  const IndexFieldOptions* field_options,
+                  const MergeWriter::FlushProgress& progress,
+                  const AnnBuildEnv* env) -> yaclib::Future<Merged>;
+
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:
     CompactionFloorGuard() = default;
@@ -513,6 +518,7 @@ class IndexWriter : private util::Noncopyable {
 
   CompactionFloorGuard ArmCompactionFloor();
 
+  uint64_t NextSegmentId() noexcept;
   uint64_t CurrentSegmentId() const noexcept;
   void ReserveSegmentId(uint64_t id) noexcept;
 
@@ -830,7 +836,10 @@ class IndexWriter : private util::Noncopyable {
   SegmentWriterOptions GetSegmentWriterOptions(
     bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
-  uint64_t NextSegmentId() noexcept;
+  auto FlushMerge(Merged merged, const IndexFieldOptions* field_options,
+                  const MergeWriter::FlushProgress& progress,
+                  const AnnBuildEnv* env) -> yaclib::Future<Merged>;
+
   void InitMeta(IndexMeta& meta) const;
 
   uint64_t NextTick(uint64_t queries) noexcept {

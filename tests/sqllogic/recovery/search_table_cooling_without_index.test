@@ -50,5 +50,5 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'cwi_indexed')
 ORDER BY metric;
 ----
 metric	value
-num_buffered_docs	0
-num_segments	1
+num_buffered_docs	100
+num_segments	0

@@ -155,8 +155,8 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _table->View(own);
   }
   irs::DirectoryReader View(const std::shared_ptr<const TableState>& state,
-                            const OwnWrites& own, bool searchable) const {
-    return _table->View(state, own, searchable);
+                            const OwnWrites& own) const {
+    return _table->View(state, own);
   }
   uint32_t RowGroupSize() const noexcept { return _row_group_size; }
   bool HasTable() const noexcept { return static_cast<bool>(_table); }
@@ -167,7 +167,14 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::IndexWriter& Writer() noexcept { return *_writer; }
   std::vector<OwnSegment> OpenFlushed(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) const;
-  void ReleaseHot(const std::shared_ptr<HotContext>& hot);
+
+  struct Piece {
+    irs::IndexWriter::Transaction trx;
+    uint64_t id = 0;
+  };
+  Piece StartPiece();
+  void WriteOut(Lsn before);
+  void WriteOutWhenFull();
 
   std::shared_ptr<const FileManifest> GetFileManifest() const {
     return std::atomic_load(&_file_manifest);
@@ -209,8 +216,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::shared_ptr<const irs::IndexFieldOptions> CompactionOptions();
 
   void Commit(const irs::ProgressReportCallback& progress = nullptr);
-  void CoolAll();
-  void MakeSearchable(const TableState& state);
   bool Settle();
   [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
                                            uint32_t target_segments);
@@ -308,13 +313,12 @@ class Store final : public std::enable_shared_from_this<Store>,
     std::span<const irs::SubReader* const> replaced,
     std::vector<irs::IndexWriter::Replacement> replacements);
 
-  void ReplayHotRows(duckdb::Catalog& catalog,
-                     std::vector<connector::ColumnId> column_ids,
-                     uint64_t segment, irs::doc_id_t first,
-                     duckdb::unique_ptr<duckdb::DataChunk> chunk, Lsn lsn);
+  void ReplayRows(duckdb::Catalog& catalog,
+                  std::vector<connector::ColumnId> column_ids, uint64_t segment,
+                  irs::doc_id_t first,
+                  duckdb::unique_ptr<duckdb::DataChunk> chunk, Lsn lsn);
   void ReplayAddSegment(const ReplacedSegment& segment, Lsn lsn);
   void ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn);
-  void ReplayCooled(const ReplacedSegment& segment, Lsn lsn);
   void ReplayTruncate(Lsn lsn);
   void ReplayReplace(std::span<const uint64_t> replaced,
                      std::span<const ReplacedSegment> segments,
@@ -323,7 +327,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   void InvertReplayed(duckdb::ClientContext& context);
   bool FinishReplay();
 
-  void Cool(bool all, bool durable = true);
   void Cover(Lsn target);
 
   // One REINDEX at a time per index, across all connections: claim the
@@ -369,15 +372,14 @@ class Store final : public std::enable_shared_from_this<Store>,
   void EnsureOpen();
   void ClaimColumnOids(const irs::DirectoryReader& reader) const;
   void SyncSegments() const;
-  void CoolOne(const std::shared_ptr<HotContext>& hot, bool durable);
-  bool PersistSegments(Lsn before);
   bool OwnerDropped() const noexcept {
     return Dropped() || _directory->Dropped();
   }
   void CommitStorage(std::string entry,
                      absl::FunctionRef<void(Tick, Lsn)> apply);
-  void ScheduleCooling();
-  void CoolRetired(Lsn before);
+  void MaintainPieces();
+  void WriteOutLocked(Lsn before)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
   template<typename Remove>
   void CommitRemovalWith(const Remove& remove);
   auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
@@ -413,6 +415,9 @@ class Store final : public std::enable_shared_from_this<Store>,
   IndexDurability _durability;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
+  std::unique_ptr<irs::Directory> _piece_dir;
+  std::shared_ptr<irs::IndexWriter> _piece_writer;
+  absl::Mutex _write_out_mutex;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
   StoreSnapshotPtr _snapshot;
@@ -434,7 +439,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   WriterGenerations _writers;
   std::unique_ptr<Table> _table;
   bool _on_disk = false;
-  std::atomic<bool> _cooling_scheduled{false};
+  std::atomic<bool> _write_out_scheduled{false};
   std::atomic<uint32_t> _merges{0};
   struct ReplayedRows {
     irs::doc_id_t first = 0;

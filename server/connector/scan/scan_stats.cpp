@@ -220,7 +220,7 @@ duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
   if (!bind.ReadsEveryRow()) {
     return result;
   }
-  auto snapshot = bind.Snapshot(context, false);
+  auto snapshot = bind.Snapshot(context);
   const auto& reader = snapshot->reader;
   auto& stats = result.emplace_back();
   stats.count = reader.live_docs_count();
@@ -243,7 +243,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto column_index = input.column_index.GetPrimaryIndex();
-  const auto snapshot = bind.Snapshot(context, false);
+  const auto snapshot = bind.Snapshot(context);
   if (!input.column_index.HasChildren()) {
     auto stats = ColumnStats(bind, snapshot->reader, column_index);
     SDB_ASSERT(!stats || stats->GetType() == bind.columns.types[column_index]);

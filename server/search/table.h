@@ -47,7 +47,6 @@
 #include <vector>
 
 #include "catalog/walk.h"
-#include "search/hot_keys.h"
 #include "search/store_stats.h"
 
 namespace sdb::search {
@@ -62,70 +61,17 @@ constexpr uint64_t OwnRowsId(uint64_t generation) noexcept {
   return std::numeric_limits<uint64_t>::max() - generation;
 }
 
-irs::doc_id_t HotDocs(const irs::IndexWriter::Transaction& trx) noexcept;
-uint64_t HotSegmentId(const irs::IndexWriter::Transaction& trx);
-
-class HotContext final {
- public:
-  explicit HotContext(irs::IndexWriter::Transaction&& trx) noexcept
-    : _trx{std::move(trx)} {}
-
-  absl::Mutex& Mutex() noexcept ABSL_LOCK_RETURNED(_mutex) { return _mutex; }
-
-  irs::IndexWriter::Transaction& Trx() noexcept
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) {
-    return _trx;
-  }
-
-  irs::doc_id_t Docs() const noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) {
-    return HotDocs(_trx);
-  }
-  uint64_t Id() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) {
-    return HotSegmentId(_trx);
-  }
-  size_t Memory() const noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-
-  std::shared_ptr<const irs::SegmentReaderImpl> Reader(
-    duckdb::DatabaseInstance& db, irs::doc_id_t docs)
-    ABSL_LOCKS_EXCLUDED(_mutex);
-
-  HotKeys& Keys() noexcept { return _keys; }
-  const HotKeys& Keys() const noexcept { return _keys; }
-
-  struct CooledSegment {
-    std::string filename;
-    std::shared_ptr<const irs::SegmentReaderImpl> reader;
-  };
-
-  std::shared_ptr<const CooledSegment> Cooled() const noexcept {
-    return std::atomic_load(&_cooled);
-  }
-  void SetCooled(std::shared_ptr<const CooledSegment> cooled) noexcept {
-    std::atomic_store(&_cooled, std::move(cooled));
-  }
-
- private:
-  std::shared_ptr<const irs::SegmentReaderImpl> Build(
-    duckdb::DatabaseInstance& db, irs::doc_id_t docs)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-
-  absl::Mutex _mutex;
-  irs::IndexWriter::Transaction _trx ABSL_GUARDED_BY(_mutex);
-  irs::HotChunkStats _stats ABSL_GUARDED_BY(_mutex);
-  std::shared_ptr<const irs::SegmentReaderImpl> _cached;
-  std::shared_ptr<const CooledSegment> _cooled;
-  HotKeys _keys;
-};
+irs::doc_id_t PieceDocs(const irs::IndexWriter::Transaction& trx) noexcept;
 
 struct TableUnit {
   uint64_t id = 0;
-  std::shared_ptr<HotContext> hot;
   irs::IndexSegment segment;
   std::shared_ptr<const irs::SegmentReaderImpl> reader;
   irs::IndexFileRefs::ref_t meta_ref;
   irs::doc_id_t docs = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
   Lsn first_lsn = kNoLsn;
+  bool piece = false;
 };
 
 struct MovedUnit {
@@ -174,9 +120,7 @@ struct OwnWrites {
 };
 
 struct TableCommit {
-  std::shared_ptr<HotContext> hot;
-  uint64_t hot_id = 0;
-  irs::doc_id_t hot_end = 0;
+  std::shared_ptr<const irs::SegmentReaderImpl> piece;
   std::vector<OwnSegment> segments;
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
   bool truncate = false;
@@ -240,26 +184,24 @@ class Table final {
   bool FreeRetired() ABSL_LOCKS_EXCLUDED(_state_mutex);
 
   irs::DirectoryReader View(const OwnWrites& own) const {
-    return Assemble(State(), own, Scope::All, false);
+    return Assemble(State(), own, Scope::All);
   }
   irs::DirectoryReader View(const std::shared_ptr<const TableState>& state,
-                            const OwnWrites& own, bool searchable) const {
-    return Assemble(state, own, Scope::All, searchable);
+                            const OwnWrites& own) const {
+    return Assemble(state, own, Scope::All);
   }
   irs::DirectoryReader ColdView() const {
-    return Assemble(State(), {}, Scope::Cold, false);
+    return Assemble(State(), {}, Scope::Cold);
   }
+  irs::DirectoryReader PieceView(
+    std::span<const std::shared_ptr<const TableUnit>> pieces) const;
   StoreStats Stats() const;
-  std::shared_ptr<const irs::SegmentReaderImpl> UnitReader(
-    const TableUnit& unit) const {
-    return unit.hot ? unit.hot->Reader(*_options.db, unit.docs) : unit.reader;
-  }
   OwnSegment OpenSegment(std::string meta_file) const;
 
-  std::shared_ptr<HotContext> AcquireHot(irs::IndexWriter& writer);
-  void ReleaseHot(const std::shared_ptr<HotContext>& hot, bool retire);
-  void Retire(Lsn before);
-  void RetireVisible(const TableState& state);
+  std::vector<std::shared_ptr<const TableUnit>> Pieces(Lsn before) const;
+  uint64_t PieceBytes() const noexcept {
+    return _piece_bytes.load(std::memory_order_relaxed);
+  }
 
   std::shared_ptr<const irs::DocRemoval> Resolve(
     const std::shared_ptr<const irs::DocRemoval>& removal) const;
@@ -283,17 +225,6 @@ class Table final {
     return _commit_mutex;
   }
 
-  std::vector<std::shared_ptr<HotContext>> TakeCoolable(size_t memory_limit,
-                                                        bool all);
-  [[nodiscard]] bool Cooled(const std::shared_ptr<HotContext>& hot,
-                            OwnSegment&& written, Lsn lsn);
-  bool HasRetiredHot() const;
-  void AwaitRetiredReleased();
-
-  std::vector<std::shared_ptr<const TableUnit>> UnsyncedSegments(
-    Lsn before) const;
-  bool Unsynced(uint64_t id) const;
-  void Synced(std::span<const uint64_t> ids, Lsn lsn);
   bool Unsettled() const;
 
   std::vector<StateUnit> StateUnits() const;
@@ -303,12 +234,11 @@ class Table final {
   void ReplayRows(uint64_t id, irs::doc_id_t first, irs::doc_id_t count,
                   Lsn lsn);
   bool ReplayPending(uint64_t id) const;
-  void ReplayHotRows(
+  void ReplayPieceRows(
     irs::IndexWriter& writer, uint64_t id, irs::doc_id_t first,
-    absl::FunctionRef<void(irs::IndexWriter::Transaction&, HotKeys&)> append);
+    absl::FunctionRef<void(irs::IndexWriter::Transaction&)> append);
   void ReplayAddSegment(const ReplacedSegment& segment, Lsn lsn);
   void ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn);
-  void ReplayCooled(const ReplacedSegment& segment, Lsn lsn);
   void ReplayTruncate(Lsn lsn);
   void ReplayReplace(std::span<const uint64_t> replaced,
                      std::span<const ReplacedSegment> segments,
@@ -324,7 +254,7 @@ class Table final {
   };
 
   struct ReplayUnit {
-    std::shared_ptr<HotContext> hot;
+    std::optional<irs::IndexWriter::Transaction> trx;
     bool pending = false;
     Lsn first_lsn = kNoLsn;
     std::string meta_file;
@@ -344,10 +274,9 @@ class Table final {
   }
 
   irs::DirectoryReader Assemble(const std::shared_ptr<const TableState>& state,
-                                const OwnWrites& own, Scope scope,
-                                bool searchable) const;
+                                const OwnWrites& own, Scope scope) const;
   irs::DirectoryReader Build(const TableState& state, const OwnWrites& own,
-                             Scope scope, bool searchable) const;
+                             Scope scope) const;
   void Publish(std::shared_ptr<TableState> state, Tick tick)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Republish(std::shared_ptr<TableState> state)
@@ -362,7 +291,7 @@ class Table final {
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);
   void Saw(uint64_t id) noexcept { _replay_top = std::max(_replay_top, id); }
-  bool RetiredIdle() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_hot_mutex);
+  void CountPieces(const TableState& state) noexcept;
 
   irs::Directory& _dir;
   irs::IndexReaderOptions _options;
@@ -378,10 +307,7 @@ class Table final {
   std::atomic<Tick> _last_append{0};
   std::atomic<Tick> _last_write{0};
   mutable absl::Mutex _commit_mutex;
-  mutable absl::Mutex _hot_mutex;
-  std::vector<std::shared_ptr<HotContext>> _free ABSL_GUARDED_BY(_hot_mutex);
-  absl::flat_hash_set<const HotContext*> _held ABSL_GUARDED_BY(_hot_mutex);
-  absl::flat_hash_set<const HotContext*> _retired ABSL_GUARDED_BY(_hot_mutex);
+  std::atomic<uint64_t> _piece_bytes{0};
   absl::flat_hash_map<uint64_t, ReplayUnit> _replay;
   Lsn _replay_needed = kNoLsn;
   uint64_t _replay_top = 0;

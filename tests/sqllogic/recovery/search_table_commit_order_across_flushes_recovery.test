@@ -22,7 +22,7 @@ INSERT INTO order_docs VALUES (-1, 'm6');
 
 
 statement ok
-SET sdb_faults = 'pause_search_cooling';
+SET sdb_faults = 'pause_search_write_out';
 
 
 connection cooler
@@ -32,7 +32,7 @@ CHECKPOINT;
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_cooling:parked';
+SET sdb_faults = '-pause_search_write_out:parked';
 
 
 connection default
@@ -70,7 +70,7 @@ n
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_cooling:release';
+SET sdb_faults = 'pause_search_write_out:release';
 
 
 wait

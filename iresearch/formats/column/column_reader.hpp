@@ -168,6 +168,7 @@ class ColumnReader {
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint64_t RowCount() const noexcept { return _row_count; }
+  virtual bool InMemory() const noexcept { return false; }
   size_t DataRgCount() const noexcept { return _segments.size(); }
   bool HasValidity() const noexcept { return _validity != nullptr; }
   const ColumnReader* Validity() const noexcept { return _validity.get(); }

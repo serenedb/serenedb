@@ -209,6 +209,7 @@ ColReader::ColReader(duckdb::DatabaseInstance& db,
                      IndexInput::ptr norms_in,
                      std::vector<NormColumnSpec> norms)
   : _db{&db}, _ctx{db, std::move(norms_in)}, _columns{std::move(columns)} {
+  _ctx.SetBlockAllocSize(DEFAULT_BLOCK_ALLOC_SIZE);
   for (const auto& col : _columns) {
     const bool ok = _by_id.emplace(col->Id(), col.get()).second;
     SDB_ENSURE(ok, "in-memory columns: duplicate column field_id ", col->Id());

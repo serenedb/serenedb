@@ -61,16 +61,12 @@ struct StoreWrites {
   uint64_t rows_generation = 0;
   std::shared_ptr<const TableState> rebuilt;
   bool rebuilt_newer = false;
-  std::shared_ptr<HotContext> hot;
-  uint64_t hot_id = 0;
-  irs::doc_id_t hot_first = 0;
-  irs::doc_id_t hot_end = 0;
+  std::shared_ptr<const irs::SegmentReaderImpl> piece;
   duckdb::vector<std::string> log;
   bool prepared = false;
   bool dropping = false;
   // The keys the table enforces, and what this transaction's rows were
-  // checked against: the keys of the rows it still buffers (once the commit
-  // is prepared, of the rows it wrote into its hot unit), how many of those
+  // checked against: the keys of the rows it still buffers, how many of those
   // rows and of its own segments were checked, and the committed rows the last
   // check saw.
   std::vector<KeySpec> keys;
@@ -95,13 +91,6 @@ struct StoreWrites {
   // against it saw, by store.
   absl::flat_hash_map<duckdb::idx_t, std::shared_ptr<const TableState>>
     related_checked;
-  // The keys of the rows the commit writes into its hot unit.
-  struct HotKey {
-    irs::field_id field = 0;
-    std::string key;
-    irs::doc_id_t doc = 0;
-  };
-  std::vector<HotKey> hot_keys;
 };
 
 struct LogSection {
@@ -167,26 +156,20 @@ class Writes {
 
   template<typename Factory>
   PinnedSearchTable EnsureSearchTable(duckdb::idx_t database_id,
-                                      duckdb::idx_t store_id, bool searchable,
-                                      Factory&& make) {
+                                      duckdb::idx_t store_id, Factory&& make) {
     const std::pair key{database_id, store_id};
     {
       absl::ReaderMutexLock lock{&_mutex};
-      if (const auto it = _readers.find(key); it != _readers.end()) {
-        const auto& pinned =
-          searchable ? it->second.searchable : it->second.columns;
-        if (pinned.reader) {
-          return pinned;
-        }
+      if (const auto it = _readers.find(key);
+          it != _readers.end() && it->second.pinned.reader) {
+        return it->second.pinned;
       }
     }
     auto made = make();
     absl::MutexLock lock{&_mutex};
-    auto& views = _readers[key];
-    auto& pinned = searchable ? views.searchable : views.columns;
+    auto& pinned = _readers[key].pinned;
     if (!pinned.reader) {
       pinned = std::move(made);
-      views.latest = pinned.reader;
     }
     return pinned;
   }
@@ -202,7 +185,7 @@ class Writes {
   }
 
   irs::DirectoryReader View(duckdb::ClientContext& context, Store& store,
-                            Tick snapshot, bool searchable);
+                            Tick snapshot);
   irs::DirectoryReader LatestView(duckdb::ClientContext& context, Store& store);
   std::shared_ptr<irs::DirectoryReader> PinnedReader(const Store& store) const;
 
@@ -260,15 +243,13 @@ class Writes {
 
   struct PinnedViews {
     std::shared_ptr<const TableState> state;
-    PinnedSearchTable columns;
-    PinnedSearchTable searchable;
-    std::shared_ptr<irs::DirectoryReader> latest;
+    PinnedSearchTable pinned;
   };
 
   std::shared_ptr<const TableState> PinState(const Store& store, Tick snapshot);
-  irs::DirectoryReader BuildView(duckdb::ClientContext& context, Store& store,
-                                 const std::shared_ptr<const TableState>& state,
-                                 bool searchable);
+  irs::DirectoryReader BuildView(
+    duckdb::ClientContext& context, Store& store,
+    const std::shared_ptr<const TableState>& state);
 
   duckdb::transaction_t _session;
   catalog::WalkCounters& _walks;

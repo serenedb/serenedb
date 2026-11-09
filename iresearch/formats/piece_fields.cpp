@@ -341,6 +341,14 @@ void PieceFields::Open(const ReaderState& state, IndexFeatures features) {
   _pr.prepare(state, features);
 }
 
+size_t PieceFields::Bytes() const noexcept {
+  size_t bytes = _dicts.capacity() * sizeof(const TermReader*);
+  for (const auto& reader : _readers) {
+    bytes += sizeof(PieceTermReader) + reader.Bytes();
+  }
+  return bytes;
+}
+
 void PieceFieldWriter::prepare(const FlushState& state, uint64_t) {
   _features = state.index_features;
   _pw.Prepare(state);

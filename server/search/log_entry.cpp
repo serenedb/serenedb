@@ -41,9 +41,8 @@ namespace {
 enum class LogEntryType : uint8_t {
   Truncate,
   AddSegments,
-  HotRows,
+  Rows,
   Removal,
-  Cooled,
   Replace,
   State,
 };
@@ -183,10 +182,10 @@ std::string LogAddSegments(std::span<const OwnSegment> segments) {
   });
 }
 
-std::string LogHotRows(uint64_t segment, irs::doc_id_t first,
-                       duckdb::DataChunk& chunk) {
+std::string LogRows(uint64_t segment, irs::doc_id_t first,
+                    duckdb::DataChunk& chunk) {
   SDB_ASSERT(chunk.size() > 0);
-  return Encode(LogEntryType::HotRows, [&](duckdb::Serializer& serializer) {
+  return Encode(LogEntryType::Rows, [&](duckdb::Serializer& serializer) {
     serializer.WriteProperty<uint64_t>(101, "segment", segment);
     serializer.WriteProperty<uint32_t>(102, "first", first);
     serializer.WriteProperty(103, "chunk", chunk);
@@ -205,14 +204,6 @@ std::string LogRemoval(const irs::DocRemoval& removal) {
           object.WriteProperty(101, "docs", Frozen(&group.docs));
         });
       });
-  });
-}
-
-std::string LogCooled(const ReplacedSegment& segment) {
-  return Encode(LogEntryType::Cooled, [&](duckdb::Serializer& serializer) {
-    serializer.WriteObject(101, "segment", [&](duckdb::Serializer& object) {
-      WriteSegment(object, segment);
-    });
   });
 }
 
@@ -274,7 +265,7 @@ void ReplayLogEntry(duckdb::ClientContext& context,
         store.ReplayAddSegment(segment, lsn);
       }
       break;
-    case LogEntryType::HotRows: {
+    case LogEntryType::Rows: {
       const auto segment = deserializer.ReadProperty<uint64_t>(101, "segment");
       const auto first = deserializer.ReadProperty<uint32_t>(102, "first");
       auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
@@ -285,21 +276,13 @@ void ReplayLogEntry(duckdb::ClientContext& context,
       for (const auto& column : table.GetColumns().Physical()) {
         column_ids.emplace_back(connector::TableColumnId(column));
       }
-      store.ReplayHotRows(table.ParentCatalog(), std::move(column_ids), segment,
-                          first, std::move(chunk), lsn);
+      store.ReplayRows(table.ParentCatalog(), std::move(column_ids), segment,
+                       first, std::move(chunk), lsn);
       break;
     }
     case LogEntryType::Removal:
       store.ReplayRemoval(ReadRemoval(deserializer), lsn);
       break;
-    case LogEntryType::Cooled: {
-      ReplacedSegment segment;
-      deserializer.ReadObject(
-        101, "segment",
-        [&](duckdb::Deserializer& object) { segment = ReadSegment(object); });
-      store.ReplayCooled(segment, lsn);
-      break;
-    }
     case LogEntryType::Replace: {
       std::vector<uint64_t> replaced;
       deserializer.ReadList(

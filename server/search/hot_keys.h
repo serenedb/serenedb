@@ -31,8 +31,8 @@
 
 namespace sdb::search {
 
-// The constraint keys of rows that have no term dictionary yet -- the rows of
-// a hot unit, or the rows a transaction still buffers -- per key field.
+// The constraint keys of the rows a transaction still buffers, which have no
+// term dictionary yet, per key field.
 class HotKeys {
  public:
   void Add(irs::field_id field, std::string_view key, irs::doc_id_t doc);

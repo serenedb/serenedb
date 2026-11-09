@@ -363,11 +363,6 @@ std::optional<ColumnId> FetchableColumn(
   return col_id;
 }
 
-bool NeedsSearch(const DeferredBuild& built) noexcept {
-  return (built.filter && (built.index_only || built.dual_filters.empty())) ||
-         !built.scorers.empty();
-}
-
 void ApplyDeferredClaim(ScanGlobalState& state, DeferredBuild&& built) {
   state.owned_where = std::move(built.filter);
   state.owned_index_only = std::move(built.index_only);
@@ -474,16 +469,10 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
 
 void AcquireScanSnapshot(ScanGlobalState& state, duckdb::ClientContext& context,
                          const ScanBindData& bind_data) {
-  bool searchable = bind_data.NeedsSearch();
-  state.snapshot = bind_data.Snapshot(context, searchable);
+  state.snapshot = bind_data.Snapshot(context);
   std::optional<DeferredBuild> built;
   if (bind_data.plan_cache.deferred) {
     built = BuildDeferredFilter(context, bind_data, *state.snapshot);
-    if (!searchable && NeedsSearch(*built)) {
-      searchable = true;
-      state.snapshot = bind_data.Snapshot(context, true);
-      built = BuildDeferredFilter(context, bind_data, *state.snapshot);
-    }
   }
   state.reader = &state.snapshot->reader;
   state.total_segments = state.snapshot->reader.size();

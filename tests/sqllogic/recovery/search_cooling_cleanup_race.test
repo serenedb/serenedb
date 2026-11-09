@@ -37,7 +37,7 @@ DETAIL: Key (id)=(10) already exists.
 
 connection default
 statement ok
-SET sdb_faults = 'search_cleanup_during_cooling';
+SET sdb_faults = 'search_cleanup_during_write_out';
 
 
 connection default
@@ -47,7 +47,7 @@ VACUUM (FLUSH_TABLE) ccr_rows;
 
 connection default
 statement ok
-SET sdb_faults = '-search_cleanup_during_cooling';
+SET sdb_faults = '-search_cleanup_during_write_out';
 
 
 connection default

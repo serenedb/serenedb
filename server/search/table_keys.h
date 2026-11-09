@@ -105,24 +105,17 @@ struct KeyHolder {
   irs::doc_id_t doc = 0;
 };
 
-// The live rows holding a key, read from units written as segments through
-// the term dictionary of the key's field, and from hot units and buffered rows
-// through their key sets.
 class KeyProbe {
  public:
   struct Segment {
     uint64_t unit = 0;
     const irs::SubReader* sub = nullptr;
     RowMasks masks;
-    // Rows before `first` are not answered.
-    irs::doc_id_t first = 0;
   };
 
   struct Hot {
     uint64_t unit = 0;
     const HotKeys* keys = nullptr;
-    // Rows in [first, docs) are the ones answered.
-    irs::doc_id_t first = 0;
     irs::doc_id_t docs = 0;
     RowMasks masks;
   };
@@ -131,8 +124,6 @@ class KeyProbe {
 
   void Add(const Segment& segment);
   void Add(const Hot& hot) { _hots.push_back(hot); }
-  // The units of `live`; with `since`, only the rows `since` lacks: all of a
-  // unit it does not hold, and the rows a hot unit gained after it.
   void AddLive(const LiveUnits& live, const LiveUnits* since = nullptr);
 
   bool Empty() const noexcept { return _segments.empty() && _hots.empty(); }
@@ -148,7 +139,6 @@ class KeyProbe {
     const irs::TermReader* field = nullptr;
     irs::DocumentMask::Iterator mask;
     RowMasks masks;
-    irs::doc_id_t first = 0;
   };
 
   irs::field_id _field;

@@ -353,7 +353,7 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   }
   abort_all();
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
-  shard.CoolAll();
+  shard.WriteOut(search::kNoLsn);
   return published;
 }
 
@@ -387,7 +387,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
 
   irs::IndexWriter::CompactionFloorGuard floor;
   for (;;) {
-    shard.CoolAll();
+    shard.WriteOut(search::kNoLsn);
     floor = shard.ArmCompactionFloor();
     if (floor.Held()) {
       break;

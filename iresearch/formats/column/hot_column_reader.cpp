@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <duckdb/common/operator/comparison_operators.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -225,6 +226,17 @@ std::unique_ptr<ColumnReader> HotColumnReader::Make(
       }
       children.push_back(Make(db, std::move(child), stats));
     }
+  } else if (column.type.id() == duckdb::LogicalTypeId::ARRAY) {
+    const auto size = duckdb::ArrayType::GetSize(column.type);
+    StagedColumn child{.id = column.id,
+                       .type = duckdb::ArrayType::GetChildType(column.type)};
+    child.chunks.reserve(column.chunks.size());
+    for (const auto& chunk : column.chunks) {
+      child.chunks.push_back(WriteChunk{
+        duckdb::Vector::Ref(duckdb::ArrayVector::GetChild(chunk.data)),
+        chunk.count * size});
+    }
+    children.push_back(Make(db, std::move(child), stats));
   }
   std::vector<ColumnBlockMeta> blocks;
   if (HasOwnBlocks(column.type)) {

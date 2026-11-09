@@ -682,7 +682,8 @@ void ColumnWriter::PadNestedNulls(uint64_t count) {
 
 bool ColumnWriter::CopyableFrom(const ColumnReader& column) const noexcept {
   if (_is_nested || _deferred || _type.id() == duckdb::LogicalTypeId::VARIANT ||
-      column.Type() != _type || column.RowCount() < _row_group_size ||
+      column.InMemory() || column.Type() != _type ||
+      column.RowCount() < _row_group_size ||
       (_skip_validity && column.HasValidity()) ||
       !absl::c_all_of(column.DataBlocks(), SelfContained)) {
     return false;

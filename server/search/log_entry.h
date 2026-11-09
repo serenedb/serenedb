@@ -35,10 +35,9 @@ namespace sdb::search {
 
 std::string LogTruncate();
 std::string LogAddSegments(std::span<const OwnSegment> segments);
-std::string LogHotRows(uint64_t segment, irs::doc_id_t first,
-                       duckdb::DataChunk& chunk);
+std::string LogRows(uint64_t segment, irs::doc_id_t first,
+                    duckdb::DataChunk& chunk);
 std::string LogRemoval(const irs::DocRemoval& removal);
-std::string LogCooled(const ReplacedSegment& segment);
 std::string LogReplace(std::span<const uint64_t> replaced,
                        std::span<const ReplacedSegment> segments,
                        std::span<const irs::DocMap> maps);

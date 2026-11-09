@@ -41,6 +41,7 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
 #include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/hot_column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
@@ -349,6 +350,28 @@ TEST_F(ColumnReaderTest, UncompressedOverflowStringsAreNotCopied) {
   EXPECT_FALSE(w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
                             /*skip_validity=*/false, kRgSize)
                  .CopyableFrom(*source));
+}
+
+TEST_F(ColumnReaderTest, InMemoryColumnsAreNotCopied) {
+  constexpr uint32_t kRgSize = 4096;
+  constexpr irs::field_id kA = 6;
+  irs::StagedColumn staged{.id = kA, .type = duckdb::LogicalType::BIGINT};
+  for (uint64_t first = 0; first < 3 * kRgSize; first += STANDARD_VECTOR_SIZE) {
+    duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(v);
+    for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+      data[k] = static_cast<int64_t>(first + k);
+    }
+    staged.chunks.push_back(
+      irs::WriteChunk{std::move(v), STANDARD_VECTOR_SIZE});
+  }
+  const auto hot = irs::HotColumnReader::Make(Db(), std::move(staged), nullptr);
+  ASSERT_GE(hot->RowCount(), kRgSize);
+  irs::MemoryDirectory dir{};
+  irs::ColWriter w{dir, "dst", Db()};
+  EXPECT_FALSE(w.OpenColumn(kA, duckdb::LogicalType::BIGINT,
+                            /*skip_validity=*/false, kRgSize)
+                 .CopyableFrom(*hot));
 }
 
 // A nullable VARCHAR column compresses with dict_fsst, which self-carries nulls

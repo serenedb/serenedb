@@ -1618,17 +1618,45 @@ auto IndexWriter::MergeAsync(const CompactionPolicy& policy,
     }
     merged.claim = MergeClaim{*this, std::move(candidates)};
   }
+  co_return co_await FlushMerge(std::move(merged), field_options, progress,
+                                env);
+}
+
+auto IndexWriter::WriteAsync(DirectoryReader source,
+                             const IndexFieldOptions* field_options,
+                             const MergeWriter::FlushProgress& progress,
+                             const AnnBuildEnv* env) -> yaclib::Future<Merged> {
+  Merged merged;
+  merged.source = std::move(source);
+  Compaction candidates;
+  for (const auto& segment : *merged.source.GetImpl()) {
+    candidates.emplace_back(&segment);
+  }
+  if (candidates.empty()) {
+    co_return merged;
+  }
+  merged.claim.candidates = std::move(candidates);
+  co_return co_await FlushMerge(std::move(merged), field_options, progress,
+                                env);
+}
+
+auto IndexWriter::FlushMerge(Merged merged,
+                             const IndexFieldOptions* field_options,
+                             const MergeWriter::FlushProgress& progress,
+                             const AnnBuildEnv* env) -> yaclib::Future<Merged> {
+  const auto& candidates = merged.claim.candidates;
   IndexSegment segment;
   segment.meta.version = 0;
   segment.meta.name = FileName(NextSegmentId());
   RefTrackingDirectory dir{_dir};
   MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
-  merger.Reset(merged.claim.candidates.begin(), merged.claim.candidates.end());
+  merger.Reset(candidates.begin(), candidates.end());
   if (!(co_await merger.Flush(segment.meta, progress, env))) {
     co_return merged;
   }
-  merged.reader = SegmentReaderImpl::Open(_dir, segment.meta, reader.Options());
-  merged.maps = MergeMaps(merged.claim.candidates, merger, *merged.reader);
+  merged.reader = SegmentReaderImpl::Open(_dir, segment.meta,
+                                          merged.source.GetImpl()->Options());
+  merged.maps = MergeMaps(candidates, merger, *merged.reader);
   index_utils::FlushIndexSegment(dir, segment, false);
   std::vector<std::string_view> files{segment.meta.files.begin(),
                                       segment.meta.files.end()};

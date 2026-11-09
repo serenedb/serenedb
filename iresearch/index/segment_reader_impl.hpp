@@ -63,8 +63,7 @@ class SegmentReaderImpl final : public SubReader {
     const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns);
 
   static std::shared_ptr<const SegmentReaderImpl> OpenPiece(
-    const Directory& dir, const SegmentMeta& meta, uint64_t id,
-    std::unique_ptr<ColReader> columns,
+    const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns,
     std::shared_ptr<const PieceFields> fields);
 
   std::shared_ptr<const SegmentReaderImpl> WithDocsMask(

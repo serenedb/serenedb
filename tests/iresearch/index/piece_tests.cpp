@@ -24,10 +24,13 @@
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <string>
 #include <vector>
 
@@ -118,11 +121,12 @@ std::vector<ReplayToken> MakeDocTokens(uint32_t seed, size_t count) {
   return tokens;
 }
 
-void InsertDocs(IndexWriter::Transaction& trx, uint32_t docs) {
+void InsertDocs(IndexWriter::Transaction& trx, uint32_t docs,
+                uint32_t first = 0) {
   ReplayStream text;
   ReplayStream keyword;
   ReplayStream freq;
-  for (uint32_t d = 0; d < docs; ++d) {
+  for (uint32_t d = first; d < first + docs; ++d) {
     auto doc = trx.Insert();
     const auto text_tokens = MakeDocTokens(d, 3 + d % 40);
     text.Reset(&text_tokens);
@@ -234,6 +238,86 @@ void ExpectSameField(const TermReader& expected, const TermReader& actual) {
     actual.Lookup(ViewCast<byte_type>(std::string_view{"absent"})).docs_count);
 }
 
+void ExpectSameSegment(const SubReader& expected, const SubReader& actual) {
+  EXPECT_EQ(expected.docs_count(), actual.docs_count());
+  EXPECT_EQ(expected.live_docs_count(), actual.live_docs_count());
+  const auto expected_ids = expected.field_ids();
+  const auto actual_ids = actual.field_ids();
+  ASSERT_EQ(std::vector<field_id>(expected_ids.begin(), expected_ids.end()),
+            std::vector<field_id>(actual_ids.begin(), actual_ids.end()));
+  for (const auto id : expected_ids) {
+    const auto expected_fields = expected.fields(id);
+    const auto actual_fields = actual.fields(id);
+    ASSERT_EQ(expected_fields.size(), actual_fields.size());
+    for (size_t i = 0; i != expected_fields.size(); ++i) {
+      ExpectSameField(*expected_fields[i], *actual_fields[i]);
+    }
+  }
+  const auto norm = expected.fields(kText).front()->meta().norm;
+  ASSERT_TRUE(field_limits::valid(norm));
+  auto expected_norms = expected.norms(norm);
+  auto actual_norms = actual.norms(norm);
+  ASSERT_NE(nullptr, expected_norms);
+  ASSERT_NE(nullptr, actual_norms);
+  for (doc_id_t doc = doc_limits::min();
+       doc != doc_limits::min() + expected.docs_count(); ++doc) {
+    EXPECT_EQ(expected_norms->Get(doc), actual_norms->Get(doc));
+  }
+}
+
+TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
+  constexpr uint32_t kDocs = 300;
+  constexpr uint32_t kPieceDocs = 100;
+
+  MemoryDirectory flushed_dir;
+  auto flushed_writer = IndexWriter::Make(flushed_dir, kOmCreate,
+                                          irs::tests::DefaultWriterOptions());
+  {
+    auto trx = flushed_writer->GetBatch();
+    InsertDocs(trx, kDocs);
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(flushed_writer->RefreshCommit());
+  const auto flushed = flushed_writer->GetSnapshot();
+  ASSERT_EQ(1, flushed.size());
+
+  MemoryDirectory piece_dir;
+  auto piece_writer =
+    IndexWriter::Make(piece_dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  DirectoryMeta meta;
+  std::vector<SegmentReader> pieces;
+  for (uint32_t first = 0; first != kDocs; first += kPieceDocs) {
+    auto trx = piece_writer->GetBatch(/*exclusive_segment=*/true);
+    trx.SetHot(0);
+    InsertDocs(trx, kPieceDocs, first);
+    auto piece = trx.SealPiece(first + 1);
+    trx.Abort();
+    ASSERT_NE(nullptr, piece);
+    IndexSegment segment;
+    static_cast<SegmentInfo&>(segment.meta) = piece->Meta();
+    meta.index_meta.segments.push_back(std::move(segment));
+    pieces.emplace_back(std::move(piece));
+  }
+  size_t files = 0;
+  piece_dir.visit([&](std::string_view) {
+    ++files;
+    return true;
+  });
+  EXPECT_EQ(0, files);
+
+  const DirectoryReader source{std::make_shared<const DirectoryReaderImpl>(
+    piece_dir, irs::tests::DefaultReaderOptions(), std::move(meta),
+    std::move(pieces))};
+  MemoryDirectory written_dir;
+  auto writer = IndexWriter::Make(written_dir, kOmCreate,
+                                  irs::tests::DefaultWriterOptions());
+  auto written = GetBlocking(
+    writer->WriteAsync(source, nullptr, [] { return true; }, nullptr));
+  ASSERT_NE(nullptr, written.reader);
+  EXPECT_EQ(kDocs / kPieceDocs, written.maps.size());
+  ExpectSameSegment(flushed[0], *written.reader);
+}
+
 TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
   constexpr uint32_t kDocs = 300;
 
@@ -310,6 +394,8 @@ TEST(PieceTest, SealsSingleDocumentPieces) {
     auto norms = piece->norms(norm);
     ASSERT_NE(nullptr, norms);
     EXPECT_EQ(3, norms->Get(doc_limits::min()));
+    const ReadContext context{*piece->GetColReader(), /*random_access=*/false};
+    EXPECT_EQ(DEFAULT_BLOCK_ALLOC_SIZE, context.GetBlockAllocSize());
   }
 }
 

@@ -17,17 +17,17 @@ INSERT INTO ckpt_cooling.public.docs SELECT i, 'base' FROM range(0, 1000) r(i);
 
 
 statement ok
-SET sdb_faults = 'pause_search_cooling';
+SET sdb_faults = 'pause_search_write_out';
 
 
 connection reader
 statement async ok
-SELECT count(*) AS n FROM ckpt_cooling.public.docs_idx WHERE body @@ 'base';
+VACUUM (FLUSH_TABLE) ckpt_cooling.public.docs;
 
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_cooling:parked';
+SET sdb_faults = '-pause_search_write_out:parked';
 
 
 connection checkpointer
@@ -45,7 +45,7 @@ n
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_cooling:release';
+SET sdb_faults = 'pause_search_write_out:release';
 
 
 connection reader

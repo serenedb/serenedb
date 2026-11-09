@@ -217,6 +217,12 @@ void ForEachChunkKey(
   }
 }
 
+struct KeyedRow {
+  irs::field_id field = 0;
+  std::string key;
+  irs::doc_id_t doc = 0;
+};
+
 // Every key the rows of `w` hold more than once, or that a live row of
 // `existing` holds, for unique key `spec`: the rows are `segments`, read
 // through their term dictionaries, and `keys`, sorted.
@@ -608,10 +614,10 @@ std::shared_ptr<irs::DirectoryReader> Writes::PinnedReader(
   absl::ReaderMutexLock lock{&_mutex};
   const auto pinned =
     _readers.find(std::pair{store.GetDatabaseId(), store.GetId()});
-  SDB_ENSURE(pinned != _readers.end() && pinned->second.latest, "table ",
+  SDB_ENSURE(pinned != _readers.end() && pinned->second.pinned.reader, "table ",
              store.GetId(),
              ": deletes without the reader their positions come from");
-  return pinned->second.latest;
+  return pinned->second.pinned.reader;
 }
 
 std::shared_ptr<const TableState> Writes::PinState(const Store& store,
@@ -764,26 +770,28 @@ void Writes::ClaimExclusive(const std::shared_ptr<Store>& store,
 
 namespace {
 
+KeyProbe::Segment OwnSegmentSource(
+  const std::shared_ptr<const irs::SegmentReaderImpl>& reader,
+  const LiveUnits& live) {
+  const auto id = reader->Id();
+  return {
+    .unit = id, .sub = reader.get(), .masks = {.removed = live.Removed(id)}};
+}
+
 KeyProbe::Segment OwnSegmentSource(const OwnSegment& segment,
                                    const LiveUnits& live) {
-  const auto id = segment.reader->Id();
-  return {.unit = id,
-          .sub = segment.reader.get(),
-          .masks = {.removed = live.Removed(id)}};
+  return OwnSegmentSource(segment.reader, live);
 }
 
 // The rows of `w` that are not committed yet: its own segments, and the rows
-// it buffers or, once its commit is prepared, wrote into its hot unit.
+// it buffers or, once its commit is prepared, sealed into its piece.
 void AddOwnRows(KeyProbe& probe, const StoreWrites& w, const LiveUnits& live) {
   for (const auto& segment : w.own_segments) {
     probe.Add(OwnSegmentSource(segment, live));
   }
   if (w.prepared) {
-    if (w.hot_end != w.hot_first) {
-      probe.Add(KeyProbe::Hot{.unit = w.hot_id,
-                              .keys = &w.buffered_keys,
-                              .first = w.hot_first,
-                              .docs = w.hot_end});
+    if (w.piece) {
+      probe.Add(OwnSegmentSource(w.piece, live));
     }
     return;
   }
@@ -876,19 +884,17 @@ std::vector<std::string> OwnKeys(const StoreWrites& w, irs::field_id field,
                                  const LiveUnits& live) {
   std::vector<std::string> keys;
   std::vector<KeyProbe::Segment> segments;
-  segments.reserve(w.own_segments.size());
+  segments.reserve(w.own_segments.size() + 1);
   for (const auto& segment : w.own_segments) {
     segments.push_back(OwnSegmentSource(segment, live));
+  }
+  if (w.piece) {
+    segments.push_back(OwnSegmentSource(w.piece, live));
   }
   ForEachSegmentKey(segments, field, [&](std::string_view key, size_t) {
     keys.emplace_back(key);
     return true;
   });
-  for (const auto& row : w.hot_keys) {
-    if (row.field == field) {
-      keys.push_back(row.key);
-    }
-  }
   absl::c_sort(keys);
   keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
   return keys;
@@ -990,7 +996,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     w.keyed_generation = w.rows_generation;
   }
   std::vector<std::vector<std::string>> fresh(w.keys.size());
-  std::vector<StoreWrites::HotKey> keyed;
+  std::vector<KeyedRow> keyed;
   duckdb::idx_t rows = 0;
   if (w.changes.HasBufferedRows()) {
     std::vector<connector::ConstraintKeyEncoder> encoders;
@@ -1137,13 +1143,15 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
   }
   LiveUnits now{w.store->GetTable().State(), w.changes.removals};
   if (HasUniqueKeys(w) && !w.changes.truncate &&
-      (!w.own_segments.empty() || !w.hot_keys.empty())) {
+      (!w.own_segments.empty() || w.piece)) {
     std::vector<KeyProbe::Segment> segments;
-    segments.reserve(w.own_segments.size());
+    segments.reserve(w.own_segments.size() + 1);
     for (const auto& segment : w.own_segments) {
       segments.push_back(OwnSegmentSource(segment, now));
     }
-    std::vector<std::string> keys;
+    if (w.piece) {
+      segments.push_back(OwnSegmentSource(w.piece, now));
+    }
     for (const auto& spec : w.keys) {
       if (spec.kind != KeyKind::Unique) {
         continue;
@@ -1153,15 +1161,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       if (fresh.Empty()) {
         continue;
       }
-      keys.clear();
-      for (const auto& row : w.hot_keys) {
-        if (row.field == spec.key.field) {
-          keys.push_back(row.key);
-        }
-      }
-      absl::c_sort(keys);
-      if (auto duplicate =
-            FindDuplicate(context, spec, segments, keys, fresh)) {
+      if (auto duplicate = FindDuplicate(context, spec, segments, {}, fresh)) {
         ThrowDuplicateOrConflict(context, w, spec, *duplicate);
       }
     }
@@ -1240,7 +1240,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         }
       };
       for (const auto& unit : now.Units()) {
-        collect(*w.store->GetTable().UnitReader(*unit.unit), unit.removed);
+        collect(*unit.unit->reader, unit.removed);
       }
       for (const auto& segment : w.own_segments) {
         collect(*segment.reader, now.Removed(segment.reader->Id()));
@@ -1255,28 +1255,18 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
 }
 
 irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
-                                  Tick snapshot, bool searchable) {
-  const auto state = PinState(store, snapshot);
-  const bool search = searchable && store.HasIndexes();
-  if (search) {
-    store.MakeSearchable(*state);
-  }
-  return BuildView(context, store, state, search);
+                                  Tick snapshot) {
+  return BuildView(context, store, PinState(store, snapshot));
 }
 
 irs::DirectoryReader Writes::LatestView(duckdb::ClientContext& context,
                                         Store& store) {
-  const auto state = store.GetTable().State();
-  const bool search = store.HasIndexes();
-  if (search) {
-    store.MakeSearchable(*state);
-  }
-  return BuildView(context, store, state, search);
+  return BuildView(context, store, store.GetTable().State());
 }
 
 irs::DirectoryReader Writes::BuildView(
   duckdb::ClientContext& context, Store& store,
-  const std::shared_ptr<const TableState>& state, bool searchable) {
+  const std::shared_ptr<const TableState>& state) {
   StoreWrites* w = nullptr;
   {
     absl::ReaderMutexLock lock{&_mutex};
@@ -1285,7 +1275,7 @@ irs::DirectoryReader Writes::BuildView(
     }
   }
   if (!w) {
-    return store.View(state, {}, searchable);
+    return store.View(state, {});
   }
   absl::MutexLock lock{&w->mutex};
   if (w->rebuilt_newer) {
@@ -1294,7 +1284,7 @@ irs::DirectoryReader Writes::BuildView(
   if (store.HasIndexes() && w->changes.HasBufferedRows()) {
     FlushRows(context, *w);
   }
-  return store.View(state, OwnOf(*w), searchable);
+  return store.View(state, OwnOf(*w));
 }
 
 void Writes::PrepareCommit(duckdb::ClientContext& context) {
@@ -1322,41 +1312,25 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
     if (changes.HasBufferedRows()) {
       auto removed =
         TakeRowRemovals(changes.removals, OwnRowsId(w.rows_generation));
-      w.hot = w.store->GetTable().AcquireHot(w.store->Writer());
-      absl::MutexLock lock{&w.hot->Mutex()};
-      auto& trx = w.hot->Trx();
-      w.hot_first = HotDocs(trx);
+      auto piece = w.store->StartPiece();
       {
         const auto sink = connector::MakeSearchTableInsertSink(
-          trx, *w.store, *changes.catalog, context);
+          piece.trx, *w.store, *changes.catalog, context);
         ForEachLiveChunk(
           *changes.collection, removed, [&](duckdb::DataChunk& chunk) {
-            const auto first = HotDocs(trx);
-            for (const auto& key : sink->ConstraintKeys()) {
-              ForEachChunkKey(
-                chunk, changes.column_ids, key,
-                static_cast<irs::doc_id_t>(irs::doc_limits::min() + first),
-                [&](std::string_view value, irs::doc_id_t doc) {
-                  w.hot_keys.push_back({.field = key.Key().field,
-                                        .key = std::string{value},
-                                        .doc = doc});
-                });
-            }
+            const auto first = PieceDocs(piece.trx);
             connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,
                                               w.store->GetId(), context);
-            w.log.push_back(LogHotRows(HotSegmentId(trx), first, chunk));
+            w.log.push_back(LogRows(piece.id, first, chunk));
           });
       }
-      w.hot_end = HotDocs(trx);
-      if (w.hot_end != w.hot_first) {
-        w.hot_id = HotSegmentId(trx);
+      if (PieceDocs(piece.trx) != 0) {
+        w.piece = piece.trx.SealPiece(piece.id);
       }
+      piece.trx.Abort();
       changes.ClearBufferedRows();
     }
     w.buffered_keys.Clear();
-    for (const auto& row : w.hot_keys) {
-      w.buffered_keys.Add(row.field, row.key, row.doc);
-    }
     w.prepared = true;
   }
   for (auto& [store_id, w] : _writes) {
@@ -1445,28 +1419,20 @@ void Writes::Apply(Tick tick, Lsn lsn) noexcept {
     if (w.prepared) {
       try {
         auto& table = w.store->GetTable();
-        const bool appended = w.hot && w.hot_end != w.hot_first;
+        const bool appended = static_cast<bool>(w.piece);
         if (!w.own_segments.empty()) {
           w.store->NudgeCompaction();
         }
-        if (appended) {
-          for (const auto& row : w.hot_keys) {
-            w.hot->Keys().Add(row.field, row.key, row.doc);
-          }
-        }
         if (table.Apply(tick,
-                        TableCommit{.hot = appended ? w.hot : nullptr,
-                                    .hot_id = w.hot_id,
-                                    .hot_end = w.hot_end,
+                        TableCommit{.piece = std::move(w.piece),
                                     .segments = std::move(w.own_segments),
                                     .removals = std::move(w.changes.removals),
                                     .truncate = w.changes.truncate,
                                     .lsn = lsn})) {
           QueueReleaseCleanup(w.store, tick);
         }
-        if (w.hot) {
-          w.store->ReleaseHot(w.hot);
-          w.hot.reset();
+        if (appended) {
+          w.store->WriteOutWhenFull();
         }
       } catch (const std::exception& e) {
         SDB_FATAL(
@@ -1500,19 +1466,7 @@ void Writes::Finish() noexcept {
 
 void Writes::Abort() noexcept {
   for (auto& [store_id, w] : _writes) {
-    if (w.hot) {
-      bool inverted = false;
-      {
-        absl::MutexLock lock{&w.hot->Mutex()};
-        inverted = w.hot->Docs() != w.hot_first;
-        if (inverted) {
-          w.hot->Trx().DiscardDocsFrom(
-            static_cast<irs::doc_id_t>(irs::doc_limits::min() + w.hot_first));
-        }
-      }
-      w.store->GetTable().ReleaseHot(w.hot, inverted);
-      w.hot.reset();
-    }
+    w.piece.reset();
     w.transactions.clear();
     ReleaseWriter(w);
   }

@@ -166,7 +166,7 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter, uint64_t live_docs,
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
   duckdb::ClientContext& context, const ScanBindData& bind) {
-  const auto snapshot = bind.Snapshot(context, true);
+  const auto snapshot = bind.Snapshot(context);
   uint64_t estimate = 0;
   for (const auto& req : bind.ts_dict.requests) {
     const uint64_t rows = [&] -> uint64_t {
@@ -206,42 +206,40 @@ const duckdb::ColumnDefinition* FindColumnById(
 
 search::Writes::PinnedSearchTable PinnedSearchTable(
   duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
-  const std::shared_ptr<search::Store>& store, bool searchable) {
+  const std::shared_ptr<search::Store>& store) {
   auto& session = ConnectionContext::Get(context).Transaction();
   auto& writes = session.SearchTxn();
   const auto make = [&] {
     auto config = store->ScanConfig();
     return search::Writes::PinnedSearchTable{
       .reader = std::make_shared<irs::DirectoryReader>(
-        writes.View(context, *store, session.Snapshot(), searchable)),
+        writes.View(context, *store, session.Snapshot())),
       .config = std::move(config),
     };
   };
-  return writes.EnsureSearchTable(database_oid, oid, searchable, make);
+  return writes.EnsureSearchTable(database_oid, oid, make);
 }
 
 irs::DirectoryReader PinnedSearchReader(
   duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
-  const std::shared_ptr<search::Store>& store, bool searchable) {
+  const std::shared_ptr<search::Store>& store) {
   return irs::DirectoryReader{
-    *PinnedSearchTable(context, database_oid, oid, store, searchable).reader};
+    *PinnedSearchTable(context, database_oid, oid, store).reader};
 }
 
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   const catalog::SearchTableEntry& table) {
-  return
-    [database_oid = table.catalog.GetOid(), oid = table.oid,
-     store = table.Storage()](duckdb::ClientContext& context,
-                              bool searchable) -> search::StoreSnapshotPtr {
-      return std::make_shared<search::StoreSnapshot>(
-        PinnedSearchReader(context, database_oid, oid, store, searchable),
-        nullptr);
-    };
+  return [database_oid = table.catalog.GetOid(), oid = table.oid,
+          store = table.Storage()](
+           duckdb::ClientContext& context) -> search::StoreSnapshotPtr {
+    return std::make_shared<search::StoreSnapshot>(
+      PinnedSearchReader(context, database_oid, oid, store), nullptr);
+  };
 }
 
 void AcquireSnapshot(ScanBindData& data, duckdb::ClientContext& context,
                      decltype(SearchSpec::acquire_snapshot) acquire) {
-  data.search.planned_reader = acquire(context, false)->reader.GetImpl();
+  data.search.planned_reader = acquire(context)->reader.GetImpl();
   data.search.acquire_snapshot = std::move(acquire);
 }
 
@@ -252,7 +250,7 @@ class SnapshotVersion final : public duckdb::PlanDataVersion {
     : _planned{std::move(planned)}, _acquire{std::move(acquire)} {}
 
   bool IsCurrent(duckdb::ClientContext& context) const final {
-    const auto snapshot = _acquire(context, false);
+    const auto snapshot = _acquire(context);
     const auto& current = snapshot->reader.GetImpl();
     return !_planned.owner_before(current) && !current.owner_before(_planned);
   }
@@ -388,7 +386,7 @@ duckdb::unique_ptr<ScanBindData> BindIndexScan(
     AcquireSnapshot(
       *data, context,
       [oid = entry.oid, storage = entry.Storage()](
-        duckdb::ClientContext& ctx, bool) -> search::StoreSnapshotPtr {
+        duckdb::ClientContext& ctx) -> search::StoreSnapshotPtr {
         return ConnectionContext::Get(ctx).Transaction().EnsureSearchSnapshot(
           oid, storage);
       });
@@ -410,8 +408,7 @@ duckdb::unique_ptr<ScanBindData> BindSearchTable(
   AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
   data->score.prune = store->TopKScorer();
   data->relation.inverted_config =
-    PinnedSearchTable(context, entry.catalog.GetOid(), entry.oid, store, false)
-      .config;
+    PinnedSearchTable(context, entry.catalog.GetOid(), entry.oid, store).config;
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   return data;
@@ -491,13 +488,6 @@ bool ScanBindData::HasPushdowns() const noexcept {
          score.static_floor != std::numeric_limits<float>::lowest() ||
          scan_order || offsets.Active() || ts_dict.Active() ||
          plan_cache.deferred;
-}
-
-bool ScanBindData::NeedsSearch() const noexcept {
-  return (!plan_cache.deferred && search.filter &&
-          (search.index_only || search.duals.empty())) ||
-         !search.filter_scorers.empty() || score.text || score.vector ||
-         offsets.Active() || ts_dict.Active();
 }
 
 bool ScanBindData::ReadsParametersAtExecution() const {
@@ -606,7 +596,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
   if (ts_dict.Active()) {
     return TsDictEstimation(context, *this);
   }
-  const auto live = Snapshot(context, false)->reader.live_docs_count();
+  const auto live = Snapshot(context)->reader.live_docs_count();
   const auto* filter = search.filter.get();
   const auto estimate =
     filter ? EstimateFilterMatchCount(*filter, live, UniqueTermFields(*this))

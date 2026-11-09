@@ -161,6 +161,7 @@ struct TableVersion {
   const Tick tick;
   const std::shared_ptr<const TableState> state;
   std::atomic<TableVersion*> prev;
+  TableVersion* next = nullptr;
 };
 
 struct OwnSegment {
@@ -359,7 +360,8 @@ class Table final {
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void RetireVersion(TableVersion* version)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void CountVersions() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
+  void Unlink(TableVersion* version)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void FreeRetiredVersions() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);
@@ -370,6 +372,7 @@ class Table final {
   irs::IndexReaderOptions _options;
   std::atomic<TableVersion*> _head;
   mutable absl::Mutex _state_mutex;
+  TableVersion* _tail ABSL_GUARDED_BY(_state_mutex);
   std::vector<RetiredVersion> _retired_versions ABSL_GUARDED_BY(_state_mutex);
   std::atomic<uint32_t> _older_versions{0};
   std::atomic<uint32_t> _retired_count{0};

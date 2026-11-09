@@ -379,7 +379,8 @@ const LiveUnits::Unit* LiveUnits::Find(uint64_t id) const noexcept {
 Table::Table(irs::Directory& dir, irs::IndexReaderOptions options)
   : _dir{dir},
     _options{std::move(options)},
-    _head{new TableVersion{std::make_shared<const TableState>(), nullptr}} {}
+    _head{new TableVersion{std::make_shared<const TableState>(), nullptr}},
+    _tail{_head.load(std::memory_order_relaxed)} {}
 
 Table::~Table() {
   auto* version = _head.load(std::memory_order_relaxed);
@@ -415,34 +416,41 @@ void Table::Publish(std::shared_ptr<TableState> state, Tick tick) {
     return;
   }
   state->tick = tick;
-  _head.store(new TableVersion{std::move(state), head},
-              std::memory_order_release);
+  auto* version = new TableVersion{std::move(state), head};
+  head->next = version;
+  _head.store(version, std::memory_order_release);
+  _older_versions.fetch_add(1, std::memory_order_relaxed);
   const auto oldest = catalog::Transactions::Get().Oldest();
-  auto* version = _head.load(std::memory_order_relaxed);
-  while (version->tick > oldest) {
-    auto* older = version->prev.load(std::memory_order_relaxed);
-    if (!older) {
-      break;
-    }
-    version = older;
+  while (_tail != version && _tail->next->tick <= oldest) {
+    Unlink(_tail);
   }
-  auto* tail = version->prev.exchange(nullptr, std::memory_order_acq_rel);
-  while (tail) {
-    auto* older = tail->prev.load(std::memory_order_relaxed);
-    RetireVersion(tail);
-    tail = older;
-  }
-  CountVersions();
 }
 
 void Table::Republish(std::shared_ptr<TableState> state) {
   auto* head = _head.load(std::memory_order_relaxed);
   state->tick = head->tick;
-  _head.store(new TableVersion{std::move(state),
-                               head->prev.load(std::memory_order_relaxed)},
-              std::memory_order_release);
+  auto* older = head->prev.load(std::memory_order_relaxed);
+  auto* version = new TableVersion{std::move(state), older};
+  if (older) {
+    older->next = version;
+  } else {
+    _tail = version;
+  }
+  _head.store(version, std::memory_order_release);
   RetireVersion(head);
-  CountVersions();
+}
+
+void Table::Unlink(TableVersion* version) {
+  auto* newer = version->next;
+  auto* older = version->prev.load(std::memory_order_relaxed);
+  newer->prev.store(older, std::memory_order_release);
+  if (older) {
+    older->next = newer;
+  } else {
+    _tail = newer;
+  }
+  _older_versions.fetch_sub(1, std::memory_order_relaxed);
+  RetireVersion(version);
 }
 
 void Table::RetireVersion(TableVersion* version) {
@@ -450,19 +458,9 @@ void Table::RetireVersion(TableVersion* version) {
   _retired_versions.push_back(
     {.epoch = transactions.Epoch(),
      .version = std::unique_ptr<TableVersion>{version}});
-  transactions.VersionsRetired();
-}
-
-void Table::CountVersions() {
-  uint32_t older = 0;
-  for (auto* version = _head.load(std::memory_order_relaxed)
-                         ->prev.load(std::memory_order_relaxed);
-       version; version = version->prev.load(std::memory_order_relaxed)) {
-    ++older;
-  }
-  _older_versions.store(older, std::memory_order_relaxed);
   _retired_count.store(static_cast<uint32_t>(_retired_versions.size()),
                        std::memory_order_relaxed);
+  transactions.VersionsRetired();
 }
 
 void Table::FreeRetiredVersions() {
@@ -470,7 +468,8 @@ void Table::FreeRetiredVersions() {
   std::erase_if(_retired_versions, [&](const RetiredVersion& retired) {
     return retired.epoch <= safe;
   });
-  CountVersions();
+  _retired_count.store(static_cast<uint32_t>(_retired_versions.size()),
+                       std::memory_order_relaxed);
 }
 
 bool Table::FreeRetired() {
@@ -496,8 +495,7 @@ void Table::Prune(std::span<const Tick> running, Tick published) {
         (seen != running.end() && *seen < newer->tick)) {
       newer = version;
     } else {
-      newer->prev.store(older, std::memory_order_release);
-      RetireVersion(version);
+      Unlink(version);
     }
     version = older;
   }

@@ -348,6 +348,7 @@ bool Store::PersistSegments(Lsn before) {
   SyncSegments();
   std::vector<uint64_t> logged;
   catalog::Transactions::Get().CommitStorage(
+    _table->CommitMutex(),
     [&] {
       duckdb::vector<std::string> entries;
       for (const auto& unit : unsynced) {
@@ -424,6 +425,7 @@ void Store::CommitStorage(std::string entry,
                           absl::FunctionRef<void(Tick, Tick, Lsn)> apply) {
   SDB_ASSERT(!_read_only);
   catalog::Transactions::Get().CommitStorage(
+    _table->CommitMutex(),
     [&] {
       std::vector<uint8_t> record;
       if (!_in_memory && !OwnerDropped()) {
@@ -489,7 +491,10 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot, bool durable) {
         _table->Cooled(hot, std::move(written), lsn);
       });
   } else {
-    _table->Cooled(hot, std::move(written), kNoLsn);
+    {
+      absl::MutexLock lock{&_table->CommitMutex()};
+      _table->Cooled(hot, std::move(written), kNoLsn);
+    }
     catalog::Transactions::Get().RequestCollect();
   }
   absl::MutexLock lock{&hot->Mutex()};
@@ -535,6 +540,7 @@ void Store::Cover(Lsn target) {
   CoolRetired(target);
   PersistSegments(target);
   catalog::Transactions::Get().CommitState(
+    _table->CommitMutex(),
     [&] {
       if (OwnerDropped()) {
         return std::vector<uint8_t>{};
@@ -620,7 +626,11 @@ ResultWithTime Store::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
   if (_table) {
     auto& transactions = catalog::Transactions::Get();
-    _table->Collect(transactions.RefreshOldest());
+    const auto oldest = transactions.RefreshOldest();
+    {
+      absl::MutexLock lock{&_table->CommitMutex()};
+      _table->Collect(oldest);
+    }
     const auto running = transactions.RunningSnapshots();
     _table->Prune(running.snapshots, running.published);
     transactions.AdvanceEpoch();

@@ -41,10 +41,14 @@ namespace sdb::catalog {
 using Lsn = uint64_t;
 
 class Log {
+  struct Chunk;
+
  public:
   struct Range {
     Lsn begin = 0;
     Lsn end = 0;
+    uint64_t seq = 0;
+    std::shared_ptr<Chunk> chunk;
   };
 
   struct HistoryEntry {
@@ -89,9 +93,8 @@ class Log {
     return _reserved;
   }
 
-  Lsn Durable() const {
-    absl::MutexLock lock{&_mutex};
-    return _durable;
+  Lsn Durable() const noexcept {
+    return _durable.load(std::memory_order_acquire);
   }
 
   Lsn End() const { return Reserved(); }
@@ -122,13 +125,19 @@ class Log {
     duckdb::unique_ptr<duckdb::FileHandle> file;
   };
 
-  bool SyncIdle() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) {
-    return _syncs == 0;
-  }
+  struct Written {
+    std::atomic<uint64_t> seq{0};
+    std::atomic<Lsn> end{0};
+  };
+
+  static constexpr uint64_t kWrittenRing = uint64_t{1} << 16;
+
   std::filesystem::path ChunkPath(Lsn begin) const;
   std::shared_ptr<Chunk> OpenChunk(Lsn begin, bool create) const;
   void StartChunk() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   void SyncDirectory() const;
+  void AdvanceWritten() noexcept;
+  void SyncTo(Lsn target);
 
   duckdb::FileSystem& _fs;
   std::filesystem::path _dir;
@@ -136,12 +145,14 @@ class Log {
   absl::btree_map<Lsn, std::shared_ptr<Chunk>> _chunks ABSL_GUARDED_BY(_mutex);
   Lsn _replayed ABSL_GUARDED_BY(_mutex) = 0;
   Lsn _reserved ABSL_GUARDED_BY(_mutex) = 0;
-  Lsn _written ABSL_GUARDED_BY(_mutex) = 0;
-  Lsn _durable ABSL_GUARDED_BY(_mutex) = 0;
-  absl::btree_map<Lsn, Lsn> _out_of_order ABSL_GUARDED_BY(_mutex);
-  Lsn _syncing_to ABSL_GUARDED_BY(_mutex) = 0;
-  uint32_t _syncs ABSL_GUARDED_BY(_mutex) = 0;
-  bool _parallel_syncs ABSL_GUARDED_BY(_mutex) = false;
+  uint64_t _reserved_seq ABSL_GUARDED_BY(_mutex) = 0;
+  std::unique_ptr<Written[]> _written_ring =
+    std::make_unique<Written[]>(kWrittenRing);
+  std::atomic<uint64_t> _written_seq{0};
+  std::atomic<Lsn> _written{0};
+  std::atomic<Lsn> _durable{0};
+  std::atomic<bool> _syncing{false};
+  std::atomic<uint64_t> _syncs{0};
   uint64_t _directory_changes ABSL_GUARDED_BY(_mutex) = 0;
   uint64_t _directory_synced ABSL_GUARDED_BY(_mutex) = 0;
   std::shared_ptr<Chunk> _spare ABSL_GUARDED_BY(_mutex);

@@ -339,10 +339,6 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
       for (auto& target : compact) {
         jobs.Consume(Compact(std::move(target)));
       }
-      if (auto& transactions = catalog::Transactions::Get();
-          transactions.GarbagePending()) {
-        transactions.RequestCollect();
-      }
       if (settle_log) {
         const auto commit = catalog::Transactions::Get().LastCommit();
         if (commit == settled_commit) {
@@ -366,8 +362,10 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
 void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released) {
   auto& queue = GetReleased();
   absl::MutexLock lock{&queue.mutex};
-  SDB_ASSERT(queue.pending.empty() || queue.pending.back().tick <= released);
-  queue.pending.push_back({.tick = released, .store = store});
+  const auto at = absl::c_upper_bound(
+    queue.pending, released,
+    [](Tick tick, const Released& pending) { return tick < pending.tick; });
+  queue.pending.insert(at, {.tick = released, .store = store});
   queue.next.store(queue.pending.front().tick, std::memory_order_release);
   catalog::Transactions::Get().GarbageQueued();
 }

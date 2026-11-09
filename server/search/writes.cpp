@@ -1423,6 +1423,33 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context,
   return sections;
 }
 
+bool Writes::CrossTable() const {
+  if (!_reference_checks.empty()) {
+    return true;
+  }
+  return absl::c_any_of(_writes, [](const auto& entry) {
+    const auto& w = entry.second;
+    return w.prepared &&
+           (absl::c_any_of(w.keys,
+                           [](const KeySpec& spec) {
+                             return spec.kind == KeyKind::Reference;
+                           }) ||
+            !w.store->ReferencingKeys().empty());
+  });
+}
+
+std::vector<absl::Mutex*> Writes::CommitMutexes() const {
+  std::vector<absl::Mutex*> mutexes;
+  for (const auto& [store_id, w] : _writes) {
+    if (w.prepared) {
+      mutexes.push_back(&w.store->GetTable().CommitMutex());
+    }
+  }
+  absl::c_sort(mutexes);
+  mutexes.erase(std::ranges::unique(mutexes).begin(), mutexes.end());
+  return mutexes;
+}
+
 void Writes::Apply(Tick tick, Tick oldest, Lsn lsn) noexcept {
   for (auto& [store_id, w] : _writes) {
     if (!w.table) {

@@ -21,6 +21,7 @@
 #include "catalog/log.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/crc/crc32c.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -59,13 +60,6 @@ uint32_t Checksum(std::span<const uint8_t> bytes) {
   return static_cast<uint32_t>(absl::ComputeCrc32c(std::string_view{
     reinterpret_cast<const char*>(bytes.data()), bytes.size()}));
 }
-
-struct Awaited {
-  const Lsn* position = nullptr;
-  Lsn end = 0;
-};
-
-bool Reached(Awaited* awaited) { return *awaited->position >= awaited->end; }
 
 template<typename T>
 T Load(std::span<const uint8_t> bytes, size_t at) {
@@ -329,20 +323,16 @@ void Log::Replay(
   if (removed) {
     SyncDirectory();
   }
-  auto& first = *chunks.begin()->second->file;
-  const bool parallel_syncs = first.file_system.SyncParallelism(first) ==
-                              duckdb::FileSyncParallelism::PARALLEL;
   absl::MutexLock lock{&_mutex};
   _chunks = std::move(chunks);
-  _parallel_syncs = parallel_syncs;
   _oldest.store(_chunks.begin()->first, std::memory_order_relaxed);
   _newest.store(_chunks.rbegin()->first, std::memory_order_relaxed);
   _spare = std::move(spare);
   _has_spare.store(_spare != nullptr, std::memory_order_relaxed);
   _replayed = end;
   _reserved = end;
-  _written = end;
-  _durable = end;
+  _written.store(end, std::memory_order_release);
+  _durable.store(end, std::memory_order_release);
 }
 
 Log::Range Log::Reserve(size_t payload_size) {
@@ -353,7 +343,12 @@ Log::Range Log::Reserve(size_t payload_size) {
   if (_reserved != current && _reserved - current + bytes > kChunkBytes) {
     StartChunk();
   }
-  const Range range{.begin = _reserved, .end = _reserved + bytes};
+  SDB_ASSERT(_reserved_seq - _written_seq.load(std::memory_order_relaxed) <
+             kWrittenRing);
+  Range range{.begin = _reserved,
+              .end = _reserved + bytes,
+              .seq = _reserved_seq++,
+              .chunk = _chunks.rbegin()->second};
   _reserved = range.end;
   return range;
 }
@@ -413,84 +408,104 @@ void Log::Write(const Range& range, std::span<const uint8_t> payload) {
                       .size = static_cast<uint32_t>(payload.size())};
   std::memcpy(record.data(), &header, sizeof(Header));
   std::memcpy(record.data() + sizeof(Header), payload.data(), payload.size());
-  std::shared_ptr<Chunk> chunk;
-  {
-    absl::MutexLock lock{&_mutex};
-    const auto it = _chunks.upper_bound(range.begin);
-    SDB_ASSERT(it != _chunks.begin());
-    chunk = std::prev(it)->second;
-  }
   try {
-    chunk->file->Write(duckdb::QueryContext{}, record.data(), record.size(),
-                       range.begin - chunk->begin);
+    range.chunk->file->Write(duckdb::QueryContext{}, record.data(),
+                             record.size(), range.begin - range.chunk->begin);
   } catch (const std::exception& e) {
     SDB_FATAL(GENERAL, "log '", _dir.string(),
               "': a committed record could not be written: ",
               duckdb::ErrorData{e}.RawMessage());
   }
-  absl::MutexLock lock{&_mutex};
-  if (range.begin != _written) {
-    _out_of_order.emplace(range.begin, range.end);
-    return;
+  auto& slot = _written_ring[range.seq % kWrittenRing];
+  slot.end.store(range.end, std::memory_order_relaxed);
+  slot.seq.store(range.seq + 1, std::memory_order_seq_cst);
+  AdvanceWritten();
+}
+
+void Log::AdvanceWritten() noexcept {
+  auto seq = _written_seq.load(std::memory_order_seq_cst);
+  bool advanced = false;
+  for (;;) {
+    const auto& slot = _written_ring[seq % kWrittenRing];
+    if (slot.seq.load(std::memory_order_seq_cst) != seq + 1) {
+      break;
+    }
+    const auto end = slot.end.load(std::memory_order_relaxed);
+    if (!_written_seq.compare_exchange_weak(seq, seq + 1,
+                                            std::memory_order_seq_cst)) {
+      continue;
+    }
+    ++seq;
+    auto written = _written.load(std::memory_order_relaxed);
+    while (written < end && !_written.compare_exchange_weak(
+                              written, end, std::memory_order_release,
+                              std::memory_order_relaxed)) {
+    }
+    advanced = true;
   }
-  _written = range.end;
-  for (auto it = _out_of_order.begin();
-       it != _out_of_order.end() && it->first == _written;
-       it = _out_of_order.erase(it)) {
-    _written = it->second;
+  if (advanced) {
+    _written.notify_all();
   }
 }
 
 void Log::Sync(Lsn end) {
-  _mutex.Lock();
-  Awaited written{.position = &_written, .end = end};
-  Awaited durable{.position = &_durable, .end = end};
-  while (_durable < end) {
-    _mutex.Await(absl::Condition(&Reached, &written));
-    if (_durable >= end) {
-      break;
+  for (;;) {
+    if (_durable.load(std::memory_order_acquire) >= end) {
+      return;
     }
-    if (_syncing_to >= end) {
-      _mutex.Await(absl::Condition(&Reached, &durable));
+    const auto syncs = _syncs.load(std::memory_order_acquire);
+    if (_syncing.exchange(true, std::memory_order_acq_rel)) {
+      _syncs.wait(syncs, std::memory_order_acquire);
       continue;
     }
-    if (_syncs != 0 && !_parallel_syncs) {
-      _mutex.Await(absl::Condition{this, &Log::SyncIdle});
-      continue;
+    absl::Cleanup done = [this] {
+      _syncing.store(false, std::memory_order_release);
+      _syncs.fetch_add(1, std::memory_order_release);
+      _syncs.notify_all();
+    };
+    for (auto written = _written.load(std::memory_order_acquire); written < end;
+         written = _written.load(std::memory_order_acquire)) {
+      _written.wait(written, std::memory_order_acquire);
     }
-    ++_syncs;
-    const auto target = _written;
-    _syncing_to = std::max(_syncing_to, target);
-    std::vector<std::shared_ptr<Chunk>> chunks;
-    auto it = _chunks.upper_bound(_durable);
+    SyncTo(_written.load(std::memory_order_acquire));
+  }
+}
+
+void Log::SyncTo(Lsn target) {
+  const auto durable = _durable.load(std::memory_order_relaxed);
+  std::vector<std::shared_ptr<Chunk>> chunks;
+  uint64_t directory_changes = 0;
+  bool directory = false;
+  {
+    absl::MutexLock lock{&_mutex};
+    auto it = _chunks.upper_bound(durable);
     if (it != _chunks.begin()) {
       --it;
     }
     for (; it != _chunks.end() && it->first < target; ++it) {
       chunks.push_back(it->second);
     }
-    const auto directory_changes = _directory_changes;
-    const bool directory = directory_changes != _directory_synced;
-    _mutex.Unlock();
-    SDB_PARK_ONCE_ON_FAILURE("pause_wal_sync");
-    try {
-      if (directory) {
-        SyncDirectory();
-      }
-      for (const auto& chunk : chunks) {
-        chunk->file->Sync();
-      }
-    } catch (const std::exception& e) {
-      SDB_FATAL(GENERAL, "log '", _dir.string(),
-                "': committed records could not be synced: ",
-                duckdb::ErrorData{e}.RawMessage());
-    }
-    _mutex.Lock();
-    _durable = std::max(_durable, target);
-    _directory_synced = std::max(_directory_synced, directory_changes);
-    --_syncs;
+    directory_changes = _directory_changes;
+    directory = directory_changes != _directory_synced;
   }
-  _mutex.Unlock();
+  SDB_PARK_ONCE_ON_FAILURE("pause_wal_sync");
+  try {
+    if (directory) {
+      SyncDirectory();
+    }
+    for (const auto& chunk : chunks) {
+      chunk->file->Sync();
+    }
+  } catch (const std::exception& e) {
+    SDB_FATAL(GENERAL, "log '", _dir.string(),
+              "': committed records could not be synced: ",
+              duckdb::ErrorData{e}.RawMessage());
+  }
+  {
+    absl::MutexLock lock{&_mutex};
+    _directory_synced = std::max(_directory_synced, directory_changes);
+  }
+  _durable.store(std::max(durable, target), std::memory_order_release);
 }
 
 Lsn Log::Append(std::span<const uint8_t> payload) {
@@ -506,7 +521,7 @@ void Log::Truncate(Lsn below, CatalogPart part, Compact compact) {
   Lsn cut = 0;
   {
     absl::MutexLock lock{&_mutex};
-    below = std::min(below, _durable);
+    below = std::min(below, _durable.load(std::memory_order_acquire));
     for (auto it = _chunks.begin(); it != _chunks.end(); ++it) {
       const auto next = std::next(it);
       if (next == _chunks.end() || next->first > below) {
@@ -583,7 +598,7 @@ Lsn Log::Link(const std::filesystem::path& dir) {
   Lsn first = 0;
   {
     absl::MutexLock lock{&_mutex};
-    durable = _durable;
+    durable = _durable.load(std::memory_order_acquire);
     first = _chunks.begin()->first;
   }
   const auto history = _dir / kHistoryFile;

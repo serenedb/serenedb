@@ -186,6 +186,11 @@ void Sweep(Units& units, Tick oldest) {
   std::erase_if(units, [&](const auto& unit) { return Gone(*unit, oldest); });
 }
 
+size_t VersionBytes(const TableVersion& version) noexcept {
+  return sizeof(TableVersion) + sizeof(TableState) +
+         version.state->units.size() * sizeof(std::shared_ptr<const TableUnit>);
+}
+
 std::shared_ptr<const irs::SegmentReaderImpl> Masked(
   const std::shared_ptr<const irs::SegmentReaderImpl>& base,
   irs::DocumentMaskBuilder&& mask) {
@@ -424,6 +429,7 @@ void Table::Publish(std::shared_ptr<TableState> state, Tick tick) {
   while (_tail != version && _tail->next->tick <= oldest) {
     Unlink(_tail);
   }
+  AddGarbage(*head);
 }
 
 void Table::Republish(std::shared_ptr<TableState> state) {
@@ -438,6 +444,15 @@ void Table::Republish(std::shared_ptr<TableState> state) {
   }
   _head.store(version, std::memory_order_release);
   RetireVersion(head);
+  AddGarbage(*head);
+}
+
+void Table::AddGarbage(const TableVersion& version) {
+  _garbage_bytes += VersionBytes(version);
+  if (_garbage_bytes > _garbage_trigger) {
+    _garbage_trigger = std::numeric_limits<size_t>::max();
+    catalog::Transactions::Get().RequestCollect();
+  }
 }
 
 void Table::Unlink(TableVersion* version) {
@@ -454,22 +469,28 @@ void Table::Unlink(TableVersion* version) {
 }
 
 void Table::RetireVersion(TableVersion* version) {
-  auto& transactions = catalog::Transactions::Get();
   _retired_versions.push_back(
-    {.epoch = transactions.Epoch(),
+    {.epoch = catalog::Transactions::Get().Epoch(),
      .version = std::unique_ptr<TableVersion>{version}});
   _retired_count.store(static_cast<uint32_t>(_retired_versions.size()),
                        std::memory_order_relaxed);
-  transactions.VersionsRetired();
 }
 
 void Table::FreeRetiredVersions() {
   const auto safe = catalog::Transactions::Get().SafeEpoch();
+  size_t freed = 0;
   std::erase_if(_retired_versions, [&](const RetiredVersion& retired) {
-    return retired.epoch <= safe;
+    if (retired.epoch > safe) {
+      return false;
+    }
+    freed += VersionBytes(*retired.version);
+    return true;
   });
+  _garbage_bytes -= freed;
   _retired_count.store(static_cast<uint32_t>(_retired_versions.size()),
                        std::memory_order_relaxed);
+  _garbage_trigger =
+    std::max({kMinGarbageBytes, VersionBytes(Head()), 2 * _garbage_bytes});
 }
 
 bool Table::FreeRetired() {

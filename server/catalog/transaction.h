@@ -27,6 +27,7 @@
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -213,10 +214,11 @@ class Transactions final {
 
   void Commit(SessionTransaction& transaction, duckdb::ClientContext& context);
   void CommitStorage(
-    absl::FunctionRef<std::vector<uint8_t>()> build,
+    absl::Mutex& table, absl::FunctionRef<std::vector<uint8_t>()> build,
     absl::FunctionRef<void(duckdb::transaction_t, duckdb::transaction_t, Lsn)>
       apply);
-  void CommitState(absl::FunctionRef<std::vector<uint8_t>()> build,
+  void CommitState(absl::Mutex& table,
+                   absl::FunctionRef<std::vector<uint8_t>()> build,
                    absl::FunctionRef<void(Lsn)> logged);
 
   absl::Status TruncateLog(
@@ -239,14 +241,6 @@ class Transactions final {
   }
   duckdb::transaction_t RefreshOldest() ABSL_LOCKS_EXCLUDED(_walk_mutex);
   void GarbageQueued() noexcept;
-  void VersionsRetired() noexcept {
-    if (!_garbage_pending.load(std::memory_order_relaxed)) {
-      _garbage_pending.store(true, std::memory_order_relaxed);
-    }
-  }
-  bool GarbagePending() const noexcept {
-    return _garbage_pending.load(std::memory_order_relaxed);
-  }
   void CollectGarbage();
 
   struct Running {
@@ -277,25 +271,17 @@ class Transactions final {
     Running,
     Again,
   };
-  struct Pending {
-    duckdb::transaction_t commit = 0;
-    Lsn end = 0;
-    bool catalog = false;
-    bool ready = false;
-  };
+  static constexpr uint64_t kPublishRing = uint64_t{1} << 16;
 
-  Lsn DurableEnd() const;
   Lsn ReservedEnd() const;
-  void Enqueue(duckdb::transaction_t commit, Lsn end, bool catalog)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_commit_mutex);
-  void Publish(duckdb::transaction_t commit, bool wait);
+  void Publish(duckdb::transaction_t commit, bool catalog, bool wait);
   void MaintainLog(duckdb::ClientContext& context, Lsn end);
   void TruncateInBackground(bool switch_chunk);
 
-  static constexpr uint64_t kCollectEvery = 1024;
+  static constexpr int64_t kMinDeadSlots = 64;
 
   void RunCollector() noexcept;
-  void AfterCommit(duckdb::transaction_t commit) noexcept;
+  void AfterCommit() noexcept;
   void Collect(duckdb::transaction_t oldest);
   template<typename Fn>
   void WalkSlots(Fn&& fn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_walk_mutex);
@@ -305,7 +291,8 @@ class Transactions final {
   std::atomic<uint64_t> _safe_epoch{0};
   WalkCounters _shared_walks;
   std::atomic<SessionSlot*> _slots{nullptr};
-  std::atomic<uint64_t> _joined{0};
+  std::atomic<int64_t> _live_slots{0};
+  std::atomic<int64_t> _dead_slots{0};
   absl::Mutex _walk_mutex;
   std::atomic<duckdb::transaction_t> _oldest{
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
@@ -315,11 +302,11 @@ class Transactions final {
   std::atomic<CollectState> _collect_state{CollectState::Idle};
   absl::Mutex _garbage_mutex;
   std::deque<Garbage> _garbage ABSL_GUARDED_BY(_garbage_mutex);
-  absl::Mutex _commit_mutex;
-  duckdb::transaction_t _reserved_commit ABSL_GUARDED_BY(_commit_mutex) =
+  absl::Mutex _commit_gate;
+  absl::Mutex _sequence_mutex;
+  duckdb::transaction_t _reserved_commit ABSL_GUARDED_BY(_sequence_mutex) =
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP;
-  absl::Mutex _publish_mutex;
-  std::deque<Pending> _pending ABSL_GUARDED_BY(_publish_mutex);
+  std::array<std::atomic<uint64_t>, kPublishRing> _ready{};
   std::atomic<duckdb::transaction_t> _last_commit{
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
   std::atomic<duckdb::transaction_t> _next_id{duckdb::TRANSACTION_ID_START};

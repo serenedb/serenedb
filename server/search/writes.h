@@ -232,6 +232,8 @@ class Writes {
   void PrepareCommit(duckdb::ClientContext& context, Tick snapshot);
   std::vector<LogSection> TakeLog(duckdb::ClientContext& context,
                                   Tick snapshot);
+  bool CrossTable() const;
+  std::vector<absl::Mutex*> CommitMutexes() const;
   void Apply(Tick tick, Tick oldest, Lsn lsn) noexcept;
   void BeforePublish() noexcept;
   void Finish() noexcept;

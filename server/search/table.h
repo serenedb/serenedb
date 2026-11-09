@@ -289,6 +289,10 @@ class Table final {
 
   void Collect(Tick oldest);
 
+  absl::Mutex& CommitMutex() const noexcept ABSL_LOCK_RETURNED(_commit_mutex) {
+    return _commit_mutex;
+  }
+
   std::vector<std::shared_ptr<HotContext>> TakeCoolable(size_t memory_limit,
                                                         bool all);
   void Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
@@ -344,6 +348,8 @@ class Table final {
     std::unique_ptr<TableVersion> version;
   };
 
+  static constexpr size_t kMinGarbageBytes = size_t{1} << 20;
+
   const TableVersion& Head() const noexcept {
     return *_head.load(std::memory_order_acquire);
   }
@@ -362,6 +368,8 @@ class Table final {
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Unlink(TableVersion* version)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
+  void AddGarbage(const TableVersion& version)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void FreeRetiredVersions() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);
@@ -374,11 +382,14 @@ class Table final {
   mutable absl::Mutex _state_mutex;
   TableVersion* _tail ABSL_GUARDED_BY(_state_mutex);
   std::vector<RetiredVersion> _retired_versions ABSL_GUARDED_BY(_state_mutex);
+  size_t _garbage_bytes ABSL_GUARDED_BY(_state_mutex) = 0;
+  size_t _garbage_trigger ABSL_GUARDED_BY(_state_mutex) = kMinGarbageBytes;
   std::atomic<uint32_t> _older_versions{0};
   std::atomic<uint32_t> _retired_count{0};
   Lsn _needed ABSL_GUARDED_BY(_state_mutex) = kNoLsn;
   std::atomic<Tick> _last_append{0};
   std::atomic<Tick> _last_write{0};
+  mutable absl::Mutex _commit_mutex;
   mutable absl::Mutex _hot_mutex;
   std::vector<std::shared_ptr<HotContext>> _free ABSL_GUARDED_BY(_hot_mutex);
   absl::flat_hash_set<const HotContext*> _held ABSL_GUARDED_BY(_hot_mutex);

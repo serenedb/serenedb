@@ -50,14 +50,51 @@
 namespace sdb::catalog {
 namespace {
 
-struct Awaited {
-  const std::atomic<duckdb::transaction_t>* last = nullptr;
-  duckdb::transaction_t commit = 0;
+class [[nodiscard]] CommitGate final {
+ public:
+  CommitGate(absl::Mutex& gate, bool exclusive) ABSL_NO_THREAD_SAFETY_ANALYSIS
+    : _gate{gate},
+      _exclusive{exclusive} {
+    if (_exclusive) {
+      _gate.Lock();
+    } else {
+      _gate.ReaderLock();
+    }
+  }
+  ~CommitGate() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    if (_exclusive) {
+      _gate.Unlock();
+    } else {
+      _gate.ReaderUnlock();
+    }
+  }
+  CommitGate(const CommitGate&) = delete;
+  CommitGate& operator=(const CommitGate&) = delete;
+
+ private:
+  absl::Mutex& _gate;
+  bool _exclusive;
 };
 
-bool Published(Awaited* awaited) {
-  return awaited->last->load(std::memory_order_acquire) >= awaited->commit;
-}
+class [[nodiscard]] TableLocks final {
+ public:
+  explicit TableLocks(std::vector<absl::Mutex*> mutexes)
+    ABSL_NO_THREAD_SAFETY_ANALYSIS : _mutexes{std::move(mutexes)} {
+    for (auto* mutex : _mutexes) {
+      mutex->Lock();
+    }
+  }
+  ~TableLocks() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    for (auto it = _mutexes.rbegin(); it != _mutexes.rend(); ++it) {
+      (*it)->Unlock();
+    }
+  }
+  TableLocks(const TableLocks&) = delete;
+  TableLocks& operator=(const TableLocks&) = delete;
+
+ private:
+  std::vector<absl::Mutex*> _mutexes;
+};
 
 bool ModifiesUserDatabase(SessionTransaction& session) {
   return !session.SearchTxn().Empty() ||
@@ -187,10 +224,7 @@ SessionSlot& Transactions::Join() {
   while (!_slots.compare_exchange_weak(
     slot->next, slot, std::memory_order_release, std::memory_order_relaxed)) {
   }
-  if ((_joined.fetch_add(1, std::memory_order_relaxed) & (kCollectEvery - 1)) ==
-      kCollectEvery - 1) {
-    RequestCollect();
-  }
+  _live_slots.fetch_add(1, std::memory_order_relaxed);
   return *slot;
 }
 
@@ -198,6 +232,11 @@ void Transactions::Leave(SessionSlot& slot) noexcept {
   slot.snapshot.store(kNoSnapshot, std::memory_order_release);
   slot.held.store(kNoSnapshot, std::memory_order_release);
   slot.left.store(true, std::memory_order_release);
+  const auto live = _live_slots.fetch_sub(1, std::memory_order_relaxed) - 1;
+  const auto dead = _dead_slots.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (dead > std::max(kMinDeadSlots, live)) {
+    RequestCollect();
+  }
 }
 
 duckdb::transaction_t Transactions::Acquire(
@@ -245,12 +284,14 @@ void Transactions::WalkSlots(Fn&& fn) {
     } else if (prev) {
       prev->next = next;
       delete slot;
+      _dead_slots.fetch_sub(1, std::memory_order_relaxed);
       slot = next;
       continue;
     } else if (auto* head = slot; _slots.compare_exchange_strong(
                  head, next, std::memory_order_acq_rel,
                  std::memory_order_acquire)) {
       delete slot;
+      _dead_slots.fetch_sub(1, std::memory_order_relaxed);
       slot = next;
       continue;
     }
@@ -377,7 +418,8 @@ void Transactions::CollectGarbage() {
   const auto running = RunningSnapshots();
   search::PruneVersions(running.snapshots, running.published);
   AdvanceEpoch();
-  bool pending = search::FreeVersions() || search::ReleasedPending();
+  search::FreeVersions();
+  bool pending = search::ReleasedPending();
   if (!pending) {
     absl::MutexLock lock{&_garbage_mutex};
     pending = !_garbage.empty();
@@ -387,10 +429,9 @@ void Transactions::CollectGarbage() {
   }
 }
 
-void Transactions::AfterCommit(duckdb::transaction_t commit) noexcept {
+void Transactions::AfterCommit() noexcept {
   if (_garbage_queued.load(std::memory_order_relaxed) !=
-        _garbage_seen.load(std::memory_order_relaxed) ||
-      (commit & (kCollectEvery - 1)) == 0) {
+      _garbage_seen.load(std::memory_order_relaxed)) {
     RequestCollect();
   }
 }
@@ -437,21 +478,31 @@ void Transactions::Commit(SessionTransaction& transaction,
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
   {
-    absl::MutexLock lock{&_commit_mutex};
+    const CommitGate gate{_commit_gate, !transaction.Changes().empty() ||
+                                          !transaction.LsnUpdates().empty() ||
+                                          writes.CrossTable()};
+    const TableLocks tables{writes.CommitMutexes()};
     if (_replaying == 0) {
       CheckDependencies(transaction);
     }
     record = WriteRecord(context, transaction, writes);
-    if (!record.empty() && _log && _replaying == 0) {
+    const bool logged = !record.empty() && _log && _replaying == 0;
+    if (logged) {
       SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
       SDB_IF_FAILURE("catalog_append_fails") {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_IO_ERROR),
           ERR_MSG("catalog log: could not append the transaction"));
       }
-      range = _log->Reserve(record.size());
     }
-    commit = ++_reserved_commit;
+    {
+      absl::MutexLock sequence{&_sequence_mutex};
+      if (logged) {
+        range = _log->Reserve(record.size());
+      }
+      commit = ++_reserved_commit;
+      end = range.end != 0 ? range.end : ReservedEnd();
+    }
     for (const auto& change : transaction.Changes()) {
       change.version->timestamp = commit;
       change.set->Commit(*change.version);
@@ -477,8 +528,6 @@ void Transactions::Commit(SessionTransaction& transaction,
     for (const auto& update : transaction.LsnUpdates()) {
       ApplyLsnUpdate(update);
     }
-    end = range.end != 0 ? range.end : ReservedEnd();
-    Enqueue(commit, end, !transaction.Changes().empty());
   }
   if (range.end != 0) {
     _log->Write(range, record);
@@ -491,12 +540,12 @@ void Transactions::Commit(SessionTransaction& transaction,
     _log->Sync(end);
   }
   writes.BeforePublish();
-  Publish(commit, true);
+  Publish(commit, !transaction.Changes().empty(), true);
   writes.Finish();
   if (!transaction.Changes().empty()) {
     GarbageQueued();
   }
-  AfterCommit(commit);
+  AfterCommit();
   std::vector<BaseCatalog*> catalogs;
   for (const auto& change : transaction.Changes()) {
     auto* catalog = &change.Subject().ParentCatalog().Cast<BaseCatalog>();
@@ -510,7 +559,7 @@ void Transactions::Commit(SessionTransaction& transaction,
 }
 
 void Transactions::CommitStorage(
-  absl::FunctionRef<std::vector<uint8_t>()> build,
+  absl::Mutex& table, absl::FunctionRef<std::vector<uint8_t>()> build,
   absl::FunctionRef<void(duckdb::transaction_t, duckdb::transaction_t, Lsn)>
     apply) {
   std::vector<uint8_t> record;
@@ -518,15 +567,18 @@ void Transactions::CommitStorage(
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
   {
-    absl::MutexLock lock{&_commit_mutex};
+    absl::ReaderMutexLock gate{&_commit_gate};
+    absl::MutexLock lock{&table};
     record = build();
-    if (!record.empty() && _log && _replaying == 0) {
-      range = _log->Reserve(record.size());
+    {
+      absl::MutexLock sequence{&_sequence_mutex};
+      if (!record.empty() && _log && _replaying == 0) {
+        range = _log->Reserve(record.size());
+      }
+      commit = ++_reserved_commit;
+      end = range.end != 0 ? range.end : ReservedEnd();
     }
-    commit = ++_reserved_commit;
     apply(commit, Oldest(), range.begin);
-    end = range.end != 0 ? range.end : ReservedEnd();
-    Enqueue(commit, end, false);
   }
   if (range.end != 0) {
     _log->Write(range, record);
@@ -534,11 +586,12 @@ void Transactions::CommitStorage(
   if (end != 0) {
     _log->Sync(end);
   }
-  Publish(commit, false);
-  AfterCommit(commit);
+  Publish(commit, false, false);
+  AfterCommit();
 }
 
-void Transactions::CommitState(absl::FunctionRef<std::vector<uint8_t>()> build,
+void Transactions::CommitState(absl::Mutex& table,
+                               absl::FunctionRef<std::vector<uint8_t>()> build,
                                absl::FunctionRef<void(Lsn)> logged) {
   if (!_log || _replaying != 0) {
     return;
@@ -546,12 +599,16 @@ void Transactions::CommitState(absl::FunctionRef<std::vector<uint8_t>()> build,
   std::vector<uint8_t> record;
   Log::Range range;
   {
-    absl::MutexLock lock{&_commit_mutex};
+    absl::ReaderMutexLock gate{&_commit_gate};
+    absl::MutexLock lock{&table};
     record = build();
     if (record.empty()) {
       return;
     }
-    range = _log->Reserve(record.size());
+    {
+      absl::MutexLock sequence{&_sequence_mutex};
+      range = _log->Reserve(record.size());
+    }
     logged(range.begin);
   }
   _log->Write(range, record);
@@ -629,7 +686,7 @@ absl::Status Transactions::TruncateLog(bool switch_chunk,
   absl::MutexLock round{&_truncate_mutex};
   Lsn target = 0;
   {
-    absl::MutexLock lock{&_commit_mutex};
+    absl::MutexLock gate{&_commit_gate};
     target = switch_chunk ? _log->Switch() : _log->NewestChunk();
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_checkpoint");
@@ -659,44 +716,42 @@ Lsn Transactions::ReservedEnd() const {
   return _log && _replaying == 0 ? _log->Reserved() : 0;
 }
 
-Lsn Transactions::DurableEnd() const {
-  return _log && _replaying == 0 ? _log->Durable()
-                                 : std::numeric_limits<Lsn>::max();
-}
-
-void Transactions::Enqueue(duckdb::transaction_t commit, Lsn end,
-                           bool catalog) {
-  absl::MutexLock lock{&_publish_mutex};
-  _pending.push_back({.commit = commit, .end = end, .catalog = catalog});
-}
-
-void Transactions::Publish(duckdb::transaction_t commit, bool wait) {
-  absl::MutexLock lock{&_publish_mutex};
-  const auto durable = DurableEnd();
-  if (!_pending.empty() && commit >= _pending.front().commit) {
-    auto& own = _pending[commit - _pending.front().commit];
-    SDB_ASSERT(own.commit == commit);
-    own.ready = true;
-  }
-  duckdb::transaction_t last = 0;
-  duckdb::transaction_t catalog = 0;
-  while (!_pending.empty() && _pending.front().ready &&
-         _pending.front().end <= durable) {
-    last = _pending.front().commit;
-    if (_pending.front().catalog) {
-      catalog = last;
+void Transactions::Publish(duckdb::transaction_t commit, bool catalog,
+                           bool wait) {
+  SDB_ASSERT(commit - LastCommit() < kPublishRing);
+  _ready[commit % kPublishRing].store(commit << 1 | uint64_t{catalog},
+                                      std::memory_order_seq_cst);
+  auto published = _last_commit.load(std::memory_order_seq_cst);
+  bool advanced = false;
+  for (;;) {
+    const auto next = published + 1;
+    const auto mark =
+      _ready[next % kPublishRing].load(std::memory_order_seq_cst);
+    if (mark >> 1 != next) {
+      break;
     }
-    _pending.pop_front();
+    if (mark & 1) {
+      auto version = _catalog_version.load(std::memory_order_relaxed);
+      while (version < next && !_catalog_version.compare_exchange_weak(
+                                 version, next, std::memory_order_release,
+                                 std::memory_order_relaxed)) {
+      }
+    }
+    if (_last_commit.compare_exchange_weak(published, next,
+                                           std::memory_order_seq_cst)) {
+      published = next;
+      advanced = true;
+    }
   }
-  if (catalog != 0) {
-    _catalog_version.store(catalog, std::memory_order_release);
+  if (advanced) {
+    _last_commit.notify_all();
   }
-  if (last != 0) {
-    _last_commit.store(last, std::memory_order_release);
+  if (!wait) {
+    return;
   }
-  if (wait) {
-    Awaited awaited{.last = &_last_commit, .commit = commit};
-    _publish_mutex.Await(absl::Condition(&Published, &awaited));
+  for (auto seen = _last_commit.load(std::memory_order_acquire); seen < commit;
+       seen = _last_commit.load(std::memory_order_acquire)) {
+    _last_commit.wait(seen, std::memory_order_acquire);
   }
 }
 

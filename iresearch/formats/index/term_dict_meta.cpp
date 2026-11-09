@@ -97,7 +97,6 @@ constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
 constexpr duckdb::field_id_t kTextNorm = 2;
 constexpr duckdb::field_id_t kTextPrefixes = 3;
-constexpr duckdb::field_id_t kTextLeads = 4;
 
 constexpr duckdb::field_id_t kRangesOffset = 0;
 constexpr duckdb::field_id_t kRangesSize = 1;
@@ -126,8 +125,7 @@ void WriteOptionalBytes(duckdb::BinarySerializer& out, duckdb::field_id_t id,
 
 bool Empty(const TextHead& text) noexcept {
   return text.total_freq == 0 && !text.has_score_bounds &&
-         !field_limits::valid(text.norm) && text.prefixes.empty() &&
-         text.leads.empty();
+         !field_limits::valid(text.norm) && text.prefixes.empty();
 }
 
 void WriteSlot(duckdb::BinarySerializer& out, const FieldHead& head) {
@@ -147,7 +145,6 @@ void WriteText(duckdb::BinarySerializer& out, const TextHead& text) {
   out.WritePropertyWithDefault<uint64_t>(kTextNorm, "norm", text.norm,
                                          field_limits::invalid());
   WriteOptionalBytes(out, kTextPrefixes, "prefixes", text.prefixes);
-  WriteOptionalBytes(out, kTextLeads, "leads", text.leads);
 }
 
 void WriteRanges(duckdb::BinarySerializer& out, const RangesHead& ranges) {
@@ -253,7 +250,6 @@ void ReadText(duckdb::BinaryDeserializer& in, TextHead& text) {
     kTextNorm, "norm", field_limits::invalid());
   text.prefixes =
     in.ReadPropertyWithDefault<std::string>(kTextPrefixes, "prefixes");
-  text.leads = in.ReadPropertyWithDefault<std::string>(kTextLeads, "leads");
 }
 
 void ReadRanges(duckdb::BinaryDeserializer& in, RangesHead& ranges) {
@@ -329,8 +325,7 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
     IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0;
   const bool has_ranges = !head.ranges.counts.empty() || head.ranges.size != 0;
   if ((has_ranges && (!ranged || head.term_count == 1)) ||
-      (head.term_count == 1 &&
-       (!head.text.prefixes.empty() || !head.text.leads.empty())) ||
+      (head.term_count == 1 && !head.text.prefixes.empty()) ||
       (field_limits::valid(head.text.norm) &&
        !IsSubsetOf(IndexFeatures::Norm, head.features))) {
     Corrupted("dictionary", head.id);

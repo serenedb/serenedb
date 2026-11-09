@@ -86,17 +86,6 @@ inline constexpr size_t kMaxRangeLevels = 8;
 inline constexpr size_t kTermPrefix = sizeof(uint32_t);
 inline constexpr uint32_t kNoLabel = 256;
 
-inline constexpr size_t kLeadMask = kNoLabel / 8;
-inline constexpr size_t kLeadBytes = sizeof(uint16_t) + kLeadMask;
-
-inline bool HasLead(const byte_type* lead, uint32_t label) noexcept {
-  return (lead[sizeof(uint16_t) + label / 8] >> (label % 8) & 1) != 0;
-}
-
-inline size_t LeadDepth(const byte_type* lead) noexcept {
-  return size_t{lead[0]} | size_t{lead[1]} << 8;
-}
-
 constexpr uint32_t TermPrefix(bytes_view term) noexcept {
   uint32_t value = 0;
   for (size_t i = 0; i != kTermPrefix; ++i) {

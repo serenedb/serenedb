@@ -37,7 +37,6 @@ struct TextHead {
   field_id norm = field_limits::invalid();
   bool has_score_bounds = false;
   std::string prefixes;
-  std::string leads;
 };
 
 struct RangesHead {

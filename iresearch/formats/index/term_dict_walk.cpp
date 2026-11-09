@@ -860,38 +860,6 @@ LabelRange LiveRangeOf(const A& a, const typename A::State& state) {
   return range;
 }
 
-template<typename A>
-bool LeadsLive(const A& a, const typename A::State& state,
-               const byte_type* lead) {
-  if constexpr (A::kMayBeUnknown) {
-    if (A::Unknown(state)) {
-      return true;
-    }
-  }
-  const auto range = LiveRangeOf(a, state);
-  if (HasLead(lead, 0)) {
-    typename A::PayloadType payload{};
-    if (a.Accept(state, payload) ||
-        (range.lo == 0 && A::Alive(a.Step(state, 0)))) {
-      return true;
-    }
-  }
-  for (uint32_t label = std::max<uint32_t>(range.lo, 1); label <= range.hi;
-       ++label) {
-    if (HasLead(lead, label) &&
-        A::Alive(a.Step(state, static_cast<byte_type>(label)))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-enum class Lead : uint8_t {
-  Live,
-  Block,
-  Prefix,
-};
-
 constexpr size_t kMaxContinuation = 4;
 
 template<typename A>
@@ -1058,19 +1026,11 @@ class BlockPlan {
       if (!Target(lower)) {
         break;
       }
-      const bool last = block + 1 == blocks;
-      const auto upper =
-        last ? _field->MaxKey() : root.Separator(block + 1, _upper_key);
       const auto target = _target.Key();
-      if (last ? target <= upper : target < upper) {
-        const auto plan = Plan(block, lower, upper, last);
-        if (plan == Planned::Stop) {
-          break;
-        }
-        if (plan == Planned::Read) {
-          Add(block);
-        }
-        ++block;
+      if (block + 1 == blocks
+            ? target <= _field->MaxKey()
+            : target < root.Separator(block + 1, _upper_key)) {
+        Add(block++);
         continue;
       }
       block = std::max(block + 1, static_cast<uint32_t>(root.FindFrom(
@@ -1080,43 +1040,6 @@ class BlockPlan {
   }
 
  private:
-  enum class Planned : uint8_t {
-    Read,
-    Skip,
-    Stop,
-  };
-
-  Planned Plan(uint32_t block, bytes_view lower, bytes_view upper, bool last) {
-    const auto* lead = _field->Lead(block);
-    const auto prefix = lower.substr(0, CommonPrefixLength(lower, upper));
-    if (!lead || prefix.size() < _k ||
-        LeadDepth(lead) != std::max(prefix.size() - _k, kTermPrefix)) {
-      return Planned::Read;
-    }
-    if (prefix.size() >= _k + kTermPrefix) {
-      return !Alive(prefix) || LeadsLive(*_a, _states[prefix.size()], lead)
-               ? Planned::Read
-               : Planned::Skip;
-    }
-    const size_t end = _k + kTermPrefix;
-    for (;;) {
-      const auto key = _target.Key();
-      if (key.size() < end || !key.starts_with(prefix) ||
-          !Alive(key.substr(0, end)) || LeadsLive(*_a, _states[end], lead)) {
-        return Planned::Read;
-      }
-      _scratch.assign(key);
-      _valid = end - 1;
-      if (!NextTarget(_scratch)) {
-        return Planned::Stop;
-      }
-      const auto next = _target.Key();
-      if (last ? next > upper : next >= upper) {
-        return Planned::Skip;
-      }
-    }
-  }
-
   bool Target(bytes_view lower) {
     if (!Alive(lower)) {
       return NextTarget(lower);
@@ -1197,7 +1120,6 @@ class BlockPlan {
   size_t _k;
   containers::SmallVector<State, 64> _states;
   bstring _path;
-  bstring _scratch;
   SeparatorBuffer _lower_key;
   SeparatorBuffer _upper_key;
   PaddedKey _target;
@@ -1508,25 +1430,6 @@ class AcceptorIterator : public SeekTermIterator {
     return Land(field.BlockFrom(_cursor.BlockIndex(), _target.View()), valid);
   }
 
-  Lead CheckLead(uint32_t block, bytes_view prefix, size_t shared) {
-    const auto* lead = _cursor.Field().Lead(block);
-    if (!lead || prefix.size() < _k ||
-        LeadDepth(lead) != std::max(prefix.size() - _k, kTermPrefix)) {
-      return Lead::Live;
-    }
-    if (prefix.size() >= _k + kTermPrefix) {
-      return LeadsLive(*_a, _states[prefix.size()], lead) ? Lead::Live
-                                                          : Lead::Block;
-    }
-    const auto key = _target.Key();
-    const size_t end = _k + kTermPrefix;
-    if (shared != prefix.size() || key.size() < end ||
-        StepAlong(key.substr(0, end), prefix.size()) != end) {
-      return Lead::Live;
-    }
-    return LeadsLive(*_a, _states[end], lead) ? Lead::Live : Lead::Prefix;
-  }
-
   bool Land(uint32_t block, size_t valid) {
     const auto& field = _cursor.Field();
     _filter.Restart();
@@ -1534,35 +1437,18 @@ class AcceptorIterator : public SeekTermIterator {
     for (;;) {
       const auto prefix = BlockPrefix(block);
       const size_t shared = CommonPrefixLength(_target.Key(), prefix);
-      size_t base = std::min(valid, shared);
+      const size_t base = std::min(valid, shared);
       size_t depth = StepAlong(prefix, base);
       if (depth == prefix.size()) {
-        const auto lead = CheckLead(block, prefix, shared);
-        if (lead == Lead::Live) {
-          if (_cursor.BlockIndex() != block) {
-            _cursor.Load(block);
+        if (_cursor.BlockIndex() != block) {
+          _cursor.Load(block);
+        }
+        if (_cursor.LowerBound(_target.View())) {
+          _valid = prefix.size();
+          if (shared == prefix.size()) {
+            _valid = std::min(std::max(valid, prefix.size()), _cursor.Shared());
           }
-          if (_cursor.LowerBound(_target.View())) {
-            _valid = prefix.size();
-            if (shared == prefix.size()) {
-              _valid =
-                std::min(std::max(valid, prefix.size()), _cursor.Shared());
-            }
-            return true;
-          }
-        } else if (lead == Lead::Prefix) {
-          depth = _k + kTermPrefix - 1;
-          if (!NextTarget(_target.Key(), depth) ||
-              _target.Key() > field.MaxKey()) {
-            return false;
-          }
-          if (block + 1 == field.Blocks() ||
-              _target.Key() <
-                field.GetRoot().Separator(block + 1, _separator_key)) {
-            valid = depth;
-            continue;
-          }
-          base = std::min(base, depth);
+          return true;
         }
         if (++block == field.Blocks()) {
           return false;

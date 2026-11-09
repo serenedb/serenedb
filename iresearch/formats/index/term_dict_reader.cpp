@@ -195,8 +195,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   const auto corrupted = [&] { Corrupted("record", head.id); };
   SDB_ASSERT(head.term_count > 1);
   if (head.width > kMaxStride ||
-      (!head.text.prefixes.empty() && head.width != 0) ||
-      (!head.text.leads.empty() && head.width != 0)) {
+      (!head.text.prefixes.empty() && head.width != 0)) {
     corrupted();
   }
   _prefix_size = static_cast<uint32_t>(prefix.size());
@@ -226,14 +225,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
         ViewCast<byte_type>(std::string_view{head.text.prefixes}), head.id));
       bytes += _prefixes->MemoryBytes();
     }
-    if (!head.text.leads.empty()) {
-      if (head.text.leads.size() != size_t{_blocks} * kLeadBytes) {
-        corrupted();
-      }
-      _leads = head.text.leads;
-      bytes += _leads.size();
-    }
-  } else if (!head.text.prefixes.empty() || !head.text.leads.empty()) {
+  } else if (!head.text.prefixes.empty()) {
     corrupted();
   } else {
     _inline_base = head.inline_base;

@@ -840,4 +840,15 @@ bytes_view Root::Separator(size_t block, SeparatorBuffer& buffer) const {
   return key;
 }
 
+size_t Root::SharedWithNext(size_t block, const SeparatorBuffer& buffer,
+                            bytes_view separator) const noexcept {
+  SDB_ASSERT(block != 0 && block < _count);
+  SDB_ASSERT(buffer.root == this && buffer.block == block);
+  if (block % kGroup == 0) {
+    return CommonPrefixLength(separator, Restart(block / kGroup));
+  }
+  const byte_type* p = buffer.next;
+  return std::min<size_t>(ReadPacked(p), separator.size());
+}
+
 }  // namespace irs::term_dict

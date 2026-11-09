@@ -35,6 +35,8 @@
 namespace irs::count {
 namespace {
 
+constexpr uint64_t kFoldLeafWords = 2;
+
 Root::ptr PlanTerms(const MultiTermQuery& query, const Context& ctx) {
   const auto& state = query.State();
   const auto* const field = state.Reader();
@@ -64,7 +66,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   return query.PlanCount(ctx);
 }
 
-detail::BitsetStorage FoldTerms(const QueryBuilder& query) {
+detail::BitsetStorage FoldTerms(const QueryBuilder& query, doc_id_t unit_docs) {
   if (query.Kind() != QueryKind::Terms) {
     return {};
   }
@@ -73,7 +75,9 @@ detail::BitsetStorage FoldTerms(const QueryBuilder& query) {
   const auto* const field = state.Reader();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   const auto* const doc = field != nullptr ? detail::DocOf(*field) : nullptr;
-  if (doc == nullptr || terms.size() < 2) {
+  if (doc == nullptr || terms.size() < 2 ||
+      terms.size() * kFoldLeafWords <
+        uint64_t{unit_docs} / detail::BitsetStorage::kBits) {
     return {};
   }
   const auto docs_count =

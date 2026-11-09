@@ -72,7 +72,8 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                            .needs_terms = g.needs_terms});
     if (g.shape == ScanShape::Count &&
         work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit) {
-      work.fold = irs::count::FoldTerms(*g.queries[seg_idx]);
+      work.fold = irs::count::FoldTerms(*g.queries[seg_idx],
+                                        static_cast<irs::doc_id_t>(g.rg_size));
     }
     work.prepare.store(SegmentWork::kReady, std::memory_order_release);
     work.prepare.notify_all();

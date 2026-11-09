@@ -143,6 +143,10 @@ class TermReaderImpl final : public TermReader {
   uint32_t LastEntry() const noexcept { return _last_entry; }
   bytes_view BlockPrefix(size_t block, SeparatorBuffer& lower_key,
                          SeparatorBuffer& upper_key) const {
+    if (block != 0 && block + 1 != _blocks) {
+      const bytes_view lower = _root.Separator(block, lower_key);
+      return lower.substr(0, _root.SharedWithNext(block, lower_key, lower));
+    }
     const bytes_view lower =
       block == 0 ? MinKey() : _root.Separator(block, lower_key);
     const bytes_view upper =

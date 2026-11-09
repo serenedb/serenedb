@@ -295,6 +295,8 @@ class Root {
   size_t FindFrom(size_t from, Probe key, SeparatorBuffer& buffer) const;
   bool NotAfter(size_t block, Probe key) const noexcept;
   bytes_view Separator(size_t block, SeparatorBuffer& buffer) const;
+  size_t SharedWithNext(size_t block, const SeparatorBuffer& buffer,
+                        bytes_view separator) const noexcept;
   size_t MemoryBytes() const noexcept {
     return Visit([](const auto& root) { return root.MemoryBytes(); }) +
            (_restarts ? SeparatorBytes(*_restarts) + sizeof(Separators) : 0) +

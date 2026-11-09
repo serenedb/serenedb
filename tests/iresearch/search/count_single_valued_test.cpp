@@ -29,6 +29,7 @@
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -401,6 +402,47 @@ TEST_P(CountSingleValuedTest,
     EXPECT_EQ(kind, query->Kind());
     CheckDocs(*range, SingleIn(lo, kValues - 1));
     CheckCount(*range, SingleIn(lo, kValues - 1), true);
+  }
+}
+
+TEST_P(CountSingleValuedTest,
+       split_counts_fold_only_disjunctions_of_many_terms) {
+  auto writer = open_writer(irs::kOmCreate);
+  Build(*writer);
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  constexpr doc_id_t kRowGroupDocs = 122880;
+  constexpr struct {
+    int64_t lo;
+    int64_t hi;
+  } kRanges[]{
+    {100, 109},
+    {4500, kValues - 1},
+  };
+  for (const auto& [lo, hi] : kRanges) {
+    SCOPED_TRACE(lo);
+    const auto range = Range(kSingle, lo, hi);
+    auto query = irs::PrepareMasked(*range, reader[0], {});
+    ASSERT_NE(nullptr, query);
+    ASSERT_EQ(irs::QueryKind::Terms, query->Kind());
+    EXPECT_EQ(
+      0, irs::count::FoldTerms(*query, std::numeric_limits<doc_id_t>::max())
+           .WordCount());
+    if (hi - lo < 16) {
+      EXPECT_EQ(0, irs::count::FoldTerms(*query, kRowGroupDocs).WordCount());
+    }
+    const auto fold =
+      irs::count::FoldTerms(*query, irs::detail::BitsetStorage::kBits);
+    ASSERT_NE(0, fold.WordCount());
+    auto count = irs::count::MakeRoot(*query, {.partial = true, .fold = &fold});
+    ASSERT_NE(nullptr, count);
+    constexpr doc_id_t kBounds[]{
+      irs::doc_limits::min(), 777, 9001, 16384, 20001, irs::doc_limits::eof()};
+    uint64_t parts = 0;
+    for (size_t i = 1; i != std::size(kBounds); ++i) {
+      parts += count->Run(kBounds[i - 1], kBounds[i]);
+    }
+    EXPECT_EQ(SingleIn(lo, hi), parts + count->Finish());
   }
 }
 

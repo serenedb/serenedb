@@ -1400,15 +1400,18 @@ class AcceptorIterator : public SeekTermIterator {
     return Land(field.BlockOf(_target.View()), valid);
   }
 
-  bool InBlock(bytes_view target) {
-    const auto& field = _cursor.Field();
-    const auto block = _cursor.BlockIndex();
+  void Bound(uint32_t block) {
     if (block != _bound_block) {
+      const auto& field = _cursor.Field();
       _last_block = block + 1 == field.Blocks();
       _bound = _last_block ? field.MaxKey()
                            : field.GetRoot().Separator(block + 1, _bound_key);
       _bound_block = block;
     }
+  }
+
+  bool InBlock(bytes_view target) {
+    Bound(_cursor.BlockIndex());
     return _last_block ? target <= _bound : target < _bound;
   }
 
@@ -1427,7 +1430,14 @@ class AcceptorIterator : public SeekTermIterator {
     if (_target.Key() > field.MaxKey()) {
       return false;
     }
-    return Land(field.BlockFrom(_cursor.BlockIndex(), _target.View()), valid);
+    const auto block = _cursor.BlockIndex();
+    Bound(block);
+    if (_last_block || _target.Key() < _bound) {
+      return Land(block, valid);
+    }
+    return Land(static_cast<uint32_t>(field.GetRoot().FindFrom(
+                  block + 1, _target.View(), _bound_key)),
+                valid);
   }
 
   bool Land(uint32_t block, size_t valid) {

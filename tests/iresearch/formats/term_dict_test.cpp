@@ -4099,6 +4099,49 @@ TEST(TermDictRootTest, root_rebuilds_separators_in_any_order) {
   }
 }
 
+TEST(TermDictRootTest, root_shares_each_separator_with_the_next) {
+  std::mt19937 rng{11};
+  for (const bool urls : {true, false}) {
+    SCOPED_TRACE(urls);
+    std::vector<irs::bstring> separators;
+    for (size_t i = 0; i != 400; ++i) {
+      if (urls) {
+        separators.emplace_back(
+          Bytes(absl::StrCat("https://host", i / 40, ".example.com/",
+                             std::string(i % 7, 'a'), i)));
+        continue;
+      }
+      irs::bstring key(1 + rng() % 6, 0);
+      for (auto& byte : key) {
+        byte = static_cast<irs::byte_type>('a' + rng() % 2);
+      }
+      separators.push_back(std::move(key));
+    }
+    absl::c_sort(separators);
+    separators.erase(std::ranges::unique(separators).begin(), separators.end());
+    ASSERT_GT(separators.size(), 2 * irs::term_dict::Root::kGroup);
+    irs::term_dict::Separators owned;
+    for (const auto& separator : separators) {
+      owned.arena.append(separator);
+      owned.offsets.push_back(static_cast<uint32_t>(owned.arena.size()));
+    }
+    const irs::term_dict::Root root{irs::term_dict::Slice(owned), false};
+    irs::term_dict::SeparatorBuffer forward;
+    for (size_t block = 1; block < separators.size(); ++block) {
+      SCOPED_TRACE(block);
+      const irs::bytes_view current{separators[block - 1]};
+      const irs::bytes_view next{separators[block]};
+      const size_t expected = static_cast<size_t>(
+        std::ranges::mismatch(current, next).in1 - current.begin());
+      const auto separator = root.Separator(block, forward);
+      EXPECT_EQ(expected, root.SharedWithNext(block, forward, separator));
+      irs::term_dict::SeparatorBuffer fresh;
+      const auto rebuilt = root.Separator(block, fresh);
+      EXPECT_EQ(expected, root.SharedWithNext(block, fresh, rebuilt));
+    }
+  }
+}
+
 TEST(TermDictRootTest, padded_mismatch_ignores_bytes_past_size) {
   for (size_t size = 0; size != 2 * sizeof(uint64_t); ++size) {
     const irs::bstring key(size, irs::byte_type{'k'});

@@ -1,0 +1,174 @@
+# A keyed search table answers for its key twice: once before the commit lock,
+# where the reading is done without holding anything up, and once under it, for
+# whatever committed in between. `search_commit_prepared` parks a transaction
+# between the two, which is where the second pass earns its keep.
+
+statement ok
+CREATE TABLE pk_race(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO pk_race VALUES (1, 'first');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_race;
+
+
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+
+# Nothing holds key 9 when this one looks.
+connection writer
+statement async error
+INSERT INTO pk_race VALUES (9, 'parked');
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_race"
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+
+# ... but somebody takes it before the parked one reaches the commit lock.
+connection other
+statement ok
+INSERT INTO pk_race VALUES (9, 'winner');
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_commit_prepared:release';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_race;
+
+
+query
+SELECT i, t FROM pk_race ORDER BY i;
+----
+i	t
+1	first
+9	winner
+
+
+# The same window, for a row this transaction means to replace rather than a
+# key it means to take: the row is gone by the time it commits, so writing it
+# back would undo somebody's delete.
+
+statement ok
+CREATE TABLE pk_gone(i INTEGER PRIMARY KEY, t TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO pk_gone VALUES (5, 'original'), (6, 'other');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_gone;
+
+
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+
+connection writer
+statement async error
+UPDATE pk_gone SET t = 'rewritten' WHERE i = 5;
+----
+db error: ERROR: could not serialize access due to concurrent update of table "pk_gone"
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+
+connection other
+statement ok
+DELETE FROM pk_gone WHERE i = 5;
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_commit_prepared:release';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_gone;
+
+
+# The delete stands.
+query
+SELECT i, t FROM pk_gone ORDER BY i;
+----
+i	t
+6	other
+
+
+# Two transactions rewriting one row is the same conflict, reported as one
+# rather than as a duplicate key.
+
+statement ok
+CREATE TABLE pk_both(i INTEGER PRIMARY KEY, n INTEGER) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO pk_both VALUES (1, 10);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_both;
+
+
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+
+connection writer
+statement async error
+UPDATE pk_both SET n = n + 1 WHERE i = 1;
+----
+db error: ERROR: could not serialize access due to concurrent update of table "pk_both"
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+
+connection other
+statement ok
+UPDATE pk_both SET n = 100 WHERE i = 1;
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_commit_prepared:release';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_both;
+
+
+query
+SELECT i, n FROM pk_both ORDER BY i;
+----
+i	n
+1	100
+
+
+statement ok
+RESET sdb_faults;

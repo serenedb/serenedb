@@ -1,0 +1,309 @@
+statement ok
+CREATE FUNCTION dfd_conv(x int) RETURNS int LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE FUNCTION dfd_pos(x int) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE FUNCTION dfd_gen(x int) RETURNS int LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE FUNCTION dfd_idx(x int) RETURNS int LANGUAGE sql IMMUTABLE AS 'SELECT x * 3';
+
+
+statement ok
+CREATE FUNCTION dfd_pred(x int) RETURNS int LANGUAGE sql IMMUTABLE AS 'SELECT x * 4';
+
+
+statement ok
+CREATE FUNCTION dfd_using(x int) RETURNS bigint LANGUAGE sql IMMUTABLE AS 'SELECT x * 5';
+
+
+statement ok
+CREATE SCHEMA dfd_s;
+
+
+statement ok
+CREATE FUNCTION dfd_s.dfd_far(x int) RETURNS int LANGUAGE sql IMMUTABLE AS 'SELECT x * 6';
+
+
+statement ok
+CREATE TABLE dfd_t (id int, a int);
+
+
+statement error (?i)function.* dfd_missing.* does not exist
+CREATE INDEX dfd_missing_idx ON dfd_t ((dfd_missing(a)));
+
+
+statement error (?i)function.* dfd_missing.* does not exist
+CREATE INDEX dfd_missing_pidx ON dfd_t (a) WHERE dfd_missing(a) > 0;
+
+
+statement error (?i)function.* dfd_missing.* does not exist
+ALTER TABLE dfd_t ADD COLUMN b int DEFAULT dfd_missing(1);
+
+
+statement error (?i)function.* dfd_missing.* does not exist
+ALTER TABLE dfd_t ALTER COLUMN a SET DEFAULT dfd_missing(1);
+
+
+statement error (?i)function.* dfd_missing.* does not exist
+ALTER TABLE dfd_t ADD CONSTRAINT dfd_missing_chk CHECK (dfd_missing(a) > 0);
+
+
+statement error (?i)function.* dfd_missing.* does not exist
+ALTER TABLE dfd_t ALTER COLUMN a TYPE bigint USING dfd_missing(a);
+
+
+statement error (?i)function.* dfd_missing.* does not exist
+CREATE TABLE dfd_t2 (a int DEFAULT dfd_missing(1));
+
+
+query
+SELECT column_name, column_default, data_type FROM information_schema.columns
+WHERE table_schema = current_schema() AND table_name = 'dfd_t' ORDER BY ordinal_position;
+----
+column_name	column_default	data_type
+id	NULL	integer
+a	NULL	integer
+
+
+query
+SELECT count(*) AS n FROM pg_indexes WHERE tablename = 'dfd_t';
+----
+n
+0
+
+
+statement ok
+CREATE TABLE dfd_d (id int, a int DEFAULT dfd_conv(1));
+
+
+statement ok
+ALTER TABLE dfd_d ADD COLUMN b int DEFAULT dfd_conv(2);
+
+
+statement ok
+ALTER TABLE dfd_d ADD COLUMN c int;
+
+
+statement ok
+ALTER TABLE dfd_d ALTER COLUMN c SET DEFAULT dfd_conv(3);
+
+
+statement error (?i)cannot drop .*dfd_conv.* because .* depend on it
+DROP FUNCTION dfd_conv(int);
+
+
+statement ok
+INSERT INTO dfd_d (id) VALUES (1);
+
+
+statement ok
+DROP FUNCTION dfd_conv(int) CASCADE;
+
+
+statement ok
+INSERT INTO dfd_d (id) VALUES (2);
+
+
+query
+SELECT * FROM dfd_d ORDER BY id;
+----
+id	a	b	c
+1	10	20	30
+2	NULL	NULL	NULL
+
+
+query
+SELECT column_name, column_default FROM information_schema.columns
+WHERE table_schema = current_schema() AND table_name = 'dfd_d' ORDER BY ordinal_position;
+----
+column_name	column_default
+id	NULL
+a	NULL
+b	NULL
+c	NULL
+
+
+statement ok
+CREATE TABLE dfd_c (id int, a int);
+
+
+statement ok
+ALTER TABLE dfd_c ADD CONSTRAINT dfd_c_chk CHECK (dfd_pos(a));
+
+
+statement error (?i)cannot drop .*dfd_pos.* because .* depend on it
+DROP FUNCTION dfd_pos(int);
+
+
+statement error (?i)check constraint
+INSERT INTO dfd_c VALUES (1, -1);
+
+
+statement ok
+DROP FUNCTION dfd_pos(int) CASCADE;
+
+
+statement ok
+INSERT INTO dfd_c VALUES (1, -1);
+
+
+query
+SELECT count(*) AS n FROM pg_constraint WHERE conrelid = 'dfd_c'::regclass;
+----
+n
+0
+
+
+statement ok
+CREATE TABLE dfd_g (id int, a int, g int GENERATED ALWAYS AS (dfd_gen(a)) STORED);
+
+
+statement ok
+INSERT INTO dfd_g (id, a) VALUES (1, 1);
+
+
+statement error (?i)cannot drop .*dfd_gen.* because .* depend on it
+DROP FUNCTION dfd_gen(int);
+
+
+statement ok
+DROP FUNCTION dfd_gen(int) CASCADE;
+
+
+query
+SELECT * FROM dfd_g;
+----
+id	a
+1	1
+
+
+statement ok
+CREATE TABLE dfd_i (id int, a int);
+
+
+statement ok
+CREATE INDEX dfd_i_expr ON dfd_i ((dfd_idx(a)));
+
+
+statement ok
+CREATE INDEX dfd_i_pred ON dfd_i (a) WHERE dfd_pred(a) > 0;
+
+
+statement error (?i)cannot drop .*dfd_idx.* because .* depend on it
+DROP FUNCTION dfd_idx(int);
+
+
+statement error (?i)cannot drop .*dfd_pred.* because .* depend on it
+DROP FUNCTION dfd_pred(int);
+
+
+statement ok
+DROP FUNCTION dfd_idx(int) CASCADE;
+
+
+statement ok
+DROP FUNCTION dfd_pred(int) CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_indexes WHERE tablename = 'dfd_i';
+----
+n
+0
+
+
+statement ok
+CREATE TABLE dfd_u (a int);
+
+
+statement ok
+INSERT INTO dfd_u VALUES (1);
+
+
+statement ok
+ALTER TABLE dfd_u ALTER COLUMN a TYPE bigint USING dfd_using(a);
+
+
+statement ok
+DROP FUNCTION dfd_using(int);
+
+
+query
+SELECT a FROM dfd_u;
+----
+a
+5
+
+
+statement ok
+SET search_path = dfd_s, public;
+
+
+statement ok
+CREATE TABLE public.dfd_f (id int, a int DEFAULT dfd_far(1), CONSTRAINT dfd_f_chk CHECK (dfd_far(a) > 0));
+
+
+statement ok
+RESET search_path;
+
+
+statement error (?i)cannot drop .*dfd_far.* because .* depend on it
+DROP FUNCTION dfd_s.dfd_far(int);
+
+
+statement error (?i)cannot drop .*dfd_s.* because .* depend on it
+DROP SCHEMA dfd_s;
+
+
+statement ok
+INSERT INTO public.dfd_f (id) VALUES (1);
+
+
+statement ok
+DROP SCHEMA dfd_s CASCADE;
+
+
+statement ok
+INSERT INTO public.dfd_f (id, a) VALUES (2, -1);
+
+
+query
+SELECT * FROM public.dfd_f ORDER BY id;
+----
+id	a
+1	6
+2	-1
+
+
+statement ok
+DROP TABLE dfd_t;
+
+
+statement ok
+DROP TABLE dfd_d;
+
+
+statement ok
+DROP TABLE dfd_c;
+
+
+statement ok
+DROP TABLE dfd_g;
+
+
+statement ok
+DROP TABLE dfd_i;
+
+
+statement ok
+DROP TABLE dfd_u;
+
+
+statement ok
+DROP TABLE public.dfd_f;

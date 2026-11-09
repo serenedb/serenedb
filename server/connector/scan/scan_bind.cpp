@@ -118,15 +118,36 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
+search::Writes::PinnedSearchTable PinnedSearchTable(
+  duckdb::ClientContext& context, const search::Store& store) {
+  auto* conn_ctx = GetSereneDBContextPtr(context);
+  if (!conn_ctx) {
+    auto config = store.ScanConfig();
+    return {
+      .reader =
+        std::make_shared<irs::DirectoryReader>(store.GetDirectoryReader()),
+      .config = std::move(config),
+    };
+  }
+  return conn_ctx->SearchTxn().EnsureSearchTable(store);
+}
+
+search::StoreSnapshotPtr IndexSnapshot(
+  duckdb::ClientContext& context, duckdb::idx_t oid,
+  const std::shared_ptr<search::Store>& storage) {
+  auto* conn_ctx = GetSereneDBContextPtr(context);
+  if (!conn_ctx) {
+    return storage->Snapshot();
+  }
+  return conn_ctx->EnsureSearchSnapshot(oid, storage);
+}
+
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   const catalog::SearchTableEntry& table) {
   return [store = table.Storage()](
            duckdb::ClientContext& context) -> search::StoreSnapshotPtr {
     return std::make_shared<search::StoreSnapshot>(
-      irs::DirectoryReader{*GetSereneDBContext(context)
-                              .SearchTxn()
-                              .EnsureSearchTable(*store)
-                              .reader},
+      irs::DirectoryReader{*PinnedSearchTable(context, *store).reader},
       nullptr);
   };
 }
@@ -478,8 +499,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     AcquireSnapshot(*data, context,
                     [oid = entry.oid, storage = entry.Storage()](
                       duckdb::ClientContext& ctx) -> search::StoreSnapshotPtr {
-                      return GetSereneDBContext(ctx).EnsureSearchSnapshot(
-                        oid, storage);
+                      return IndexSnapshot(ctx, oid, storage);
                     });
   }
   data->relation.inverted_config = entry.Config();
@@ -506,8 +526,7 @@ duckdb::TableFunction BindSearchTableScan(
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
   AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
   data->score.prune = store->TopKScorer();
-  data->relation.inverted_config =
-    GetSereneDBContext(context).SearchTxn().EnsureSearchTable(*store).config;
+  data->relation.inverted_config = PinnedSearchTable(context, *store).config;
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   bind_data = std::move(data);

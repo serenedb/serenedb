@@ -22,6 +22,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
+#include <duckdb/planner/bound_constraint.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <memory>
 
@@ -34,10 +35,11 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   // Insert mode: pre-existing target table. `return_chunk` is RETURNING: the
   // operator then hands back the rows it inserted rather than their count, and
   // `types` is the whole row.
-  SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
-                       const catalog::SearchTableEntry& table,
-                       duckdb::vector<duckdb::LogicalType> types,
-                       duckdb::idx_t estimated_cardinality, bool return_chunk);
+  SereneDBSearchInsert(
+    duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
+    duckdb::vector<duckdb::LogicalType> types,
+    duckdb::idx_t estimated_cardinality, bool return_chunk,
+    duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints);
 
   // CTAS mode: create the target table from `info` in GetGlobalSinkState.
   SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
@@ -77,6 +79,7 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   // It carries the target schema, so nothing has to resolve one.
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
 
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> _constraints;
   bool _return_chunk = false;
 };
 

@@ -134,6 +134,7 @@ class HitBatcher {
                                               duckdb::idx_t n);
   bool DrainCompact();
   void FinishBatch(Batch& batch, duckdb::idx_t count);
+  void FillAbsent(duckdb::DataChunk& output) const;
   Batch EmitFiltered(duckdb::DataChunk& output);
   void Compact();
   float* ScoreData();
@@ -159,6 +160,7 @@ class HitBatcher {
 
   std::unique_ptr<irs::ReadContext> _ctx;
   std::vector<Column> _columns;
+  std::vector<duckdb::idx_t> _absent;
   uint32_t _seg_idx = 0;
   const irs::ColumnReader* _rg_col = nullptr;
 

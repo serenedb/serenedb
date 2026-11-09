@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/status/status.h>
+#include <absl/status/statusor.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
@@ -273,5 +274,11 @@ bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);
 // Term-surface comparison shapes: comparisons plus the scalar pattern
 // functions, excluding the index-only match sugar.
 bool IsStrictComparisonShape(const duckdb::Expression& expr);
+
+// The term a query for `value` on this column would look up. Declines a type
+// the term dictionary does not carry.
+absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
+                                     const SearchColumnInfo& column_info,
+                                     const duckdb::Value& value);
 
 }  // namespace sdb::connector

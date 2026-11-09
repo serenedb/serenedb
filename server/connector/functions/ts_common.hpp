@@ -46,7 +46,6 @@
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
 
-#include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/term_dict.h"
@@ -191,10 +190,6 @@ bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
 duckdb::Value CastConstant(const duckdb::Value& value,
                            const duckdb::LogicalType& type);
 
-absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
-                                     const SearchColumnInfo& column_info,
-                                     const duckdb::Value& value);
-
 struct ArgError {
   std::string_view label;
   std::string_view hint;
@@ -254,7 +249,7 @@ void WithNumericValue(const duckdb::LogicalType& type,
       f(value.GetValue<int32_t>());
       break;
     case TIME_TZ:
-      f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
+      f(term_dict::TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
       break;
     case BIGINT:
     case UINTEGER:

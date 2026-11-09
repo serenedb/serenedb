@@ -189,7 +189,21 @@ duckdb::idx_t KeepInRange(const duckdb::Vector& values, duckdb::idx_t count,
   return total;
 }
 
+void SetNullColumn(duckdb::Vector& vector) {
+  vector.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  duckdb::ConstantVector::SetNull(vector, true);
+}
+
 }  // namespace
+
+const ColumnReader* FilteredColumn(const ColumnReader& column,
+                                   const ColFilterSpec& spec) {
+  if (spec.extract_path.empty()) {
+    return &column;
+  }
+  SDB_ASSERT(spec.extract_type);
+  return DirectExtractLeaf(column, spec.extract_path, *spec.extract_type);
+}
 
 ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
   : _query{filter.PrepareSegment(segment, {})} {
@@ -279,9 +293,9 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       row.chunk = &states.Chunk(context, *spec.filter, spec.row_types);
       for (const auto field : spec.row_fields) {
         const auto* column = col_reader.Column(field);
-        SDB_ASSERT(column);
         row.readers.push_back(column);
-        row.scans.push_back(column->InitScan(ctx));
+        row.scans.push_back(column ? column->InitScan(ctx)
+                                   : irs::ColumnReader::ScanState{});
       }
       row.points.resize(row.readers.size());
       row.leaves = spec.row_leaves;
@@ -290,29 +304,18 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
     const auto* column = col_reader.Column(spec.field);
     SDB_ASSERT(column != nullptr,
                "classification resolves filters on absent columns");
-    const auto* reader = column;
+    const auto* reader = FilteredColumn(*column, spec);
     std::unique_ptr<ExtractBinding> extract;
-    if (!spec.extract_path.empty()) {
-      SDB_ASSERT(spec.extract_type != nullptr);
-      reader =
-        DirectExtractLeaf(*column, spec.extract_path, *spec.extract_type);
-      if (reader == nullptr) {
-        extract = std::make_unique<ExtractBinding>();
-        extract->Bind(*column, ctx, spec.extract_path, *spec.extract_type,
-                      &context);
-        reader = column;
-      }
+    if (!reader) {
+      extract = std::make_unique<ExtractBinding>();
+      extract->Bind(*column, ctx, spec.extract_path, *spec.extract_type,
+                    &context);
+      reader = column;
     }
-    const auto type_id =
-      extract ? spec.extract_type->id() : reader->Type().id();
-    const bool list_like = type_id == duckdb::LogicalTypeId::LIST ||
-                           type_id == duckdb::LogicalTypeId::MAP;
-    const bool nested = spec.row_gather || extract != nullptr || list_like ||
-                        type_id == duckdb::LogicalTypeId::ARRAY ||
-                        type_id == duckdb::LogicalTypeId::STRUCT ||
-                        type_id == duckdb::LogicalTypeId::TUPLE ||
-                        type_id == duckdb::LogicalTypeId::UNION ||
-                        type_id == duckdb::LogicalTypeId::VARIANT;
+    const auto& type = extract ? *spec.extract_type : reader->Type();
+    const bool list_like = type.id() == duckdb::LogicalTypeId::LIST ||
+                           type.id() == duckdb::LogicalTypeId::MAP;
+    const bool nested = spec.row_gather || extract || type.IsNested();
     _cols.push_back(Col{
       .reader = reader,
       .field = spec.field,
@@ -439,8 +442,7 @@ duckdb::idx_t ColFilterChain::DenseMask(
                      ? f.verdict
                      : duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
     duckdb::idx_t kept = 0;
-    if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
-        z == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+    if (ZoneDead(z)) {
       f.reader->Skip(f.scan, n);
       std::fill_n(chunk, chunk_words, uint64_t{0});
     } else if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
@@ -510,8 +512,7 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
     const auto z = anchor + span <= f.checked.end
                      ? f.verdict
                      : duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
-    if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
-        z == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+    if (ZoneDead(z)) {
       survivors = 0;
       break;
     }
@@ -607,6 +608,10 @@ duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
     auto& chunk = *row.chunk;
     chunk.Reset();
     for (size_t j = 0; j < row.readers.size(); ++j) {
+      if (!row.readers[j]) {
+        SetNullColumn(chunk.data[j]);
+        continue;
+      }
       row.readers[j]->GatherDense(row.scans[j], anchor, sel, survivors, span,
                                   chunk.data[j]);
     }
@@ -629,6 +634,10 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
     for (size_t j = 0; j < r.readers.size(); ++j) {
       auto& vector = chunk.data[j];
       const auto* reader = r.readers[j];
+      if (!reader) {
+        SetNullColumn(vector);
+        continue;
+      }
       if (!r.points[j]) {
         r.points[j] = std::make_unique<irs::ColumnReader::PointReader>(
           *_col_reader, *reader);
@@ -699,6 +708,9 @@ detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
   }
   for (const auto& r : _rows) {
     for (const auto* reader : r.readers) {
+      if (!reader) {
+        continue;
+      }
       if (reader->Type().IsNested()) {
         return detail::PointRead::None;
       }
@@ -899,7 +911,9 @@ void ColFilterChain::Rewind(irs::ReadContext& ctx) {
   }
   for (auto& r : _rows) {
     for (size_t j = 0; j < r.readers.size(); ++j) {
-      r.scans[j] = r.readers[j]->InitScan(ctx);
+      if (r.readers[j]) {
+        r.scans[j] = r.readers[j]->InitScan(ctx);
+      }
     }
   }
 }
@@ -918,8 +932,7 @@ uint64_t ColFilterChain::DeadUntil(uint64_t row) {
       const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
     }
-    if (f.verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
-        f.verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+    if (ZoneDead(f.verdict)) {
       dead_end = std::max<uint64_t>(dead_end, f.checked.end);
     }
   }

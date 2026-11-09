@@ -55,6 +55,11 @@ struct IndexStamp {
   static IndexStamp Read(duckdb::BinaryDeserializer& in);
 };
 
+struct RefreshGate {
+  absl::Mutex& mutex;
+  absl::FunctionRef<bool()> open;
+};
+
 class IndexDurability {
  public:
   using ManifestSource =
@@ -69,13 +74,18 @@ class IndexDurability {
     irs::Directory& dir, const irs::IndexReaderOptions& options);
 
   const irs::SourcePosition& Position() const noexcept { return _position; }
+  // The position everything the index holds is published up to. Read on its
+  // own, without the lock a refresh holds for its whole length, because a
+  // commit asking this must never wait for one.
+  irs::SourcePosition PublishedPosition() const;
   void MarkStaged(const irs::SourcePosition& position);
   std::optional<uint64_t> NeededWAL() const;
 
   absl::Status Refresh(irs::IndexWriter& writer, bool wait,
                        const irs::ProgressReportCallback& progress,
                        RefreshResult& code, absl::FunctionRef<void()> unchanged,
-                       absl::FunctionRef<void()> published);
+                       absl::FunctionRef<void()> published,
+                       const RefreshGate* gate);
   void ReplaceSegments(irs::IndexWriter& writer,
                        std::span<const irs::SubReader* const> replaced,
                        std::vector<irs::IndexWriter::Replacement> replacements);
@@ -91,6 +101,7 @@ class IndexDurability {
     irs::IndexWriter& writer);
 
   absl::Status Cleanup(irs::Directory& dir);
+  [[nodiscard]] bool SyncPublished();
   void MarkOutOfSync() noexcept {
     _out_of_sync.store(true, std::memory_order_relaxed);
   }

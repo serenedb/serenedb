@@ -26,16 +26,16 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/storage/table/table_log_storage.hpp>
-#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "search/feeder.h"
+#include "search/row_position_wal.h"
 #include "search/store.h"
 
 namespace sdb::search {
@@ -53,13 +53,17 @@ class Replay {
     _feeder->Push(std::move(batch));
   }
 
-  void RemoveKey(int64_t key) { _keys.push_back(key); }
+  void RemoveKey(int64_t key) { _removals.AddKey(key); }
   void RemovePositions(
     std::shared_ptr<const duckdb::data_t> entry,
-    std::span<const duckdb::WALFrozenRowPositionGroup> groups);
+    std::span<const duckdb::WALFrozenRowPositionGroup> groups) {
+    _removals.AddPositions(std::move(entry), groups);
+  }
   void MapPositions(std::shared_ptr<const duckdb::data_t> entry,
                     uint64_t source,
-                    std::span<const duckdb::WALFrozenRowPositionMap> maps);
+                    std::span<const duckdb::WALFrozenRowPositionMap> maps) {
+    _removals.AddMaps(std::move(entry), source, maps);
+  }
   void Truncate();
   void Adopt(std::span<const std::string> segments);
 
@@ -72,9 +76,7 @@ class Replay {
   std::optional<Feeder> _feeder;
   irs::IndexWriter::Transaction _head;
   irs::IndexWriter::Transaction _tail;
-  std::vector<int64_t> _keys;
-  irs::DocRemoval _positions;
-  irs::containers::FlatHashMap<uint64_t, std::vector<irs::DocMap>> _doc_maps;
+  RemovalLog _removals;
 };
 
 }  // namespace sdb::search

@@ -1,0 +1,140 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE rdr_s (id INT, v TEXT)
+WITH (storage = 'search', refresh_interval = 20, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO rdr_s SELECT i, 'x' FROM range(10) t(i);
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM rdr_s;
+----
+n
+10
+
+
+statement ok
+SET sdb_faults = 'pause_index_refresh';
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh:parked';
+
+
+statement ok
+ALTER TABLE rdr_s SET (refresh_interval = 0);
+
+
+statement ok
+INSERT INTO rdr_s SELECT i, 'y' FROM range(10, 20) t(i);
+
+
+statement ok
+SET sdb_faults = 'pause_refresh_loop_head';
+
+
+statement ok
+SET sdb_faults = 'pause_index_refresh:release';
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_refresh_loop_head:parked';
+
+
+query
+SELECT count(*) AS n FROM rdr_s;
+----
+n
+10
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rdr_s;
+
+
+query
+SELECT count(*) AS n FROM rdr_s;
+----
+n
+20
+
+
+statement ok
+CREATE TABLE rdr_t (id INT, v TEXT);
+
+
+statement ok
+CREATE INDEX rdr_t_idx ON rdr_t USING inverted (id, v)
+WITH (refresh_interval = 20, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO rdr_t SELECT i, 'x' FROM range(10) t(i);
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM rdr_t_idx WHERE v @@ 'x';
+----
+n
+10
+
+
+statement ok
+SET sdb_faults = 'pause_index_refresh';
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh:parked';
+
+
+statement ok
+ALTER INDEX rdr_t_idx SET (refresh_interval = 0);
+
+
+statement ok
+INSERT INTO rdr_t SELECT i, 'x' FROM range(10, 20) t(i);
+
+
+statement ok
+SET sdb_faults = 'pause_refresh_loop_head';
+
+
+statement ok
+SET sdb_faults = 'pause_index_refresh:release';
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_refresh_loop_head:parked';
+
+
+query
+SELECT count(*) AS n FROM rdr_t_idx WHERE v @@ 'x';
+----
+n
+10
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+VACUUM (REFRESH_INDEX) rdr_t_idx;
+
+
+query
+SELECT count(*) AS n FROM rdr_t_idx WHERE v @@ 'x';
+----
+n
+20

@@ -183,6 +183,7 @@ class PgReplicationClient final : public SyncSession {
                                std::vector<std::pair<uint32_t, size_t>>>
     _subxacts;
   std::optional<uint32_t> _streamed_xid;
+  std::optional<uint32_t> _eager_candidate;
   std::optional<uint32_t> _eager_xid;
   bool _txn_open = false;
   uint64_t _max_sync_lsn = 0;

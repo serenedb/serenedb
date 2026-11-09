@@ -443,38 +443,6 @@ std::vector<FlushedSegmentContext> OpenFlushed(
   return segment_ctxs;
 }
 
-struct RemovalTarget {
-  const SegmentReaderImpl* reader;
-  DocumentMaskBuilder* removed;
-};
-
-using RemovalTargets = containers::FlatHashMap<uint64_t, RemovalTarget>;
-
-void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets) {
-  const auto removed_of = [&](uint64_t id) -> DocumentMaskBuilder* {
-    const auto it = targets.find(id);
-    return it != targets.end() ? it->second.removed : nullptr;
-  };
-  const auto follow = [&](this const auto& self, const DocMapsSlot& slot,
-                          const DocumentMask& docs) -> void {
-    for (const auto& map : slot.maps) {
-      if (auto* removed = removed_of(map.target)) {
-        MapDocs(map, docs, *removed);
-      } else if (DocumentMaskBuilder moved; MapDocs(map, docs, moved)) {
-        SDB_ASSERT(map.next != nullptr);
-        self(*map.next, std::move(moved).Take());
-      }
-    }
-  };
-  for (const auto& group : removal.groups) {
-    if (auto* removed = removed_of(group.segment)) {
-      removed->Merge(group.docs);
-    } else if (group.maps != nullptr) {
-      follow(*group.maps, group.docs);
-    }
-  }
-}
-
 void ResolveKeys(std::span<const int64_t> keys, field_id key_column,
                  std::span<FlushedSegmentContext> flushed,
                  const auto& removed_at) {
@@ -1460,6 +1428,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
       _compacting.segments.erase(candidate->Meta().name);
     }
   };
+  SDB_PARK_ONCE_ON_FAILURE("pause_irs_compaction_registered");
 
   // validate candidates: no duplicates and all should be from committed reader
 #ifdef SDB_DEV

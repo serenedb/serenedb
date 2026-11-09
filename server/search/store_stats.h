@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/status/status.h>
+#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cstdint>
@@ -152,6 +153,7 @@ class MaintainedStore {
  protected:
   template<typename Options>
   void SetTasksSettings(const Options& options) {
+    absl::MutexLock lock{&_settings_mutex};
     _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
     _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
     _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
@@ -162,6 +164,7 @@ class MaintainedStore {
       options.compaction_floor_segment_bytes;
   }
 
+  absl::Mutex _settings_mutex;
   TasksSettings _tasks_settings;
   MaintenanceCounters _maintenance;
 

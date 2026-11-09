@@ -27,6 +27,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <optional>
@@ -83,12 +84,14 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk,
-  duckdb::RowIdHandling row_id_handling)
+  duckdb::RowIdHandling row_id_handling,
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(table),
     _columns(std::move(columns)),
     _expressions(std::move(expressions)),
+    _constraints(std::move(constraints)),
     _return_chunk(return_chunk),
     _row_id_handling(row_id_handling) {}
 
@@ -112,6 +115,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   target.catalog = &_table.catalog;
   target.table_id = _table.oid;
   conn_ctx.SearchTxn().RegisterWriter(target.store, _table);
+  _table.RequireCurrentSchema();
 
   const auto& columns = _table.GetColumns();
   target.column_ids.reserve(columns.LogicalColumnCount());
@@ -183,6 +187,10 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.table.types);
   new_row.ReferenceColumns(chunk, gstate.new_row_src);
+  for (const auto& constraint : _constraints) {
+    duckdb::DataTable::VerifyRowConstraint(context.client, _table, *constraint,
+                                           new_row);
+  }
   lstate.rows.Append(context.client, gstate.table, new_row);
 
   if (lstate.returned) {

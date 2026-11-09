@@ -747,8 +747,9 @@ void BuildTsDictCounts(ScanGlobalState& g) {
   const auto& reader = *g.reader;
   g.ts_dict_counts.resize(reader.size());
   for (const auto seg : g.segment_order) {
-    if (g.Segment(seg).claim.load(std::memory_order_relaxed) !=
-        SegmentWork::kSplit) {
+    const auto& work = g.Segment(seg);
+    if (work.claim.load(std::memory_order_relaxed) != SegmentWork::kSplit ||
+        work.LiveCount() == 0) {
       continue;
     }
     auto& per_field = g.ts_dict_counts[seg];

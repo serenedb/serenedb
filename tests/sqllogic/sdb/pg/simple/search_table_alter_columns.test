@@ -1,0 +1,610 @@
+statement ok
+CREATE TABLE sac (id INT PRIMARY KEY, a INT, b TEXT, n INT NOT NULL)
+WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+CREATE INDEX sac_b ON sac USING inverted (b);
+
+
+statement ok
+INSERT INTO sac VALUES (1, 10, 'alpha', 1), (2, 20, 'bravo', 2);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac;
+
+
+statement ok
+INSERT INTO sac VALUES (3, 30, 'charlie', 3);
+
+
+statement ok
+ALTER TABLE sac ADD COLUMN c INT;
+
+
+statement ok
+ALTER TABLE sac ADD COLUMN IF NOT EXISTS c INT;
+
+
+statement ok
+INSERT INTO sac VALUES (4, 40, 'delta', 4, 400);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac;
+
+
+query
+SELECT id, a, b, n, c FROM sac ORDER BY id;
+----
+id	a	b	n	c
+1	10	alpha	1	NULL
+2	20	bravo	2	NULL
+3	30	charlie	3	NULL
+4	40	delta	4	400
+
+
+query
+SELECT count(*) AS nulls FROM sac WHERE c IS NULL;
+----
+nulls
+3
+
+
+query
+SELECT id, c FROM sac WHERE b @@ 'bravo' OR b @@ 'delta' ORDER BY id;
+----
+id	c
+2	NULL
+4	400
+
+
+statement ok
+ALTER TABLE sac ADD COLUMN d TEXT DEFAULT 'dflt';
+
+
+statement ok
+INSERT INTO sac (id, a, b, n) VALUES (5, 50, 'echo', 5);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac;
+
+
+query
+SELECT id, c, d FROM sac ORDER BY id;
+----
+id	c	d
+1	NULL	dflt
+2	NULL	dflt
+3	NULL	dflt
+4	400	dflt
+5	NULL	dflt
+
+
+query
+SELECT id FROM sac WHERE d = 'dflt' AND b @@ 'alpha';
+----
+id
+1
+
+
+statement ok
+CREATE SEQUENCE sac_seq;
+
+
+statement ok
+ALTER TABLE sac ADD COLUMN s BIGINT DEFAULT nextval('sac_seq');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac;
+
+
+query
+SELECT count(*) AS rows, count(DISTINCT s) AS distinct_s FROM sac;
+----
+rows	distinct_s
+5	5
+
+
+statement error
+ALTER TABLE sac ADD COLUMN g INT GENERATED ALWAYS AS (a + 1) VIRTUAL;
+----
+db error: ERROR: Adding generated columns after table creation is not supported yet
+
+
+statement ok
+ALTER TABLE sac ADD CONSTRAINT sac_a_pos CHECK (a > 0);
+
+
+statement ok
+ALTER TABLE sac DROP COLUMN a;
+
+
+statement ok
+ALTER TABLE sac DROP COLUMN IF EXISTS a;
+
+
+query
+SELECT conname FROM pg_constraint
+WHERE conrelid = 'sac'::regclass AND contype = 'c' ORDER BY conname;
+----
+conname
+
+
+statement error
+INSERT INTO sac (id, b) VALUES (6, 'foxtrot');
+----
+db error: ERROR: NOT NULL constraint failed: sac.n
+
+
+statement ok
+INSERT INTO sac (id, b, n, c) VALUES (6, 'foxtrot', 6, 600);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac;
+
+
+query
+SELECT id, b, n, c, d FROM sac ORDER BY id;
+----
+id	b	n	c	d
+1	alpha	1	NULL	dflt
+2	bravo	2	NULL	dflt
+3	charlie	3	NULL	dflt
+4	delta	4	400	dflt
+5	echo	5	NULL	dflt
+6	foxtrot	6	600	dflt
+
+
+query
+SELECT id, n FROM sac WHERE b @@ 'foxtrot' OR b @@ 'alpha' ORDER BY id;
+----
+id	n
+1	1
+6	6
+
+
+statement error
+ALTER TABLE sac DROP COLUMN id;
+----
+db error: ERROR: Cannot drop column id because there is a PRIMARY KEY constraint that depends on it
+
+
+statement ok
+ALTER TABLE sac DROP COLUMN b;
+
+
+query
+SELECT count(*) AS indexes FROM pg_indexes WHERE indexname = 'sac_b';
+----
+indexes
+0
+
+
+statement ok
+ALTER TABLE sac ALTER COLUMN n TYPE BIGINT;
+
+
+statement ok
+ALTER TABLE sac ALTER COLUMN d DROP DEFAULT;
+
+
+statement ok
+ALTER TABLE sac ALTER COLUMN d TYPE INT USING length(d);
+
+
+query
+SELECT id, n, d, pg_typeof(n) AS nt, pg_typeof(d) AS dt FROM sac ORDER BY id;
+----
+id	n	d	nt	dt
+1	1	4	bigint	integer
+2	2	4	bigint	integer
+3	3	4	bigint	integer
+4	4	4	bigint	integer
+5	5	4	bigint	integer
+6	6	4	bigint	integer
+
+
+statement error
+ALTER TABLE sac ALTER COLUMN c TYPE INT USING 10 / (c - 400);
+----
+db error: ERROR: Division by zero in expression (10 // (c - 400)). Use TRY(...) to return NULL for this expression, or SET error_on_division_by_zero=false to return NULL for all divisions by zero.
+
+
+query
+SELECT id, c FROM sac WHERE c IS NOT NULL ORDER BY id;
+----
+id	c
+4	400
+6	600
+
+
+statement error
+ALTER TABLE sac ALTER COLUMN n TYPE INT USING CASE WHEN n = 3 THEN NULL ELSE n END;
+----
+db error: ERROR: NOT NULL constraint failed: sac.n
+
+
+statement error
+ALTER TABLE sac ALTER COLUMN id TYPE BIGINT;
+----
+db error: ERROR: Cannot change the type of a column that has a UNIQUE or PRIMARY KEY constraint specified
+
+
+statement ok
+CREATE INDEX sac_c ON sac USING inverted (c);
+
+
+statement error
+ALTER TABLE sac ALTER COLUMN c TYPE BIGINT;
+----
+db error: ERROR: Cannot change the type of column "c": index "sac_c" depends on it
+
+
+statement ok
+ALTER TABLE sac RENAME COLUMN c TO cc;
+
+
+query
+SELECT id FROM sac WHERE cc = 600;
+----
+id
+6
+
+
+query
+SELECT attname FROM pg_attribute
+WHERE attrelid = 'sac'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname
+id
+n
+cc
+d
+s
+
+
+statement ok
+INSERT INTO sac (id, n, cc) VALUES (7, 7, 700);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac;
+
+
+query
+SELECT id, cc FROM sac WHERE cc >= 600 ORDER BY id;
+----
+id	cc
+6	600
+7	700
+
+
+statement ok
+CREATE TABLE sac_ck (x INT, CONSTRAINT sac_ck_x CHECK (x > 0)) WITH (storage = 'search');
+
+
+statement ok
+ALTER TABLE sac_ck RENAME CONSTRAINT sac_ck_x TO sac_ck_pos;
+
+
+statement error
+INSERT INTO sac_ck VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "sac_ck" with expression CHECK((x > 0))
+
+
+statement ok
+ALTER TABLE sac_ck DROP CONSTRAINT sac_ck_pos;
+
+
+statement ok
+ALTER TABLE sac_ck DROP CONSTRAINT IF EXISTS sac_ck_pos;
+
+
+statement error
+ALTER TABLE sac_ck DROP CONSTRAINT sac_ck_pos;
+----
+db error: ERROR: constraint "sac_ck_pos" of table sac_ck does not exist
+
+
+statement ok
+INSERT INTO sac_ck VALUES (-1);
+
+
+statement error
+ALTER TABLE sac DROP CONSTRAINT sac_pkey;
+----
+db error: ERROR: dropping a PRIMARY KEY or UNIQUE constraint of a search-backed table is not supported
+
+
+statement ok
+CREATE TABLE sac_tx (id INT, v TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO sac_tx VALUES (1, 'one');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sac_tx ADD COLUMN w INT DEFAULT 5;
+
+
+statement ok
+INSERT INTO sac_tx VALUES (2, 'two', 6);
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+INSERT INTO sac_tx VALUES (3, 'three');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac_tx;
+
+
+query
+SELECT id, v FROM sac_tx ORDER BY id;
+----
+id	v
+1	one
+3	three
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sac_tx ADD COLUMN w INT DEFAULT 5;
+
+
+statement ok
+INSERT INTO sac_tx VALUES (4, 'four', 6);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac_tx;
+
+
+query
+SELECT id, v, w FROM sac_tx ORDER BY id;
+----
+id	v	w
+1	one	5
+3	three	5
+4	four	6
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE sac_tx DROP COLUMN v;
+
+
+connection s2
+statement error
+INSERT INTO sac_tx VALUES (5, 'five', 7);
+----
+db error: ERROR: search table "sac_tx" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+statement ok
+INSERT INTO sac_tx VALUES (5, 7);
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) sac_tx;
+
+
+connection s2
+query
+SELECT id, w FROM sac_tx ORDER BY id;
+----
+id	w
+1	5
+3	5
+4	6
+5	7
+
+
+statement ok
+CREATE TABLE sac_vec (id INT PRIMARY KEY, emb FLOAT[2], a INT)
+WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+CREATE INDEX sac_vec_idx ON sac_vec
+  USING inverted (id, emb hnsw (metric = 'l2', quant = 'none')) INCLUDE (a);
+
+
+statement ok
+INSERT INTO sac_vec VALUES (1, [1, 0], 10), (2, [2, 0], 20);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac_vec;
+
+
+statement ok
+ALTER TABLE sac_vec ADD COLUMN c INT;
+
+
+statement ok
+INSERT INTO sac_vec VALUES (3, [3, 0], 30, 5), (4, [4, 0], 40, 50);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac_vec;
+
+
+query
+EXPLAIN SELECT id FROM sac_vec WHERE a = 10 OR c = 50
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: sac_vec                    │
+│ Lookup: search                    │
+│ Row Filter: (a = 10) OR (c = 50)  │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: id                   │
+│ ~4 rows                           │
+╰───────────────────────────────────╯
+
+
+query
+SELECT id FROM sac_vec WHERE a = 10 OR c = 50
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+id
+1
+4
+
+
+query
+SELECT id FROM sac_vec WHERE a > 15 AND (c IS NULL OR c > 10)
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
+----
+id
+2
+4
+
+
+statement ok
+CREATE TABLE sac_expr (id INT PRIMARY KEY, b TEXT, n INT)
+WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+CREATE INDEX sac_expr_idx ON sac_expr USING inverted ((lower(b)));
+
+
+statement ok
+INSERT INTO sac_expr VALUES (1, 'Alpha', 1), (2, 'Bravo', 2);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac_expr;
+
+
+statement ok
+ALTER TABLE sac_expr ADD COLUMN d TEXT DEFAULT 'x';
+
+
+statement ok
+ALTER TABLE sac_expr ALTER COLUMN n TYPE BIGINT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac_expr;
+
+
+query
+SELECT id, n, d FROM sac_expr WHERE lower(b) = 'alpha';
+----
+id	n	d
+1	1	x
+
+
+query
+SELECT id, b, n, d FROM sac_expr ORDER BY id;
+----
+id	b	n	d
+1	Alpha	1	x
+2	Bravo	2	x
+
+
+statement ok
+CREATE TABLE sac_serial (id SERIAL, v INT)
+WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+INSERT INTO sac_serial (v) VALUES (10), (20);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sac_serial ALTER COLUMN id TYPE BIGINT;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT pg_get_serial_sequence('sac_serial', 'id') AS seq;
+----
+seq
+public.sac_serial_id_seq
+
+
+statement ok
+ALTER TABLE sac_serial ALTER COLUMN id TYPE BIGINT;
+
+
+query
+SELECT pg_get_serial_sequence('sac_serial', 'id') AS seq;
+----
+seq
+public.sac_serial_id_seq
+
+
+statement ok
+INSERT INTO sac_serial (v) VALUES (30);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sac_serial;
+
+
+query
+SELECT id, v, pg_typeof(id) AS t FROM sac_serial ORDER BY id;
+----
+id	v	t
+1	10	bigint
+2	20	bigint
+3	30	bigint
+
+
+statement ok
+ALTER TABLE sac_serial DROP COLUMN id;
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'sac_serial_id_seq';
+----
+sequences
+0

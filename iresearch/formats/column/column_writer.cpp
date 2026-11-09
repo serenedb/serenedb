@@ -308,59 +308,61 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
     meta.write_numeric_tuning = std::make_unique<codecs::NumericTuning>();
   }
   auto& tuning = *meta.write_numeric_tuning;
-  const auto rows = static_cast<double>(std::max<uint64_t>(row_count, 1));
+  auto& reuse = tuning.reuse;
+  const bool merge = _codec_params.tier == WriteTier::Merge;
   duckdb::unique_ptr<duckdb::AnalyzeState> state;
   duckdb::optional_ptr<const duckdb::CompressionFunction> fn;
   duckdb::idx_t score = codecs::kNoRival;
-  const auto measure = [&] {
-    fn = PickCodec(type, chunks, forced, state, &score);
+  const auto analyze = [&](duckdb::CompressionType only) {
+    fn = PickCodec(type, chunks, only, state, &score);
+  };
+  const auto analyze_all = [&] {
+    analyze(forced);
     tuning.rival = fn->type;
   };
-  auto& reuse = tuning.reuse;
   bool due = reuse.Due();
-  const bool flush = _codec_params.tier == WriteTier::Flush;
-  const bool held = !due && !reuse.pick;
-  const auto rival = tuning.rival;
-  const auto follow = [&] {
-    if (fn->type != rival) {
-      due = true;
-    } else if (reuse.Grew(static_cast<double>(score), rows)) {
-      reuse.clock.Restart();
+  if (!due && !reuse.pick) {
+    const auto held = tuning.rival;
+    if (merge) {
+      analyze_all();
+    } else {
+      analyze(held);
     }
-  };
-  if (flush && held) {
-    fn = PickCodec(type, chunks, rival, state, &score);
-    follow();
+    if (fn->type == held) {
+      const auto rows = static_cast<double>(std::max<uint64_t>(row_count, 1));
+      if (reuse.Grew(static_cast<double>(score), rows)) {
+        reuse.clock.Restart();
+      }
+      return Compress(*fn, std::move(state), type, chunks, meta.data);
+    }
+    due = true;
+    if (!merge) {
+      analyze_all();
+    }
+  } else if (due || merge) {
+    analyze_all();
   }
-  if (due || !flush) {
-    measure();
-    if (!flush && held) {
-      follow();
-    }
+  const auto sealer = codecs::NumericSealer::Make(type, row_count);
+  for (const auto& c : chunks) {
+    sealer->Add(c.data);
   }
-  if (due || reuse.pick) {
-    const auto sealer = codecs::NumericSealer::Make(type, row_count);
-    for (const auto& c : chunks) {
-      sealer->Add(c.data);
-    }
-    auto segment = sealer->Seal(_codec_params, score, tuning, due);
-    if (segment.bytes.empty() && !fn) {
-      measure();
-      segment = sealer->Seal(_codec_params, score, tuning, true);
-    }
-    if (!segment.bytes.empty()) {
-      const std::string_view part{segment.bytes};
-      CaptureBlock(
-        db,
-        *codecs::GetCodec(db, duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
-                          type.InternalType()),
-        std::move(segment.stats), row_count,
-        std::span<const std::string_view>{&part, 1}, WriteCtx().Blocks(),
-        meta.data);
-      return false;
-    }
+  auto segment = sealer->Seal(_codec_params, score, tuning, due);
+  if (segment.bytes.empty() && !fn) {
+    analyze_all();
+    segment = sealer->Seal(_codec_params, score, tuning, true);
   }
-  return Compress(*fn, std::move(state), type, chunks, meta.data);
+  if (segment.bytes.empty()) {
+    return Compress(*fn, std::move(state), type, chunks, meta.data);
+  }
+  const std::string_view part{segment.bytes};
+  CaptureBlock(
+    db,
+    *codecs::GetCodec(db, duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
+                      type.InternalType()),
+    std::move(segment.stats), row_count,
+    std::span<const std::string_view>{&part, 1}, WriteCtx().Blocks(),
+    meta.data);
+  return false;
 }
 
 bool ColumnWriter::Compress(const duckdb::CompressionFunction& picked,

@@ -176,3 +176,13 @@ TEST(math_utils, ceil64) {
   ASSERT_EQ(uint64_t(std::numeric_limits<uint64_t>::max() - 3),
             math::Ceil64(std::numeric_limits<uint64_t>::max() - 4, 2));
 }
+
+TEST(math_utils, proportion) {
+  ASSERT_EQ(0, math::Proportion(100, 7, 0));
+  ASSERT_EQ(0, math::Proportion(0, 7, 9));
+  ASSERT_EQ(33, math::Proportion(100, 1, 3));
+  ASSERT_EQ(100, math::Proportion(100, 3, 3));
+  constexpr auto kMax = std::numeric_limits<uint64_t>::max();
+  ASSERT_EQ(kMax / 2, math::Proportion(kMax, kMax / 2, kMax));
+  ASSERT_EQ(kMax - 1, math::Proportion(kMax - 1, kMax, kMax));
+}

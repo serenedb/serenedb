@@ -19,7 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <iresearch/analysis/numeric_terms.hpp>
@@ -31,6 +33,9 @@
 #include <iresearch/index/inverter/columnar_readers.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <limits>
+#include <numeric>
+#include <random>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -789,6 +794,78 @@ TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
   check(*keywords(3, descending), 11, 33);
   const std::string_view fixed[]{"abc", "xyz", "abc"};
   check(*keywords(4, fixed), 3, 6);
+}
+
+void AssertRemappedKeys(std::span<const std::string> vals,
+                        std::span<const uint32_t> new2old) {
+  auto mem = DefaultMemory();
+  FieldsInverter inv_old{mem};
+  FieldsInverter inv_new{mem};
+  auto* old_field =
+    inv_old.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
+  auto* new_field =
+    inv_new.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
+  DocOrder order;
+  order.new2old.assign(new2old.begin(), new2old.end());
+  order.old2new.resize(new2old.size());
+  for (uint32_t row = 0; row != new2old.size(); ++row) {
+    order.old2new[new2old[row]] = row;
+  }
+  for (uint32_t row = 0; row != vals.size(); ++row) {
+    ASSERT_TRUE(InvertKeyword(*old_field, doc_limits::min() + row,
+                              ToBytesView(vals[row])));
+    ASSERT_TRUE(InvertKeyword(*new_field, doc_limits::min() + row,
+                              ToBytesView(vals[new2old[row]])));
+  }
+
+  ScatterScratch remapped_scratch{mem.rm};
+  ScatteredField remapped{mem, remapped_scratch};
+  remapped.Reset(*old_field, order);
+  ScatterScratch expected_scratch{mem.rm};
+  ScatteredField expected{mem, expected_scratch};
+  expected.Reset(*new_field);
+
+  ASSERT_EQ(expected.TermCount(), remapped.TermCount());
+  for (size_t r = 0; r != expected.TermCount(); ++r) {
+    ASSERT_EQ(TermBytes(expected, r), TermBytes(remapped, r)) << r;
+    ASSERT_EQ(expected.TermBegin(r), remapped.TermBegin(r)) << r;
+    ASSERT_EQ(expected.TermEnd(r), remapped.TermEnd(r)) << r;
+  }
+  for (uint64_t k = 0; k != new2old.size(); ++k) {
+    ASSERT_EQ(RowDoc(expected, k), RowDoc(remapped, k)) << k;
+  }
+}
+
+std::vector<uint32_t> Shuffled(size_t n, uint64_t seed) {
+  std::vector<uint32_t> order(n);
+  std::iota(order.begin(), order.end(), uint32_t{0});
+  std::mt19937_64 rng{seed};
+  std::ranges::shuffle(order, rng);
+  return order;
+}
+
+TEST(InverterScatterTest, RemapSortedUniqueKeys) {
+  std::vector<std::string> vals;
+  for (size_t i = 0; i != 3000; ++i) {
+    vals.push_back(absl::StrCat("pk_", absl::Dec(i, absl::kZeroPad8)));
+  }
+  AssertRemappedKeys(vals, Shuffled(vals.size(), 1));
+}
+
+TEST(InverterScatterTest, RemapShuffledUniqueKeys) {
+  std::vector<std::string> vals;
+  for (const auto i : Shuffled(3000, 2)) {
+    vals.push_back(absl::StrCat("pk_", absl::Dec(i, absl::kZeroPad8)));
+  }
+  AssertRemappedKeys(vals, Shuffled(vals.size(), 3));
+}
+
+TEST(InverterScatterTest, RemapFoldedDuplicateKeys) {
+  std::vector<std::string> vals;
+  for (const auto i : Shuffled(3000, 4)) {
+    vals.push_back(absl::StrCat("pk_", absl::Dec(i % 700, absl::kZeroPad8)));
+  }
+  AssertRemappedKeys(vals, Shuffled(vals.size(), 5));
 }
 
 struct RejectFill {

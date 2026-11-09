@@ -94,6 +94,12 @@ struct ColumnBlockMeta {
   const duckdb::CompressionFunction* codec = nullptr;
 };
 
+struct ListPart {
+  uint64_t row = 0;
+  uint64_t code = 0;
+  uint64_t elem = 0;
+};
+
 struct ColumnMeta;
 
 struct VariantRgMeta {
@@ -109,6 +115,7 @@ struct ColumnMeta {
   std::vector<ColumnBlockMeta> validity;
   std::vector<ColumnMeta> children;
   std::vector<VariantRgMeta> variant_rgs;
+  std::vector<ListPart> list_parts;
   duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
   uint64_t write_list_running = 0;
   std::unique_ptr<codecs::StringTuning> write_string_tuning;
@@ -314,6 +321,8 @@ class ColumnReader {
 
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
+
+    void SetCache(duckdb::ObjectCache* cache) noexcept { _ctx.SetCache(cache); }
 
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
 

@@ -215,6 +215,12 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
                  }
                });
   s.WritePropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  WriteObjects(s, 8, "list_parts", meta.list_parts,
+               [](duckdb::BinarySerializer& obj, const ListPart& part) {
+                 obj.WriteProperty(0, "row", part.row);
+                 obj.WriteProperty(1, "code", part.code);
+                 obj.WriteProperty(2, "elem", part.elem);
+               });
 }
 
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
@@ -238,6 +244,12 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
     });
   });
   d.ReadPropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  ReadObjects(d, 8, "list_parts", [&](duckdb::BinaryDeserializer& obj) {
+    auto& part = meta.list_parts.emplace_back();
+    obj.ReadProperty(0, "row", part.row);
+    obj.ReadProperty(1, "code", part.code);
+    obj.ReadProperty(2, "elem", part.elem);
+  });
   return meta;
 }
 
@@ -368,6 +380,7 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
       slot.touched = &_touched[w.block];
       slot.cache = cache;
     }
+    slot.streams = ctx.Streams();
   }
   auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, slot);
   auto segment = std::make_unique<duckdb::ColumnSegment>(
@@ -902,7 +915,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
     case duckdb::LogicalTypeId::MAP:
       col = std::make_unique<ListColumnReader>(
         meta.id, std::move(meta.type), std::move(meta.data),
-        std::move(validity), std::move(children));
+        std::move(validity), std::move(children), std::move(meta.list_parts));
       break;
     default:
       col.reset(new ColumnReader{

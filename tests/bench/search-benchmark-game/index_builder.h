@@ -67,8 +67,6 @@ struct IndexBuilderOptions {
   size_t batch_size = 100000;
   size_t indexer_threads = 1;
   size_t refresh_interval_ms = 0;
-  size_t compaction_interval_ms = 5000;
-  size_t compaction_threads = 0;
   bool compact_all = true;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   uint32_t segment_docs_max = 0;

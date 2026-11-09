@@ -151,8 +151,8 @@ struct FsstPlusScan {
                  prefix_ends[id - 1], prefix_ends[id] - prefix_ends[id - 1]);
   }
 
-  template<typename Frames>
-  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+  template<typename Frames, typename Visit>
+  void WalkFrame(Frames& s, uint32_t f, char* out, Visit&& visit) {
     const auto& m = s.frames[f];
     const auto end = s.FrameEnd(f);
     const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
@@ -176,14 +176,28 @@ struct FsstPlusScan {
                                           out + off + prefix.size(), room);
       SDB_ENSURE(dec <= room, "col codec: corrupted entry");
       const std::string_view v{out + off, prefix.size() + dec};
-      SDB_ASSERT(!Frames::kDedup || e == m.first_entry ||
-                 View(s.values[e - 1]) < v);
-      s.Keep(e, v);
+      visit(e, v);
       off += v.size();
       enc_off += enc;
     }
     SDB_ENSURE(off == m.raw_len && enc_off == enc_end,
                "col codec: corrupted frame");
+  }
+
+  template<typename Frames>
+  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+    const auto first = s.frames[f].first_entry;
+    WalkFrame(s, f, out, [&](uint32_t e, std::string_view v) {
+      SDB_ASSERT(!Frames::kDedup || e == first || View(s.values[e - 1]) < v);
+      s.Keep(e, v);
+    });
+  }
+
+  template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
+    WalkFrame(s, f, out, [&](uint32_t, std::string_view v) {
+      *ends++ = static_cast<uint32_t>(v.data() + v.size() - out);
+    });
   }
 
   template<typename Frames>
@@ -208,7 +222,9 @@ struct FsstPlusScan {
     char* out = duckdb::char_ptr_cast(
       duckdb::StringVector::GetStringAllocator(s.dictionary->data)
         .Allocate(v.size()));
-    std::memcpy(out, v.data(), v.size());
+    if (!v.empty()) {
+      std::memcpy(out, v.data(), v.size());
+    }
     s.Keep(e, std::string_view{out, v.size()});
     entry_heap_bytes += v.size();
     entry_decoded[e] = 1;

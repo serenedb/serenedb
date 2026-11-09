@@ -61,8 +61,7 @@ bool GetBoolSetting(duckdb::ClientContext& context, std::string_view name);
 uint32_t GetEnumSetting(duckdb::ClientContext& context, std::string_view name,
                         std::span<const std::string_view> options);
 
-duckdb::Value GetGlobalSetting(const duckdb::DBConfig& config,
-                               std::string_view name);
+duckdb::Value GetGlobalSetting(std::string_view name);
 
 struct VariableDescription {
   duckdb::LogicalTypeId type;

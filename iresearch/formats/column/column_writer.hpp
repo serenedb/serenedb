@@ -56,7 +56,7 @@ struct ColumnWriterOptions {
 class ColumnWriter final {
  public:
   ColumnWriter(WriteContext& ctx, field_id id, duckdb::LogicalType type,
-               const ColumnWriterOptions& options);
+               const ColumnWriterOptions& options, bool stage_all);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -74,12 +74,20 @@ class ColumnWriter final {
     ++back.count;
     duckdb::FlatVector::SetSize(back.data, back.count);
     ++_staged_rows;
-    if (_staged_rows == _row_group_size) {
+    if (_staged_rows == _seal_at) {
       SealRowGroup();
     }
   }
 
   void PadNullsTo(uint64_t target_row);
+
+  std::span<const WriteChunk> Staged() const noexcept {
+    return {_staged.data(), _staged_chunks};
+  }
+
+  uint64_t StagedBytes() const noexcept { return _staged_bytes + _open_bytes; }
+
+  void Reorder(std::span<const uint32_t> new2old);
 
   void Finish() { SealRowGroup(); }
 
@@ -96,6 +104,7 @@ class ColumnWriter final {
   void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
   void AppendStruct(const duckdb::Vector& vec, duckdb::idx_t count);
   WriteChunk& OpenChunk();
+  void InitIngest();
   bool IngestsList() const noexcept {
     return !_ingest.empty() &&
            _type.InternalType() == duckdb::PhysicalType::LIST;
@@ -178,6 +187,7 @@ class ColumnWriter final {
   bool _skip_validity = false;
   bool _ingest_lists = false;
   uint32_t _row_group_size = 0;
+  uint64_t _seal_at = 0;
   duckdb::CompressionType _forced = duckdb::CompressionType::COMPRESSION_AUTO;
   ColCodecParams _codec_params;
   std::vector<WriteChunk> _staged;
@@ -185,6 +195,8 @@ class ColumnWriter final {
   std::unique_ptr<duckdb::Vector> _null_pad;
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
+  uint64_t _staged_bytes = 0;
+  uint64_t _open_bytes = 0;
   uint64_t _row_start = 0;
   bool _hll_auto = false;
   duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};

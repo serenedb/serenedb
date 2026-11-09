@@ -52,6 +52,13 @@ class ColMapping final : public duckdb::MemoryMappedFile {
 
 }  // namespace
 
+bool StreamsFrames(const duckdb::LogicalType& type) {
+  return !duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
+    return t.InternalType() == duckdb::PhysicalType::LIST ||
+           t.id() == duckdb::LogicalTypeId::VARIANT;
+  });
+}
+
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
   : BlockManager{db, /*block_header_size=*/0}, _cache{&db.GetObjectCache()} {}
 
@@ -224,6 +231,16 @@ void ReadContext::WriteHeader(duckdb::QueryContext /*context*/,
   THROW_SQL_ERROR(ERR_MSG("ReadContext::WriteHeader on read-only context"));
 }
 duckdb::idx_t ReadContext::TotalBlocks() { return 0; }
+
+std::shared_ptr<ReadContext> MergeReadContext(const ColReader& reader,
+                                              duckdb::ObjectCache* cache,
+                                              bool streams) {
+  auto ctx = std::make_shared<ReadContext>(reader);
+  ctx->SetMergeRead(true);
+  ctx->SetCache(cache);
+  ctx->SetStreams(streams);
+  return ctx;
+}
 
 const ReadContext::CacheSlot& CacheSlotOf(
   duckdb::ColumnSegment& segment) noexcept {

@@ -9,7 +9,7 @@ control substitution on
 # definitions and before it picks the segments to merge.
 
 statement ok
-CREATE TABLE ccr (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE ccr (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 3);
 
 
 statement ok

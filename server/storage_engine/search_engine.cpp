@@ -37,6 +37,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
+#include "search/compaction/merge_runner.h"
 #include "search/store.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
@@ -46,6 +47,13 @@
 namespace sdb::search {
 
 SearchEngine::SearchEngine() { gInstance = this; }
+
+SearchEngine::~SearchEngine() { gInstance = nullptr; }
+
+void SearchEngine::RequestStop() noexcept {
+  _stopping.store(true, std::memory_order_release);
+  _merges->Interrupt();
+}
 
 int SearchEngine::MaxConcurrentCompactions() noexcept {
   return std::max<int>(1, static_cast<int>(CountLogicalCores()) / 4 - 1);
@@ -73,15 +81,15 @@ uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
 }  // namespace
 
 ManualCompactionSlot::ManualCompactionSlot() noexcept
-  : _held{GetSearchEngine().TryAcquireCompaction()} {}
+  : _held{GetSearchEngine().Merges().TryHoldBig()} {}
 
 ManualCompactionSlot::~ManualCompactionSlot() {
   if (_held) {
-    GetSearchEngine().ReleaseCompaction();
+    GetSearchEngine().Merges().ReleaseBig();
   }
 }
 
-const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
+const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() noexcept {
   static const irs::AnnBuildEnv env{.executor = AnnBuildEnv().executor,
                                     .acquire = AnnAcquireAllWorkers,
                                     .release = AnnReleaseWorkers};
@@ -89,12 +97,20 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
 }
 
 void SearchEngine::start() {
+  _merge_pool = duckdb::TaskScheduler::GetScheduler(
+                  irs::DuckDBEngine::Instance().instance())
+                  .CreateDedicatedPool(
+                    static_cast<duckdb::idx_t>(MaxConcurrentCompactions()));
+  _merges = std::make_unique<MergeRunner>(
+    BackgroundScheduler::instance().executor(),
+    2 * static_cast<size_t>(MaxConcurrentCompactions()));
   StartSearchStorageTasks();
   SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
 void SearchEngine::stop() {
   _stopping.store(true, std::memory_order_release);
+  _merges->Stop();
   _loops.Done();
   _loops.Wait();
 }

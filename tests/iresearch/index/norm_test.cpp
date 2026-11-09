@@ -27,10 +27,10 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index_tests.hpp"
 #include "token_sink_utils.hpp"
 
@@ -363,8 +363,8 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
   tests::Remove(*writer, remove_long);
   tests::Remove(*writer, remove_short);
   writer->RefreshCommit();
-  const irs::index_utils::CompactionCount compact_all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  const tests::CompactionCount compact_all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
   writer->RefreshCommit();
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> merged;
@@ -658,8 +658,8 @@ TEST_P(NormTestCase, CheckNormsCompaction) {
 
   // Compact segments
   {
-    const irs::index_utils::CompactionCount compact_all;
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    const tests::CompactionCount compact_all;
+    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -915,8 +915,8 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
 
   // Compact segments
   {
-    const irs::index_utils::CompactionCount compact_all;
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    const tests::CompactionCount compact_all;
+    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -1002,8 +1002,8 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
 
   // Compact segments
   {
-    const irs::index_utils::CompactionCount compact_all;
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    const tests::CompactionCount compact_all;
+    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }

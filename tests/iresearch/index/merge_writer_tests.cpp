@@ -21,22 +21,44 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
+
+#include <atomic>
+#include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/function/compression_function.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/index_features.hpp>
-#include <iresearch/index/merge_writer.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
+#include <iresearch/index/merge/merge_plan.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <limits>
+#include <optional>
+#include <random>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
+#include "index/merge/support/parallel_merge.hpp"
+#include "index/merge/support/segment_dump.hpp"
+#include "index/merge/support/segment_gen.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 #include "postings_cursor.hpp"
@@ -184,8 +206,8 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed() {
   // 0: 1..10
   // 1: 11..20
   // 2: 21..30
-  const irs::index_utils::CompactionCount compact_all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  const tests::CompactionCount compact_all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
   ASSERT_TRUE(writer->RefreshCommit());
   AssertSnapshotEquality(
     writer->GetSnapshot(),
@@ -266,10 +288,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
     irs::SegmentMeta index_segment;
     const irs::SegmentWriterOptions options{
       .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir, options);
-    writer.Reset(reader.begin(), reader.end());
+    auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
-    ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MergePool(1)));
 
     auto segment = irs::SegmentReaderImpl::Open(
       dir, index_segment,
@@ -281,6 +303,101 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
     ASSERT_EQ(33, segment->field(kSameId)->docs_count());
     ASSERT_EQ(13, segment->field(kDuplicatedId)->docs_count());
   }
+}
+
+TEST_P(MergeWriterTestCase, MergeReportsStepTimes) {
+  irs::MemoryDirectory data_dir;
+  {
+    tests::JsonDocGenerator gen(TestBase::resource("simple_sequential_33.json"),
+                                &tests::GenericJsonFieldFactory);
+    auto writer = irs::IndexWriter::Make(data_dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t i = 0; i < 4; ++i) {
+      const auto* doc = gen.next();
+      ASSERT_NE(nullptr, doc);
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+      writer->RefreshCommit();
+    }
+  }
+  auto reader =
+    irs::DirectoryReader(data_dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(4, reader.size());
+
+  irs::MemoryDirectory dir;
+  irs::SegmentMeta segment;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance()};
+  auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
+  irs::MergeProfile profile;
+  ASSERT_TRUE(irs::MergeSegments(dir, doc_map, segment, options,
+                                 tests::merge::MergePool(1), {}, nullptr,
+                                 &profile));
+
+  uint64_t sum = 0;
+  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
+    const auto id = static_cast<irs::MergeStep>(step);
+    SCOPED_TRACE(irs::SnakeCaseName(id));
+    if (id == irs::MergeStep::Norms || id == irs::MergeStep::Columns) {
+      EXPECT_EQ(0, profile.Nanos(id));
+    } else {
+      EXPECT_GT(profile.Nanos(id), 0);
+    }
+    sum += profile.Nanos(id);
+  }
+  EXPECT_LE(sum, profile.TotalNanos());
+}
+
+TEST_P(MergeWriterTestCase, CompactReportsMergeStats) {
+  irs::MemoryDirectory dir;
+  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential_33.json"),
+                              &tests::GenericJsonFieldFactory);
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+  for (size_t i = 0; i < 3; ++i) {
+    const auto* doc = gen.next();
+    ASSERT_NE(nullptr, doc);
+    ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    writer->RefreshCommit();
+  }
+  const auto before = writer->GetSnapshot();
+  ASSERT_EQ(3, before.size());
+  uint64_t bytes = 0;
+  for (const auto& segment : before) {
+    bytes += segment.Meta().byte_size;
+  }
+
+  const auto result = tests::Compact(
+    *writer, tests::MakePolicy(
+               tests::CompactionCount{std::numeric_limits<size_t>::max()}));
+  ASSERT_TRUE(result);
+  EXPECT_EQ(3, result.size);
+  const auto& stats = result.stats;
+  ASSERT_EQ(3, stats.inputs.size());
+  for (const auto& segment : before) {
+    EXPECT_TRUE(absl::c_linear_search(stats.inputs, segment.Meta().name));
+  }
+  EXPECT_EQ(3, stats.input_docs);
+  EXPECT_EQ(3, stats.input_live_docs);
+  EXPECT_EQ(bytes, stats.input_bytes);
+  EXPECT_FALSE(stats.output.empty());
+  EXPECT_EQ(3, stats.output_docs);
+  EXPECT_GT(stats.output_bytes, 0);
+  EXPECT_GT(stats.profile.TotalNanos(), 0);
+
+  writer->RefreshCommit();
+  const auto after = writer->GetSnapshot();
+  ASSERT_EQ(1, after.size());
+  EXPECT_EQ(stats.output, after[0].Meta().name);
+  EXPECT_EQ(stats.output_bytes, after[0].Meta().byte_size);
+
+  const auto nothing = tests::Compact(
+    *writer, tests::MakePolicy(
+               tests::CompactionCount{std::numeric_limits<size_t>::max()}));
+  ASSERT_TRUE(nothing);
+  EXPECT_EQ(0, nothing.size);
+  EXPECT_TRUE(nothing.stats.inputs.empty());
+  EXPECT_TRUE(nothing.stats.output.empty());
+  EXPECT_EQ(0, nothing.stats.profile.TotalNanos());
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
@@ -317,13 +434,13 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
   {
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
-    irs::MergeWriter::FlushProgress progress;
+    irs::MergeProgress progress;
     const irs::SegmentWriterOptions options{
       .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir, options);
+    auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
-    writer.Reset(reader.begin(), reader.end());
-    ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment, progress)));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MergePool(1), progress));
 
     ASSERT_FALSE(index_segment.files.empty());
     ASSERT_EQ(2, index_segment.docs_count);
@@ -341,13 +458,13 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
   {
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
-    irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
+    irs::MergeProgress progress = []() -> bool { return false; };
     const irs::SegmentWriterOptions options{
       .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir, options);
+    auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
-    writer.Reset(reader.begin(), reader.end());
-    ASSERT_FALSE(irs::GetReady(writer.Flush(index_segment, progress)));
+    ASSERT_FALSE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                    tests::merge::MergePool(1), progress));
 
     ASSERT_TRUE(index_segment.name.empty());
     ASSERT_TRUE(index_segment.files.empty());
@@ -357,23 +474,22 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.byte_size);
   }
 
-  size_t progress_call_count = 0;
+  std::atomic<size_t> progress_call_count{0};
 
   // test always-true progress
   {
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
-    irs::MergeWriter::FlushProgress progress =
-      [&progress_call_count]() -> bool {
+    irs::MergeProgress progress = [&progress_call_count]() -> bool {
       ++progress_call_count;
       return true;
     };
     const irs::SegmentWriterOptions options{
       .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir, options);
+    auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
-    writer.Reset(reader.begin(), reader.end());
-    ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment, progress)));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MergePool(1), progress));
 
     ASSERT_FALSE(index_segment.files.empty());
     ASSERT_EQ(2, index_segment.docs_count);
@@ -393,19 +509,21 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
   // test limited-true progress
   for (size_t i = 1; i < progress_call_count;
        ++i) {  // +1 for pre-decrement in 'progress'
+    absl::Mutex mutex;
     size_t call_count = i;
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
-    irs::MergeWriter::FlushProgress progress = [&call_count]() -> bool {
-      return --call_count;
+    irs::MergeProgress progress = [&mutex, &call_count]() -> bool {
+      absl::MutexLock lock{&mutex};
+      return call_count != 0 && --call_count != 0;
     };
     const irs::SegmentWriterOptions options{
       .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir, options);
+    auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
     index_segment.name = "merged";
-    writer.Reset(reader.begin(), reader.end());
-    ASSERT_FALSE(irs::GetReady(writer.Flush(index_segment, progress)));
+    ASSERT_FALSE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                    tests::merge::MergePool(1), progress));
     ASSERT_EQ(0, call_count);
 
     ASSERT_TRUE(index_segment.name.empty());
@@ -415,6 +533,34 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.byte_size);
   }
+}
+
+TEST_P(MergeWriterTestCase, FieldsPastFourBillionTermsOpen) {
+  if (!duckdb::FaultPoints::Arm("irs::term_dict::TotalTermFreqPast32Bits")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup remove = [] {
+    duckdb::FaultPoints::Disarm("irs::term_dict::TotalTermFreqPast32Bits");
+  };
+  tests::Document doc;
+  auto text = std::make_shared<tests::TextField<std::string_view>>(
+    "doc_text", "quick brown fox", true);
+  text->id = kDocTextId;
+  doc.indexed.push_back(std::move(text));
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_TRUE(Insert(*writer, doc.indexed.begin(), doc.indexed.end()));
+    writer->RefreshCommit();
+  }
+  std::move(remove).Invoke();
+  const auto reader =
+    irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  const auto* field = reader[0].field(kDocTextId);
+  ASSERT_NE(nullptr, field);
+  EXPECT_EQ((uint64_t{1} << 32) + 3, field->total_term_freq());
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
@@ -479,11 +625,11 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
 
     const irs::SegmentWriterOptions options{
       .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir, options);
-    writer.Reset(segments.begin(), segments.end());
+    auto doc_map = irs::MakeMergeDocMap(segments, options.resource_manager);
 
     irs::SegmentMeta index_segment;
-    ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MergePool(1)));
   }
 
   // test merge existing with feature superset: succeeds with the
@@ -496,11 +642,11 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
 
     const irs::SegmentWriterOptions options{
       .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir, options);
-    writer.Reset(segments.begin(), segments.end());
+    auto doc_map = irs::MakeMergeDocMap(segments, options.resource_manager);
 
     irs::SegmentMeta index_segment;
-    ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MergePool(1)));
   }
 }
 
@@ -1169,9 +1315,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     .db = &::irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,
   };
-  irs::MergeWriter writer(dir, options);
-  writer.Reset(reader.begin(), reader.end());
-  ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+  auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
+  ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                 tests::merge::MergePool(1)));
 
   auto segment = irs::SegmentReaderImpl::Open(
     dir, index_segment, irs::tests::DefaultReaderOptions());
@@ -1542,8 +1688,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{})));
     ASSERT_TRUE(writer->RefreshCommit());
   }
 
@@ -1874,8 +2020,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{})));
     ASSERT_TRUE(writer->RefreshCommit());
   }
 
@@ -2052,8 +2198,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     {
       auto writer = irs::IndexWriter::Make(dir2, irs::kOmAppend,
                                            irs::tests::DefaultWriterOptions());
-      ASSERT_TRUE(writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+      ASSERT_TRUE(
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{})));
       ASSERT_TRUE(writer->RefreshCommit());
     }
 
@@ -2120,8 +2266,409 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   }
 }
 
+TEST_P(MergeWriterTestCase, MergeKeepsTheColumnCompressionLevel) {
+  constexpr irs::field_id kLevelId = kDocStringId;
+  constexpr size_t kDocsPerSegment = 100;
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t s = 0; s < 2; ++s) {
+      auto batch = writer->GetBatch();
+      for (size_t i = 0; i < kDocsPerSegment; ++i) {
+        auto doc = batch.Insert();
+        tests::StringField foo{"foo", "bar"};
+        foo.id = kFooId;
+        tests::InsertField(doc, foo);
+        auto& cw = doc.GetColWriter()->OpenColumn(
+          kLevelId, duckdb::LogicalType::VARCHAR,
+          {.compression = duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
+           .codec_params = irs::ColCodecParams{.compression_level = 1}});
+        duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
+          duckdb::StringVector::AddString(
+            v, "value-" + std::to_string(s * kDocsPerSegment + i));
+        cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(),
+                  v, 1);
+      }
+      batch.Commit();
+      ASSERT_TRUE(writer->RefreshCommit());
+    }
+  }
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  for (const uint8_t column_level : {uint8_t{0}, uint8_t{9}}) {
+    SCOPED_TRACE(testing::Message("column level ")
+                 << static_cast<int>(column_level));
+    irs::FunctionFieldOptions field_options{
+      [column_level](irs::field_id id) {
+        if (id != kLevelId) {
+          return irs::ColumnOptions{};
+        }
+        return irs::ColumnOptions{
+          .compression = duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
+          .compression_level = column_level};
+      },
+      irs::tests::MakeNormColumnIdProvider(),
+      DEFAULT_ROW_GROUP_SIZE,
+      {}};
+    field_options.codec_params = irs::ColCodecParams{.compression_level = 2};
+    irs::MemoryDirectory merged_dir;
+    irs::SegmentMeta merged_meta;
+    const irs::SegmentWriterOptions options{
+      .db = &::irs::DuckDBEngine::Instance().instance(),
+      .field_options = &field_options,
+    };
+    auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
+    ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options,
+                                   tests::merge::MergePool(1)));
+
+    auto segment = irs::SegmentReaderImpl::Open(
+      merged_dir, merged_meta, irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(2 * kDocsPerSegment, segment->docs_count());
+    const auto* cs = segment->GetColReader();
+    ASSERT_NE(nullptr, cs);
+    const auto* col = cs->Column(kLevelId);
+    ASSERT_NE(nullptr, col);
+    ASSERT_FALSE(col->DataBlocks().empty());
+    irs::ReadContext ctx{*cs};
+    irs::BlockWindow window{};
+    uint64_t row = 0;
+    for (const auto& block : col->DataBlocks()) {
+      EXPECT_EQ(block.codec->type,
+                duckdb::CompressionType::COMPRESSION_DICT_ZSTD);
+      window = col->Locate(row, window);
+      auto seg = col->OpenSegment(window.block, ctx);
+      auto info = seg->GetCompressionFunction().get_segment_info(
+        duckdb::QueryContext{}, *seg);
+      EXPECT_EQ(info["level"], column_level == 0 ? "2" : "9");
+      row += block.tuple_count;
+    }
+  }
+}
+
+TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
+  constexpr irs::field_id kTextId = kDocStringId;
+  constexpr size_t kDocsPerSegment = 30000;
+  const auto value = [](size_t g) {
+    static constexpr std::string_view kVerbs[] = {
+      "handled request", "rejected payment", "retried connection",
+      "flushed cache",   "opened session",   "closed stream",
+      "queued job",      "scheduled task"};
+    static constexpr std::string_view kServices[] = {
+      "checkout", "frontend", "cart", "shipping", "currency", "ads", "email"};
+    static constexpr std::string_view kAlphabet =
+      "abcdefghijklmnopqrstuvwxyz0123456789";
+    std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 7};
+    std::string id;
+    for (int i = 0; i < 16; ++i) {
+      id.push_back(kAlphabet[rng() % kAlphabet.size()]);
+    }
+    return "2026-10-05T12:" + std::to_string(rng() % 60) + " INFO " +
+           std::string{kServices[rng() % std::size(kServices)]} + " " +
+           std::string{kVerbs[rng() % std::size(kVerbs)]} + " id=" + id +
+           " user=" + std::to_string(rng() % 100000) + " took " +
+           std::to_string(rng() % 997) + "ms";
+  };
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t s = 0; s < 2; ++s) {
+      auto batch = writer->GetBatch();
+      for (size_t i = 0; i < kDocsPerSegment; ++i) {
+        auto doc = batch.Insert();
+        tests::StringField foo{"foo", "bar"};
+        foo.id = kFooId;
+        tests::InsertField(doc, foo);
+        auto& cw = doc.GetColWriter()->OpenColumn(
+          kTextId, duckdb::LogicalType::VARCHAR,
+          {.codec_params = irs::ColCodecParams{.tier = irs::WriteTier::Flush}});
+        duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
+          duckdb::StringVector::AddString(v, value(s * kDocsPerSegment + i));
+        cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(),
+                  v, 1);
+      }
+      batch.Commit();
+      ASSERT_TRUE(writer->RefreshCommit());
+    }
+  }
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  irs::FunctionFieldOptions field_options{
+    [](irs::field_id) { return irs::ColumnOptions{}; },
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
+  irs::MemoryDirectory merged_dir;
+  irs::SegmentMeta merged_meta;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance(),
+    .field_options = &field_options,
+  };
+  auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
+  ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options,
+                                 tests::merge::MergePool(1)));
+
+  auto segment = irs::SegmentReaderImpl::Open(
+    merged_dir, merged_meta, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2 * kDocsPerSegment, segment->docs_count());
+  const auto* cs = segment->GetColReader();
+  ASSERT_NE(nullptr, cs);
+  const auto* col = cs->Column(kTextId);
+  ASSERT_NE(nullptr, col);
+  ASSERT_FALSE(col->DataBlocks().empty());
+  irs::ReadContext ctx{*cs};
+  bool trained = false;
+  for (size_t b = 0; b < col->DataBlocks().size() && !trained; ++b) {
+    auto seg = col->OpenSegment(b, ctx);
+    auto info = seg->GetCompressionFunction().get_segment_info(
+      duckdb::QueryContext{}, *seg);
+    trained = info["dictionary"] == "local";
+  }
+  EXPECT_TRUE(trained);
+
+  auto state = col->InitScan(ctx);
+  uint64_t row = 0;
+  while (row < col->RowCount()) {
+    const auto take =
+      std::min<uint64_t>(col->RowCount() - row, STANDARD_VECTOR_SIZE);
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, take);
+    out.Flatten(take);
+    const auto* data = duckdb::FlatVector::GetData<duckdb::string_t>(out);
+    for (uint64_t k = 0; k < take; ++k) {
+      ASSERT_EQ(data[k].GetString(), value(row + k)) << "row " << row + k;
+    }
+    row += take;
+  }
+}
+
 TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
-  GTEST_SKIP() << "sorted-index merge path not supported";
+  const std::vector<std::vector<std::optional<std::string>>> segments{
+    {std::nullopt, "kiwi", "fig", "apple"},
+    {"quince", "pear", "lime", "date"},
+    {std::nullopt, "plum", "banana"},
+  };
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t s = 0; s != segments.size(); ++s) {
+      auto batch = writer->GetBatch();
+      for (const auto& key : segments[s]) {
+        auto doc = batch.Insert();
+        tests::StringField name{"foo", key.value_or(absl::StrCat("none", s))};
+        name.id = kFooId;
+        ASSERT_TRUE(tests::InsertField(doc, name));
+        tests::StringField same{"same", "AAA"};
+        same.id = kSameId;
+        ASSERT_TRUE(tests::InsertField(doc, same));
+        if (!key) {
+          continue;
+        }
+        auto& cw = doc.GetColWriter()->OpenColumn(kDocStringId,
+                                                  duckdb::LogicalType::VARCHAR);
+        duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
+          duckdb::StringVector::AddString(v, *key);
+        duckdb::FlatVector::SetSize(v, 1);
+        cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(),
+                  v, 1);
+      }
+      batch.Commit();
+      ASSERT_TRUE(writer->RefreshCommit());
+      AssertSnapshotEquality(
+        writer->GetSnapshot(),
+        irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+    }
+    tests::Remove(*writer, MakeByTerm("foo", "quince"));
+    ASSERT_TRUE(writer->RefreshCommit());
+    AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+  }
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(segments.size(), reader.size());
+  EXPECT_EQ(4, reader[0].docs_count());
+  EXPECT_EQ(4, reader[0].live_docs_count());
+  EXPECT_EQ(4, reader[1].docs_count());
+  EXPECT_EQ(3, reader[1].live_docs_count());
+  EXPECT_EQ(3, reader[2].docs_count());
+  EXPECT_EQ(3, reader[2].live_docs_count());
+
+  irs::FunctionFieldOptions field_options{
+    [](irs::field_id) { return irs::ColumnOptions{}; },
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
+  const std::vector<irs::SortKey> sort{
+    {{.column = kDocStringId,
+      .order = duckdb::OrderType::DESCENDING,
+      .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
+  irs::MemoryDirectory merged_dir;
+  irs::SegmentMeta merged_meta;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance(),
+    .field_options = &field_options,
+    .sort = &sort,
+  };
+  auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
+  ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options,
+                                 tests::merge::MergePool(1)));
+
+  auto segment = irs::SegmentReaderImpl::Open(
+    merged_dir, merged_meta, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(nullptr, segment);
+  const std::vector<std::string> expected{"none0",  "none2", "plum", "pear",
+                                          "lime",   "kiwi",  "fig",  "date",
+                                          "banana", "apple"};
+  ASSERT_EQ(expected.size(), segment->docs_count());
+  EXPECT_EQ(expected.size(), segment->live_docs_count());
+  std::vector<irs::doc_id_t> all(expected.size());
+  absl::c_iota(all, irs::doc_limits::min());
+  std::vector<irs::doc_id_t> live;
+  auto live_it = segment->docs_iterator();
+  for (auto doc = live_it->Next(); !irs::doc_limits::eof(doc);
+       doc = live_it->Next()) {
+    live.push_back(doc);
+  }
+  EXPECT_EQ(all, live);
+
+  const auto* col = segment->GetColReader()->Column(kDocStringId);
+  ASSERT_NE(nullptr, col);
+  EXPECT_EQ(expected.size(), col->RowCount());
+  irs::ReadContext ctx{*segment->GetColReader()};
+  auto state = col->InitScan(ctx);
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+  col->Scan(state, out, col->RowCount());
+  for (size_t row = 0; row != expected.size(); ++row) {
+    const auto value = out.GetValue(row);
+    EXPECT_EQ(
+      expected[row].starts_with("none") ? std::string{"NULL"} : expected[row],
+      value.IsNull() ? std::string{"NULL"} : value.ToString())
+      << row;
+  }
+
+  const auto* terms = segment->field(kFooId);
+  ASSERT_NE(nullptr, terms);
+  for (size_t row = 0; row != expected.size(); ++row) {
+    auto it = terms->iterator();
+    ASSERT_TRUE(
+      it->seek(irs::ViewCast<irs::byte_type>(std::string_view{expected[row]})));
+    auto postings = it->postings(irs::IndexFeatures::None);
+    irs::doc_id_t docs[irs::doc_limits::kBlockSize];
+    uint32_t freqs[irs::doc_limits::kBlockSize];
+    ASSERT_EQ(1, postings->NextDocs(docs, freqs)) << expected[row];
+    EXPECT_EQ(row + irs::doc_limits::min(), docs[0]) << expected[row];
+  }
+  EXPECT_EQ(expected.size(), terms->size());
+  EXPECT_EQ(expected.size(), terms->docs_count());
+  EXPECT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"apple"}),
+            (terms->min)());
+  EXPECT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"plum"}),
+            (terms->max)());
+  EXPECT_FALSE(terms->iterator()->seek(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quince"})));
+
+  const auto* same = segment->field(kSameId);
+  ASSERT_NE(nullptr, same);
+  EXPECT_EQ(1, same->size());
+  auto same_it = same->iterator();
+  ASSERT_TRUE(
+    same_it->seek(irs::ViewCast<irs::byte_type>(std::string_view{"AAA"})));
+  std::vector<irs::doc_id_t> same_docs;
+  auto same_postings =
+    ::tests::Docs(same_it->postings(irs::IndexFeatures::None));
+  for (auto doc = same_postings->Next(); !irs::doc_limits::eof(doc);
+       doc = same_postings->Next()) {
+    same_docs.push_back(doc);
+  }
+  EXPECT_EQ(all, same_docs);
+
+  const std::vector<const irs::SubReader*> inputs{&reader[0], &reader[1],
+                                                  &reader[2]};
+  EXPECT_EQ("", tests::merge::FirstDifference(
+                  tests::merge::ExpectedSortedMerge(inputs, sort),
+                  tests::merge::Dump(*segment)));
+}
+
+TEST_P(MergeWriterTestCase, sorted_compaction_keeps_each_segment_contiguous) {
+  constexpr size_t kSegments = 3;
+  constexpr size_t kDocs = 10;
+  irs::MemoryDirectory dir;
+  auto options = irs::tests::DefaultWriterOptions();
+  options.sort = {{.column = kDocStringId}};
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  ASSERT_NE(nullptr, writer);
+  {
+    std::array<irs::IndexWriter::Transaction, kSegments> batches{
+      writer->GetBatch(), writer->GetBatch(), writer->GetBatch()};
+    for (size_t s = 0; s != kSegments; ++s) {
+      for (size_t i = 0; i != kDocs; ++i) {
+        auto doc = batches[s].Insert();
+        tests::StringField foo{"foo", "bar"};
+        foo.id = kFooId;
+        ASSERT_TRUE(tests::InsertField(doc, foo));
+        tests::merge::WriteValue(doc, kDocStringId,
+                                 duckdb::LogicalType::VARCHAR,
+                                 duckdb::Value{"bar"});
+        tests::merge::WriteValue(
+          doc, kSeqId, duckdb::LogicalType::BIGINT,
+          duckdb::Value::BIGINT(static_cast<int64_t>(s * kDocs + i)));
+      }
+    }
+    for (auto& batch : batches) {
+      ASSERT_TRUE(batch.Commit());
+    }
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+  AssertSnapshotEquality(
+    writer->GetSnapshot(),
+    irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+  {
+    const auto reader =
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(kSegments, reader.size());
+    for (const auto& segment : reader) {
+      EXPECT_EQ(kDocs, segment.docs_count());
+      EXPECT_EQ(kDocs, segment.live_docs_count());
+    }
+  }
+
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{
+                                        std::numeric_limits<size_t>::max()})));
+  ASSERT_TRUE(writer->RefreshCommit());
+  AssertSnapshotEquality(
+    writer->GetSnapshot(),
+    irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+  const auto reader =
+    irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  const auto& segment = reader[0];
+  ASSERT_EQ(kSegments * kDocs, segment.docs_count());
+  ASSERT_EQ(kSegments * kDocs, segment.live_docs_count());
+  const auto seq = tests::merge::LiveValues(segment, kSeqId);
+  ASSERT_EQ(kSegments * kDocs, seq.size());
+  std::vector<int64_t> firsts;
+  for (size_t block = 0; block != kSegments; ++block) {
+    std::vector<int64_t> values;
+    for (size_t i = 0; i != kDocs; ++i) {
+      values.emplace_back(seq[block * kDocs + i].GetValue<int64_t>());
+    }
+    absl::c_sort(values);
+    std::vector<int64_t> expected(kDocs);
+    absl::c_iota(expected, values.front());
+    EXPECT_EQ(0, values.front() % static_cast<int64_t>(kDocs))
+      << "block " << block;
+    EXPECT_EQ(expected, values) << "block " << block;
+    firsts.emplace_back(values.front());
+  }
+  absl::c_sort(firsts);
+  EXPECT_EQ((std::vector<int64_t>{0, 10, 20}), firsts);
 }
 
 TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
@@ -2202,9 +2749,9 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
   irs::SegmentMeta index_segment;
   const irs::SegmentWriterOptions options{
     .db = &::irs::DuckDBEngine::Instance().instance()};
-  irs::MergeWriter writer(dir, options);
-  writer.Reset(reader.begin(), reader.end());
-  ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+  auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
+  ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                 tests::merge::MergePool(1)));
   auto segment = irs::SegmentReaderImpl::Open(
     dir, index_segment,
     irs::IndexReaderOptions{.db = &::irs::DuckDBEngine::Instance().instance()});
@@ -2309,9 +2856,9 @@ TEST_P(MergeWriterTestCase, merges_every_member_of_a_json_list) {
   irs::SegmentMeta index_segment;
   const irs::SegmentWriterOptions options{
     .db = &::irs::DuckDBEngine::Instance().instance()};
-  irs::MergeWriter writer(dir, options);
-  writer.Reset(reader.begin(), reader.end());
-  ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+  auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
+  ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                 tests::merge::MergePool(1)));
   auto segment = irs::SegmentReaderImpl::Open(
     dir, index_segment,
     irs::IndexReaderOptions{.db = &::irs::DuckDBEngine::Instance().instance()});
@@ -2380,10 +2927,11 @@ TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
   irs::SegmentMeta index_segment;
   const irs::SegmentWriterOptions options{
     .db = &::irs::DuckDBEngine::Instance().instance()};
-  irs::MergeWriter writer(dir, options);
-  writer.Reset(reader.begin(), reader.end());
-  ASSERT_SQL_ERROR(irs::GetReady(writer.Flush(index_segment)),
-                   ERRCODE_INDEX_CORRUPTED);
+  auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
+  ASSERT_SQL_ERROR(
+    std::ignore = irs::MergeSegments(dir, doc_map, index_segment, options,
+                                     tests::merge::MergePool(1)),
+    ERRCODE_INDEX_CORRUPTED);
 }
 
 INSTANTIATE_TEST_SUITE_P(merge_writer_test, MergeWriterTestCase,

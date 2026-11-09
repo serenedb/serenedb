@@ -85,7 +85,9 @@ ChainEnd WalkChain(const FsstDecoder& fsst, const char* in,
     SDB_ENSURE(
       lcp <= prev_len && enc_off + enc <= enc_end && off + lcp <= capacity,
       "col codec: corrupted front coding");
-    std::memcpy(out + off, out + prev_off, lcp);
+    if (lcp != 0) {
+      std::memcpy(out + off, out + prev_off, lcp);
+    }
     const auto room = capacity - (off + lcp);
     const auto dec =
       enc == 0 ? 0 : fsst.Decode(in + enc_off, enc, out + off + lcp, room);
@@ -156,6 +158,13 @@ struct FsstScan {
   }
 
   template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
+    WalkFrame(s, f, out, [&](uint32_t, std::string_view v) {
+      *ends++ = static_cast<uint32_t>(v.data() + v.size() - out);
+    });
+  }
+
+  template<typename Frames>
   void EnsureEntry(Frames& s, uint32_t e, uint32_t f) {
     const auto g = (e - s.frames[f].first_entry) / kChainRestart;
     if (!group_decoded[groups.Base(f) + g]) {
@@ -183,7 +192,9 @@ struct FsstScan {
     char* out = duckdb::char_ptr_cast(
       duckdb::StringVector::GetStringAllocator(s.dictionary->data)
         .Allocate(chain.written));
-    std::memcpy(out, group.data(), chain.written);
+    if (chain.written != 0) {
+      std::memcpy(out, group.data(), chain.written);
+    }
     uint64_t from = 0;
     for (auto e = first; e < end; ++e) {
       const auto to = ends[e - first];

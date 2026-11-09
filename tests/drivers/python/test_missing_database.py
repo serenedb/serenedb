@@ -3,7 +3,8 @@
 A database whose data file is missing: the default refuses to start, since
 coming back with an empty database would turn a lost file into silent data
 loss. --missing_database=skip boots without attaching it, and
---missing_database=drop removes it from the catalog.
+--missing_database=drop removes it from the catalog. CREATE DATABASE brings
+a skipped database back, empty and writable.
 
 A missing catalog log beside database directories that hold data refuses to
 start too. Empty directories a crashed first boot left are removed.
@@ -42,9 +43,9 @@ class _Server:
                  f"--listen=postgres://127.0.0.1:{self.port}", *flags],
                 stdout=out, stderr=subprocess.STDOUT)
 
-    def connect(self) -> psycopg.Connection:
+    def connect(self, dbname: str = "postgres") -> psycopg.Connection:
         return psycopg.connect(host="127.0.0.1", port=self.port,
-                               user="postgres", dbname="postgres",
+                               user="postgres", dbname=dbname,
                                autocommit=True)
 
     def wait_ready(self, timeout: float = 60.0) -> bool:
@@ -128,6 +129,59 @@ def test_missing_database_file(tmp_path: Path) -> None:
     try:
         assert after.wait_ready(), after.output()
         assert _databases(after) == ["postgres"]
+    finally:
+        after.stop()
+
+
+def test_skipped_database_created_again(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    server = _Server(datadir)
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute("CREATE DATABASE lost")
+            oid = conn.execute(
+                "SELECT oid FROM pg_database WHERE datname = 'lost'"
+            ).fetchone()[0]
+    finally:
+        server.stop()
+    for path in (datadir / "engine_v1" / str(oid)).glob("data.db*"):
+        path.unlink()
+
+    skipped = _Server(datadir, "--missing_database=skip")
+    try:
+        assert skipped.wait_ready(), skipped.output()
+        with skipped.connect() as conn:
+            conn.execute("CREATE DATABASE lost")
+        with skipped.connect("lost") as conn:
+            conn.execute("CREATE TABLE t(a INTEGER)")
+            conn.execute("INSERT INTO t VALUES (7)")
+            conn.execute(
+                "CREATE TABLE s(id INTEGER PRIMARY KEY, body TEXT) WITH "
+                "(storage = 'search', refresh_interval = 0, "
+                "compaction_interval = 10)")
+            for first in range(1, 601, 100):
+                conn.execute(
+                    "INSERT INTO s SELECT i, 'fox' FROM "
+                    f"generate_series({first}, {first + 99}) g(i)")
+                conn.execute("VACUUM (REFRESH_TABLE) s")
+            deadline = time.monotonic() + 60
+            while conn.execute(
+                    "SELECT count(*) FROM sdb_compact_history "
+                    "WHERE relation_id = (SELECT oid FROM pg_class "
+                    "WHERE relname = 's') AND origin = 'background' "
+                    "AND outcome = 'merged'").fetchone()[0] == 0:
+                assert time.monotonic() < deadline, "no background merge ran"
+                time.sleep(0.2)
+    finally:
+        skipped.stop()
+
+    after = _Server(datadir)
+    try:
+        assert after.wait_ready(), after.output()
+        with after.connect("lost") as conn:
+            assert conn.execute("SELECT a FROM t").fetchall() == [(7,)]
+            assert conn.execute("SELECT count(*) FROM s").fetchone()[0] == 600
     finally:
         after.stop()
 

@@ -26,10 +26,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
 
+#include "search/compaction/merge_runner.h"
 #include "utils/drain_gate.h"
 
 namespace sdb {
@@ -54,10 +56,15 @@ class SearchEngine final {
   static int MaxConcurrentCompactions() noexcept;
 
   SearchEngine();
-  ~SearchEngine() { gInstance = nullptr; }
+  ~SearchEngine();
 
   void start();
   void stop();
+
+  MergeRunner& Merges() noexcept { return *_merges; }
+  const duckdb::shared_ptr<duckdb::DedicatedPool>& MergePool() const noexcept {
+    return _merge_pool;
+  }
 
   // Launch the per-target refresh + compaction loops, registering their Futures
   // so stop() can join them.
@@ -69,27 +76,7 @@ class SearchEngine final {
   }
 
   // Signal the loops to stop without joining.
-  void RequestStop() noexcept {
-    _stopping.store(true, std::memory_order_release);
-  }
-
-  // Reserve / release one of the MaxConcurrentCompactions() slots. A fan-out
-  // sub-task holds a slot only while CompactUnsafe runs.
-  bool TryAcquireCompaction() noexcept {
-    const int cap = MaxConcurrentCompactions();
-    auto cur = _running_compactions.load(std::memory_order_relaxed);
-    while (cur < cap) {
-      if (_running_compactions.compare_exchange_weak(
-            cur, cur + 1, std::memory_order_acq_rel,
-            std::memory_order_relaxed)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  void ReleaseCompaction() noexcept {
-    _running_compactions.fetch_sub(1, std::memory_order_release);
-  }
+  void RequestStop() noexcept;
 
   uint32_t AcquireAnnWorkers(uint32_t want, uint32_t held,
                              uint32_t most = MaxAnnWorkersPerBuild()) noexcept {
@@ -115,21 +102,15 @@ class SearchEngine final {
     _running_ann_workers.fetch_sub(n, std::memory_order_release);
   }
 
-  // Free global slots right now. The coordinator throttles merge size when this
-  // is low (occupancy backpressure) so the pool always drains.
-  int FreeCompactionSlots() const noexcept {
-    const int cur = _running_compactions.load(std::memory_order_acquire);
-    return std::max(0, MaxConcurrentCompactions() - cur);
-  }
-
   bool IsBackupActive() const noexcept { return _maintenance.IsClosed(); }
   utils::DrainGate& Maintenance() noexcept { return _maintenance; }
 
  private:
   utils::DrainGate _maintenance;
   std::atomic<bool> _stopping{false};
-  std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};
+  std::unique_ptr<MergeRunner> _merges;
+  duckdb::shared_ptr<duckdb::DedicatedPool> _merge_pool;
   // Live loop futures plus one baseline token held for the engine's lifetime:
   // loops come and go with CREATE/DROP, and a transient zero would complete the
   // group for good. stop() Done()s the token, then Waits.
@@ -166,7 +147,7 @@ class [[nodiscard]] ManualCompactionSlot {
   ManualCompactionSlot(const ManualCompactionSlot&) = delete;
   ManualCompactionSlot& operator=(const ManualCompactionSlot&) = delete;
 
-  const irs::AnnBuildEnv* AnnEnv() const noexcept;
+  static const irs::AnnBuildEnv* AnnEnv() noexcept;
 
  private:
   bool _held;

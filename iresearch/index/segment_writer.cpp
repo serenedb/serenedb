@@ -36,6 +36,7 @@
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/index_utils.hpp"
@@ -71,7 +72,8 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 
 size_t SegmentWriter::memory_active() const noexcept {
   return _docs_context.MemoryActive() + _docs_mask.ByteSize() +
-         _fields.MemoryActive();
+         _fields.MemoryActive() +
+         (_col_writer ? _col_writer->StagedBytes() : 0);
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
@@ -101,22 +103,27 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
-    _hnsw_bases{options.hnsw_bases} {}
+    _sort{options.sort},
+    _hnsw_bases{options.hnsw_bases} {
+  SDB_ASSERT(!_sort || !_sort->empty());
+}
 
 void SegmentWriter::FlushFields(FlushState& state,
-                                std::span<const BasicTermReader* const> extra) {
+                                std::span<const BasicTermReader* const> extra,
+                                const DocOrder& order) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.Flush(*_field_writer, state, extra);
+    _fields.Flush(*_field_writer, state, extra, order);
   } catch (...) {
     _field_writer.reset();
     throw;
   }
 }
 
-void SegmentWriter::flush(IndexSegment& segment,
-                          DocumentMaskBuilder& docs_mask) {
+void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
+                          DocOrder& order) {
+  SDB_ASSERT(order.Empty());
   auto& meta = segment.meta;
 
   FlushState state{
@@ -133,7 +140,10 @@ void SegmentWriter::flush(IndexSegment& segment,
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
-    _col_writer->Commit(buffered_docs());
+    if (_sort) {
+      order = MakeDocOrder(FlushOrder(*_sort, *_col_writer, buffered_docs()));
+    }
+    _col_writer->Commit(buffered_docs(), order.new2old);
     if (_ann_env != nullptr) {
       GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
     } else {
@@ -150,7 +160,7 @@ void SegmentWriter::flush(IndexSegment& segment,
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
       PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
-    FlushFields(state, cluster_readers);
+    FlushFields(state, cluster_readers, order);
   }
 
   for (const auto& w : ann_writers) {
@@ -163,7 +173,17 @@ void SegmentWriter::flush(IndexSegment& segment,
 
   idx.Commit();
 
-  docs_mask = std::move(_docs_mask);
+  if (order.Empty()) {
+    docs_mask = std::move(_docs_mask);
+  } else {
+    std::move(_docs_mask)
+      .Take()
+      .ForEachRun(nullptr, [&](doc_id_t first, doc_id_t end) {
+        order.MaskRows(docs_mask, first - doc_limits::min(),
+                       end - doc_limits::min());
+        return true;
+      });
+  }
 
   meta.docs_count = state.doc_count;
   meta.live_docs_count =
@@ -223,7 +243,8 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   }
 
   const auto* active = ActiveFieldOptions();
-  _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
+  _col_writer = std::make_unique<ColWriter>(
+    _dir, meta.name, _db, WriteTier::Flush, static_cast<bool>(_sort));
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());

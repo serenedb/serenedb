@@ -29,11 +29,11 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/multiterm_query.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <type_traits>
 
 #include "filter_test_case_base.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -1073,8 +1073,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_compaction) {
     }
     CheckQuery(*MakeRegexp("same", ".*"), all, rdr);
   }
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   {
     auto rdr = open_reader();

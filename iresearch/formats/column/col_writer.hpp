@@ -53,7 +53,8 @@ namespace irs {
 class ColWriter final {
  public:
   ColWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db, WriteTier tier = WriteTier::Flush);
+            duckdb::DatabaseInstance& db, WriteTier tier = WriteTier::Flush,
+            bool stage_all = false);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -61,12 +62,32 @@ class ColWriter final {
 
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
 
+  ColumnWriter* StagedColumn(field_id id) noexcept;
+
+  uint64_t StagedBytes() const noexcept;
+
   void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
                            ColumnWriterOptions options);
+
+  ColumnWriter& OpenedColumn(field_id id) noexcept;
+
+  void CloseColumn(field_id id);
+
+  void PlanParts(field_id id, uint32_t parts);
+
+  ColumnWriter& OpenColumnPart(field_id id, uint32_t part,
+                               duckdb::LogicalType type,
+                               const ColumnWriterOptions& options);
+
+  void CloseColumnPart(field_id id, uint32_t part);
+
+  bool CopyColumnPart(field_id id, uint32_t part, ReadContext& ctx,
+                      const ColumnReader& column, bool validity,
+                      absl::FunctionRef<bool()> progress);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -78,12 +99,13 @@ class ColWriter final {
 
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
-  bool Commit(uint64_t target_row);
-  bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);
+  bool Commit(uint64_t target_row, std::span<const uint32_t> new2old = {});
+  bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
+              std::span<const uint32_t> new2old = {});
 
-  yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env);
-  yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env,
-                                absl::FunctionRef<bool()> progress);
+  yaclib::Task<> ComputeAnn(const AnnBuildEnv* env);
+  yaclib::Task<> ComputeAnn(field_id column, ColReader& reader,
+                            const AnnBuildEnv* env);
 
   void Rollback() noexcept;
 
@@ -99,7 +121,22 @@ class ColWriter final {
     ColumnMeta meta;
   };
 
+  struct Column {
+    Column(uint32_t count, bool whole) : parts(count), whole{whole} {}
+
+    std::vector<ColumnEntry> parts;
+    bool whole;
+  };
+
+  Column& AddColumn(field_id id, uint32_t parts, bool whole);
+
+  Column& ColumnOf(field_id id);
+
+  ColumnEntry& PartOf(field_id id, uint32_t part);
+
   static void Close(ColumnEntry& entry);
+
+  static ColumnMeta Assemble(Column& column);
 
   void EnsureOut();
   NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
@@ -112,12 +149,13 @@ class ColWriter final {
   HnswBases* _hnsw_bases = nullptr;
   std::unique_ptr<ColFileWriter> _file;
   std::unique_ptr<WriteContext> _write_ctx;
-  std::vector<ColumnEntry> _columns;
+  std::vector<std::unique_ptr<Column>> _columns;
   irs::containers::FlatHashMap<field_id, size_t> _by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> _norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<AnnEntry> _ann_writers;
   irs::containers::FlatHashMap<field_id, size_t> _ann_by_id;
+  bool _stage_all = false;
   bool _committed = false;
 };
 

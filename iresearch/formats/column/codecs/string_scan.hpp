@@ -204,6 +204,35 @@ struct HeapReference {
 void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
                    duckdb::Vector& result);
 
+struct FrameBytes {
+  explicit FrameBytes(uint32_t size)
+    : data{duckdb::make_unsafe_uniq_array_uninitialized<char>(
+        std::max<uint32_t>(size, 1))},
+      size{size} {}
+
+  duckdb::unsafe_unique_array<char> data;
+  uint32_t size;
+};
+
+struct FrameReference final : duckdb::AuxiliaryDataHolder {
+  explicit FrameReference(duckdb::shared_ptr<const FrameBytes> frame) noexcept
+    : frame{std::move(frame)} {}
+
+  duckdb::idx_t GetAllocationSize() const final { return frame->size; }
+  bool CertifiesImmutablePayloads() const final { return true; }
+
+  duckdb::shared_ptr<const FrameBytes> frame;
+};
+
+struct FrameLink {
+  AuxiliaryLink target;
+  const FrameBytes* frame = nullptr;
+};
+
+void ReferenceFrame(FrameLink& link,
+                    const duckdb::shared_ptr<const FrameBytes>& frame,
+                    duckdb::Vector& result);
+
 void EmitDecoded(const DecodedDictionary& decoded,
                  std::span<const EntryAt> order, duckdb::Vector& result,
                  HeapReference& reference);

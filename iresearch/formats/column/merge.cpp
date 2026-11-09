@@ -20,19 +20,33 @@
 
 #include "iresearch/formats/column/merge.hpp"
 
-#include <absl/container/flat_hash_set.h>
+#include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cstddef>
+#include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/function/compression_function.hpp>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/column/col_copy_check.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -40,207 +54,613 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 namespace {
 
-class HyperLogLogMerger {
- public:
-  void Begin() {
-    _hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
-    if (!_hashes.GetBufferRef()) {
-      _hashes.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
-                         STANDARD_VECTOR_SIZE);
-    }
-  }
+const ColumnReader* ColumnOf(const MergeSource& source, field_id column) {
+  return source.col_reader ? source.col_reader->Column(column) : nullptr;
+}
 
-  bool MergeStored(const ColumnReader& col) {
-    if (const auto* src = col.HyperLogLog()) {
-      _hyperloglog->Merge(*src);
-      return true;
-    }
+bool IngestsLists(const duckdb::LogicalType& type) {
+  if (type.InternalType() == duckdb::PhysicalType::LIST) {
+    return true;
+  }
+  if (type.id() != duckdb::LogicalTypeId::STRUCT) {
     return false;
   }
+  return absl::c_any_of(
+    duckdb::StructType::GetChildTypes(type), [](const auto& field) {
+      return field.second.InternalType() == duckdb::PhysicalType::LIST;
+    });
+}
 
-  void MergeValues(const duckdb::Vector& values, duckdb::idx_t count) {
-    UpdateFrom(values, count);
+constexpr uint64_t kOrderedRowsInFlight = uint64_t{1} << 19;
+constexpr uint64_t kOrderedStepMin = 64;
+
+uint32_t OrderedStep(size_t inputs) {
+  const auto rows =
+    std::clamp<uint64_t>(kOrderedRowsInFlight / std::max<size_t>(inputs, 1),
+                         kOrderedStepMin, STANDARD_VECTOR_SIZE);
+  return static_cast<uint32_t>(std::bit_floor(rows));
+}
+
+bool BlocksRelocatable(const ColumnReader& column) {
+  if (column.Type().InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return true;
   }
+  return absl::c_all_of(column.DataBlocks(), [](const ColumnBlockMeta& block) {
+    const auto type = block.codec->type;
+    SDB_ASSERT(type != duckdb::CompressionType::COMPRESSION_CONSTANT &&
+               type != duckdb::CompressionType::COMPRESSION_EMPTY &&
+               type != duckdb::CompressionType::COMPRESSION_DICTIONARY &&
+               type != duckdb::CompressionType::COMPRESSION_FSST);
+    return type == duckdb::CompressionType::COMPRESSION_DICT_FSST ||
+           duckdb::IsSereneDBCompressionType(type);
+  });
+}
 
-  duckdb::shared_ptr<duckdb::HyperLogLog> Take() {
-    SDB_ASSERT(_hyperloglog);
-    return std::move(_hyperloglog);
-  }
-
- private:
-  void UpdateFrom(const duckdb::Vector& input, duckdb::idx_t count) {
-    duckdb::VectorOperations::Hash(input, _hashes, count);
-    _hyperloglog->Update(input, _hashes);
-  }
-
-  duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
-  duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
-};
+uint32_t ValuedIn(const std::vector<duckdb::sel_t>& kept, uint64_t take) {
+  return static_cast<uint32_t>(
+    absl::c_lower_bound(kept, static_cast<duckdb::sel_t>(take)) - kept.begin());
+}
 
 }  // namespace
 
-bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress) {
-  std::vector<std::pair<field_id, const ColumnReader*>> ordered_cols;
-  absl::flat_hash_set<field_id> seen_ids;
+std::vector<duckdb::sel_t>& ColumnMerger::KeptFor(size_t si, uint64_t pos) {
+  auto& kept = _kept_rows[si];
+  kept.once.Call([&] {
+    const auto& reader = *_sources[si].reader;
+    auto mask = MakeGenericDocsMask(reader);
+    const uint64_t rows = reader.docs_count();
+    kept.windows.resize((rows + STANDARD_VECTOR_SIZE - 1) /
+                        STANDARD_VECTOR_SIZE);
+    for (size_t w = 0; w != kept.windows.size(); ++w) {
+      auto& slot = kept.windows[w];
+      slot.resize(STANDARD_VECTOR_SIZE + doc_limits::kDocsSlack);
+      const auto first = static_cast<doc_id_t>(
+        uint64_t{w} * STANDARD_VECTOR_SIZE + doc_limits::min());
+      slot.resize(mask.FillLive(first, STANDARD_VECTOR_SIZE, slot.data()));
+    }
+  });
+  const size_t w = pos / STANDARD_VECTOR_SIZE;
+  SDB_ASSERT(w < kept.windows.size());
+  return kept.windows[w];
+}
+
+auto& ColumnMerger::Slot(this auto& self, field_id column) {
+  const auto it = self._slots.find(column);
+  SDB_ASSERT(it != self._slots.end());
+  return it->second;
+}
+
+const ColumnReader& ColumnMerger::First(field_id column) const {
+  return *Slot(column).first;
+}
+
+ColumnOptions ColumnMerger::Options(field_id column) const {
+  return _field_options ? _field_options->GetColumnOptions(column)
+                        : ColumnOptions{};
+}
+
+ColCodecParams ColumnMerger::CodecParams(const ColumnOptions& opts) const {
+  return _field_options ? _field_options->CodecParams(opts) : ColCodecParams{};
+}
+
+std::span<const field_id> ColumnMerger::AnnFields(
+  field_id column) const noexcept {
+  return _field_options ? _field_options->AnnFields(column)
+                        : std::span<const field_id>{};
+}
+
+ColumnWriterOptions ColumnMerger::WriterOptions(field_id column) const {
+  const auto opts = Options(column);
+  return {
+    .skip_validity = opts.skip_validity,
+    .row_group_size = _row_group_size,
+    .compression = opts.compression,
+    .codec_params = CodecParams(opts),
+  };
+}
+
+ColumnWriter& ColumnMerger::OpenPart(field_id column, uint32_t part,
+                                     ColWriter& output) const {
+  return output.OpenColumnPart(column, part, First(column).Type(),
+                               WriterOptions(column));
+}
+
+template<typename Visit>
+bool ColumnMerger::VisitRows(field_id column, uint64_t begin, uint64_t end,
+                             std::span<const std::shared_ptr<ReadContext>> ctxs,
+                             const MergeProgress& progress, Visit&& visit) {
+  const auto& type = First(column).Type();
+  ColumnReader::VectorScratch batch_scratch{type};
+  uint64_t source_end = 0;
+  for (size_t si = 0; si < _sources.size() && source_end < end; ++si) {
+    const auto& s = _sources[si];
+    const uint64_t source_begin = source_end;
+    source_end += s.alive_count;
+    const uint64_t lo = std::max(begin, source_begin);
+    const uint64_t hi = std::min(end, source_end);
+    const auto* col = ColumnOf(s, column);
+    if (lo >= hi || !col) {
+      continue;
+    }
+    SDB_ASSERT(col->Type() == type);
+    const uint64_t skip = lo - source_begin;
+    auto state =
+      col->InitScan(ctxs.empty() ? MergeReadContext(*s.col_reader, _cache,
+                                                    StreamsFrames(type))
+                                 : ctxs[si]);
+    const uint64_t total = col->RowCount();
+    if (!HasRemovals(s.reader->Meta())) {
+      const uint64_t stop = std::min(skip + (hi - lo), total);
+      uint64_t pos = std::min(skip, stop);
+      col->Skip(state, pos);
+      while (pos < stop) {
+        if (!progress()) {
+          return false;
+        }
+        const auto take =
+          std::min<duckdb::idx_t>(stop - pos, STANDARD_VECTOR_SIZE);
+        auto& batch = batch_scratch.Reset();
+        col->Scan(state, batch, take);
+        visit(si, source_begin + pos, batch, take);
+        pos += take;
+      }
+      continue;
+    }
+    uint64_t to_skip = skip;
+    uint64_t need = hi - lo;
+    uint64_t scanned = 0;
+    for (uint64_t pos = 0; pos < total && need != 0;
+         pos += STANDARD_VECTOR_SIZE) {
+      const auto take =
+        std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
+      auto& kept_idx = KeptFor(si, pos);
+      const uint64_t kept_in_window = ValuedIn(kept_idx, take);
+      if (to_skip >= kept_in_window) {
+        to_skip -= kept_in_window;
+        continue;
+      }
+      if (!progress()) {
+        return false;
+      }
+      const auto kept = std::min(kept_in_window, to_skip + need) - to_skip;
+      const duckdb::SelectionVector sel{kept_idx.data() + to_skip, kept};
+      const uint64_t at = hi - need;
+      to_skip = 0;
+      need -= kept;
+      col->Skip(state, pos - scanned);
+      auto& batch = batch_scratch.Reset();
+      col->Scan(state, batch, take);
+      scanned = pos + take;
+      duckdb::Vector selected{batch, sel, kept};
+      visit(si, at, selected, kept);
+    }
+  }
+  return true;
+}
+
+struct ColumnMerger::OrderedInput {
+  OrderedInput(const duckdb::LogicalType& type, bool fresh, uint32_t step)
+    : scratch{type, step}, fresh{fresh}, step{step}, pending_sel{step} {}
+
+  duckdb::Vector& NextBatch() {
+    if (fresh) {
+      return owned.emplace(scratch.vector.GetType(), step);
+    }
+    return scratch.Reset();
+  }
+
+  const ColumnReader* col = nullptr;
+  ColumnReader::ScanState state;
+  ColumnReader::VectorScratch scratch;
+  std::optional<duckdb::Vector> owned;
+  bool fresh;
+  uint32_t step;
+  const duckdb::Vector* batch = nullptr;
+  const duckdb::sel_t* rows = nullptr;
+  std::vector<duckdb::sel_t> kept;
+  duckdb::SelectionVector pending_sel;
+  uint64_t valued = 0;
+  uint64_t live = 0;
+  uint64_t window = 0;
+  uint64_t scanned = 0;
+  uint64_t skip = 0;
+  uint32_t at = 0;
+  uint32_t size = 0;
+  uint32_t pending = 0;
+  uint32_t base = 0;
+  bool masked = false;
+};
+
+void ColumnMerger::OpenOrdered(OrderedInput& in, size_t si, field_id column,
+                               uint64_t live) {
+  const auto& s = _sources[si];
+  in.live = live;
+  in.col = ColumnOf(s, column);
+  if (!in.col) {
+    return;
+  }
+  auto ctx =
+    MergeReadContext(*s.col_reader, _cache, StreamsFrames(in.col->Type()));
+  ctx->SetReadAhead(false);
+  in.state = in.col->InitScan(std::move(ctx));
+  const uint64_t total = in.col->RowCount();
+  if (!HasRemovals(s.reader->Meta())) {
+    in.valued = total;
+    in.window = std::min(live, total);
+    in.col->Skip(in.state, in.window);
+    return;
+  }
+  in.masked = true;
+  for (uint64_t pos = 0; pos < total; pos += STANDARD_VECTOR_SIZE) {
+    const auto n = ValuedIn(
+      KeptFor(si, pos), std::min<uint64_t>(total - pos, STANDARD_VECTOR_SIZE));
+    if (in.valued <= live && live < in.valued + n) {
+      in.window = pos;
+      in.skip = live - in.valued;
+    }
+    in.valued += n;
+  }
+}
+
+void ColumnMerger::LoadOrdered(OrderedInput& in, size_t si) {
+  const uint64_t total = in.col->RowCount();
+  auto& batch = in.NextBatch();
+  in.batch = &batch;
+  if (!in.masked) {
+    const auto take = std::min<uint64_t>(total - in.window, in.step);
+    in.col->Scan(in.state, batch, take);
+    in.at = 0;
+    in.size = static_cast<uint32_t>(take);
+    in.window += take;
+    return;
+  }
+  while (true) {
+    const auto pos = in.window;
+    const auto take = std::min<uint64_t>(total - pos, in.step);
+    const auto& kept = KeptFor(si, pos);
+    const auto off = static_cast<duckdb::sel_t>(pos % STANDARD_VECTOR_SIZE);
+    const auto first = absl::c_lower_bound(kept, off);
+    const auto last = std::lower_bound(first, kept.end(),
+                                       static_cast<duckdb::sel_t>(off + take));
+    const auto n = static_cast<uint32_t>(last - first);
+    in.window = pos + take;
+    if (n <= in.skip) {
+      in.skip -= n;
+      continue;
+    }
+    in.col->Skip(in.state, pos - in.scanned);
+    in.col->Scan(in.state, batch, take);
+    in.scanned = pos + take;
+    if (off == 0) {
+      in.rows = kept.data();
+    } else {
+      in.kept.clear();
+      for (auto it = first; it != last; ++it) {
+        in.kept.emplace_back(*it - off);
+      }
+      in.rows = in.kept.data();
+    }
+    in.at = static_cast<uint32_t>(in.skip);
+    in.size = n;
+    in.skip = 0;
+    return;
+  }
+}
+
+template<typename Visit>
+bool ColumnMerger::VisitOrdered(field_id column, uint64_t begin, uint64_t end,
+                                const MergeProgress& progress, Visit&& visit) {
+  static constexpr uint16_t kNullSlot = std::numeric_limits<uint16_t>::max();
+  const auto& type = First(column).Type();
+  const auto inputs = _order->Inputs();
+  std::vector<uint64_t> live(_sources.size());
+  _order->LiveRowsBefore(begin, live);
+  std::vector<uint64_t> last(_sources.size());
+  _order->LiveRowsBefore(end, last);
+  std::vector<std::unique_ptr<OrderedInput>> cursors(_sources.size());
+  std::vector<uint32_t> active;
+  const bool fresh = IngestsLists(type);
+  const auto step = OrderedStep(_sources.size());
+  ColumnReader::VectorScratch staging{type};
+  std::optional<duckdb::Vector> owned;
+  const duckdb::Vector null_row{duckdb::Value{type}, duckdb::count_t{1}};
+  duckdb::SelectionVector out_sel{STANDARD_VECTOR_SIZE};
+  std::array<uint16_t, STANDARD_VECTOR_SIZE> slot_input;
+  std::array<uint16_t, STANDARD_VECTOR_SIZE> slot_index;
+  uint32_t n = 0;
+  bool nulls = false;
+  uint64_t chunk_at = begin;
+  const auto flush = [&] {
+    if (n == 0) {
+      return;
+    }
+    if (active.size() == 1 && !nulls) {
+      auto& in = *cursors[active.front()];
+      visit(chunk_at, duckdb::Vector{*in.batch, in.pending_sel, n}, n);
+    } else {
+      auto& out =
+        fresh ? owned.emplace(type, STANDARD_VECTOR_SIZE) : staging.Reset();
+      uint32_t off = 0;
+      for (const auto a : active) {
+        auto& in = *cursors[a];
+        duckdb::ImmutableStrings::Copy(*in.batch, out, in.pending_sel,
+                                       in.pending, 0, off);
+        in.base = off;
+        off += in.pending;
+      }
+      if (nulls) {
+        duckdb::ImmutableStrings::Copy(null_row, out, 1, 0, off);
+      }
+      duckdb::FlatVector::SetSize(out, off + (nulls ? 1 : 0));
+      for (uint32_t k = 0; k != n; ++k) {
+        out_sel.set_index(k, slot_input[k] == kNullSlot
+                               ? off
+                               : cursors[slot_input[k]]->base + slot_index[k]);
+      }
+      visit(chunk_at, duckdb::Vector{out, out_sel, n}, n);
+    }
+    for (const auto a : active) {
+      auto& cursor = cursors[a];
+      cursor->pending = 0;
+      if (cursor->live == last[a]) {
+        cursor.reset();
+      }
+    }
+    active.clear();
+    n = 0;
+    nulls = false;
+  };
+  for (uint64_t row = begin; row < end;) {
+    const auto i = inputs[row];
+    auto run_end = row + 1;
+    while (run_end < end && inputs[run_end] == i) {
+      ++run_end;
+    }
+    auto& cursor = cursors[i];
+    if (!cursor) {
+      cursor = std::make_unique<OrderedInput>(type, fresh, step);
+      OpenOrdered(*cursor, i, column, live[i]);
+    }
+    auto& in = *cursor;
+    while (row < run_end) {
+      if (in.live >= in.valued) {
+        const auto take =
+          n == 0 ? run_end - row
+                 : std::min<uint64_t>(run_end - row, STANDARD_VECTOR_SIZE - n);
+        if (n != 0) {
+          std::fill_n(slot_input.begin() + n, take, kNullSlot);
+          n += static_cast<uint32_t>(take);
+          nulls = true;
+        }
+        row += take;
+        in.live += take;
+        if (n == STANDARD_VECTOR_SIZE) {
+          flush();
+        }
+        continue;
+      }
+      if (in.at == in.size) {
+        if (in.pending != 0) {
+          flush();
+        }
+        if (!progress()) {
+          return false;
+        }
+        LoadOrdered(in, i);
+        continue;
+      }
+      const auto take = static_cast<uint32_t>(std::min<uint64_t>(
+        {run_end - row, in.size - in.at, STANDARD_VECTOR_SIZE - n}));
+      if (n == 0) {
+        chunk_at = row;
+      }
+      if (in.pending == 0) {
+        active.push_back(i);
+      }
+      for (uint32_t k = 0; k != take; ++k) {
+        const auto at = in.at + k;
+        in.pending_sel.set_index(in.pending + k, in.rows ? in.rows[at] : at);
+        slot_input[n + k] = i;
+        slot_index[n + k] = static_cast<uint16_t>(in.pending + k);
+      }
+      in.pending += take;
+      in.at += take;
+      in.live += take;
+      n += take;
+      row += take;
+      if (n == STANDARD_VECTOR_SIZE) {
+        flush();
+      }
+    }
+    if (cursor && cursor->live == last[i] && cursor->pending == 0) {
+      cursor.reset();
+    }
+  }
+  flush();
+  return true;
+}
+
+ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
+                           const IndexFieldOptions* field_options,
+                           const MergeOrder* order, duckdb::ObjectCache& cache)
+  : _sources{sources},
+    _field_options{field_options},
+    _order{order},
+    _cache{&cache},
+    _row_group_size{field_options ? field_options->row_group_size
+                                  : uint32_t{DEFAULT_ROW_GROUP_SIZE}} {
   for (const auto& s : sources) {
     if (!s.col_reader) {
       continue;
     }
+    _db = &s.col_reader->Database();
     for (const auto& col : s.col_reader->Columns()) {
       if (field_options &&
           field_options->GetFieldKind(col->Id()) == FieldKind::None) {
         continue;
       }
-      if (seen_ids.insert(col->Id()).second) {
-        ordered_cols.emplace_back(col->Id(), col.get());
+      if (_slots.try_emplace(col->Id(), ColumnSlot{.first = col.get()})
+            .second) {
+        _ids.emplace_back(col->Id());
       }
     }
   }
-  if (ordered_cols.empty()) {
-    return true;
+  if (_ids.empty()) {
+    return;
   }
+  _kept_rows = std::make_unique<KeptRows[]>(sources.size());
+}
 
-  std::vector<std::optional<ReadContext>> source_ctxs(sources.size());
-  for (size_t i = 0; i < sources.size(); ++i) {
-    if (sources[i].col_reader) {
-      source_ctxs[i].emplace(*sources[i].col_reader);
-    }
+uint64_t ColumnMerger::StoredBytes(field_id column) const {
+  uint64_t bytes = 0;
+  for (size_t input = 0; input != _sources.size(); ++input) {
+    bytes += StoredBytes(column, input);
   }
+  return bytes;
+}
 
-  HyperLogLogMerger hyperloglog;
-  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-  std::vector<std::vector<std::optional<std::vector<duckdb::sel_t>>>>
-    kept_cache(sources.size());
-  auto kept_for = [&](size_t si, const SubReader& reader,
-                      uint64_t pos) -> const std::vector<duckdb::sel_t>& {
-    auto& windows = kept_cache[si];
-    const size_t w = pos / STANDARD_VECTOR_SIZE;
-    if (windows.size() <= w) {
-      windows.resize(w + 1);
-    }
-    auto& slot = windows[w];
-    if (!slot) {
-      slot.emplace(STANDARD_VECTOR_SIZE + doc_limits::kDocsSlack);
-      const auto first_doc = static_cast<doc_id_t>(pos + doc_limits::min());
-      slot->resize(MakeGenericDocsMask(reader.docs_mask())
-                     .FillLive(first_doc, STANDARD_VECTOR_SIZE, slot->data()));
-    }
-    return *slot;
+uint64_t ColumnMerger::StoredBytes(field_id column, size_t input) const {
+  const auto* col = ColumnOf(_sources[input], column);
+  return col ? irs::StoredBytes(*col) : 0;
+}
+
+bool ColumnMerger::Splittable(field_id column) const {
+  const auto opts = Options(column);
+  return !opts.hyperloglog && AnnFields(column).empty() &&
+         !duckdb::TypeVisitor::Contains(First(column).Type(),
+                                        duckdb::LogicalTypeId::VARIANT);
+}
+
+bool ColumnMerger::Copyable(field_id column, size_t input) const {
+  const auto& source = _sources[input];
+  const auto* col = ColumnOf(source, column);
+  if (!_field_options || !col || HasRemovals(source.reader->Meta()) ||
+      col->Type().IsNested() || !Splittable(column)) {
+    return false;
+  }
+  if (col->RowCount() != source.alive_count ||
+      col->RowCount() < uint64_t{_row_group_size} * kCopyMinRowGroups) {
+    return false;
+  }
+  if (Options(column).skip_validity && col->HasValidity()) {
+    return false;
+  }
+  return BlocksRelocatable(*col);
+}
+
+bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
+                              uint64_t end, ColWriter& output,
+                              const MergeProgress& progress) {
+  SDB_ASSERT(begin < end);
+  auto& cw = OpenPart(column, part, output);
+  const auto append = [&](uint64_t at, const duckdb::Vector& values,
+                          duckdb::idx_t count) {
+    cw.Append(at - begin, values, count);
   };
-  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  if (field_options) {
-    row_group_size = field_options->row_group_size;
+  if (!(_order ? VisitOrdered(column, begin, end, progress, append)
+               : VisitRows(
+                   column, begin, end, {}, progress,
+                   [&](size_t, uint64_t at, const duckdb::Vector& values,
+                       duckdb::idx_t count) { append(at, values, count); }))) {
+    return false;
   }
-  for (const auto& [field_id_v, first_col] : ordered_cols) {
-    const auto opts = field_options
-                        ? field_options->GetColumnOptions(field_id_v)
-                        : ColumnOptions{};
+  cw.PadNullsTo(end - begin);
+  output.CloseColumnPart(column, part);
+  return true;
+}
 
-    auto& cw = output.OpenColumn(
-      field_id_v, first_col->Type(),
-      {
-        .skip_validity = opts.skip_validity,
-        .row_group_size = row_group_size,
-        .compression = opts.compression,
-        .codec_params =
-          field_options ? field_options->CodecParams(opts) : ColCodecParams{},
+bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
+                             uint64_t begin, uint64_t end, ColWriter& output,
+                             const MergeProgress& progress) {
+  const auto& source = _sources[input];
+  const auto& col = *ColumnOf(source, column);
+  const auto estimate =
+    EstimateReencode(*source.col_reader, col, *_field_options, _cache);
+  if (ReencodePays(estimate)) {
+    return MergeRange(column, part, begin, end, output, progress);
+  }
+  ReadContext ctx{*source.col_reader};
+  return output.CopyColumnPart(column, part, ctx, col,
+                               !Options(column).skip_validity, progress);
+}
+
+void ColumnMerger::Open(field_id column, ColWriter& output) const {
+  output.OpenColumn(column, First(column).Type(), WriterOptions(column));
+  for (const auto ann_field : AnnFields(column)) {
+    auto& ann = output.AttachAnn(
+      column, *_field_options->GetColumnOptions(ann_field).ann_info);
+    if (!_order) {
+      ann.SetMergeSources(_sources);
+    }
+  }
+}
+
+bool ColumnMerger::Merge(field_id column, ColWriter& output,
+                         const MergeProgress& progress) {
+  const auto opts = Options(column);
+  auto& cw = output.OpenedColumn(column);
+  duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
+  duckdb::Vector hashes{duckdb::LogicalType::HASH, nullptr};
+  if (opts.hyperloglog) {
+    hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
+    hashes.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
+                      STANDARD_VECTOR_SIZE);
+  }
+  const auto count_distinct = [&](const duckdb::Vector& values,
+                                  duckdb::idx_t count) {
+    duckdb::VectorOperations::Hash(values, hashes, count);
+    hyperloglog->Update(values, hashes);
+  };
+
+  uint64_t rows = 0;
+  bool merged = false;
+  if (_order) {
+    rows = _order->Rows();
+    merged = VisitOrdered(
+      column, 0, rows, progress,
+      [&](uint64_t at, const duckdb::Vector& values, duckdb::idx_t count) {
+        cw.Append(at, values, count);
+        if (hyperloglog) {
+          count_distinct(values, count);
+        }
       });
-    if (field_options) {
-      for (const auto ann : field_options->AnnFields(field_id_v)) {
-        output
-          .AttachAnn(field_id_v, *field_options->GetColumnOptions(ann).ann_info)
-          .SetMergeSources(sources);
+  } else {
+    std::vector<bool> stored(_sources.size());
+    for (size_t si = 0; si != _sources.size(); ++si) {
+      const auto& s = _sources[si];
+      rows += s.alive_count;
+      const auto* col = ColumnOf(s, column);
+      const auto* known = hyperloglog && col && !HasRemovals(s.reader->Meta())
+                            ? col->HyperLogLog()
+                            : nullptr;
+      if (known) {
+        hyperloglog->Merge(*known);
+        stored[si] = true;
       }
     }
-
-    if (opts.hyperloglog) {
-      hyperloglog.Begin();
-    }
-
-    ColumnReader::VectorScratch batch_scratch{first_col->Type()};
-
-    uint64_t out_doc = 0;
-    for (size_t si = 0; si < sources.size(); ++si) {
-      const auto& s = sources[si];
-      const auto* src = s.col_reader;
-      const uint64_t source_target = out_doc + s.alive_count;
-      if (!src) {
-        out_doc = source_target;
-        continue;
-      }
-      const auto* col = src->Column(field_id_v);
-      if (!col) {
-        out_doc = source_target;
-        continue;
-      }
-      SDB_ASSERT(col->Type() == first_col->Type(),
-                 "schema evolution between merge sources not supported");
-      const bool has_mask = HasRemovals(s.reader->Meta());
-
-      const bool stored_hll =
-        opts.hyperloglog && !has_mask && hyperloglog.MergeStored(*col);
-
-      auto state = col->InitScan(*source_ctxs[si]);
-      cw.PadNullsTo(out_doc);
-      const auto total = col->RowCount();
-      uint64_t pos = 0;
-      while (pos < total) {
-        if (progress && !progress()) {
-          return false;
-        }
-        const auto take =
-          std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
-
-        if (!has_mask) {
-          auto& batch = batch_scratch.Reset();
-          col->Scan(state, batch, take);
-          cw.Append(batch, take);
-          if (opts.hyperloglog && !stored_hll) {
-            hyperloglog.MergeValues(batch, take);
-          }
-          out_doc += take;
-        } else {
-          const auto& kept_idx = kept_for(si, *s.reader, pos);
-          duckdb::idx_t kept = 0;
-          for (const auto i : kept_idx) {
-            if (i >= take) {
-              break;
-            }
-            sel.set_index(kept++, i);
-          }
-          if (kept == 0) {
-            col->Skip(state, take);
-          } else {
-            auto& batch = batch_scratch.Reset();
-            col->Scan(state, batch, take);
-            duckdb::Vector selected{batch, sel, kept};
-            cw.Append(out_doc, selected, kept);
-            if (opts.hyperloglog) {
-              hyperloglog.MergeValues(selected, kept);
-            }
-            out_doc += kept;
-          }
-        }
-        pos += take;
-      }
-      if (out_doc < source_target) {
-        cw.PadNullsTo(source_target);
-        out_doc = source_target;
-      }
-    }
-
-    cw.PadNullsTo(out_doc);
-
-    if (opts.hyperloglog) {
-      cw.SetHyperLogLog(hyperloglog.Take());
-    }
+    merged = VisitRows(column, 0, rows, {}, progress,
+                       [&](size_t si, uint64_t at, const duckdb::Vector& values,
+                           duckdb::idx_t count) {
+                         cw.Append(at, values, count);
+                         if (hyperloglog && !stored[si]) {
+                           count_distinct(values, count);
+                         }
+                       });
   }
+  if (!merged) {
+    return false;
+  }
+  cw.PadNullsTo(rows);
+  if (hyperloglog) {
+    cw.SetHyperLogLog(std::move(hyperloglog));
+  }
+  output.CloseColumn(column);
   return true;
 }
 

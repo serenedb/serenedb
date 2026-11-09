@@ -1,0 +1,74 @@
+control substitution on
+
+statement ok
+CREATE TABLE isr (id INTEGER, k INTEGER, body VARCHAR);
+
+statement ok
+CREATE INDEX isr_idx ON isr USING inverted (body) SORTED BY (k DESC NULLS LAST, id) WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO isr SELECT i, CASE WHEN i % 9 = 0 THEN NULL ELSE (i * 7) % 13 END, 'v' || i FROM range(200) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) isr;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+INSERT INTO isr SELECT i, (i * 5) % 11, 'w' || i FROM range(200, 300) t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT split_part(pg_get_indexdef('isr_idx'::regclass), ' WITH', 1) AS def;
+----
+def
+CREATE INDEX isr_idx ON public.isr USING inverted (body) INCLUDE (k, id) SORTED BY (k DESC NULLS LAST, id)
+
+
+connection after_crash
+statement ok
+INSERT INTO isr SELECT i, (i * 3) % 17, 'x' || i FROM range(300, 400) t(i);
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) isr;
+
+
+connection after_crash
+statement ok
+VACUUM (COMPACT_INDEX) isr_idx;
+
+
+connection after_crash
+statement ok
+SET threads = 1;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, list({'k': k, 'id': id}) = list({'k': k, 'id': id} ORDER BY k DESC NULLS LAST, id ASC NULLS LAST) AS sorted FROM isr_idx;
+----
+n	sorted
+400	t
+
+
+connection after_crash
+statement ok
+DROP TABLE isr;

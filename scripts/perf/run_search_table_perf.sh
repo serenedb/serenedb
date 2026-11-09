@@ -613,7 +613,6 @@ VACUUM (REFRESH_TABLE) hits_search_idx;
 	# Settled the same way as the backfill run's search table, or the two
 	# suites' size rows would mean different things: a parallel load leaves a
 	# segment set per writer, and this table disables background compaction.
-	# VacuumCompact merges and reclaims in one step.
 	run_setup "idx_search_compact" "${BUILD_THREADS}" "
 VACUUM (COMPACT_TABLE) hits_search_idx;
 "
@@ -701,8 +700,7 @@ INSERT INTO hits_txn_bf SELECT * FROM hits_view;
 CREATE INDEX hits_txn_bf_inv ON hits_txn_bf USING inverted (${idx_cols});
 "
 	# Nothing to settle on this side: CREATE INDEX builds the index once, with
-	# no prior version to leave behind. Compacting it would only strand the
-	# segments the merge retires -- CompactInvertedStorage never reclaims.
+	# no prior version to leave behind.
 	local txn_cols search_after_txn txn_index
 	txn_cols=$(($(store_used_bytes) - base_store))
 	search_after_txn=$(du_search_committed "${ENGINE_DIR}")
@@ -734,8 +732,7 @@ CREATE INDEX hits_search_bf_inv ON hits_search_bf USING inverted (${idx_cols});
 	search_dirty=$(($(du_search_committed "${ENGINE_DIR}") - search_after_txn))
 	# The transactional index arrives as one build; a sliced backfill leaves a
 	# segment set per worker plus the ones it replaced, and this table disables
-	# background compaction. VacuumCompact merges AND reclaims (it ends in
-	# CleanupUnsafe), so this one step is the whole settling.
+	# background compaction.
 	run_setup "backfill_search_compact" "${BUILD_THREADS}" "
 VACUUM (COMPACT_TABLE) hits_search_bf;
 "

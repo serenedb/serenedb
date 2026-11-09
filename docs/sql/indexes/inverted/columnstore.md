@@ -14,6 +14,8 @@ A stored column is written in **row groups** of `row_group_size` rows (122,880 b
 
 A list or map column stores each distinct value of a row group once. Columns whose values repeat, such as attribute maps shared by every record of the same resource, shrink by their repeat factor, and an expression over such a column runs once per distinct value.
 
+A search table or an inverted index created with a sort key ([`SORTED BY` on a table](../../statements/create_table/index.md#sort-keys), [on an index](../../statements/create_index/inverted.md#sort-keys)) writes the rows of every segment in key order, so the key columns' zonemaps cover narrow ranges and a filter on the key skips more segments.
+
 ## Codecs
 
 A column's codec is either picked automatically (`auto`, the default: a row group takes the smallest of the candidates measured on its first rows; while one codec keeps winning, later row groups reuse it and measure only now and then, and a row group whose data compresses differently is measured again) or named explicitly. Numeric columns use the transactional codecs and, under `auto`, the columnstore's [numeric codec](#numeric-columns); text columns use the columnstore's own string codecs, which differ in their *shape* (a dictionary of distinct values with row codes, or one entry per row) and their *leaf* (how the entry bytes are encoded):
@@ -43,7 +45,7 @@ A refresh writes text with the codecs that encode and decode fastest, `fsst` and
 
 A dictionary decoded in full, and the parts of a numeric column that scans and lookups decompress, are kept in the database's object cache while the cache has room, so repeated scans, filters and lookups do not decode them again. Scans add to the cache only while it is less than half full, which leaves the rest to point lookups. The cache holds an eighth of `memory_limit` (at least 256 MB) unless `SET GLOBAL sdb_object_cache_size = <bytes>` says otherwise (0 restores the automatic size); a dictionary that does not fit is decoded again by every scan that needs it whole.
 
-[Background compaction](./maintenance.md#background-compaction) re-encodes the segments it merges this way, without a `VACUUM`; a merge becomes visible with the table's next refresh. A segment that nothing merges with, such as a table written by a single refresh, keeps the refresh codecs until a merge includes it.
+[Background compaction](./maintenance.md#background-compaction) merges neighbouring segments as they accumulate and re-encodes them this way, without a `VACUUM`; a merge becomes visible with the table's next refresh. A segment that nothing merges with, such as a table written by a single refresh, keeps the refresh codecs until a merge includes it; `VACUUM (OPTIMIZE_TABLE)` also rewrites such a segment when re-encoding makes it noticeably smaller.
 
 ## Numeric columns
 

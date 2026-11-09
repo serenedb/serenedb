@@ -111,15 +111,28 @@ struct BlobScan {
 
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
+    Inflate(s, f, out);
+    Entries(s, f, [&](uint32_t e, uint64_t off, uint32_t len) {
+      s.values[e] = duckdb::string_t{out + off, len};
+    });
+  }
+
+  template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
+    Inflate(s, f, out);
+    Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
+      *ends++ = static_cast<uint32_t>(off + len);
+    });
+  }
+
+  template<typename Frames>
+  void Inflate(const Frames& s, uint32_t f, char* out) {
     const auto& m = s.frames[f];
     const auto got = inflater.Inflate(s.header, s.base, m, f, out, m.raw_len);
     SDB_ENSURE(got.size() == m.raw_len, "col codec: corrupted frame");
     if (got.data() != out) {
       std::memcpy(out, got.data(), m.raw_len);
     }
-    Entries(s, f, [&](uint32_t e, uint64_t off, uint32_t len) {
-      s.values[e] = duckdb::string_t{out + off, len};
-    });
   }
 
   template<typename Frames, typename Visit>

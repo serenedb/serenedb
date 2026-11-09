@@ -1,0 +1,84 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE sma (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO sma SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sma;
+
+
+statement ok
+INSERT INTO sma SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sma;
+
+
+statement ok
+INSERT INTO sma SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sma;
+
+
+query
+SELECT segment FROM sdb_segments('sma') ORDER BY segment;
+----
+segment
+_1
+_2
+_3
+
+
+statement ok
+SET sdb_faults = 'pause_manual_compaction_before_plan';
+
+
+connection compactor
+statement async error
+SELECT * FROM sdb_compact('sma', mode := 'segments', segments := ['_1', '_2']);
+----
+db error: ERROR: segment(s) _1, _2 not found in public.sma
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_manual_compaction_before_plan:parked';
+
+
+connection vacuumer
+statement async ok
+VACUUM (COMPACT_TABLE) sma;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS segments FROM sdb_segments('sma');
+----
+segments
+1
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_manual_compaction_before_plan:release';
+
+
+wait
+
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM sma;
+----
+n	s
+300	45150

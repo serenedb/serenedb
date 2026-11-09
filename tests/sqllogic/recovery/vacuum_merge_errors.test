@@ -1,0 +1,151 @@
+# VACUUM reports what goes wrong with the merges and cleanups it runs by hand: a target that is
+# neither a search table nor an inverted index, a merge whose unit fails, and a cleanup that fails,
+# in the pass itself and in the publish a compaction starts with.
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE vme (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO vme SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vme;
+
+statement ok
+INSERT INTO vme SELECT i, 'fox cat' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vme;
+
+statement ok
+INSERT INTO vme SELECT i, 'owl dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vme;
+
+statement ok
+INSERT INTO vme SELECT i, 'owl cat' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vme;
+
+statement ok
+CREATE TABLE vme_plain (id INT PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX vme_art ON vme_plain (id);
+
+statement ok
+CREATE INDEX vme_idx ON vme_plain USING inverted (body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO vme_plain SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_INDEX) vme_idx;
+
+statement ok
+INSERT INTO vme_plain SELECT i, 'fox cat' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_INDEX) vme_idx;
+
+statement ok
+INSERT INTO vme_plain SELECT i, 'owl dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_INDEX) vme_idx;
+
+# An index that is not inverted has no segments to merge
+statement error
+VACUUM (COMPACT_INDEX) vme_art;
+----
+db error: ERROR: relation "vme_art" does not exist
+
+
+statement error
+SELECT * FROM sdb_segments('vme_art');
+----
+db error: ERROR: "vme_art" is not a search table or an inverted index
+
+
+statement error
+CALL sdb_compact('vme_art');
+----
+db error: ERROR: "vme_art" is not a search table or an inverted index
+
+
+# A merge whose unit fails is reported with the failure, and recorded as failed
+statement ok
+SET sdb_faults = 'irs::MergeUnit';
+
+statement error
+VACUUM (COMPACT_TABLE) vme;
+----
+db error: ERROR: failed to compact 'vme': intentional debug error
+
+
+statement error
+VACUUM (OPTIMIZE_INDEX) vme_idx;
+----
+db error: ERROR: failed to optimize 'vme_idx': intentional debug error
+
+
+statement ok
+SET sdb_faults = '-irs::MergeUnit';
+
+query
+SELECT cardinality(inputs) AS inputs, input_docs, input_live_docs, input_bytes > 0 AS input_sized,
+       output IS NULL AS no_output, output_docs, output_bytes, error
+FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'vme')
+  AND origin = 'vacuum' AND outcome = 'failed';
+----
+inputs	input_docs	input_live_docs	input_sized	no_output	output_docs	output_bytes	error
+4	400	400	t	t	0	0	intentional debug error
+
+query
+SELECT count(*) AS segments FROM sdb_segments('vme');
+----
+segments
+4
+
+# A cleanup that fails is reported, in a cleanup pass and in the publish a compaction starts with
+statement ok
+SET sdb_faults = 'IndexDurability::Cleanup';
+
+statement error
+VACUUM (CLEANUP_INDEX) vme_idx;
+----
+db error: ERROR: failed to clean up index 'vme_idx': caught exception while cleaning up inverted index <slt:ignore>: intentional debug error
+
+
+statement error
+VACUUM (COMPACT_INDEX) vme_idx;
+----
+db error: ERROR: failed to clean up 'vme_idx': caught exception while cleaning up inverted index <slt:ignore>: intentional debug error
+
+
+statement ok
+RESET sdb_faults;
+
+# Nothing of the failed passes sticks: the merges run once the faults are gone
+statement ok
+VACUUM (OPTIMIZE_TABLE) vme;
+
+statement ok
+VACUUM (OPTIMIZE_INDEX) vme_idx;
+
+query
+SELECT (SELECT count(*) FROM vme WHERE body LIKE '%dog%') AS table_dogs,
+       (SELECT count(*) FROM vme_idx WHERE body @@ 'owl dog') AS index_owl_dogs,
+       (SELECT count(*) FROM sdb_segments('vme')) AS table_segments,
+       (SELECT count(*) FROM sdb_segments('vme_idx')) AS index_segments;
+----
+table_dogs	index_owl_dogs	table_segments	index_segments
+200	100	1	1

@@ -383,8 +383,8 @@ void Report(benchmark::State& state, const Prepared& prepared, size_t probes) {
       irs::CommonPrefixLength(separators.front(), separators.back());
     size_t ties = 0;
     for (size_t i = 1; i != separators.size(); ++i) {
-      ties += irs::term_dict::HeadAt(separators[i - 1], skip) ==
-              irs::term_dict::HeadAt(separators[i], skip);
+      ties += irs::HeadAt(separators[i - 1], skip) ==
+              irs::HeadAt(separators[i], skip);
     }
     state.counters["head_ties"] =
       static_cast<double>(ties) / static_cast<double>(separators.size());

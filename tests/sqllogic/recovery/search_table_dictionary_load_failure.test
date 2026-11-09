@@ -41,8 +41,7 @@ VACUUM (COMPACT_TABLE) dlf;
 
 
 query
-SELECT value AS segments FROM sdb_metrics
-WHERE relation_id = 'dlf'::regclass AND metric = 'num_segments';
+SELECT count(*) AS segments FROM sdb_segments('dlf');
 ----
 segments
 1

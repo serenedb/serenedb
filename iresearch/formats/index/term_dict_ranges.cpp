@@ -160,8 +160,10 @@ class RangeWalk {
 
 }  // namespace
 
-void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs) noexcept {
+void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs,
+                        IndexFeatures features) noexcept {
   _pw = &pw;
+  _features = features;
   _heavy = std::max(kHeavyDocs, docs / kTopPieces);
 }
 
@@ -243,6 +245,15 @@ void RangeWriter::Close(size_t level) {
   range.group.docs_count = 0;
 }
 
+IRS_FORCE_INLINE void RangeWriter::AppendRecord(Level& range,
+                                                const PostingMeta& meta) {
+  _record.Clear();
+  RecordEncoder{_features}.Encode(_record, meta);
+  range.records.append(_record.View());
+  range.records.append(meta.Inline());
+  range.ends.push_back(static_cast<uint32_t>(range.records.size()));
+}
+
 void RangeWriter::Release(size_t level) {
   auto& range = _levels[level];
   if (!range.holding) {
@@ -263,11 +274,7 @@ void RangeWriter::Release(size_t level) {
   } else if (piece.meta.inline_size != 0) {
     piece.meta.inline_data = piece.inline_bytes.data();
   }
-  _record.Clear();
-  _pw->EncodeAbsolute(_record, piece.meta);
-  range.records.append(_record.View());
-  range.records.append(piece.meta.Inline());
-  range.ends.push_back(static_cast<uint32_t>(range.records.size()));
+  AppendRecord(range, piece.meta);
   range.starts.append(piece.key);
   if (level != 0) {
     range.firsts.push_back(piece.first);
@@ -281,6 +288,43 @@ void RangeWriter::Release(size_t level) {
                       .docs_count = piece.docs_count,
                       .index = index,
                     });
+  }
+}
+
+void RangeWriter::Seal() {
+  for (size_t level = 0; level != kMaxRangeLevels; ++level) {
+    Close(level);
+    Release(level);
+    auto& range = _levels[level];
+    range.group.docs = {};
+    range.held.docs = {};
+  }
+}
+
+void RangeWriter::Append(const RangeWriter& part, uint64_t doc_base) {
+  uint32_t below = 0;
+  for (size_t level = 0; level != kMaxRangeLevels; ++level) {
+    const auto& from = part._levels[level];
+    if (from.count == 0) {
+      return;
+    }
+    auto& to = _levels[level];
+    to.starts.append(from.starts);
+    for (const auto first : from.firsts) {
+      to.firsts.push_back(below + first);
+    }
+    below = to.count;
+    uint32_t begin = 0;
+    for (const auto end : from.ends) {
+      const auto* record = from.records.data() + begin;
+      PostingMeta meta;
+      meta.inline_data =
+        record + PostingsReader::decode(record, _features, meta);
+      meta.doc_start += doc_base;
+      AppendRecord(to, meta);
+      begin = end;
+    }
+    to.count += from.count;
   }
 }
 

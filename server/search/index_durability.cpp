@@ -420,6 +420,9 @@ void IndexDurability::SyncDirectory() {
 
 absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
   try {
+    SDB_IF_FAILURE("IndexDurability::Cleanup") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
     SyncDirectory();
     irs::directory_utils::RemoveAllUnreferenced(dir);
   } catch (const std::exception& e) {

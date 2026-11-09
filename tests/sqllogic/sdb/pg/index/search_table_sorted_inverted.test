@@ -1,0 +1,125 @@
+# A sorted search table writes every segment in key order, so an inverted index on it maps each
+# doc id through the sort order: term postings with and without positions, the slots that collect
+# NULL and boolean values, and the rows an index created later backfills from sorted segments.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ssi_words AS split_text(case := 'lower') WITH (frequency, position);
+
+statement ok
+CREATE TABLE ssi (id INTEGER, k INTEGER, body TEXT, tag TEXT, flag BOOLEAN)
+  SORTED BY (k DESC)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+# Rows arrive in ascending k, so the flush reverses them, and every term spans many rows.
+statement ok
+INSERT INTO ssi
+SELECT i, i,
+       'alpha ' || CASE WHEN i % 3 = 0 THEN 'beta gamma' ELSE 'gamma beta' END,
+       CASE WHEN i % 5 = 0 THEN NULL ELSE 't' || (i % 4) END,
+       CASE WHEN i % 7 = 0 THEN NULL ELSE i % 2 = 0 END
+FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ssi;
+
+query
+SELECT bool_and(prev IS NULL OR prev >= k) AS sorted_desc
+FROM (SELECT k, lag(k) OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS prev FROM ssi);
+----
+sorted_desc
+t
+
+# The index is created over a sorted segment, which it backfills through the sort order.
+statement ok
+CREATE INDEX ssi_idx ON ssi USING inverted (body ssi_words, tag, flag);
+
+query
+SELECT id FROM ssi WHERE body @@ ts_phrase('beta gamma') AND id < 12 ORDER BY id;
+----
+id
+0
+3
+6
+9
+
+query
+SELECT (SELECT count(*) FROM ssi_idx WHERE body @@ ts_phrase('gamma beta')) =
+       (SELECT count(*) FROM range(3000) t(i) WHERE i % 3 <> 0) AS phrases,
+       (SELECT count(*) FROM ssi_idx WHERE tag IS NULL) =
+       (SELECT count(*) FROM range(3000) t(i) WHERE i % 5 = 0) AS null_tags,
+       (SELECT count(*) FROM ssi_idx WHERE tag = 't2') =
+       (SELECT count(*) FROM range(3000) t(i) WHERE i % 5 <> 0 AND i % 4 = 2) AS tags,
+       (SELECT count(*) FROM ssi_idx WHERE flag) =
+       (SELECT count(*) FROM range(3000) t(i) WHERE i % 7 <> 0 AND i % 2 = 0) AS true_flags,
+       (SELECT count(*) FROM ssi_idx WHERE NOT flag) =
+       (SELECT count(*) FROM range(3000) t(i) WHERE i % 7 <> 0 AND i % 2 = 1) AS false_flags,
+       (SELECT count(*) FROM ssi_idx WHERE flag IS NULL) =
+       (SELECT count(*) FROM range(3000) t(i) WHERE i % 7 = 0) AS null_flags;
+----
+phrases	null_tags	tags	true_flags	false_flags	null_flags
+t	t	t	t	t	t
+
+# With the index in place, a flush remaps its postings and slots along with the table's rows.
+statement ok
+INSERT INTO ssi
+SELECT i, i,
+       'alpha ' || CASE WHEN i % 3 = 0 THEN 'beta gamma' ELSE 'gamma beta' END,
+       CASE WHEN i % 5 = 0 THEN NULL ELSE 't' || (i % 4) END,
+       CASE WHEN i % 7 = 0 THEN NULL ELSE i % 2 = 0 END
+FROM range(3000, 6000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ssi;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments,
+       bool_and(prev IS NULL OR prev >= k) AS sorted_desc
+FROM (SELECT k, rowid, lag(k) OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS prev FROM ssi);
+----
+segments	sorted_desc
+2	t
+
+query
+SELECT id FROM ssi WHERE body @@ ts_phrase('beta gamma') AND id BETWEEN 2995 AND 3010 ORDER BY id;
+----
+id
+2997
+3000
+3003
+3006
+3009
+
+query
+SELECT (SELECT count(*) FROM ssi_idx WHERE body @@ ts_phrase('gamma beta')) =
+       (SELECT count(*) FROM range(6000) t(i) WHERE i % 3 <> 0) AS phrases,
+       (SELECT count(*) FROM ssi_idx WHERE tag IS NULL) =
+       (SELECT count(*) FROM range(6000) t(i) WHERE i % 5 = 0) AS null_tags,
+       (SELECT count(*) FROM ssi_idx WHERE tag = 't2') =
+       (SELECT count(*) FROM range(6000) t(i) WHERE i % 5 <> 0 AND i % 4 = 2) AS tags,
+       (SELECT count(*) FROM ssi_idx WHERE flag) =
+       (SELECT count(*) FROM range(6000) t(i) WHERE i % 7 <> 0 AND i % 2 = 0) AS true_flags,
+       (SELECT count(*) FROM ssi_idx WHERE NOT flag) =
+       (SELECT count(*) FROM range(6000) t(i) WHERE i % 7 <> 0 AND i % 2 = 1) AS false_flags,
+       (SELECT count(*) FROM ssi_idx WHERE flag IS NULL) =
+       (SELECT count(*) FROM range(6000) t(i) WHERE i % 7 = 0) AS null_flags;
+----
+phrases	null_tags	tags	true_flags	false_flags	null_flags
+t	t	t	t	t	t
+
+# Every indexed row still carries its own values after the remaps.
+query
+SELECT count(*) AS mismatched
+FROM ssi
+WHERE body <> 'alpha ' || CASE WHEN id % 3 = 0 THEN 'beta gamma' ELSE 'gamma beta' END
+   OR tag IS DISTINCT FROM CASE WHEN id % 5 = 0 THEN NULL ELSE 't' || (id % 4) END
+   OR flag IS DISTINCT FROM CASE WHEN id % 7 = 0 THEN NULL ELSE id % 2 = 0 END
+   OR k <> id;
+----
+mismatched
+0
+
+statement ok
+DROP TABLE ssi;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ssi_words;

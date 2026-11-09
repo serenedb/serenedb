@@ -75,6 +75,7 @@ add_executable(
     duckdb/validity_mask_tests.cpp
     formats/column/col_file_writer_test.cpp
     formats/column/col_codecs_test.cpp
+    formats/column/col_copy_check_test.cpp
     formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
     formats/columnstore2_test.cpp
@@ -89,10 +90,12 @@ add_executable(
     formats/ivf/centroids_test.cpp
     formats/ivf/quantizer_test.cpp
     formats/posting/block_codec_test.cpp
+    formats/posting/growing_hint_test.cpp
     formats/posting_alloc_test.cpp
     formats/sparse_bitmap_test.cpp
     formats/term_dict_test.cpp
     index/assert_format.cpp
+    index/compaction/merge_ticket_tests.cpp
     index/compaction_policy_tests.cpp
     index/doc_generator.cpp
     index/doc_removal_tests.cpp
@@ -106,6 +109,17 @@ add_executable(
     index/index_tests.cpp
     index/inverter_oracle_test.cpp
     index/inverter_tests.cpp
+    index/merge/input_norms_tests.cpp
+    index/merge/merge_ann_tests.cpp
+    index/merge/merge_characterization_tests.cpp
+    index/merge/merge_executor_tests.cpp
+    index/merge/merge_oracle_tests.cpp
+    index/merge/merge_plan_tests.cpp
+    index/merge/sorted_merge_tests.cpp
+    index/merge/support/segment_dump.cpp
+    index/merge/support/segment_gen.cpp
+    index/merge/term_keys_tests.cpp
+    index/merge/term_ranges_tests.cpp
     index/merge_writer_tests.cpp
     index/norm_column_test.cpp
     index/norm_test.cpp
@@ -208,7 +222,10 @@ add_executable(
 )
 target_link_libraries(
     iresearch-tests
-    PRIVATE iresearch-test-support search-benchmark-common
+    PRIVATE
+        iresearch-test-support
+        iresearch-policy-compaction
+        search-benchmark-common
 )
 target_include_directories(
     iresearch-tests

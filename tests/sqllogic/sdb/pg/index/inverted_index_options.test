@@ -1,12 +1,3 @@
-# Inverted-index WITH (...) options surfaced through the PG-native catalog
-# (pg_class.reloptions / relam -> pg_am / pg_index), and ALTER INDEX
-# SET/RESET of the maintenance/perf option subset. Options always hold
-# concrete values, resolved from WITH / session settings when they are set
-# (CREATE or ALTER; RESET re-resolves the session value), so reloptions
-# renders the full list. segment_docs_max=0 = unlimited (iresearch
-# semantics); every other option rejects 0.
-
-
 statement ok
 CREATE TABLE opt_t(x bigint, label text);
 

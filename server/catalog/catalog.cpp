@@ -64,6 +64,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <filesystem>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -79,6 +80,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/sort_keys.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_search_delete.h"
@@ -172,13 +174,55 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(std::make_shared<search::Store>(
-      _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
-      ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
+      _directory, _attachment, InMemory(), GetAttached().IsReadOnly(), GetOid(),
+      entry->oid, ResolveSettings(entry->options),
+      entry->Config()->top_k_scorer, entry->Config()->sort, false));
   }
   return std::move(entry);
 }
 
 namespace {
+
+irs::containers::FlatHashSet<duckdb::idx_t> StoredColumns(
+  const duckdb::CreateIndexInfo& info, const duckdb::ColumnList& columns) {
+  irs::containers::FlatHashSet<duckdb::idx_t> stored;
+  for (size_t slot = 0; slot != info.parsed_expressions.size(); ++slot) {
+    const auto& expr = *info.parsed_expressions[slot];
+    if (info.column_opclasses[slot] != kIncludedKind ||
+        expr.GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF) {
+      continue;
+    }
+    const auto& name = expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+    if (columns.ColumnExists(name)) {
+      stored.emplace(columns.GetColumn(name).Logical().index);
+    }
+  }
+  return stored;
+}
+
+void BindIndexSortKeys(duckdb::CreateIndexInfo& info,
+                       const duckdb::TableCatalogEntry& table) {
+  const auto& columns = table.GetColumns();
+  const auto keys = ResolveSortKeys(columns, info.sort_orders);
+  info.sort_orders = SortOrdersOf(keys, columns);
+  auto stored = StoredColumns(info, columns);
+  for (const auto& key : keys) {
+    if (!stored.emplace(key.column.index).second) {
+      continue;
+    }
+    const auto& name = columns.GetColumn(key.column).Name();
+    info.expressions.emplace_back(
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(name, info.table));
+    info.parsed_expressions.emplace_back(
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(name, info.table));
+    info.column_opclasses.emplace_back(kIncludedKind);
+    info.column_opclass_options.emplace_back(
+      duckdb::case_insensitive_map_t<duckdb::Value>{});
+    info.column_orders.emplace_back(duckdb::OrderType::ORDER_DEFAULT);
+    info.column_null_orders.emplace_back(
+      duckdb::OrderByNullType::ORDER_DEFAULT);
+  }
+}
 
 std::vector<duckdb::CatalogEntry*> VisibleEntries(
   duckdb::CatalogTransaction transaction, duckdb::CatalogSet& set) {
@@ -305,6 +349,31 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     for (const auto& [name, value] : info.options) {
       RequireSearchTableIndexOption(name);
     }
+  }
+  if (inverted &&
+      absl::c_any_of(info.column_orders, [](duckdb::OrderType order) {
+        return order != duckdb::OrderType::ORDER_DEFAULT;
+      })) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("access method \"", info.index_type,
+                            "\" does not support ASC/DESC options"));
+  }
+  if (inverted && absl::c_any_of(
+                    info.column_null_orders, [](duckdb::OrderByNullType order) {
+                      return order != duckdb::OrderByNullType::ORDER_DEFAULT;
+                    })) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("access method \"", info.index_type,
+                            "\" does not support NULLS FIRST/LAST options"));
+  }
+  if (!info.sort_orders.empty() &&
+      (search_table || table.type == duckdb::CatalogType::VIEW_ENTRY)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("SORTED BY is not supported for indexes on ",
+                            search_table ? "search tables" : "views"));
+  }
+  if (inverted && !info.sort_orders.empty()) {
+    BindIndexSortKeys(info, table.Cast<duckdb::TableCatalogEntry>());
   }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);
@@ -434,8 +503,16 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
+  if (!info.Base().partition_keys.empty()) {
+    return duckdb::ErrorData{
+      duckdb::NotImplementedException("PARTITIONED BY is not supported")};
+  }
   const auto& options = info.Base().options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
+  if (!search && !info.Base().sort_keys.empty()) {
+    return duckdb::ErrorData{duckdb::NotImplementedException(
+      "SORTED BY is supported only for search tables")};
+  }
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
     return option.first != kStorageOption &&
            !(search && absl::c_contains(kSearchTableOptions, option.first));
@@ -499,7 +576,7 @@ std::string SereneDBCatalog::GetCatalogType() {
 }
 
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
-  if (GetAttached().IsReadOnly() || _detached.load(std::memory_order_acquire)) {
+  if (GetAttached().IsReadOnly() || _directory->Detached(_attachment)) {
     return nullptr;
   }
   return ClusterOf(GetDatabase()).CatalogLog();
@@ -577,7 +654,7 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 }
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
-  _detached.store(true, std::memory_order_release);
+  _directory->Detach(_attachment);
   if (GetAttached().IsReadOnly()) {
     duckdb::DuckCatalog::OnDetach(context);
     return;

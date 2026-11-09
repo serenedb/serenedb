@@ -52,6 +52,8 @@
 #include "connector/functions/math.h"
 #include "connector/functions/metrics.h"
 #include "connector/functions/otel.h"
+#include "connector/functions/sdb_maintenance.h"
+#include "connector/functions/sdb_segments.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
 #include "connector/inverted_store_index.h"
@@ -188,6 +190,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterJobFunctions(db);
 
   connector::RegisterVacuumFunction(db);
+
+  connector::RegisterSdbMaintenanceFunctions(db);
+
+  connector::RegisterSdbSegmentsFunction(db);
 
   connector::RegisterReindexFunction(db);
 

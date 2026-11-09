@@ -75,8 +75,8 @@ struct OnPairScan {
     entry_decoded.assign(s.header.entry_count, 0);
   }
 
-  template<typename Frames>
-  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+  template<typename Frames, typename Visit>
+  void WalkFrame(Frames& s, uint32_t f, char* out, Visit&& visit) {
     const auto& m = s.frames[f];
     const auto tokens = TokenFrame(m, table.Bits());
     const auto* stream =
@@ -90,14 +90,27 @@ struct OnPairScan {
                  "col codec: corrupted entry");
       const auto n =
         table.Decode(stream, token, count, out + off, m.raw_len - off);
-      const std::string_view v{out + off, n};
-      SDB_ASSERT(!Frames::kDedup || e == m.first_entry ||
-                 View(s.values[e - 1]) < v);
-      s.Keep(e, v);
+      visit(e, std::string_view{out + off, n});
       off += n;
       token += count;
     }
     SDB_ENSURE(off == m.raw_len, "col codec: corrupted frame");
+  }
+
+  template<typename Frames>
+  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+    const auto first = s.frames[f].first_entry;
+    WalkFrame(s, f, out, [&](uint32_t e, std::string_view v) {
+      SDB_ASSERT(!Frames::kDedup || e == first || View(s.values[e - 1]) < v);
+      s.Keep(e, v);
+    });
+  }
+
+  template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
+    WalkFrame(s, f, out, [&](uint32_t, std::string_view v) {
+      *ends++ = static_cast<uint32_t>(v.data() + v.size() - out);
+    });
   }
 
   template<typename Frames>

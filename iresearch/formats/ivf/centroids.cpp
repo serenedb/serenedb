@@ -565,7 +565,6 @@ CentroidsSpan CentroidsBuilder::Serialize(DataOutput& out) const {
     const auto end = static_cast<size_t>(out.Position());
     return CentroidsSpan{
       .offset = offset,
-      .byte_size = end - offset,
       .root_byte_size = (root_end != 0 ? root_end : end) - offset,
     };
   };

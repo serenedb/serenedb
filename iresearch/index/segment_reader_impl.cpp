@@ -94,8 +94,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   reader->_refs = GetRefs(*options.refs, meta);
   ParseSegmentId(meta.name, reader->_id);
   reader->_doc_maps = std::make_shared<DocMapsSlot>();
-  reader->_data =
-    std::make_shared<const ColumnData>(db, fs, root, meta, options.hnsw_bases);
+  reader->_readers =
+    std::make_shared<const Readers>(db, fs, root, meta, options.hnsw_bases);
   return reader;
 }
 
@@ -105,7 +105,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   reader->_refs = GetRefs(refs, meta);
   reader->_id = _id;
   reader->_doc_maps = _doc_maps;
-  reader->_data = _data;
+  reader->_readers = _readers;
   return reader;
 }
 
@@ -116,13 +116,13 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Reopen(
   reader->_refs = _refs;
   reader->_id = _id;
   reader->_doc_maps = _doc_maps;
-  reader->_data =
-    std::make_shared<const ColumnData>(db, fs, root, meta, options.hnsw_bases);
+  reader->_readers =
+    std::make_shared<const Readers>(db, fs, root, meta, options.hnsw_bases);
   return reader;
 }
 
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  const auto* nc = _data->col_reader.NormColumn(field);
+  const auto* nc = _readers->col_reader.NormColumn(field);
   if (!nc) {
     return {};
   }
@@ -145,11 +145,11 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
     });
 }
 
-SegmentReaderImpl::ColumnData::ColumnData(duckdb::DatabaseInstance& db,
-                                          duckdb::FileSystem& fs,
-                                          std::string_view root,
-                                          const SegmentMeta& meta,
-                                          HnswBases* hnsw_bases)
+SegmentReaderImpl::Readers::Readers(duckdb::DatabaseInstance& db,
+                                    duckdb::FileSystem& fs,
+                                    std::string_view root,
+                                    const SegmentMeta& meta,
+                                    HnswBases* hnsw_bases)
   : col_reader{db,
                fs,
                root,

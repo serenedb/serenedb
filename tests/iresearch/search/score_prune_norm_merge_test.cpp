@@ -45,6 +45,7 @@
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "token_sink_utils.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -113,7 +114,7 @@ class NormField final : public tests::Ifield {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
   bool Write(irs::DataOutput& out) const final {
-    irs::WriteStr(out, _value);
+    tests::WriteStr(out, _value);
     return true;
   }
 
@@ -137,7 +138,7 @@ class IdField final : public tests::Ifield {
     return irs::IndexFeatures::None;
   }
   bool Write(irs::DataOutput& out) const final {
-    irs::WriteStr(out, _value);
+    tests::WriteStr(out, _value);
     return true;
   }
 

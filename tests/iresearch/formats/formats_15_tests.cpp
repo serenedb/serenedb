@@ -356,7 +356,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
     auto out = dir.Create("attributes");
     EXPECT_FALSE(!out);
-    irs::WriteStr(*out, std::string_view("file_header"));
+    tests::WriteStr(*out, std::string_view("file_header"));
 
     writer.Prepare(state);
     writer.BeginField(irs::FieldProperties{.index_features = features});

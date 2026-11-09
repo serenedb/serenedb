@@ -23,8 +23,8 @@
 
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <limits>
 #include <random>
 
 #include "filter_test_case_base.hpp"

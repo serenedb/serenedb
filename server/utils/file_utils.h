@@ -27,6 +27,7 @@
 
 namespace sdb::utils::file_utils {
 
+std::string ReadFile(duckdb::FileSystem& fs, const std::string& path);
 void WriteFile(duckdb::FileSystem& fs, const std::string& path,
                std::string_view content, bool sync);
 void ReplaceFile(duckdb::FileSystem& fs, const std::string& path,

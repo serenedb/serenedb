@@ -32,7 +32,6 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/type_limits.hpp>
 

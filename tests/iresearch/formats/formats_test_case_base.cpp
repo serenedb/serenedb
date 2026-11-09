@@ -1390,7 +1390,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   auto write_str = [](irs::bstring& buf, std::string_view s) {
     irs::tests::BstringDataOutput out{buf};
-    irs::WriteStr(out, s);
+    tests::WriteStr(out, s);
   };
   auto append_str_blob = [&](irs::ColumnWriter& cw, irs::doc_id_t doc,
                              std::string_view s) {
@@ -1402,8 +1402,8 @@ TEST_P(FormatTestCase, columns_rw) {
                                  std::string_view a, std::string_view b) {
     irs::bstring buf;
     irs::tests::BstringDataOutput out{buf};
-    irs::WriteStr(out, a);
-    irs::WriteStr(out, b);
+    tests::WriteStr(out, a);
+    tests::WriteStr(out, b);
     irs::tests::AppendBlob(cw, doc, {buf.data(), buf.size()});
   };
 
@@ -1779,7 +1779,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
       irs::bstring buf;
       irs::tests::BstringDataOutput out{buf};
       const auto s = std::string{"row_"} + std::to_string(i);
-      irs::WriteStr(out, s);
+      tests::WriteStr(out, s);
       irs::tests::AppendBlob(
         cw_str, static_cast<irs::doc_id_t>(i + irs::doc_limits::min()),
         {buf.data(), buf.size()});
@@ -1972,7 +1972,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
       irs::bstring buf;
       irs::tests::BstringDataOutput out{buf};
       const auto s = std::string{"row_"} + std::to_string(i);
-      irs::WriteStr(out, s);
+      tests::WriteStr(out, s);
       irs::tests::AppendBlob(
         cw_str, static_cast<irs::doc_id_t>(i + irs::doc_limits::min()),
         {buf.data(), buf.size()});
@@ -2619,11 +2619,11 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
       irs::bstring name_buf;
       {
         irs::tests::BstringDataOutput out{id_buf};
-        irs::WriteStr(out, std::to_string(prefix + i));
+        tests::WriteStr(out, std::to_string(prefix + i));
       }
       {
         irs::tests::BstringDataOutput out{name_buf};
-        irs::WriteStr(out, std::string{"name_"} + std::to_string(prefix + i));
+        tests::WriteStr(out, std::string{"name_"} + std::to_string(prefix + i));
       }
       irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});
       irs::tests::AppendBlob(name_w, doc, {name_buf.data(), name_buf.size()});
@@ -2731,11 +2731,11 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
       irs::bstring name_buf;
       {
         irs::tests::BstringDataOutput out{id_buf};
-        irs::WriteStr(out, std::to_string(3000 + i));
+        tests::WriteStr(out, std::to_string(3000 + i));
       }
       {
         irs::tests::BstringDataOutput out{name_buf};
-        irs::WriteStr(out, std::string{"name_"} + std::to_string(3000 + i));
+        tests::WriteStr(out, std::string{"name_"} + std::to_string(3000 + i));
       }
       irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});
       irs::tests::AppendBlob(name_w, doc, {name_buf.data(), name_buf.size()});
@@ -2800,14 +2800,14 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
         irs::bstring name_buf;
         if (with_byte) {
           irs::tests::BstringDataOutput out{id_buf};
-          irs::WriteStr(out, std::string_view{"x", 1});
+          tests::WriteStr(out, std::string_view{"x", 1});
           irs::tests::BstringDataOutput out2{name_buf};
-          irs::WriteStr(out2, std::string_view{"y", 1});
+          tests::WriteStr(out2, std::string_view{"y", 1});
         } else {
           irs::tests::BstringDataOutput out{id_buf};
-          irs::WriteStr(out, std::string_view{});
+          tests::WriteStr(out, std::string_view{});
           irs::tests::BstringDataOutput out2{name_buf};
-          irs::WriteStr(out2, std::string_view{});
+          tests::WriteStr(out2, std::string_view{});
         }
         irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});
         irs::tests::AppendBlob(name_w, doc, {name_buf.data(), name_buf.size()});
@@ -2928,12 +2928,12 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
       irs::bstring name_buf;
       {
         irs::tests::BstringDataOutput out{id_buf};
-        irs::WriteStr(
+        tests::WriteStr(
           out, with_byte ? std::string_view{"x", 1} : std::string_view{});
       }
       {
         irs::tests::BstringDataOutput out{name_buf};
-        irs::WriteStr(
+        tests::WriteStr(
           out, with_byte ? std::string_view{"y", 1} : std::string_view{});
       }
       irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});

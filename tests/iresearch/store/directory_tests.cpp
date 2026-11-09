@@ -36,7 +36,6 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/index_files.hpp>
 #include <iresearch/store/storage.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
@@ -424,7 +423,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
       out->WriteV32(strings.size());
       u32crc(crc, static_cast<uint32_t>(strings.size()));
       for (const auto& str : strings) {
-        WriteStr(*out, str);
+        ::tests::WriteStr(*out, str);
         strcrc(crc, str);
       }
       ASSERT_EQ(crc.checksum(), out->Checksum());
@@ -1958,7 +1957,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
       out->WriteV32(strings.size());
       u32crc(crc, static_cast<uint32_t>(strings.size()));
       for (const auto& str : strings) {
-        WriteStr(*out, str);
+        ::tests::WriteStr(*out, str);
         strcrc(crc, str);
       }
       ASSERT_EQ(crc.checksum(), out->Checksum());
@@ -3591,7 +3590,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
       out->WriteV32(strings.size());
       u32crc(crc, static_cast<uint32_t>(strings.size()));
       for (const auto& str : strings) {
-        WriteStr(*out, str);
+        ::tests::WriteStr(*out, str);
         strcrc(crc, str);
       }
       ASSERT_EQ(crc.checksum(), out->Checksum());
@@ -3726,7 +3725,7 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
     out->WriteV64(23289LL);
     out->WriteV64(std::numeric_limits<uint64_t>::max());
 
-    WriteStr(*out, str);
+    ::tests::WriteStr(*out, str);
     out->Close();
   }
 

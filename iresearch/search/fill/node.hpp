@@ -33,6 +33,7 @@ namespace irs::detail {
 class BitsetStorage;
 
 }
+
 namespace irs::fill {
 
 struct Node : memory::Managed {

@@ -42,7 +42,6 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -54,6 +53,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_dir.hpp"
 #include "tests_shared.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -64,13 +64,13 @@ class IndexColumnTestCase : public ::testing::TestWithParam<bool> {
   }
 };
 
-// Encode a `std::string` with the legacy `irs::WriteStr` shape (length-
+// Encode a `std::string` with the legacy `WriteStr` shape (length-
 // prefix + raw bytes) into an `irs::bstring`. Lets us match the legacy
 // tests' "stored a length-prefixed string per doc" pattern verbatim.
 irs::bstring EncodeStr(std::string_view s) {
   irs::bstring buf;
   irs::tests::BstringDataOutput out{buf};
-  irs::WriteStr(out, s);
+  tests::WriteStr(out, s);
   return buf;
 }
 

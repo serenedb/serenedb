@@ -33,6 +33,17 @@
 
 namespace sdb::utils::file_utils {
 
+std::string ReadFile(duckdb::FileSystem& fs, const std::string& path) {
+  const auto handle = fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ);
+  std::string content;
+  char buffer[4096];
+  while (const auto n =
+           handle->Read(duckdb::QueryContext{}, buffer, sizeof(buffer))) {
+    content.append(buffer, static_cast<size_t>(n));
+  }
+  return content;
+}
+
 void WriteFile(duckdb::FileSystem& fs, const std::string& path,
                std::string_view content, bool sync) {
   fs.TryRemoveFile(path);

@@ -31,7 +31,6 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/storage.hpp"
-#include "iresearch/store/store_utils.hpp"
 
 namespace irs {
 

@@ -2693,7 +2693,7 @@ TEST_F(ColumnReaderTest, ReproDensePkWithSparseSibling) {
 TEST_F(ColumnReaderTest, ReproShortPkPointRead) {
   constexpr irs::field_id kB = 72;
   constexpr uint64_t kRows = 500;
-  // Length-prefixed content (irs::WriteStr layout) like the failing test.
+  // Length-prefixed content (WriteStr layout) like the failing test.
   auto key = [](uint64_t i) {
     const std::string s = "row_" + std::to_string(i);
     return std::string(1, static_cast<char>(s.size())) + s;

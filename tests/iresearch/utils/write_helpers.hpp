@@ -24,8 +24,10 @@
 #include <cstdint>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
 #include <iresearch/utils/number_utils.hpp>
+#include <limits>
 
 namespace irs {
 
@@ -82,5 +84,13 @@ float_t ReadZvfloat(irs::IndexInput& in);
 void WriteZvdouble(irs::DataOutput& out, double_t v);
 
 double_t ReadZvdouble(irs::IndexInput& in);
+
+template<typename StringType>
+void WriteStr(irs::DataOutput& out, const StringType& str) {
+  SDB_ASSERT(str.size() < std::numeric_limits<uint32_t>::max());
+  out.WriteV32(static_cast<uint32_t>(str.size()));
+  out.WriteData(reinterpret_cast<const irs::byte_type*>(str.data()),
+                str.size());
+}
 
 }  // namespace tests

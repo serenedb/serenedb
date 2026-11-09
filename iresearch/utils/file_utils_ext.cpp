@@ -37,6 +37,7 @@
 namespace irs::file_utils {
 
 #ifndef _WIN32
+
 namespace {
 
 constexpr size_t kWillNeedChunk = 32 * 1024;

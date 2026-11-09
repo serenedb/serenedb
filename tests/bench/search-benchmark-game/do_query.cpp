@@ -93,8 +93,6 @@ int64_t MedianRunNs(bench::Executor& executor, const bench::Command& cmd,
   return *middle;
 }
 
-// The index at `path`, or a copy of it in memory: in cache blocks, or with
-// every file compacted into one span.
 std::string OpenIndex(std::string_view path, std::string_view memory) {
   if (memory.empty()) {
     return std::string{path};

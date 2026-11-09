@@ -44,7 +44,6 @@
 #include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <stdexcept>
 #include <tuple>

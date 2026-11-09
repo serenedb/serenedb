@@ -28,7 +28,6 @@
 #include <iresearch/search/scorers/raw_boost.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/geo/geo_json.hpp>
 #include <set>

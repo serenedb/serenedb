@@ -34,7 +34,6 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 
 #include "filter_test_case_base.hpp"

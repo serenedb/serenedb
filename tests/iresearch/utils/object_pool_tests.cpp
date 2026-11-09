@@ -30,6 +30,7 @@
 #include "gtest/gtest.h"
 
 using namespace std::chrono_literals;
+
 namespace irs {
 
 // A fixed size pool of objects.

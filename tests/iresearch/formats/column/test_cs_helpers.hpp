@@ -34,7 +34,6 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -158,7 +157,7 @@ class BlobPointReader {
   ColumnReader::BlobPointReader _impl;
 };
 
-// Convenience: read a length-prefixed string (irs::WriteStr layout) from
+// Convenience: read a length-prefixed string (WriteStr layout) from
 // `column` at `doc` via a BlobPointReader. Accepts both the wrapper above
 // and the underlying `ColumnReader::BlobPointReader`.
 template<typename StringType>

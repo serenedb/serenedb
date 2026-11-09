@@ -42,6 +42,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
+
 namespace irs {
 
 inline constexpr uint32_t kHnswInvalidNode =

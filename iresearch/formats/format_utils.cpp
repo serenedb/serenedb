@@ -33,7 +33,6 @@
 
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/file_output.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 

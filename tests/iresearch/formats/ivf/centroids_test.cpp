@@ -650,10 +650,12 @@ TEST(centroids_builder_test, open_reads_exactly_the_root_level) {
       sample, d, VectorMetric::L2Sqr, params);
     MemoryFile file;
     CentroidsSpan span;
+    uint64_t tree_end = 0;
     {
       MemoryFileOutput out{file};
       out.WriteU64(0);
       span = builder.Serialize(out);
+      tree_end = out.Position();
       out.WriteU64(0);
       out.Flush();
     }
@@ -664,7 +666,7 @@ TEST(centroids_builder_test, open_reads_exactly_the_root_level) {
     levels = tree.Levels();
     root_size = tree.RootSize();
 
-    EXPECT_EQ(levels == 1, span.root_byte_size == span.byte_size);
+    EXPECT_EQ(levels == 1, span.offset + span.root_byte_size == tree_end);
     if (root_size != 0) {
       EXPECT_EQ(span.offset + span.root_byte_size, in.Position());
     }

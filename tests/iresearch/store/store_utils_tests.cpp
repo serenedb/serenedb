@@ -21,7 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
 #include <unordered_set>
@@ -212,7 +211,7 @@ TEST(store_utils_tests, std_string_read_write) {
       std::string("lazy p1230142hlds"),
       std::string("dob  sdofjasoufdsa"),
     },
-    irs::ReadString<std::string, IndexInput>, irs::WriteStr<std::string>);
+    irs::ReadString<std::string, IndexInput>, tests::WriteStr<std::string>);
 }
 
 TEST(store_utils_tests, bytes_read_write) {
@@ -224,5 +223,5 @@ TEST(store_utils_tests, bytes_read_write) {
       bstring(irs::ViewCast<byte_type>(std::string_view("102174174010"))),
       bstring(irs::ViewCast<byte_type>(std::string_view("0182ljdskfaof"))),
     },
-    irs::ReadString<bstring, IndexInput>, irs::WriteStr<bstring>);
+    irs::ReadString<bstring, IndexInput>, tests::WriteStr<bstring>);
 }

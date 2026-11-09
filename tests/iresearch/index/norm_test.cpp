@@ -33,6 +33,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "token_sink_utils.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -99,7 +100,7 @@ class NormField final : public tests::Ifield {
   }
 
   bool Write(irs::DataOutput& out) const final {
-    irs::WriteStr(out, _value);
+    tests::WriteStr(out, _value);
     return true;
   }
 

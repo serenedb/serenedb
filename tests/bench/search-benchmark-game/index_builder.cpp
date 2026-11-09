@@ -28,7 +28,7 @@
 #include <duckdb/main/database.hpp>
 #include <filesystem>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/store/data_output.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
@@ -285,7 +285,9 @@ void IndexBuilder::Settle() {
 }
 
 bool TextField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, text);
+  out.WriteV32(static_cast<uint32_t>(text.size()));
+  out.WriteData(reinterpret_cast<const irs::byte_type*>(text.data()),
+                text.size());
   return true;
 }
 

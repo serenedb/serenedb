@@ -44,6 +44,7 @@
 #include "formats_test_case_base.hpp"
 #include "index_dir.hpp"
 #include "tests_shared.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -74,7 +75,7 @@ class Format10TestCase : public tests::FormatTestCase {
 
       auto out = dir->Create("attributes");
       ASSERT_FALSE(!out);
-      irs::WriteStr(*out, std::string_view("file_header"));
+      tests::WriteStr(*out, std::string_view("file_header"));
 
       // prepare writer
       writer.Prepare(state);
@@ -981,7 +982,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         auto out = dir->Create("attributes");
         ASSERT_FALSE(!out);
-        irs::WriteStr(*out, std::string_view("file_header"));
+        tests::WriteStr(*out, std::string_view("file_header"));
 
         writer.Prepare(state);
         writer.BeginField(field);

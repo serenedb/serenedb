@@ -84,11 +84,10 @@ class RefCounter : public util::Noncopyable {
 
   template<typename T>
   ref_t add(T&& key) {
-    absl::MutexLock lock{&_lock};
     const auto settled = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
       return !_removing.contains(key);
     };
-    _lock.Await(absl::Condition(&settled));
+    absl::MutexLock lock{&_lock, absl::Condition(&settled)};
 
     auto it = _refs.lazy_emplace(key, [&](const auto& ctor) {
       ctor(std::make_shared<const Key>(std::forward<T>(key)));

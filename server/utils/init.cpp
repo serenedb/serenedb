@@ -20,13 +20,10 @@
 
 #include "init.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/debugging/symbolize.h>
 #include <absl/strings/ascii.h>
 #include <fast_float/fast_float.h>
-#include <fcntl.h>
 #include <sys/resource.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -34,6 +31,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/local_file_system.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/log.hpp>
@@ -44,6 +42,8 @@
 
 #define ZLIB_COMPAT
 #include <functable.h>
+
+#include "file_utils.h"
 
 namespace sdb::app {
 namespace {
@@ -72,20 +72,12 @@ void RaiseFdLimit() {
 
 void CheckMaxMapCount() {
   constexpr uint64_t kExpected = 262144;
-  const int fd = ::open("/proc/sys/vm/max_map_count", O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
+  constexpr const char* kPath = "/proc/sys/vm/max_map_count";
+  duckdb::LocalFileSystem fs;
+  if (!fs.FileExists(kPath)) {
     return;
   }
-  absl::Cleanup guard = [fd] { ::close(fd); };
-  std::string s;
-  char buffer[64];
-  ssize_t n = 0;
-  while ((n = ::read(fd, buffer, sizeof(buffer))) > 0) {
-    s.append(buffer, static_cast<size_t>(n));
-  }
-  if (n < 0) {
-    return;
-  }
+  const auto s = utils::file_utils::ReadFile(fs, kPath);
   const auto trimmed = absl::StripAsciiWhitespace(s);
   uint64_t actual = 0;
   if (auto [p, ec] = fast_float::from_chars(

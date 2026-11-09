@@ -28,6 +28,7 @@
 #include <string_view>
 
 #include "catalog/entry/search_table.h"
+
 namespace sdb::connector {
 
 inline std::string_view AsView(const duckdb::string_t& s) noexcept {

@@ -178,7 +178,6 @@ class CentroidsTree {
 
 struct CentroidsSpan {
   size_t offset = 0;
-  size_t byte_size = 0;
   size_t root_byte_size = 0;
 };
 

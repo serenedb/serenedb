@@ -43,9 +43,7 @@ struct AnnIndex;
 
 struct IvfCentroidMeta {
   uint64_t tree_offset = 0;
-  uint64_t tree_byte_size = 0;
   uint64_t stats_offset = 0;
-  uint64_t stats_byte_size = 0;
   uint64_t root_byte_size = 0;
 };
 

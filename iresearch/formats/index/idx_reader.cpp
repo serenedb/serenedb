@@ -23,7 +23,6 @@
 #include <cstring>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/types.hpp>
-#include <tuple>
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -61,10 +60,8 @@ IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
             const auto id = obj.ReadProperty<uint64_t>(0, "id");
             const auto tree_offset =
               obj.ReadProperty<uint64_t>(1, "tree_offset");
-            std::ignore = obj.ReadProperty<uint64_t>(2, "tree_byte_size");
             const auto stats_offset =
               obj.ReadProperty<uint64_t>(3, "stats_offset");
-            std::ignore = obj.ReadProperty<uint64_t>(4, "stats_byte_size");
             const auto root_byte_size =
               obj.ReadProperty<uint64_t>(5, "root_byte_size");
 

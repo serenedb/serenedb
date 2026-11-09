@@ -36,7 +36,6 @@
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/log.hpp"

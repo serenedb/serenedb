@@ -31,6 +31,17 @@ n
 1
 
 
+statement ok
+PREPARE srus_point(INT) AS SELECT count(*) AS n FROM srus WHERE id = $1;
+
+
+query
+EXECUTE srus_point(8);
+----
+n
+1
+
+
 query
 SELECT value AS buffered FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND relation_id = 'srus'::regclass;
 ----

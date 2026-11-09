@@ -85,6 +85,10 @@ statement ok
 INSERT INTO sven_storm_hammer VALUES (1, 'pudge hook'), (2, 'sven cleave'), (3, 'roshan aegis');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) sven_storm_hammer;
+
+
 query
 SELECT metric, value
 FROM sdb_metrics

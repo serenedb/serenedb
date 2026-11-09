@@ -1711,12 +1711,13 @@ bool StoredColumn(const duckdb::LogicalGet& get,
 }
 
 bool CallsSearchStub(const duckdb::Expression& expr) {
-  bool found = false;
-  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundFunctionExpression>(
-    expr, [&](const duckdb::BoundFunctionExpression& call) {
-      found = found || connector::IsSearchStub(call);
-    });
-  return found;
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION &&
+      connector::IsSearchStub(expr.Cast<duckdb::BoundFunctionExpression>())) {
+    return true;
+  }
+  return duckdb::ExpressionIterator::AnyChild(
+    expr,
+    [](const duckdb::Expression& child) { return CallsSearchStub(child); });
 }
 
 bool ColumnEvaluable(const duckdb::LogicalGet& get,

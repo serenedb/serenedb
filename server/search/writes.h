@@ -201,6 +201,8 @@ class Writes {
 
   irs::DirectoryReader View(duckdb::ClientContext& context, Store& store,
                             Tick snapshot, bool searchable);
+  irs::DirectoryReader LatestView(duckdb::ClientContext& context, Store& store,
+                                  Tick snapshot);
   std::shared_ptr<irs::DirectoryReader> PinnedReader(const Store& store) const;
 
   bool Empty() const noexcept { return _writes.empty(); }
@@ -270,6 +272,10 @@ class Writes {
   };
 
   std::shared_ptr<const TableState> PinState(const Store& store);
+  irs::DirectoryReader BuildView(duckdb::ClientContext& context, Store& store,
+                                 Tick snapshot,
+                                 const std::shared_ptr<const TableState>& state,
+                                 bool searchable);
 
   duckdb::transaction_t _session;
   bool _conflict = false;

@@ -1249,6 +1249,26 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
 
 irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
                                   Tick snapshot, bool searchable) {
+  const auto state = PinState(store);
+  const bool search = searchable && store.HasIndexes();
+  if (search) {
+    store.MakeSearchable(snapshot);
+  }
+  return BuildView(context, store, snapshot, state, search);
+}
+
+irs::DirectoryReader Writes::LatestView(duckdb::ClientContext& context,
+                                        Store& store, Tick snapshot) {
+  const bool search = store.HasIndexes();
+  if (search) {
+    store.MakeSearchable(snapshot);
+  }
+  return BuildView(context, store, snapshot, store.GetTable().State(), search);
+}
+
+irs::DirectoryReader Writes::BuildView(
+  duckdb::ClientContext& context, Store& store, Tick snapshot,
+  const std::shared_ptr<const TableState>& state, bool searchable) {
   StoreWrites* w = nullptr;
   {
     absl::ReaderMutexLock lock{&_mutex};
@@ -1256,23 +1276,18 @@ irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
       w = &it->second;
     }
   }
-  const bool indexed = store.HasIndexes();
-  const auto state = PinState(store);
-  if (indexed && searchable) {
-    store.MakeSearchable(snapshot);
-  }
   if (!w) {
-    return store.View(state, snapshot, {}, indexed && searchable);
+    return store.View(state, snapshot, {}, searchable);
   }
   absl::MutexLock lock{&w->mutex};
   if (w->rebuilt_newer) {
     ThrowConcurrentUpdate();
   }
-  if (indexed && w->changes.HasBufferedRows()) {
+  if (store.HasIndexes() && w->changes.HasBufferedRows()) {
     FlushRows(context, *w);
   }
   return store.View(state, std::max(snapshot, w->rebuilt), OwnOf(*w),
-                    indexed && searchable);
+                    searchable);
 }
 
 void Writes::NoteConflicts(Tick snapshot) {

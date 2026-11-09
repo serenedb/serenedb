@@ -494,7 +494,8 @@ bool ScanBindData::HasPushdowns() const noexcept {
 }
 
 bool ScanBindData::NeedsSearch() const noexcept {
-  return (search.filter && (search.index_only || search.duals.empty())) ||
+  return (!plan_cache.deferred && search.filter &&
+          (search.index_only || search.duals.empty())) ||
          !search.filter_scorers.empty() || score.text || score.vector ||
          offsets.Active() || ts_dict.Active();
 }

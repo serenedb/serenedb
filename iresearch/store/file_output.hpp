@@ -20,13 +20,14 @@
 
 #pragma once
 
+#include <absl/crc/crc32c.h>
+
 #include <duckdb/common/file_system.hpp>
 #include <memory>
 #include <string_view>
 
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/index_files.hpp"
-#include "iresearch/utils/crc.hpp"
 
 namespace irs {
 
@@ -70,7 +71,7 @@ class FileOutput final : public DataOutput {
   std::unique_ptr<duckdb::FileWriter> _writer;
   std::unique_ptr<duckdb::FileHandle> _handle;
   std::unique_ptr<byte_type[]> _buf;
-  Crc32c _crc;
+  absl::crc32c_t _crc{0};
   uint64_t _unhinted = 0;
   FileObservers _observers;
   bool _remote;

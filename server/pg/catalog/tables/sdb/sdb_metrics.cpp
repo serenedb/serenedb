@@ -121,8 +121,6 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
       "bytes");
   add("block_cache_used_bytes", stats.used,
       "memory the cache of remote and in-memory index files uses, in bytes");
-  add("block_cache_hits", stats.hits,
-      "block reads served from the cache since start");
   add("block_cache_misses", stats.misses,
       "block reads that went to storage since start");
   add("block_cache_fetches", stats.fetches,

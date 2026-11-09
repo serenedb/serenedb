@@ -127,14 +127,16 @@ void FileOutput::CommitWindow() {
   if (size == 0) {
     return;
   }
-  _crc.process_bytes(_begin, size);
-  _writer->Commit(size);
+  const auto crc =
+    absl::ComputeCrc32c({reinterpret_cast<const char*>(_begin), size});
+  _crc = absl::ConcatCrc32c(_crc, crc, size);
+  _writer->Commit(size, static_cast<uint32_t>(crc));
   Advance(size);
 }
 
 uint32_t FileOutput::Checksum() {
   Flush();
-  return std::exchange(_crc, Crc32c{}).checksum();
+  return static_cast<uint32_t>(std::exchange(_crc, absl::crc32c_t{0}));
 }
 
 void FileOutput::Release() noexcept {
@@ -205,7 +207,7 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) {
   SDB_ASSERT(_handle);
   _handle->Write(duckdb::QueryContext{}, const_cast<byte_type*>(b), len,
                  _offset);
-  _crc.process_bytes(b, len);
+  _crc = absl::ExtendCrc32c(_crc, {reinterpret_cast<const char*>(b), len});
   Advance(len);
   _unhinted += len;
   if (_unhinted >= kWritebackHintBytes) {

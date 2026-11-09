@@ -55,7 +55,9 @@ class HookFileWriter final : public duckdb::FileWriter {
 
   duckdb::FileWriteWindow Window() final { return _inner->Window(); }
 
-  void Commit(duckdb::idx_t nr_bytes) final { _inner->Commit(nr_bytes); }
+  void Commit(duckdb::idx_t nr_bytes, uint32_t crc32c) final {
+    _inner->Commit(nr_bytes, crc32c);
+  }
 
   void Close() final {
     _fs.OnClose(Name(_path));

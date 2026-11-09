@@ -51,7 +51,6 @@ The `sdb_metrics` system table reports how the cache and the uploads do, in rows
 | :--- | :--- |
 | `block_cache_capacity_bytes` | Memory the cache may use, in bytes: `memory_limit`, which it shares with queries |
 | `block_cache_used_bytes` | Memory the cache uses, in bytes |
-| `block_cache_hits` | Block reads served from the cache since startup |
 | `block_cache_misses` | Block reads that went to the store since startup |
 | `block_cache_fetches` | Requests that read blocks from the store since startup |
 | `block_cache_fetched_bytes` | Bytes read from the store into the cache since startup |

@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
-#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <re2/regexp.h>
@@ -69,11 +68,9 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
-#include <iresearch/utils/utf8_character_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
-#include <utf8proc_wrapper.hpp>
 #include <vector>
 
 #include "comparison_op.hpp"
@@ -1466,59 +1463,11 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWithLike(
                 duckdb::Value(std::move(pattern)))));
 }
 
-void AppendRegexpCodepoint(uint32_t cp, std::string& out) {
-  if (cp < 0x80 && absl::ascii_isalnum(static_cast<unsigned char>(cp))) {
-    out.push_back(static_cast<char>(cp));
-    return;
-  }
-  absl::StrAppend(&out, "\\x{", absl::Hex(cp), "}");
-}
-
-void AppendCaseless(uint32_t cp, std::string& out) {
-  const auto lower = irs::utf8_utils::CharToLowerSimple(cp);
-  const auto lowers_to = [&](irs::utf8_utils::CaseMap m) {
-    return m.to == lower;
-  };
-  if (!absl::c_any_of(irs::utf8_utils::kSimpleLowerTable, lowers_to)) {
-    AppendRegexpCodepoint(lower, out);
-    return;
-  }
-  out.push_back('[');
-  AppendRegexpCodepoint(lower, out);
-  for (const auto m : irs::utf8_utils::kSimpleLowerTable) {
-    if (lowers_to(m)) {
-      AppendRegexpCodepoint(m.cp, out);
-    }
-  }
-  out.push_back(']');
-}
-
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSILike(
   std::string_view literal) {
-  std::string regexp = "(?s)";
-  regexp.reserve(literal.size() * 4 + regexp.size());
-  bool escaped = false;
-  for (size_t i = 0; i < literal.size();) {
-    int size = 0;
-    const auto cp = duckdb::Utf8Proc::UTF8ToCodepoint(literal.data() + i, size,
-                                                      literal.size() - i);
-    i += size;
-    if (escaped) {
-      AppendCaseless(cp, regexp);
-      escaped = false;
-    } else if (cp == '\\') {
-      escaped = true;
-    } else if (cp == '%') {
-      regexp += ".*";
-    } else if (cp == '_') {
-      regexp += '.';
-    } else {
-      AppendCaseless(cp, regexp);
-    }
-  }
   return MakeTSQueryCall(
     kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(std::move(regexp)))));
+                  duckdb::Value(irs::LikeRegexp(literal, true)))));
 }
 
 bool AnchoredAtText(re2::Regexp* re, bool start) {

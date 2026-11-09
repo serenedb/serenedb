@@ -444,7 +444,6 @@ void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
 }
 
 EntrySet::~EntrySet() {
-  Transactions::Get().ExpireSet(_alive);
   std::vector<duckdb::CatalogEntry*> indexed;
   {
     absl::ReaderMutexLock lock{&_mutex};

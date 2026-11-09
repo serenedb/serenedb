@@ -238,16 +238,18 @@ class Transactions final {
   duckdb::transaction_t RefreshOldest() ABSL_LOCKS_EXCLUDED(_walk_mutex);
   void GarbageQueued() noexcept;
   void CollectGarbage();
-  void ExpireSet(std::shared_ptr<const char>& alive)
-    ABSL_LOCKS_EXCLUDED(_collect_mutex);
 
  private:
   struct Garbage {
     duckdb::transaction_t commit;
     EntrySet* set;
-    std::weak_ptr<const void> set_alive;
     duckdb::CatalogEntry* version;
     duckdb::weak_ptr<duckdb::AttachedDatabase> database;
+  };
+  enum class CollectState : uint8_t {
+    Idle,
+    Running,
+    Again,
   };
   struct Pending {
     duckdb::transaction_t commit = 0;
@@ -267,6 +269,7 @@ class Transactions final {
   static constexpr uint64_t kCollectEvery = 1024;
 
   void RequestCollect() noexcept;
+  void RunCollector() noexcept;
   void AfterCommit(duckdb::transaction_t commit) noexcept;
   void Collect(duckdb::transaction_t oldest);
 
@@ -278,8 +281,7 @@ class Transactions final {
   std::atomic<uint64_t> _garbage_queued{0};
   std::atomic<uint64_t> _garbage_seen{0};
   std::atomic<bool> _garbage_pending{false};
-  std::atomic<bool> _collect_requested{false};
-  absl::Mutex _collect_mutex;
+  std::atomic<CollectState> _collect_state{CollectState::Idle};
   absl::Mutex _garbage_mutex;
   std::deque<Garbage> _garbage ABSL_GUARDED_BY(_garbage_mutex);
   absl::Mutex _commit_mutex;

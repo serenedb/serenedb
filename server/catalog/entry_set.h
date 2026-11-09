@@ -218,8 +218,6 @@ class EntrySet {
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Trim(duckdb::CatalogEntry& version);
 
-  std::weak_ptr<const void> Alive() const noexcept { return _alive; }
-
   void CreateDefaults(duckdb::CatalogTransaction transaction);
 
   bool Members() const noexcept { return _members; }
@@ -261,7 +259,6 @@ class EntrySet {
   OidIndex& _oids;
   const duckdb::idx_t _owner;
   const bool _members;
-  std::shared_ptr<const char> _alive = std::make_shared<const char>();
   duckdb::unique_ptr<duckdb::DefaultGenerator> _defaults;
   absl::Mutex _mutex;
   duckdb::identifier_tree_t<duckdb::unique_ptr<duckdb::CatalogEntry>> _entries

@@ -44,6 +44,7 @@
 #include "scheduler/background_scheduler.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
@@ -257,29 +258,53 @@ void Transactions::GarbageQueued() noexcept {
 }
 
 void Transactions::RequestCollect() noexcept {
-  if (!BackgroundScheduler::gInstance ||
-      _collect_requested.load(std::memory_order_relaxed) ||
-      _collect_requested.exchange(true, std::memory_order_acq_rel)) {
+  if (!BackgroundScheduler::gInstance || lifecycle::IsStopping()) {
     return;
   }
+  auto state = _collect_state.load(std::memory_order_acquire);
+  for (;;) {
+    if (state == CollectState::Again) {
+      return;
+    }
+    const auto next =
+      state == CollectState::Idle ? CollectState::Running : CollectState::Again;
+    if (_collect_state.compare_exchange_weak(
+          state, next, std::memory_order_acq_rel, std::memory_order_acquire)) {
+      if (next == CollectState::Again) {
+        return;
+      }
+      break;
+    }
+  }
   try {
-    BackgroundScheduler::instance()
-      .Run([this] {
-        _collect_requested.store(false, std::memory_order_release);
-        try {
-          CollectGarbage();
-        } catch (const std::exception& e) {
-          SDB_WARN(GENERAL, "collecting garbage failed: ",
-                   duckdb::ErrorData{e}.RawMessage());
-        }
-      })
-      .Detach();
+    BackgroundScheduler::instance().Run([this] { RunCollector(); }).Detach();
   } catch (...) {
-    _collect_requested.store(false, std::memory_order_release);
+    _collect_state.store(CollectState::Idle, std::memory_order_release);
+  }
+}
+
+void Transactions::RunCollector() noexcept {
+  for (;;) {
+    try {
+      CollectGarbage();
+    } catch (const std::exception& e) {
+      SDB_WARN(GENERAL, "collecting garbage failed: ",
+               duckdb::ErrorData{e}.RawMessage());
+    }
+    auto state = CollectState::Running;
+    if (_collect_state.compare_exchange_strong(state, CollectState::Idle,
+                                               std::memory_order_acq_rel,
+                                               std::memory_order_acquire)) {
+      return;
+    }
+    _collect_state.store(CollectState::Running, std::memory_order_release);
   }
 }
 
 void Transactions::CollectGarbage() {
+  if (lifecycle::IsStopping()) {
+    return;
+  }
   _garbage_seen.store(_garbage_queued.load(std::memory_order_acquire),
                       std::memory_order_relaxed);
   _garbage_pending.store(false, std::memory_order_relaxed);
@@ -311,38 +336,27 @@ void Transactions::Collect(duckdb::transaction_t oldest) {
       return;
     }
   }
-  std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> databases;
-  std::vector<duckdb::unique_ptr<duckdb::CatalogEntry>> freed;
+  std::vector<Garbage> ready;
   {
-    absl::MutexLock collect{&_collect_mutex};
-    std::vector<Garbage> ready;
-    {
-      absl::MutexLock lock{&_garbage_mutex};
-      while (!_garbage.empty() && _garbage.front().commit <= oldest) {
-        ready.push_back(std::move(_garbage.front()));
-        _garbage.pop_front();
-      }
-    }
-    for (auto& garbage : ready) {
-      auto database =
-        duckdb::AttachedDatabase::TryGetReference(garbage.database);
-      if (!database) {
-        continue;
-      }
-      if (!garbage.set_alive.expired()) {
-        if (auto older = garbage.set->Trim(*garbage.version)) {
-          freed.push_back(std::move(older));
-        }
-      }
-      databases.push_back(std::move(database));
+    absl::MutexLock lock{&_garbage_mutex};
+    while (!_garbage.empty() && _garbage.front().commit <= oldest) {
+      ready.push_back(std::move(_garbage.front()));
+      _garbage.pop_front();
     }
   }
+  std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> databases;
+  std::vector<duckdb::unique_ptr<duckdb::CatalogEntry>> freed;
+  for (auto& garbage : ready) {
+    auto database = duckdb::AttachedDatabase::TryGetReference(garbage.database);
+    if (!database) {
+      continue;
+    }
+    if (auto older = garbage.set->Trim(*garbage.version)) {
+      freed.push_back(std::move(older));
+    }
+    databases.push_back(std::move(database));
+  }
   SDB_PARK_ONCE_ON_FAILURE("catalog_collect_before_free");
-}
-
-void Transactions::ExpireSet(std::shared_ptr<const char>& alive) {
-  absl::MutexLock collect{&_collect_mutex};
-  alive.reset();
 }
 
 void Transactions::Commit(SessionTransaction& transaction,
@@ -382,7 +396,6 @@ void Transactions::Commit(SessionTransaction& transaction,
         _garbage.push_back({
           .commit = commit,
           .set = change.set,
-          .set_alive = change.set->Alive(),
           .version = change.version,
           .database =
             change.Subject().ParentCatalog().GetAttached().shared_from_this(),

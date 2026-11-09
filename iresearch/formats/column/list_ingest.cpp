@@ -144,6 +144,7 @@ void ListIngest::CheckDistinct() {
   if (_dedup && codes * 10 > (_valid_rows - _window_valid) * 9) {
     _dedup = false;
     _off_chunks = 0;
+    _sequence = true;
     Forget();
     if (_borrow) {
       FlushTail();

@@ -3307,6 +3307,31 @@ TEST_F(ColumnReaderTest, UniqueListRowGroupsBitpackTheirCodes) {
                  Rows{{3000, 3001, 3002, 3010, 5000, 5001}}, true);
 }
 
+TEST_F(ColumnReaderTest, ListCodesStayConsecutiveOnceDedupTurnsOff) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::ListIngest ingest{type, /*borrow=*/false};
+  duckdb::Connection con{Db()};
+  auto result = con.Query(
+    "SELECT CASE WHEN i % 7 = 0 THEN NULL WHEN i % 13 = 0 THEN "
+    "[]::VARCHAR[] ELSE ['u' || i, 'v' || (i * 31)] END FROM range(8192) "
+    "t(i)");
+  ASSERT_FALSE(result->HasError()) << result->GetError();
+  while (auto chunk = result->Fetch()) {
+    ingest.Add(chunk->data[0], 0, chunk->size());
+    ingest.CheckDistinct();
+  }
+  const auto parts = ingest.Take();
+  std::vector<uint64_t> codes;
+  for (const auto& chunk : parts.codes) {
+    const auto* data = duckdb::FlatVector::GetData<uint64_t>(chunk.data);
+    codes.insert(codes.end(), data, data + chunk.count);
+  }
+  ASSERT_EQ(codes.size(), 8192u);
+  for (size_t i = STANDARD_VECTOR_SIZE + 1; i < codes.size(); ++i) {
+    ASSERT_EQ(codes[i], codes[i - 1] + 1) << "row " << i;
+  }
+}
+
 TEST_F(ColumnReaderTest, RepeatedListRowGroupsKeepTheirCodes) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   irs::MemoryDirectory dir{};

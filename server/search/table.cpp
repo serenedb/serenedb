@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/hot_column_reader.hpp>
@@ -553,8 +554,8 @@ void Table::ReleaseHot(const std::shared_ptr<HotContext>& hot, bool retire) {
 }
 
 void Table::Retire(Lsn before) {
-  const auto state = State();
   absl::MutexLock lock{&_hot_mutex};
+  const auto state = State();
   if (before == kNoLsn) {
     for (const auto& hot : _free) {
       _retired.insert(hot.get());
@@ -572,8 +573,9 @@ void Table::Retire(Lsn before) {
 }
 
 void Table::RetireVisible(Tick snapshot) {
-  const auto state = State();
+  SDB_PARK_ONCE_ON_FAILURE("search_retire_visible_before_lock");
   absl::MutexLock lock{&_hot_mutex};
+  const auto state = State();
   for (const auto& unit : state->units) {
     if (unit->hot && VisibleEnd(*unit, snapshot) != 0) {
       _retired.insert(unit->hot.get());
@@ -807,9 +809,10 @@ void Table::Collect(Tick oldest) {
 
 std::vector<std::shared_ptr<HotContext>> Table::TakeCoolable(
   size_t memory_limit, bool all) {
-  const auto state = State();
   std::vector<std::shared_ptr<HotContext>> taken;
+  SDB_PARK_ONCE_ON_FAILURE("search_take_coolable_before_lock");
   absl::MutexLock lock{&_hot_mutex};
+  const auto state = State();
   for (const auto& unit : state->units) {
     const auto& hot = unit->hot;
     if (!hot || _held.contains(hot.get())) {
@@ -832,8 +835,8 @@ std::vector<std::shared_ptr<HotContext>> Table::TakeCoolable(
 }
 
 bool Table::HasRetiredHot() const {
-  const auto state = State();
   absl::MutexLock lock{&_hot_mutex};
+  const auto state = State();
   for (const auto& unit : state->units) {
     if (unit->hot && _retired.contains(unit->hot.get())) {
       return true;

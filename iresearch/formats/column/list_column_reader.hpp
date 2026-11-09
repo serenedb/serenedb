@@ -112,6 +112,7 @@ class ListColumnReader final : public ColumnReader {
   static constexpr uint64_t kWholeBlockElems = 1 << 19;
   static constexpr uint64_t kWholeBlockLists = 8192;
   static constexpr uint64_t kRunGapLists = 16;
+  static constexpr uint64_t kEndsPerSeek = 1024;
   static constexpr uint64_t kAnyElems = std::numeric_limits<uint64_t>::max();
 
   bool Reusable(const ScanState& s) const noexcept {
@@ -150,11 +151,18 @@ class ListColumnReader final : public ColumnReader {
     }
   }
 
-  bool ReadLists(ScanState& s, uint64_t first, uint64_t count,
-                 duckdb::Vector& out, duckdb::list_entry_t* entries,
-                 uint64_t child_base, uint64_t max_elems) const {
-    SDB_ENSURE(first + count <= _children[1]->RowCount(),
-               "list column: corrupted list codes");
+  struct ListEnds {
+    uint64_t first_elem = 0;
+    const uint64_t* ends = nullptr;
+  };
+
+  ListEnds ReadEnds(ScanState& s, uint64_t first, uint64_t count) const {
+    if (const auto* d = s.list_dict.get(); d && d->ends_block != 0 &&
+                                           first >= d->ends_begin &&
+                                           first + count <= d->ends_end) {
+      const auto* ends = d->ends.data() + (first - d->ends_base);
+      return {first == 0 ? 0 : ends[-1], ends};
+    }
     const bool chained =
       first == 0 || first == _children[1]->GatherCursor(s.child_states[2]);
     const uint64_t from = chained ? first : first - 1;
@@ -164,12 +172,49 @@ class ListColumnReader final : public ColumnReader {
       ResetScratch(s.list_ends, duckdb::LogicalType::UBIGINT, end_count);
     _children[1]->ScanCount(s.child_states[2], ends_vec,
                             static_cast<duckdb::idx_t>(end_count), 0);
-    auto* ends = duckdb::FlatVector::GetDataMutable<uint64_t>(ends_vec);
+    const auto* ends = duckdb::FlatVector::GetData<uint64_t>(ends_vec);
+    const auto* list_ends = ends + (end_count - count);
     const uint64_t first_elem =
       first == 0 ? 0 : (chained ? s.st.last_offset : ends[0]);
-    const auto* list_ends = ends + (end_count - count);
+    s.st.last_offset = list_ends[count - 1];
+    return {first_elem, list_ends};
+  }
+
+  IRS_NO_INLINE void DecodeEnds(ScanState& s, ListDictionary& d, uint64_t lo,
+                                uint64_t hi, uint64_t seeks) const {
+    const auto w = _children[1]->Locate(lo);
+    const uint64_t key = w.block + 1;
+    if (hi >= w.end || d.ends_block == key ||
+        seeks * kEndsPerSeek < w.end - w.begin) {
+      return;
+    }
+    const uint64_t base = w.begin == 0 ? 0 : w.begin - 1;
+    d.ends.resize(w.end - base);
+    SeekChild(s, 1, base);
+    for (uint64_t pos = 0; pos < d.ends.size();) {
+      const auto take =
+        std::min<uint64_t>(d.ends.size() - pos, STANDARD_VECTOR_SIZE);
+      auto& chunk = ResetScratch(s.list_ends, duckdb::LogicalType::UBIGINT);
+      _children[1]->ScanCount(s.child_states[2], chunk,
+                              static_cast<duckdb::idx_t>(take), 0);
+      std::copy_n(duckdb::FlatVector::GetData<uint64_t>(chunk), take,
+                  d.ends.data() + pos);
+      pos += take;
+    }
+    s.st.last_offset = d.ends.back();
+    d.ends_block = key;
+    d.ends_base = base;
+    d.ends_begin = w.begin;
+    d.ends_end = w.end;
+  }
+
+  bool ReadLists(ScanState& s, uint64_t first, uint64_t count,
+                 duckdb::Vector& out, duckdb::list_entry_t* entries,
+                 uint64_t child_base, uint64_t max_elems) const {
+    SDB_ENSURE(first + count <= _children[1]->RowCount(),
+               "list column: corrupted list codes");
+    const auto [first_elem, list_ends] = ReadEnds(s, first, count);
     const uint64_t last_elem = list_ends[count - 1];
-    s.st.last_offset = last_elem;
     SDB_ENSURE(first_elem <= last_elem && last_elem <= _children[0]->RowCount(),
                "list column: corrupted list ends");
     const uint64_t elem_count = last_elem - first_elem;
@@ -285,14 +330,18 @@ class ListColumnReader final : public ColumnReader {
       SetBit(words[off / 64], off % 64);
     }
     const uint64_t limit = bits.size() * 64;
+    uint64_t seeks = 1;
     for (uint64_t from = NextBit(bits, 0, true), prev = from; from < limit;) {
       const uint64_t to = NextBit(bits, from, false);
       if (from > prev && from - prev <= kRunGapLists) {
         SetBits(bits, prev, from);
+      } else {
+        ++seeks;
       }
       prev = to;
       from = NextBit(bits, to, true);
     }
+    DecodeEnds(s, d, lo, hi, seeks);
     d.ranks.resize(bits.size());
     uint64_t total = 0;
     for (size_t w = 0; w != bits.size(); ++w) {

@@ -42,6 +42,7 @@
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -126,9 +127,14 @@ struct ListDictionary {
   uint64_t end = 0;
   uint64_t missed_block = 0;
   uint64_t oversized_block = 0;
+  uint64_t ends_block = 0;
+  uint64_t ends_base = 0;
+  uint64_t ends_begin = 0;
+  uint64_t ends_end = 0;
   duckdb::buffer_ptr<duckdb::DictionaryEntry> lists;
   std::vector<uint64_t> decoded;
   std::vector<uint32_t> ranks;
+  ScratchVector<uint64_t> ends;
 };
 
 class ColumnReader {

@@ -31,6 +31,7 @@
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
@@ -84,6 +85,9 @@ class ColumnWriter final {
   }
 
   void PadNullsTo(uint64_t target_row);
+
+  bool CopyableFrom(const ColumnReader& column) const noexcept;
+  void CopyBlocks(const ColumnReader& column, ReadContext& source);
 
   std::vector<WriteChunk> Snapshot(uint64_t rows) const;
   size_t StagedBytes() const noexcept;

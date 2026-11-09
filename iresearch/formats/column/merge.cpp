@@ -136,7 +136,9 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
                         row_group_size, opts.compression);
-    if (field_options) {
+    const bool annotated =
+      field_options && !field_options->AnnFields(field_id_v).empty();
+    if (annotated) {
       for (const auto ann : field_options->AnnFields(field_id_v)) {
         output
           .AttachAnn(field_id_v, *field_options->GetColumnOptions(ann).ann_info)
@@ -171,6 +173,18 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
       const bool stored_distinct =
         distinct && !has_mask && distinct_merger.MergeStored(*col);
+
+      if (!has_mask && !annotated && (!distinct || stored_distinct) &&
+          cw.CopyableFrom(*col)) {
+        cw.PadNullsTo(out_doc);
+        cw.CopyBlocks(*col, *source_ctxs[si]);
+        out_doc += col->RowCount();
+        if (out_doc < source_target) {
+          cw.PadNullsTo(source_target);
+          out_doc = source_target;
+        }
+        continue;
+      }
 
       auto state = col->InitScan(*source_ctxs[si]);
       cw.PadNullsTo(out_doc);

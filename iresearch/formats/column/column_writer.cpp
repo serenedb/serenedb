@@ -131,6 +131,16 @@ void EmitEmptyValidity(const duckdb::LogicalType& validity_type,
   sink.push_back(std::move(m));
 }
 
+bool SelfContained(const ColumnBlockMeta& block) noexcept {
+  const auto type = block.codec->type;
+  if (type == duckdb::CompressionType::COMPRESSION_ZSTD) {
+    return false;
+  }
+  return type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+         block.statistics.GetType().InternalType() !=
+           duckdb::PhysicalType::VARCHAR;
+}
+
 }  // namespace
 
 WriteContext& ColumnWriter::WriteCtx() const noexcept {
@@ -668,6 +678,61 @@ void ColumnWriter::PadNestedNulls(uint64_t count) {
       SealRowGroup();
     }
   }
+}
+
+bool ColumnWriter::CopyableFrom(const ColumnReader& column) const noexcept {
+  if (_is_nested || _deferred || _type.id() == duckdb::LogicalTypeId::VARIANT ||
+      column.Type() != _type || column.RowCount() < _row_group_size ||
+      (_skip_validity && column.HasValidity()) ||
+      !absl::c_all_of(column.DataBlocks(), SelfContained)) {
+    return false;
+  }
+  const auto* validity = column.Validity();
+  return !validity || absl::c_all_of(validity->DataBlocks(), SelfContained);
+}
+
+void ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& source) {
+  SDB_ASSERT(CopyableFrom(column));
+  SealRowGroup();
+  auto& out = Out();
+  std::vector<byte_type> buffer;
+  const auto copy = [&](std::span<const ColumnBlockMeta> blocks,
+                        std::vector<ColumnBlockMeta>& sink) {
+    for (const auto& block : blocks) {
+      ColumnBlockMeta m{block.statistics.Copy()};
+      m.tuple_count = block.tuple_count;
+      m.codec = block.codec;
+      if (block.byte_size != 0) {
+        if (const uint64_t misalign = out.Position() % 8; misalign != 0) {
+          static constexpr byte_type kPad[8]{};
+          out.WriteData(kPad, 8 - misalign);
+        }
+        m.file_offset = out.Position();
+        m.byte_size = block.byte_size;
+        const auto* bytes =
+          source.TryReadStable(block.file_offset, block.byte_size);
+        if (!bytes) {
+          buffer.resize(block.byte_size);
+          source.Read(block.file_offset, buffer.data(), block.byte_size);
+          bytes = buffer.data();
+        }
+        out.WriteData(reinterpret_cast<const byte_type*>(bytes),
+                      block.byte_size);
+      }
+      sink.push_back(std::move(m));
+    }
+  };
+  copy(column.DataBlocks(), _meta.data);
+  if (!_skip_validity) {
+    if (const auto* validity = column.Validity()) {
+      copy(validity->DataBlocks(), _meta.validity);
+    } else {
+      EmitEmptyValidity(
+        duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY}, column.RowCount(),
+        duckdb::DBConfig::GetConfig(WriteCtx().Database()), _meta.validity);
+    }
+  }
+  _row_start += column.RowCount();
 }
 
 void ColumnWriter::PadNullsTo(uint64_t target_row) {

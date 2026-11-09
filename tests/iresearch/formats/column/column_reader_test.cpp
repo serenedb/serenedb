@@ -230,6 +230,127 @@ TEST_F(ColumnReaderTest, SegmentRoundTripVarcharOverflow) {
   }
 }
 
+TEST_F(ColumnReaderTest, CopiedBlocksReadBackBetweenAppendedRows) {
+  constexpr uint64_t kRows = 10000;
+  constexpr uint64_t kBefore = 50;
+  constexpr uint64_t kAfter = 70;
+  constexpr uint32_t kRgSize = 4096;
+  constexpr irs::field_id kA = 1;
+  const auto append = [](irs::ColumnWriter& cw, uint64_t rows,
+                         const std::function<bool(uint64_t)>& is_valid,
+                         const std::function<int64_t(uint64_t)>& value_of) {
+    for (uint64_t pos = 0; pos < rows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(rows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(v);
+      auto& validity = duckdb::FlatVector::ValidityMutable(v);
+      validity.Reset(STANDARD_VECTOR_SIZE);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        if (is_valid(pos + k)) {
+          data[k] = value_of(pos + k);
+        } else {
+          validity.SetInvalid(k);
+        }
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+  };
+  const auto source_valid = [](uint64_t g) { return g % 10 != 0; };
+  const auto source_value = [](uint64_t g) { return static_cast<int64_t>(g); };
+  const auto always = [](uint64_t) { return true; };
+  const auto before_value = [](uint64_t g) {
+    return static_cast<int64_t>(1'000'000 + g);
+  };
+  const auto after_value = [](uint64_t g) {
+    return static_cast<int64_t>(2'000'000 + g);
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "src", Db()};
+    append(w.OpenColumn(kA, duckdb::LogicalType::BIGINT,
+                        /*skip_validity=*/false, kRgSize),
+           kRows, source_valid, source_value);
+    w.Commit(0);
+  }
+  irs::ColReader src{dir, "src", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* source = src.Column(kA);
+  ASSERT_NE(source, nullptr);
+  {
+    irs::ColWriter w{dir, "dst", Db()};
+    auto& cw = w.OpenColumn(kA, duckdb::LogicalType::BIGINT,
+                            /*skip_validity=*/false, kRgSize);
+    append(cw, kBefore, always, before_value);
+    ASSERT_TRUE(cw.CopyableFrom(*source));
+    cw.CopyBlocks(*source, src.Ctx());
+    append(cw, kAfter, always, after_value);
+    w.Commit(0);
+  }
+
+  irs::ColReader dst{dir, "dst", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* copied = dst.Column(kA);
+  ASSERT_NE(copied, nullptr);
+  ASSERT_EQ(copied->RowCount(), kBefore + kRows + kAfter);
+  VerifyBigint(
+    *copied, dst.Ctx(), kBefore + kRows + kAfter,
+    [&](uint64_t g) {
+      return g < kBefore || g >= kBefore + kRows || source_valid(g - kBefore);
+    },
+    [&](uint64_t g) {
+      if (g < kBefore) {
+        return before_value(g);
+      }
+      if (g < kBefore + kRows) {
+        return source_value(g - kBefore);
+      }
+      return after_value(g - kBefore - kRows);
+    });
+  const auto source_blocks = source->DataBlocks();
+  const auto copied_blocks = copied->DataBlocks();
+  ASSERT_GE(copied_blocks.size(), source_blocks.size() + 2);
+  for (size_t i = 0; i < source_blocks.size(); ++i) {
+    EXPECT_EQ(copied_blocks[i + 1].tuple_count, source_blocks[i].tuple_count);
+    EXPECT_EQ(copied_blocks[i + 1].byte_size, source_blocks[i].byte_size);
+  }
+}
+
+TEST_F(ColumnReaderTest, UncompressedOverflowStringsAreNotCopied) {
+  constexpr uint64_t kRows = 5000;
+  constexpr uint32_t kRgSize = 4096;
+  constexpr irs::field_id kS = 5;
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "src", Db()};
+    auto& cw = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
+                            /*skip_validity=*/false, kRgSize,
+                            duckdb::CompressionType::COMPRESSION_UNCOMPRESSED);
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        data[k] = duckdb::StringVector::AddString(
+          v, "long_string_value_" + std::to_string(pos + k) + "_padding_zzz");
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+  irs::ColReader src{dir, "src", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* source = src.Column(kS);
+  ASSERT_NE(source, nullptr);
+  irs::ColWriter w{dir, "dst", Db()};
+  EXPECT_FALSE(w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
+                            /*skip_validity=*/false, kRgSize)
+                 .CopyableFrom(*source));
+}
+
 // A nullable VARCHAR column compresses with dict_fsst, which self-carries nulls
 // (dict slot 0 == NULL) and reconstructs them in-band on scan; the validity
 // stream is therefore absorbed to a single EMPTY segment (mirror DuckDB

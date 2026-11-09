@@ -179,18 +179,19 @@ void FullScanner::FillAbsent(duckdb::DataChunk& output) const {
 }
 
 void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
+                  uint64_t begin, uint64_t end,
                   std::span<const irs::ColumnstoreProjection> projections,
                   irs::ColFilterStateCache& filter_states,
                   duckdb::SelectionVector& live, duckdb::DataChunk& chunk,
                   absl::FunctionRef<bool(duckdb::DataChunk&)> visit) {
   const auto* col_reader = segment.GetColReader();
   SDB_ENSURE(col_reader, "table segment has no columnstore");
+  SDB_ASSERT(begin <= end && end <= segment.Meta().docs_count);
   FullScanner scanner{*col_reader, projections, {}, &context, filter_states};
   const bool has_mask = segment.docs_mask() != nullptr;
   auto mask = irs::MakeGenericDocsMask(segment.docs_mask());
-  const uint64_t docs = segment.Meta().docs_count;
-  for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
-    const auto take = std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row);
+  for (uint64_t row = begin; row < end; row += STANDARD_VECTOR_SIZE) {
+    const auto take = std::min<uint64_t>(STANDARD_VECTOR_SIZE, end - row);
     chunk.Reset();
     const auto produced = scanner.Scan(row, take, chunk);
     SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");

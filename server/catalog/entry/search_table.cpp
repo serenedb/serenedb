@@ -1662,13 +1662,13 @@ void SearchTableEntry::VerifyExistingRows(
   duckdb::SelectionVector live_rows{STANDARD_VECTOR_SIZE +
                                     irs::doc_limits::kDocsSlack};
   for (const auto& segment : RowsWithOwn(context)) {
-    connector::ScanLiveRows(context, segment, projections, filter_states,
-                            live_rows, chunk, [&](duckdb::DataChunk& rows) {
-                              context.InterruptCheck();
-                              VerifyExistingChunk(context, *this, constraint,
-                                                  rows);
-                              return true;
-                            });
+    connector::ScanLiveRows(
+      context, segment, 0, segment.Meta().docs_count, projections,
+      filter_states, live_rows, chunk, [&](duckdb::DataChunk& rows) {
+        context.InterruptCheck();
+        VerifyExistingChunk(context, *this, constraint, rows);
+        return true;
+      });
   }
 }
 

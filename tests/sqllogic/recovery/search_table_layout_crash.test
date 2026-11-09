@@ -41,6 +41,9 @@ CREATE TABLE lxs (id INT PRIMARY KEY, body TEXT)
   WITH (compaction_interval = 0);
 
 statement ok
+CREATE INDEX lxs_x ON lxs USING inverted (body);
+
+statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1, 1000) s(i);
 
 statement ok
@@ -57,9 +60,6 @@ INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(2001, 3000) s(i);
 
 statement ok
 CHECKPOINT;
-
-statement ok
-CREATE INDEX lxs_x ON lxs USING inverted (body);
 
 # ----------------------------------------------------------------------
 # 1. A crash while a replace has rebuilt a segment it has not swapped in.

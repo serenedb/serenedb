@@ -123,29 +123,36 @@ duckdb::DataChunk& Rewritten(RowSource& source, duckdb::DataChunk& chunk) {
   return source.written;
 }
 
-// Feeds every live row of `sub` into `sink`. A segment with deletes is scanned
-// in full and sliced down to the unmasked rows, which keeps this off the scan
-// operator's hit-batching machinery.
+// Feeds every live row of `sub` in [begin, end) into `sink`. A range with
+// deletes is scanned in full and sliced down to the unmasked rows, which keeps
+// this off the scan operator's hit-batching machinery.
 uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
-                     RowSource& source, SearchSinkInsertBaseImpl& sink,
+                     uint64_t begin, uint64_t end, RowSource& source,
+                     SearchSinkInsertBaseImpl& sink,
                      const SearchBackfillTarget& target) {
   uint64_t fed = 0;
-  ScanLiveRows(context, sub, source.projections, source.filter_states,
-               source.live, source.chunk, [&](duckdb::DataChunk& chunk) {
-                 WriteChunkToSearchSink(sink, Rewritten(source, chunk),
-                                        source.write_ids, target.table_id,
-                                        context);
-                 fed += chunk.size();
-                 return true;
-               });
+  ScanLiveRows(
+    context, sub, begin, end, source.projections, source.filter_states,
+    source.live, source.chunk, [&](duckdb::DataChunk& chunk) {
+      WriteChunkToSearchSink(sink, Rewritten(source, chunk), source.write_ids,
+                             target.table_id, context);
+      fed += chunk.size();
+      return true;
+    });
   return fed;
 }
+
+struct Piece {
+  const irs::SubReader* segment = nullptr;
+  uint64_t begin = 0;
+  uint64_t end = 0;
+};
 
 struct Slice {
   RowSource source;
   irs::IndexWriter::Transaction trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
-  std::vector<const irs::SubReader*> segments;
+  std::vector<Piece> pieces;
   std::span<const irs::IndexWriter::FlushedSegment> flushed;
 };
 
@@ -157,11 +164,20 @@ void AppendReplacements(const Slice& slice,
   }
   size_t i = 0;
   uint64_t used = 0;
-  for (const auto* sub : slice.segments) {
+  for (const auto& piece : slice.pieces) {
     const auto& segment =
-      *irs::utils::downCast<irs::SegmentReader>(*sub).GetImpl();
-    const uint64_t live = sub->live_docs_count();
-    for (uint64_t rank = 0; rank < live;) {
+      *irs::utils::downCast<irs::SegmentReader>(*piece.segment).GetImpl();
+    const auto* mask = piece.segment->docs_mask();
+    const auto removed = [&](uint64_t from, uint64_t to) -> uint64_t {
+      return mask ? mask->CountInRange(
+                      static_cast<irs::doc_id_t>(irs::doc_limits::min() + from),
+                      static_cast<irs::doc_id_t>(irs::doc_limits::min() + to))
+                  : 0;
+    };
+    const uint64_t begin = piece.begin - removed(0, piece.begin);
+    const uint64_t live =
+      begin + (piece.end - piece.begin) - removed(piece.begin, piece.end);
+    for (uint64_t rank = begin; rank < live;) {
       SDB_ENSURE(i < slice.flushed.size(),
                  "index build: fed more rows than its segments hold");
       const uint64_t docs = slice.flushed[i].meta.docs_count;
@@ -185,21 +201,34 @@ void AppendReplacements(const Slice& slice,
              "index build: fed fewer rows than its segments hold");
 }
 
-// By bytes, not by segment count: sizes are uneven, and a group is only as
-// fast as its heaviest slice.
-std::vector<std::vector<const irs::SubReader*>> BalanceSlices(
+// By rows, not by segment count: a group is only as fast as its heaviest
+// slice, and one big segment would otherwise leave every other thread idle.
+std::vector<std::vector<Piece>> CutPieces(
   std::span<const irs::SubReader* const> group, size_t slices) {
-  std::vector<const irs::SubReader*> by_size{group.begin(), group.end()};
-  absl::c_sort(by_size, [](const irs::SubReader* l, const irs::SubReader* r) {
-    return l->Meta().byte_size > r->Meta().byte_size;
-  });
-  std::vector<std::vector<const irs::SubReader*>> out(slices);
-  std::vector<uint64_t> load(slices, 0);
-  for (const auto* sub : by_size) {
-    const auto lightest = static_cast<size_t>(
-      std::distance(load.begin(), absl::c_min_element(load)));
-    out[lightest].push_back(sub);
-    load[lightest] += sub->Meta().byte_size;
+  constexpr uint64_t kChunk = STANDARD_VECTOR_SIZE;
+  uint64_t total = 0;
+  for (const auto* sub : group) {
+    total += sub->Meta().docs_count;
+  }
+  const auto budget = std::max(kChunk, (total + slices - 1) / slices);
+  std::vector<std::vector<Piece>> out(slices);
+  size_t slice = 0;
+  uint64_t load = 0;
+  for (const auto* sub : group) {
+    const uint64_t docs = sub->Meta().docs_count;
+    for (uint64_t row = 0; row < docs;) {
+      auto take = docs - row;
+      if (slice + 1 < slices) {
+        take = std::min(take, (budget - load + kChunk - 1) / kChunk * kChunk);
+      }
+      out[slice].push_back({.segment = sub, .begin = row, .end = row + take});
+      row += take;
+      load += take;
+      if (load >= budget && slice + 1 < slices) {
+        ++slice;
+        load = 0;
+      }
+    }
   }
   return out;
 }
@@ -216,9 +245,11 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       progress{progress_in} {}
 
   duckdb::TaskExecutionResult ExecuteTaskStep() final {
-    if (next < slice.segments.size()) {
-      const auto fed = FeedSegment(context, *slice.segments[next++],
-                                   slice.source, *slice.sink, target);
+    if (next < slice.pieces.size()) {
+      const auto& piece = slice.pieces[next++];
+      const auto fed =
+        FeedSegment(context, *piece.segment, piece.begin, piece.end,
+                    slice.source, *slice.sink, target);
       if (progress) {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
@@ -248,10 +279,15 @@ search::Tick RebuildGroup(duckdb::ClientContext& context,
                           std::span<const irs::SubReader* const> group,
                           pg::ProgressMetrics* progress) {
   auto& shard = *target.shard;
-  const auto slice_count = std::max<size_t>(
-    1, std::min<size_t>(group.size(),
-                        duckdb::TaskScheduler::QueryThreads(context)));
-  auto assignment = BalanceSlices(group, slice_count);
+  uint64_t rows = 0;
+  for (const auto* sub : group) {
+    rows += sub->Meta().docs_count;
+  }
+  const uint64_t slice_rows = std::max<uint64_t>(1, shard.RowGroupSize());
+  const auto slice_count = static_cast<size_t>(
+    std::clamp<uint64_t>((rows + slice_rows - 1) / slice_rows, 1,
+                         duckdb::TaskScheduler::QueryThreads(context)));
+  auto assignment = CutPieces(group, slice_count);
 
   // Built here, never on a worker: the sink factory reads the catalog and
   // InitRowSource takes the context allocator.
@@ -259,7 +295,7 @@ search::Tick RebuildGroup(duckdb::ClientContext& context,
   slices.reserve(slice_count);
   for (size_t k = 0; k < slice_count; ++k) {
     auto slice = std::make_unique<Slice>();
-    slice->segments = std::move(assignment[k]);
+    slice->pieces = std::move(assignment[k]);
     // Exclusive: FlushAndFsync hands back exactly this slice's segments, and
     // they must not share one with a concurrent writer.
     slice->trx = shard.GetTransaction(/*exclusive_segment=*/true);
@@ -282,7 +318,7 @@ search::Tick RebuildGroup(duckdb::ClientContext& context,
     duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
                                   context.GetSchedulerAccount()};
     for (auto& slice : slices) {
-      if (slice->segments.empty()) {
+      if (slice->pieces.empty()) {
         continue;
       }
       executor.ScheduleTask(duckdb::make_uniq<FeedSliceTask>(
@@ -420,7 +456,7 @@ void RewriteOwnRows(duckdb::ClientContext& context,
   ConnectionContext::Get(context).Transaction().SearchTxn().RewriteOwn(
     context, target.shard, *target.catalog,
     [&](const irs::SubReader& sub, SearchSinkInsertBaseImpl& sink) {
-      FeedSegment(context, sub, source, sink, target);
+      FeedSegment(context, sub, 0, sub.Meta().docs_count, source, sink, target);
     });
 }
 

@@ -159,6 +159,7 @@ class Store final : public std::enable_shared_from_this<Store>,
                             bool searchable) const {
     return _table->View(state, snapshot, own, searchable);
   }
+  uint32_t RowGroupSize() const noexcept { return _row_group_size; }
   Table& GetTable() noexcept { return *_table; }
   const Table& GetTable() const noexcept { return *_table; }
   Tick LastWrite() const noexcept { return _table ? _table->LastWrite() : 0; }

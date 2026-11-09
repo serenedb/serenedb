@@ -33,14 +33,11 @@
 namespace irs {
 
 StorageKind StorageKindOf(std::string_view location) {
-  if (location.starts_with(duckdb::MemoryFileSystem::PREFIX)) {
+  const auto path = duckdb::Path::FromString(location);
+  if (path.GetScheme() == duckdb::MemoryFileSystem::PREFIX) {
     return StorageKind::Memory;
   }
-  if (location.contains("://") &&
-      duckdb::Path::FromString(location).IsRemote()) {
-    return StorageKind::Remote;
-  }
-  return StorageKind::Local;
+  return path.IsRemote() ? StorageKind::Remote : StorageKind::Local;
 }
 
 std::string PathOf(std::string_view root, std::string_view name) {

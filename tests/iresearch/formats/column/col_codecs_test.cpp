@@ -1035,6 +1035,22 @@ TEST_F(ColCodecsTest, ConstantAndEmptyStrings) {
   RoundTrip(duckdb::CompressionType::COMPRESSION_LZ4, {}, 5000, 2048, empties);
 }
 
+TEST_F(ColCodecsTest, ChainGroupsOfEmptyStrings) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 128 < 64) {
+      return "";
+    }
+    return "row-" + std::to_string(g);
+  };
+  for (const auto codec :
+       {duckdb::CompressionType::COMPRESSION_FSST,
+        duckdb::CompressionType::COMPRESSION_COL_FSST12,
+        duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS}) {
+    SCOPED_TRACE(static_cast<int>(codec));
+    RoundTrip(codec, {}, 5000, 2048, value);
+  }
+}
+
 TEST_F(ColCodecsTest, AllNull) {
   const Value none = [](uint64_t) -> std::optional<std::string> {
     return std::nullopt;

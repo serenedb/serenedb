@@ -208,7 +208,9 @@ struct FsstPlusScan {
     char* out = duckdb::char_ptr_cast(
       duckdb::StringVector::GetStringAllocator(s.dictionary->data)
         .Allocate(v.size()));
-    std::memcpy(out, v.data(), v.size());
+    if (!v.empty()) {
+      std::memcpy(out, v.data(), v.size());
+    }
     s.Keep(e, std::string_view{out, v.size()});
     entry_heap_bytes += v.size();
     entry_decoded[e] = 1;

@@ -6627,10 +6627,9 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_ThreeArgCaseOptions) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   const std::pair<std::string_view, std::string_view> cases[] = {
-    {"i", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"},
-    {"c", "(?s:.*)(?:[a-z]+)(?s:.*)"},
-    {"ci", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"},
-    {"ic", "(?s:.*)(?:[a-z]+)(?s:.*)"},
+    {"i", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"},  {"c", "(?s:.*)(?:[a-z]+)(?s:.*)"},
+    {"ci", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"}, {"ic", "(?s:.*)(?:[a-z]+)(?s:.*)"},
+    {"mi", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"},
   };
   for (const auto& [options, pattern] : cases) {
     irs::BooleanFilter expected;
@@ -6649,7 +6648,6 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesOtherOptions) {
   for (const std::string_view sql : {
          "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 's')",
          "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 'il')",
-         "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', NULL)",
        }) {
     AssertFilter(irs::BooleanFilter{}, sql, columns, false);
   }

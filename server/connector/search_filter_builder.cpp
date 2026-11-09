@@ -27,6 +27,7 @@
 #include <re2/regexp.h>
 
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/function/scalar/regexp.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -1559,20 +1560,6 @@ const irs::containers::FlatHashMap<std::string_view, std::string_view>
     {"not_ilike_escape", "ilike_escape"},
 };
 
-std::optional<bool> RegexpCaseInsensitive(std::string_view options) {
-  bool insensitive = false;
-  for (const char option : options) {
-    if (option == 'i') {
-      insensitive = true;
-    } else if (option == 'c') {
-      insensitive = false;
-    } else {
-      return std::nullopt;
-    }
-  }
-  return insensitive;
-}
-
 absl::Status FromFunctionExpression(
   BoolTarget filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& func) {
@@ -1624,19 +1611,13 @@ absl::Status FromFunctionExpression(
   bool case_insensitive = false;
   if (args.size() == 3 &&
       (name == "regexp_matches" || name == "regexp_full_match")) {
-    const auto* options_val = TryGetConstant(*args[2]);
-    if (!options_val || options_val->IsNull() ||
-        options_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-      return absl::InvalidArgumentError(
-        absl::StrCat(name, " options must be a non-null VARCHAR constant"));
-    }
-    const auto insensitive =
-      RegexpCaseInsensitive(duckdb::StringValue::Get(*options_val));
-    if (!insensitive) {
+    const auto& options =
+      func.BindInfo()->Cast<duckdb::RegexpBaseBindData>().options;
+    if (options.literal() || options.dot_nl()) {
       return absl::UnimplementedError(
-        absl::StrCat(name, ": only the 'c' and 'i' options are indexed"));
+        absl::StrCat(name, ": only the case options are indexed"));
     }
-    case_insensitive = *insensitive;
+    case_insensitive = !options.case_sensitive();
     args = args.subspan(0, 2);
   }
 

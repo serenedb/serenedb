@@ -642,12 +642,12 @@ class LikeShape {
       return std::nullopt;
     }
     std::vector<Spellings> parts;
-    Spellings best;
+    Spellings best{bstring{}};
     const auto flush = [&](Spellings& piece) {
       const auto& first = piece.front();
       if ((_bytes ? first.size() : RuneLength(first)) >= _n) {
         parts.push_back(std::move(piece));
-      } else if (best.empty() || best.front().size() <= first.size()) {
+      } else if (best.front().size() <= first.size()) {
         best = std::move(piece);
       }
     };
@@ -677,9 +677,8 @@ class LikeShape {
           Combine(Kind::And, std::move(plan.query), AnyOf(std::move(part)));
       }
       plan.query = Prune(std::move(plan.query), limits.max_leaves);
-    } else if (exact || best.size() != 1 ||
-               best.front() != bytes_view{&_boundary, 1}) {
-      SDB_ASSERT(!best.empty());
+    } else if (exact || best.front() != bytes_view{&_boundary, 1}) {
+      SDB_ASSERT(!best.front().empty());
       plan.query = AnyOf(std::move(best));
     }
     return plan;
@@ -790,16 +789,15 @@ class LikeShape {
   bool Class(re2::Regexp* re) {
     std::vector<re2::Rune> runes;
     for (const auto& range : *re->cc()) {
-      if (range.hi - range.lo >= static_cast<re2::Rune>(_limits.max_class) ||
-          runes.size() + static_cast<size_t>(range.hi - range.lo) >=
-            _limits.max_class) {
+      if (runes.size() + static_cast<size_t>(range.hi - range.lo) >=
+          _limits.max_class) {
         return false;
       }
       for (auto rune = range.lo; rune <= range.hi; ++rune) {
         runes.push_back(rune);
       }
     }
-    return !runes.empty() && Append(runes);
+    return Append(runes);
   }
 
   bool Append(std::span<const re2::Rune> runes) {

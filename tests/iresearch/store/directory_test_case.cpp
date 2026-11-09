@@ -36,6 +36,7 @@
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/network_utils.hpp>
+#include <limits>
 #include <random>
 #include <string>
 #include <thread>
@@ -4572,7 +4573,7 @@ TEST_P(DirectoryTestCase, hint_prefetches_the_cold_remainder) {
   };
   Recording recording{.in = in.get(), .prefetched = {}};
 
-  irs::file_utils::SyncResidency();
+  irs::file_utils::PollResidency(std::numeric_limits<uint32_t>::max());
   irs::file_utils::InvalidateResidency();
   irs::file_utils::Hint(recording, kPage, 10 * kPage);
   EXPECT_EQ((Ranges{{kPage, 11 * kPage}}), recording.prefetched);

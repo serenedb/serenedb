@@ -1198,7 +1198,8 @@ TEST(HnswSelectNeighborsTest, TransposedMatchesReference) {
       for (const bool cheap : {true, false}) {
         SelectRefDist form{.pts = &pts, .d = kD, .cheap_pair = cheap};
         irs::HnswSelectNeighbors(form, cands, limit, scratch);
-        ASSERT_EQ(want, scratch.selected)
+        ASSERT_EQ(want, std::vector<uint32_t>(scratch.selected.begin(),
+                                              scratch.selected.end()))
           << "trial " << trial << " limit " << limit << " n " << cands.size()
           << " cheap_pair " << cheap;
       }
@@ -1335,7 +1336,7 @@ void CheckWalkAsksPerHop() {
     std::partial_sort(truth.begin(), truth.begin() + kK, truth.end(),
                       std::greater<>{});
     truth.resize(kK);
-    const auto hits = [&](std::vector<irs::HnswCandidate> nearest) {
+    const auto hits = [&](irs::TrackedVector<irs::HnswCandidate> nearest) {
       std::ranges::sort(nearest, [](const auto& l, const auto& r) {
         return l.score > r.score;
       });

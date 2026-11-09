@@ -744,11 +744,10 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state, keyed_dicts + extra.size());
 
-  std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
-  absl::c_sort(sorted_extra,
-               [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
-                 return lhs->id() < rhs->id();
-               });
+  SDB_ASSERT(absl::c_is_sorted(
+    extra, [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
+      return lhs->id() < rhs->id();
+    }));
   const auto extra_key = [](const BasicTermReader* reader) {
     return DictKey{
       .id = reader->id(),
@@ -759,19 +758,19 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     field_writer->write(StringLayout::kStrings, reader);
   };
   size_t ei = 0;
-  const size_t en = sorted_extra.size();
+  const size_t en = extra.size();
 
   while (field_itr.Next()) {
     const auto dict = field_itr.Dict();
     const DictKey key{.id = field_itr.Meta().id, .member = dict.member};
-    while (ei < en && extra_key(sorted_extra[ei]) < key) {
-      write_extra(*sorted_extra[ei]);
+    while (ei < en && extra_key(extra[ei]) < key) {
+      write_extra(*extra[ei]);
       ++ei;
     }
 
-    if (ei < en && extra_key(sorted_extra[ei]) == key) {
+    if (ei < en && extra_key(extra[ei]) == key) {
       SDB_ASSERT(dict.layout == DictLayout::String);
-      write_extra(*sorted_extra[ei]);
+      write_extra(*extra[ei]);
       ++ei;
       continue;
     }
@@ -800,7 +799,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   }
 
   while (ei < en) {
-    write_extra(*sorted_extra[ei]);
+    write_extra(*extra[ei]);
     ++ei;
   }
 
@@ -810,10 +809,12 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   return !field_itr.Aborted();
 }
 
-bool ComputeDocMappingsAndFieldMeta(
-  std::vector<MergeWriter::ReaderCtx>& readers, SegmentMeta& segment,
-  FieldMetaMapT& field_meta_map, CompoundFieldIterator& fields_itr,
-  IndexFeatures& index_features, const IndexFieldOptions* field_options) {
+bool ComputeDocMappingsAndFieldMeta(std::span<MergeWriter::ReaderCtx> readers,
+                                    SegmentMeta& segment,
+                                    FieldMetaMapT& field_meta_map,
+                                    CompoundFieldIterator& fields_itr,
+                                    IndexFeatures& index_features,
+                                    const IndexFieldOptions* field_options) {
   doc_id_t base_id = doc_limits::min();
   for (auto& reader_ctx : readers) {
     SDB_ASSERT(reader_ctx.reader);
@@ -843,7 +844,7 @@ bool ComputeDocMappingsAndFieldMeta(
 
 void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
                    std::string_view segment_name,
-                   std::vector<MergeWriter::ReaderCtx>& readers,
+                   std::span<MergeWriter::ReaderCtx> readers,
                    std::vector<MergeSource>& sources,
                    std::unique_ptr<ColWriter>& col_writer,
                    const IndexFieldOptions* field_options,

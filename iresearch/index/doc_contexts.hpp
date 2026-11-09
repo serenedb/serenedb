@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -47,7 +48,7 @@ class DocContexts final {
     : _runs{std::move(other._runs)}, _size{std::exchange(other._size, 0)} {}
 
   DocContexts& operator=(DocContexts&& other) noexcept(
-    std::is_nothrow_move_assignable_v<std::vector<Run>>) {
+    std::is_nothrow_move_assignable_v<TrackedVector<Run>>) {
     _runs = std::move(other._runs);
     _size = std::exchange(other._size, 0);
     return *this;
@@ -147,7 +148,7 @@ class DocContexts final {
     _runs.push_back(Run{tick, static_cast<uint32_t>(begin), committed});
   }
 
-  std::vector<Run> _runs;
+  TrackedVector<Run> _runs;
   size_t _size{0};
 };
 

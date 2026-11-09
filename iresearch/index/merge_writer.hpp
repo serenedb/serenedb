@@ -108,7 +108,7 @@ class MergeWriter : public util::Noncopyable {
 
  private:
   Directory& _dir;
-  std::vector<ReaderCtx> _readers;
+  TrackedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.

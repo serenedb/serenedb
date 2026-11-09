@@ -157,8 +157,14 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
 }
 
 struct HealScratch {
-  std::vector<HnswCandidate> pool;
-  std::vector<uint32_t> stack;
+  explicit HealScratch(MemoryBudget* budget) noexcept
+    : pool{TrackedAllocator<HnswCandidate>{budget}},
+      stack{TrackedAllocator<uint32_t>{budget}},
+      seen{budget},
+      walked{budget} {}
+
+  TrackedVector<HnswCandidate> pool;
+  TrackedVector<uint32_t> stack;
   HnswVisited seen;
   HnswVisited walked;
 };
@@ -669,7 +675,23 @@ struct HnswInsertJob {
       _rows{rows},
       _nodes{nodes},
       _sync{workers * graph.M()},
-      _slots(workers) {}
+      _slots(workers) {
+    if (auto* budget = graph.Budget()) {
+      const auto share = HnswScratchBound(rows, ef, graph.M0());
+      _shares.reserve(workers);
+      for (size_t i = 0; i < workers; ++i) {
+        _shares.push_back(
+          budget->Split(std::min<uint64_t>(share, budget->size)));
+      }
+    }
+  }
+
+  ~HnswInsertJob() {
+    _slots.clear();
+    for (auto& share : _shares) {
+      _graph.Budget()->Merge(std::move(share));
+    }
+  }
 
   void SetWindow(const float* base, uint32_t first, uint32_t count) noexcept {
     _window = {.base = base, .first = first, .count = count};
@@ -717,7 +739,8 @@ struct HnswInsertJob {
   };
 
   struct WorkerSlot {
-    explicit WorkerSlot(typename Factory::Dist d) : dist{std::move(d)} {}
+    WorkerSlot(typename Factory::Dist d, MemoryBudget* budget)
+      : dist{std::move(d)}, scratch{budget} {}
 
     typename Factory::Dist dist;
     HnswBuildScratch scratch;
@@ -726,7 +749,8 @@ struct HnswInsertJob {
   WorkerSlot& Slot(size_t worker) {
     auto& slot = _slots[worker];
     if (!slot) {
-      slot = std::make_unique<WorkerSlot>(_factory.Make());
+      slot = std::make_unique<WorkerSlot>(
+        _factory.Make(), _shares.empty() ? nullptr : &_shares[worker]);
       slot->scratch.search.visited.Reset(
         _rows, HnswWalkVisits(_ef, _graph.M0()), HnswWalks::Many);
       if (_window.base) {
@@ -744,6 +768,7 @@ struct HnswInsertJob {
   Window _window;
   HnswStripeSync _sync;
   std::atomic<size_t> _cursor{0};
+  std::vector<duckdb::TempBufferPoolReservation> _shares;
   std::vector<std::unique_ptr<WorkerSlot>> _slots;
 };
 
@@ -801,7 +826,7 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
     crew.CanGrow() ? std::min<size_t>(nodes.size(), warmup) : nodes.size();
   {
     auto dist = factory.Make();
-    HnswBuildScratch scratch;
+    HnswBuildScratch scratch{graph.Budget()};
     scratch.search.visited.Reset(rows, HnswWalkVisits(ef, graph.M0()),
                                  HnswWalks::Many);
     for (size_t i = 0; i < serial; ++i) {
@@ -939,10 +964,10 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   }
 
   auto dist = factory.Make();
-  HnswBuildScratch scratch;
+  HnswBuildScratch scratch{graph.Budget()};
   scratch.search.visited.Reset(
     rows, HnswWalkVisits(ef_construction, graph.M0()), HnswWalks::Many);
-  HealScratch heal;
+  HealScratch heal{graph.Budget()};
   heal.seen.Reset(rows, HnswWalkVisits(graph.M0(), graph.M0()),
                   HnswWalks::Many);
   heal.walked.Reset(src_rows, HnswWalkVisits(graph.M0(), graph.M0()),
@@ -1271,9 +1296,13 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) const {
     }
   }
   const uint64_t seed = sizeof(uint32_t) * rows;
+  const uint64_t workers =
+    std::clamp<uint64_t>(rows / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers);
+  const uint64_t scratch =
+    (workers + 2) * HnswScratchBound(rows, _info.ef_construction, 2 * m);
   return {
-    .compute =
-      rows + floats + codes + tails + norms + basis + streamed + graph + seed,
+    .compute = rows + floats + codes + tails + norms + basis + streamed +
+               graph + seed + scratch,
     .kept = graph + codes + tails + (quant ? 0 : floats + norms),
   };
 }

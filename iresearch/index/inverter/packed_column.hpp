@@ -29,6 +29,7 @@
 #include "iresearch/utils/bit_packing.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -226,7 +227,7 @@ class PackedU32Column : util::Noncopyable {
   }
 
   duckdb::ArenaAllocator* _arena;
-  std::vector<PackedBlock> _packed;
+  TrackedVector<PackedBlock> _packed;
   uint32_t* _staging = nullptr;
   uint32_t* _tail = nullptr;
   uint32_t* _tail_end = nullptr;

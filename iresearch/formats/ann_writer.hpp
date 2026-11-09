@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,6 +29,7 @@
 #include <yaclib/coro/task.hpp>
 
 #include "iresearch/formats/ann_build_env.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
@@ -34,7 +37,6 @@
 
 namespace irs {
 
-struct BasicTermReader;
 class ColReader;
 class ColumnReader;
 class IdxWriter;
@@ -92,6 +94,9 @@ inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
       out.push_back(r);
     }
   }
+  absl::c_sort(out, [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
+    return lhs->id() < rhs->id();
+  });
   return out;
 }
 

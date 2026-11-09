@@ -69,6 +69,7 @@ class DatabaseInstance;
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -585,8 +586,8 @@ class IndexWriter : private util::Noncopyable {
     std::atomic_size_t buffered_docs{0};
     RefTrackingDirectory dir;
 
-    std::vector<Queued> queries;
-    std::vector<FlushedSegment> flushed;
+    TrackedVector<Queued> queries;
+    TrackedVector<FlushedSegment> flushed;
 
     segment_meta_generator_t meta_generator;
 

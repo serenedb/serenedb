@@ -107,7 +107,7 @@ class FrameInflater {
 template<typename Codec>
 struct BlobScan {
   template<typename Frames>
-  BlobScan(duckdb::ColumnSegment&, const Frames&) {}
+  BlobScan(const ColumnSegment&, const Frames&) {}
 
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
@@ -155,7 +155,7 @@ struct BlobFetch {
     return decoded_total + inflater.Loaded();
   }
 
-  IRS_FORCE_INLINE void Emit(duckdb::ColumnSegment&, const Header& h,
+  IRS_FORCE_INLINE void Emit(const ColumnSegment&, const Header& h,
                              duckdb::data_ptr_t base, PackedReader& lengths,
                              uint32_t lo, const FrameMeta& f, uint32_t entry,
                              duckdb::Vector& result, duckdb::idx_t result_idx,

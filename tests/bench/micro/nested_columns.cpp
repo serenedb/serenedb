@@ -170,6 +170,36 @@ struct Seg {
   const irs::ColumnReader* col = nullptr;
 };
 
+void HashBlocks(const irs::ColumnReader& col, const std::vector<uint8_t>& file,
+                uint64_t& hash) {
+  const auto mix = [&](uint64_t byte) {
+    hash = (hash ^ byte) * 0x100000001b3ULL;
+  };
+  for (const auto& block : col.DataBlocks()) {
+    mix(static_cast<uint64_t>(block.codec->type));
+    mix(block.tuple_count);
+    for (uint64_t i = 0; i < block.byte_size; ++i) {
+      mix(file[block.file_offset + i]);
+    }
+  }
+  col.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    HashBlocks(sub.column, file, hash);
+  });
+}
+
+void PrintHash(Shape shape, const Seg& seg) {
+  if (!std::getenv("SDB_BENCH_HASH")) {
+    return;
+  }
+  auto in = seg.dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
+  std::vector<uint8_t> file(in->Length());
+  in->ReadData(file.data(), file.size());
+  uint64_t hash = 0xcbf29ce484222325ULL;
+  HashBlocks(*seg.col, file, hash);
+  std::fprintf(stderr, "hash shape%d %016llx\n", static_cast<int>(shape),
+               static_cast<unsigned long long>(hash));
+}
+
 const Seg& GetSeg(Shape shape) {
   static std::array<std::unique_ptr<Seg>, kShapes> cache;
   auto& slot = cache[static_cast<size_t>(shape)];
@@ -185,6 +215,7 @@ const Seg& GetSeg(Shape shape) {
     std::fprintf(stderr, "column missing\n");
     std::abort();
   }
+  PrintHash(shape, *slot);
   return *slot;
 }
 

@@ -401,8 +401,7 @@ class ColNumericCodecTest : public TestBase {
           duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
-        out.emplace_back(seg->GetCompressionFunction().get_segment_info(
-          duckdb::QueryContext{}, *seg)[key]);
+        out.emplace_back(seg->function.get_segment_info(*seg)[key]);
       }
       row += block.tuple_count;
     }
@@ -433,8 +432,7 @@ class ColNumericCodecTest : public TestBase {
           duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
-        auto info = seg->GetCompressionFunction().get_segment_info(
-          duckdb::QueryContext{}, *seg);
+        auto info = seg->function.get_segment_info(*seg);
         out.emplace_back(info["transform"] + "/" + info["leaf"]);
       }
       row += block.tuple_count;

@@ -45,8 +45,7 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
-#include <duckdb/storage/table/column_segment.hpp>
-#include <duckdb/storage/table/scan_state.hpp>
+#include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -95,7 +94,7 @@ struct Blk {
   irs::MemoryDirectory dir{};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
-  std::unique_ptr<duckdb::ColumnSegment> block;
+  std::unique_ptr<irs::codecs::ColumnSegment> block;
   duckdb::LogicalType type;
   uint64_t rows = 0;  // rows in block 0 (== W unless the codec split it)
 };
@@ -144,8 +143,8 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
   blk->type = col->Type();
   blk->ctx = std::make_unique<irs::ReadContext>(*blk->reader);
   blk->block = col->OpenSegment(0, *blk->ctx);
-  blk->rows = blk->block->count.load();
-  const auto& fn = blk->block->GetCompressionFunction();
+  blk->rows = blk->block->count;
+  const auto& fn = blk->block->function;
   std::fprintf(stderr,
                "shape %-12s W=%-6llu type=%-10s blocks=%zu block0=%llu "
                "codec=%s select=%d fetch=%d\n",
@@ -204,8 +203,12 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
     state.SkipWithError("codec split the block");
     return;
   }
-  auto& segment = *blk.block;
-  const auto& fn = segment.GetCompressionFunction();
+  const auto& segment = *blk.block;
+  const auto& fn = segment.function;
+  const auto skip = [&](irs::codecs::ColumnScanState& st) {
+    fn.skip(segment, st, st.offset_in_column - st.internal_index);
+    st.internal_index = st.offset_in_column;
+  };
   if (arm == Arm::Select && fn.select == nullptr) {
     state.SkipWithError("no select");
     return;
@@ -231,10 +234,10 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
     // 2048-capacity result and throws above it. Probe once: where the codec
     // can't take a block-sized window the arm is simply unavailable.
     try {
-      duckdb::ColumnScanState probe_st{nullptr};
+      irs::codecs::ColumnScanState probe_st;
       duckdb::Vector probe{blk.type};
-      segment.InitializeScan(probe_st);
-      segment.Select(probe_st, w, probe, sel, k);
+      probe_st.scan_state = fn.init_scan(segment);
+      fn.select(segment, probe_st, w, probe, sel, k);
     } catch (const std::exception&) {
       state.SkipWithError("select can't take a block-sized window");
       return;
@@ -248,25 +251,25 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
 
   for (auto _ : state) {
     out_cache.ResetFromCache(out);
-    duckdb::ColumnScanState st{nullptr};
+    irs::codecs::ColumnScanState st;
     switch (arm) {
       case Arm::Fetch: {
-        duckdb::ColumnFetchState fs;
+        irs::codecs::ColumnFetchState fs;
         for (uint64_t j = 0; j < k; ++j) {
-          segment.FetchRow(fs, static_cast<duckdb::row_t>(sel.get_index(j)),
-                           out, j);
+          const duckdb::idx_t row = sel.get_index(j);
+          fn.fetch_rows(segment, fs, &row, 1, out,
+                        *duckdb::FlatVector::IncrementalSelectionVector(), j);
         }
         break;
       }
       case Arm::Select:
-        segment.InitializeScan(st);
-        segment.Select(st, w, out, sel, k);
+        st.scan_state = fn.init_scan(segment);
+        fn.select(segment, st, w, out, sel, k);
         break;
       case Arm::Entire: {
-        segment.InitializeScan(st);
+        st.scan_state = fn.init_scan(segment);
         if (w <= kVec) {
-          segment.Scan(st, w, out, 0,
-                       duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR);
+          fn.scan_vector(segment, st, w, out);
           if (k < w) {
             out.Slice(sel, k);
           }
@@ -279,8 +282,7 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
         duckdb::FlatVector::ValidityMutable(scratch).Reset();
         for (uint64_t off = 0; off < w; off += kVec) {
           const auto n = std::min(kVec, w - off);
-          segment.Scan(st, n, scratch, off,
-                       duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+          fn.scan_partial(segment, st, n, scratch, off);
           st.offset_in_column += n;
           st.internal_index = st.offset_in_column;
         }
@@ -288,24 +290,23 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
         break;
       }
       case Arm::Partial1: {
-        segment.InitializeScan(st);
+        st.scan_state = fn.init_scan(segment);
         for (uint64_t j = 0; j < k; ++j) {
           st.offset_in_column = sel.get_index(j);
-          segment.Skip(st);
-          segment.Scan(st, 1, out, j, duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+          skip(st);
+          fn.scan_partial(segment, st, 1, out, j);
           st.offset_in_column += 1;
           st.internal_index = st.offset_in_column;
         }
         break;
       }
       case Arm::PartialRun: {
-        segment.InitializeScan(st);
+        st.scan_state = fn.init_scan(segment);
         duckdb::idx_t out_off = 0;
         for (const auto& [start, len] : runs) {
           st.offset_in_column = start;
-          segment.Skip(st);
-          segment.Scan(st, len, out, out_off,
-                       duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+          skip(st);
+          fn.scan_partial(segment, st, len, out, out_off);
           st.offset_in_column += len;
           st.internal_index = st.offset_in_column;
           out_off += len;

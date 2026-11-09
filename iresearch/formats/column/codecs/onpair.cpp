@@ -410,14 +410,14 @@ void OnPairCodec::Export(std::string& side) const {
   }
 }
 
-const duckdb::CompressionFunction& OnPairFunction() {
+const CompressionFunction& OnPairFunction() {
   static const auto kFunction =
     text::StringFunction<text::PlainScan<text::OnPairLeaf>>(
       duckdb::CompressionType::COMPRESSION_COL_ONPAIR);
   return kFunction;
 }
 
-const duckdb::CompressionFunction& DictOnPairFunction() {
+const CompressionFunction& DictOnPairFunction() {
   static const auto kFunction =
     text::StringFunction<text::DictionaryScan<text::OnPairLeaf>>(
       duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR);

@@ -38,19 +38,24 @@ WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& blocks)
 
 WriteContext::~WriteContext() = default;
 
-void WriteContext::WriteString(
-  duckdb::UncompressedStringSegmentState& /*state*/, duckdb::string_t string,
-  duckdb::block_id_t& result_block, int32_t& result_offset) {
+duckdb::block_id_t WriteContext::WriteOverflowString(duckdb::string_t string) {
   const auto size = string.GetSize();
   SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(),
              "string too long for overflow format");
   byte_type length[sizeof(uint32_t)];
   absl::little_endian::Store32(length, static_cast<uint32_t>(size));
-  result_block = static_cast<duckdb::block_id_t>(_blocks->Position());
-  result_offset = 0;
+  const auto block = static_cast<duckdb::block_id_t>(_blocks->Position());
   _blocks->WriteData(length, sizeof(length));
   _blocks->WriteData(reinterpret_cast<const byte_type*>(string.GetData()),
                      size);
+  return block;
+}
+
+void WriteContext::WriteString(
+  duckdb::UncompressedStringSegmentState& /*state*/, duckdb::string_t string,
+  duckdb::block_id_t& result_block, int32_t& result_offset) {
+  result_block = WriteOverflowString(string);
+  result_offset = 0;
 }
 
 duckdb::idx_t WriteContext::Position() const { return _blocks->Position(); }

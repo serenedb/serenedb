@@ -45,14 +45,14 @@ same frames, each compressed with the segment's trained dictionary; or
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction& Lz4Function() {
+const CompressionFunction& Lz4Function() {
   static const auto kFunction =
     text::StringFunction<text::PlainScan<text::BlobLeaf<Lz4>>>(
       duckdb::CompressionType::COMPRESSION_LZ4);
   return kFunction;
 }
 
-const duckdb::CompressionFunction& DictLz4Function() {
+const CompressionFunction& DictLz4Function() {
   static const auto kFunction =
     text::StringFunction<text::DictionaryScan<text::BlobLeaf<Lz4>>>(
       duckdb::CompressionType::COMPRESSION_DICT_LZ4);

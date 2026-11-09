@@ -22,9 +22,11 @@
 
 #include <absl/algorithm/container.h>
 
-#include <duckdb/main/config.hpp>
+#include <array>
 #include <iterator>
+#include <vector>
 
+#include "iresearch/formats/column/codecs/duckdb_bridge.hpp"
 #include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/codecs/zxc.hpp"
@@ -33,11 +35,12 @@ namespace irs::codecs {
 namespace {
 
 using duckdb::CompressionType;
+using duckdb::PhysicalType;
 
 struct TextCodec {
   CompressionType type;
   StringChoice choice;
-  const duckdb::CompressionFunction& (*function)();
+  const CompressionFunction& (*function)();
 };
 
 constexpr TextCodec kTextCodecs[] = {
@@ -96,21 +99,80 @@ const TextCodec* TextCodecOf(CompressionType type) noexcept {
   return it == std::end(kTextCodecs) ? nullptr : it;
 }
 
+constexpr PhysicalType kPhysicalTypes[] = {
+  PhysicalType::BOOL,    PhysicalType::UINT8,   PhysicalType::INT8,
+  PhysicalType::UINT16,  PhysicalType::INT16,   PhysicalType::UINT32,
+  PhysicalType::INT32,   PhysicalType::UINT64,  PhysicalType::INT64,
+  PhysicalType::FLOAT,   PhysicalType::DOUBLE,  PhysicalType::INTERVAL,
+  PhysicalType::LIST,    PhysicalType::STRUCT,  PhysicalType::ARRAY,
+  PhysicalType::VARCHAR, PhysicalType::UINT128, PhysicalType::INT128,
+  PhysicalType::BIT,
+};
+
+constexpr CompressionType kCandidates[] = {
+  CompressionType::COMPRESSION_UNCOMPRESSED,
+  CompressionType::COMPRESSION_RLE,
+  CompressionType::COMPRESSION_BITPACKING,
+  CompressionType::COMPRESSION_ALP,
+  CompressionType::COMPRESSION_ALPRD,
+  CompressionType::COMPRESSION_ROARING,
+};
+
+using CandidateTable = std::array<std::vector<const CompressionFunction*>,
+                                  std::size(kPhysicalTypes)>;
+
+CandidateTable MakeCandidates() {
+  CandidateTable table;
+  for (size_t p = 0; p < std::size(kPhysicalTypes); ++p) {
+    for (const auto type : kCandidates) {
+      const auto* function = GetCodec(type, kPhysicalTypes[p]);
+      if (function && function->init_analyze) {
+        table[p].push_back(function);
+      }
+    }
+  }
+  return table;
+}
+
 }  // namespace
 
-const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
-                                            CompressionType type,
-                                            duckdb::PhysicalType physical) {
-  if (type == CompressionType::COMPRESSION_COL_NUMERIC) {
-    return NumericFunction(physical);
+const CompressionFunction* GetCodec(CompressionType type,
+                                    PhysicalType physical) {
+  switch (type) {
+    case CompressionType::COMPRESSION_COL_NUMERIC:
+      return NumericFunction(physical);
+    case CompressionType::COMPRESSION_CONSTANT:
+      return ConstantFunction(physical);
+    case CompressionType::COMPRESSION_UNCOMPRESSED:
+      return UncompressedFunction(physical);
+    case CompressionType::COMPRESSION_RLE:
+      return RleFunction(physical);
+    case CompressionType::COMPRESSION_BITPACKING:
+      return BitpackingFunction(physical);
+    case CompressionType::COMPRESSION_ALP:
+      return AlpFunction(physical);
+    case CompressionType::COMPRESSION_ALPRD:
+      return AlpRdFunction(physical);
+    case CompressionType::COMPRESSION_EMPTY:
+      return physical == PhysicalType::BIT ? &EmptyValidityFunction() : nullptr;
+    default:
+      break;
   }
   if (const auto* text = TextCodecOf(type);
-      text && text->function && physical == duckdb::PhysicalType::VARCHAR) {
+      text && text->function && physical == PhysicalType::VARCHAR) {
     return &text->function();
   }
-  return duckdb::DBConfig::GetConfig(db)
-    .TryGetCompressionFunction(type, physical)
-    .get();
+  return DuckDBFunction(type, physical);
+}
+
+std::span<const CompressionFunction* const> GetCompressionFunctions(
+  PhysicalType physical) {
+  static const auto kTable = MakeCandidates();
+  const auto* it = absl::c_find(kPhysicalTypes, physical);
+  if (it == std::end(kPhysicalTypes)) {
+    return {};
+  }
+  return kTable[static_cast<size_t>(it - std::begin(kPhysicalTypes))];
 }
 
 const StringChoice* ChoiceOf(CompressionType type) {

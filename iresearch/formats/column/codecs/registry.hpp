@@ -22,32 +22,42 @@
 
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
-#include <duckdb/function/compression_function.hpp>
+#include <span>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction& DictLz4Function();
-const duckdb::CompressionFunction& Lz4Function();
-const duckdb::CompressionFunction& DictZstdFunction();
-const duckdb::CompressionFunction& ZstdFunction();
-const duckdb::CompressionFunction& DictZxcFunction();
-const duckdb::CompressionFunction& ZxcFunction();
-const duckdb::CompressionFunction& DictFsstFunction();
-const duckdb::CompressionFunction& FsstFunction();
-const duckdb::CompressionFunction& DictFsstPlusFunction();
-const duckdb::CompressionFunction& FsstPlusFunction();
-const duckdb::CompressionFunction& DictOnPairFunction();
-const duckdb::CompressionFunction& OnPairFunction();
-const duckdb::CompressionFunction& DictFsst12Function();
-const duckdb::CompressionFunction& Fsst12Function();
-const duckdb::CompressionFunction* NumericFunction(
-  duckdb::PhysicalType physical);
+const CompressionFunction& DictLz4Function();
+const CompressionFunction& Lz4Function();
+const CompressionFunction& DictZstdFunction();
+const CompressionFunction& ZstdFunction();
+const CompressionFunction& DictZxcFunction();
+const CompressionFunction& ZxcFunction();
+const CompressionFunction& DictFsstFunction();
+const CompressionFunction& FsstFunction();
+const CompressionFunction& DictFsstPlusFunction();
+const CompressionFunction& FsstPlusFunction();
+const CompressionFunction& DictOnPairFunction();
+const CompressionFunction& OnPairFunction();
+const CompressionFunction& DictFsst12Function();
+const CompressionFunction& Fsst12Function();
+const CompressionFunction* NumericFunction(duckdb::PhysicalType physical);
+const CompressionFunction* ConstantFunction(duckdb::PhysicalType physical);
+const CompressionFunction& EmptyValidityFunction();
+const CompressionFunction* UncompressedFunction(duckdb::PhysicalType physical);
+const CompressionFunction* RleFunction(duckdb::PhysicalType physical);
+const CompressionFunction* BitpackingFunction(duckdb::PhysicalType physical);
+const CompressionFunction* AlpFunction(duckdb::PhysicalType physical);
+const CompressionFunction* AlpRdFunction(duckdb::PhysicalType physical);
+const CompressionFunction* RoaringFunction(duckdb::PhysicalType physical);
 
-const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
-                                            duckdb::CompressionType type,
-                                            duckdb::PhysicalType physical);
+const CompressionFunction* GetCodec(duckdb::CompressionType type,
+                                    duckdb::PhysicalType physical);
+
+std::span<const CompressionFunction* const> GetCompressionFunctions(
+  duckdb::PhysicalType physical);
 
 const StringChoice* ChoiceOf(duckdb::CompressionType type);
 

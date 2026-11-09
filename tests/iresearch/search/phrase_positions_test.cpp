@@ -33,6 +33,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/string.hpp>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>

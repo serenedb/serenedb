@@ -425,6 +425,13 @@ duckdb::Value SourceAt(uint64_t row) {
   return duckdb::Value{data.type};
 }
 
+bool Same(const duckdb::Value& got, const duckdb::Value& want) {
+  if (got.IsNull() || want.IsNull()) {
+    return got.IsNull() == want.IsNull();
+  }
+  return duckdb::Value::NotDistinctFrom(got, want);
+}
+
 void Mismatch(const ColArm& arm, const char* path, uint64_t row,
               const duckdb::Value& got) {
   std::fprintf(stderr, "verify %s/%s row %llu: got %s want %s\n", arm.name,
@@ -450,8 +457,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
       seg.col->Scan(st, batch, data.counts[v]);
       for (duckdb::idx_t i = 0; i < data.counts[v]; ++i) {
         const auto got = batch.GetValue(i);
-        if (!duckdb::Value::NotDistinctFrom(got,
-                                            data.vectors[v]->GetValue(i))) {
+        if (!Same(got, data.vectors[v]->GetValue(i))) {
           Mismatch(arm, "scan", row + i, got);
         }
       }
@@ -471,7 +477,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
                                        batch, 0);
       for (size_t k = 0; k < take; ++k) {
         const auto got = batch.GetValue(k);
-        if (!duckdb::Value::NotDistinctFrom(got, SourceAt(rows[i + k]))) {
+        if (!Same(got, SourceAt(rows[i + k]))) {
           Mismatch(arm, "gather", rows[i + k], got);
         }
       }
@@ -483,7 +489,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
     duckdb::FlatVector::ValidityMutable(out).Reset();
     cursor.FetchRow(r, out, 0);
     const auto got = out.GetValue(0);
-    if (!duckdb::Value::NotDistinctFrom(got, SourceAt(r))) {
+    if (!Same(got, SourceAt(r))) {
       Mismatch(arm, "point", r, got);
     }
   }
@@ -499,7 +505,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
       fetch.FetchRows(std::span<const uint64_t>{&rows[i], take}, batch, 0);
       for (size_t k = 0; k < take; ++k) {
         const auto got = batch.GetValue(k);
-        if (!duckdb::Value::NotDistinctFrom(got, SourceAt(rows[i + k]))) {
+        if (!Same(got, SourceAt(rows[i + k]))) {
           Mismatch(arm, "fetch", rows[i + k], got);
         }
       }
@@ -541,7 +547,8 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
   uint64_t want = 0;
   for (size_t v = 0; v < data.vectors.size(); ++v) {
     for (duckdb::idx_t i = 0; i < data.counts[v]; ++i) {
-      want += data.vectors[v]->GetValue(i) == needle;
+      const auto value = data.vectors[v]->GetValue(i);
+      want += !value.IsNull() && !needle.IsNull() && value == needle;
     }
   }
   const auto filter = MakeFilter(false);
@@ -567,7 +574,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
                             irs::NullCheckKind::None, filtered);
     for (duckdb::idx_t k = 0; k < hits; ++k) {
       const auto row = sel.get_index(k);
-      if (!duckdb::Value::NotDistinctFrom(filtered.GetValue(row), needle)) {
+      if (!Same(filtered.GetValue(row), needle)) {
         Mismatch(arm, "filter", anchor + row, filtered.GetValue(row));
       }
     }
@@ -594,8 +601,7 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
     if (block.codec->get_segment_info && block.byte_size != 0) {
       window = seg.col->Locate(row, window);
       auto segment = seg.col->OpenSegment(window.block, ctx);
-      auto info =
-        block.codec->get_segment_info(duckdb::QueryContext{}, *segment);
+      auto info = block.codec->get_segment_info(*segment);
       for (const auto* name : {"transform", "leaf", "codec", "shape",
                                "dictionary", "codes_transform"}) {
         if (info.contains(name)) {

@@ -60,10 +60,10 @@
 namespace irs::codecs::text {
 
 template<typename Leaf>
-struct DictionaryFetch final : duckdb::SegmentScanState {
-  void Reset(duckdb::ColumnSegment& segment) {
+struct DictionaryFetch final : SegmentScanState {
+  void Reset(const ColumnSegment& segment) {
     code_frames.reset();
-    frames.decoded = CachedDictionary(CacheSlotOf(segment));
+    frames.decoded = CachedDictionary(segment.cache_slot);
   }
 
   void Read(data_ptr_t base, const idx_t* rows, idx_t count,
@@ -218,20 +218,19 @@ class FilterVerdicts {
 };
 
 template<typename Leaf>
-struct DictionaryScan final : duckdb::SegmentScanState {
+struct DictionaryScan final : SegmentScanState {
   using Fetch = DictionaryFetch<Leaf>;
   static constexpr Shape kShape = Shape::Dedup;
-  static constexpr auto kValidity =
-    duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+  static constexpr auto kValidity = CompressionValidity::NoValidityRequired;
 
-  DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle)
+  DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle)
     : DictionaryScan{segment, std::move(handle),
-                     CachedDictionary(CacheSlotOf(segment))} {}
+                     CachedDictionary(segment.cache_slot)} {}
 
-  DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle,
+  DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle,
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached},
-      cache_slot{CacheSlotOf(segment)},
+      cache_slot{segment.cache_slot},
       code_frames{entries.base + entries.header.off_codes,
                   CodesHeader(entries.base, entries.header)} {
     if (cached) {

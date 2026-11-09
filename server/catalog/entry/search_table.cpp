@@ -383,9 +383,12 @@ void CheckColumnCodec(duckdb::ClientContext& context,
                 ? "deprecated and only has decompress support"
                 : "not available yet"));
   }
-  const auto& config = duckdb::DBConfig::GetConfig(context);
   const auto compresses = [&](duckdb::PhysicalType physical) {
-    const auto function = config.TryGetCompressionFunction(type, physical);
+    if (physical == duckdb::PhysicalType::VARCHAR &&
+        irs::codecs::ChoiceOf(type)) {
+      return true;
+    }
+    const auto* function = irs::codecs::GetCodec(type, physical);
     return function && function->init_analyze;
   };
   const auto physical = column_type.InternalType();

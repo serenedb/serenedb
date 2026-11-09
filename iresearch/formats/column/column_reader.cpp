@@ -33,8 +33,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
-#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -74,8 +73,7 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   const auto file_offset = d.ReadProperty<uint64_t>(2, "file_offset");
   const auto byte_size = d.ReadProperty<uint64_t>(3, "byte_size");
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
-  const auto* codec = codecs::GetCodec(d.Get<duckdb::DatabaseInstance&>(),
-                                       compression_type, physical);
+  const auto* codec = codecs::GetCodec(compression_type, physical);
   if (!codec) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -120,10 +118,42 @@ void ReadBlockMetas(duckdb::BinaryDeserializer& d, duckdb::field_id_t id,
   d.Unset<const duckdb::LogicalType>();
 }
 
-bool BorrowsBlockStrings(duckdb::ColumnSegment& segment) {
-  return segment.GetType().InternalType() == duckdb::PhysicalType::VARCHAR &&
-         !duckdb::IsSereneDBCompressionType(
-           segment.GetCompressionFunction().type);
+bool BorrowsBlockStrings(const codecs::ColumnSegment& segment) {
+  return segment.type.InternalType() == duckdb::PhysicalType::VARCHAR &&
+         !duckdb::IsSereneDBCompressionType(segment.function.type);
+}
+
+void ScanSegment(const codecs::ColumnSegment& segment,
+                 codecs::ColumnScanState& st, duckdb::idx_t count,
+                 duckdb::Vector& result, duckdb::idx_t result_offset,
+                 duckdb::ScanVectorType scan_type) {
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    SDB_ASSERT(result_offset == 0);
+    segment.function.scan_vector(segment, st, count, result);
+    return;
+  }
+  SDB_ASSERT(result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
+  segment.function.scan_partial(segment, st, count, result, result_offset);
+}
+
+void SkipSegment(const codecs::ColumnSegment& segment,
+                 codecs::ColumnScanState& st) {
+  segment.function.skip(segment, st, st.offset_in_column - st.internal_index);
+  st.internal_index = st.offset_in_column;
+}
+
+void FetchSegmentRows(const codecs::ColumnSegment& segment,
+                      codecs::ColumnFetchState& state,
+                      const duckdb::idx_t* rows, duckdb::idx_t count,
+                      duckdb::Vector& result,
+                      const duckdb::SelectionVector& result_sel,
+                      duckdb::idx_t result_offset) {
+  if (count == 0) {
+    return;
+  }
+  SDB_ASSERT(rows[count - 1] < segment.count);
+  segment.function.fetch_rows(segment, state, rows, count, result, result_sel,
+                              result_offset);
 }
 
 struct GatherBands {
@@ -343,25 +373,25 @@ bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {
   return true;
 }
 
-std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
+std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
                                                           ReadContext& ctx,
                                                           ScanState* s) const {
   Readahead(w.block, ctx, s);
   const auto& m = _segments[w.block];
-  auto& db = ctx.Database();
   const auto& codec = *m.codec;
-  auto stats = m.statistics.Copy();
-  const auto byte_size = static_cast<duckdb::idx_t>(m.byte_size);
-
-  if (byte_size == 0) {
-    return std::make_unique<duckdb::ColumnSegment>(
-      db, /*block=*/nullptr, duckdb::ColumnSegmentType::PERSISTENT,
-      static_cast<duckdb::idx_t>(m.tuple_count), codec, std::move(stats),
-      /*block_id=*/0, /*offset=*/0, byte_size, /*segment_state=*/nullptr);
+  auto segment = std::make_unique<codecs::ColumnSegment>(codecs::ColumnSegment{
+    .function = codec,
+    .type = m.statistics.GetType(),
+    .stats = m.statistics,
+    .ctx = ctx,
+    .count = m.tuple_count,
+    .size = m.byte_size,
+  });
+  if (m.byte_size == 0) {
+    return segment;
   }
-
-  ReadContext::CacheSlot slot;
   if (duckdb::IsSereneDBCompressionType(codec.type)) {
+    auto& slot = segment->cache_slot;
     slot.file_id = _file_id;
     slot.file_offset = m.file_offset;
     if (auto* cache = ctx.Cache()) {
@@ -369,19 +399,7 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
       slot.cache = cache;
     }
   }
-  auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, slot);
-  auto segment = std::make_unique<duckdb::ColumnSegment>(
-    db, std::move(handle), duckdb::ColumnSegmentType::PERSISTENT,
-    static_cast<duckdb::idx_t>(m.tuple_count), codec, std::move(stats),
-    /*block_id=*/0, /*offset=*/0, byte_size, /*segment_state=*/nullptr);
-  if (_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
-    if (auto seg_state = segment->GetSegmentState()) {
-      auto& str_state =
-        seg_state->Cast<duckdb::UncompressedStringSegmentState>();
-      str_state.overflow_reader = &ctx;
-      str_state.stream_reader = &ctx;
-    }
-  }
+  segment->block = ctx.RegisterColBlock(m.file_offset, m.byte_size);
   return segment;
 }
 
@@ -450,13 +468,11 @@ struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
 
 }  // namespace
 
-void ColumnReader::CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
+void ColumnReader::CertifyStrings(ScanState& s,
+                                  const codecs::ColumnSegment& segment,
                                   duckdb::Vector& result) const {
-  if (s.ctx.use_count() == 0 || !BorrowsBlockStrings(segment)) {
-    return;
-  }
-  auto& block = segment.GetBlockHandle();
-  if (!block) {
+  if (s.ctx.use_count() == 0 || !BorrowsBlockStrings(segment) ||
+      !segment.block) {
     return;
   }
   auto* target = &result;
@@ -467,17 +483,16 @@ void ColumnReader::CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
     s.certified_dictionary = true;
     target = &duckdb::DictionaryVector::Child(result);
   }
-  auto& bm = s.ctx->Database().GetBufferManager();
   duckdb::StringVector::AddAuxiliaryData(
-    *target, duckdb::make_uniq<ScannedStrings>(s.ctx, bm.Pin(block)));
+    *target, duckdb::make_uniq<ScannedStrings>(s.ctx, segment.Pin()));
 }
 
 void ColumnReader::OpenScanSegment(ScanState& s) const {
   if (s.st.scan_state) {
     s.st.previous_states.emplace_back(std::move(s.st.scan_state));
   }
-  s.segments.emplace_back(Open(s.window, *s.ctx, &s));
-  s.segments.back()->InitializeScan(s.st);
+  const auto& segment = *s.segments.emplace_back(Open(s.window, *s.ctx, &s));
+  s.st.scan_state = segment.function.init_scan(segment);
   s.certified_dictionary = false;
   s.st.internal_index = 0;
   s.initialized = true;
@@ -494,7 +509,7 @@ void ColumnReader::BeginScanVector(ScanState& s) const {
   }
   SDB_ASSERT(s.st.internal_index <= s.st.offset_in_column);
   if (s.st.internal_index < s.st.offset_in_column) {
-    s.segments.back()->Skip(s.st);
+    SkipSegment(*s.segments.back(), s.st);
   }
 }
 
@@ -538,8 +553,8 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
       remaining, (s.window.end - s.window.begin) - s.st.offset_in_column);
     const auto result_offset = base_result_offset + (initial - remaining);
     if (scan_count > 0) {
-      s.segments.back()->Scan(s.st, scan_count, result, result_offset,
-                              scan_type);
+      ScanSegment(*s.segments.back(), s.st, scan_count, result, result_offset,
+                  scan_type);
       CertifyStrings(s, *s.segments.back(), result);
       s.st.offset_in_column += scan_count;
       remaining -= scan_count;
@@ -619,9 +634,8 @@ void ColumnReader::FetchInto(ScanState& s, std::span<const uint64_t> rows,
     for (; end < rows.size() && rows[end] < s.fetch_window.end; ++end) {
       in_block[end - i] = rows[end] - s.fetch_window.begin;
     }
-    s.fetch.segment->FetchRows(s.fetch.state, in_block.data(), end - i, out,
-                               duckdb::SelectionVector{positions + i, end - i},
-                               at);
+    FetchSegmentRows(*s.fetch.segment, s.fetch.state, in_block.data(), end - i,
+                     out, duckdb::SelectionVector{positions + i, end - i}, at);
     i = end;
   }
 }
@@ -724,7 +738,7 @@ bool ColumnReader::SelectNative(ScanState& s,
     return false;
   }
   const bool self_valid =
-    codec.validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+    codec.validity == codecs::CompressionValidity::NoValidityRequired;
   if (_validity && !self_valid) {
     auto& vs = s.child_states[0];
     _validity->BeginScanVector(vs);
@@ -733,14 +747,16 @@ bool ColumnReader::SelectNative(ScanState& s,
       return false;
     }
   }
-  s.segments.back()->Select(s.st, span, out, sel, hits);
+  const auto& segment = *s.segments.back();
+  segment.function.select(segment, s.st, span, out, sel, hits);
   s.st.offset_in_column += span;
   s.st.internal_index = s.st.offset_in_column;
   if (self_valid) {
     SkipValidity(s, span);
   } else if (_validity) {
     auto& vs = s.child_states[0];
-    vs.segments.back()->Select(vs.st, span, out, sel, hits);
+    const auto& validity = *vs.segments.back();
+    validity.function.select(validity, vs.st, span, out, sel, hits);
     vs.st.offset_in_column += span;
     vs.st.internal_index = vs.st.offset_in_column;
   }
@@ -756,13 +772,13 @@ duckdb::idx_t ColumnReader::GatherFilter(
   SDB_ASSERT(span <= STANDARD_VECTOR_SIZE);
   SkipTo(s, anchor);
   BeginScanVector(s);
-  auto& seg = *s.segments.back();
-  const auto& codec = seg.GetCompressionFunction();
+  const auto& seg = *s.segments.back();
+  const auto& codec = seg.function;
   duckdb::idx_t approved = sel_count;
   const bool within_segment =
     (s.window.end - s.window.begin) - s.st.offset_in_column >= span;
   const bool self_valid =
-    codec.validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+    codec.validity == codecs::CompressionValidity::NoValidityRequired;
   // The codec filter needs the data segment alone to be validity-complete for
   // the span: either the codec self-describes nulls (dict_fsst evaluates its
   // dictionary once and filters rows by code), or the span's validity block is
@@ -777,7 +793,7 @@ duckdb::idx_t ColumnReader::GatherFilter(
     if (!self_valid) {
       ResetAllValid(result, span);
     }
-    seg.Filter(s.st, span, result, sel, approved, filter, filter_state);
+    codec.filter(seg, s.st, span, result, sel, approved, filter, filter_state);
     s.st.offset_in_column += span;
     s.st.internal_index = s.st.offset_in_column;
     // Codecs are picked per block: a later block of the same column may need
@@ -954,7 +970,7 @@ void ColumnReader::PointReader::Evict(uint64_t incoming) {
         return l->last_use < r->last_use;
       });
     auto& block = **oldest;
-    block.state = duckdb::ColumnFetchState{};
+    block.state = codecs::ColumnFetchState{};
     block.segment.reset();
     _open_bytes -= block.bytes;
     block.bytes = 0;
@@ -968,9 +984,10 @@ IRS_FORCE_INLINE bool ColumnReader::PointReader::FetchOne(
   BlockWindow& window, uint64_t row, duckdb::Vector& out,
   duckdb::idx_t out_offset) {
   auto& block = Block(blocks, reader, window, row);
-  block.segment->FetchRow(block.state,
-                          static_cast<duckdb::row_t>(row - window.begin), out,
-                          out_offset);
+  const duckdb::idx_t local = row - window.begin;
+  FetchSegmentRows(*block.segment, block.state, &local, 1, out,
+                   *duckdb::FlatVector::IncrementalSelectionVector(),
+                   out_offset);
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
@@ -1011,8 +1028,8 @@ void ColumnReader::PointReader::FetchRows(std::span<const uint64_t> rows,
       for (; j < count && rows[j] < _validity_window.end; ++j) {
         _local.push_back(rows[j] - _validity_window.begin);
       }
-      block.segment->FetchRows(
-        block.state, _local.data(), _local.size(), out,
+      FetchSegmentRows(
+        *block.segment, block.state, _local.data(), _local.size(), out,
         *duckdb::FlatVector::IncrementalSelectionVector(), out_offset + i);
       i = j;
     }
@@ -1033,8 +1050,8 @@ void ColumnReader::PointReader::FetchRows(std::span<const uint64_t> rows,
       _sel.set_index(_local.size(), _fetched[j]);
       _local.push_back(rows[_fetched[j] - out_offset] - _window.begin);
     }
-    block.segment->FetchRows(block.state, _local.data(), _local.size(), out,
-                             _sel, 0);
+    FetchSegmentRows(*block.segment, block.state, _local.data(), _local.size(),
+                     out, _sel, 0);
     if (BorrowsBlockStrings(*block.segment)) {
       auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(out);
       for (size_t k = 0; k < _local.size(); ++k) {

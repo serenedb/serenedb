@@ -24,20 +24,19 @@
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/enums/scan_vector_type.hpp>
 #include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/function/compression_function.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
-#include <duckdb/storage/table/column_segment.hpp>
-#include <duckdb/storage/table/scan_state.hpp>
 #include <limits>
 #include <memory>
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -92,7 +91,7 @@ struct ColumnBlockMeta {
   uint64_t tuple_count = 0;
   uint64_t file_offset = 0;
   uint64_t byte_size = 0;
-  const duckdb::CompressionFunction* codec = nullptr;
+  const codecs::CompressionFunction* codec = nullptr;
 };
 
 struct ColumnMeta;
@@ -163,9 +162,9 @@ class ColumnReader {
     ~ScanState();
 
     std::shared_ptr<ReadContext> ctx;
-    duckdb::ColumnScanState st{nullptr};
+    codecs::ColumnScanState st;
     BlockWindow window{};
-    std::vector<std::unique_ptr<duckdb::ColumnSegment>> segments;
+    std::vector<std::unique_ptr<codecs::ColumnSegment>> segments;
     std::vector<ScanState> child_states;
     std::unique_ptr<VariantScanState> variant;
     size_t opened_block = std::numeric_limits<size_t>::max();
@@ -179,8 +178,8 @@ class ColumnReader {
     std::vector<duckdb::sel_t> list_picked;
     duckdb::SelectionVector list_sel;
     struct Fetch {
-      std::unique_ptr<duckdb::ColumnSegment> segment;
-      duckdb::ColumnFetchState state;
+      std::unique_ptr<codecs::ColumnSegment> segment;
+      codecs::ColumnFetchState state;
     };
     Fetch fetch;
     BlockWindow fetch_window{};
@@ -260,7 +259,7 @@ class ColumnReader {
 
   virtual uint64_t RowGroupEnd(uint64_t row) const noexcept;
 
-  std::unique_ptr<duckdb::ColumnSegment> OpenSegment(size_t rg,
+  std::unique_ptr<codecs::ColumnSegment> OpenSegment(size_t rg,
                                                      ReadContext& ctx) const {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
   }
@@ -330,8 +329,8 @@ class ColumnReader {
 
    protected:
     struct OpenBlock {
-      std::unique_ptr<duckdb::ColumnSegment> segment;
-      duckdb::ColumnFetchState state;
+      std::unique_ptr<codecs::ColumnSegment> segment;
+      codecs::ColumnFetchState state;
       uint64_t bytes = 0;
       uint64_t last_use = 0;
     };
@@ -439,10 +438,10 @@ class ColumnReader {
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
 
  private:
-  void CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
+  void CertifyStrings(ScanState& s, const codecs::ColumnSegment& segment,
                       duckdb::Vector& result) const;
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;
-  std::unique_ptr<duckdb::ColumnSegment> Open(const BlockWindow& w,
+  std::unique_ptr<codecs::ColumnSegment> Open(const BlockWindow& w,
                                               ReadContext& ctx,
                                               ScanState* s = nullptr) const;
   bool NextSegment(BlockWindow& w) const noexcept;

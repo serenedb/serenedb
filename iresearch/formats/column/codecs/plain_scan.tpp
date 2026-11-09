@@ -25,7 +25,6 @@
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
-#include <duckdb/storage/table/column_segment.hpp>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/string_layout.hpp"
@@ -37,8 +36,8 @@
 namespace irs::codecs::text {
 
 template<typename Leaf>
-struct PlainFetch final : duckdb::SegmentScanState {
-  void Reset(duckdb::ColumnSegment&) noexcept {}
+struct PlainFetch final : SegmentScanState {
+  void Reset(const ColumnSegment&) noexcept {}
 
   void Read(data_ptr_t, const idx_t* rows, idx_t count, duckdb::Vector&,
             const duckdb::SelectionVector& sel, idx_t offset) {
@@ -71,13 +70,12 @@ struct PlainFetch final : duckdb::SegmentScanState {
 };
 
 template<typename Leaf>
-struct PlainScan final : duckdb::SegmentScanState {
+struct PlainScan final : SegmentScanState {
   using Fetch = PlainFetch<Leaf>;
   static constexpr Shape kShape = Shape::Plain;
-  static constexpr auto kValidity =
-    duckdb::CompressionValidity::REQUIRES_VALIDITY;
+  static constexpr auto kValidity = CompressionValidity::RequiresValidity;
 
-  PlainScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle)
+  PlainScan(const ColumnSegment& segment, duckdb::BufferHandle handle)
     : entries{segment, std::move(handle), true} {}
 
   void EnsureDictionary() { entries.DecodeAll(); }

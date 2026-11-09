@@ -5061,10 +5061,8 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
 
 TEST_F(ColumnReaderTest, UnknownCompressionIsRefused) {
   auto unknown =
-    duckdb::DBConfig::GetConfig(Db())
-      .GetCompressionFunction(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-                              duckdb::PhysicalType::INT64)
-      .get();
+    *irs::codecs::GetCodec(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+                           duckdb::PhysicalType::INT64);
   unknown.type = static_cast<duckdb::CompressionType>(200);
 
   irs::ColumnMeta meta;

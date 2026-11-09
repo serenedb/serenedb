@@ -84,7 +84,6 @@ void ReadContext::Reset(const ColReader& reader) {
 void ReadContext::ResetMapping() {
   _mapping.reset();
   _ranges.clear();
-  _cache_slots.clear();
   if (!_in) {
     return;
   }
@@ -132,10 +131,9 @@ void ReadContext::Read(duckdb::idx_t position, duckdb::data_ptr_t target,
 }
 
 duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
-  uint64_t offset, uint64_t size, CacheSlot slot) {
+  uint64_t offset, uint64_t size) {
   const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
   _ranges.emplace_back(offset, size);
-  _cache_slots.push_back(slot);
   ++_live_handles;
   auto handle = RegisterBlock(
     id, duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size));
@@ -224,12 +222,5 @@ void ReadContext::WriteHeader(duckdb::QueryContext /*context*/,
   THROW_SQL_ERROR(ERR_MSG("ReadContext::WriteHeader on read-only context"));
 }
 duckdb::idx_t ReadContext::TotalBlocks() { return 0; }
-
-const ReadContext::CacheSlot& CacheSlotOf(
-  duckdb::ColumnSegment& segment) noexcept {
-  const auto& block = segment.GetBlockHandle();
-  return static_cast<const ReadContext&>(block->GetBlockManager())
-    .CacheSlotOf(block->BlockId());
-}
 
 }  // namespace irs

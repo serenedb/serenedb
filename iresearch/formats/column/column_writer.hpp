@@ -41,8 +41,7 @@
 
 namespace irs {
 
-void EmitEmptyValidity(duckdb::DatabaseInstance& db, uint64_t rows,
-                       std::vector<ColumnBlockMeta>& sink);
+void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink);
 
 struct ColumnWriterOptions {
   bool skip_validity = false;
@@ -103,10 +102,10 @@ class ColumnWriter final {
 
   void SealRowGroup();
 
-  duckdb::optional_ptr<const duckdb::CompressionFunction> PickCodec(
+  const codecs::CompressionFunction* PickCodec(
     const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
     duckdb::CompressionType forced,
-    duckdb::unique_ptr<duckdb::AnalyzeState>& out_state,
+    std::unique_ptr<codecs::AnalyzeState>& out_state,
     duckdb::idx_t* out_score = nullptr);
 
   bool CompressData(const duckdb::LogicalType& type,
@@ -127,8 +126,8 @@ class ColumnWriter final {
                    std::span<WriteChunk> chunks, uint64_t row_count,
                    duckdb::CompressionType forced, ColumnMeta& meta);
 
-  bool Compress(const duckdb::CompressionFunction& picked,
-                duckdb::unique_ptr<duckdb::AnalyzeState> state,
+  bool Compress(const codecs::CompressionFunction& picked,
+                std::unique_ptr<codecs::AnalyzeState> state,
                 const duckdb::LogicalType& codec_type,
                 std::span<WriteChunk> chunks,
                 std::vector<ColumnBlockMeta>& sink);

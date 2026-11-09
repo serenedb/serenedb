@@ -95,8 +95,7 @@ uint64_t ColFileId(ColReader& reader, const ColumnReader& col);
 
 inline bool NullsInData(const ColumnReader& column) {
   return absl::c_any_of(column.DataBlocks(), [](const ColumnBlockMeta& m) {
-    return m.codec->validity ==
-           duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+    return m.codec->validity == codecs::CompressionValidity::NoValidityRequired;
   });
 }
 

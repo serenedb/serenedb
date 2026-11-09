@@ -42,6 +42,8 @@ class WriteContext final : public BlockManager,
 
   IndexOutput& Blocks() noexcept { return *_blocks; }
 
+  duckdb::block_id_t WriteOverflowString(duckdb::string_t string);
+
   void WriteString(duckdb::UncompressedStringSegmentState& state,
                    duckdb::string_t string, duckdb::block_id_t& result_block,
                    int32_t& result_offset) final;

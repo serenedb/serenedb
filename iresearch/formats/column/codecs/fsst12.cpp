@@ -28,14 +28,14 @@
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction& Fsst12Function() {
+const CompressionFunction& Fsst12Function() {
   static const auto kFunction =
     text::StringFunction<text::PlainScan<text::Fsst12Leaf>>(
       duckdb::CompressionType::COMPRESSION_COL_FSST12);
   return kFunction;
 }
 
-const duckdb::CompressionFunction& DictFsst12Function() {
+const CompressionFunction& DictFsst12Function() {
   static const auto kFunction =
     text::StringFunction<text::DictionaryScan<text::Fsst12Leaf>>(
       duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12);

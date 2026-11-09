@@ -29,15 +29,9 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
-#include <duckdb/function/compression_function.hpp>
-#include <duckdb/main/database.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
-#include <duckdb/storage/segment/uncompressed.hpp>
-#include <duckdb/storage/table/column_segment.hpp>
-#include <duckdb/storage/table/scan_state.hpp>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -66,12 +60,12 @@ struct EntryFrames {
   static constexpr bool kDedup = S == Shape::Dedup;
   static constexpr uint32_t kFirstEntry = kDedup ? 1 : 0;
 
-  EntryFrames(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle_p,
+  EntryFrames(const ColumnSegment& segment, duckdb::BufferHandle handle_p,
               bool load)
     : handle{std::move(handle_p)},
-      base{handle.GetDataMutable() + segment.GetBlockOffset()},
+      base{handle.GetDataMutable()},
       header{SegmentHeader(base, segment, S, Leaf::kCodec)},
-      type{segment.GetType()},
+      type{segment.type},
       length_reader{base + header.off_lengths, header.length_width} {
     if (!load) {
       return;
@@ -216,20 +210,19 @@ struct EntryFrames {
 
 template<typename Leaf>
 struct FetchFrames {
-  bool Switch(duckdb::ColumnSegment& segment, data_ptr_t base, Shape shape) {
-    const auto id = segment.GetBlockHandle()->BlockId();
-    if (block == id) {
+  bool Switch(const ColumnSegment& segment, data_ptr_t base, Shape shape) {
+    if (switched) {
       return false;
     }
     header = SegmentHeader(base, segment, shape, Leaf::kCodec);
-    block = id;
+    switched = true;
     lengths = PackedReader{base + header.off_lengths, header.length_width};
     leaf.Reset(header, base);
     decoded.reset();
     return true;
   }
 
-  IRS_FORCE_INLINE void Emit(duckdb::ColumnSegment& segment, data_ptr_t base,
+  IRS_FORCE_INLINE void Emit(const ColumnSegment& segment, data_ptr_t base,
                              uint32_t entry, duckdb::Vector& result, idx_t at,
                              bool batched) {
     SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
@@ -241,7 +234,7 @@ struct FetchFrames {
               batched);
   }
 
-  duckdb::block_id_t block = INVALID_BLOCK;
+  bool switched = false;
   Header header;
   PackedReader lengths{nullptr, 0};
   ScratchVector<EntryAt> order;
@@ -251,42 +244,36 @@ struct FetchFrames {
 };
 
 template<typename Scan>
-duckdb::unique_ptr<duckdb::SegmentScanState> InitScan(
-  const duckdb::QueryContext&, duckdb::ColumnSegment& segment) {
-  auto& buffer_manager =
-    duckdb::BufferManager::GetBufferManager(segment.GetDatabase());
-  return duckdb::make_uniq<Scan>(segment,
-                                 buffer_manager.Pin(segment.GetBlockHandle()));
+std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
+  return std::make_unique<Scan>(segment, segment.Pin());
 }
 
 template<typename Scan>
-void ScanPartial(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
-                 idx_t scan_count, duckdb::Vector& result,
-                 idx_t result_offset) {
+void ScanPartial(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+                 duckdb::Vector& result, idx_t result_offset) {
   state.scan_state->Cast<Scan>().ScanFlat(
     result, result_offset, state.GetPositionInSegment(), scan_count);
 }
 
 template<typename Scan>
-void ScanVector(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
-                idx_t scan_count, duckdb::Vector& result) {
+void ScanVector(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+                duckdb::Vector& result) {
   state.scan_state->Cast<Scan>().ScanVector(
     result, state.GetPositionInSegment(), scan_count);
 }
 
 template<typename Scan>
-void Select(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
-            idx_t vector_count, duckdb::Vector& result,
-            const duckdb::SelectionVector& sel, idx_t sel_count) {
+void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
+            duckdb::Vector& result, const duckdb::SelectionVector& sel,
+            idx_t sel_count) {
   state.scan_state->Cast<Scan>().Select(result, state.GetPositionInSegment(),
                                         vector_count, sel, sel_count);
 }
 
 template<typename Scan>
-void Filter(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
-            idx_t vector_count, duckdb::Vector& result,
-            duckdb::SelectionVector& sel, idx_t& sel_count,
-            const duckdb::TableFilter& filter,
+void Filter(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
+            duckdb::Vector& result, duckdb::SelectionVector& sel,
+            idx_t& sel_count, const duckdb::TableFilter& filter,
             duckdb::TableFilterState& filter_state) {
   state.scan_state->Cast<Scan>().Filter(result, state.GetPositionInSegment(),
                                         vector_count, sel, sel_count, filter,
@@ -295,10 +282,8 @@ void Filter(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
 
 template<typename Scan>
 duckdb::shared_ptr<DecodedDictionary> DecodeWhole(
-  duckdb::ColumnSegment& segment) {
-  auto& buffer_manager =
-    duckdb::BufferManager::GetBufferManager(segment.GetDatabase());
-  Scan scan{segment, buffer_manager.Pin(segment.GetBlockHandle())};
+  const ColumnSegment& segment) {
+  Scan scan{segment, segment.Pin()};
   scan.EnsureDictionary();
   const auto bytes = scan.entries.CacheBytes();
   return duckdb::make_shared_ptr<DecodedDictionary>(
@@ -306,14 +291,14 @@ duckdb::shared_ptr<DecodedDictionary> DecodeWhole(
 }
 
 template<typename Scan>
-void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
+void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
   using Fetch = typename Scan::Fetch;
   auto& handle = state.GetOrInsertHandle(segment);
-  auto* base = handle.GetDataMutable() + segment.GetBlockOffset();
+  auto* base = handle.GetDataMutable();
   auto& fetch = state.GetOrCreateSegmentState<Fetch>(
-    segment, [] { return duckdb::make_uniq<Fetch>(); });
+    [] { return std::make_unique<Fetch>(); });
   auto& frames = fetch.frames;
   if (frames.Switch(segment, base, Scan::kShape)) {
     fetch.Reset(segment);
@@ -373,28 +358,22 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
 }
 
 template<typename Scan>
-duckdb::CompressionFunction StringFunction(duckdb::CompressionType type) {
-  duckdb::CompressionFunction f{
-    type,
-    duckdb::PhysicalType::VARCHAR,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
-    InitScan<Scan>,
-    ScanVector<Scan>,
-    ScanPartial<Scan>,
-    FetchRows<Scan>,
-    duckdb::UncompressedFunctions::EmptySkip,
+constexpr CompressionFunction StringFunction(duckdb::CompressionType type) {
+  CompressionFunction f{
+    .type = type,
+    .data_type = duckdb::PhysicalType::VARCHAR,
+    .init_scan = InitScan<Scan>,
+    .scan_vector = ScanVector<Scan>,
+    .scan_partial = ScanPartial<Scan>,
+    .select = Select<Scan>,
+    .fetch_rows = FetchRows<Scan>,
+    .skip = EmptySkip,
+    .get_segment_info = SegmentInfo,
+    .validity = Scan::kValidity,
   };
-  f.select = Select<Scan>;
   if constexpr (Scan::kShape == Shape::Dedup) {
     f.filter = Filter<Scan>;
   }
-  f.get_segment_info = SegmentInfo;
-  f.validity = Scan::kValidity;
   return f;
 }
 

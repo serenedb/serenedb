@@ -126,7 +126,7 @@ uint32_t Fsst12WalkInPlace(const Fsst12Decoder& fsst, const char* in,
 
 struct Fsst12Scan {
   template<typename Frames>
-  Fsst12Scan(duckdb::ColumnSegment&, const Frames& s)
+  Fsst12Scan(const ColumnSegment&, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
     SDB_ENSURE(s.header.symtab_size == 0 ||
                  decoder.Import(std::string_view{
@@ -272,7 +272,7 @@ struct Fsst12Fetch {
 
   uint64_t DecodedBytes() const noexcept { return 0; }
 
-  void Emit(duckdb::ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
+  void Emit(const ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
             PackedReader& lengths, uint32_t lo, const FrameMeta& f,
             uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
             bool) {

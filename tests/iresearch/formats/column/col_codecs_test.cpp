@@ -313,8 +313,7 @@ class ColCodecsTest : public TestBase {
       if (duckdb::IsSereneDBCompressionType(block.codec->type)) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
-        auto info = seg->GetCompressionFunction().get_segment_info(
-          duckdb::QueryContext{}, *seg);
+        auto info = seg->function.get_segment_info(*seg);
         level = info["level"];
       }
       levels.emplace_back(block.codec->type, std::move(level));
@@ -335,8 +334,7 @@ class ColCodecsTest : public TestBase {
     for (const auto& block : col->DataBlocks()) {
       window = col->Locate(row, window);
       auto seg = col->OpenSegment(window.block, ctx);
-      auto info = seg->GetCompressionFunction().get_segment_info(
-        duckdb::QueryContext{}, *seg);
+      auto info = seg->function.get_segment_info(*seg);
       values.emplace_back(info[key]);
       row += block.tuple_count;
     }
@@ -771,8 +769,7 @@ TEST_F(ColCodecsTest, ColumnLevelOverridesTableLevel) {
     irs::BlockWindow window{};
     window = col->Locate(0, window);
     auto seg = col->OpenSegment(window.block, ctx);
-    auto info = seg->GetCompressionFunction().get_segment_info(
-      duckdb::QueryContext{}, *seg);
+    auto info = seg->function.get_segment_info(*seg);
     return info["level"];
   };
   for (const uint8_t column_level : {uint8_t{0}, uint8_t{9}}) {
@@ -2344,13 +2341,19 @@ TEST_F(ColCodecsTest, RleLookupsInEveryOrder) {
   irs::ReadContext ctx{r};
   auto rle_segment = c_rle->OpenSegment(0, ctx);
   auto numeric_segment = c_num->OpenSegment(0, ctx);
-  duckdb::ColumnFetchState shared;
+  irs::codecs::ColumnFetchState rle_state;
+  irs::codecs::ColumnFetchState numeric_state;
+  const auto fetch = [&](const irs::codecs::ColumnSegment& segment,
+                         irs::codecs::ColumnFetchState& state, uint64_t g) {
+    const duckdb::idx_t row = g;
+    segment.function.fetch_rows(
+      segment, state, &row, 1, out,
+      *duckdb::FlatVector::IncrementalSelectionVector(), 0);
+    return duckdb::FlatVector::GetData<int64_t>(out)[0];
+  };
   for (uint64_t g = 0; g < 4096; g += 37) {
-    rle_segment->FetchRow(shared, static_cast<duckdb::row_t>(g), out, 0);
-    ASSERT_EQ(duckdb::FlatVector::GetData<int64_t>(out)[0], rle_value(g)) << g;
-    numeric_segment->FetchRow(shared, static_cast<duckdb::row_t>(g), out, 0);
-    ASSERT_EQ(duckdb::FlatVector::GetData<int64_t>(out)[0], numeric_value(g))
-      << g;
+    ASSERT_EQ(fetch(*rle_segment, rle_state, g), rle_value(g)) << g;
+    ASSERT_EQ(fetch(*numeric_segment, numeric_state, g), numeric_value(g)) << g;
   }
 }
 

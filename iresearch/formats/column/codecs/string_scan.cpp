@@ -31,7 +31,6 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
@@ -52,12 +51,12 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
 }
 
 Header SegmentHeader(duckdb::const_data_ptr_t base,
-                     const duckdb::ColumnSegment& segment, Shape shape,
+                     const ColumnSegment& segment, Shape shape,
                      ByteCodec codec) {
-  const auto h = Header::Parse(base, segment.SegmentSize());
+  const auto h = Header::Parse(base, segment.size);
   const uint64_t first_entry = shape == Shape::Dedup ? 1 : 0;
   SDB_ENSURE(h.shape == shape && h.codec == codec &&
-               h.row_count == segment.count.load(std::memory_order_relaxed) &&
+               h.row_count == segment.count &&
                uint64_t{h.entry_count} <= uint64_t{h.row_count} + first_entry &&
                (shape == Shape::Dedup || h.entry_count == h.row_count),
              "col codec: corrupted segment header");
@@ -164,12 +163,10 @@ void EmitDecoded(const DecodedDictionary& decoded,
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
-  duckdb::QueryContext, duckdb::ColumnSegment& segment) {
-  auto& buffer_manager =
-    duckdb::BufferManager::GetBufferManager(segment.GetDatabase());
-  auto handle = buffer_manager.Pin(segment.GetBlockHandle());
-  const auto* base = handle.Ptr() + segment.GetBlockOffset();
-  const auto h = Header::Parse(base, segment.SegmentSize());
+  const ColumnSegment& segment) {
+  auto handle = segment.Pin();
+  const auto* base = handle.Ptr();
+  const auto h = Header::Parse(base, segment.size);
   duckdb::InsertionOrderPreservingMap<std::string> info;
   info["shape"] = std::string{SnakeCaseName(h.shape)};
   info["codec"] = std::string{SnakeCaseName(h.codec)};

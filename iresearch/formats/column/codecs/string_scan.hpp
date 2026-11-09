@@ -31,7 +31,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
-#include <duckdb/storage/table/column_segment.hpp>
 #include <limits>
 #include <span>
 #include <string>
@@ -39,6 +38,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
@@ -147,7 +147,7 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   const ReadContext::CacheSlot& slot);
 
 Header SegmentHeader(duckdb::const_data_ptr_t base,
-                     const duckdb::ColumnSegment& segment, Shape shape,
+                     const ColumnSegment& segment, Shape shape,
                      ByteCodec codec);
 
 NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h);
@@ -209,6 +209,6 @@ void EmitDecoded(const DecodedDictionary& decoded,
                  HeapReference& reference);
 
 duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
-  duckdb::QueryContext, duckdb::ColumnSegment& segment);
+  const ColumnSegment& segment);
 
 }  // namespace irs::codecs::text

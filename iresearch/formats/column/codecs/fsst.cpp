@@ -132,14 +132,14 @@ Sections start at 8-byte boundaries.
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction& FsstFunction() {
+const CompressionFunction& FsstFunction() {
   static const auto kFunction =
     text::StringFunction<text::PlainScan<text::FsstLeaf>>(
       duckdb::CompressionType::COMPRESSION_COL_FSST);
   return kFunction;
 }
 
-const duckdb::CompressionFunction& DictFsstFunction() {
+const CompressionFunction& DictFsstFunction() {
   static const auto kFunction =
     text::StringFunction<text::DictionaryScan<text::FsstLeaf>>(
       duckdb::CompressionType::COMPRESSION_COL_DICT_FSST);

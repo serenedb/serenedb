@@ -121,7 +121,7 @@ inline std::string_view DecodePlusEntry(const FsstDecoder& fsst,
 
 struct FsstPlusScan {
   template<typename Frames>
-  FsstPlusScan(duckdb::ColumnSegment&, const Frames& s)
+  FsstPlusScan(const ColumnSegment&, const Frames& s)
     : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
     SDB_ENSURE(prefixes.Open(SideSection(s.header, s.base),
                              s.header.dictionary_size, decoder),
@@ -257,7 +257,7 @@ struct FsstPlusFetch {
 
   uint64_t DecodedBytes() const noexcept { return 0; }
 
-  void Emit(duckdb::ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
+  void Emit(const ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
             PackedReader& lengths, uint32_t lo, const FrameMeta& f,
             uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
             bool) {

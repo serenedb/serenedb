@@ -58,14 +58,14 @@ std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
 
 }  // namespace
 
-const duckdb::CompressionFunction& ZxcFunction() {
+const CompressionFunction& ZxcFunction() {
   static const auto kFunction =
     text::StringFunction<text::PlainScan<text::BlobLeaf<Zxc>>>(
       duckdb::CompressionType::COMPRESSION_ZXC);
   return kFunction;
 }
 
-const duckdb::CompressionFunction& DictZxcFunction() {
+const CompressionFunction& DictZxcFunction() {
   static const auto kFunction =
     text::StringFunction<text::DictionaryScan<text::BlobLeaf<Zxc>>>(
       duckdb::CompressionType::COMPRESSION_DICT_ZXC);

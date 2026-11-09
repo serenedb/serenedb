@@ -21,10 +21,10 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
+#include "iresearch/formats/column/codecs/reuse_policy.hpp"
 
 namespace irs::codecs {
 
@@ -58,12 +58,6 @@ struct Config {
 
 }  // namespace text
 
-struct ReusePolicy {
-  std::optional<text::Config> pick;
-  CalibrationClock clock;
-  double bytes_per_input = 0;
-};
-
 struct TunedParameters {
   bool done = false;
   uint8_t level[kByteCodecCount]{};
@@ -76,7 +70,7 @@ struct EstimatorState {
 };
 
 struct StringTuning {
-  ReusePolicy reuse;
+  ReusePolicy<text::Config> reuse;
   TunedParameters tuned;
   EstimatorState estimators;
   uint64_t last_distinct = 0;

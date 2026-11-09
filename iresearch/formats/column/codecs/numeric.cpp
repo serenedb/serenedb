@@ -312,31 +312,32 @@ class TypedSealer final : public NumericSealer {
     }
     DivideByGcd();
     const auto rows = static_cast<double>(_values.size());
+    auto& reuse = tuning.reuse;
     if (!due) {
-      if (!tuning.pick) {
+      if (!reuse.pick) {
         return NoSegment();
       }
-      BuildCandidates(&tuning.pick->transform);
-      const auto* c = Find(*tuning.pick);
+      BuildCandidates(&reuse.pick->transform);
+      const auto* c = Find(*reuse.pick);
       const auto option = absl::c_find_if(
-        plan, [&](const auto& o) { return o.leaf == tuning.pick->leaf; });
+        plan, [&](const auto& o) { return o.leaf == reuse.pick->leaf; });
       if (c && option != plan.end()) {
         auto out = Emit(*c, *option);
         const auto bytes = out.bytes.size();
-        const bool drift = tuning.Drifted(static_cast<double>(bytes), rows);
+        const bool drift = reuse.Grew(static_cast<double>(bytes), rows);
         const bool keep =
           rival_bytes == kNoRival
             ? !drift
             : option->Price(bytes) < static_cast<double>(rival_bytes);
         if (keep) {
           if (drift) {
-            tuning.clock.Restart();
+            reuse.clock.Restart();
           }
           return out;
         }
       }
       if (rival_bytes == kNoRival) {
-        tuning.clock.Restart();
+        reuse.clock.Restart();
         return NoSegment();
       }
     }
@@ -361,10 +362,8 @@ class TypedSealer final : public NumericSealer {
     }
     const auto calibrate = [&](std::optional<NumericChoice> pick,
                                uint64_t bytes) {
-      tuning.clock.Settle(tuning.calibrated && tuning.pick == pick);
-      tuning.calibrated = true;
-      tuning.pick = pick;
-      tuning.bytes_per_row = static_cast<double>(bytes) / rows;
+      reuse.Settle(pick, reuse.calibrated && reuse.pick == pick,
+                   static_cast<double>(bytes), rows);
     };
     if (best) {
       auto out = Emit(*best, best_leaf);
@@ -1143,7 +1142,7 @@ std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
                         uint64_t runs, NumericTuning& tuning) {
   TypedSealer<uint32_t> sealer{duckdb::LogicalType::UINTEGER, codes};
   const auto bound = CodesBound(codes.size(), entries, runs);
-  bool due = tuning.Due();
+  bool due = tuning.reuse.Due();
   auto bytes = sealer.SealWith(kLeaflessPlan, kNoRival, tuning, due).bytes;
   if (bytes.empty() ||
       (!due && static_cast<double>(bytes.size()) >

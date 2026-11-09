@@ -110,8 +110,7 @@ Config NamedConfig(const StringChoice& named,
 }
 
 PooledSegment StringPicker::First() {
-  auto& reuse = _tuning.reuse;
-  const bool due = !reuse.pick || reuse.clock.Due();
+  const bool due = _tuning.reuse.Due();
   if (_acc.Rows() == 0) {
     return {};
   }
@@ -134,13 +133,9 @@ Config StringPicker::Current() const noexcept {
 }
 
 bool StringPicker::Drifted(const Segment& seg) const noexcept {
-  if (seg.input == 0) {
-    return false;
-  }
-  const auto ratio =
-    static_cast<double>(seg.Size()) / static_cast<double>(seg.input);
-  const auto reference = _tuning.reuse.bytes_per_input;
-  return ratio > reference * kDrift || ratio * kDrift < reference;
+  return seg.input != 0 &&
+         _tuning.reuse.Drifted(static_cast<double>(seg.Size()),
+                               static_cast<double>(seg.input));
 }
 
 PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
@@ -197,12 +192,8 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
   }
   auto& reuse = _tuning.reuse;
   const bool kept = reuse.pick && reuse.pick->choice == picked->config.choice;
-  reuse.clock.Settle(kept && !drift);
-  reuse.pick = picked->config;
-  if (input != 0) {
-    reuse.bytes_per_input =
-      static_cast<double>(picked->Size()) / static_cast<double>(input);
-  }
+  reuse.Settle(picked->config, kept && !drift,
+               static_cast<double>(picked->Size()), static_cast<double>(input));
   return picked == first.get() ? std::move(first) : window.Take(*picked);
 }
 

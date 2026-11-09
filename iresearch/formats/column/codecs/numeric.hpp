@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
@@ -28,11 +27,11 @@
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
+#include "iresearch/formats/column/codecs/reuse_policy.hpp"
 #include "iresearch/index/column_info.hpp"
 
 namespace irs::codecs {
@@ -50,35 +49,12 @@ struct NumericSegment {
   std::string bytes;
 };
 
-inline constexpr double kDrift = 1.25;
 inline constexpr uint64_t kNoRival = std::numeric_limits<uint64_t>::max();
 
-struct CalibrationClock {
-  static constexpr uint32_t kMaxGap = 16;
-
-  uint32_t gap = 1;
-  uint32_t since = 0;
-
-  bool Due() noexcept { return ++since >= gap; }
-  void Settle(bool kept) noexcept {
-    gap = kept ? std::min(gap * 2, kMaxGap) : 1;
-    since = 0;
-  }
-  void Restart() noexcept { Settle(false); }
-};
-
 struct NumericTuning {
-  std::optional<NumericChoice> pick;
-  bool calibrated = false;
-  CalibrationClock clock;
-  double bytes_per_row = 0;
+  ReusePolicy<NumericChoice> reuse;
   double codes_ratio = 1;
   duckdb::CompressionType rival = duckdb::CompressionType::COMPRESSION_AUTO;
-
-  bool Due() noexcept { return !calibrated || clock.Due(); }
-  bool Drifted(double bytes, double rows) const noexcept {
-    return bytes > bytes_per_row * rows * kDrift;
-  }
 };
 
 uint64_t Packed(uint64_t count, uint64_t max_value) noexcept;

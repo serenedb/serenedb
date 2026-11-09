@@ -28,7 +28,6 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <memory>
-#include <span>
 #include <string>
 #include <string_view>
 
@@ -64,11 +63,6 @@ Bytes ReadWhole(duckdb::QueryContext context, duckdb::FileSystem& fs,
   }
   return bytes;
 }
-
-void SyncFiles(duckdb::FileSystem& fs, std::string_view root,
-               std::span<const std::string_view> names);
-
-void SyncDirectory(duckdb::FileSystem& fs, std::string_view root);
 
 void ForEach(duckdb::DatabaseInstance& db, std::string_view root, size_t count,
              absl::FunctionRef<void(size_t)> visit);

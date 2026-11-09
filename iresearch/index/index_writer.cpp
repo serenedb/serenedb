@@ -739,8 +739,10 @@ IndexWriter::Transaction::FlushAndFsync() {
     files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
     files.emplace_back(entry.filename);
   }
-  SyncFiles(segment->fs, segment->root, files);
-  SyncDirectory(segment->fs, segment->root);
+  for (const auto& name : files) {
+    segment->fs.SyncFile(PathOf(segment->root, name));
+  }
+  segment->fs.SyncDirectory(segment->root);
   for (auto& entry : flushed) {
     entry.meta_on_disk = true;
   }
@@ -1990,7 +1992,9 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
 
   context.files_to_sync.emplace_back(to_commit.filename);
 
-  SyncFiles(_fs, _root, context.files_to_sync);
+  for (const auto& name : context.files_to_sync) {
+    _fs.SyncFile(PathOf(_root, name));
+  }
 
   // Update file name so that directory reader holds a reference
   to_commit.filename = std::move(index_meta_file);

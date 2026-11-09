@@ -298,7 +298,7 @@ def s3_store():
 
 def _index_files(fake: FakeS3, prefix: str) -> list[str]:
     return [key for key in fake.keys("bucket", prefix)
-            if not key.endswith(".storage")]
+            if not key.endswith("/")]
 
 
 def _create_secret(server: _Server, store: _Store, location: str) -> None:
@@ -384,7 +384,7 @@ def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
     finally:
         again.stop()
     if s3_store.fake:
-        assert not s3_store.fake.keys(s3_store.bucket, f"{prefix}/"), \
+        assert not _index_files(s3_store.fake, f"{prefix}/"), \
             s3_store.fake.keys(s3_store.bucket)
 
 
@@ -715,8 +715,11 @@ def test_clusters_sharing_a_location_keep_apart(tmp_path: Path,
             keys = fake.names
         prefix = f"shared-{tmp_path.name}/"
 
+        def files() -> list[str]:
+            return [key for key in keys(bucket, prefix) if not key.endswith("/")]
+
         def clusters() -> set[str]:
-            return {key.split("/")[1] for key in keys(bucket, prefix)}
+            return {key.split("/")[1] for key in files()}
 
         def rows(server: _Server, table: str) -> list[tuple[int]]:
             with server.connect() as conn:
@@ -780,7 +783,7 @@ def test_clusters_sharing_a_location_keep_apart(tmp_path: Path,
                 conn.execute("DROP TABLESPACE kept")
         finally:
             again.stop()
-        assert not keys(bucket, prefix), keys(bucket)
+        assert not files(), keys(bucket)
 
 
 def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
@@ -813,25 +816,32 @@ def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
         assert not set(fake.dropped) & set(fake.keys("bucket")), fake.dropped
 
 
-def test_a_lost_marker_response_is_retried(tmp_path: Path) -> None:
-    location = f"s3://bucket/marker-{tmp_path.name}"
-    with FakeS3() as fake:
+@pytest.mark.parametrize("kind", ["s3", "azure"])
+def test_a_lost_marker_response_is_retried(tmp_path: Path, kind: str) -> None:
+    with FakeS3() if kind == "s3" else FakeAzure() as fake:
         server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
-            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
-                           location)
-            fake.drop["PUT"] = 1
+            if kind == "s3":
+                _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                               f"s3://bucket/marker-{tmp_path.name}")
+            else:
+                _create_azure_secret(server, fake, f"az://indexes/marker-{tmp_path.name}")
             with server.connect() as conn:
+                conn.execute("CREATE TABLE earlier(id INTEGER) "
+                             "WITH (storage = 'search') TABLESPACE idx")
+                fake.drop["PUT" if kind == "s3" else "PUT_BLOCK_LIST"] = 1
                 conn.execute("CREATE TABLE notes(id INTEGER, body TEXT) "
                              "WITH (storage = 'search') TABLESPACE idx")
+                oid = conn.execute(
+                    "SELECT oid FROM pg_class WHERE relname = 'notes'").fetchone()[0]
                 conn.execute("INSERT INTO notes VALUES (1, 'kept on s3')")
                 conn.execute("VACUUM (REFRESH_TABLE) notes")
                 assert conn.execute("SELECT body FROM notes").fetchall() == [
                     ("kept on s3",)]
         finally:
             server.stop()
-    assert len(fake.dropped) == 1 and fake.dropped[0].endswith(".storage"), \
+    assert len(fake.dropped) == 1 and fake.dropped[0].endswith(f"/{oid}/"), \
         fake.dropped
 
 
@@ -1151,9 +1161,9 @@ def test_a_restart_lists_each_directory_one_level_deep(tmp_path: Path, kind: str
             _create_index(server)
         finally:
             server.stop()
-        markers = [key for key in keys(bucket, f"{prefix}/") if key.endswith(".storage")]
-        assert len(markers) == 1, keys(bucket)
-        index = markers[0].removesuffix(".storage")
+        markers = [key for key in keys(bucket, f"{prefix}/") if key.endswith("/")]
+        assert len(markers) == 5, keys(bucket)
+        index = max(markers, key=lambda key: key.count("/")).removesuffix("/")
         database = index.rsplit("/", 1)[0]
         for i in range(6000):
             fake.replace(bucket, f"{database}/archive/{i}", b"")
@@ -1221,7 +1231,7 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
                     ).fetchall() == [(i, "kept on s3")]
         finally:
             again.stop()
-    assert not [entry for entry in log if entry["key"].endswith(".storage")], log
+    assert not [entry for entry in log if entry["key"].endswith("/")], log
     opens: dict[str, dict] = {}
     for entry in sorted(log, key=lambda entry: entry["began"]):
         directory, name = entry["key"].rsplit("/", 1)

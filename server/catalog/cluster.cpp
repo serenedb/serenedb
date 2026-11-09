@@ -107,7 +107,7 @@ std::string NormalizeLocation(std::string_view location) {
 class BuiltinTablespaces final : public duckdb::DefaultGenerator {
  public:
   BuiltinTablespaces(duckdb::Catalog& catalog,
-                     std::string_view default_directory)
+                     const std::string& default_directory)
     : duckdb::DefaultGenerator{catalog},
       _default_directory{default_directory} {}
 
@@ -119,8 +119,8 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
     info.permissions.owner = pg::kRootUser;
     if (name == kDefault) {
       info.oid = pg::kPgDefaultTablespace;
-      return duckdb::make_uniq<TablespaceCatalogEntry>(
-        catalog, info, std::string{_default_directory});
+      return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, info,
+                                                       _default_directory);
     }
     if (name == kGlobal) {
       info.oid = pg::kPgGlobalTablespace;
@@ -140,7 +140,7 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
   static constexpr const char* kDefault = "pg_default";
   static constexpr const char* kGlobal = "pg_global";
 
-  std::string_view _default_directory;
+  const std::string& _default_directory;
 };
 
 }  // namespace
@@ -256,12 +256,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
   }
   const auto created = duckdb::DuckCatalog::CreateTablespace(transaction, info);
   if (created) {
-    const auto& directory = created->Cast<TablespaceCatalogEntry>().Directory();
-    if (irs::StorageKindOf(directory) == irs::StorageKind::Remote) {
-      StorageFileSystem().ListFiles(directory, [](const std::string&, bool) {});
-    } else {
-      CreateDirectories(directory);
-    }
+    StorageFileSystem().CreateDirectoryExtended(
+      created->Cast<TablespaceCatalogEntry>().Directory(),
+      {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
   }
   return created;
 }
@@ -641,7 +638,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
   DeclareModified(transaction, *this);
   auto entry = duckdb::DuckCatalog::CreateDatabase(transaction, info);
   if (entry) {
-    entry->Cast<DatabaseCatalogEntry>().Directory()->Create();
+    CreateDirectory(entry->Cast<DatabaseCatalogEntry>().Directory()->Path());
   }
   return entry;
 }

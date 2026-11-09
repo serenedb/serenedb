@@ -284,7 +284,9 @@ void RegisterClusterStorage(duckdb::DBConfig& config,
 
 void InitCatalog(std::string_view directory) {
   const DataDirectory layout{std::string{directory}};
-  CreateDirectories(layout.EngineDir());
+  StorageFileSystem().CreateDirectoryExtended(
+    layout.EngineDir().native(),
+    {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
   backup::PrepareDataDirectory(layout);
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;

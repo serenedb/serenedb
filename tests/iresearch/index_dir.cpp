@@ -77,7 +77,9 @@ void IndexDir::Rename(std::string_view src, std::string_view dst) const {
 }
 
 void IndexDir::Sync(std::span<const std::string_view> names) const {
-  irs::SyncFiles(Fs(), Root(), names);
+  for (const auto name : names) {
+    Fs().SyncFile(irs::PathOf(Root(), name));
+  }
 }
 
 void IndexDir::Compact(std::string_view name) const {

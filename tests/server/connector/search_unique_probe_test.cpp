@@ -118,7 +118,7 @@ class SearchUniqueProbeTest : public ::testing::Test {
 
   void TearDown() final {
     _writer.reset();
-    _fs.RemoveDirectory(std::string{kRoot});
+    _fs.RemoveDirectory(kRoot);
   }
 
   // Writes `chunk` through the sink the server writes with, so the segment
@@ -151,7 +151,7 @@ class SearchUniqueProbeTest : public ::testing::Test {
     return irs::DirectoryReader{TestDb(), _fs, kRoot, {}};
   }
 
-  static constexpr std::string_view kRoot = "memory://search_unique_probe";
+  static inline const std::string kRoot = "memory://search_unique_probe";
 
   duckdb::FileSystem& _fs = duckdb::FileSystem::GetFileSystem(TestDb());
   irs::IndexWriter::ptr _writer;

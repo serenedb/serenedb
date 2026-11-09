@@ -1,11 +1,13 @@
 """An Azure Blob Storage endpoint in the test process, for the Azure client without a real store.
 
 Path-style URLs under one storage account, containers that exist on first use, block blobs
-staged and committed by block lists, Data Lake files created, appended in order and flushed,
-ranged reads with conditions, blob listings, same-account copies, single and batched deletes.
-Requests are not authenticated, except that while
+staged and committed by block lists with the metadata the commit sets, Data Lake files created,
+appended in order and flushed, ranged reads with conditions, blob listings, same-account copies,
+single and batched deletes. Requests are not authenticated, except that while
 `sas_signatures` is set, a request whose SAS signature is not one of them is refused with 403
-AuthenticationFailed, as an expired SAS is. It counts requests by kind.
+AuthenticationFailed, as an expired SAS is. It counts requests by kind. The next `drop[kind]`
+requests of a kind (PUT_BLOCK_LIST) take effect but get no response: the connection closes, and
+their blob names are listed in `dropped`.
 
 Point a secret at it with `connection_string`, or with `sas_connection_string(signature)`.
 """
@@ -13,6 +15,7 @@ Point a secret at it with `connection_string`, or with `sas_connection_string(si
 from __future__ import annotations
 
 import base64
+import collections
 import hashlib
 import time
 import urllib.parse
@@ -27,9 +30,11 @@ KEY = base64.b64encode(b"fake-azure-account-key-for-tests").decode()
 
 
 class _Blob:
-    def __init__(self, data: bytes, blocks: dict[str, bytes] | None = None) -> None:
+    def __init__(self, data: bytes, blocks: dict[str, bytes] | None = None,
+                 metadata: dict[str, str] | None = None) -> None:
         self.data = data
         self.blocks = blocks or {}
+        self.metadata = metadata or {}
         self.etag = '"0x' + hashlib.md5(data + uuid.uuid4().bytes).hexdigest()[:16].upper() + '"'
         self.modified = time.time()
 
@@ -41,6 +46,8 @@ class FakeAzure(FakeStore):
         self.blobs: dict[tuple[str, str], _Blob] = {}
         self.staged: dict[tuple[str, str], dict[str, bytes]] = {}
         self.appended: dict[tuple[str, str], bytearray] = {}
+        self.drop: collections.Counter[str] = collections.Counter()
+        self.dropped: list[str] = []
 
     @property
     def endpoint(self) -> str:
@@ -110,7 +117,8 @@ class _Handler(Handler):
         return {"ETag": blob.etag, "Last-Modified": http_date(blob.modified),
                 "x-ms-creation-time": http_date(blob.modified), "x-ms-blob-type": "BlockBlob",
                 "x-ms-server-encrypted": "true", "Accept-Ranges": "bytes",
-                "Content-Type": "application/octet-stream"}
+                "Content-Type": "application/octet-stream",
+                **{f"x-ms-meta-{name}": value for name, value in blob.metadata.items()}}
 
     def _conditions_fail(self, blob: _Blob) -> bool:
         if_match = self.headers.get("If-Match")
@@ -118,6 +126,15 @@ class _Handler(Handler):
 
     def _occupied(self, container: str, name: str) -> bool:
         return self.headers.get("If-None-Match") == "*" and (container, name) in self.fake.blobs
+
+    def _dropped(self, kind: str, name: str) -> bool:
+        with self.fake.lock:
+            if self.fake.drop[kind] == 0:
+                return False
+            self.fake.drop[kind] -= 1
+            self.fake.dropped.append(name)
+        self.close_connection = True
+        return True
 
     def do_HEAD(self) -> None:
         if self._forbidden():
@@ -217,6 +234,8 @@ class _Handler(Handler):
         if comp == "blocklist":
             self.fake.count("PUT_BLOCK_LIST")
             ids = [element.text or "" for element in ET.fromstring(body)]
+            metadata = {header[len("x-ms-meta-"):]: value for header, value in self.headers.items()
+                        if header.lower().startswith("x-ms-meta-")}
             with self.fake.lock:
                 exists = self._occupied(container, name)
                 blocks = dict(getattr(self.fake.blobs.get((container, name)), "blocks", {}))
@@ -225,7 +244,7 @@ class _Handler(Handler):
                     blob = None
                 else:
                     blob = _Blob(b"".join(blocks[block] for block in ids),
-                                 {block: blocks[block] for block in ids})
+                                 {block: blocks[block] for block in ids}, metadata)
                     self.fake.blobs[(container, name)] = blob
                     self.fake.staged.pop((container, name), None)
             if exists:
@@ -233,6 +252,8 @@ class _Handler(Handler):
                 return
             if blob is None:
                 self._error(400, "InvalidBlockList")
+                return
+            if self._dropped("PUT_BLOCK_LIST", name):
                 return
             self._reply(201, headers={"ETag": blob.etag, "Last-Modified": http_date(blob.modified),
                                       "x-ms-request-server-encrypted": "true"})

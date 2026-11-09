@@ -20,6 +20,7 @@
 
 #include "store/simulated_object_store.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/btree_map.h>
 #include <absl/container/btree_set.h>
@@ -53,6 +54,14 @@ std::string DirectoryPrefix(std::string_view directory) {
   }
   prefix.push_back('/');
   return prefix;
+}
+
+bool IsBucket(std::string_view directory) {
+  auto path = directory.substr(SimulatedObjectStore::kPrefix.size());
+  while (path.ends_with('/')) {
+    path.remove_suffix(1);
+  }
+  return !path.contains('/');
 }
 
 class ObjectHandle final : public duckdb::FileHandle {
@@ -349,19 +358,55 @@ duckdb::FileExistence SimulatedObjectStore::TryFileExists(
 duckdb::FileExistence SimulatedObjectStore::TryDirectoryExists(
   const std::string& directory, duckdb::optional_ptr<duckdb::FileOpener> opener,
   duckdb::optional_ptr<duckdb::ErrorData> error) {
-  return duckdb::FileExistence::EXISTS;
+  if (IsBucket(directory)) {
+    return duckdb::FileExistence::EXISTS;
+  }
+  const auto prefix = DirectoryPrefix(directory);
+  Request(_head);
+  {
+    absl::ReaderMutexLock lock{&_mutex};
+    if (_objects.contains(prefix)) {
+      return duckdb::FileExistence::EXISTS;
+    }
+  }
+  Request(_list);
+  absl::ReaderMutexLock lock{&_mutex};
+  return absl::c_any_of(
+           _objects,
+           [&](const auto& entry) { return entry.first.starts_with(prefix); })
+           ? duckdb::FileExistence::EXISTS
+           : duckdb::FileExistence::MISSING;
+}
+
+bool SimulatedObjectStore::CreateDirectoryExtended(
+  const std::string& directory, const duckdb::CreateDirectoryOptions& options,
+  duckdb::optional_ptr<duckdb::FileOpener> opener) {
+  if (IsBucket(directory)) {
+    return false;
+  }
+  Request(_put);
+  auto marker = std::make_shared<Object>();
+  marker->written = duckdb::Timestamp::GetCurrentTimestamp();
+  absl::MutexLock lock{&_mutex};
+  marker->version = ++_versions;
+  return _objects.try_emplace(DirectoryPrefix(directory), std::move(marker))
+    .second;
 }
 
 void SimulatedObjectStore::RemoveDirectory(
   const std::string& directory,
   duckdb::optional_ptr<duckdb::FileOpener> opener) {
+  Request(_list);
+  const auto prefix = DirectoryPrefix(directory);
   duckdb::vector<std::string> names;
-  ListFilesExtended(
-    directory,
-    [&](duckdb::OpenFileInfo& file) {
-      names.push_back(absl::StrCat(DirectoryPrefix(directory), file.path));
-    },
-    opener, {.recursive = true});
+  {
+    absl::ReaderMutexLock lock{&_mutex};
+    for (const auto& [name, object] : _objects) {
+      if (name.starts_with(prefix)) {
+        names.push_back(name);
+      }
+    }
+  }
   RemoveFiles(names, opener);
 }
 
@@ -384,7 +429,7 @@ bool SimulatedObjectStore::ListFilesExtended(
       if (const auto slash = child.find('/');
           !options.recursive && slash != std::string_view::npos) {
         directories.emplace(child.substr(0, slash));
-      } else {
+      } else if (!child.empty() && !child.ends_with('/')) {
         listed.emplace(child, object);
       }
     }

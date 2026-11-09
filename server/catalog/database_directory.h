@@ -41,20 +41,15 @@ inline constexpr std::string_view kDataFile = "data.db";
 
 duckdb::FileSystem& StorageFileSystem();
 void CreateDirectory(const std::filesystem::path& path);
-void CreateDirectories(const std::filesystem::path& path);
 bool RemoveTree(const std::string& path) noexcept;
 // While a backup runs, removals of dropped storages wait for ResumeRemovals.
 void DeferRemovals() noexcept;
 void ResumeRemovals();
 std::optional<duckdb::idx_t> OidFromName(std::string_view name);
 
-void CreateStorage(const std::string& path);
-bool StorageExists(const std::string& path);
-
 struct StorageEntry {
   duckdb::idx_t oid = 0;
   std::string path;
-  bool is_directory = false;
 };
 
 std::vector<StorageEntry> ListStorages(const std::string& root);
@@ -90,7 +85,7 @@ class StorageDirectory final {
 class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
  public:
   DatabaseDirectory(duckdb::idx_t oid, std::filesystem::path path,
-                    std::string_view tablespace);
+                    std::string_view tablespace = {});
 
   duckdb::idx_t Oid() const noexcept { return _oid; }
   const std::filesystem::path& Path() const noexcept { return _path; }
@@ -99,7 +94,6 @@ class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
   std::unique_ptr<StorageDirectory> StorageOf(std::string_view tablespace,
                                               duckdb::idx_t oid) const;
 
-  void Create() const;
   void SetTablespaces(std::vector<std::string> tablespaces) {
     _tablespaces = std::move(tablespaces);
   }

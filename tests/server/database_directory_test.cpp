@@ -108,40 +108,36 @@ class DatabaseDirectoryTest : public ::testing::Test {
 
 TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {
   const auto directory = Database(_root.string());
-  directory->Create();
+  CreateDirectory(directory->Path());
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5"));
-  EXPECT_ANY_THROW(directory->Create());
+  EXPECT_ANY_THROW(CreateDirectory(directory->Path()));
   EXPECT_EQ(directory->DataFile(), Path("5/data.db"));
   const auto storage = Storage(directory, 7)->Path();
   EXPECT_EQ(storage, Path("5/7"));
-  EXPECT_FALSE(StorageExists(storage));
-  CreateStorage(storage);
-  EXPECT_ANY_THROW(CreateStorage(storage));
-  EXPECT_TRUE(StorageExists(storage));
+  EXPECT_FALSE(StorageFileSystem().DirectoryExists(storage));
+  CreateDirectory(storage);
+  EXPECT_ANY_THROW(CreateDirectory(storage));
+  EXPECT_TRUE(StorageFileSystem().DirectoryExists(storage));
 }
 
 TEST_F(DatabaseDirectoryTest, ABareDirectoryHoldsItsStorages) {
-  const auto directory =
-    std::make_shared<DatabaseDirectory>(5, _root / "5", std::string{});
+  const auto directory = std::make_shared<DatabaseDirectory>(5, _root / "5");
   EXPECT_EQ(Storage(directory, 7)->Path(), Path("5/7"));
 }
 
 TEST_F(DatabaseDirectoryTest, CreatesEveryMissingParent) {
-  CreateDirectories(_root / "a" / "b" / "c");
-  EXPECT_TRUE(std::filesystem::is_directory(_root / "a" / "b" / "c"));
-  CreateDirectories(_root / "a" / "b" / "c");
   std::ofstream{_root / "file"} << "data";
-  EXPECT_ANY_THROW(CreateDirectories(_root / "file" / "sub"));
+  EXPECT_ANY_THROW(CreateDirectory(_root / "file" / "sub"));
   const auto storage = Path("ts/engine_v1/1-2/5/7");
-  CreateStorage(storage);
+  CreateDirectory(storage);
   EXPECT_TRUE(std::filesystem::is_directory(storage));
 }
 
 TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
   auto directory = Database(_root.string());
-  directory->Create();
-  CreateStorage(Storage(directory, 7)->Path());
-  CreateStorage(Storage(directory, 8)->Path());
+  CreateDirectory(directory->Path());
+  CreateDirectory(Storage(directory, 7)->Path());
+  CreateDirectory(Storage(directory, 8)->Path());
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
   RemoveStorage(Storage(directory, 7));
   EXPECT_TRUE(Gone(_root / "5" / "7"));
@@ -152,9 +148,9 @@ TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
 
 TEST_F(DatabaseDirectoryTest, ADroppedDatabaseGoesAfterItsLastStorage) {
   auto directory = Database(_root.string());
-  directory->Create();
+  CreateDirectory(directory->Path());
   auto storage = Storage(directory, 7);
-  CreateStorage(storage->Path());
+  CreateDirectory(storage->Path());
   std::ofstream{_root / "5" / "data.db"} << "pages";
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
   directory->MarkDropped();
@@ -166,12 +162,12 @@ TEST_F(DatabaseDirectoryTest, ADroppedDatabaseGoesAfterItsLastStorage) {
 
 TEST_F(DatabaseDirectoryTest, StoragesInOtherTablespaces) {
   auto directory = Database(Path("indexes"));
-  directory->Create();
+  CreateDirectory(directory->Path());
   const auto other = Path("other");
   EXPECT_EQ(Storage(directory, 7)->Path(), Path("indexes/5/7"));
   EXPECT_EQ(Storage(directory, other, 8)->Path(), Path("other/5/8"));
-  CreateStorage(Storage(directory, 7)->Path());
-  CreateStorage(Storage(directory, other, 8)->Path());
+  CreateDirectory(Storage(directory, 7)->Path());
+  CreateDirectory(Storage(directory, other, 8)->Path());
   EXPECT_TRUE(std::filesystem::is_directory(_root / "indexes" / "5" / "7"));
   EXPECT_TRUE(std::filesystem::is_directory(_root / "other" / "5" / "8"));
   EXPECT_FALSE(std::filesystem::exists(_root / "5" / "7"));
@@ -189,27 +185,27 @@ TEST_F(DatabaseDirectoryTest, StoragesOnAnObjectStore) {
   const auto root = absl::StrCat(irs::SimulatedObjectStore::kPrefix,
                                  "bucket/database_directory_", ::getpid());
   auto directory = Database(root);
-  directory->Create();
+  CreateDirectory(directory->Path());
   auto storage = Storage(directory, 7);
   const auto path = storage->Path();
   EXPECT_EQ(path, absl::StrCat(root, "/5/7"));
-  EXPECT_FALSE(StorageExists(path));
-  CreateStorage(path);
-  EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/5/7.storage")));
-  CreateStorage(path);
-  EXPECT_TRUE(StorageExists(path));
-  EXPECT_FALSE(StorageExists(Storage(directory, 8)->Path()));
+  EXPECT_FALSE(StorageFileSystem().DirectoryExists(path));
+  CreateDirectory(path);
+  EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/5/7/")));
+  EXPECT_TRUE(StorageFileSystem().DirectoryExists(path));
+  EXPECT_FALSE(
+    StorageFileSystem().DirectoryExists(Storage(directory, 8)->Path()));
 
   ObjectStore().Publish(absl::StrCat(root, "/5/7/segment"), "rows");
   RemoveStorage(std::move(storage));
-  EXPECT_TRUE(ObjectGone(absl::StrCat(root, "/5/7.storage")));
+  EXPECT_TRUE(ObjectGone(absl::StrCat(root, "/5/7/")));
   EXPECT_TRUE(ObjectGone(absl::StrCat(root, "/5/7/segment")));
-  EXPECT_FALSE(StorageExists(path));
+  EXPECT_FALSE(StorageFileSystem().DirectoryExists(path));
 }
 
 TEST_F(DatabaseDirectoryTest, RemoveTreeSaysWhetherTheTreeIsGone) {
   EXPECT_TRUE(RemoveTree(Path("missing")));
-  CreateDirectories(_root / "tree" / "sub");
+  std::filesystem::create_directories(_root / "tree" / "sub");
   std::ofstream{_root / "tree" / "sub" / "file"} << "data";
   EXPECT_TRUE(RemoveTree(Path("tree")));
   EXPECT_FALSE(std::filesystem::exists(_root / "tree"));
@@ -217,9 +213,9 @@ TEST_F(DatabaseDirectoryTest, RemoveTreeSaysWhetherTheTreeIsGone) {
 
 TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromADirectory) {
   auto directory = Database(_root.string());
-  directory->Create();
-  CreateStorage(Storage(directory, 7)->Path());
-  CreateStorage(Storage(directory, 8)->Path());
+  CreateDirectory(directory->Path());
+  CreateDirectory(Storage(directory, 7)->Path());
+  CreateDirectory(Storage(directory, 8)->Path());
   std::ofstream{_root / "5" / "8" / "segment"} << "rows";
   std::ofstream{_root / "5" / "notes"} << "kept";
 
@@ -235,22 +231,22 @@ TEST_F(DatabaseDirectoryTest, UnownedStoragesGoFromAnObjectStore) {
                                        "bucket/unowned_", ::getpid());
   const auto root = absl::StrCat(tablespace, "/5");
   auto directory = Database(tablespace);
-  directory->Create();
-  CreateStorage(Storage(directory, 7)->Path());
-  CreateStorage(Storage(directory, 8)->Path());
+  CreateDirectory(directory->Path());
+  CreateDirectory(Storage(directory, 7)->Path());
+  CreateDirectory(Storage(directory, 8)->Path());
   ObjectStore().Publish(absl::StrCat(root, "/7/segment"), "rows");
   ObjectStore().Publish(absl::StrCat(root, "/8/segment"), "rows");
   ObjectStore().Publish(absl::StrCat(root, "/8/segment.meta"), "rows");
   ObjectStore().Publish(absl::StrCat(root, "/9/orphan"), "rows");
 
   const auto storages = ListStorages(root);
-  EXPECT_EQ(5, storages.size());
+  EXPECT_EQ(3, storages.size());
   RemoveUnowned(storages, {7});
   EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/7/segment")));
-  EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/7.storage")));
+  EXPECT_TRUE(ObjectStore().Find(absl::StrCat(root, "/7/")));
   EXPECT_FALSE(ObjectStore().Find(absl::StrCat(root, "/8/segment")));
   EXPECT_FALSE(ObjectStore().Find(absl::StrCat(root, "/8/segment.meta")));
-  EXPECT_FALSE(ObjectStore().Find(absl::StrCat(root, "/8.storage")));
+  EXPECT_FALSE(ObjectStore().Find(absl::StrCat(root, "/8/")));
   EXPECT_FALSE(ObjectStore().Find(absl::StrCat(root, "/9/orphan")));
 }
 

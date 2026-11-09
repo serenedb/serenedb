@@ -462,7 +462,7 @@ void IndexDurability::SyncDirectory() {
     published = _published;
   }
   try {
-    irs::SyncDirectory(_fs, _root);
+    _fs.SyncDirectory(_root);
   } catch (...) {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;

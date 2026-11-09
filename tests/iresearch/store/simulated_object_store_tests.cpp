@@ -177,14 +177,15 @@ TEST(SimulatedObjectStoreTest, prefixes_list_move_and_remove) {
   const std::vector<std::pair<std::string, bool>> expected{
     {"a", false}, {"b", false}, {"sub", true}};
   EXPECT_EQ(expected, entries);
-  EXPECT_TRUE(Vfs().DirectoryExists(root + "/none"));
+  EXPECT_TRUE(Vfs().DirectoryExists(root + "/sub"));
+  EXPECT_FALSE(Vfs().DirectoryExists(root + "/none"));
 
   Vfs().MoveFile(root + "/b", root + "/d");
   EXPECT_FALSE(Vfs().FileExists(root + "/b"));
   EXPECT_EQ("22", Get(root + "/d", 0, 2));
 
   auto requests = store.Requests();
-  EXPECT_EQ(1, requests.list);
+  EXPECT_EQ(3, requests.list);
   EXPECT_EQ(1, requests.copy);
   EXPECT_EQ(1, requests.remove);
 

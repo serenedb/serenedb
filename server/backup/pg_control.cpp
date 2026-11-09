@@ -132,7 +132,9 @@ std::optional<ControlState> ReadPgControl(
 void WritePgControl(const std::filesystem::path& data_dir,
                     const ControlState& state) {
   const auto path = data_dir / kPgControlFile;
-  catalog::CreateDirectories(path.parent_path());
+  catalog::StorageFileSystem().CreateDirectoryExtended(
+    path.parent_path().native(),
+    {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
   std::string buffer(kPgControlFileSize, '\0');
   const auto data = MakeControl(state);
   std::memcpy(buffer.data(), &data, sizeof(data));

@@ -107,7 +107,7 @@ std::string StorageRoot(duckdb::AttachedDatabase& database,
   }
   SDB_ASSERT(storage);
   if (is_new) {
-    catalog::CreateStorage(storage->Path());
+    catalog::CreateDirectory(storage->Path());
   }
   return storage->Path();
 }
@@ -184,7 +184,7 @@ irs::IndexReaderOptions Store::ReaderOptions() const {
 }
 
 bool Store::Open() {
-  if (!catalog::StorageExists(_durability.Root())) {
+  if (!catalog::StorageFileSystem().DirectoryExists(_durability.Root())) {
     return false;
   }
   if (_read_only) {

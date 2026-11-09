@@ -88,8 +88,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                             "\" is not a SereneDB database directory: its "
                             "name is not a database oid"));
   }
-  auto directory =
-    std::make_shared<catalog::DatabaseDirectory>(*oid, path, std::string{});
+  auto directory = std::make_shared<catalog::DatabaseDirectory>(*oid, path);
   info.path = directory->DataFile();
   options.defer_storage_load = true;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{

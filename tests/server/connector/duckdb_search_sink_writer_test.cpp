@@ -196,11 +196,11 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
 
   void TearDown() final {
     _data_writer.reset();
-    _fs.RemoveDirectory(std::string{kRoot});
+    _fs.RemoveDirectory(kRoot);
   }
 
  protected:
-  static constexpr std::string_view kRoot = "memory://sink_writer";
+  static inline const std::string kRoot = "memory://sink_writer";
 
   duckdb::FileSystem& _fs = duckdb::FileSystem::GetFileSystem(TestDb());
   irs::IndexWriter::ptr _data_writer;

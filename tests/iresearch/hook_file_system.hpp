@@ -104,6 +104,9 @@ class HookFileSystem : public duckdb::FileSystem {
   void SyncDirectory(
     const std::string& directory,
     duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;
+  void SyncFile(
+    const std::string& path,
+    duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;
 
   std::string GetName() const override { return "HookFileSystem"; }
 

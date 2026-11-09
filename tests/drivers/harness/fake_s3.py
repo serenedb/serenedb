@@ -1,7 +1,8 @@
 """An S3 endpoint in the test process, for the S3 client without a real store.
 
 Path-style buckets that exist on first use, single and multipart uploads,
-ranged reads, ListObjectsV2, server-side copies, single and batched deletes.
+the x-amz-meta-* metadata a single upload sets, ranged reads, ListObjectsV2,
+server-side copies, single and batched deletes.
 Requests are not authenticated. It counts requests by kind, accepted
 connections and the most part uploads in flight at once; `latency` delays every request, `trickle`
 sends the bodies of reads at that many bytes a second, and the part numbers in `failing_parts` are
@@ -127,8 +128,9 @@ class _Upload:
 
 
 class _Object:
-    def __init__(self, data: bytes) -> None:
+    def __init__(self, data: bytes, metadata: dict[str, str] | None = None) -> None:
         self.data = data
+        self.metadata = metadata or {}
         self.etag = '"' + hashlib.md5(data).hexdigest() + '"'
         self.modified = time.time()
 
@@ -354,7 +356,7 @@ class _Handler(Handler):
 
     def _object_headers(self, obj: _Object) -> dict[str, str]:
         return {"ETag": obj.etag, "Accept-Ranges": "bytes",
-                "Last-Modified": http_date(obj.modified)}
+                "Last-Modified": http_date(obj.modified), **obj.metadata}
 
     def do_GET(self) -> None:
         bucket, key, query = self._target()
@@ -468,7 +470,8 @@ class _Handler(Handler):
         if not self._payload_matches(body):
             self._payload_mismatch()
             return
-        obj = _Object(body)
+        obj = _Object(body, {header.lower(): value for header, value in self.headers.items()
+                             if header.lower().startswith("x-amz-meta-")})
         if not self._store(bucket, key, obj):
             self._xml(412, "<Error><Code>PreconditionFailed</Code></Error>")
             return

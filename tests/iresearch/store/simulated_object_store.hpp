@@ -98,7 +98,12 @@ class SimulatedObjectStore final : public duckdb::FileSystem {
     duckdb::optional_ptr<duckdb::ErrorData> error = nullptr) final;
   void CreateDirectory(
     const std::string& directory,
-    duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) final {}
+    duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) final {
+    CreateDirectoryExtended(directory, {}, opener);
+  }
+  bool CreateDirectoryExtended(
+    const std::string& directory, const duckdb::CreateDirectoryOptions& options,
+    duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) final;
   void RemoveDirectory(
     const std::string& directory,
     duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) final;

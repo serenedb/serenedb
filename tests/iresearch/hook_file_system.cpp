@@ -252,4 +252,10 @@ void HookFileSystem::SyncDirectory(
   _inner.SyncDirectory(directory, opener);
 }
 
+void HookFileSystem::SyncFile(const std::string& path,
+                              duckdb::optional_ptr<duckdb::FileOpener> opener) {
+  OnSync(Name(path));
+  _inner.SyncFile(path, opener);
+}
+
 }  // namespace tests

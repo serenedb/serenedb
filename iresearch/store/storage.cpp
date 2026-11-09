@@ -74,27 +74,6 @@ duckdb::unique_ptr<duckdb::FileHandle> OpenWhole(duckdb::FileSystem& fs,
   return fs.OpenFile(file, duckdb::FileFlags::FILE_FLAGS_READ);
 }
 
-void SyncFiles(duckdb::FileSystem& fs, std::string_view root,
-               std::span<const std::string_view> names) {
-  if (StorageKindOf(root) != StorageKind::Local) {
-    return;
-  }
-  duckdb::TaskScheduler::BlockingScope blocking;
-  for (const auto name : names) {
-    auto handle =
-      fs.OpenFile(PathOf(root, name), duckdb::FileFlags::FILE_FLAGS_READ);
-    handle->Sync();
-  }
-}
-
-void SyncDirectory(duckdb::FileSystem& fs, std::string_view root) {
-  if (StorageKindOf(root) != StorageKind::Local) {
-    return;
-  }
-  duckdb::TaskScheduler::BlockingScope blocking;
-  fs.SyncDirectory(std::string{root});
-}
-
 void ForEach(duckdb::DatabaseInstance& db, std::string_view root, size_t count,
              absl::FunctionRef<void(size_t)> visit) {
   if (StorageKindOf(root) != StorageKind::Remote || count < 2) {

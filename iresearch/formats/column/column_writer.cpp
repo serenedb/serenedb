@@ -505,14 +505,16 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
   auto parts = ingest.Take();
   meta.write_list_running = parts.running;
   meta.write_list_distinct = parts.next_code;
-  CompressPlain(type, CodesCodec(parts, row_count), parts.codes, meta.data);
+  auto code_chunks = ViewChunks(parts.codes);
+  CompressPlain(type, CodesCodec(parts, row_count), code_chunks, meta.data);
   SealColumn(duckdb::ListType::GetChildType(type), parts.elems,
              parts.elem_count, /*skip_validity=*/false, forced,
              meta.children[0]);
   auto& ends = meta.children[1];
   Claim(ends, duckdb::LogicalType::UBIGINT);
+  auto end_chunks = ViewChunks(parts.ends);
   CompressPlain(duckdb::LogicalType::UBIGINT,
-                duckdb::CompressionType::COMPRESSION_BITPACKING, parts.ends,
+                duckdb::CompressionType::COMPRESSION_BITPACKING, end_chunks,
                 ends.data);
 }
 

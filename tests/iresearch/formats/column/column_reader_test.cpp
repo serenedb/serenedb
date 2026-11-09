@@ -3321,11 +3321,7 @@ TEST_F(ColumnReaderTest, ListCodesStayConsecutiveOnceDedupTurnsOff) {
     ingest.CheckDistinct();
   }
   const auto parts = ingest.Take();
-  std::vector<uint64_t> codes;
-  for (const auto& chunk : parts.codes) {
-    const auto* data = duckdb::FlatVector::GetData<uint64_t>(chunk.data);
-    codes.insert(codes.end(), data, data + chunk.count);
-  }
+  const auto& codes = parts.codes;
   ASSERT_EQ(codes.size(), 8192u);
   for (size_t i = STANDARD_VECTOR_SIZE + 1; i < codes.size(); ++i) {
     ASSERT_EQ(codes[i], codes[i - 1] + 1) << "row " << i;

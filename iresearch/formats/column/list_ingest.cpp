@@ -56,11 +56,20 @@ void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
   }
 }
 
-std::vector<WriteChunk> UbigintChunks::Take() {
-  for (auto& c : _chunks) {
-    duckdb::FlatVector::SetSize(c.data, c.count);
+std::vector<WriteChunk> ViewChunks(std::span<uint64_t> values) {
+  std::vector<WriteChunk> out;
+  out.reserve((values.size() + STANDARD_VECTOR_SIZE - 1) /
+              STANDARD_VECTOR_SIZE);
+  for (size_t off = 0; off < values.size(); off += STANDARD_VECTOR_SIZE) {
+    const auto count = static_cast<duckdb::idx_t>(
+      std::min<size_t>(values.size() - off, STANDARD_VECTOR_SIZE));
+    out.push_back(WriteChunk{
+      duckdb::Vector{duckdb::LogicalType::UBIGINT,
+                     reinterpret_cast<duckdb::data_ptr_t>(values.data() + off),
+                     count},
+      count});
   }
-  return std::move(_chunks);
+  return out;
 }
 
 void ListKeys::Node::Assign(const duckdb::Vector& vec) {
@@ -154,8 +163,8 @@ void ListIngest::CheckDistinct() {
 
 ListParts ListIngest::Take() {
   ListParts out;
-  out.codes = _codes.Take();
-  out.ends = _ends.Take();
+  out.codes = std::exchange(_codes, {});
+  out.ends = std::exchange(_ends, {});
   FlushTail();
   out.elems = std::move(_elems);
   out.elem_count = _running - _elem_base;
@@ -243,7 +252,7 @@ void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
     _picked.append_range(std::views::iota(
       first, first + static_cast<duckdb::sel_t>(entry.length)));
     _running += entry.length;
-    _ends.Push(_running);
+    _ends.push_back(_running);
   }
 }
 
@@ -292,7 +301,7 @@ void ListIngest::AddDistinct(const duckdb::UnifiedVectorFormat& parent,
     run_end = entry.offset + entry.length;
     _last_code = _next_code++;
     _running += entry.length;
-    _ends.Push(_running);
+    _ends.push_back(_running);
     PushCode(_last_code);
   }
   AppendRange(child, run_begin, run_end - run_begin);

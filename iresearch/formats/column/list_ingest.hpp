@@ -33,6 +33,7 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -51,24 +52,7 @@ WriteChunk RefChunk(const duckdb::Vector& vec, duckdb::idx_t count);
 void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
                  duckdb::idx_t base, duckdb::idx_t count);
 
-class UbigintChunks {
- public:
-  IRS_FORCE_INLINE void Push(uint64_t value) {
-    if (_chunks.empty() ||
-        _chunks.back().count == duckdb::idx_t{STANDARD_VECTOR_SIZE}) {
-      _chunks.push_back(WriteChunk{
-        duckdb::Vector{duckdb::LogicalType::UBIGINT, STANDARD_VECTOR_SIZE}, 0});
-      _data = duckdb::FlatVector::GetDataMutable<uint64_t>(_chunks.back().data);
-    }
-    _data[_chunks.back().count++] = value;
-  }
-
-  std::vector<WriteChunk> Take();
-
- private:
-  std::vector<WriteChunk> _chunks;
-  uint64_t* _data = nullptr;
-};
+std::vector<WriteChunk> ViewChunks(std::span<uint64_t> values);
 
 struct ListRep {
   uint64_t offset;
@@ -286,8 +270,8 @@ class ListKeys {
 };
 
 struct ListParts {
-  std::vector<WriteChunk> codes;
-  std::vector<WriteChunk> ends;
+  std::vector<uint64_t> codes;
+  std::vector<uint64_t> ends;
   std::vector<WriteChunk> elems;
   uint64_t elem_count = 0;
   uint64_t distinct = 0;
@@ -351,14 +335,14 @@ class ListIngest {
       ++_runs;
     }
     ++_run;
-    _codes.Push(code);
+    _codes.push_back(code);
   }
 
   IRS_FORCE_INLINE void PushNull() {
     if (_sequence) {
       _last_code = _next_code++;
       ++_null_codes;
-      _ends.Push(_running);
+      _ends.push_back(_running);
     }
     PushCode(_last_code);
   }
@@ -432,8 +416,8 @@ class ListIngest {
   std::vector<uint64_t> _probe;
   bool _sequence = true;
   uint32_t _prev = kNoRep;
-  UbigintChunks _codes;
-  UbigintChunks _ends;
+  std::vector<uint64_t> _codes;
+  std::vector<uint64_t> _ends;
   std::vector<WriteChunk> _elems;
   std::optional<duckdb::Vector> _tail;
   ListKeys _keys;

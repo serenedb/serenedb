@@ -1,0 +1,96 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE tesr_u (s TEXT);
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE UNIQUE INDEX tesr_u_lower ON tesr_u ((lower(s)));
+
+
+statement ok
+INSERT INTO tesr_u VALUES ('ABC');
+
+
+statement ok
+CREATE TABLE tesr_p (s TEXT);
+
+
+statement ok
+CREATE UNIQUE INDEX tesr_p_lower ON tesr_p ((lower(s)));
+
+
+statement ok
+INSERT INTO tesr_p VALUES ('ABC');
+
+
+statement ok
+CREATE SCHEMA tesr_app;
+
+
+statement ok
+CREATE FUNCTION tesr_app.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''zzz'' || x';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection with_macro
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TEMPORARY MACRO lower(x) AS 'zzz' || x;
+
+
+connection with_macro
+statement ok
+INSERT INTO tesr_u VALUES ('DEF');
+
+
+connection plain
+statement error
+INSERT INTO tesr_u VALUES ('def');
+----
+db error: ERROR: Duplicate key "lower(s): def" violates unique constraint.
+
+
+connection with_path
+statement ok
+SET search_path = tesr_app, public;
+
+
+connection with_path
+statement ok
+INSERT INTO tesr_p VALUES ('DEF');
+
+
+connection plain
+statement error
+INSERT INTO tesr_p VALUES ('def');
+----
+db error: ERROR: Duplicate key "lower(s): def" violates unique constraint.
+
+
+connection plain
+query
+SELECT s FROM tesr_u ORDER BY s;
+----
+s
+ABC
+DEF
+
+
+connection plain
+query
+SELECT s FROM tesr_p ORDER BY s;
+----
+s
+ABC
+DEF

@@ -28,7 +28,7 @@ statement error
 CREATE TABLE public.tesp_missing (a INT CHECK (tesp_missing_fn(a)));
 ----
 db error: ERROR: Scalar Function with name tesp_missing_fn does not exist!
-Did you mean "tesp_pos or tesp_tmp"?
+Did you mean "tesp_pos"?
 
 
 statement error
@@ -244,7 +244,184 @@ db error: ERROR: CHECK constraint failed on table "tesp_x" with expression CHECK
 
 
 statement ok
+CREATE FUNCTION public.tesp_pub(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE TABLE tesp_db_${__DATABASE__}.public.tesp_y (a INT CHECK (tesp_pub(a)));
+
+
+statement ok
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_y VALUES (1);
+
+
+statement error
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_y VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_y" with expression CHECK(<slt:ignore>.public.tesp_pub(a))
+
+
+statement ok
+CREATE TABLE public.tesp_sf (id INT, s STRUCT(a INT));
+
+
+statement error
+ALTER TABLE public.tesp_sf ADD COLUMN s.k INT DEFAULT tesp_tmp(1);
+----
+db error: ERROR: Cannot use temporary function "tesp_tmp" in a non-temporary relation
+
+
+statement ok
+CREATE FUNCTION public.tesp_own(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x + 1';
+
+
+statement ok
+CREATE SCHEMA tesp_app;
+
+
+statement ok
+CREATE FUNCTION tesp_app.length(x TEXT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 0';
+
+
+statement ok
+CREATE TABLE public.tesp_b (n INT, s TEXT CHECK (length(s) < 3), d TEXT DEFAULT lower('X'), o INT DEFAULT tesp_own(1),
+  g INT GENERATED ALWAYS AS (abs(n)) STORED, v INT GENERATED ALWAYS AS (abs(n) + 1));
+
+
+statement ok
+CREATE TABLE public.tesp_old (n INT, g INT, v INT);
+
+
+statement ok
+CREATE TRIGGER tesp_b_old AFTER UPDATE ON public.tesp_b REFERENCING OLD TABLE AS o FOR EACH STATEMENT
+  INSERT INTO public.tesp_old SELECT n, g, v FROM o;
+
+
+statement ok
+CREATE TABLE public.tesp_e (n INT, e INT GENERATED ALWAYS AS (sign(n)));
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO sign(x) AS error('shadowed');
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO length(x) AS 0;
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO lower(x) AS 'zzz';
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO abs(x) AS 1000;
+
+
+connection shadow
+statement ok
+CREATE TEMPORARY MACRO tesp_own(x) AS 1000;
+
+
+connection shadow
+statement error
+INSERT INTO public.tesp_b (n, s) VALUES (-5, 'abcdef');
+----
+db error: ERROR: CHECK constraint failed on table "tesp_b" with expression CHECK((length(s) < 3))
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_b (n, s) VALUES (-5, 'ab');
+
+
+connection shadow
+query
+SELECT n, s, d, o, g, v FROM public.tesp_b;
+----
+n	s	d	o	g	v
+-5	ab	x	2	5	6
+
+
+connection shadow
+statement ok
+UPDATE public.tesp_b SET n = -7;
+
+
+connection shadow
+query
+SELECT n, g, v FROM public.tesp_b;
+----
+n	g	v
+-7	7	8
+
+
+connection shadow
+query
+SELECT n, g, v FROM public.tesp_old;
+----
+n	g	v
+-5	5	6
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_e (n) VALUES (-3);
+
+
+connection shadow
+query
+SELECT n, e FROM public.tesp_e;
+----
+n	e
+-3	-1
+
+
+connection with_path
+statement ok
+SET search_path = tesp_app, public;
+
+
+connection with_path
+statement error
+INSERT INTO public.tesp_b (n, s) VALUES (1, 'abcdef');
+----
+db error: ERROR: CHECK constraint failed on table "tesp_b" with expression CHECK((length(s) < 3))
+
+
+statement ok
 DROP DATABASE tesp_db_${__DATABASE__};
+
+
+statement ok
+DROP FUNCTION public.tesp_pub(INT);
+
+
+statement ok
+DROP TABLE public.tesp_b;
+
+
+statement ok
+DROP TABLE public.tesp_old;
+
+
+statement ok
+DROP TABLE public.tesp_e;
+
+
+statement ok
+DROP TABLE public.tesp_sf;
+
+
+statement ok
+DROP FUNCTION public.tesp_own(INT);
+
+
+statement ok
+DROP SCHEMA tesp_app CASCADE;
 
 
 statement ok

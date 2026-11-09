@@ -301,7 +301,8 @@ class Table final {
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void AddGarbage(const TableVersion& version)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void FreeRetiredVersions() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
+  std::vector<std::unique_ptr<TableVersion>> TakeFreeVersions()
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);
   void Saw(uint64_t id) noexcept { _replay_top = std::max(_replay_top, id); }

@@ -372,29 +372,32 @@ void Table::RetireVersion(TableVersion* version) {
                        std::memory_order_relaxed);
 }
 
-void Table::FreeRetiredVersions() {
+std::vector<std::unique_ptr<TableVersion>> Table::TakeFreeVersions() {
   const auto safe = catalog::Transactions::Get().SafeEpoch();
-  size_t freed = 0;
-  std::erase_if(_retired_versions, [&](const RetiredVersion& retired) {
-    if (retired.epoch > safe) {
-      return false;
-    }
-    freed += VersionBytes(*retired.version);
-    return true;
-  });
-  _garbage_bytes -= freed;
+  const auto kept = absl::c_stable_partition(
+    _retired_versions,
+    [&](const RetiredVersion& retired) { return retired.epoch > safe; });
+  std::vector<std::unique_ptr<TableVersion>> freed;
+  freed.reserve(static_cast<size_t>(_retired_versions.end() - kept));
+  for (auto it = kept; it != _retired_versions.end(); ++it) {
+    _garbage_bytes -= VersionBytes(*it->version);
+    freed.push_back(std::move(it->version));
+  }
+  _retired_versions.erase(kept, _retired_versions.end());
   _retired_count.store(static_cast<uint32_t>(_retired_versions.size()),
                        std::memory_order_relaxed);
   _garbage_trigger =
     std::max({kMinGarbageBytes, VersionBytes(Head()), 2 * _garbage_bytes});
+  return freed;
 }
 
 bool Table::FreeRetired() {
   if (_retired_count.load(std::memory_order_relaxed) == 0) {
     return false;
   }
+  std::vector<std::unique_ptr<TableVersion>> freed;
   absl::MutexLock lock{&_state_mutex};
-  FreeRetiredVersions();
+  freed = TakeFreeVersions();
   return !_retired_versions.empty();
 }
 
@@ -402,6 +405,7 @@ void Table::Prune(std::span<const Tick> running, Tick published) {
   if (_older_versions.load(std::memory_order_relaxed) == 0) {
     return;
   }
+  std::vector<std::unique_ptr<TableVersion>> freed;
   absl::MutexLock lock{&_state_mutex};
   auto* newer = _head.load(std::memory_order_relaxed);
   auto* version = newer->prev.load(std::memory_order_relaxed);
@@ -416,7 +420,7 @@ void Table::Prune(std::span<const Tick> running, Tick published) {
     }
     version = older;
   }
-  FreeRetiredVersions();
+  freed = TakeFreeVersions();
 }
 
 void Table::Logged(Lsn lsn) {

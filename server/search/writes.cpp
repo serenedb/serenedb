@@ -1419,7 +1419,6 @@ void Writes::Apply(Tick tick, Lsn lsn) noexcept {
     if (w.prepared) {
       try {
         auto& table = w.store->GetTable();
-        const bool appended = static_cast<bool>(w.piece);
         if (!w.own_segments.empty()) {
           w.store->NudgeCompaction();
         }
@@ -1430,9 +1429,6 @@ void Writes::Apply(Tick tick, Lsn lsn) noexcept {
                                     .truncate = w.changes.truncate,
                                     .lsn = lsn})) {
           QueueReleaseCleanup(w.store, tick);
-        }
-        if (appended) {
-          w.store->PiecesAdded();
         }
       } catch (const std::exception& e) {
         SDB_FATAL(
@@ -1459,6 +1455,7 @@ void Writes::Finish() noexcept {
     if (w.prepared) {
       SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_build_truncate");
       SDB_WAIT_ON_FAILURE("pause_search_commit_after_irs");
+      w.store->PiecesAdded();
     }
     ReleaseWriter(w);
   }

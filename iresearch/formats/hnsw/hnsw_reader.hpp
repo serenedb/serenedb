@@ -32,7 +32,6 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
-#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 

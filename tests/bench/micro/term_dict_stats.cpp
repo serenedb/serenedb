@@ -1308,6 +1308,13 @@ SeparatorStats MeasureSeparators(const td::TermReaderImpl& reader,
   return stats;
 }
 
+struct CountingMemory final : irs::IResourceManager {
+  void Increase(size_t v) final { bytes += v; }
+  void Decrease(size_t v) noexcept final { bytes -= v; }
+
+  uint64_t bytes = 0;
+};
+
 void Segment(const irs::Directory& dir, const irs::SegmentMeta& meta,
              const Options& options, Outputs& out) {
   irs::IdxReader heads_idx{dir, meta.name, nullptr};
@@ -1316,8 +1323,12 @@ void Segment(const irs::Directory& dir, const irs::SegmentMeta& meta,
     return;
   }
   irs::IdxReader idx{dir, meta.name, nullptr};
-  td::FieldReader fields{irs::IResourceManager::gNoop};
+  CountingMemory memory;
+  td::FieldReader fields{memory};
   fields.prepare(irs::ReaderState{.dir = &dir, .meta = &meta, .idx = &idx});
+  absl::FPrintF(stdout,
+                "segment %s: term dictionary memory %u bytes, %u dicts\n",
+                meta.name, memory.bytes, fields.size());
 
   std::vector<Dict> dicts;
   for (const auto& head : terms.fields) {

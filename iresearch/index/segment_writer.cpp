@@ -56,7 +56,6 @@ duckdb::DatabaseInstance& DerefDb(duckdb::DatabaseInstance* db) {
 doc_id_t SegmentWriter::begin(uint64_t tick, doc_id_t batch_size) {
   SDB_ASSERT(LastDocId() < doc_limits::eof());
   _valid = true;
-  _flush_reserved = false;
   SDB_ASSERT(batch_size > 0);
 
   _batch_first_doc_id = LastDocId() + 1;
@@ -129,9 +128,12 @@ size_t SegmentWriter::FlushBound() {
 }
 
 void SegmentWriter::ReserveFlush() {
-  _flush_reserved = false;
-  _budget.Reserve(FlushBound());
-  _flush_reserved = true;
+  const auto bound = FlushBound();
+  if (!_budget) {
+    _budget.emplace(ReserveMemory(kMemoryTag, bound));
+  } else if (bound > _budget->size) {
+    _budget->Merge(ReserveMemory(kMemoryTag, bound - _budget->size));
+  }
 }
 
 bool SegmentWriter::TryReserveFlush() noexcept {
@@ -146,8 +148,7 @@ bool SegmentWriter::TryReserveFlush() noexcept {
 void SegmentWriter::flush(IndexSegment& segment,
                           DocumentMaskBuilder& docs_mask) {
   auto& meta = segment.meta;
-  [[maybe_unused]] const auto reserved = _flush_reserved;
-  [[maybe_unused]] const auto overflow = _budget.Overflow();
+  auto* budget = _budget ? &*_budget : nullptr;
 
   FlushState state{
     .dir = &_dir,
@@ -155,7 +156,7 @@ void SegmentWriter::flush(IndexSegment& segment,
     .name = _seg_name,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
-    .budget = &_budget,
+    .budget = budget,
   };
 
   IdxWriter idx{_dir, _seg_name};
@@ -164,7 +165,7 @@ void SegmentWriter::flush(IndexSegment& segment,
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
     cluster_terms = _col_writer->AnnBound(state.doc_count).terms;
-    _col_writer->SetBudget(&_budget);
+    _col_writer->SetBudget(budget);
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
     _col_writer->Commit(buffered_docs());
@@ -203,7 +204,6 @@ void SegmentWriter::flush(IndexSegment& segment,
   meta.live_docs_count =
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
   meta.files = _dir.FlushTracked(meta.byte_size);
-  SDB_ASSERT(!reserved || _budget.Overflow() == overflow);
 }
 
 void SegmentWriter::SetFieldOptions(
@@ -224,8 +224,7 @@ void SegmentWriter::SetFieldOptions(
 }
 
 void SegmentWriter::ResetState() noexcept {
-  _budget.Release();
-  _flush_reserved = false;
+  _budget.reset();
   _initialized = false;
   _dir.ClearTracked();
   _docs_context.Clear();

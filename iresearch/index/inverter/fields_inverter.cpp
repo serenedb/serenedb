@@ -103,7 +103,8 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
                });
 
   const auto needs = Needs();
-  InverterMemory mem{state.budget ? state.budget->Allocator() : _mem.allocator};
+  auto budget_allocator = BudgetAllocator(state.budget);
+  InverterMemory mem{state.budget ? budget_allocator : _mem.allocator};
   ScatterScratch scratch{state.budget};
   scratch.Reserve(needs.max_terms, needs.blocks, mem.allocator);
   ScatteredField scattered{mem, scratch};

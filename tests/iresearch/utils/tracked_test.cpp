@@ -185,22 +185,21 @@ TEST(TrackedTest, AllocationOverTheLimitThrows) {
 TEST(TrackedTest, BudgetedVectorDrawsFromTheReservation) {
   const auto base = TrackedMemory();
   {
-    irs::MemoryBudget budget;
-    budget.Reserve(8 * kMiB);
+    auto budget = irs::ReserveMemory(irs::kMemoryTag, 8 * kMiB);
     EXPECT_EQ(base + 8 * kMiB, TrackedMemory());
     {
       irs::TrackedVector<uint64_t> values{
         irs::TrackedAllocator<uint64_t>{&budget}};
       values.reserve(kMiB / 2);
       EXPECT_EQ(base + 8 * kMiB, TrackedMemory());
+      EXPECT_EQ(4 * kMiB, budget.size);
       irs::TrackedVector<uint64_t> moved{std::move(values)};
       EXPECT_EQ(&budget, moved.get_allocator().budget);
       irs::TrackedVector<uint64_t> copied{moved};
       EXPECT_EQ(nullptr, copied.get_allocator().budget);
     }
     EXPECT_EQ(base + 8 * kMiB, TrackedMemory());
-    EXPECT_EQ(8 * kMiB, budget.Reserved());
-    EXPECT_EQ(0, budget.Overflow());
+    EXPECT_EQ(8 * kMiB, budget.size);
   }
   EXPECT_EQ(base, TrackedMemory());
 }
@@ -208,14 +207,14 @@ TEST(TrackedTest, BudgetedVectorDrawsFromTheReservation) {
 TEST(TrackedTest, BudgetOverflowChargesThePool) {
   const auto base = TrackedMemory();
   {
-    irs::MemoryBudget budget;
-    budget.Reserve(kMiB);
+    auto budget = irs::ReserveMemory(irs::kMemoryTag, kMiB);
     irs::MemoryCharge charge{&budget, 4 * kMiB};
     EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
-    EXPECT_EQ(3 * kMiB, budget.Overflow());
+    EXPECT_EQ(0, budget.size);
     charge.Resize(0);
-    EXPECT_EQ(base + kMiB, TrackedMemory());
-    budget.Release();
+    EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
+    EXPECT_EQ(4 * kMiB, budget.size);
+    budget.Resize(0);
     EXPECT_EQ(base, TrackedMemory());
   }
   EXPECT_EQ(base, TrackedMemory());
@@ -269,30 +268,31 @@ TEST(TrackedTest, CallOnceRetriesAfterAFailedAllocation) {
 
 TEST(TrackedTest, BudgetFreesWhatIsReturnedAfterItsRelease) {
   const auto base = TrackedMemory();
-  irs::MemoryBudget budget;
-  budget.Reserve(4 * kMiB);
+  auto budget = irs::ReserveMemory(irs::kMemoryTag, 4 * kMiB);
   {
-    irs::MemoryCharge charge{&budget, 4 * kMiB};
-    budget.Release(kMiB);
-    EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
+    irs::MemoryCharge charge{&budget, 3 * kMiB};
+    budget.Resize(0);
+    EXPECT_EQ(base + 3 * kMiB, TrackedMemory());
   }
-  EXPECT_EQ(base + kMiB, TrackedMemory());
-  budget.Release();
+  EXPECT_EQ(3 * kMiB, budget.size);
+  EXPECT_EQ(base + 3 * kMiB, TrackedMemory());
+  budget.Resize(0);
   EXPECT_EQ(base, TrackedMemory());
 }
 
 TEST(TrackedTest, BudgetedAllocationPassesAtTheLimit) {
   const auto base = TrackedMemory();
   {
-    irs::MemoryBudget budget;
-    budget.Reserve(8 * kMiB);
+    auto budget = irs::ReserveMemory(irs::kMemoryTag, 8 * kMiB);
     MemoryLimit limit{0};
     EXPECT_THROW(irs::MemoryCharge{kMiB}, duckdb::OutOfMemoryException);
-    EXPECT_THROW(budget.Reserve(16 * kMiB), duckdb::OutOfMemoryException);
+    EXPECT_THROW(budget.Merge(irs::ReserveMemory(irs::kMemoryTag, 8 * kMiB)),
+                 duckdb::OutOfMemoryException);
     auto array = irs::MakeTrackedArray<uint64_t>(kMiB / 2, &budget);
-    auto* data = budget.Allocator().AllocateData(2 * kMiB);
-    budget.Allocator().FreeData(data, 2 * kMiB);
-    EXPECT_EQ(0, budget.Overflow());
+    auto allocator = irs::BudgetAllocator(&budget);
+    auto* data = allocator.AllocateData(2 * kMiB);
+    allocator.FreeData(data, 2 * kMiB);
+    EXPECT_EQ(4 * kMiB, budget.size);
   }
   EXPECT_EQ(base, TrackedMemory());
 }
@@ -303,24 +303,31 @@ TEST(TrackedTest, BudgetFundsTransientBlocksAtTheLimit) {
   const auto block_size = block_manager.GetBlockSize();
   const auto base = TrackedMemory();
   {
-    irs::MemoryBudget budget;
-    budget.Reserve(4 * block_size + kMiB);
+    auto budget = irs::ReserveMemory(irs::kMemoryTag, 4 * block_size);
+    auto short_budget = irs::ReserveMemory(irs::kMemoryTag, block_size / 2);
     MemoryLimit limit{0};
     EXPECT_THROW(manager.RegisterTransientMemory(block_size, block_manager),
                  duckdb::OutOfMemoryException);
-    auto source = budget.Detach(2 * block_size + kMiB);
-    absl::Cleanup attach = [&] { budget.Attach(source); };
-    auto handle =
-      manager.AllocateTransientMemory(block_size, block_manager, source);
-    const auto charge = handle.GetBlockHandle()->GetMemory().GetMemoryUsage();
-    EXPECT_LE(block_size, charge);
-    EXPECT_EQ(2 * block_size + kMiB - charge, source.size);
-    budget.Attach(source);
-    EXPECT_EQ(4 * block_size + kMiB - charge, budget.Reserved());
-    budget.Reclaim(charge);
-    handle.Destroy();
-    EXPECT_EQ(4 * block_size + kMiB, budget.Reserved());
-    EXPECT_EQ(0, budget.Overflow());
+    EXPECT_THROW(manager.RegisterTransientMemoryFrom(block_size, block_manager,
+                                                     short_budget),
+                 duckdb::OutOfMemoryException);
+    EXPECT_EQ(block_size / 2, short_budget.size);
+    for (const auto size : {block_size, block_size / 2}) {
+      auto block =
+        manager.RegisterTransientMemoryFrom(size, block_manager, budget);
+      auto& memory = block->GetMemory();
+      const auto charge = memory.GetMemoryUsage();
+      EXPECT_LE(size, charge);
+      EXPECT_EQ(4 * block_size - charge, budget.size);
+      {
+        auto lock = memory.GetLock();
+        budget.Merge(memory.TakeMemoryCharge(lock));
+      }
+      EXPECT_EQ(0, memory.GetMemoryUsage());
+      block.reset();
+      EXPECT_EQ(4 * block_size, budget.size);
+    }
+    EXPECT_EQ(base + 4 * block_size + block_size / 2, TrackedMemory());
   }
   EXPECT_EQ(base, TrackedMemory());
 }

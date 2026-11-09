@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/column_writer.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <cstring>
@@ -54,6 +53,12 @@
 
 namespace irs {
 namespace {
+
+duckdb::TempBufferPoolReservation TakeMemoryCharge(duckdb::BlockHandle& block) {
+  auto& memory = block.GetMemory();
+  auto lock = memory.GetLock();
+  return memory.TakeMemoryCharge(lock);
+}
 
 void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
                     const uint8_t* bytes, IndexOutput& out,
@@ -265,33 +270,29 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     stream_writer = &ctx;
   }
 
-  std::vector<duckdb::BufferHandle> funded;
   duckdb::ColumnDataCheckpointData::CreateSegmentFn create_segment;
   if (budget) {
     create_segment = [&](const duckdb::CompressionFunction& function,
                          duckdb::idx_t size,
                          duckdb::BlockManager& block_manager) {
-      auto source = budget->Detach(duckdb::BufferManager::GetAllocSize(
-        size + block_manager.GetBlockHeaderSize()));
-      absl::Cleanup attach = [&] { budget->Attach(source); };
-      auto handle = bm.AllocateTransientMemory(size, block_manager, source);
-      auto segment = duckdb::ColumnSegment::CreateTransientSegment(
-        db, function, codec_type, size, handle.GetBlockHandle());
-      funded.push_back(std::move(handle));
-      return segment;
+      return duckdb::ColumnSegment::CreateTransientSegment(
+        db, function, codec_type, size,
+        bm.RegisterTransientMemoryFrom(size, block_manager, *budget));
     };
   }
 
   auto capture = [&](duckdb::ColumnSegment& seg, duckdb::idx_t size,
                      const uint8_t* bytes) {
     CaptureSegment(seg, size, bytes, out, sink);
-    const auto it = absl::c_find_if(funded, [&](const auto& handle) {
-      return handle.GetBlockHandle() == seg.GetBlockHandle();
-    });
-    if (it != funded.end()) {
-      budget->Reclaim(it->GetBlockHandle()->GetMemory().GetMemoryUsage());
-      funded.erase(it);
+  };
+  auto free_segment = [&](duckdb::unique_ptr<duckdb::ColumnSegment> seg) {
+    if (!budget || !seg->GetBlockHandle()) {
+      return;
     }
+    auto charge = TakeMemoryCharge(*seg->GetBlockHandle());
+    SDB_ASSERT(charge.tag == budget->tag);
+    seg.reset();
+    budget->Merge(std::move(charge));
   };
   auto capture_from_block = [&](duckdb::ColumnSegment& seg,
                                 duckdb::idx_t size) {
@@ -309,10 +310,13 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     } else {
       capture_from_block(*seg, size);
     }
+    handle.Destroy();
+    free_segment(std::move(seg));
   };
   auto flush_internal_fn = [&](duckdb::unique_ptr<duckdb::ColumnSegment> seg,
                                duckdb::idx_t size) {
     capture_from_block(*seg, size);
+    free_segment(std::move(seg));
   };
 
   duckdb::ColumnDataCheckpointData ckp{
@@ -332,7 +336,6 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     picked.compress(*comp_state, c.data);
   }
   picked.compress_finalize(*comp_state);
-  SDB_ASSERT(funded.empty());
 }
 
 void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,

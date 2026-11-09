@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/cleanup/cleanup.h>
-#include <absl/synchronization/mutex.h>
 
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enums/memory_tag.hpp>
@@ -37,42 +36,13 @@ namespace irs {
 
 inline constexpr duckdb::MemoryTag kMemoryTag = duckdb::MemoryTag::ALLOCATOR;
 
-void ReserveMemory(duckdb::MemoryTag tag, size_t size);
+using MemoryBudget = duckdb::BufferPoolReservation;
+
+[[nodiscard]] duckdb::TempBufferPoolReservation ReserveMemory(
+  duckdb::MemoryTag tag, size_t size);
 void FreeReservedMemory(duckdb::MemoryTag tag, size_t size) noexcept;
 duckdb::Allocator& TrackedDuckAllocator();
-
-class MemoryBudget {
- public:
-  MemoryBudget();
-  MemoryBudget(const MemoryBudget&) = delete;
-  MemoryBudget& operator=(const MemoryBudget&) = delete;
-  ~MemoryBudget();
-
-  void Reserve(size_t bytes);
-  void Release(size_t keep = 0) noexcept;
-
-  void Take(size_t bytes);
-  void Return(size_t bytes) noexcept;
-
-  duckdb::BufferPoolReservation Detach(size_t bytes);
-  void Attach(duckdb::BufferPoolReservation& reservation) noexcept;
-  void Reclaim(size_t bytes) noexcept;
-
-  size_t Reserved() const noexcept;
-  size_t Overflow() const noexcept;
-
-  duckdb::Allocator& Allocator() noexcept { return _allocator; }
-
- private:
-  void Trim() noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-
-  mutable absl::Mutex _mutex;
-  size_t _reserved = 0;
-  size_t _lent = 0;
-  size_t _kept = 0;
-  size_t _overflow = 0;
-  duckdb::Allocator _allocator;
-};
+duckdb::Allocator BudgetAllocator(MemoryBudget* budget);
 
 void ChargeMemory(MemoryBudget* budget, duckdb::MemoryTag tag, size_t size);
 void FreeCharge(MemoryBudget* budget, duckdb::MemoryTag tag,
@@ -140,18 +110,16 @@ struct TrackedAllocator {
 
 struct Tracked {
   static void* operator new(size_t size) {
-    ReserveMemory(kMemoryTag, size);
-    absl::Cleanup release = [&] { FreeReservedMemory(kMemoryTag, size); };
+    auto charge = ReserveMemory(kMemoryTag, size);
     auto* p = ::operator new(size);
-    std::move(release).Cancel();
+    charge.size = 0;
     return p;
   }
 
   static void* operator new(size_t size, std::align_val_t alignment) {
-    ReserveMemory(kMemoryTag, size);
-    absl::Cleanup release = [&] { FreeReservedMemory(kMemoryTag, size); };
+    auto charge = ReserveMemory(kMemoryTag, size);
     auto* p = ::operator new(size, alignment);
-    std::move(release).Cancel();
+    charge.size = 0;
     return p;
   }
 

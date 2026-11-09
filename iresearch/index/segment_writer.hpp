@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/index/field_writer.hpp"
@@ -264,7 +266,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // keeps.
   void ResetState() noexcept;
 
-  MemoryBudget _budget;
+  std::optional<duckdb::TempBufferPoolReservation> _budget;
   TrackingDirectory _dir;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
@@ -287,7 +289,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;
-  bool _flush_reserved = false;
 };
 
 }  // namespace irs

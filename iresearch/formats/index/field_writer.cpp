@@ -537,6 +537,13 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
 
 void FieldWriter::Commit(bytes_view term, const PostingMeta& meta) {
   if (!Append(term, meta)) {
+    if (Leads()) {
+      _lead_bound.assign(_key_prefix);
+      _lead_bound.append(term);
+      const bytes_view next{_lead_bound};
+      const auto last = KeyAt(_block, _block.ends.size() - 1);
+      Lead(next.substr(0, CommonPrefixLength(last, next) + 1));
+    }
     Cut();
     Append(term, meta);
   }
@@ -739,6 +746,40 @@ void FieldWriter::Cut() {
   Clear(_block);
 }
 
+bool FieldWriter::Leads() const noexcept {
+  return _first_block != kNoBlock && _dict.member == DictMember::Strings &&
+         _width == 0;
+}
+
+void FieldWriter::Lead(bytes_view upper) {
+  const bool first = _first_block == _blocks;
+  const auto head = KeyAt(_block, 0);
+  bstring min;
+  bytes_view lower;
+  if (first) {
+    min.assign(_key_prefix);
+    min.append(_min);
+    lower = min;
+  } else {
+    lower = head.substr(0, CommonPrefixLength(bytes_view{_last}, head) + 1);
+  }
+  const size_t skip = _key_prefix.size();
+  const size_t depth =
+    std::max(CommonPrefixLength(lower, upper), skip + kTermPrefix);
+  const auto stored = static_cast<uint16_t>(
+    std::min<size_t>(depth - skip, std::numeric_limits<uint16_t>::max()));
+  std::array<byte_type, kLeadBytes> lead{};
+  lead[0] = static_cast<byte_type>(stored);
+  lead[1] = static_cast<byte_type>(stored >> 8);
+  for (size_t i = first ? _first_entry : 0; i != _block.ends.size(); ++i) {
+    const auto key = KeyAt(_block, i);
+    const uint32_t label = key.size() > depth ? key[depth] : 0;
+    lead[sizeof(uint16_t) + label / 8] |=
+      static_cast<byte_type>(1 << (label % 8));
+  }
+  _leads.append(ViewCast<char>(bytes_view{lead.data(), lead.size()}));
+}
+
 void FieldWriter::WriteBlock() {
   const uint64_t position = _out->Position();
   const uint64_t pad = (kPage - position % kPage) % kPage;
@@ -811,6 +852,8 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
       WriteVarint(prefix - last, out);
       last = prefix;
     }
+    Lead(KeyAt(_block, _block.ends.size() - 1));
+    head.text.leads = std::move(_leads);
   }
   if (_ranges.Active()) {
     const auto prefix = CommonPrefixLength(bytes_view{_min}, max);
@@ -830,6 +873,7 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
 void FieldWriter::ResetField() noexcept {
   _ranges.Clear();
   _prefixes.clear();
+  _leads.clear();
   _min.clear();
   _terms = 0;
   _first_block = kNoBlock;

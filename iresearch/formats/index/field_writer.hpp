@@ -106,6 +106,8 @@ class FieldWriter final {
   bool AppendCodedKey(bytes_view key, size_t lcp, uint64_t records);
   void Seal();
   void Cut();
+  bool Leads() const noexcept;
+  void Lead(bytes_view upper);
   void WriteBlock();
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
                 uint64_t docs_sum, uint64_t first_inline);
@@ -136,6 +138,8 @@ class FieldWriter final {
   bstring _range_regions;
   std::vector<FieldHead> _heads;
   std::vector<uint32_t> _prefixes;
+  std::string _leads;
+  bstring _lead_bound;
   bstring _key_prefix;
   bstring _min;
   PostingMeta _single;

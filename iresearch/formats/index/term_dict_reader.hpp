@@ -157,6 +157,12 @@ class TermReaderImpl final : public TermReader {
   bool Gates(bytes_view head) const noexcept {
     return _prefixes && head.size() < kTermPrefix;
   }
+  const byte_type* Lead(size_t block) const noexcept {
+    return _leads.empty()
+             ? nullptr
+             : ViewCast<byte_type>(std::string_view{_leads}).data() +
+                 block * kLeadBytes;
+  }
   uint32_t NextLabel(bytes_view head, uint32_t from,
                      const uint32_t*& at) const noexcept {
     if (!Gates(head) || from >= kNoLabel) {
@@ -195,6 +201,7 @@ class TermReaderImpl final : public TermReader {
   Root _root;
   std::vector<RangeLevel> _levels;
   std::unique_ptr<PrefixIndex> _prefixes;
+  std::string _leads;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   uint32_t _range_prefix = 0;
 };

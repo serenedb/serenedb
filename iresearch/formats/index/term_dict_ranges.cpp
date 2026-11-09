@@ -353,23 +353,15 @@ void RangeWriter::Clear() noexcept {
     range.firsts.clear();
     range.ends.clear();
     range.records.clear();
-    range.group.docs.clear();
+    range.group.docs = {};
     range.group.docs_count = 0;
-    range.held.docs.clear();
+    range.held.docs = {};
     range.count = 0;
     range.children = 0;
     range.holding = false;
   }
   _pw = nullptr;
   _height = 0;
-}
-
-void RangeWriter::Release() noexcept {
-  Clear();
-  for (auto& range : _levels) {
-    range.group.docs = {};
-    range.held.docs = {};
-  }
 }
 
 void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,

@@ -800,7 +800,6 @@ void FieldWriter::end() {
   }
   Reset();
   _inline = {};
-  _ranges.Release();
   _idx = nullptr;
   _out = nullptr;
 }

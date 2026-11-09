@@ -43,7 +43,6 @@ class RangeWriter final {
   void Write(bstring& region, size_t prefix,
              std::vector<uint64_t>& counts) const;
   void Clear() noexcept;
-  void Release() noexcept;
 
  private:
   struct Piece {

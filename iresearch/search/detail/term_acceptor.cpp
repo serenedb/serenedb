@@ -277,7 +277,7 @@ TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
   SDB_ASSERT(kind != PatternKind::Fused);
   auto acceptor = PatternCache::Instance().Get(pattern, kind);
   if (const auto error = acceptor->Error(); !error.empty()) {
-    if (kind == PatternKind::Wildcard) {
+    if (kind == PatternKind::Wildcard || kind == PatternKind::WildcardBytes) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
                       ERR_MSG("pattern is too complex"));
     }

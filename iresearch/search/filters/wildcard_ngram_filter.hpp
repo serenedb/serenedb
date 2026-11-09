@@ -132,13 +132,14 @@ struct ByWildcardNGramOptions {
   GramQuery query;
   std::vector<ByPhraseOptions> grams;
   bool has_pos{false};
+  bool bytes{false};
   std::shared_ptr<const re2::RE2> matcher;
   field_id store_field_id{irs::field_limits::invalid()};
 
   bool operator==(const ByWildcardNGramOptions& other) const noexcept {
     return pattern == other.pattern && syntax == other.syntax &&
-           has_pos == other.has_pos && store_field_id == other.store_field_id &&
-           query == other.query;
+           has_pos == other.has_pos && bytes == other.bytes &&
+           store_field_id == other.store_field_id && query == other.query;
   }
 
   ByWildcardNGramOptions() noexcept = default;
@@ -148,10 +149,10 @@ struct ByWildcardNGramOptions {
 
   ByWildcardNGramOptions(std::string_view like,
                          analysis::WildcardTokenizer& analyzer,
-                         bool has_positions);
+                         bool has_positions, bool bytes = false);
   ByWildcardNGramOptions(bytes_view regexp, RegexpSyntax regexp_syntax,
                          analysis::WildcardTokenizer& analyzer,
-                         bool has_positions);
+                         bool has_positions, bool bytes = false);
 };
 
 class ByWildcardNGram final : public FilterWithField<ByWildcardNGramOptions> {

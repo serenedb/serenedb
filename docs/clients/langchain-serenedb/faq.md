@@ -25,6 +25,7 @@ Questions that come up when working with the integration, each with the cause an
 | `similarity_search_with_score()` ignores the hybrid config | [Scored search is dense by design](#hybrid-scores) |
 | `fts_query` on a scored search raises | [Use `similarity_search()` for hybrid](#scored-hybrid) |
 | MMR results ignore the keyword half | [MMR is always dense](#mmr) |
+| Creating the engine raises `UnsupportedServerVersionError` | [Upgrade the server to 26.11.2 or later](#server-version) |
 | `from_texts()` raises `NotImplementedError` | [Create the table, then `create_sync()`](#from-texts) |
 | `await store.aadd_texts(...)` is slower than expected | [Use `AsyncSereneDBVectorStore`](#async) |
 | An `IVFIndex` changed after being passed to the store | [It is mutated in place](#mutation) |
@@ -190,6 +191,16 @@ If you need hybrid retrieval, use [`similarity_search()`](./vector-store.md#simi
 
 ## Constructors, sync and async {#api}
 
+### Why does creating the engine raise `UnsupportedServerVersionError`? {#server-version}
+
+The integration supports SereneDB 26.11.2 and later, and every engine checks the server's release before it is used. The message names the release the server reported:
+
+```text
+version 26.10.0 is not supported. Minimum supported version is 26.11.2. To disable version check use ignore_db_version=True
+```
+
+Upgrade the server. If you cannot — or you are running a development build, which always reports patch level `0` — pass `ignore_db_version=True` to [`from_connection_string()`](./engine.md#from_connection_string) or [`from_pool()`](./engine.md#from_pool), accepting that some queries may be rejected or misbehave. See [Server version check](./engine.md#version-check).
+
 ### Why does `from_texts()` raise `NotImplementedError`? {#from-texts}
 
 The table's shape — embedding dimension, id column type, metadata columns — cannot be inferred from a list of texts, so the integration will not guess it. Create the table first:
@@ -235,7 +246,7 @@ Build a fresh `IVFIndex` per store rather than sharing one instance.
 | Can I create a partial index? | No. `partial_indexes` on `IVFIndex` raises — SereneDB inverted indexes have no `CREATE INDEX ... WHERE` form. |
 | Why does `IVFQueryOptions.to_string()` warn? | It is deprecated. Use [`to_parameter()`](./indexes.md#ivfqueryoptions). |
 | Can I have a metadata column named `distance`? | Yes. The computed score column is renamed to `distance_1` (or the next free name) so it does not shadow yours. |
-| Why does a text search dictionary survive `drop_table()`? | [`drop_table()`](./engine.md#drop_table) drops the table and its index, not the dictionary. It is created `IF NOT EXISTS`, so a recreated table reuses the existing options — drop it by hand if you change `dictionary_options`. |
+| Why does a text search dictionary survive `drop_table()`? | [`drop_table()`](./engine.md#drop_table) drops the table and its index, not the dictionary. It is created `IF NOT EXISTS`, so a recreated table reuses the existing dictionary — drop it by hand if you change `dictionary_expression`. |
 
 
 ## See also

@@ -92,6 +92,13 @@ segs
 8
 
 
+query
+EXPLAIN UPDATE pud SET b = 'u1_' || a;
+----
+QUERY PLAN
+╭─ SEARCH_UPDATE<slt:ignore>Table: pud<slt:ignore>Row Ids: ASSUME_UNIQUE<slt:ignore>
+
+
 statement count 8000
 UPDATE pud SET b = 'u1_' || a;
 
@@ -140,6 +147,13 @@ CREATE TABLE pud_src AS
   SELECT i AS a FROM range(0, 8000, 2) t(i), range(3) r(j);
 
 
+query
+EXPLAIN UPDATE pud SET b = 'u2_' || pud.a FROM pud_src WHERE pud.a = pud_src.a;
+----
+QUERY PLAN
+╭─ SEARCH_UPDATE<slt:ignore>Table: pud<slt:ignore>Row Ids: KEEP_FIRST<slt:ignore>
+
+
 statement count 4000
 UPDATE pud SET b = 'u2_' || pud.a FROM pud_src WHERE pud.a = pud_src.a;
 
@@ -157,6 +171,13 @@ SELECT count(*) AS n, count(DISTINCT a) AS d, count(*) FILTER (WHERE b LIKE 'u2!
 ----
 n	d	updated
 8000	8000	4000
+
+
+query
+EXPLAIN DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND pud.a % 4 = 0;
+----
+QUERY PLAN
+╭─ SEARCH_DELETE<slt:ignore>Table: pud<slt:ignore>Row Ids: KEEP_FIRST<slt:ignore>
 
 
 statement count 2000
@@ -246,6 +267,13 @@ INSERT INTO pud VALUES (100001, 'ins1'), (100002, 'ins2');
 
 statement ok
 UPDATE pud SET b = 'u4_' || a WHERE a % 2 = 1;
+
+
+query
+EXPLAIN DELETE FROM pud WHERE a % 8 = 6;
+----
+QUERY PLAN
+╭─ SEARCH_DELETE<slt:ignore>Table: pud<slt:ignore>Row Ids: ASSUME_UNIQUE<slt:ignore>
 
 
 statement ok

@@ -31,6 +31,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -47,6 +48,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -58,6 +60,7 @@
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
+#include "query/config_variable_names.h"
 #include "search/store.h"
 
 namespace sdb::connector {
@@ -73,6 +76,10 @@ struct RowSource {
   irs::ColFilterStateCache filter_states;
   duckdb::SelectionVector live{STANDARD_VECTOR_SIZE +
                                irs::doc_limits::kDocsSlack};
+  std::vector<ColumnId> write_ids;
+  std::optional<duckdb::ExpressionExecutor> executor;
+  duckdb::DataChunk added;
+  duckdb::DataChunk written;
 };
 
 // In place: RowSource owns a DataChunk and a selection vector, neither
@@ -84,50 +91,62 @@ void InitRowSource(duckdb::ClientContext& context,
     source.projections.emplace_back(irs::ColumnstoreProjection{
       .output_slot = i, .column_id = target.column_ids[i]});
   }
-  source.chunk.Initialize(duckdb::Allocator::Get(context), target.column_types);
+  auto& allocator = duckdb::Allocator::Get(context);
+  source.chunk.Initialize(allocator, target.column_types);
+  source.write_ids = target.column_ids;
+  if (target.added.empty()) {
+    return;
+  }
+  source.write_ids.insert(source.write_ids.end(), target.added_ids.begin(),
+                          target.added_ids.end());
+  source.executor.emplace(context);
+  auto types = target.column_types;
+  duckdb::vector<duckdb::LogicalType> added_types;
+  for (const auto& expression : target.added) {
+    source.executor->AddExpression(*expression);
+    added_types.push_back(expression->GetReturnType());
+    types.push_back(expression->GetReturnType());
+  }
+  source.added.Initialize(allocator, added_types);
+  source.written.InitializeEmpty(types);
+}
+
+duckdb::DataChunk& Rewritten(RowSource& source, duckdb::DataChunk& chunk) {
+  if (!source.executor) {
+    return chunk;
+  }
+  source.added.Reset();
+  source.executor->Execute(chunk, source.added);
+  const auto read = chunk.ColumnCount();
+  for (duckdb::idx_t i = 0; i < read; ++i) {
+    source.written.data[i].Reference(chunk.data[i]);
+  }
+  for (duckdb::idx_t i = 0; i < source.added.ColumnCount(); ++i) {
+    source.written.data[read + i].Reference(source.added.data[i]);
+  }
+  source.written.SetCardinality(chunk.size());
+  return source.written;
 }
 
 // Feeds every live row of `sub` into `sink`. A segment with deletes is scanned
 // in full and sliced down to the unmasked rows, which keeps this off the scan
-// operator's hit-batching machinery; the mask is per doc id, and doc ids are
-// row + doc_limits::min().
+// operator's hit-batching machinery.
 uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      RowSource& source, SearchSinkInsertBaseImpl& sink,
                      const SearchBackfillTarget& target,
                      const irs::SourcePosition& snapshot) {
-  const auto* col_reader = sub.GetColReader();
-  SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
-  FullScanner scanner{
-    *col_reader, source.projections, {}, &context, source.filter_states};
-  const bool has_mask = sub.docs_mask() != nullptr;
-  auto mask = irs::MakeGenericDocsMask(sub.docs_mask());
-  const uint64_t docs = sub.Meta().docs_count;
   uint64_t fed = 0;
-  for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
-    if (target.shard->TruncatedAfter(snapshot)) {
-      break;
-    }
-    const auto take = std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row);
-    auto& chunk = source.chunk;
-    chunk.Reset();
-    const auto produced = scanner.Scan(row, take, chunk);
-    SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");
-    chunk.SetCardinality(produced);
-    if (has_mask) {
-      const duckdb::idx_t keep =
-        mask.FillLive(static_cast<irs::doc_id_t>(row + irs::doc_limits::min()),
-                      static_cast<uint32_t>(produced), source.live.data());
-      if (keep == 0) {
-        continue;
-      }
-      if (keep != produced) {
-        chunk.Slice(source.live, keep);
-      }
-    }
-    WriteChunkToSearchSink(sink, chunk, target.column_ids, target.table_id,
-                           context);
-    fed += chunk.size();
-  }
+  ScanLiveRows(context, sub, source.projections, source.filter_states,
+               source.live, source.chunk, [&](duckdb::DataChunk& chunk) {
+                 if (target.shard->TruncatedAfter(snapshot)) {
+                   return false;
+                 }
+                 WriteChunkToSearchSink(sink, Rewritten(source, chunk),
+                                        source.write_ids, target.table_id,
+                                        context);
+                 fed += chunk.size();
+                 return true;
+               });
   return fed;
 }
 
@@ -331,12 +350,21 @@ bool RebuildGroup(duckdb::ClientContext& context,
 
 }  // namespace
 
+uint64_t SearchBackfillGroupBytes(duckdb::ClientContext& context) {
+  duckdb::Value group_bytes;
+  if (context.TryGetCurrentSetting(
+        duckdb::Identifier{kSearchBackfillGroupBytesSetting}, group_bytes) &&
+      !group_bytes.IsNull()) {
+    return group_bytes.GetValue<uint64_t>();
+  }
+  return uint64_t{1} << 30;
+}
+
 void RunSearchTableBackfill(duckdb::ClientContext& context,
                             const SearchBackfillTarget& target,
                             pg::ProgressMetrics* progress) {
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
-  SDB_ASSERT(shard.BuildInFlight());
 
   // The statement pinned a reader of this shard at bind time and only drops it
   // at a statement boundary, so every segment it saw would outlive the build
@@ -349,10 +377,10 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   shard.WatchTruncates();
 
   shard.DrainPriorWriters(context);
-  shard.Publish();
 
   irs::IndexWriter::CompactionFloorGuard floor;
   for (;;) {
+    shard.Publish();
     floor = shard.ArmCompactionFloor();
     if (floor.Held()) {
       break;
@@ -363,6 +391,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                               "search table ",
                               target.table_id));
     }
+    SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_retry");
     absl::SleepFor(kArmRetry);
   }
 

@@ -231,7 +231,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       !IndexNameTaken(context, *_info, _relation)) {
     auto& search_table = _relation.Cast<catalog::SearchTableEntry>();
     search_table.Storage()->ClaimLayout(context,
-                                        search_table.name.GetIdentifierName());
+                                        search_table.name.GetIdentifierName(),
+                                        search::TableChange::Layout);
   }
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement
@@ -272,17 +273,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         backfill.column_ids.reserve(table_columns.LogicalColumnCount());
         backfill.column_types.reserve(table_columns.LogicalColumnCount());
         for (const auto& column : table_columns.Logical()) {
-          backfill.column_ids.emplace_back(column.Oid());
+          backfill.column_ids.emplace_back(TableColumnId(column));
           backfill.column_types.emplace_back(column.Type());
         }
-        backfill.group_bytes = uint64_t{1} << 30;
-        duckdb::Value group_bytes;
-        if (context.TryGetCurrentSetting(
-              duckdb::Identifier{kSearchBackfillGroupBytesSetting},
-              group_bytes) &&
-            !group_bytes.IsNull()) {
-          backfill.group_bytes = group_bytes.GetValue<uint64_t>();
-        }
+        backfill.group_bytes = SearchBackfillGroupBytes(context);
         state->search_backfill = std::move(backfill);
       } else {
         const auto published = PublishInvertedIndex(
@@ -521,6 +515,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
   if (gstate.search_backfill) {
+    SDB_ASSERT(gstate.search_backfill->shard->BuildInFlight());
     RunSearchTableBackfill(context, *gstate.search_backfill, gstate.progress);
     gstate.build_claim.Finish();
     if (gstate.progress) {

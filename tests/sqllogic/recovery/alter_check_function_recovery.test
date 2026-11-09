@@ -1,0 +1,212 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE SCHEMA acf_fs;
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE FUNCTION acf_fs.acf_conv(x INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE FUNCTION acf_fs.acf_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE TABLE public.acf_defaults (id INT PRIMARY KEY, a INT);
+
+
+statement ok
+INSERT INTO public.acf_defaults VALUES (1, 1);
+
+
+statement ok
+SET search_path = acf_fs, public;
+
+
+statement ok
+CREATE TABLE public.acf_retyped (id INT PRIMARY KEY, a INT);
+
+
+statement ok
+CREATE TABLE public.acf_checked (id INT PRIMARY KEY, a INT CHECK (acf_pos(a)), b INT, c INT);
+
+
+statement ok
+CREATE TABLE public.acf_shared (id INT PRIMARY KEY, a INT, b INT, CHECK (acf_pos(a) AND b > 0));
+
+
+statement ok
+INSERT INTO public.acf_retyped VALUES (1, 1), (2, 2);
+
+
+statement ok
+INSERT INTO public.acf_checked VALUES (1, 1, 1, 1);
+
+
+statement ok
+INSERT INTO public.acf_shared VALUES (1, 1, 1);
+
+
+statement ok
+ALTER TABLE public.acf_checked DROP COLUMN b;
+
+
+statement ok
+ALTER TABLE public.acf_checked ALTER COLUMN c TYPE BIGINT;
+
+
+statement ok
+ALTER TABLE public.acf_retyped ALTER COLUMN a TYPE BIGINT USING acf_conv(a);
+
+
+statement ok
+ALTER TABLE public.acf_shared DROP COLUMN b;
+
+
+statement ok
+ALTER TABLE public.acf_defaults ADD COLUMN d BIGINT DEFAULT acf_conv(7);
+
+
+statement ok
+CREATE TABLE public.acf_generated (id INT PRIMARY KEY, a INT,
+  v BIGINT GENERATED ALWAYS AS (acf_conv(a)) VIRTUAL, s BIGINT GENERATED ALWAYS AS (acf_conv(a)) STORED);
+
+
+statement ok
+INSERT INTO public.acf_generated (id, a) VALUES (1, 1);
+
+
+statement ok
+ALTER TABLE public.acf_generated ADD COLUMN b INT;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+CREATE DATABASE acf_app;
+
+
+connection app database=acf_app
+statement ok
+CREATE FUNCTION acf_app_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+connection app database=acf_app
+statement ok
+CREATE FUNCTION acf_app_conv(x INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+connection app database=acf_app
+statement ok
+CREATE TABLE acf_t (id INT PRIMARY KEY, a INT CHECK (acf_app_pos(a)), b INT, c INT);
+
+
+connection app database=acf_app
+statement ok
+INSERT INTO acf_t VALUES (1, 1, 1, 1);
+
+
+connection app database=acf_app
+statement ok
+ALTER TABLE acf_t DROP COLUMN b;
+
+
+connection app database=acf_app
+statement ok
+ALTER TABLE acf_t ALTER COLUMN c TYPE BIGINT USING acf_app_conv(c);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection restarted
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, a, pg_typeof(a) AS t FROM acf_retyped ORDER BY id;
+----
+id	a	t
+1	10	bigint
+2	20	bigint
+
+
+connection restarted
+query
+SELECT id, a, c, pg_typeof(c) AS t FROM acf_checked ORDER BY id;
+----
+id	a	c	t
+1	1	1	bigint
+
+
+connection restarted
+statement error
+INSERT INTO acf_checked VALUES (2, -1, 2);
+----
+db error: ERROR: CHECK constraint failed on table "acf_checked" with expression CHECK(acf_fs.acf_pos(a))
+
+
+connection restarted
+statement ok
+INSERT INTO acf_shared VALUES (2, -1);
+
+
+connection restarted
+query
+SELECT id, a FROM acf_shared ORDER BY id;
+----
+id	a
+1	1
+2	-1
+
+
+connection restarted
+statement ok
+INSERT INTO acf_defaults (id, a) VALUES (2, 2);
+
+
+connection restarted
+query
+SELECT id, a, d FROM acf_defaults ORDER BY id;
+----
+id	a	d
+1	1	70
+2	2	70
+
+
+connection restarted
+statement ok
+INSERT INTO acf_generated (id, a) VALUES (2, 2);
+
+
+connection restarted
+query
+SELECT id, v, s FROM acf_generated ORDER BY id;
+----
+id	v	s
+1	10	10
+2	20	20
+
+
+connection restarted_app database=acf_app
+query
+SELECT id, a, c, pg_typeof(c) AS t FROM acf_t ORDER BY id;
+----
+id	a	c	t
+1	1	10	bigint
+
+
+connection restarted_app database=acf_app
+statement error
+INSERT INTO acf_t VALUES (2, -1, 2);
+----
+db error: ERROR: CHECK constraint failed on table "acf_t" with expression CHECK(acf_app_pos(a))

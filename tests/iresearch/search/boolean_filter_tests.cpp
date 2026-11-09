@@ -3470,6 +3470,34 @@ TEST(OrAcceptorFusion_test, fuses_nested_fused_or) {
   EXPECT_FALSE(FusedAccepts(*fused, "kiwi"));
 }
 
+TEST(OrAcceptorFusion_test, fuses_byte_automatons) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  const auto add = [&](std::string_view pattern, irs::PatternKind kind) {
+    auto& automaton = AddChild<irs::AutomatonFilter>(*root, irs::Occur::Should);
+    *automaton.mutable_field_id() = kFieldTestField;
+    *automaton.mutable_options() = irs::AutomatonOptions{B(pattern), kind};
+  };
+  add("mr.beast", irs::PatternKind::RegexpPerlBytes);
+  add("b.ea.st", irs::PatternKind::RegexpPosixEreBytes);
+  add("%feast", irs::PatternKind::WildcardBytes);
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused,
+                           "mr\xFF"
+                           "beast"));
+  EXPECT_TRUE(FusedAccepts(*fused,
+                           "b\xFF"
+                           "ea\xFF"
+                           "st"));
+  EXPECT_TRUE(FusedAccepts(*fused, "chocolate feast"));
+  EXPECT_FALSE(FusedAccepts(*fused, "beast"));
+}
+
 TEST(OrAcceptorFusion_test, keeps_unfusable_nested_or) {
   auto root = std::make_unique<irs::BooleanFilter>();
   {

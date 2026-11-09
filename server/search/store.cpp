@@ -36,8 +36,10 @@
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -70,7 +72,8 @@ catalog::CompressionByColumn DeclaredCompression(
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
     if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(column.Oid(), column.CompressionType());
+      compression.emplace(connector::TableColumnId(column),
+                          column.CompressionType());
     }
   }
   return compression;
@@ -329,9 +332,13 @@ ResultWithTime Store::RefreshUnsafe(bool wait,
                                     RefreshResult& code) {
   SDB_ASSERT(_writer);
   const auto begin = std::chrono::steady_clock::now();
+  const auto enabled = [&] {
+    return _tasks_settings.refresh_interval_msec.load() != 0;
+  };
+  const RefreshGate scheduled{_settings_mutex, enabled};
   auto result = _durability.Refresh(
     *_writer, wait, progress, code, [&] { PublishSnapshot(); },
-    [&] { PublishSnapshot(); });
+    [&] { PublishSnapshot(); }, wait ? nullptr : &scheduled);
   const auto time_ms = MillisSince(begin);
   SDB_IF_FAILURE("Search::FailOnCommit") {
     result = absl::InternalError("debug failure point");
@@ -613,7 +620,6 @@ std::vector<irs::KeyRemoval> Store::TakeDeleteLog() {
 }
 
 void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  SDB_ASSERT(BuildInFlight());
   _writers.Drain(context);
 }
 
@@ -691,6 +697,14 @@ void Store::RebuildConfig(Configs&& configs,
   _layout.compaction_stale = false;
 }
 
+irs::SegmentReader Store::OpenSegment(std::string_view meta_file) const {
+  SDB_ASSERT(_dir);
+  irs::SegmentMeta meta;
+  irs::segment_meta::Read(*_dir, meta, meta_file);
+  return irs::SegmentReader{
+    irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions())};
+}
+
 void Store::MergeIndexConfig(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
@@ -700,21 +714,32 @@ void Store::MergeIndexConfig(
     _layout.building_index);
 }
 
-void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name) {
-  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-    connection->ClaimSearchLayout(
-      shared_from_this(),
-      duckdb::MetaTransaction::Get(context).global_transaction_id, name);
+void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name,
+                        TableChange change) {
+  auto* connection = connector::GetSereneDBContextPtr(context);
+  if (!connection) {
+    SDB_ASSERT(change == TableChange::Layout);
+    return;
   }
+  if (change == TableChange::Schema &&
+      connection->SearchTxn().HasWritesFor(GetId())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("ALTER TABLE on a search-backed table cannot run in a "
+              "transaction that has already written to \"",
+              name, "\""));
+  }
+  connection->ClaimSearchLayout(
+    shared_from_this(),
+    duckdb::MetaTransaction::Get(context).global_transaction_id, name, change);
 }
 
-bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name) {
+bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
+                          TableChange change) {
   SDB_ASSERT(owner != kNoLayoutOwner);
   absl::MutexLock lock{&_layout_mutex};
-  if (_layout.owner == owner) {
-    return false;
-  }
-  if (_layout.owner != kNoLayoutOwner) {
+  const bool acquired = _layout.owner != owner;
+  if (acquired && _layout.owner != kNoLayoutOwner) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_IN_USE),
       ERR_MSG("search table \"", name,
@@ -722,13 +747,55 @@ bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name) {
       ERR_HINT("Retry once that transaction commits or rolls back."));
   }
   _layout.owner = owner;
-  return true;
+  if (change == TableChange::Schema) {
+    SDB_ASSERT(IsSearchTable());
+    if (!_layout.schema_undo) {
+      _layout.schema_undo = SchemaUndo{
+        .epoch = _schema_epoch.load(),
+        .table_columns = *_table_columns,
+        .compression = _compression,
+      };
+    }
+    _schema_epoch.fetch_add(1);
+  }
+  return acquired;
 }
 
-void Store::ReleaseLayout(duckdb::transaction_t owner) noexcept {
+void Store::ReleaseLayout(duckdb::transaction_t owner,
+                          bool committed) noexcept {
   absl::MutexLock lock{&_layout_mutex};
   SDB_ASSERT(_layout.owner == owner);
   _layout.owner = kNoLayoutOwner;
+  auto undo = std::exchange(_layout.schema_undo, std::nullopt);
+  if (undo && !committed) {
+    _schema_epoch.store(undo->epoch);
+    _table_columns = std::move(undo->table_columns);
+    _compression = std::move(undo->compression);
+    RebuildConfig(_layout.configs, _layout.building_index);
+  }
+}
+
+void Store::AddTableColumns(const duckdb::ColumnList& columns) {
+  absl::MutexLock lock{&_layout_mutex};
+  _table_columns->merge(TableColumns(columns));
+  _compression.merge(DeclaredCompression(columns));
+  RebuildConfig(_layout.configs, _layout.building_index);
+}
+
+void Store::SetTableColumns(const duckdb::ColumnList& columns) {
+  absl::MutexLock lock{&_layout_mutex};
+  _table_columns = TableColumns(columns);
+  _compression = DeclaredCompression(columns);
+  RebuildConfig(_layout.configs, _layout.building_index);
+}
+
+void Store::SyncPublished() {
+  if (!_durability.SyncPublished()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("search store ", _id,
+              " cannot persist its rows, so its table cannot be altered"));
+  }
 }
 
 Store::BuildClaim Store::BeginIndexBuild(

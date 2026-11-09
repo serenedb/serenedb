@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE vrr_t (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO vrr_t VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga');
+
+
+statement ok
+CREATE VIEW vrr_v AS SELECT id, body FROM vrr_t;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER VIEW vrr_v RENAME TO vrr_v2;
+
+
+statement ok
+CREATE INDEX vrr_idx ON vrr_v2 USING inverted (id, body) WITH (reindex_interval = 3600000);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE VIEW vrr_w AS SELECT id, body FROM vrr_t;
+
+
+statement ok
+CREATE INDEX vrr_widx ON vrr_w USING inverted (id, body) WITH (reindex_interval = 0);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE vrr_w RENAME TO vrr_w2;
+
+
+statement ok
+ALTER INDEX vrr_widx SET (reindex_interval = 3600000);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT job_name FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+job_name
+vrr_idx
+vrr_widx
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT job_name FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+job_name
+vrr_idx
+vrr_widx
+
+
+connection after_crash
+query
+SELECT id, body FROM vrr_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga
+
+
+connection after_crash
+query
+SELECT id, body FROM vrr_widx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga

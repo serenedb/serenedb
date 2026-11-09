@@ -35,6 +35,7 @@
 namespace irs {
 
 class DirectoryReader;
+class SegmentReaderImpl;
 struct DocMapsSlot;
 
 struct DocMap {
@@ -83,5 +84,18 @@ class DocRemovalBuilder {
 
 bool MapDocs(const DocMap& map, const DocumentMask& docs,
              DocumentMaskBuilder& out);
+
+struct RemovalTarget {
+  const SegmentReaderImpl* reader;
+  DocumentMaskBuilder* removed;
+};
+
+using RemovalTargets = containers::FlatHashMap<uint64_t, RemovalTarget>;
+
+// Lands a removal on the segments that hold its docs now. A group names the
+// segment the docs were in when it was recorded; where a consolidation has
+// since replaced that segment, the group's own maps carry the docs forward,
+// which is why a removal cannot simply be matched by segment id.
+void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets);
 
 }  // namespace irs

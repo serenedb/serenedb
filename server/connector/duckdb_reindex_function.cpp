@@ -227,19 +227,14 @@ class PassConnection {
  public:
   PassConnection(duckdb::ClientContext& context, ConnectionContext& caller,
                  const ReindexTarget& target)
-    : _caller{caller},
-      _conn{*context.db},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn.context, caller.user(), caller.SystemUser(), caller.GetRoleId(),
-        target.database, target.database_id, nullptr, caller.GetBackendPid(),
-        nullptr)},
-      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
-                  .progress_source} {
-    _conn.context->config.user_settings = context.config.user_settings;
-  }
-  ~PassConnection() {
-    _ctx->ConsumeNotices(
-      [&](auto& notice) { _caller.AddNotice(std::move(notice)); });
+    : _system{{.user = caller.user(),
+               .system_user = caller.SystemUser(),
+               .role = caller.GetRoleId(),
+               .database = target.database,
+               .database_id = target.database_id,
+               .backend_pid = caller.GetBackendPid()},
+              {.forward_to = &caller}} {
+    _system.conn->context->config.user_settings = context.config.user_settings;
   }
 
   // The pass statement carries the index's persisted DEFINITION (positions
@@ -271,7 +266,7 @@ class PassConnection {
       QualifiedIn(target, info->GetQualifiedName().Name()));
     auto statement = duckdb::make_uniq<duckdb::CreateStatement>();
     statement->info = std::move(info);
-    auto result = _conn.Query(std::move(statement));
+    auto result = _system.conn->Query(std::move(statement));
     if (result->HasError()) {
       SDB_DEBUG(SEARCH, "REINDEX pass for index \"", target.name,
                 "\" failed: ", result->GetError());
@@ -281,14 +276,11 @@ class PassConnection {
 
   duckdb::unique_ptr<duckdb::QueryResult> Query(
     duckdb::unique_ptr<duckdb::SQLStatement> statement) {
-    return _conn.Query(std::move(statement));
+    return _system.conn->Query(std::move(statement));
   }
 
  private:
-  ConnectionContext& _caller;
-  duckdb::Connection _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
-  pg::ProgressRegistration _progress;
+  SystemConnection _system;
 };
 
 bool CollectDeadRows(duckdb::ClientContext& context,
@@ -951,34 +943,22 @@ ReindexOutcome RunClaimed(duckdb::ClientContext& context,
 
 class ReindexSession {
  public:
-  using NoticeSink = std::function<void(irs::pg::SqlErrorData&)>;
+  ReindexSession(std::string_view user, duckdb::idx_t role_id,
+                 std::string_view database, duckdb::idx_t database_id,
+                 int32_t backend_pid, ConnectionContext& caller)
+    : _system{{.user = user,
+               .role = role_id,
+               .database = database,
+               .database_id = database_id,
+               .backend_pid = backend_pid},
+              {.forward_to = &caller}} {}
 
-  ReindexSession(duckdb::DatabaseInstance& db, std::string_view user,
-                 duckdb::idx_t role_id, const std::string& database,
-                 duckdb::idx_t database_id, int32_t backend_pid,
-                 NoticeSink sink)
-    : _conn{db},
-      _ctx{std::make_shared<ConnectionContext>(
-        *_conn.context, user, std::string_view{}, role_id, database,
-        database_id, nullptr, backend_pid, nullptr)},
-      _progress{SereneDBClientState::Register(*_conn.context, _ctx, false)
-                  .progress_source},
-      _sink{std::move(sink)} {}
-  ~ReindexSession() {
-    _ctx->ConsumeNotices([&](auto& notice) { _sink(notice); });
-  }
-  ReindexSession(const ReindexSession&) = delete;
-  ReindexSession& operator=(const ReindexSession&) = delete;
-
-  duckdb::ClientContext& Context() { return *_conn.context; }
-  ConnectionContext& Conn() { return *_ctx; }
-  void Begin() { _conn.BeginTransaction(); }
+  duckdb::ClientContext& Context() { return *_system.conn->context; }
+  ConnectionContext& Conn() { return *_system.ctx; }
+  void Begin() { _system.conn->BeginTransaction(); }
 
  private:
-  duckdb::Connection _conn;
-  std::shared_ptr<ConnectionContext> _ctx;
-  pg::ProgressRegistration _progress;
-  NoticeSink _sink;
+  SystemConnection _system;
 };
 
 ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
@@ -1012,14 +992,9 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
   }
   for (uint64_t attempt = 1;; ++attempt) {
     context.InterruptCheck();
-    ReindexSession session{
-      *context.db,
-      conn_ctx.user(),
-      conn_ctx.GetRoleId(),
-      target.database,
-      target.database_id,
-      conn_ctx.GetBackendPid(),
-      [&](auto& notice) { conn_ctx.AddNotice(std::move(notice)); }};
+    ReindexSession session{conn_ctx.user(),          conn_ctx.GetRoleId(),
+                           target.database,          target.database_id,
+                           conn_ctx.GetBackendPid(), conn_ctx};
     session.Context().config.user_settings = context.config.user_settings;
     session.Begin();
     const auto current =
@@ -1167,13 +1142,8 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   const auto& database_name = catalog.GetName().GetIdentifierName();
   try {
     ReindexSession session{
-      *context.db,
-      conn_ctx.user(),
-      conn_ctx.GetRoleId(),
-      database_name,
-      conn_ctx.GetDatabaseId(),
-      conn_ctx.GetBackendPid(),
-      [&](auto& notice) { conn_ctx.AddNotice(std::move(notice)); }};
+      conn_ctx.user(),          conn_ctx.GetRoleId(),     database_name,
+      conn_ctx.GetDatabaseId(), conn_ctx.GetBackendPid(), conn_ctx};
     session.Begin();
     const auto target =
       ResolveTarget(session.Context(), session.Conn(), index_name,

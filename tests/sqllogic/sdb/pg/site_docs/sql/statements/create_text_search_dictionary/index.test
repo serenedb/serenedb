@@ -100,3 +100,22 @@ SELECT ts_lexize('english_no_run', 'running engines');
 ----
 ts_lexize
 {engin}
+
+# DOCS_TEST: example_008
+
+statement ok
+CREATE SCHEMA archive;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY words_dict AS split_text();
+
+statement ok
+ALTER TEXT SEARCH DICTIONARY words_dict SET SCHEMA archive;
+
+query
+SELECT ts_lexize('archive.words_dict', 'squid game');
+----
+ts_lexize
+{squid,game}

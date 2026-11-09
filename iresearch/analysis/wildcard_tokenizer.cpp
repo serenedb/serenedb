@@ -167,7 +167,7 @@ void WildcardTokenizer::FillRow(const duckdb::UnifiedVectorFormat& values,
 
 template<TokenLayout Layout>
 void WildcardTokenizer::EmitEncoded(TokenSink& sink, size_t from, bool ascii) {
-  if (ascii) {
+  if (ascii || _bytes) {
     EmitTerms<true, Layout>(sink, from);
   } else {
     EmitTerms<false, Layout>(sink, from);

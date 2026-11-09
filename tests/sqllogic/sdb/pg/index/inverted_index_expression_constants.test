@@ -53,17 +53,17 @@ query
 EXPLAIN SELECT id FROM consts WHERE fallback(v) @@ ts_regexp('none');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────╮
-│ Index: consts          │
-│ Lookup: search         │
-│ Index Filter:          │
-│ ╭─ Term ─────────────╮ │
-│ │ Field: fallback(v) │ │
-│ │ Value: none        │ │
-│ ╰────────────────────╯ │
-│ Projections: id        │
-│ ~1 row                 │
-╰────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: consts                 │
+│ Lookup: search                │
+│ Index Filter:                 │
+│ ╭─ Term ────────────────────╮ │
+│ │ Field: public.fallback(v) │ │
+│ │ Value: none               │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 query
 SELECT id FROM consts WHERE CASE WHEN len(v) = 0 THEN ['none'] ELSE v END @@ ts_regexp('eng') ORDER BY id;
@@ -75,17 +75,17 @@ query
 EXPLAIN SELECT id FROM consts WHERE CASE WHEN len(v) = 0 THEN ['none'] ELSE v END @@ ts_regexp('eng');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────╮
-│ Index: consts          │
-│ Lookup: search         │
-│ Index Filter:          │
-│ ╭─ Term ─────────────╮ │
-│ │ Field: fallback(v) │ │
-│ │ Value: eng         │ │
-│ ╰────────────────────╯ │
-│ Projections: id        │
-│ ~1 row                 │
-╰────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: consts                 │
+│ Lookup: search                │
+│ Index Filter:                 │
+│ ╭─ Term ────────────────────╮ │
+│ │ Field: public.fallback(v) │ │
+│ │ Value: eng                │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 query
 SELECT id FROM consts WHERE list_concat(v, ['x', 'y']) @@ ts_regexp('y') ORDER BY id;

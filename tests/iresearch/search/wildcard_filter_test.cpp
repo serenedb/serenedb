@@ -112,6 +112,10 @@ TEST(by_wildcard_test, equal) {
   ASSERT_EQ(q, MakeFilter(kFieldId, "bar*"));
   ASSERT_NE(q, MakeFilter(kField1Id, "bar*"));
   ASSERT_NE(q, MakeFilter(kFieldId, "bar"));
+
+  auto bytes = MakeFilter(kFieldId, "bar*");
+  bytes.mutable_options()->bytes = true;
+  ASSERT_NE(q, bytes);
 }
 
 TEST(by_wildcard_test, boost) {

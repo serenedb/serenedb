@@ -72,7 +72,38 @@ class ListColumnReader final : public ColumnReader {
     return ScanCodes<false>(s, result, count, result_offset);
   }
 
-  IRS_COLUMN_READER_GATHER_SCATTER
+  void GatherScatter(ScanState& s, uint64_t anchor,
+                     const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+                     duckdb::Vector& out, duckdb::idx_t at) const final {
+    if (at == 0) {
+      NewOutputVector(s);
+    }
+    auto& codes_vec =
+      ResetScratch(s.list_codes, duckdb::LogicalType::UBIGINT, hits);
+    uint64_t pos = GatherCursor(s);
+    for (duckdb::idx_t i = 0; i < hits;) {
+      const uint64_t target = anchor + sel.get_index(i);
+      SDB_ASSERT(target >= pos);
+      duckdb::idx_t run = 1;
+      while (i + run < hits &&
+             sel.get_index(i + run) == sel.get_index(i + run - 1) + 1) {
+        ++run;
+      }
+      if (target > pos) {
+        ColumnReader::Skip(s, static_cast<duckdb::idx_t>(target - pos));
+      }
+      ScanVector(s, codes_vec, run, duckdb::ScanVectorType::SCAN_FLAT_VECTOR,
+                 i);
+      if (_validity) {
+        _validity->ColumnReader::ScanCount(s.child_states[0], out, run, at + i);
+      }
+      pos = target + run;
+      i += run;
+    }
+    ResolveCodes<false>(
+      s, out, {duckdb::FlatVector::GetData<uint64_t>(codes_vec), hits}, at);
+  }
+
   IRS_COLUMN_READER_GATHER_DENSE
 
  private:
@@ -332,21 +363,28 @@ class ListColumnReader final : public ColumnReader {
       _validity->ColumnReader::ScanCount(s.child_states[0], result, count,
                                          result_offset);
     }
-    const std::span<const uint64_t> codes{
-      duckdb::FlatVector::GetData<uint64_t>(codes_vec), scan_count};
+    ResolveCodes<kDictionary>(
+      s, result, {duckdb::FlatVector::GetData<uint64_t>(codes_vec), scan_count},
+      result_offset);
+    return scan_count;
+  }
+
+  template<bool kDictionary>
+  void ResolveCodes(ScanState& s, duckdb::Vector& result,
+                    std::span<const uint64_t> codes,
+                    duckdb::idx_t result_offset) const {
     const uint64_t child_base =
       result_offset != 0 ? duckdb::ListVector::GetListSize(result) : 0;
     if (ConsecutiveRunLength(codes, 0) == codes.size() &&
-        DirectRun(s, codes[0], scan_count)) {
+        DirectRun(s, codes[0], codes.size())) {
       ReadLists(
-        s, codes[0], scan_count, result,
+        s, codes[0], codes.size(), result,
         duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +
           result_offset,
         child_base, kAnyElems);
-      return scan_count;
+      return;
     }
     FromDictionary<kDictionary>(s, result, codes, result_offset, child_base);
-    return scan_count;
   }
 
   template<bool kDictionary>

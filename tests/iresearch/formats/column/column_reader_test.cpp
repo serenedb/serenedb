@@ -706,6 +706,54 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
   con.Query("SET force_compression = 'auto'");
 }
 
+TEST_F(ColumnReaderTest, RepeatedMapGathersMatchValues) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 30000;
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  const auto list_of = [](uint64_t g) -> uint64_t {
+    return g % 7 == 0 ? kRows + g : g * 2654435761 % 997;
+  };
+  const ValueOf value_of = [&](uint64_t g) {
+    if (g % 23 == 0) {
+      return duckdb::Value{type};
+    }
+    const auto list = list_of(g);
+    std::vector<duckdb::Value> keys;
+    std::vector<duckdb::Value> values;
+    for (uint64_t k = 0; k < list % 4; ++k) {
+      keys.emplace_back(absl::StrCat("key-", k));
+      values.emplace_back(absl::StrCat("value-of-list-", list, "-", k));
+    }
+    return duckdb::Value::MAP(duckdb::LogicalType::VARCHAR,
+                              duckdb::LogicalType::VARCHAR, std::move(keys),
+                              std::move(values));
+  };
+  irs::MemoryDirectory dir{};
+  WriteColumn(Db(), dir, kId, type, kRows, 4096, value_of);
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  uint64_t elements = 0;
+  for (uint64_t g = 0; g < kRows; ++g) {
+    elements += g % 23 == 0 ? 0 : list_of(g) % 4;
+  }
+  EXPECT_LT(col->Child()->RowCount() * 2, elements);
+  GatherStats stats;
+  for (const auto mode : {GatherMode::Dense, GatherMode::Scatter,
+                          GatherMode::ScatterAppend, GatherMode::Mixed}) {
+    for (const uint32_t per_mille : {1u, 10u, 50u, 200u, 600u, 1000u}) {
+      SCOPED_TRACE(testing::Message() << "mode " << static_cast<int>(mode)
+                                      << " per_mille " << per_mille);
+      CheckGathers(*col, r.Ctx(), value_of, mode, per_mille, stats);
+      if (HasFatalFailure()) {
+        return;
+      }
+    }
+  }
+  EXPECT_GT(stats.crossing, 0u) << "of " << stats.windows << " windows";
+}
+
 TEST_F(ColumnReaderTest, GatherFilterReleasesPassedBlocks) {
   constexpr irs::field_id kId = 1;
   constexpr uint64_t kRows = 60000;
@@ -2284,11 +2332,6 @@ TEST_F(ColumnReaderTest, SegmentRoundTripNestedArray) {
   }
 }
 
-// Sparse Gather of a LIST column across row-group boundaries: the doc ids are
-// non-contiguous, so every run after the first lands at result_offset > 0 --
-// exercising the scratch + VectorOperations::Copy reconstruction (the DuckDB
-// VectorListBuffer::CopyInternal mirror; ListColumnData::ScanCount itself
-// rejects result_offset > 0, same as us).
 TEST_F(ColumnReaderTest, ListGatherSparse) {
   constexpr uint64_t kRows = 600;
   constexpr uint32_t kRgSize = 128;

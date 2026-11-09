@@ -393,11 +393,269 @@ db error: ERROR: CHECK constraint failed on table "tesp_b" with expression CHECK
 
 
 statement ok
+CREATE TABLE public.tesp_d (id INT PRIMARY KEY, a TEXT DEFAULT lower('ABC'), g TEXT GENERATED ALWAYS AS (a || '!') STORED);
+
+
+statement ok
+INSERT INTO public.tesp_d (id, a) VALUES (1, 'x');
+
+
+connection shadow
+statement ok
+UPDATE public.tesp_d SET a = DEFAULT;
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_d (id, a) VALUES (2, DEFAULT);
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_d (id) VALUES (3) ON CONFLICT (id) DO NOTHING;
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_d (id) SELECT 4;
+
+
+connection shadow
+statement ok
+MERGE INTO public.tesp_d USING (SELECT 5 AS id) s ON tesp_d.id = s.id WHEN NOT MATCHED THEN INSERT (id, a) VALUES (s.id, DEFAULT);
+
+
+connection shadow
+statement ok
+INSERT INTO public.tesp_d (id) VALUES (6);
+
+
+query
+SELECT id, a, g FROM public.tesp_d ORDER BY id;
+----
+id	a	g
+1	abc	abc!
+2	abc	abc!
+3	abc	abc!
+4	abc	abc!
+5	abc	abc!
+6	abc	abc!
+
+
+statement ok
+CREATE SCHEMA tesp_ix;
+
+
+statement ok
+CREATE TABLE tesp_ix.tesp_g (n INT, g INT GENERATED ALWAYS AS (abs(n)));
+
+
+statement ok
+CREATE SCHEMA tesp_n1;
+
+
+statement ok
+CREATE SCHEMA tesp_n1.tesp_n2;
+
+
+statement ok
+CREATE TABLE tesp_n1.tesp_n2.tesp_g (n INT, g INT GENERATED ALWAYS AS (abs(n)));
+
+
+statement ok
+INSERT INTO tesp_ix.tesp_g (n) VALUES (-4);
+
+
+statement ok
+INSERT INTO tesp_n1.tesp_n2.tesp_g (n) VALUES (-4);
+
+
+statement ok
+CREATE FUNCTION tesp_ix.abs(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 1000';
+
+
+statement ok
+CREATE SCHEMA tesp_n2;
+
+
+statement ok
+CREATE FUNCTION tesp_n2.abs(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 1000';
+
+
+query
+SELECT n, g FROM tesp_ix.tesp_g;
+----
+n	g
+-4	4
+
+
+query
+SELECT n, g FROM tesp_n1.tesp_n2.tesp_g;
+----
+n	g
+-4	4
+
+
+statement ok
+CREATE SCHEMA tesp_own;
+
+
+statement ok
+CREATE FUNCTION tesp_own.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''own''';
+
+
+statement ok
+SET search_path = tesp_own, public;
+
+
+statement ok
+CREATE TABLE tesp_own.tesp_l (s TEXT, g TEXT GENERATED ALWAYS AS (lower(s)));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO tesp_own.tesp_l (s) VALUES ('ABC');
+
+
+query
+SELECT s, g FROM tesp_own.tesp_l;
+----
+s	g
+ABC	own
+
+
+statement ok
+CREATE TABLE tesp_db_${__DATABASE__}.public.tesp_q (a INT CHECK (public.tesp_pub(a)));
+
+
+statement ok
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_q VALUES (1);
+
+
+statement error
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_q VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_q" with expression CHECK(<slt:ignore>.public.tesp_pub(a))
+
+
+statement ok
+CREATE FUNCTION tesp_db_${__DATABASE__}.public.tesp_cpos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE SCHEMA tesp_db_${__DATABASE__}.tesp_c;
+
+
+statement ok
+CREATE TABLE tesp_db_${__DATABASE__}.tesp_c.tesp_w (a INT CHECK (public.tesp_cpos(a)));
+
+
+statement ok
+CREATE FUNCTION public.tesp_cpos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT true';
+
+
+statement ok
+INSERT INTO tesp_db_${__DATABASE__}.tesp_c.tesp_w VALUES (1);
+
+
+statement error
+INSERT INTO tesp_db_${__DATABASE__}.tesp_c.tesp_w VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_w" with expression CHECK(public.tesp_cpos(a))
+
+
+statement ok
+SET search_path = tesp_s, public;
+
+
+statement ok
+CREATE TABLE public.tesp_m (c INT CHECK (c.tesp_pos()));
+
+
+statement ok
+CREATE TABLE tesp_s.tesp_mv (a INT CHECK (tesp_pos(a)));
+
+
+statement ok
+CREATE TABLE tesp_s.tesp_mv2 (a INT CHECK (abs(a) > 0));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO public.tesp_m VALUES (1);
+
+
+statement error
+INSERT INTO public.tesp_m VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_m" with expression CHECK(tesp_s.tesp_pos(c))
+
+
+statement error
+ALTER TABLE tesp_s.tesp_mv SET SCHEMA public;
+----
+db error: ERROR: Cannot move table "tesp_mv" to schema "public": its expressions call function "tesp_pos", which would resolve to a different function there
+
+
+statement ok
+ALTER TABLE tesp_s.tesp_mv2 SET SCHEMA public;
+
+
+statement ok
+CREATE TEMPORARY SEQUENCE tesp_tseq;
+
+
+statement error
+CREATE TABLE public.tesp_seq (a INT DEFAULT nextval('tesp_tseq'));
+----
+db error: ERROR: Sequence with name tesp_tseq does not exist!
+Did you mean "temp.tesp_tseq"?
+
+
+statement ok
 DROP DATABASE tesp_db_${__DATABASE__};
 
 
 statement ok
+DROP FUNCTION public.tesp_cpos(INT);
+
+
+statement ok
 DROP FUNCTION public.tesp_pub(INT);
+
+
+statement ok
+DROP TABLE public.tesp_d;
+
+
+statement ok
+DROP TABLE public.tesp_m;
+
+
+statement ok
+DROP TABLE public.tesp_mv2;
+
+
+statement ok
+DROP SCHEMA tesp_ix CASCADE;
+
+
+statement ok
+DROP SCHEMA tesp_n1 CASCADE;
+
+
+statement ok
+DROP SCHEMA tesp_n2 CASCADE;
+
+
+statement ok
+DROP SCHEMA tesp_own CASCADE;
 
 
 statement ok

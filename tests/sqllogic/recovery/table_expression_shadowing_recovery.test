@@ -37,6 +37,90 @@ CREATE FUNCTION tesr_app.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'S
 
 
 statement ok
+CREATE SCHEMA tesr_n1;
+
+
+statement ok
+CREATE SCHEMA tesr_n1.tesr_n2;
+
+
+statement ok
+CREATE TABLE tesr_n1.tesr_n2.tesr_u (s TEXT);
+
+
+statement ok
+CREATE UNIQUE INDEX tesr_nu_lower ON tesr_n1.tesr_n2.tesr_u ((lower(s)));
+
+
+statement ok
+INSERT INTO tesr_n1.tesr_n2.tesr_u VALUES ('ABC');
+
+
+statement ok
+CREATE SCHEMA tesr_n2;
+
+
+statement ok
+CREATE FUNCTION tesr_n2.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT x';
+
+
+statement ok
+CREATE SCHEMA tesr_ix;
+
+
+statement ok
+CREATE TABLE tesr_ix.tesr_u (s TEXT);
+
+
+statement ok
+CREATE UNIQUE INDEX tesr_iu_lower ON tesr_ix.tesr_u ((lower(s)));
+
+
+statement ok
+INSERT INTO tesr_ix.tesr_u VALUES ('ABC');
+
+
+statement ok
+CREATE FUNCTION tesr_ix.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT x';
+
+
+statement ok
+CREATE DATABASE tesr_xdb;
+
+
+statement ok
+CREATE FUNCTION public.tesr_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE TABLE tesr_xdb.public.tesr_xt (a INT CHECK (public.tesr_pos(a)));
+
+
+statement ok
+ALTER TABLE tesr_xdb.public.tesr_xt ADD COLUMN b INT;
+
+
+statement ok
+CREATE FUNCTION tesr_app.tesr_ispos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+SET search_path = tesr_app, public;
+
+
+statement ok
+CREATE TABLE public.tesr_mt (c INT CHECK (c.tesr_ispos()));
+
+
+statement ok
+ALTER TABLE public.tesr_mt ADD COLUMN b INT;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -94,3 +178,41 @@ SELECT s FROM tesr_p ORDER BY s;
 s
 ABC
 DEF
+
+
+connection plain
+statement error
+INSERT INTO tesr_n1.tesr_n2.tesr_u VALUES ('abc');
+----
+db error: ERROR: Duplicate key "lower(s): abc" violates unique constraint.
+
+
+connection plain
+statement error
+INSERT INTO tesr_ix.tesr_u VALUES ('abc');
+----
+db error: ERROR: Duplicate key "lower(s): abc" violates unique constraint.
+
+
+connection plain
+statement ok
+INSERT INTO tesr_xdb.public.tesr_xt VALUES (1, 1);
+
+
+connection plain
+statement error
+INSERT INTO tesr_xdb.public.tesr_xt VALUES (-1, 1);
+----
+db error: ERROR: CHECK constraint failed on table "tesr_xt" with expression CHECK(<slt:ignore>.public.tesr_pos(a))
+
+
+connection plain
+statement ok
+INSERT INTO public.tesr_mt VALUES (1, 1);
+
+
+connection plain
+statement error
+INSERT INTO public.tesr_mt VALUES (-1, 1);
+----
+db error: ERROR: CHECK constraint failed on table "tesr_mt" with expression CHECK(tesr_app.tesr_ispos(c))

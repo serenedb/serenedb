@@ -118,11 +118,11 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   _table.RequireCurrentSchema();
 
   const auto& columns = _table.GetColumns();
-  target.column_ids.reserve(columns.LogicalColumnCount());
-  for (const auto& column : columns.Logical()) {
+  target.column_ids.reserve(columns.PhysicalColumnCount());
+  for (const auto& column : columns.Physical()) {
     target.column_ids.emplace_back(TableColumnId(column));
   }
-  target.types = columns.GetColumnTypes();
+  target.types = _table.GetTypes();
   target.buffer_bytes =
     duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 

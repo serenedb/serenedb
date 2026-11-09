@@ -457,7 +457,7 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
 void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
                                     duckdb::DataChunk& chunk) {
   std::vector<connector::ColumnId> column_ids;
-  for (const auto& column : _columns.Logical()) {
+  for (const auto& column : _columns.Physical()) {
     column_ids.emplace_back(connector::TableColumnId(column));
   }
   _storage->ReplayInsert(context, catalog, column_ids, chunk);

@@ -79,21 +79,16 @@ const MovedUnit* FindMoved(const TableState& state, uint64_t id) noexcept {
   return it == state.moved->end() ? nullptr : it->second.get();
 }
 
-void SetDeletes(TableUnit& unit, irs::DocumentMaskBuilder&& mask) {
-  unit.deleted =
-    std::make_shared<const irs::DocumentMask>(std::move(mask).Finish());
+void SetDeletes(TableUnit& unit, irs::DocumentMask&& mask) {
+  unit.deleted = std::make_shared<const irs::DocumentMask>(std::move(mask));
   if (unit.reader) {
     unit.reader = unit.reader->WithDocsMask(unit.deleted);
   }
 }
 
 void AddDeletes(TableUnit& unit, const irs::DocumentMask& docs) {
-  irs::DocumentMaskBuilder mask;
-  if (unit.deleted) {
-    mask.Merge(*unit.deleted);
-  }
-  mask.Merge(docs);
-  SetDeletes(unit, std::move(mask));
+  SetDeletes(unit, unit.deleted ? irs::DocumentMask::Union(unit.deleted, docs)
+                                : irs::DocumentMaskBuilder{docs}.Finish());
 }
 
 void DeleteAll(TableUnit& unit) {
@@ -103,7 +98,7 @@ void DeleteAll(TableUnit& unit) {
   irs::DocumentMaskBuilder mask;
   mask.AddRange(irs::doc_limits::min(),
                 static_cast<irs::doc_id_t>(irs::doc_limits::min() + unit.docs));
-  SetDeletes(unit, std::move(mask));
+  SetDeletes(unit, std::move(mask).Finish());
 }
 
 bool Dead(const TableUnit& unit) noexcept {
@@ -488,14 +483,19 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
     readers.emplace_back(std::move(reader));
   };
   const auto with_own =
-    [&](uint64_t id, const irs::DocumentMask* deleted,
+    [&](uint64_t id, const std::shared_ptr<const irs::DocumentMask>& deleted,
         const std::shared_ptr<const irs::SegmentReaderImpl>& base) {
       const auto own_it = own_removed.find(id);
-      if (own_it == own_removed.end() && deleted == base->docs_mask()) {
+      if (own_it == own_removed.end() && deleted.get() == base->docs_mask()) {
         return base;
       }
+      if (deleted && own_it != own_removed.end()) {
+        return base->WithDocsMask(
+          std::make_shared<const irs::DocumentMask>(irs::DocumentMask::Union(
+            deleted, std::move(own_it->second).Finish())));
+      }
       irs::DocumentMaskBuilder mask;
-      if (deleted != nullptr) {
+      if (deleted) {
         mask.Merge(*deleted);
       }
       if (own_it != own_removed.end()) {
@@ -508,11 +508,11 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       continue;
     }
     add(unit->segment.filename,
-        with_own(unit->id, unit->deleted.get(), unit->reader));
+        with_own(unit->id, unit->deleted, unit->reader));
   }
   for (const auto& segment : own.segments) {
     add(segment.segment.filename,
-        with_own(segment.reader->Id(), segment.reader->docs_mask(),
+        with_own(segment.reader->Id(), segment.reader->SharedDocsMask(),
                  segment.reader));
   }
   if (own.rows != nullptr && own.rows->Count() != 0) {
@@ -767,7 +767,7 @@ std::shared_ptr<const TableState> Table::ReplaceUnits(
         mask.Merge(*unit->deleted);
       }
       mask.Merge(it->second);
-      SetDeletes(*unit, std::move(mask));
+      SetDeletes(*unit, std::move(mask).Finish());
     }
     units.push_back(std::move(unit));
   }
@@ -1008,7 +1008,7 @@ bool Table::FinishReplay() {
       replayed.removed.Merge(*base);
     }
     if (!replayed.removed.Empty()) {
-      SetDeletes(*unit, std::move(replayed.removed));
+      SetDeletes(*unit, std::move(replayed.removed).Finish());
     }
     if (!Dead(*unit)) {
       next->units.push_back(std::move(unit));

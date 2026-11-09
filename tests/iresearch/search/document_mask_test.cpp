@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <roaring/memory.h>
 
@@ -37,6 +38,7 @@
 #include <optional>
 #include <random>
 #include <roaring/roaring.hh>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -908,6 +910,71 @@ TEST(document_mask_test, read_frozen_rejects_corruption) {
   std::string no_docs(empty.getFrozenSizeInBytes(), 0);
   empty.writeFrozen(no_docs.data());
   ASSERT_SQL_ERROR(ReadFrozen(no_docs), ERRCODE_INDEX_CORRUPTED);
+}
+
+TEST(document_mask_test, union_shares_the_containers_it_leaves_alone) {
+  const auto base_docs = Join({Every(1, 65536, 3),
+                               Every(70000, 70100, 1),
+                               Every(140000, 196608, 5),
+                               {200000}});
+  const auto added_docs = Join({{2, 4, 70000}, Every(270000, 270010, 1)});
+  std::vector<doc_id_t> all;
+  std::set_union(base_docs.begin(), base_docs.end(), added_docs.begin(),
+                 added_docs.end(), std::back_inserter(all));
+  const auto expected = Build(all);
+  for (const bool frozen : {false, true}) {
+    SCOPED_TRACE(frozen);
+    auto base = std::make_shared<const irs::DocumentMask>(
+      frozen ? RoundTrip(Build(base_docs)) : Build(base_docs));
+    const auto mask =
+      irs::DocumentMask::Union(base, Build(added_docs, kArrays));
+    ASSERT_EQ(all.size(), mask.Count());
+    ASSERT_EQ(expected, mask);
+    ASSERT_EQ(expected.Kind(), mask.Kind());
+    const std::span<const uint16_t> keys{mask.Keys(), mask.ContainerCount()};
+    for (uint32_t i = 0; i != base->ContainerCount(); ++i) {
+      const auto key = base->Keys()[i];
+      const auto at = absl::c_find(keys, key) - keys.begin();
+      ASSERT_LT(at, keys.size());
+      const bool touched = key == 0 || key == 1;
+      ASSERT_EQ(!touched, mask.Containers()[at] == base->Containers()[i])
+        << key;
+    }
+    ASSERT_EQ(base->Count(), irs::DocumentMask::Union(base, Build({})).Count());
+    base.reset();
+    ASSERT_EQ(all, DocsOfRuns(mask, nullptr));
+    ASSERT_EQ(mask, RoundTrip(mask));
+    irs::ResolveDocsMask(&mask, [&]<irs::DocsMaskType Mask>(Mask docs) {
+      ASSERT_EQ(1, docs.Probe(1));
+      ASSERT_EQ(70000, docs.Probe(65536));
+      ASSERT_EQ(270000, docs.Probe(200001));
+      ASSERT_EQ(kEof, docs.Probe(270010));
+    });
+  }
+}
+
+TEST(document_mask_test, unions_match_a_mask_built_at_once) {
+  auto mask = std::make_shared<const irs::DocumentMask>(Build({}));
+  std::vector<doc_id_t> all;
+  std::mt19937 gen{7};
+  for (int round = 0; round < 3000; ++round) {
+    std::vector<doc_id_t> added;
+    for (auto n = 1 + gen() % 3; n != 0; --n) {
+      added.push_back(1 + gen() % kLimit);
+    }
+    added = Join({added});
+    all.insert(all.end(), added.begin(), added.end());
+    mask = std::make_shared<const irs::DocumentMask>(
+      irs::DocumentMask::Union(mask, Build(added, kArrays)));
+  }
+  all = Join({all});
+  ASSERT_EQ(all.size(), mask->Count());
+  ASSERT_EQ(Build(all), *mask);
+  ASSERT_EQ(all, DocsOfRuns(*mask, nullptr));
+  const Reference reference{all};
+  for (doc_id_t doc = 1; doc <= kLimit; doc += 11) {
+    ASSERT_EQ(reference.Masked(doc), mask->Contains(doc)) << doc;
+  }
 }
 
 }  // namespace

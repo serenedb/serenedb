@@ -26,7 +26,7 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/formats/column/col_file_writer.hpp"
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
@@ -102,7 +102,7 @@ inline uint64_t NormTableSize(const NormRegionMeta& region) noexcept {
 
 class NormColumnWriter final {
  public:
-  using Open = std::function<ColFileWriter&()>;
+  using Open = std::function<IndexOutput&()>;
 
   NormColumnWriter(field_id id, uint32_t row_group_size, Open open);
 
@@ -139,7 +139,7 @@ class NormColumnWriter final {
   uint32_t Escape(uint64_t row, uint32_t value);
 
   field_id _id;
-  ColFileWriter* _blocks = nullptr;
+  IndexOutput* _out = nullptr;
   Open _open;
   uint32_t _row_group_size;
   NormColumnMeta _meta;

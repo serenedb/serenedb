@@ -25,11 +25,11 @@
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <iresearch/formats/column/col_file_writer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/column/norm_writer.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 
@@ -490,14 +490,15 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   irs::MemoryDirectory dir;
   irs::NormColumnMeta meta;
   {
-    irs::ColFileWriter file{dir.create("norms")};
+    auto file = dir.create("norms");
     irs::NormColumnWriter writer{1, kRows,
-                                 [&]() -> irs::ColFileWriter& { return file; }};
+                                 [&]() -> irs::IndexOutput& { return *file; }};
     for (uint32_t i = 0; i != kRows; ++i) {
       writer.Append(i, i % kWideEvery == 0 ? 70000 + i : 1 + i % 3);
     }
     writer.Finalize();
-    file.Finish([](duckdb::BinarySerializer&) {});
+    irs::format_utils::WriteFooter(*file, [](duckdb::BinarySerializer&) {});
+    file.reset();
     meta = writer.Meta();
   }
   ASSERT_EQ(meta.regions.size(), 1u);

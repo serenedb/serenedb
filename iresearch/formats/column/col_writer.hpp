@@ -34,7 +34,6 @@
 
 #include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/formats/ann_writer.hpp"
-#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -110,7 +109,7 @@ class ColWriter final {
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  std::unique_ptr<ColFileWriter> _file;
+  IndexOutput::ptr _file;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<ColumnEntry> _columns;
   irs::containers::FlatHashMap<field_id, size_t> _by_id;

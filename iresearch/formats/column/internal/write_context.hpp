@@ -23,8 +23,8 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 
-#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/internal/block_manager.hpp"
+#include "iresearch/store/data_output.hpp"
 
 namespace irs {
 
@@ -32,7 +32,7 @@ class WriteContext final : public BlockManager,
                            public duckdb::OverflowStringWriter,
                            public duckdb::ColumnStreamWriter {
  public:
-  WriteContext(duckdb::DatabaseInstance& db, ColFileWriter& blocks);
+  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out);
   ~WriteContext() final;
 
   WriteContext(const WriteContext&) = delete;
@@ -40,7 +40,7 @@ class WriteContext final : public BlockManager,
   WriteContext(WriteContext&&) = delete;
   WriteContext& operator=(WriteContext&&) = delete;
 
-  ColFileWriter& Blocks() noexcept { return *_blocks; }
+  IndexOutput& Out() noexcept { return *_out; }
 
   void WriteString(duckdb::UncompressedStringSegmentState& state,
                    duckdb::string_t string, duckdb::block_id_t& result_block,
@@ -68,7 +68,7 @@ class WriteContext final : public BlockManager,
   duckdb::idx_t TotalBlocks() final;
 
  private:
-  ColFileWriter* _blocks;
+  IndexOutput* _out;
 };
 
 }  // namespace irs

@@ -24,7 +24,6 @@ target_sources(
         column/codecs/string_window.cpp
         column/codecs/zstd.cpp
         column/codecs/zxc.cpp
-        column/col_file_writer.cpp
         column/col_reader.cpp
         column/col_writer.cpp
         column/column_reader.cpp

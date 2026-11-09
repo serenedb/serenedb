@@ -113,8 +113,7 @@ void ColWriter::EnsureOut() {
   if (_file) {
     return;
   }
-  _file =
-    std::make_unique<ColFileWriter>(_dir->create(FileName(_segment_name)));
+  _file = _dir->create(FileName(_segment_name));
   _write_ctx = std::make_unique<WriteContext>(*_db, *_file);
 }
 
@@ -181,7 +180,7 @@ void ColWriter::Close(ColumnEntry& entry) {
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
-    id, row_group_size, [this]() -> ColFileWriter& {
+    id, row_group_size, [this]() -> IndexOutput& {
       EnsureOut();
       return *_file;
     }));
@@ -294,7 +293,7 @@ bool ColWriter::Commit(uint64_t target_row,
     }
     Close(entry);
   }
-  _file->Finish([&](duckdb::BinarySerializer& footer) {
+  format_utils::WriteFooter(*_file, [&](duckdb::BinarySerializer& footer) {
     if (!_columns.empty()) {
       footer.WriteList(
         kColFieldColumns, "columns", _columns.size(),
@@ -314,6 +313,7 @@ bool ColWriter::Commit(uint64_t target_row,
         });
     }
   });
+  _file.reset();
   _committed = true;
   return true;
 }

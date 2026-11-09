@@ -29,7 +29,6 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -189,8 +188,8 @@ void NormColumnWriter::CloseRegion() {
     }
     put32(0);
     SDB_ASSERT(at == _staging.data() + bytes);
-    region.table_offset =
-      _blocks->Append({reinterpret_cast<const char*>(_staging.data()), bytes});
+    region.table_offset = _out->Position();
+    _out->WriteData(_staging.data(), bytes);
   }
   _meta.row_count += region.stats.rows;
   _meta.regions.push_back(region);
@@ -198,14 +197,14 @@ void NormColumnWriter::CloseRegion() {
 
 void NormColumnWriter::Begin(const NormStats& planned) {
   const auto layout = PickNormLayout(planned);
-  if (layout.bits != 0 && !_blocks) {
-    _blocks = &_open();
+  if (layout.bits != 0 && !_out) {
+    _out = &_open();
   }
   _open_region = true;
   _region = {};
   _region.bits = static_cast<uint8_t>(layout.bits);
   _region.value = layout.value;
-  _region.file_offset = layout.bits == 0 ? 0 : _blocks->Position();
+  _region.file_offset = layout.bits == 0 ? 0 : _out->Position();
   if (layout.exceptions != 0) {
     _region.shift = PickShift(planned.rows, layout.exceptions);
     _region.exception_bytes =
@@ -259,7 +258,7 @@ void NormColumnWriter::EncodeSlots(std::span<const uint32_t> values,
         absl::little_endian::Store32(out + i * 4, v);
       }
     }
-    _blocks->Append({reinterpret_cast<const char*>(out), bytes});
+    _out->WriteData(out, bytes);
   }
 }
 

@@ -325,7 +325,11 @@ class CommittedView final {
   CommittedView()
     : _slot{Transactions::Get().Join()},
       _snapshot{Transactions::Get().Acquire(_slot.snapshot)} {}
-  ~CommittedView() { Transactions::Get().Leave(_slot); }
+  ~CommittedView() {
+    auto& transactions = Transactions::Get();
+    transactions.Leave(_slot);
+    transactions.Ended(_snapshot);
+  }
   CommittedView(const CommittedView&) = delete;
   CommittedView& operator=(const CommittedView&) = delete;
 

@@ -794,10 +794,13 @@ bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
   auto next = std::make_shared<TableState>(*Head().state);
   auto& units = next->units;
   bool emptied = false;
+  bool stale = false;
   const auto rewrite = [&](size_t i, auto&& change) {
     auto unit = std::make_shared<TableUnit>(*units[i]);
     change(*unit);
     CollectStamps(*unit, oldest);
+    stale = stale || unit->inserts.size() > kStaleStamps ||
+            unit->deletes.size() > kStaleStamps;
     const auto* deleted = LatestDeletes(*unit);
     emptied =
       emptied || (!unit->hot && deleted && deleted->Count() >= unit->docs);
@@ -861,6 +864,9 @@ bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
   }
   Sweep(units, oldest);
   Publish(std::move(next), tick);
+  if (stale) {
+    catalog::Transactions::Get().RequestCollect();
+  }
   return emptied;
 }
 

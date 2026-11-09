@@ -229,8 +229,8 @@ SessionSlot& Transactions::Join() {
 }
 
 void Transactions::Leave(SessionSlot& slot) noexcept {
-  slot.snapshot.store(kNoSnapshot, std::memory_order_release);
-  slot.held.store(kNoSnapshot, std::memory_order_release);
+  slot.snapshot.store(kNoSnapshot, std::memory_order_seq_cst);
+  slot.held.store(kNoSnapshot, std::memory_order_seq_cst);
   slot.left.store(true, std::memory_order_release);
   const auto live = _live_slots.fetch_sub(1, std::memory_order_relaxed) - 1;
   const auto dead = _dead_slots.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -253,8 +253,8 @@ duckdb::transaction_t Transactions::Acquire(
 }
 
 void Transactions::Ended(duckdb::transaction_t snapshot) noexcept {
-  if (_garbage_pending.load(std::memory_order_relaxed) &&
-      snapshot <= Oldest()) {
+  if (_garbage_pending.load(std::memory_order_seq_cst) &&
+      snapshot <= _oldest.load(std::memory_order_seq_cst)) {
     RequestCollect();
   }
 }
@@ -351,14 +351,14 @@ duckdb::transaction_t Transactions::RefreshOldest() {
   });
   auto cached = _oldest.load(std::memory_order_relaxed);
   while (cached < oldest && !_oldest.compare_exchange_weak(
-                              cached, oldest, std::memory_order_release,
-                              std::memory_order_relaxed)) {
+                              cached, oldest, std::memory_order_seq_cst)) {
   }
   return std::max(cached, oldest);
 }
 
 void Transactions::GarbageQueued() noexcept {
   _garbage_queued.fetch_add(1, std::memory_order_release);
+  _garbage_pending.store(true, std::memory_order_seq_cst);
 }
 
 void Transactions::RequestCollect() noexcept {
@@ -411,21 +411,27 @@ void Transactions::CollectGarbage() {
   }
   _garbage_seen.store(_garbage_queued.load(std::memory_order_acquire),
                       std::memory_order_relaxed);
-  _garbage_pending.store(false, std::memory_order_relaxed);
-  const auto oldest = RefreshOldest();
-  Collect(oldest);
-  search::CleanupReleased(oldest);
-  const auto running = RunningSnapshots();
-  search::PruneVersions(running.snapshots, running.published);
-  AdvanceEpoch();
-  search::FreeVersions();
-  bool pending = search::ReleasedPending();
-  if (!pending) {
-    absl::MutexLock lock{&_garbage_mutex};
-    pending = !_garbage.empty();
-  }
-  if (pending) {
-    _garbage_pending.store(true, std::memory_order_relaxed);
+  for (auto oldest = RefreshOldest();;) {
+    Collect(oldest);
+    search::CleanupReleased(oldest);
+    const auto running = RunningSnapshots();
+    search::PruneVersions(running.snapshots, running.published);
+    AdvanceEpoch();
+    search::FreeVersions();
+    bool pending = search::ReleasedPending();
+    if (!pending) {
+      absl::MutexLock lock{&_garbage_mutex};
+      pending = !_garbage.empty();
+    }
+    _garbage_pending.store(pending, std::memory_order_seq_cst);
+    if (!pending) {
+      return;
+    }
+    const auto again = RefreshOldest();
+    if (again <= oldest) {
+      return;
+    }
+    oldest = again;
   }
 }
 

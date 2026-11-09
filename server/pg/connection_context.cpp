@@ -278,8 +278,8 @@ void ConnectionContext::ReleaseSnapshot() noexcept {
   if (snapshot == catalog::kNoSnapshot) {
     return;
   }
-  _slot.held.store(catalog::kNoSnapshot, std::memory_order_release);
-  _slot.snapshot.store(catalog::kNoSnapshot, std::memory_order_release);
+  _slot.held.store(catalog::kNoSnapshot, std::memory_order_seq_cst);
+  _slot.snapshot.store(catalog::kNoSnapshot, std::memory_order_seq_cst);
   catalog::Transactions::Get().Ended(snapshot);
 }
 

@@ -349,6 +349,7 @@ class Table final {
   };
 
   static constexpr size_t kMinGarbageBytes = size_t{1} << 20;
+  static constexpr size_t kStaleStamps = 64;
 
   const TableVersion& Head() const noexcept {
     return *_head.load(std::memory_order_acquire);

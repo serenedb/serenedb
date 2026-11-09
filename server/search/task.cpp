@@ -67,6 +67,8 @@ constexpr Clock::duration kPoll = std::chrono::milliseconds{100};
 // Upper bound for the empty-compaction backoff: don't hammer compaction while
 // the index is idle, but resume promptly once work appears.
 constexpr Clock::duration kMaxCompactionBackoff = std::chrono::seconds{30};
+constexpr double kBusySingletonRemovals = 0.2;
+constexpr double kBusyLargestShare = 0.5;
 
 Clock::duration ToDuration(size_t msec) noexcept {
   return std::chrono::milliseconds{msec};
@@ -80,8 +82,8 @@ bool ShouldStop() noexcept {
 // target from its WITH-configured settings. `small` reduces the merge byte
 // budget when the global slot gate is nearly full so the pool keeps draining
 // under occupancy backpressure.
-irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
-                                     bool small) {
+irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings, bool small,
+                                     bool idle) {
   irs::index_utils::CompactionTier tier;
   tier.max_segments = settings.compaction_max_segments;
   tier.max_segments_bytes = settings.compaction_max_segments_bytes;
@@ -89,6 +91,10 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
   if (small) {
     tier.max_segments_bytes =
       std::max(2 * tier.floor_segment_bytes, tier.max_segments_bytes / 2);
+  }
+  if (!idle) {
+    tier.min_singleton_removals = kBusySingletonRemovals;
+    tier.max_largest_share = kBusyLargestShare;
   }
   return irs::index_utils::MakePolicy(tier);
 }
@@ -152,31 +158,32 @@ auto DoCompaction(std::shared_ptr<Store> idx, irs::CompactionPolicy policy,
 // the slot would leak into the gate count -- fail fast instead.
 std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   BackgroundScheduler& s, SearchEngine& engine,
-  const std::weak_ptr<Store>& weak) noexcept {
+  const std::weak_ptr<Store>& weak, bool idle) noexcept {
   std::vector<yaclib::FutureOn<bool>> runs;
   while (!ShouldStop() && !engine.IsBackupActive() &&
          engine.TryAcquireCompaction()) {
     const bool small = engine.FreeCompactionSlots() == 0;
-    runs.push_back(s.Run([&engine, weak, small]() -> yaclib::Future<bool> {
-      if (ShouldStop() || engine.IsBackupActive()) {
-        engine.ReleaseCompaction();
-        return yaclib::MakeFuture(false);
-      }
-      auto idx = weak.lock();
-      if (!idx) {
-        engine.ReleaseCompaction();
-        return yaclib::MakeFuture(false);
-      }
-      SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-      SDB_WAIT_ON_FAILURE("pause_compaction_run");
-      const auto& settings = idx->GetTasksSettings();
-      if (settings.compaction_interval_msec == 0) {
-        engine.ReleaseCompaction();
-        return yaclib::MakeFuture(false);
-      }
-      auto policy = MakeTierPolicy(settings, small);
-      return DoCompaction(std::move(idx), std::move(policy), engine);
-    }));
+    runs.push_back(
+      s.Run([&engine, weak, small, idle]() -> yaclib::Future<bool> {
+        if (ShouldStop() || engine.IsBackupActive()) {
+          engine.ReleaseCompaction();
+          return yaclib::MakeFuture(false);
+        }
+        auto idx = weak.lock();
+        if (!idx) {
+          engine.ReleaseCompaction();
+          return yaclib::MakeFuture(false);
+        }
+        SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+        SDB_WAIT_ON_FAILURE("pause_compaction_run");
+        const auto& settings = idx->GetTasksSettings();
+        if (settings.compaction_interval_msec == 0) {
+          engine.ReleaseCompaction();
+          return yaclib::MakeFuture(false);
+        }
+        auto policy = MakeTierPolicy(settings, small, idle);
+        return DoCompaction(std::move(idx), std::move(policy), engine);
+      }));
   }
   return runs;
 }
@@ -203,16 +210,18 @@ Targets& GetTargets() {
   return targets;
 }
 
-void SettleIfIdle(Target& target) {
+bool SettleIfIdle(Target& target) {
   const auto store = target.store.lock();
   if (!store) {
-    return;
+    return false;
   }
   const auto write = store->LastWrite();
-  if (write == target.last_write && store->Settle()) {
+  const bool idle = write == target.last_write;
+  if (idle && store->Settle()) {
     GetTargets().settle_log.store(true, std::memory_order_release);
   }
   target.last_write = write;
+  return idle;
 }
 
 yaclib::Future<> Compact(std::shared_ptr<Target> target) {
@@ -222,8 +231,8 @@ yaclib::Future<> Compact(std::shared_ptr<Target> target) {
   bool produced = false;
   try {
     if (!ShouldStop()) {
-      SettleIfIdle(*target);
-      auto runs = LaunchCompactionFanout(s, engine, target->store);
+      const bool idle = SettleIfIdle(*target);
+      auto runs = LaunchCompactionFanout(s, engine, target->store, idle);
       if (!runs.empty()) {
         co_await yaclib::Await(runs.begin(), runs.end());
         for (auto& run : runs) {

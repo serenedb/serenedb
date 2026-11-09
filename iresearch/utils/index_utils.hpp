@@ -80,6 +80,8 @@ struct CompactionTier {
   size_t floor_segment_bytes = size_t(2) * (1 << 20);
   // filter out candidates with score less than min_score
   double_t min_score = 0.;
+  double_t min_singleton_removals = 0.;
+  double_t max_largest_share = 1.;
 };
 
 CompactionPolicy MakePolicy(const CompactionTier& options);

@@ -21,10 +21,13 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <iresearch/index/composite_reader_impl.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <vector>
 
 #include "tests_shared.hpp"
 
@@ -793,6 +796,78 @@ TEST(CompactionTierTest, Singleton) {
       ASSERT_TRUE(candidates.empty());
     }
   }
+}
+
+TEST(CompactionTierTest, SingletonWaitsForEnoughRemovals) {
+  irs::index_utils::CompactionTier options;
+  options.floor_segment_bytes = 1;
+  options.max_segments = std::numeric_limits<size_t>::max();
+  options.min_segments = 1;
+  options.max_segments_bytes = std::numeric_limits<size_t>::max();
+  options.min_singleton_removals = 0.2;
+  auto policy = irs::index_utils::MakePolicy(options);
+
+  struct Case {
+    irs::doc_id_t live;
+    bool rewritten;
+  };
+  for (const auto& c :
+       {Case{99, false}, Case{81, false}, Case{80, true}, Case{10, true}}) {
+    SCOPED_TRACE(c.live);
+    irs::CompactingSegments compacting_segments;
+    irs::IndexMeta meta;
+    AddSegment(meta, "0", 100, c.live, 150);
+    IndexReaderMock reader{meta};
+    irs::Compaction candidates;
+    policy(candidates, reader, compacting_segments);
+    if (c.rewritten) {
+      AssertCandidates(reader, {0}, candidates);
+    } else {
+      ASSERT_TRUE(candidates.empty());
+    }
+  }
+
+  irs::IndexMeta meta;
+  AddSegment(meta, "0", 100, 99, 150);
+  AddSegment(meta, "1", 100, 100, 150);
+  IndexReaderMock reader{meta};
+  irs::CompactingSegments compacting_segments;
+  irs::Compaction candidates;
+  policy(candidates, reader, compacting_segments);
+  AssertCandidates(reader, {0, 1}, candidates);
+}
+
+TEST(CompactionTierTest, LargestShareKeepsBigSegmentsOutOfSmallMerges) {
+  irs::index_utils::CompactionTier options;
+  options.floor_segment_bytes = 10;
+  options.max_segments = 10;
+  options.min_segments = 1;
+  options.max_segments_bytes = std::numeric_limits<size_t>::max();
+  const auto merged = [&](std::vector<size_t> sizes) {
+    irs::IndexMeta meta;
+    for (size_t i = 0; i != sizes.size(); ++i) {
+      AddSegment(meta, std::to_string(i), 100, 100, sizes[i]);
+    }
+    IndexReaderMock reader{meta};
+    irs::CompactingSegments compacting_segments;
+    irs::Compaction candidates;
+    irs::index_utils::MakePolicy(options)(candidates, reader,
+                                          compacting_segments);
+    sizes.clear();
+    for (const auto* candidate : candidates) {
+      sizes.push_back(candidate->Meta().byte_size);
+    }
+    absl::c_sort(sizes);
+    return sizes;
+  };
+  using Sizes = std::vector<size_t>;
+  EXPECT_EQ((Sizes{30, 710}), merged({30, 710}));
+  options.max_largest_share = 0.5;
+  EXPECT_EQ((Sizes{}), merged({30, 710}));
+  EXPECT_EQ((Sizes{30, 30}), merged({30, 30, 710}));
+  EXPECT_EQ((Sizes{500, 500}), merged({500, 500}));
+  EXPECT_EQ((Sizes{300, 400, 500}), merged({300, 400, 500}));
+  EXPECT_EQ((Sizes{1, 2, 3}), merged({1, 2, 3, 700}));
 }
 
 TEST(CompactionTierTest, Defaults) {

@@ -1,0 +1,33 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE sidd (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 50);
+
+
+statement ok
+INSERT INTO sidd SELECT i, 'row ' || i FROM range(30000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sidd;
+
+
+statement ok
+DELETE FROM sidd WHERE id < 10;
+
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT value FROM sdb_metrics WHERE metric = 'num_docs' AND relation_id = 'sidd'::regclass) AS docs,
+       (SELECT value FROM sdb_metrics WHERE metric = 'num_live_docs' AND relation_id = 'sidd'::regclass) AS live,
+       (SELECT value FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = 'sidd'::regclass) AS segments;
+----
+docs	live	segments
+29990	29990	1
+
+
+query
+SELECT count(*) AS n, min(id) AS lo FROM sidd;
+----
+n	lo
+29990	10

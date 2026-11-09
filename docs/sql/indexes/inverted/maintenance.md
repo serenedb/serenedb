@@ -45,6 +45,8 @@ The session settings of the same names hold the defaults a new table or index ta
 
 The same background task settles a table that received no writes since its previous run: it writes the rows the table holds in memory to segments and merges them, so a table left alone ends up in a few large segments.
 
+While a table receives writes, compaction keeps the bytes it rewrites low: a merge never takes a segment larger than all the others it merges together, so small segments merge with each other until they reach the size of the large ones, and a segment is rewritten on its own to drop its deleted rows only once a fifth of its rows are deleted. A steady stream of writes therefore does not keep rewriting large segments. A table left alone merges its segments without these limits and drops all of its deleted rows.
+
 - **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-table-options) for a table and `ALTER INDEX ... SET` for an index on a view. Segments are then merged only when you ask for it, the table is not settled in the background, and the rows it holds in memory reach its segments when they grow to [`segment_memory_max`](#write-memory), at a checkpoint or with `VACUUM (FLUSH_TABLE)`.
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
 - **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` -- see [below](#manual-maintenance-with-vacuum).

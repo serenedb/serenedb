@@ -69,6 +69,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <iresearch/utils/utf8_character_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
@@ -1465,30 +1466,7 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWithLike(
                 duckdb::Value(std::move(pattern)))));
 }
 
-const irs::containers::FlatHashMap<int32_t, std::vector<int32_t>>&
-LowercasePreimages() {
-  static const auto kPreimages = [] {
-    irs::containers::FlatHashMap<int32_t, std::vector<int32_t>> preimages;
-    for (int32_t cp = 0; cp <= 0x10FFFF; ++cp) {
-      if (cp >= 0xD800 && cp <= 0xDFFF) {
-        continue;
-      }
-      const auto lower = duckdb::Utf8Proc::CodepointToLower(cp);
-      if (lower == cp) {
-        continue;
-      }
-      auto& members = preimages[lower];
-      if (members.empty()) {
-        members.push_back(lower);
-      }
-      members.push_back(cp);
-    }
-    return preimages;
-  }();
-  return kPreimages;
-}
-
-void AppendRegexpCodepoint(int32_t cp, std::string& out) {
+void AppendRegexpCodepoint(uint32_t cp, std::string& out) {
   if (cp < 0x80 && absl::ascii_isalnum(static_cast<unsigned char>(cp))) {
     out.push_back(static_cast<char>(cp));
     return;
@@ -1496,17 +1474,21 @@ void AppendRegexpCodepoint(int32_t cp, std::string& out) {
   absl::StrAppend(&out, "\\x{", absl::Hex(cp), "}");
 }
 
-void AppendCaseless(int32_t cp, std::string& out) {
-  const auto lower = duckdb::Utf8Proc::CodepointToLower(cp);
-  const auto& preimages = LowercasePreimages();
-  const auto it = preimages.find(lower);
-  if (it == preimages.end()) {
+void AppendCaseless(uint32_t cp, std::string& out) {
+  const auto lower = irs::utf8_utils::CharToLowerSimple(cp);
+  const auto lowers_to = [&](irs::utf8_utils::CaseMap m) {
+    return m.to == lower;
+  };
+  if (!absl::c_any_of(irs::utf8_utils::kSimpleLowerTable, lowers_to)) {
     AppendRegexpCodepoint(lower, out);
     return;
   }
   out.push_back('[');
-  for (const auto member : it->second) {
-    AppendRegexpCodepoint(member, out);
+  AppendRegexpCodepoint(lower, out);
+  for (const auto m : irs::utf8_utils::kSimpleLowerTable) {
+    if (lowers_to(m)) {
+      AppendRegexpCodepoint(m.cp, out);
+    }
   }
   out.push_back(']');
 }

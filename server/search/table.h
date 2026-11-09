@@ -69,6 +69,7 @@ struct InsertRange {
 struct DeleteGeneration {
   Tick tick = 0;
   std::shared_ptr<const irs::DocumentMask> mask;
+  std::shared_ptr<const irs::SegmentReaderImpl> reader;
 };
 
 irs::doc_id_t HotDocs(const irs::IndexWriter::Transaction& trx) noexcept;

@@ -124,7 +124,7 @@ A commit is durable once the server's write-ahead log holds it; one log serves e
 
 A server left idle settles on its own: once every table has written the rows it held in memory to segments (see [Background compaction](#background-compaction)) and nothing commits, the server removes the log files it no longer needs, so the log stays small and a restart replays little.
 
-A query that uses an inverted index sees every row committed before it, including the rows a table still holds in memory: it writes those rows to segments first, without adding to the log. These segments are made durable by the next checkpoint or replaced by compaction; after a crash, their rows are replayed from the log.
+A query sees every row committed before it, including the rows a table still holds in memory. A query that searches an inverted index -- full-text matching, relevance scoring, vector search or reading its terms -- writes those rows to segments first, without adding to the log; any other query reads them in memory. These segments are made durable by the next checkpoint or replaced by compaction; after a crash, their rows are replayed from the log.
 
 ## Session settings {#session-settings}
 

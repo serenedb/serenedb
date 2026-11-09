@@ -74,16 +74,32 @@ irs::doc_id_t VisibleEnd(const TableUnit& unit, Tick snapshot) noexcept {
   return end;
 }
 
-const irs::DocumentMask* DeletesAt(const TableUnit& unit,
-                                   Tick snapshot) noexcept {
-  const irs::DocumentMask* mask = nullptr;
+const DeleteGeneration* GenerationAt(const TableUnit& unit,
+                                     Tick snapshot) noexcept {
+  const DeleteGeneration* seen = nullptr;
   for (const auto& generation : unit.deletes) {
     if (generation.tick > snapshot) {
       break;
     }
-    mask = generation.mask.get();
+    seen = &generation;
   }
-  return mask;
+  return seen;
+}
+
+const irs::DocumentMask* DeletesAt(const TableUnit& unit,
+                                   Tick snapshot) noexcept {
+  const auto* generation = GenerationAt(unit, snapshot);
+  return generation ? generation->mask.get() : nullptr;
+}
+
+std::shared_ptr<const irs::SegmentReaderImpl> MaskedReader(
+  const TableUnit& unit, const std::shared_ptr<const irs::DocumentMask>& mask) {
+  if (!unit.reader) {
+    return nullptr;
+  }
+  return unit.reader->docs_mask() == mask.get()
+           ? unit.reader
+           : unit.reader->WithDocsMask(mask);
 }
 
 Tick SeenAt(const TableState& state, Tick snapshot) noexcept {
@@ -114,11 +130,13 @@ const irs::DocumentMask* LatestDeletes(const TableUnit& unit) noexcept {
 void PushDeletes(TableUnit& unit, Tick tick, irs::DocumentMaskBuilder&& mask) {
   auto finished =
     std::make_shared<const irs::DocumentMask>(std::move(mask).Finish());
+  auto reader = MaskedReader(unit, finished);
   if (!unit.deletes.empty() && unit.deletes.back().tick == tick) {
     unit.deletes.back().mask = std::move(finished);
+    unit.deletes.back().reader = std::move(reader);
     return;
   }
-  unit.deletes.push_back({tick, std::move(finished)});
+  unit.deletes.push_back({tick, std::move(finished), std::move(reader)});
 }
 
 void AddDeletes(TableUnit& unit, Tick tick, const irs::DocumentMask& docs) {
@@ -411,9 +429,14 @@ OwnSegment Table::OpenSegment(std::string meta_file) const {
 irs::DirectoryReader Table::Assemble(
   const std::shared_ptr<const TableState>& state, Tick snapshot,
   const OwnWrites& own, Scope scope, bool searchable) const {
-  if (searchable || scope != Scope::All || !own.removals.empty() ||
-      !own.segments.empty() || own.truncated ||
-      (own.rows != nullptr && own.rows->Count() != 0)) {
+  const auto hot_visible = [&] {
+    return absl::c_any_of(state->units, [&](const auto& unit) {
+      return unit->hot && VisibleEnd(*unit, snapshot) != 0;
+    });
+  };
+  if (scope != Scope::All || !own.removals.empty() || !own.segments.empty() ||
+      own.truncated || (own.rows != nullptr && own.rows->Count() != 0) ||
+      (searchable && hot_visible())) {
     return Build(*state, snapshot, own, scope, searchable);
   }
   const auto seen = SeenAt(*state, snapshot);
@@ -496,10 +519,13 @@ irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
       add(cooled->filename, with_own(unit->id, &mask, visible, cooled->reader));
       continue;
     }
-    const auto base =
-      unit->hot ? unit->hot->Reader(db, unit->docs) : unit->reader;
+    const auto* generation = GenerationAt(*unit, snapshot);
+    const auto base = unit->hot ? unit->hot->Reader(db, unit->docs)
+                      : generation && generation->reader ? generation->reader
+                                                         : unit->reader;
     add(unit->segment.filename,
-        with_own(unit->id, DeletesAt(*unit, snapshot), visible, base));
+        with_own(unit->id, generation ? generation->mask.get() : nullptr,
+                 visible, base));
   }
   for (const auto& segment : own.segments) {
     add(segment.segment.filename,
@@ -681,7 +707,7 @@ bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
       irs::directory_utils::Reference(_dir, segment.segment.filename);
     unit->inserts.push_back({unit->docs, tick});
     if (auto mask = segment.reader->SharedDocsMask()) {
-      unit->deletes.push_back({tick, std::move(mask)});
+      unit->deletes.push_back({tick, std::move(mask), segment.reader});
     }
     unit->segment = std::move(segment.segment);
     unit->reader = std::move(segment.reader);
@@ -778,9 +804,11 @@ void Table::Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
     unit->meta_ref =
       irs::directory_utils::Reference(_dir, segment.segment.filename);
     unit->inserts.push_back({unit->docs, visible});
+    unit->segment = std::move(segment.segment);
+    unit->reader = std::move(segment.reader);
     for (size_t k = 0; k < ticks.size(); ++k) {
       irs::DocumentMaskBuilder mask;
-      if (const auto* base = segment.reader->docs_mask()) {
+      if (const auto* base = unit->reader->docs_mask()) {
         mask.Merge(*base);
       }
       if (const auto it = carried[k].find(unit->id); it != carried[k].end()) {
@@ -790,8 +818,6 @@ void Table::Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
         PushDeletes(*unit, ticks[k], std::move(mask));
       }
     }
-    unit->segment = std::move(segment.segment);
-    unit->reader = std::move(segment.reader);
     CollectStamps(*unit, oldest);
     units.push_back(std::move(unit));
   }
@@ -916,6 +942,9 @@ void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
       }
       unit->segment = std::move(written.segment);
       unit->reader = std::move(written.reader);
+      for (auto& generation : unit->deletes) {
+        generation.reader = MaskedReader(*unit, generation.mask);
+      }
       *it = std::move(unit);
       Publish(std::move(next));
     }

@@ -274,6 +274,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   };
 
   void EndTransaction() noexcept;
+  void ReleaseSnapshot() noexcept;
 
   void OnSet(std::string_view name, bool is_local, duckdb::Value old_value);
   void RestoreValue(std::string_view key, duckdb::Value value) noexcept;
@@ -297,6 +298,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   uint64_t _catalog_epoch = 0;
   uint64_t _settings_version = 0;
   irs::containers::NodeHashMap<std::string, TxnVariable> _variables;
+  catalog::SessionSlot& _slot;
   absl::Mutex _transaction_mutex;
   std::shared_ptr<catalog::SessionTransaction> _transaction;
   duckdb::transaction_t _transaction_owner = duckdb::MAX_TRANSACTION_ID;

@@ -33,5 +33,6 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs);
 
 void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released);
 void CleanupReleased(Tick oldest);
+bool ReleasedPending() noexcept;
 
 }  // namespace sdb::search

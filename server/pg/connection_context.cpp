@@ -134,7 +134,8 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
     _login_role_id{identity.role},
     _session_role_id{identity.role},
     _effective_role_id{identity.role},
-    _progress{std::make_shared<pg::ProgressSource>()} {
+    _progress{std::make_shared<pg::ProgressSource>()},
+    _slot{catalog::Transactions::Get().Join()} {
   session_user = _user;
   _progress->pid = _backend_pid;
   _progress->datid = static_cast<int64_t>(_database_id);
@@ -174,6 +175,8 @@ ConnectionContext::~ConnectionContext() {
   ConsumeNotices([](auto&) {});
   backup::BackupSession::Instance().AbortIfOwnedBy(this);
   pg::ProgressRegistry::Instance().CollectTransactions(*_progress);
+  ReleaseSnapshot();
+  catalog::Transactions::Get().Leave(_slot);
 }
 
 std::string ConnectionContext::EffectiveUserName() {
@@ -247,8 +250,9 @@ ConnectionContext::AcquireTransaction() {
   absl::MutexLock lock{&_transaction_mutex};
   if (!_transaction || _transaction_owner != owner) {
     SDB_PARK_ONCE_ON_FAILURE("session_transaction_before_snapshot");
+    ReleaseSnapshot();
     _transaction = std::make_shared<catalog::SessionTransaction>(
-      catalog::Transactions::Get().NextId());
+      catalog::Transactions::Get().NextId(), _slot);
     _transaction_owner = owner;
   }
   return _transaction;
@@ -268,7 +272,19 @@ bool ConnectionContext::TryDropSearchReader(duckdb::idx_t database_id,
   return true;
 }
 
+void ConnectionContext::ReleaseSnapshot() noexcept {
+  const auto snapshot = std::min(_slot.snapshot.load(std::memory_order_relaxed),
+                                 _slot.held.load(std::memory_order_relaxed));
+  if (snapshot == catalog::kNoSnapshot) {
+    return;
+  }
+  _slot.held.store(catalog::kNoSnapshot, std::memory_order_release);
+  _slot.snapshot.store(catalog::kNoSnapshot, std::memory_order_release);
+  catalog::Transactions::Get().Ended(snapshot);
+}
+
 void ConnectionContext::EndTransaction() noexcept {
+  ReleaseSnapshot();
   _transaction.reset();
   _transaction_owner = duckdb::MAX_TRANSACTION_ID;
   _had_query_in_transaction = false;

@@ -618,7 +618,7 @@ ResultWithTime Store::CleanupUnsafe() {
   }
   const auto begin = std::chrono::steady_clock::now();
   if (_table) {
-    _table->Collect(catalog::Transactions::Get().OldestSnapshot());
+    _table->Collect(catalog::Transactions::Get().RefreshOldest());
   }
   auto result = _durability.Cleanup(*_dir);
   SDB_PARK_ONCE_ON_FAILURE("search_cleanup_after_remove");

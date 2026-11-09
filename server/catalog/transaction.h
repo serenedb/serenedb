@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/container/btree_map.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
@@ -37,6 +36,7 @@
 #include <duckdb/transaction/transaction.hpp>
 #include <duckdb/transaction/transaction_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -80,10 +80,19 @@ enum class SessionState : uint8_t {
   RolledBack,
 };
 
+inline constexpr duckdb::transaction_t kNoSnapshot =
+  std::numeric_limits<duckdb::transaction_t>::max();
+
+struct alignas(64) SessionSlot {
+  std::atomic<duckdb::transaction_t> snapshot{kNoSnapshot};
+  std::atomic<duckdb::transaction_t> held{kNoSnapshot};
+  std::atomic<bool> left{false};
+  SessionSlot* next = nullptr;
+};
+
 class SessionTransaction final {
  public:
-  explicit SessionTransaction(duckdb::transaction_t id);
-  ~SessionTransaction();
+  SessionTransaction(duckdb::transaction_t id, SessionSlot& slot);
 
   duckdb::transaction_t Id() const noexcept { return _id; }
 
@@ -154,6 +163,7 @@ class SessionTransaction final {
   void Release() noexcept;
 
   duckdb::transaction_t _id;
+  SessionSlot* _slot;
   std::atomic<duckdb::transaction_t> _snapshot;
   std::atomic<duckdb::idx_t> _catalog_epoch;
   std::optional<duckdb::transaction_t> _held;
@@ -216,11 +226,18 @@ class Transactions final {
     return _checkpoints.Close(context);
   }
 
-  duckdb::transaction_t Begin();
-  void Hold(duckdb::transaction_t snapshot);
-  duckdb::transaction_t Advance(duckdb::transaction_t snapshot);
-  void End(duckdb::transaction_t snapshot);
-  duckdb::transaction_t OldestSnapshot() ABSL_LOCKS_EXCLUDED(_snapshots_mutex);
+  SessionSlot& Join();
+  void Leave(SessionSlot& slot) noexcept;
+  duckdb::transaction_t Acquire(
+    std::atomic<duckdb::transaction_t>& slot) const noexcept;
+  void Ended(duckdb::transaction_t snapshot) noexcept;
+
+  duckdb::transaction_t Oldest() const noexcept {
+    return _oldest.load(std::memory_order_acquire);
+  }
+  duckdb::transaction_t RefreshOldest() ABSL_LOCKS_EXCLUDED(_walk_mutex);
+  void GarbageQueued() noexcept;
+  void CollectGarbage();
   void ExpireSet(std::shared_ptr<const char>& alive)
     ABSL_LOCKS_EXCLUDED(_collect_mutex);
 
@@ -247,17 +264,24 @@ class Transactions final {
   void MaintainLog(duckdb::ClientContext& context, Lsn end);
   void TruncateInBackground(bool switch_chunk);
 
-  duckdb::transaction_t Oldest() const
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_snapshots_mutex);
-  void Release(duckdb::transaction_t snapshot)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_snapshots_mutex);
-  void Collect();
+  static constexpr uint64_t kCollectEvery = 1024;
 
+  void RequestCollect() noexcept;
+  void AfterCommit(duckdb::transaction_t commit) noexcept;
+  void Collect(duckdb::transaction_t oldest);
+
+  std::atomic<SessionSlot*> _slots{nullptr};
+  std::atomic<uint64_t> _joined{0};
+  absl::Mutex _walk_mutex;
+  std::atomic<duckdb::transaction_t> _oldest{
+    duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
+  std::atomic<uint64_t> _garbage_queued{0};
+  std::atomic<uint64_t> _garbage_seen{0};
+  std::atomic<bool> _garbage_pending{false};
+  std::atomic<bool> _collect_requested{false};
   absl::Mutex _collect_mutex;
-  absl::Mutex _snapshots_mutex;
-  absl::btree_map<duckdb::transaction_t, uint32_t> _snapshots
-    ABSL_GUARDED_BY(_snapshots_mutex);
-  std::deque<Garbage> _garbage ABSL_GUARDED_BY(_snapshots_mutex);
+  absl::Mutex _garbage_mutex;
+  std::deque<Garbage> _garbage ABSL_GUARDED_BY(_garbage_mutex);
   absl::Mutex _commit_mutex;
   duckdb::transaction_t _reserved_commit ABSL_GUARDED_BY(_commit_mutex) =
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP;
@@ -278,8 +302,10 @@ class Transactions final {
 
 class CommittedView final {
  public:
-  CommittedView() : _snapshot{Transactions::Get().Begin()} {}
-  ~CommittedView() { Transactions::Get().End(_snapshot); }
+  CommittedView()
+    : _slot{Transactions::Get().Join()},
+      _snapshot{Transactions::Get().Acquire(_slot.snapshot)} {}
+  ~CommittedView() { Transactions::Get().Leave(_slot); }
   CommittedView(const CommittedView&) = delete;
   CommittedView& operator=(const CommittedView&) = delete;
 
@@ -295,6 +321,7 @@ class CommittedView final {
   }
 
  private:
+  SessionSlot& _slot;
   duckdb::transaction_t _snapshot;
 };
 

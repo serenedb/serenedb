@@ -98,18 +98,13 @@ void CheckDependencies(SessionTransaction& transaction) {
 
 }  // namespace
 
-SessionTransaction::SessionTransaction(duckdb::transaction_t id)
+SessionTransaction::SessionTransaction(duckdb::transaction_t id,
+                                       SessionSlot& slot)
   : _id{id},
-    _snapshot{Transactions::Get().Begin()},
+    _slot{&slot},
+    _snapshot{Transactions::Get().Acquire(slot.snapshot)},
     _catalog_epoch{Transactions::Get().CatalogEpoch(Snapshot())},
     _search{id} {}
-
-SessionTransaction::~SessionTransaction() {
-  if (_held) {
-    Transactions::Get().End(*_held);
-  }
-  Transactions::Get().End(Snapshot());
-}
 
 void SessionTransaction::Refresh() {
   if (HasChanges()) {
@@ -118,13 +113,18 @@ void SessionTransaction::Refresh() {
   _search.NoteConflicts(Snapshot());
   if (!_held && !_search.Empty()) {
     _held = Snapshot();
-    Transactions::Get().Hold(*_held);
+    _slot->held.store(*_held, std::memory_order_seq_cst);
   }
   auto& transactions = Transactions::Get();
-  const auto snapshot = transactions.Advance(Snapshot());
+  const auto previous = Snapshot();
+  if (transactions.LastCommit() == previous) {
+    return;
+  }
+  const auto snapshot = transactions.Acquire(_slot->snapshot);
   _snapshot.store(snapshot, std::memory_order_release);
   _catalog_epoch.store(transactions.CatalogEpoch(snapshot),
                        std::memory_order_release);
+  transactions.Ended(previous);
 }
 
 void ApplyLsnUpdate(const LsnUpdate& update) {
@@ -180,68 +180,134 @@ Transactions& Transactions::Get() {
   return gTransactions;
 }
 
-duckdb::transaction_t Transactions::Begin() {
-  absl::MutexLock lock{&_snapshots_mutex};
-  const auto snapshot = LastCommit();
-  ++_snapshots[snapshot];
-  return snapshot;
+SessionSlot& Transactions::Join() {
+  auto* slot = new SessionSlot;
+  slot->next = _slots.load(std::memory_order_relaxed);
+  while (!_slots.compare_exchange_weak(
+    slot->next, slot, std::memory_order_release, std::memory_order_relaxed)) {
+  }
+  if ((_joined.fetch_add(1, std::memory_order_relaxed) & (kCollectEvery - 1)) ==
+      kCollectEvery - 1) {
+    RequestCollect();
+  }
+  return *slot;
 }
 
-void Transactions::Hold(duckdb::transaction_t snapshot) {
-  absl::MutexLock lock{&_snapshots_mutex};
-  ++_snapshots[snapshot];
+void Transactions::Leave(SessionSlot& slot) noexcept {
+  slot.snapshot.store(kNoSnapshot, std::memory_order_release);
+  slot.held.store(kNoSnapshot, std::memory_order_release);
+  slot.left.store(true, std::memory_order_release);
 }
 
-duckdb::transaction_t Transactions::Advance(duckdb::transaction_t snapshot) {
-  duckdb::transaction_t oldest = 0;
-  {
-    absl::MutexLock lock{&_snapshots_mutex};
-    const auto latest = LastCommit();
-    if (latest == snapshot) {
+duckdb::transaction_t Transactions::Acquire(
+  std::atomic<duckdb::transaction_t>& slot) const noexcept {
+  auto snapshot = _last_commit.load(std::memory_order_acquire);
+  for (;;) {
+    slot.store(snapshot, std::memory_order_seq_cst);
+    const auto published = _last_commit.load(std::memory_order_seq_cst);
+    if (published == snapshot) {
       return snapshot;
     }
-    ++_snapshots[latest];
-    Release(snapshot);
-    snapshot = latest;
-    oldest = Oldest();
+    snapshot = published;
   }
-  Collect();
+}
+
+void Transactions::Ended(duckdb::transaction_t snapshot) noexcept {
+  if (_garbage_pending.load(std::memory_order_relaxed) &&
+      snapshot <= Oldest()) {
+    RequestCollect();
+  }
+}
+
+duckdb::transaction_t Transactions::RefreshOldest() {
+  absl::MutexLock lock{&_walk_mutex};
+  auto oldest = _last_commit.load(std::memory_order_seq_cst);
+  SessionSlot* prev = nullptr;
+  auto* slot = _slots.load(std::memory_order_acquire);
+  while (slot) {
+    auto* next = slot->next;
+    if (!slot->left.load(std::memory_order_acquire)) {
+      oldest = std::min({oldest, slot->snapshot.load(std::memory_order_seq_cst),
+                         slot->held.load(std::memory_order_seq_cst)});
+    } else if (prev) {
+      prev->next = next;
+      delete slot;
+      slot = next;
+      continue;
+    } else if (auto* head = slot; _slots.compare_exchange_strong(
+                 head, next, std::memory_order_acq_rel,
+                 std::memory_order_acquire)) {
+      delete slot;
+      slot = next;
+      continue;
+    }
+    prev = slot;
+    slot = next;
+  }
+  auto cached = _oldest.load(std::memory_order_relaxed);
+  while (cached < oldest && !_oldest.compare_exchange_weak(
+                              cached, oldest, std::memory_order_release,
+                              std::memory_order_relaxed)) {
+  }
+  return std::max(cached, oldest);
+}
+
+void Transactions::GarbageQueued() noexcept {
+  _garbage_queued.fetch_add(1, std::memory_order_release);
+}
+
+void Transactions::RequestCollect() noexcept {
+  if (!BackgroundScheduler::gInstance ||
+      _collect_requested.load(std::memory_order_relaxed) ||
+      _collect_requested.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  try {
+    BackgroundScheduler::instance()
+      .Run([this] {
+        _collect_requested.store(false, std::memory_order_release);
+        try {
+          CollectGarbage();
+        } catch (const std::exception& e) {
+          SDB_WARN(GENERAL, "collecting garbage failed: ",
+                   duckdb::ErrorData{e}.RawMessage());
+        }
+      })
+      .Detach();
+  } catch (...) {
+    _collect_requested.store(false, std::memory_order_release);
+  }
+}
+
+void Transactions::CollectGarbage() {
+  _garbage_seen.store(_garbage_queued.load(std::memory_order_acquire),
+                      std::memory_order_relaxed);
+  _garbage_pending.store(false, std::memory_order_relaxed);
+  const auto oldest = RefreshOldest();
+  Collect(oldest);
   search::CleanupReleased(oldest);
-  return snapshot;
-}
-
-void Transactions::End(duckdb::transaction_t snapshot) {
-  duckdb::transaction_t oldest = 0;
-  {
-    absl::MutexLock lock{&_snapshots_mutex};
-    Release(snapshot);
-    oldest = Oldest();
+  bool pending = search::ReleasedPending();
+  if (!pending) {
+    absl::MutexLock lock{&_garbage_mutex};
+    pending = !_garbage.empty();
   }
-  Collect();
-  search::CleanupReleased(oldest);
-}
-
-duckdb::transaction_t Transactions::Oldest() const {
-  return _snapshots.empty() ? LastCommit() : _snapshots.begin()->first;
-}
-
-duckdb::transaction_t Transactions::OldestSnapshot() {
-  absl::MutexLock lock{&_snapshots_mutex};
-  return Oldest();
-}
-
-void Transactions::Release(duckdb::transaction_t snapshot) {
-  const auto it = _snapshots.find(snapshot);
-  SDB_ASSERT(it != _snapshots.end());
-  if (--it->second == 0) {
-    _snapshots.erase(it);
+  if (pending) {
+    _garbage_pending.store(true, std::memory_order_relaxed);
   }
 }
 
-void Transactions::Collect() {
+void Transactions::AfterCommit(duckdb::transaction_t commit) noexcept {
+  if (_garbage_queued.load(std::memory_order_relaxed) !=
+        _garbage_seen.load(std::memory_order_relaxed) ||
+      (commit & (kCollectEvery - 1)) == 0) {
+    RequestCollect();
+  }
+}
+
+void Transactions::Collect(duckdb::transaction_t oldest) {
   {
-    absl::MutexLock lock{&_snapshots_mutex};
-    if (_garbage.empty() || _garbage.front().commit > Oldest()) {
+    absl::MutexLock lock{&_garbage_mutex};
+    if (_garbage.empty() || _garbage.front().commit > oldest) {
       return;
     }
   }
@@ -251,8 +317,7 @@ void Transactions::Collect() {
     absl::MutexLock collect{&_collect_mutex};
     std::vector<Garbage> ready;
     {
-      absl::MutexLock lock{&_snapshots_mutex};
-      const auto oldest = Oldest();
+      absl::MutexLock lock{&_garbage_mutex};
       while (!_garbage.empty() && _garbage.front().commit <= oldest) {
         ready.push_back(std::move(_garbage.front()));
         _garbage.pop_front();
@@ -312,7 +377,7 @@ void Transactions::Commit(SessionTransaction& transaction,
       change.set->Commit(*change.version);
     }
     {
-      absl::MutexLock garbage{&_snapshots_mutex};
+      absl::MutexLock garbage{&_garbage_mutex};
       for (const auto& change : transaction.Changes()) {
         _garbage.push_back({
           .commit = commit,
@@ -329,7 +394,7 @@ void Transactions::Commit(SessionTransaction& transaction,
         change.version->Child().OnDrop();
       }
     }
-    writes.Apply(commit, OldestSnapshot(), range.begin);
+    writes.Apply(commit, Oldest(), range.begin);
     for (const auto& update : transaction.LsnUpdates()) {
       ApplyLsnUpdate(update);
     }
@@ -349,6 +414,10 @@ void Transactions::Commit(SessionTransaction& transaction,
   writes.BeforePublish();
   Publish(commit, true);
   writes.Finish();
+  if (!transaction.Changes().empty()) {
+    GarbageQueued();
+  }
+  AfterCommit(commit);
   std::vector<BaseCatalog*> catalogs;
   for (const auto& change : transaction.Changes()) {
     auto* catalog = &change.Subject().ParentCatalog().Cast<BaseCatalog>();
@@ -376,7 +445,7 @@ void Transactions::CommitStorage(
       range = _log->Reserve(record.size());
     }
     commit = ++_reserved_commit;
-    apply(commit, OldestSnapshot(), range.begin);
+    apply(commit, Oldest(), range.begin);
     end = range.end != 0 ? range.end : ReservedEnd();
     Enqueue(commit, end, false);
   }
@@ -387,6 +456,7 @@ void Transactions::CommitStorage(
     _log->Sync(end);
   }
   Publish(commit, false);
+  AfterCommit(commit);
 }
 
 void Transactions::CommitState(absl::FunctionRef<std::vector<uint8_t>()> build,
@@ -599,9 +669,7 @@ void SessionTransaction::Release() noexcept {
     _search_snapshots.clear();
   }
   _search.Abort();
-  if (_held) {
-    Transactions::Get().End(*std::exchange(_held, std::nullopt));
-  }
+  _held.reset();
   _on_commit.clear();
 }
 

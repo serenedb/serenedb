@@ -365,6 +365,11 @@ void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released) {
   SDB_ASSERT(queue.pending.empty() || queue.pending.back().tick <= released);
   queue.pending.push_back({.tick = released, .store = store});
   queue.next.store(queue.pending.front().tick, std::memory_order_release);
+  catalog::Transactions::Get().GarbageQueued();
+}
+
+bool ReleasedPending() noexcept {
+  return GetReleased().next.load(std::memory_order_acquire) != kAllApplied;
 }
 
 void CleanupReleased(Tick oldest) {

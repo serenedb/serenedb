@@ -22,9 +22,8 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
-#include <absl/synchronization/mutex.h>
-
+#include <atomic>
+#include <memory>
 #include <vector>
 
 #include "iresearch/index/composite_reader_impl.hpp"
@@ -65,6 +64,15 @@ class DirectoryReaderImpl final
  private:
   struct Init;
 
+  struct StatsSlot {
+    StatsSlot() = default;
+    StatsSlot(const StatsSlot&) = delete;
+    StatsSlot& operator=(const StatsSlot&) = delete;
+    ~StatsSlot() { delete stats.load(std::memory_order_relaxed); }
+
+    std::atomic<duckdb::BaseStatistics*> stats{nullptr};
+  };
+
   DirectoryReaderImpl(Init&& init, const Directory& dir,
                       const IndexReaderOptions& opts, DirectoryMeta&& meta,
                       ReadersType&& readers);
@@ -76,10 +84,8 @@ class DirectoryReaderImpl final
   FileRefs _file_refs;
   DirectoryMeta _meta;
   IndexReaderOptions _opts;
-  mutable absl::Mutex _stats_mutex;
-  mutable irs::containers::FlatHashMap<
-    field_id, duckdb::unique_ptr<duckdb::BaseStatistics>>
-    _column_stats ABSL_GUARDED_BY(_stats_mutex);
+  irs::containers::FlatHashMap<field_id, size_t> _column_slots;
+  std::unique_ptr<StatsSlot[]> _column_stats;
   irs::containers::FlatHashMap<std::pair<field_id, DictRef>, FieldTermRange>
     _term_ranges;
 };

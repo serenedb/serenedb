@@ -76,6 +76,7 @@ struct DirectoryReaderImpl::Init {
   FileRefs file_refs;
   uint64_t docs_count{};
   uint64_t live_docs_count{};
+  irs::containers::FlatHashMap<field_id, size_t> column_slots;
   irs::containers::FlatHashMap<std::pair<field_id, DictRef>, FieldTermRange>
     term_ranges;
 };
@@ -114,6 +115,12 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
            .docs = field->docs_count()});
       }
     }
+
+    if (const auto* col_reader = reader.GetColReader()) {
+      for (const auto& column : col_reader->Columns()) {
+        column_slots.try_emplace(column->Id(), column_slots.size());
+      }
+    }
   }
 
   if (has_segments_file) {
@@ -149,16 +156,22 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
 
 const duckdb::BaseStatistics* DirectoryReaderImpl::GetColumnStats(
   field_id field) const {
-  {
-    absl::ReaderMutexLock lock{&_stats_mutex};
-    if (const auto it = _column_stats.find(field); it != _column_stats.end()) {
-      return it->second.get();
-    }
+  const auto it = _column_slots.find(field);
+  if (it == _column_slots.end()) {
+    return nullptr;
+  }
+  auto& slot = _column_stats[it->second].stats;
+  if (auto* cached = slot.load(std::memory_order_acquire)) {
+    return cached;
   }
   auto merged = MergeColumnStats(field);
-  absl::MutexLock lock{&_stats_mutex};
-  return _column_stats.try_emplace(field, std::move(merged))
-    .first->second.get();
+  duckdb::BaseStatistics* installed = nullptr;
+  if (slot.compare_exchange_strong(installed, merged.get(),
+                                   std::memory_order_acq_rel,
+                                   std::memory_order_acquire)) {
+    return merged.release();
+  }
+  return installed;
 }
 
 duckdb::unique_ptr<duckdb::BaseStatistics>
@@ -242,6 +255,8 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
     _file_refs{std::move(init.file_refs)},
     _meta{std::move(meta)},
     _opts{opts},
+    _column_slots{std::move(init.column_slots)},
+    _column_stats{std::make_unique<StatsSlot[]>(_column_slots.size())},
     _term_ranges{std::move(init.term_ranges)} {}
 
 std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(

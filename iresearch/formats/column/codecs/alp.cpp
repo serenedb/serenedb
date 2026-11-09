@@ -37,7 +37,6 @@
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/planner/filter/zonemap_checker.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
-#include <duckdb/storage/compression/compression_segment_reader.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
@@ -49,6 +48,7 @@
 
 #include "iresearch/formats/column/codecs/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/segment_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -859,13 +859,13 @@ struct AlpVectorState {
 };
 
 struct AlpSegmentLayout {
-  duckdb::CompressionSegmentReader data;
+  SegmentReader data;
   duckdb::unsafe_array_ptr<const uint32_t> vector_offsets;
 };
 
 AlpSegmentLayout ReadAlpSegmentLayout(duckdb::const_data_ptr_t base, idx_t size,
                                       idx_t count) {
-  duckdb::CompressionSegmentReader reader{base, size, "ALP segment"};
+  SegmentReader reader{base, size, "ALP segment"};
   const auto metadata_end = reader.Read<uint32_t>();
   if (metadata_end < kHeaderSize) {
     ThrowAlpMetadataBeforeHeader();
@@ -890,8 +890,8 @@ uint32_t GetVectorOffset(const AlpSegmentLayout& layout, idx_t vector_index) {
   return layout.vector_offsets[layout.vector_offsets.size() - 1 - vector_index];
 }
 
-duckdb::CompressionSegmentReader GetVectorReader(const AlpSegmentLayout& layout,
-                                                 idx_t vector_index) {
+SegmentReader GetVectorReader(const AlpSegmentLayout& layout,
+                              idx_t vector_index) {
   const auto vector_start = GetVectorOffset(layout, vector_index);
   if (vector_start < kHeaderSize) {
     ThrowAlpVectorOffsetOutOfBounds();
@@ -944,8 +944,7 @@ void LoadVector(AlpScanState<T>& state, T* value_buffer) {
   vector_state.index = 0;
 
   const auto vector_index = state.total_value_count / kVectorSize;
-  duckdb::CompressionSegmentReader vector_reader =
-    GetVectorReader(state.layout, vector_index);
+  SegmentReader vector_reader = GetVectorReader(state.layout, vector_index);
   const idx_t vector_size =
     std::min<idx_t>(kVectorSize, state.count - state.total_value_count);
 
@@ -1098,8 +1097,7 @@ void AlpSkip(const ColumnSegment&, ColumnScanState& state, idx_t skip_count) {
 template<typename T>
 bool AlpVectorBounds(const AlpScanState<T>& scan_state, idx_t vector_idx,
                      idx_t vector_rows, T& minimum, T& maximum) {
-  duckdb::CompressionSegmentReader vector_reader =
-    GetVectorReader(scan_state.layout, vector_idx);
+  SegmentReader vector_reader = GetVectorReader(scan_state.layout, vector_idx);
   const auto v_exponent = vector_reader.Read<uint8_t>();
   if (v_exponent == kUncompressedModeSentinel) {
     return false;
@@ -1226,8 +1224,7 @@ IRS_NO_INLINE T FetchValue(const AlpScanState<T>& scan_state, idx_t row) {
   SDB_ASSERT(row < scan_state.count);
   const idx_t vector_index = row / kVectorSize;
   const idx_t index = row % kVectorSize;
-  duckdb::CompressionSegmentReader reader =
-    GetVectorReader(scan_state.layout, vector_index);
+  SegmentReader reader = GetVectorReader(scan_state.layout, vector_index);
   const idx_t vector_size =
     std::min<idx_t>(kVectorSize, scan_state.count - vector_index * kVectorSize);
   const auto exponent = reader.Read<uint8_t>();

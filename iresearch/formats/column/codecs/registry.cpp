@@ -26,7 +26,6 @@
 #include <iterator>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/duckdb_bridge.hpp"
 #include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/codecs/zxc.hpp"
@@ -153,6 +152,8 @@ const CompressionFunction* GetCodec(CompressionType type,
       return AlpFunction(physical);
     case CompressionType::COMPRESSION_ALPRD:
       return AlpRdFunction(physical);
+    case CompressionType::COMPRESSION_ROARING:
+      return RoaringFunction(physical);
     case CompressionType::COMPRESSION_EMPTY:
       return physical == PhysicalType::BIT ? &EmptyValidityFunction() : nullptr;
     default:
@@ -162,7 +163,7 @@ const CompressionFunction* GetCodec(CompressionType type,
       text && text->function && physical == PhysicalType::VARCHAR) {
     return &text->function();
   }
-  return DuckDBFunction(type, physical);
+  return nullptr;
 }
 
 std::span<const CompressionFunction* const> GetCompressionFunctions(

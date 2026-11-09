@@ -40,7 +40,6 @@
 #include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
-#include <duckdb/storage/compression/compression_segment_reader.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <limits>
@@ -49,6 +48,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/segment_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -511,8 +511,7 @@ struct RleLayout {
 template<typename T>
 RleLayout<T> ParseLayout(const duckdb::BufferHandle& handle,
                          const ColumnSegment& segment) {
-  duckdb::CompressionSegmentReader reader{handle.Ptr(), segment.size,
-                                          "RLE segment"};
+  SegmentReader reader{handle.Ptr(), segment.size, "RLE segment"};
   const auto marked = reader.Read<uint64_t>();
   const auto counts_offset = marked & ~kPackedMarker;
   if (!(marked & kPackedMarker) || counts_offset < kHeaderSize<T> ||

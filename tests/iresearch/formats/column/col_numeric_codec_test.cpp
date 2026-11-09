@@ -26,7 +26,6 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/function/compression_function.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>

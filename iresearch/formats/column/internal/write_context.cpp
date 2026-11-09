@@ -22,21 +22,11 @@
 
 #include <absl/base/internal/endian.h>
 
-#include <duckdb/common/types/string_type.hpp>
-#include <duckdb/main/client_context.hpp>
-#include <duckdb/storage/block.hpp>
 #include <limits>
 
-#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
-
-WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& blocks)
-  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE},
-    _blocks{&blocks} {}
-
-WriteContext::~WriteContext() = default;
 
 duckdb::block_id_t WriteContext::WriteOverflowString(duckdb::string_t string) {
   const auto size = string.GetSize();
@@ -50,68 +40,5 @@ duckdb::block_id_t WriteContext::WriteOverflowString(duckdb::string_t string) {
                      size);
   return block;
 }
-
-void WriteContext::WriteString(
-  duckdb::UncompressedStringSegmentState& /*state*/, duckdb::string_t string,
-  duckdb::block_id_t& result_block, int32_t& result_offset) {
-  result_block = WriteOverflowString(string);
-  result_offset = 0;
-}
-
-duckdb::idx_t WriteContext::Position() const { return _blocks->Position(); }
-
-void WriteContext::Append(duckdb::const_data_ptr_t data, duckdb::idx_t size) {
-  _blocks->WriteData(data, size);
-}
-
-duckdb::block_id_t WriteContext::GetFreeBlockId() {
-  THROW_SQL_ERROR(
-    ERR_MSG("WriteContext::GetFreeBlockId: column data goes "
-            "through ColumnStreamWriter, not blocks"));
-}
-
-duckdb::block_id_t WriteContext::PeekFreeBlockId() {
-  THROW_SQL_ERROR(ERR_MSG("WriteContext::PeekFreeBlockId"));
-}
-
-void WriteContext::Write(duckdb::FileBuffer& block,
-                         duckdb::block_id_t block_id) {
-  Write(duckdb::QueryContext{}, block, block_id);
-}
-
-void WriteContext::Write(duckdb::QueryContext /*context*/,
-                         duckdb::FileBuffer& /*block*/,
-                         duckdb::block_id_t /*block_id*/) {
-  THROW_SQL_ERROR(
-    ERR_MSG("WriteContext::Write: column data goes through "
-            "ColumnStreamWriter, not blocks"));
-}
-
-void WriteContext::Read(duckdb::QueryContext /*context*/,
-                        duckdb::Block& /*block*/) {
-  THROW_SQL_ERROR(ERR_MSG("WriteContext::Read on write-only context"));
-}
-
-void WriteContext::ReadBlocks(duckdb::QueryContext /*context*/,
-                              duckdb::FileBuffer& /*buffer*/,
-                              duckdb::block_id_t /*start_block*/,
-                              duckdb::idx_t /*block_count*/) {
-  THROW_SQL_ERROR(ERR_MSG("WriteContext::ReadBlocks on write-only context"));
-}
-
-bool WriteContext::IsRootBlock(duckdb::MetaBlockPointer /*root*/) {
-  THROW_SQL_ERROR(ERR_MSG("WriteContext::IsRootBlock"));
-}
-
-duckdb::idx_t WriteContext::GetMetaBlock() {
-  THROW_SQL_ERROR(ERR_MSG("WriteContext::GetMetaBlock"));
-}
-
-void WriteContext::WriteHeader(duckdb::QueryContext /*context*/,
-                               duckdb::DatabaseHeader /*header*/) {
-  THROW_SQL_ERROR(ERR_MSG("WriteContext::WriteHeader"));
-}
-
-duckdb::idx_t WriteContext::TotalBlocks() { return 0; }
 
 }  // namespace irs

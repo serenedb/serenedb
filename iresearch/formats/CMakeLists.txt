@@ -7,7 +7,6 @@ target_sources(
         column/codecs/blob_compression_state.cpp
         column/codecs/compression_function.cpp
         column/codecs/constant.cpp
-        column/codecs/duckdb_bridge.cpp
         column/codecs/empty_validity.cpp
         column/codecs/fsst.cpp
         column/codecs/fsst12.cpp
@@ -21,6 +20,7 @@ target_sources(
         column/codecs/onpair_compression_state.cpp
         column/codecs/registry.cpp
         column/codecs/rle.cpp
+        column/codecs/roaring.cpp
         column/codecs/segment_buffer.cpp
         column/codecs/segment_dictionary.cpp
         column/codecs/segment_rows.cpp

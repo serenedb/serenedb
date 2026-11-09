@@ -34,7 +34,6 @@
 #include <duckdb/common/numeric_utils.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
-#include <duckdb/storage/compression/compression_segment_reader.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 #include <memory>
@@ -44,6 +43,7 @@
 
 #include "iresearch/formats/column/codecs/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/segment_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -639,7 +639,7 @@ struct AlpRdVectorState {
 };
 
 struct AlpRdSegmentLayout {
-  duckdb::CompressionSegmentReader data;
+  SegmentReader data;
   duckdb::unsafe_array_ptr<const uint32_t> vector_offsets;
   idx_t data_start = 0;
 };
@@ -650,7 +650,7 @@ AlpRdSegmentLayout ReadAlpRdSegmentLayout(duckdb::const_data_ptr_t base,
                                           AlpRdVectorState<T>& vector_state) {
   constexpr auto kMaxRightBitWidth =
     static_cast<uint8_t>(sizeof(alp::ExactType<T>) * 8 - 1);
-  duckdb::CompressionSegmentReader reader{base, size, "ALPRD segment"};
+  SegmentReader reader{base, size, "ALPRD segment"};
   const auto metadata_end = reader.Read<uint32_t>();
   if (metadata_end < kHeaderSize) {
     ThrowAlpRdMetadataBeforeHeader();
@@ -697,8 +697,8 @@ uint32_t GetVectorOffset(const AlpRdSegmentLayout& layout, idx_t vector_index) {
   return layout.vector_offsets[layout.vector_offsets.size() - 1 - vector_index];
 }
 
-duckdb::CompressionSegmentReader GetVectorReader(
-  const AlpRdSegmentLayout& layout, idx_t vector_index) {
+SegmentReader GetVectorReader(const AlpRdSegmentLayout& layout,
+                              idx_t vector_index) {
   const auto vector_start = GetVectorOffset(layout, vector_index);
   if (vector_start < layout.data_start) {
     ThrowAlpRdVectorOffsetOutOfBounds();
@@ -751,8 +751,7 @@ void LoadVector(AlpRdScanState<T>& state, alp::ExactType<T>* value_buffer) {
   vector_state.index = 0;
 
   const auto vector_index = state.total_value_count / kVectorSize;
-  duckdb::CompressionSegmentReader vector_reader =
-    GetVectorReader(state.layout, vector_index);
+  SegmentReader vector_reader = GetVectorReader(state.layout, vector_index);
   const idx_t vector_size =
     std::min<idx_t>(kVectorSize, state.count - state.total_value_count);
 
@@ -909,8 +908,7 @@ IRS_NO_INLINE alp::ExactType<T> FetchValue(const AlpRdScanState<T>& scan_state,
   SDB_ASSERT(row < scan_state.count);
   const idx_t vector_index = row / kVectorSize;
   const idx_t index = row % kVectorSize;
-  duckdb::CompressionSegmentReader reader =
-    GetVectorReader(scan_state.layout, vector_index);
+  SegmentReader reader = GetVectorReader(scan_state.layout, vector_index);
   const idx_t vector_size =
     std::min<idx_t>(kVectorSize, scan_state.count - vector_index * kVectorSize);
   const auto exceptions_count = reader.Read<uint16_t>();

@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <duckdb.hpp>
-#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <iresearch/formats/column/internal/write_context.hpp>
 #include <string>
 #include <string_view>
@@ -36,27 +35,17 @@ constexpr std::string_view kFile = "blocks";
 
 class WriteContextTest : public tests::DirectoryTestCaseBase<> {};
 
-TEST_P(WriteContextTest, StreamAndOverflowStringsFollowWhatTheFileHolds) {
+TEST_P(WriteContextTest, OverflowStringsFollowWhatTheFileHolds) {
   duckdb::DuckDB db;
   auto out = dir().create(kFile);
   ASSERT_NE(out, nullptr);
   {
     irs::WriteContext ctx{*db.instance, *out};
-    constexpr std::string_view kHead = "ab";
+    constexpr std::string_view kHead = "abstream";
     out->WriteData(reinterpret_cast<const irs::byte_type*>(kHead.data()),
                    kHead.size());
-    EXPECT_EQ(2U, ctx.Position());
-    constexpr std::string_view kStream = "stream";
-    ctx.Append(reinterpret_cast<duckdb::const_data_ptr_t>(kStream.data()),
-               kStream.size());
-    EXPECT_EQ(8U, ctx.Position());
-    duckdb::UncompressedStringSegmentState state;
-    duckdb::block_id_t block = 0;
-    int32_t offset = -1;
-    ctx.WriteString(state, duckdb::string_t{"overflow"}, block, offset);
-    EXPECT_EQ(8, block);
-    EXPECT_EQ(0, offset);
-    EXPECT_EQ(20U, ctx.Position());
+    EXPECT_EQ(8, ctx.WriteOverflowString(duckdb::string_t{"overflow"}));
+    EXPECT_EQ(20U, out->Position());
   }
   out.reset();
   auto in = dir().open(kFile, irs::IOAdvice::SEQUENTIAL);

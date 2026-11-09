@@ -27,6 +27,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block.hpp>
+#include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/storage_info.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"

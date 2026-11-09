@@ -35,7 +35,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
-#include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>

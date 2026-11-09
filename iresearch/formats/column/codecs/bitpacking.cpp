@@ -40,7 +40,6 @@
 #include <duckdb/planner/filter/zonemap_checker.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/compression/bitpacking.hpp>
-#include <duckdb/storage/compression/compression_segment_reader.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
@@ -54,6 +53,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/segment_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -616,8 +616,8 @@ struct Group {
   idx_t algorithm_group_size = 0;
 };
 
-std::span<const uint32_t> MetadataTable(
-  const duckdb::CompressionSegmentReader& reader, idx_t start, idx_t count) {
+std::span<const uint32_t> MetadataTable(const SegmentReader& reader,
+                                        idx_t start, idx_t count) {
   const auto table = reader.GetArray<uint32_t>(start, count);
   return {table.data(), table.size()};
 }
@@ -813,7 +813,7 @@ struct ScanState final : SegmentScanState {
   }
 
   duckdb::BufferHandle handle;
-  duckdb::CompressionSegmentReader reader;
+  SegmentReader reader;
   idx_t segment_count;
   idx_t group_count;
   idx_t metadata_table_start;

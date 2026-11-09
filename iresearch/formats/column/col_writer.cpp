@@ -24,7 +24,6 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
-#include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <string>
 #include <string_view>

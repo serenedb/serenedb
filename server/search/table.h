@@ -62,17 +62,6 @@ constexpr uint64_t OwnRowsId(uint64_t generation) noexcept {
   return std::numeric_limits<uint64_t>::max() - generation;
 }
 
-struct InsertRange {
-  irs::doc_id_t end = 0;
-  Tick tick = 0;
-};
-
-struct DeleteGeneration {
-  Tick tick = 0;
-  std::shared_ptr<const irs::DocumentMask> mask;
-  std::shared_ptr<const irs::SegmentReaderImpl> reader;
-};
-
 irs::doc_id_t HotDocs(const irs::IndexWriter::Transaction& trx) noexcept;
 uint64_t HotSegmentId(const irs::IndexWriter::Transaction& trx);
 
@@ -135,21 +124,27 @@ struct TableUnit {
   std::shared_ptr<const irs::SegmentReaderImpl> reader;
   irs::IndexFileRefs::ref_t meta_ref;
   irs::doc_id_t docs = 0;
-  std::vector<InsertRange> inserts;
-  std::vector<DeleteGeneration> deletes;
-  Tick replaced_at = 0;
-  Tick released_at = 0;
-  std::vector<irs::DocMap> maps;
+  std::shared_ptr<const irs::DocumentMask> deleted;
   Lsn first_lsn = kNoLsn;
 };
 
+struct MovedUnit {
+  Tick tick = 0;
+  std::vector<irs::DocMap> maps;
+};
+
+using MovedUnits =
+  absl::flat_hash_map<uint64_t, std::shared_ptr<const MovedUnit>>;
+
 struct TableState {
   TableState() = default;
-  TableState(const TableState& other) : units{other.units}, tick{other.tick} {}
+  TableState(const TableState& other)
+    : units{other.units}, moved{other.moved}, tick{other.tick} {}
   TableState& operator=(const TableState&) = delete;
   ~TableState() { delete reader.load(std::memory_order_relaxed); }
 
   std::vector<std::shared_ptr<const TableUnit>> units;
+  std::shared_ptr<const MovedUnits> moved;
   Tick tick = 0;
   mutable std::atomic<const irs::DirectoryReader*> reader{nullptr};
 };
@@ -244,21 +239,17 @@ class Table final {
     ABSL_LOCKS_EXCLUDED(_state_mutex);
   bool FreeRetired() ABSL_LOCKS_EXCLUDED(_state_mutex);
 
-  irs::DirectoryReader View(Tick snapshot, const OwnWrites& own) const {
-    return Assemble(State(), snapshot, own, Scope::All, false);
+  irs::DirectoryReader View(const OwnWrites& own) const {
+    return Assemble(State(), own, Scope::All, false);
   }
   irs::DirectoryReader View(const std::shared_ptr<const TableState>& state,
-                            Tick snapshot, const OwnWrites& own,
-                            bool searchable) const {
-    return Assemble(state, snapshot, own, Scope::All, searchable);
+                            const OwnWrites& own, bool searchable) const {
+    return Assemble(state, own, Scope::All, searchable);
   }
-  irs::DirectoryReader ColdView(Tick snapshot) const {
-    return Assemble(State(), snapshot, {}, Scope::Cold, false);
+  irs::DirectoryReader ColdView() const {
+    return Assemble(State(), {}, Scope::Cold, false);
   }
-  irs::DirectoryReader SettledView(Tick snapshot) const {
-    return Assemble(State(), snapshot, {}, Scope::Settled, false);
-  }
-  StoreStats Stats(Tick snapshot) const;
+  StoreStats Stats() const;
   std::shared_ptr<const irs::SegmentReaderImpl> UnitReader(
     const TableUnit& unit) const {
     return unit.hot ? unit.hot->Reader(*_options.db, unit.docs) : unit.reader;
@@ -268,12 +259,11 @@ class Table final {
   std::shared_ptr<HotContext> AcquireHot(irs::IndexWriter& writer);
   void ReleaseHot(const std::shared_ptr<HotContext>& hot, bool retire);
   void Retire(Lsn before);
-  void RetireVisible(Tick snapshot);
+  void RetireVisible(const TableState& state);
 
   std::shared_ptr<const irs::DocRemoval> Resolve(
     const std::shared_ptr<const irs::DocRemoval>& removal) const;
-  bool Conflicts(Tick snapshot, const irs::DocRemoval& removal) const;
-  void CheckConflicts(Tick snapshot, const irs::DocRemoval& removal) const;
+  void CheckConflicts(const irs::DocRemoval& removal) const;
   Tick LastAppend() const noexcept {
     return _last_append.load(std::memory_order_acquire);
   }
@@ -281,11 +271,11 @@ class Table final {
     return _last_write.load(std::memory_order_acquire);
   }
 
-  [[nodiscard]] bool Apply(Tick tick, Tick oldest, TableCommit&& commit);
-  void Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
-               std::span<const uint64_t> replaced,
-               std::vector<OwnSegment>&& segments,
-               std::vector<irs::DocMap>&& maps);
+  [[nodiscard]] bool Apply(Tick tick, TableCommit&& commit);
+  std::shared_ptr<const TableState> Replace(Tick tick, Lsn lsn,
+                                            std::span<const uint64_t> replaced,
+                                            std::vector<OwnSegment>&& segments,
+                                            std::vector<irs::DocMap>&& maps);
 
   void Collect(Tick oldest);
 
@@ -295,8 +285,8 @@ class Table final {
 
   std::vector<std::shared_ptr<HotContext>> TakeCoolable(size_t memory_limit,
                                                         bool all);
-  void Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
-              Lsn lsn);
+  [[nodiscard]] bool Cooled(const std::shared_ptr<HotContext>& hot,
+                            OwnSegment&& written, Lsn lsn);
   bool HasRetiredHot() const;
   void AwaitRetiredReleased();
 
@@ -331,7 +321,6 @@ class Table final {
   enum class Scope : uint8_t {
     All,
     Cold,
-    Settled,
   };
 
   struct ReplayUnit {
@@ -349,18 +338,16 @@ class Table final {
   };
 
   static constexpr size_t kMinGarbageBytes = size_t{1} << 20;
-  static constexpr size_t kStaleStamps = 64;
 
   const TableVersion& Head() const noexcept {
     return *_head.load(std::memory_order_acquire);
   }
 
   irs::DirectoryReader Assemble(const std::shared_ptr<const TableState>& state,
-                                Tick snapshot, const OwnWrites& own,
-                                Scope scope, bool searchable) const;
-  irs::DirectoryReader Build(const TableState& state, Tick snapshot,
-                             const OwnWrites& own, Scope scope,
-                             bool searchable) const;
+                                const OwnWrites& own, Scope scope,
+                                bool searchable) const;
+  irs::DirectoryReader Build(const TableState& state, const OwnWrites& own,
+                             Scope scope, bool searchable) const;
   void Publish(std::shared_ptr<TableState> state, Tick tick)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Republish(std::shared_ptr<TableState> state)

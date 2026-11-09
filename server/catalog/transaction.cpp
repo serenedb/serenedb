@@ -148,7 +148,6 @@ void SessionTransaction::Refresh() {
   if (HasChanges()) {
     return;
   }
-  _search.NoteConflicts(Snapshot());
   if (!_held && !_search.Empty()) {
     _held = Snapshot();
     _slot->held.store(*_held, std::memory_order_seq_cst);
@@ -530,7 +529,7 @@ void Transactions::Commit(SessionTransaction& transaction,
         change.version->Child().OnDrop();
       }
     }
-    writes.Apply(commit, Oldest(), range.begin);
+    writes.Apply(commit, range.begin);
     for (const auto& update : transaction.LsnUpdates()) {
       ApplyLsnUpdate(update);
     }
@@ -566,8 +565,7 @@ void Transactions::Commit(SessionTransaction& transaction,
 
 void Transactions::CommitStorage(
   absl::Mutex& table, absl::FunctionRef<std::vector<uint8_t>()> build,
-  absl::FunctionRef<void(duckdb::transaction_t, duckdb::transaction_t, Lsn)>
-    apply) {
+  absl::FunctionRef<void(duckdb::transaction_t, Lsn)> apply) {
   std::vector<uint8_t> record;
   Log::Range range;
   Lsn end = 0;
@@ -584,7 +582,7 @@ void Transactions::CommitStorage(
       commit = ++_reserved_commit;
       end = range.end != 0 ? range.end : ReservedEnd();
     }
-    apply(commit, Oldest(), range.begin);
+    apply(commit, range.begin);
   }
   if (range.end != 0) {
     _log->Write(range, record);
@@ -796,7 +794,7 @@ void SessionTransaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
 }
 
 void SessionTransaction::PrepareCommit(duckdb::ClientContext& context) {
-  _search.PrepareCommit(context, Snapshot());
+  _search.PrepareCommit(context);
 }
 
 void SessionTransaction::Release() noexcept {

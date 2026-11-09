@@ -210,8 +210,7 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
   duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
-  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.search_table,
-                                        gstate.sdb_txn->Snapshot());
+  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.search_table);
   return duckdb::SinkFinalizeType::READY;
 }
 

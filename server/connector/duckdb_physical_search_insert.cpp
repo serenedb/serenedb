@@ -209,8 +209,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   }
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store,
-                                        gstate.sdb_txn->Snapshot());
+  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store);
   return duckdb::SinkFinalizeType::READY;
 }
 

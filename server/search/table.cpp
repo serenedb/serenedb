@@ -59,131 +59,65 @@ const TableUnit* FindUnit(const TableState& state, uint64_t id) noexcept {
   return i == state.units.size() ? nullptr : state.units[i].get();
 }
 
-irs::doc_id_t VisibleEnd(const TableUnit& unit, Tick snapshot) noexcept {
-  if (unit.replaced_at != 0 && unit.replaced_at <= snapshot) {
-    return 0;
-  }
-  if (unit.inserts.empty()) {
-    return unit.docs;
-  }
-  irs::doc_id_t end = 0;
-  for (const auto& range : unit.inserts) {
-    if (range.tick > snapshot) {
-      break;
-    }
-    end = range.end;
-  }
-  return end;
-}
-
-const DeleteGeneration* GenerationAt(const TableUnit& unit,
-                                     Tick snapshot) noexcept {
-  const DeleteGeneration* seen = nullptr;
-  for (const auto& generation : unit.deletes) {
-    if (generation.tick > snapshot) {
-      break;
-    }
-    seen = &generation;
-  }
-  return seen;
-}
-
-const irs::DocumentMask* DeletesAt(const TableUnit& unit,
-                                   Tick snapshot) noexcept {
-  const auto* generation = GenerationAt(unit, snapshot);
-  return generation ? generation->mask.get() : nullptr;
-}
-
-std::shared_ptr<const irs::SegmentReaderImpl> MaskedReader(
-  const TableUnit& unit, const std::shared_ptr<const irs::DocumentMask>& mask) {
-  if (!unit.reader) {
+const MovedUnit* FindMoved(const TableState& state, uint64_t id) noexcept {
+  if (!state.moved) {
     return nullptr;
   }
-  return unit.reader->docs_mask() == mask.get()
-           ? unit.reader
-           : unit.reader->WithDocsMask(mask);
+  const auto it = state.moved->find(id);
+  return it == state.moved->end() ? nullptr : it->second.get();
 }
 
-const irs::DocumentMask* LatestDeletes(const TableUnit& unit) noexcept {
-  return unit.deletes.empty() ? nullptr : unit.deletes.back().mask.get();
-}
-
-void PushDeletes(TableUnit& unit, Tick tick, irs::DocumentMaskBuilder&& mask) {
-  auto finished =
+void SetDeletes(TableUnit& unit, irs::DocumentMaskBuilder&& mask) {
+  unit.deleted =
     std::make_shared<const irs::DocumentMask>(std::move(mask).Finish());
-  auto reader = MaskedReader(unit, finished);
-  if (!unit.deletes.empty() && unit.deletes.back().tick == tick) {
-    unit.deletes.back().mask = std::move(finished);
-    unit.deletes.back().reader = std::move(reader);
-    return;
+  if (unit.reader) {
+    unit.reader = unit.reader->WithDocsMask(unit.deleted);
   }
-  unit.deletes.push_back({tick, std::move(finished), std::move(reader)});
 }
 
-void AddDeletes(TableUnit& unit, Tick tick, const irs::DocumentMask& docs) {
+void AddDeletes(TableUnit& unit, const irs::DocumentMask& docs) {
   irs::DocumentMaskBuilder mask;
-  if (const auto* latest = LatestDeletes(unit)) {
-    mask.Merge(*latest);
+  if (unit.deleted) {
+    mask.Merge(*unit.deleted);
   }
   mask.Merge(docs);
-  PushDeletes(unit, tick, std::move(mask));
+  SetDeletes(unit, std::move(mask));
 }
 
-void DeleteAll(TableUnit& unit, Tick tick) {
+void DeleteAll(TableUnit& unit) {
   if (unit.docs == 0) {
     return;
   }
   irs::DocumentMaskBuilder mask;
   mask.AddRange(irs::doc_limits::min(),
                 static_cast<irs::doc_id_t>(irs::doc_limits::min() + unit.docs));
-  PushDeletes(unit, tick, std::move(mask));
+  SetDeletes(unit, std::move(mask));
 }
 
-void CollectStamps(TableUnit& unit, Tick oldest) {
-  const auto seen_insert = std::find_if(
-    unit.inserts.rbegin(), unit.inserts.rend(),
-    [&](const InsertRange& range) { return range.tick <= oldest; });
-  if (seen_insert != unit.inserts.rend()) {
-    unit.inserts.erase(unit.inserts.begin(), seen_insert.base() - 1);
-    unit.inserts.front().tick = 0;
-    if (!unit.hot && unit.inserts.size() == 1 &&
-        unit.inserts.front().end == unit.docs) {
-      unit.inserts.clear();
+bool Dead(const TableUnit& unit) noexcept {
+  return !unit.hot && unit.deleted && unit.deleted->Count() >= unit.docs;
+}
+
+bool LeaveDead(TableState& state, Tick tick) {
+  std::shared_ptr<MovedUnits> moved;
+  std::shared_ptr<const MovedUnit> deleted;
+  std::erase_if(state.units, [&](const auto& unit) {
+    if (!Dead(*unit)) {
+      return false;
     }
-  }
-  const auto seen_delete =
-    std::find_if(unit.deletes.rbegin(), unit.deletes.rend(),
-                 [&](const DeleteGeneration& generation) {
-                   return generation.tick <= oldest;
-                 });
-  if (seen_delete != unit.deletes.rend()) {
-    unit.deletes.erase(unit.deletes.begin(), seen_delete.base() - 1);
-    unit.deletes.front().tick = 0;
-  }
-}
-
-bool Collectable(const TableUnit& unit, Tick oldest) noexcept {
-  const auto stale = [&](const auto& stamps) {
-    return (stamps.size() > 1 && stamps[1].tick <= oldest) ||
-           (!stamps.empty() && stamps.front().tick != 0 &&
-            stamps.front().tick <= oldest);
-  };
-  return stale(unit.inserts) || stale(unit.deletes);
-}
-
-bool Gone(const TableUnit& unit, Tick oldest) noexcept {
-  if (unit.replaced_at != 0) {
-    return unit.released_at <= oldest;
-  }
-  if (unit.hot || !unit.inserts.empty() || unit.deletes.size() != 1 ||
-      unit.deletes.front().tick != 0) {
+    if (!moved) {
+      moved = state.moved ? std::make_shared<MovedUnits>(*state.moved)
+                          : std::make_shared<MovedUnits>();
+      deleted = std::make_shared<const MovedUnit>(MovedUnit{.tick = tick});
+    }
+    moved->insert_or_assign(unit->id, deleted);
+    return true;
+  });
+  if (!moved) {
     return false;
   }
-  return unit.deletes.front().mask->Count() >= unit.docs;
-}
-
-void Sweep(Units& units, Tick oldest) {
-  std::erase_if(units, [&](const auto& unit) { return Gone(*unit, oldest); });
+  state.moved = std::move(moved);
+  return true;
 }
 
 size_t VersionBytes(const TableVersion& version) noexcept {
@@ -239,52 +173,42 @@ std::shared_ptr<const irs::SegmentReaderImpl> OwnRowsReader(
 using Mapped = absl::flat_hash_map<uint64_t, irs::DocumentMaskBuilder>;
 
 void Follow(const TableState& state, uint64_t id, const irs::DocumentMask& docs,
-            Tick snapshot, Mapped& out) {
-  const auto* unit = FindUnit(state, id);
-  if (!unit || unit->replaced_at == 0 || unit->replaced_at > snapshot) {
+            Mapped& out) {
+  const auto* moved = FindUnit(state, id) ? nullptr : FindMoved(state, id);
+  if (!moved) {
     out[id].Merge(docs);
     return;
   }
-  for (const auto& map : unit->maps) {
-    if (irs::DocumentMaskBuilder moved; irs::MapDocs(map, docs, moved)) {
-      Follow(state, map.target, std::move(moved).Finish(), snapshot, out);
+  for (const auto& map : moved->maps) {
+    if (irs::DocumentMaskBuilder mapped; irs::MapDocs(map, docs, mapped)) {
+      Follow(state, map.target, std::move(mapped).Finish(), out);
     }
   }
 }
 
-bool Intersects(const irs::DocumentMask& docs, const irs::DocumentMask* now,
-                const irs::DocumentMask* seen) {
-  if (now == nullptr || now == seen) {
-    return false;
-  }
-  if (seen == nullptr) {
-    return roaring::api::roaring_bitmap_intersect(&now->Bitmap(),
-                                                  &docs.Bitmap());
-  }
-  auto* fresh =
-    roaring::api::roaring_bitmap_andnot(&now->Bitmap(), &seen->Bitmap());
-  const bool conflict =
-    roaring::api::roaring_bitmap_intersect(fresh, &docs.Bitmap());
-  roaring::api::roaring_bitmap_free(fresh);
-  return conflict;
+bool Intersects(const irs::DocumentMask& lhs, const irs::DocumentMask& rhs) {
+  return roaring::api::roaring_bitmap_intersect(&lhs.Bitmap(), &rhs.Bitmap());
 }
 
 bool Conflicting(const TableState& state, uint64_t id,
-                 const irs::DocumentMask& docs, Tick snapshot) {
-  const auto* unit = FindUnit(state, id);
-  if (!unit) {
+                 const irs::DocumentMask& docs) {
+  if (const auto* unit = FindUnit(state, id)) {
+    return unit->deleted && Intersects(docs, *unit->deleted);
+  }
+  const auto* moved = FindMoved(state, id);
+  if (!moved) {
     return false;
   }
-  if (Intersects(docs, LatestDeletes(*unit), DeletesAt(*unit, snapshot))) {
+  if (moved->maps.empty()) {
     return true;
   }
-  if (unit->replaced_at == 0) {
-    return false;
-  }
-  return absl::c_any_of(unit->maps, [&](const irs::DocMap& map) {
-    irs::DocumentMaskBuilder moved;
-    return irs::MapDocs(map, docs, moved) &&
-           Conflicting(state, map.target, std::move(moved).Finish(), snapshot);
+  return absl::c_any_of(moved->maps, [&](const irs::DocMap& map) {
+    if (map.mask && Intersects(docs, *map.mask)) {
+      return true;
+    }
+    irs::DocumentMaskBuilder mapped;
+    return irs::MapDocs(map, docs, mapped) &&
+           Conflicting(state, map.target, std::move(mapped).Finish());
   });
 }
 
@@ -356,20 +280,16 @@ LiveUnits::LiveUnits(
   : _state{std::move(state)} {
   for (const auto& removal : removals) {
     for (const auto& group : removal->groups) {
-      Follow(*_state, group.segment, group.docs, kAllApplied, _removed);
+      Follow(*_state, group.segment, group.docs, _removed);
     }
   }
   _units.reserve(_state->units.size());
   for (const auto& unit : _state->units) {
-    const auto visible = VisibleEnd(*unit, kAllApplied);
-    if (visible == 0) {
-      continue;
-    }
     const auto removed = _removed.find(unit->id);
     _units.push_back({
       .unit = unit.get(),
-      .visible = visible,
-      .deleted = DeletesAt(*unit, kAllApplied),
+      .visible = unit->docs,
+      .deleted = unit->deleted.get(),
       .removed = removed == _removed.end() ? nullptr : &removed->second,
     });
   }
@@ -545,23 +465,23 @@ OwnSegment Table::OpenSegment(std::string meta_file) const {
 }
 
 irs::DirectoryReader Table::Assemble(
-  const std::shared_ptr<const TableState>& state, Tick snapshot,
-  const OwnWrites& own, Scope scope, bool searchable) const {
-  const auto hot_visible = [&] {
-    return absl::c_any_of(state->units, [&](const auto& unit) {
-      return unit->hot && VisibleEnd(*unit, snapshot) != 0;
+  const std::shared_ptr<const TableState>& state, const OwnWrites& own,
+  Scope scope, bool searchable) const {
+  const auto has_hot = [&] {
+    return absl::c_any_of(state->units, [](const auto& unit) {
+      return static_cast<bool>(unit->hot);
     });
   };
   if (scope != Scope::All || !own.removals.empty() || !own.segments.empty() ||
       own.truncated || (own.rows != nullptr && own.rows->Count() != 0) ||
-      (searchable && hot_visible()) || snapshot < state->tick) {
-    return Build(*state, snapshot, own, scope, searchable);
+      (searchable && has_hot())) {
+    return Build(*state, own, scope, searchable);
   }
   if (const auto* cached = state->reader.load(std::memory_order_acquire)) {
     return *cached;
   }
   auto built = std::make_unique<const irs::DirectoryReader>(
-    Build(*state, snapshot, own, scope, false));
+    Build(*state, own, scope, false));
   const irs::DirectoryReader* installed = nullptr;
   if (state->reader.compare_exchange_strong(installed, built.get(),
                                             std::memory_order_acq_rel,
@@ -571,14 +491,13 @@ irs::DirectoryReader Table::Assemble(
   return *installed;
 }
 
-irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
-                                  const OwnWrites& own, Scope scope,
-                                  bool searchable) const {
+irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
+                                  Scope scope, bool searchable) const {
   auto& db = *_options.db;
   Mapped own_removed;
   for (const auto& removal : own.removals) {
     for (const auto& group : removal->groups) {
-      Follow(state, group.segment, group.docs, snapshot, own_removed);
+      Follow(state, group.segment, group.docs, own_removed);
     }
   }
   irs::DirectoryMeta meta;
@@ -618,32 +537,27 @@ irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
       return Masked(base, std::move(mask));
     };
   for (const auto& unit : state.units) {
-    const auto visible = own.truncated ? 0 : VisibleEnd(*unit, snapshot);
-    if (visible == 0 || (scope != Scope::All && unit->hot) ||
-        (scope == Scope::Settled &&
-         (visible != unit->docs || unit->replaced_at != 0))) {
+    if (own.truncated || (scope == Scope::Cold && unit->hot)) {
       continue;
     }
     if (const auto cooled =
           searchable && unit->hot ? unit->hot->Cooled() : nullptr) {
       irs::DocumentMaskBuilder deleted;
-      if (const auto* hot_deleted = DeletesAt(*unit, snapshot)) {
-        deleted.Merge(*hot_deleted);
+      if (unit->deleted) {
+        deleted.Merge(*unit->deleted);
       }
       if (const auto* rolled_back = cooled->reader->docs_mask()) {
         deleted.Merge(*rolled_back);
       }
       const auto mask = std::move(deleted).Finish();
-      add(cooled->filename, with_own(unit->id, &mask, visible, cooled->reader));
+      add(cooled->filename,
+          with_own(unit->id, &mask, unit->docs, cooled->reader));
       continue;
     }
-    const auto* generation = GenerationAt(*unit, snapshot);
-    const auto base = unit->hot ? unit->hot->Reader(db, unit->docs)
-                      : generation && generation->reader ? generation->reader
-                                                         : unit->reader;
+    const auto base =
+      unit->hot ? unit->hot->Reader(db, unit->docs) : unit->reader;
     add(unit->segment.filename,
-        with_own(unit->id, generation ? generation->mask.get() : nullptr,
-                 visible, base));
+        with_own(unit->id, unit->deleted.get(), unit->docs, base));
   }
   for (const auto& segment : own.segments) {
     add(segment.segment.filename,
@@ -659,15 +573,15 @@ irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
     _dir, _options, std::move(meta), std::move(readers))};
 }
 
-StoreStats Table::Stats(Tick snapshot) const {
+StoreStats Table::Stats() const {
   const auto state = State();
-  const auto cold = Build(*state, snapshot, {}, Scope::Cold, false);
+  const auto cold = Build(*state, {}, Scope::Cold, false);
   auto stats = StoreStats::FromReader(cold);
   stats.numBufferedDocs =
-    Build(*state, snapshot, {}, Scope::All, false).live_docs_count() -
+    Assemble(state, {}, Scope::All, false).live_docs_count() -
     cold.live_docs_count();
   for (const auto& unit : state->units) {
-    if (!unit->hot && VisibleEnd(*unit, snapshot) != 0) {
+    if (!unit->hot) {
       stats.numFiles += unit->segment.meta.files.size();
     }
   }
@@ -731,12 +645,14 @@ void Table::Retire(Lsn before) {
   }
 }
 
-void Table::RetireVisible(Tick snapshot) {
+void Table::RetireVisible(const TableState& state) {
   SDB_PARK_ONCE_ON_FAILURE("search_retire_visible_before_lock");
   absl::MutexLock lock{&_hot_mutex};
-  const auto state = State();
-  for (const auto& unit : state->units) {
-    if (unit->hot && VisibleEnd(*unit, snapshot) != 0) {
+  const auto head = State();
+  for (const auto& unit : head->units) {
+    if (unit->hot && absl::c_any_of(state.units, [&](const auto& seen) {
+          return seen->hot == unit->hot;
+        })) {
       _retired.insert(unit->hot.get());
     }
   }
@@ -746,15 +662,14 @@ std::shared_ptr<const irs::DocRemoval> Table::Resolve(
   const std::shared_ptr<const irs::DocRemoval>& removal) const {
   const auto state = State();
   const bool current = absl::c_all_of(removal->groups, [&](const auto& group) {
-    const auto* unit = FindUnit(*state, group.segment);
-    return !unit || unit->replaced_at == 0;
+    return FindUnit(*state, group.segment) || !FindMoved(*state, group.segment);
   });
   if (current) {
     return removal;
   }
   Mapped mapped;
   for (const auto& group : removal->groups) {
-    Follow(*state, group.segment, group.docs, kAllApplied, mapped);
+    Follow(*state, group.segment, group.docs, mapped);
   }
   auto resolved = std::make_shared<irs::DocRemoval>();
   resolved->groups.reserve(mapped.size());
@@ -774,43 +689,28 @@ void ThrowConcurrentUpdate() {
     ERR_MSG("could not serialize access due to concurrent update"));
 }
 
-bool Table::Conflicts(Tick snapshot, const irs::DocRemoval& removal) const {
+void Table::CheckConflicts(const irs::DocRemoval& removal) const {
   const auto state = State();
-  return absl::c_any_of(removal.groups, [&](const auto& group) {
-    return Conflicting(*state, group.segment, group.docs, snapshot);
-  });
-}
-
-void Table::CheckConflicts(Tick snapshot,
-                           const irs::DocRemoval& removal) const {
-  if (Conflicts(snapshot, removal)) {
+  if (absl::c_any_of(removal.groups, [&](const auto& group) {
+        return Conflicting(*state, group.segment, group.docs);
+      })) {
     ThrowConcurrentUpdate();
   }
 }
 
-bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
+bool Table::Apply(Tick tick, TableCommit&& commit) {
   absl::MutexLock lock{&_state_mutex};
   Logged(commit.lsn);
   auto next = std::make_shared<TableState>(*Head().state);
   auto& units = next->units;
-  bool emptied = false;
-  bool stale = false;
   const auto rewrite = [&](size_t i, auto&& change) {
     auto unit = std::make_shared<TableUnit>(*units[i]);
     change(*unit);
-    CollectStamps(*unit, oldest);
-    stale = stale || unit->inserts.size() > kStaleStamps ||
-            unit->deletes.size() > kStaleStamps;
-    const auto* deleted = LatestDeletes(*unit);
-    emptied =
-      emptied || (!unit->hot && deleted && deleted->Count() >= unit->docs);
     units[i] = std::move(unit);
   };
   if (commit.truncate) {
     for (size_t i = 0; i < units.size(); ++i) {
-      if (units[i]->replaced_at == 0) {
-        rewrite(i, [&](TableUnit& unit) { DeleteAll(unit, tick); });
-      }
+      rewrite(i, [](TableUnit& unit) { DeleteAll(unit); });
     }
   }
   if (commit.hot || !commit.segments.empty()) {
@@ -826,20 +726,15 @@ bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
     unit->docs = segment.reader->Meta().docs_count;
     unit->meta_ref =
       irs::directory_utils::Reference(_dir, segment.segment.filename);
-    unit->inserts.push_back({unit->docs, tick});
-    if (auto mask = segment.reader->SharedDocsMask()) {
-      unit->deletes.push_back({tick, std::move(mask), segment.reader});
-    }
+    unit->deleted = segment.reader->SharedDocsMask();
     unit->segment = std::move(segment.segment);
     unit->reader = std::move(segment.reader);
-    CollectStamps(*unit, oldest);
     units.push_back(std::move(unit));
   }
   for (const auto& removal : commit.removals) {
     for (const auto& group : removal->groups) {
       if (const auto i = IndexOf(units, group.segment); i != units.size()) {
-        rewrite(i,
-                [&](TableUnit& unit) { AddDeletes(unit, tick, group.docs); });
+        rewrite(i, [&](TableUnit& unit) { AddDeletes(unit, group.docs); });
       }
     }
   }
@@ -850,126 +745,97 @@ bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
       unit->id = commit.hot_id;
       unit->hot = commit.hot;
       unit->docs = commit.hot_end;
-      unit->inserts.push_back({commit.hot_end, tick});
       unit->first_lsn = commit.lsn != 0 ? commit.lsn : kNoLsn;
-      CollectStamps(*unit, oldest);
       units.push_back(std::move(unit));
     } else {
       SDB_ASSERT(units[i]->hot == commit.hot);
-      rewrite(i, [&](TableUnit& unit) {
-        unit.docs = commit.hot_end;
-        unit.inserts.push_back({commit.hot_end, tick});
-      });
+      rewrite(i, [&](TableUnit& unit) { unit.docs = commit.hot_end; });
     }
   }
-  Sweep(units, oldest);
+  const bool emptied = LeaveDead(*next, tick);
   Publish(std::move(next), tick);
-  if (stale) {
-    catalog::Transactions::Get().RequestCollect();
-  }
   return emptied;
 }
 
-void Table::Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
-                    std::span<const uint64_t> replaced,
-                    std::vector<OwnSegment>&& segments,
-                    std::vector<irs::DocMap>&& maps) {
+std::shared_ptr<const TableState> Table::Replace(
+  Tick tick, Lsn lsn, std::span<const uint64_t> replaced,
+  std::vector<OwnSegment>&& segments, std::vector<irs::DocMap>&& maps) {
   absl::MutexLock lock{&_state_mutex};
   Logged(lsn);
   auto next = std::make_shared<TableState>(*Head().state);
   auto& units = next->units;
-  std::vector<Tick> ticks{visible};
+  Mapped carried;
   for (const auto& map : maps) {
     const auto i = IndexOf(units, map.source);
-    if (i == units.size() || units[i]->replaced_at != 0) {
-      continue;
-    }
-    for (const auto& generation : units[i]->deletes) {
-      if (generation.tick > visible) {
-        ticks.push_back(generation.tick);
-      }
-    }
-  }
-  absl::c_sort(ticks);
-  ticks.erase(std::ranges::unique(ticks).begin(), ticks.end());
-  std::vector<Mapped> carried(ticks.size());
-  for (const auto& map : maps) {
-    const auto i = IndexOf(units, map.source);
-    const bool moved = i == units.size() || units[i]->replaced_at != 0;
-    for (size_t k = 0; k < ticks.size(); ++k) {
-      if (moved) {
-        carried[k][map.target].AddRange(
-          map.base, static_cast<irs::doc_id_t>(
-                      map.base + (map.rank_end - map.rank_begin)));
-      } else if (const auto* deleted = DeletesAt(*units[i], ticks[k])) {
-        irs::MapDocs(map, *deleted, carried[k][map.target]);
-      }
+    if (i == units.size()) {
+      carried[map.target].AddRange(
+        map.base,
+        static_cast<irs::doc_id_t>(map.base + (map.rank_end - map.rank_begin)));
+    } else if (const auto& deleted = units[i]->deleted) {
+      irs::MapDocs(map, *deleted, carried[map.target]);
     }
   }
+  auto moved = next->moved ? std::make_shared<MovedUnits>(*next->moved)
+                           : std::make_shared<MovedUnits>();
   for (const auto id : replaced) {
     const auto i = IndexOf(units, id);
-    if (i == units.size() || units[i]->replaced_at != 0) {
+    if (i == units.size()) {
       continue;
     }
-    auto unit = std::make_shared<TableUnit>(*units[i]);
-    unit->replaced_at = visible;
-    unit->released_at = tick;
+    MovedUnit source{.tick = tick};
     for (const auto& map : maps) {
       if (map.source == id) {
-        unit->maps.push_back(map);
+        source.maps.push_back(map);
       }
     }
-    units[i] = std::move(unit);
+    moved->insert_or_assign(
+      id, std::make_shared<const MovedUnit>(std::move(source)));
+    units.erase(units.begin() + i);
   }
+  next->moved = std::move(moved);
   for (auto& segment : segments) {
     auto unit = std::make_shared<TableUnit>();
     unit->id = segment.reader->Id();
     unit->docs = segment.reader->Meta().docs_count;
     unit->meta_ref =
       irs::directory_utils::Reference(_dir, segment.segment.filename);
-    unit->inserts.push_back({unit->docs, visible});
+    unit->deleted = segment.reader->SharedDocsMask();
     unit->segment = std::move(segment.segment);
     unit->reader = std::move(segment.reader);
-    for (size_t k = 0; k < ticks.size(); ++k) {
+    if (const auto it = carried.find(unit->id);
+        it != carried.end() && !it->second.Empty()) {
       irs::DocumentMaskBuilder mask;
-      if (const auto* base = unit->reader->docs_mask()) {
-        mask.Merge(*base);
+      if (unit->deleted) {
+        mask.Merge(*unit->deleted);
       }
-      if (const auto it = carried[k].find(unit->id); it != carried[k].end()) {
-        mask.Merge(it->second);
-      }
-      if (!mask.Empty()) {
-        PushDeletes(*unit, ticks[k], std::move(mask));
-      }
+      mask.Merge(it->second);
+      SetDeletes(*unit, std::move(mask));
     }
-    CollectStamps(*unit, oldest);
     units.push_back(std::move(unit));
   }
-  Sweep(units, oldest);
-  Republish(std::move(next));
+  LeaveDead(*next, tick);
+  Republish(next);
+  return next;
 }
 
 void Table::Collect(Tick oldest) {
   absl::MutexLock lock{&_state_mutex};
   const auto& state = Head().state;
-  auto next = std::make_shared<TableState>();
-  next->units.reserve(state->units.size());
-  bool changed = false;
-  for (const auto& unit : state->units) {
-    if (!Collectable(*unit, oldest)) {
-      next->units.push_back(unit);
-      continue;
-    }
-    auto collected = std::make_shared<TableUnit>(*unit);
-    CollectStamps(*collected, oldest);
-    next->units.push_back(std::move(collected));
-    changed = true;
+  const auto settled = [&](const auto& entry) {
+    return entry.second->tick <= oldest;
+  };
+  if (!state->moved || absl::c_none_of(*state->moved, settled)) {
+    return;
   }
-  const auto before = next->units.size();
-  Sweep(next->units, oldest);
-  if (changed || next->units.size() != before) {
-    Republish(std::move(next));
+  auto next = std::make_shared<TableState>(*state);
+  auto moved = std::make_shared<MovedUnits>(*state->moved);
+  absl::erase_if(*moved, settled);
+  if (moved->empty()) {
+    next->moved.reset();
+  } else {
+    next->moved = std::move(moved);
   }
+  Republish(std::move(next));
 }
 
 std::vector<std::shared_ptr<HotContext>> Table::TakeCoolable(
@@ -1024,8 +890,9 @@ void Table::AwaitRetiredReleased() {
   _hot_mutex.Await(absl::Condition{this, &Table::RetiredIdle});
 }
 
-void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
+bool Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
                    Lsn lsn) {
+  bool left = false;
   {
     absl::MutexLock lock{&_state_mutex};
     const bool logged = lsn != kNoLsn;
@@ -1037,52 +904,44 @@ void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
     const auto it = absl::c_find_if(
       units, [&](const auto& unit) { return unit->hot == hot; });
     SDB_ASSERT(it != units.end());
+    auto unit = std::make_shared<TableUnit>(**it);
+    unit->hot.reset();
+    if (logged) {
+      unit->first_lsn = kNoLsn;
+    }
     if (!written.reader) {
-      units.erase(it);
-      Republish(std::move(next));
+      DeleteAll(*unit);
     } else {
-      auto unit = std::make_shared<TableUnit>(**it);
-      unit->hot.reset();
-      if (logged) {
-        unit->first_lsn = kNoLsn;
-      }
       unit->meta_ref =
         irs::directory_utils::Reference(_dir, written.segment.filename);
       unit->docs = written.reader->Meta().docs_count;
-      if (const auto* base = written.reader->docs_mask()) {
-        for (auto& generation : unit->deletes) {
-          irs::DocumentMaskBuilder mask{*base};
-          mask.Merge(*generation.mask);
-          generation.mask =
-            std::make_shared<const irs::DocumentMask>(std::move(mask).Finish());
-        }
-        if (unit->deletes.empty()) {
-          unit->deletes.push_back({0, written.reader->SharedDocsMask()});
-        }
-      }
-      if (unit->inserts.size() == 1 && unit->inserts.front().tick == 0 &&
-          unit->inserts.front().end == unit->docs) {
-        unit->inserts.clear();
-      }
       unit->segment = std::move(written.segment);
       unit->reader = std::move(written.reader);
-      for (auto& generation : unit->deletes) {
-        generation.reader = MaskedReader(*unit, generation.mask);
+      if (!unit->deleted) {
+        unit->deleted = unit->reader->SharedDocsMask();
+      } else if (const auto* base = unit->reader->docs_mask()) {
+        irs::DocumentMaskBuilder mask{*base};
+        mask.Merge(*unit->deleted);
+        SetDeletes(*unit, std::move(mask));
+      } else {
+        unit->reader = unit->reader->WithDocsMask(unit->deleted);
       }
-      *it = std::move(unit);
-      Republish(std::move(next));
     }
+    *it = std::move(unit);
+    left = LeaveDead(*next, next->tick);
+    Republish(std::move(next));
   }
   absl::MutexLock lock{&_hot_mutex};
   _held.erase(hot.get());
   _retired.erase(hot.get());
+  return left;
 }
 
 std::vector<std::shared_ptr<const TableUnit>> Table::UnsyncedSegments(
   Lsn before) const {
   std::vector<std::shared_ptr<const TableUnit>> units;
   for (const auto& unit : State()->units) {
-    if (unit->hot || unit->replaced_at != 0 || unit->first_lsn >= before) {
+    if (unit->hot || unit->first_lsn >= before) {
       continue;
     }
     units.push_back(unit);
@@ -1093,8 +952,7 @@ std::vector<std::shared_ptr<const TableUnit>> Table::UnsyncedSegments(
 bool Table::Unsynced(uint64_t id) const {
   const auto state = State();
   const auto* unit = FindUnit(*state, id);
-  return unit && !unit->hot && unit->replaced_at == 0 &&
-         unit->first_lsn != kNoLsn;
+  return unit && !unit->hot && unit->first_lsn != kNoLsn;
 }
 
 void Table::Synced(std::span<const uint64_t> ids, Lsn lsn) {
@@ -1117,7 +975,7 @@ void Table::Synced(std::span<const uint64_t> ids, Lsn lsn) {
 
 bool Table::Unsettled() const {
   return absl::c_any_of(State()->units, [](const auto& unit) {
-    return unit->hot || (unit->first_lsn != kNoLsn && unit->replaced_at == 0);
+    return unit->hot || unit->first_lsn != kNoLsn;
   });
 }
 
@@ -1126,14 +984,13 @@ std::vector<StateUnit> Table::StateUnits() const {
   std::vector<StateUnit> units;
   units.reserve(state->units.size());
   for (const auto& unit : state->units) {
-    if (unit->hot || unit->replaced_at != 0 || unit->first_lsn != kNoLsn) {
+    if (unit->hot || unit->first_lsn != kNoLsn) {
       continue;
     }
-    units.push_back(
-      {.segment = {.id = unit->id,
-                   .meta_file = unit->segment.filename,
-                   .docs = unit->docs},
-       .deleted = unit->deletes.empty() ? nullptr : unit->deletes.back().mask});
+    units.push_back({.segment = {.id = unit->id,
+                                 .meta_file = unit->segment.filename,
+                                 .docs = unit->docs},
+                     .deleted = unit->deleted});
   }
   return units;
 }
@@ -1147,9 +1004,7 @@ Lsn Table::NeededFrom() const {
   absl::MutexLock lock{&_state_mutex};
   auto needed = _needed;
   for (const auto& unit : Head().state->units) {
-    if (unit->replaced_at == 0) {
-      needed = std::min(needed, unit->first_lsn);
-    }
+    needed = std::min(needed, unit->first_lsn);
   }
   return needed;
 }
@@ -1298,7 +1153,6 @@ bool Table::FinishReplay() {
       }
       unit->hot = replayed.hot;
       unit->docs = docs;
-      unit->inserts.push_back({docs, 0});
       absl::MutexLock hot_lock{&_hot_mutex};
       _free.push_back(replayed.hot);
     } else {
@@ -1317,9 +1171,9 @@ bool Table::FinishReplay() {
       }
     }
     if (!replayed.removed.Empty()) {
-      PushDeletes(*unit, 0, std::move(replayed.removed));
+      SetDeletes(*unit, std::move(replayed.removed));
     }
-    if (!Gone(*unit, 0)) {
+    if (!Dead(*unit)) {
       next->units.push_back(std::move(unit));
     }
   }

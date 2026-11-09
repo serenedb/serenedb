@@ -260,8 +260,7 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   SDB_PARK_ONCE_ON_FAILURE("search_update_before_key_check");
-  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store,
-                                        gstate.sdb_txn->Snapshot());
+  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store);
   return duckdb::SinkFinalizeType::READY;
 }
 

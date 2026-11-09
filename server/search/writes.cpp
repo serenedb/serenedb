@@ -66,11 +66,11 @@ void ReleaseWriter(StoreWrites& w) noexcept {
 }
 
 [[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
-                                           const StoreWrites& w, Tick snapshot,
+                                           const StoreWrites& w,
                                            const KeySpec& spec,
                                            std::string_view key) {
   for (const auto& removal : w.changes.removals) {
-    w.store->GetTable().CheckConflicts(snapshot, *removal);
+    w.store->GetTable().CheckConflicts(*removal);
   }
   ThrowDuplicate(context, spec, key);
 }
@@ -558,7 +558,7 @@ void Writes::RewriteOwn(
     for (const auto& segment : w.own_segments) {
       own.push_back(segment.reader->Id());
     }
-    const auto reader = store->View(kAllApplied, OwnOf(w));
+    const auto reader = store->View(OwnOf(w));
     auto trx = std::make_unique<irs::IndexWriter::Transaction>(
       store->GetTransaction(/*exclusive_segment=*/true));
     {
@@ -590,12 +590,14 @@ void Writes::RewriteOwn(
   ResetReader(store->GetDatabaseId(), store->GetId());
 }
 
-void Writes::Rebuilt(const std::shared_ptr<Store>& store, Tick tick,
-                     bool newer) {
+void Writes::Rebuilt(const std::shared_ptr<Store>& store,
+                     std::shared_ptr<const TableState> state, bool newer) {
   {
     auto& w = EnsureStoreWrites(store);
     absl::MutexLock lock{&w.mutex};
-    w.rebuilt = std::max(w.rebuilt, tick);
+    if (state) {
+      w.rebuilt = std::move(state);
+    }
     w.rebuilt_newer = w.rebuilt_newer || newer;
   }
   ResetReader(store->GetDatabaseId(), store->GetId());
@@ -617,9 +619,14 @@ std::shared_ptr<const TableState> Writes::PinState(const Store& store,
   absl::MutexLock lock{&_mutex};
   auto& views = _readers[std::pair{store.GetDatabaseId(), store.GetId()}];
   if (!views.state) {
-    views.state = _writes.contains(store.GetId())
-                    ? store.GetTable().State()
-                    : store.GetTable().StateAt(snapshot, _walks);
+    std::shared_ptr<const TableState> rebuilt;
+    if (const auto it = _writes.find(store.GetId()); it != _writes.end()) {
+      absl::ReaderMutexLock writes{&it->second.mutex};
+      rebuilt = it->second.rebuilt;
+    }
+    auto state = store.GetTable().StateAt(snapshot, _walks);
+    views.state = rebuilt && rebuilt->tick > state->tick ? std::move(rebuilt)
+                                                         : std::move(state);
   }
   return views.state;
 }
@@ -966,8 +973,7 @@ void Writes::CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
   }
 }
 
-void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
-                       Tick snapshot) {
+void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
   absl::MutexLock all{&_mutex};
   const auto found = _writes.find(store.GetId());
   if (found == _writes.end()) {
@@ -1043,7 +1049,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     absl::c_sort(keys);
     if (auto duplicate =
           FindDuplicate(context, key_spec, segments, keys, existing)) {
-      ThrowDuplicateOrConflict(context, w, snapshot, key_spec, *duplicate);
+      ThrowDuplicateOrConflict(context, w, key_spec, *duplicate);
     }
   }
   for (const auto& row : keyed) {
@@ -1083,10 +1089,9 @@ std::shared_ptr<const TableState> Writes::VerifyAllReferences(
   const KeySpec& spec) {
   const auto* parent = ReferencedTable(table, spec, Latest(table));
   const auto own = _writes.find(table.Storage()->GetId());
-  const auto reader =
-    own == _writes.end()
-      ? table.Storage()->View(kAllApplied, {})
-      : table.Storage()->View(kAllApplied, OwnOf(own->second));
+  const auto reader = own == _writes.end()
+                        ? table.Storage()->View({})
+                        : table.Storage()->View(OwnOf(own->second));
   std::vector<KeyProbe::Segment> segments;
   for (const auto& segment : reader) {
     segments.push_back({.sub = &segment});
@@ -1126,8 +1131,7 @@ void Writes::VerifyReferences(duckdb::ClientContext& context,
     {.table = &table, .spec = spec, .referenced = std::move(referenced)});
 }
 
-void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
-                         Tick snapshot) {
+void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
   if (w.keys.empty() && !w.removed_rows && !w.changes.truncate) {
     return;
   }
@@ -1158,7 +1162,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
       absl::c_sort(keys);
       if (auto duplicate =
             FindDuplicate(context, spec, segments, keys, fresh)) {
-        ThrowDuplicateOrConflict(context, w, snapshot, spec, *duplicate);
+        ThrowDuplicateOrConflict(context, w, spec, *duplicate);
       }
     }
   }
@@ -1255,22 +1259,23 @@ irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
   const auto state = PinState(store, snapshot);
   const bool search = searchable && store.HasIndexes();
   if (search) {
-    store.MakeSearchable(snapshot);
+    store.MakeSearchable(*state);
   }
-  return BuildView(context, store, snapshot, state, search);
+  return BuildView(context, store, state, search);
 }
 
 irs::DirectoryReader Writes::LatestView(duckdb::ClientContext& context,
-                                        Store& store, Tick snapshot) {
+                                        Store& store) {
+  const auto state = store.GetTable().State();
   const bool search = store.HasIndexes();
   if (search) {
-    store.MakeSearchable(snapshot);
+    store.MakeSearchable(*state);
   }
-  return BuildView(context, store, snapshot, store.GetTable().State(), search);
+  return BuildView(context, store, state, search);
 }
 
 irs::DirectoryReader Writes::BuildView(
-  duckdb::ClientContext& context, Store& store, Tick snapshot,
+  duckdb::ClientContext& context, Store& store,
   const std::shared_ptr<const TableState>& state, bool searchable) {
   StoreWrites* w = nullptr;
   {
@@ -1280,7 +1285,7 @@ irs::DirectoryReader Writes::BuildView(
     }
   }
   if (!w) {
-    return store.View(state, snapshot, {}, searchable);
+    return store.View(state, {}, searchable);
   }
   absl::MutexLock lock{&w->mutex};
   if (w->rebuilt_newer) {
@@ -1289,28 +1294,13 @@ irs::DirectoryReader Writes::BuildView(
   if (store.HasIndexes() && w->changes.HasBufferedRows()) {
     FlushRows(context, *w);
   }
-  return store.View(state, std::max(snapshot, w->rebuilt), OwnOf(*w),
-                    searchable);
+  return store.View(state, OwnOf(*w), searchable);
 }
 
-void Writes::NoteConflicts(Tick snapshot) {
-  absl::MutexLock all{&_mutex};
-  for (const auto& [store_id, w] : _writes) {
-    absl::ReaderMutexLock lock{&w.mutex};
-    for (const auto& removal : w.changes.removals) {
-      _conflict =
-        _conflict || w.store->GetTable().Conflicts(snapshot, *removal);
-    }
-  }
-}
-
-void Writes::PrepareCommit(duckdb::ClientContext& context, Tick snapshot) {
-  if (_conflict) {
-    ThrowConcurrentUpdate();
-  }
+void Writes::PrepareCommit(duckdb::ClientContext& context) {
   for (const auto& [store_id, w] : _writes) {
     for (const auto& removal : w.changes.removals) {
-      w.store->GetTable().CheckConflicts(snapshot, *removal);
+      w.store->GetTable().CheckConflicts(*removal);
     }
   }
   for (auto& [store_id, w] : _writes) {
@@ -1371,17 +1361,13 @@ void Writes::PrepareCommit(duckdb::ClientContext& context, Tick snapshot) {
   }
   for (auto& [store_id, w] : _writes) {
     if (w.prepared) {
-      CatchUpKeys(context, w, snapshot);
+      CatchUpKeys(context, w);
       SDB_PARK_ONCE_ON_FAILURE("search_commit_prepared");
     }
   }
 }
 
-std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context,
-                                        Tick snapshot) {
-  if (_conflict) {
-    ThrowConcurrentUpdate();
-  }
+std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
   std::vector<LogSection> sections;
   for (auto& [store_id, w] : _writes) {
     if (!w.prepared) {
@@ -1397,7 +1383,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context,
     }
     auto& table = w.store->GetTable();
     for (auto& removal : w.changes.removals) {
-      table.CheckConflicts(snapshot, *removal);
+      table.CheckConflicts(*removal);
       removal = table.Resolve(removal);
       if (!removal->groups.empty()) {
         w.log.push_back(LogRemoval(*removal));
@@ -1406,7 +1392,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context,
   }
   for (auto& [store_id, w] : _writes) {
     if (w.prepared) {
-      CatchUpKeys(context, w, snapshot);
+      CatchUpKeys(context, w);
       sections.push_back({.table = w.table, .entries = std::move(w.log)});
     }
   }
@@ -1450,7 +1436,7 @@ std::vector<absl::Mutex*> Writes::CommitMutexes() const {
   return mutexes;
 }
 
-void Writes::Apply(Tick tick, Tick oldest, Lsn lsn) noexcept {
+void Writes::Apply(Tick tick, Lsn lsn) noexcept {
   for (auto& [store_id, w] : _writes) {
     if (!w.table) {
       ReleaseWriter(w);
@@ -1468,7 +1454,7 @@ void Writes::Apply(Tick tick, Tick oldest, Lsn lsn) noexcept {
             w.hot->Keys().Add(row.field, row.key, row.doc);
           }
         }
-        if (table.Apply(tick, oldest,
+        if (table.Apply(tick,
                         TableCommit{.hot = appended ? w.hot : nullptr,
                                     .hot_id = w.hot_id,
                                     .hot_end = w.hot_end,
@@ -1533,7 +1519,6 @@ void Writes::Abort() noexcept {
   _writes.clear();
   _readers.clear();
   _reference_checks.clear();
-  _conflict = false;
 }
 
 }  // namespace sdb::search

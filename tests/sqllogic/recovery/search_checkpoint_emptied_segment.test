@@ -41,19 +41,9 @@ statement ok
 DELETE FROM ckpt_emptied.public.docs;
 
 
-connection default
-statement ok
-SET sdb_faults = 'search_persist_before_sync';
-
-
 connection checkpointer
 statement async ok
 CHECKPOINT ckpt_emptied;
-
-
-connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-search_persist_before_sync:parked';
 
 
 connection default
@@ -74,11 +64,6 @@ SET sdb_faults = '-search_cleanup_after_remove:parked';
 connection default
 statement ok
 SET sdb_faults = 'search_cleanup_after_remove:release';
-
-
-connection default
-statement ok
-SET sdb_faults = 'search_persist_before_sync:release';
 
 
 connection checkpointer

@@ -419,9 +419,6 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
          .bytes = utils::file_utils::Slurp((path / file).string())});
     };
     for (const auto& unit : store.GetTable().State()->units) {
-      if (unit->replaced_at != 0) {
-        continue;
-      }
       absl::c_for_each(unit->segment.meta.files, add);
       add(unit->segment.filename);
     }

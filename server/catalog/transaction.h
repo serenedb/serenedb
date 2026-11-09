@@ -213,10 +213,9 @@ class Transactions final {
   Lsn Replaying() const noexcept { return _replaying; }
 
   void Commit(SessionTransaction& transaction, duckdb::ClientContext& context);
-  void CommitStorage(
-    absl::Mutex& table, absl::FunctionRef<std::vector<uint8_t>()> build,
-    absl::FunctionRef<void(duckdb::transaction_t, duckdb::transaction_t, Lsn)>
-      apply);
+  void CommitStorage(absl::Mutex& table,
+                     absl::FunctionRef<std::vector<uint8_t>()> build,
+                     absl::FunctionRef<void(duckdb::transaction_t, Lsn)> apply);
   void CommitState(absl::Mutex& table,
                    absl::FunctionRef<std::vector<uint8_t>()> build,
                    absl::FunctionRef<void(Lsn)> logged);

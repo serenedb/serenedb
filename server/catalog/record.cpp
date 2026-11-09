@@ -908,7 +908,7 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
       }
     }
   }
-  auto sections = writes.TakeLog(context, transaction.Snapshot());
+  auto sections = writes.TakeLog(context);
   std::erase_if(sections, [](const search::LogSection& section) {
     return section.entries.empty() ||
            !section.table->ParentCatalog().Cast<BaseCatalog>().Durable();

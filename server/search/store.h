@@ -151,13 +151,12 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::DirectoryReader GetDirectoryReader() const { return Snapshot()->reader; }
   irs::DirectoryReader BuildSnapshot();
 
-  irs::DirectoryReader View(Tick snapshot, const OwnWrites& own) const {
-    return _table->View(snapshot, own);
+  irs::DirectoryReader View(const OwnWrites& own) const {
+    return _table->View(own);
   }
   irs::DirectoryReader View(const std::shared_ptr<const TableState>& state,
-                            Tick snapshot, const OwnWrites& own,
-                            bool searchable) const {
-    return _table->View(state, snapshot, own, searchable);
+                            const OwnWrites& own, bool searchable) const {
+    return _table->View(state, own, searchable);
   }
   uint32_t RowGroupSize() const noexcept { return _row_group_size; }
   bool HasTable() const noexcept { return static_cast<bool>(_table); }
@@ -211,7 +210,7 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   void Commit(const irs::ProgressReportCallback& progress = nullptr);
   void CoolAll();
-  void MakeSearchable(Tick snapshot);
+  void MakeSearchable(const TableState& state);
   bool Settle();
   [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
                                            uint32_t target_segments);
@@ -305,8 +304,9 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _writer->ArmCompactionFloor();
   }
   void AwaitMerges(duckdb::ClientContext& context);
-  Tick ReplaceSegments(std::span<const irs::SubReader* const> replaced,
-                       std::vector<irs::IndexWriter::Replacement> replacements);
+  std::shared_ptr<const TableState> ReplaceSegments(
+    std::span<const irs::SubReader* const> replaced,
+    std::vector<irs::IndexWriter::Replacement> replacements);
 
   void ReplayHotRows(duckdb::Catalog& catalog,
                      std::vector<connector::ColumnId> column_ids,
@@ -375,7 +375,7 @@ class Store final : public std::enable_shared_from_this<Store>,
     return Dropped() || _directory->Dropped();
   }
   void CommitStorage(std::string entry,
-                     absl::FunctionRef<void(Tick, Tick, Lsn)> apply);
+                     absl::FunctionRef<void(Tick, Lsn)> apply);
   void ScheduleCooling();
   void CoolRetired(Lsn before);
   template<typename Remove>

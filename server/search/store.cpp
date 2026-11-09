@@ -286,8 +286,7 @@ void Store::SyncSegments() const {
 
 StoreSnapshotPtr Store::Snapshot() const {
   if (_table) {
-    return std::make_shared<StoreSnapshot>(
-      _table->View(catalog::Transactions::Get().LastCommit(), {}), nullptr);
+    return std::make_shared<StoreSnapshot>(_table->View({}), nullptr);
   }
   return std::atomic_load(&_snapshot);
 }
@@ -295,7 +294,7 @@ StoreSnapshotPtr Store::Snapshot() const {
 irs::DirectoryReader Store::BuildSnapshot() {
   SDB_ASSERT(_table);
   CoolAll();
-  return _table->ColdView(kAllApplied);
+  return _table->ColdView();
 }
 
 void Store::CoolAll() {
@@ -304,11 +303,11 @@ void Store::CoolAll() {
   }
 }
 
-void Store::MakeSearchable(Tick snapshot) {
+void Store::MakeSearchable(const TableState& state) {
   if (!_table) {
     return;
   }
-  _table->RetireVisible(snapshot);
+  _table->RetireVisible(state);
   for (;;) {
     Cool(false, false);
     if (!_table->HasRetiredHot()) {
@@ -333,7 +332,6 @@ bool Store::PersistSegments(Lsn before) {
   if (unsynced.empty()) {
     return false;
   }
-  SDB_PARK_ONCE_ON_FAILURE("search_persist_before_sync");
   for (const auto& unit : unsynced) {
     const auto& segment = unit->segment;
     std::vector<std::string_view> files{segment.meta.files.begin(),
@@ -365,7 +363,7 @@ bool Store::PersistSegments(Lsn before) {
       }
       return record;
     },
-    [&](Tick, Tick, Lsn lsn) { _table->Synced(logged, lsn); });
+    [&](Tick, Lsn lsn) { _table->Synced(logged, lsn); });
   const bool superseded = logged.size() != unsynced.size();
   unsynced.clear();
   if (superseded) {
@@ -422,7 +420,7 @@ void Store::ScheduleCooling() {
 }
 
 void Store::CommitStorage(std::string entry,
-                          absl::FunctionRef<void(Tick, Tick, Lsn)> apply) {
+                          absl::FunctionRef<void(Tick, Lsn)> apply) {
   SDB_ASSERT(!_read_only);
   catalog::Transactions::Get().CommitStorage(
     _table->CommitMutex(),
@@ -482,20 +480,25 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot, bool durable) {
     }
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_cooling");
+  bool left = false;
   if (durable) {
     SyncSegments();
     CommitStorage(
       LogCooled(
         {.id = id, .meta_file = written.segment.filename, .docs = docs}),
-      [&](Tick, Tick, Lsn lsn) {
-        _table->Cooled(hot, std::move(written), lsn);
+      [&](Tick, Lsn lsn) {
+        left = _table->Cooled(hot, std::move(written), lsn);
       });
   } else {
     {
       absl::MutexLock lock{&_table->CommitMutex()};
-      _table->Cooled(hot, std::move(written), kNoLsn);
+      left = _table->Cooled(hot, std::move(written), kNoLsn);
     }
     catalog::Transactions::Get().RequestCollect();
+  }
+  if (left) {
+    QueueReleaseCleanup(shared_from_this(),
+                        catalog::Transactions::Get().LastCommit());
   }
   absl::MutexLock lock{&hot->Mutex()};
   hot->Trx().Abort();
@@ -688,9 +691,8 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
       co_return absl::OkStatus();
     }
     try {
-      const auto visible = catalog::Transactions::Get().LastCommit();
-      auto merged = co_await _writer->MergeAsync(
-        policy, _table->SettledView(visible), field_options, progress, env);
+      auto merged = co_await _writer->MergeAsync(policy, _table->ColdView(),
+                                                 field_options, progress, env);
       if (!merged.reader) {
         empty_compaction = true;
         co_return absl::OkStatus();
@@ -711,9 +713,8 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
       segments.push_back(OwnSegment{.segment = std::move(merged.segment),
                                     .reader = std::move(merged.reader)});
       CommitStorage(LogReplace(ids, named, merged.maps),
-                    [&](Tick tick, Tick oldest, Lsn lsn) {
-                      _table->Replace(visible, tick, oldest, lsn, ids,
-                                      std::move(segments),
+                    [&](Tick tick, Lsn lsn) {
+                      _table->Replace(tick, lsn, ids, std::move(segments),
                                       std::move(merged.maps));
                       QueueReleaseCleanup(shared_from_this(), tick);
                     });
@@ -794,8 +795,7 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
     std::vector<std::vector<std::string>> buckets;
     {
       const auto snapshot =
-        _table ? _table->SettledView(catalog::Transactions::Get().LastCommit())
-               : _writer->GetSnapshot();
+        _table ? _table->ColdView() : _writer->GetSnapshot();
       if (snapshot.size() <= target) {
         break;
       }
@@ -861,7 +861,7 @@ void Store::AwaitMerges(duckdb::ClientContext& context) {
 StoreStats Store::GetStats() const {
   StoreStats stats;
   if (_table) {
-    stats = _table->Stats(catalog::Transactions::Get().LastCommit());
+    stats = _table->Stats();
   } else {
     stats = StoreStats::FromReader(GetDirectoryReader());
     stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
@@ -870,7 +870,7 @@ StoreStats Store::GetStats() const {
   return stats;
 }
 
-Tick Store::ReplaceSegments(
+std::shared_ptr<const TableState> Store::ReplaceSegments(
   std::span<const irs::SubReader* const> replaced,
   std::vector<irs::IndexWriter::Replacement> replacements) {
   SDB_ASSERT(_table);
@@ -896,14 +896,12 @@ Tick Store::ReplaceSegments(
     segments.push_back(std::move(opened));
   }
   SyncSegments();
-  Tick published = 0;
-  CommitStorage(LogReplace(ids, named, maps),
-                [&](Tick tick, Tick oldest, Lsn lsn) {
-                  _table->Replace(tick, tick, oldest, lsn, ids,
-                                  std::move(segments), std::move(maps));
-                  QueueReleaseCleanup(shared_from_this(), tick);
-                  published = tick;
-                });
+  std::shared_ptr<const TableState> published;
+  CommitStorage(LogReplace(ids, named, maps), [&](Tick tick, Lsn lsn) {
+    published =
+      _table->Replace(tick, lsn, ids, std::move(segments), std::move(maps));
+    QueueReleaseCleanup(shared_from_this(), tick);
+  });
   return published;
 }
 
@@ -1341,7 +1339,7 @@ bool Store::FinishReplay() {
   }
   _writer->ReserveSegmentId(_table->ReplayTop());
   const bool replayed_records = _table->FinishReplay();
-  ClaimColumnOids(_table->View(catalog::Transactions::Get().LastCommit(), {}));
+  ClaimColumnOids(_table->View({}));
   return replayed_records;
 }
 

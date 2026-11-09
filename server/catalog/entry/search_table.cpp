@@ -1573,7 +1573,7 @@ duckdb::unique_ptr<duckdb::Expression> SearchTableEntry::BindConversion(
 
 duckdb::idx_t SearchTableEntry::UnusedColumnOid() const {
   irs::containers::FlatHashSet<irs::field_id> stored;
-  for (const auto& segment : _storage->View(search::kAllApplied, {})) {
+  for (const auto& segment : _storage->View({})) {
     if (const auto* columns = segment.GetColReader()) {
       for (const auto& column : columns->Columns()) {
         stored.insert(column->Id());
@@ -1624,9 +1624,7 @@ void SearchTableEntry::Backfill(
 
 irs::DirectoryReader SearchTableEntry::RowsWithOwn(
   duckdb::ClientContext& context) const {
-  return SessionOf(context, catalog)
-    .SearchTxn()
-    .LatestView(context, *_storage, search::kAllApplied);
+  return SessionOf(context, catalog).SearchTxn().LatestView(context, *_storage);
 }
 
 void SearchTableEntry::AdoptAsWritten(duckdb::ClientContext& context) const {

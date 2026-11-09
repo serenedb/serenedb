@@ -59,7 +59,7 @@ struct StoreWrites {
   std::vector<OwnSegment> own_segments;
   std::vector<irs::DocMap> own_maps;
   uint64_t rows_generation = 0;
-  Tick rebuilt = 0;
+  std::shared_ptr<const TableState> rebuilt;
   bool rebuilt_newer = false;
   std::shared_ptr<HotContext> hot;
   uint64_t hot_id = 0;
@@ -135,7 +135,8 @@ class Writes {
                                          connector::SearchSinkInsertBaseImpl&)>
                     feed);
 
-  void Rebuilt(const std::shared_ptr<Store>& store, Tick tick, bool newer);
+  void Rebuilt(const std::shared_ptr<Store>& store,
+               std::shared_ptr<const TableState> state, bool newer);
 
   void AddOwnSegments(
     const std::shared_ptr<Store>& store,
@@ -202,8 +203,7 @@ class Writes {
 
   irs::DirectoryReader View(duckdb::ClientContext& context, Store& store,
                             Tick snapshot, bool searchable);
-  irs::DirectoryReader LatestView(duckdb::ClientContext& context, Store& store,
-                                  Tick snapshot);
+  irs::DirectoryReader LatestView(duckdb::ClientContext& context, Store& store);
   std::shared_ptr<irs::DirectoryReader> PinnedReader(const Store& store) const;
 
   bool Empty() const noexcept { return _writes.empty(); }
@@ -213,8 +213,7 @@ class Writes {
   // referenced table does not hold, and the statement that removed the last
   // row holding a key a foreign key references. Runs once the statement has
   // handed its rows over.
-  void CheckKeys(duckdb::ClientContext& context, const Store& store,
-                 Tick snapshot);
+  void CheckKeys(duckdb::ClientContext& context, const Store& store);
 
   // Refuses the rows of `table`, the whole table, whose reference key `spec`
   // the referenced table does not hold; the commit checks them again if the
@@ -223,18 +222,11 @@ class Writes {
                         const catalog::SearchTableEntry& table,
                         const KeySpec& spec);
 
-  // Notes the rows this transaction removed that a commit after `snapshot`
-  // removed too, for the commit to refuse: a statement moving the
-  // transaction's snapshot past such a commit would hide the conflict from the
-  // check at commit.
-  void NoteConflicts(Tick snapshot);
-
-  void PrepareCommit(duckdb::ClientContext& context, Tick snapshot);
-  std::vector<LogSection> TakeLog(duckdb::ClientContext& context,
-                                  Tick snapshot);
+  void PrepareCommit(duckdb::ClientContext& context);
+  std::vector<LogSection> TakeLog(duckdb::ClientContext& context);
   bool CrossTable() const;
   std::vector<absl::Mutex*> CommitMutexes() const;
-  void Apply(Tick tick, Tick oldest, Lsn lsn) noexcept;
+  void Apply(Tick tick, Lsn lsn) noexcept;
   void BeforePublish() noexcept;
   void Finish() noexcept;
 
@@ -255,8 +247,7 @@ class Writes {
                        const KeySpec& spec, std::span<const std::string> keys);
   void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
                         bool commit);
-  void CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
-                   Tick snapshot);
+  void CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w);
   std::shared_ptr<const TableState> VerifyAllReferences(
     duckdb::ClientContext& context, const catalog::SearchTableEntry& table,
     const KeySpec& spec);
@@ -276,13 +267,11 @@ class Writes {
 
   std::shared_ptr<const TableState> PinState(const Store& store, Tick snapshot);
   irs::DirectoryReader BuildView(duckdb::ClientContext& context, Store& store,
-                                 Tick snapshot,
                                  const std::shared_ptr<const TableState>& state,
                                  bool searchable);
 
   duckdb::transaction_t _session;
   catalog::WalkCounters& _walks;
-  bool _conflict = false;
   mutable absl::Mutex _mutex;
   std::vector<ReferenceCheck> _reference_checks;
   // Node-based: the entry is well past FlatHashMap's size cut-off, and the

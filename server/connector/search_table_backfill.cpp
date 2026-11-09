@@ -274,10 +274,9 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
 };
 
 // Rewrites one group of stale segments into fresh ones and swaps them in.
-search::Tick RebuildGroup(duckdb::ClientContext& context,
-                          const SearchBackfillTarget& target,
-                          std::span<const irs::SubReader* const> group,
-                          pg::ProgressMetrics* progress) {
+std::shared_ptr<const search::TableState> RebuildGroup(
+  duckdb::ClientContext& context, const SearchBackfillTarget& target,
+  std::span<const irs::SubReader* const> group, pg::ProgressMetrics* progress) {
   auto& shard = *target.shard;
   uint64_t rows = 0;
   for (const auto* sub : group) {
@@ -336,7 +335,7 @@ search::Tick RebuildGroup(duckdb::ClientContext& context,
   for (const auto& slice : slices) {
     AppendReplacements(*slice, adopted);
   }
-  search::Tick published = 0;
+  std::shared_ptr<const search::TableState> published;
   try {
     published = shard.ReplaceSegments(group, std::move(adopted));
   } catch (const irs::SqlException& e) {
@@ -402,7 +401,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // limit" -- one group, one swap, the whole table's worth of peak disk.
   const bool unlimited = target.group_bytes == 0;
   bool counted = false;
-  search::Tick rebuilt = 0;
+  std::shared_ptr<const search::TableState> rebuilt;
   // One group per pass, and the reader that named it dies with the pass: it
   // references every segment it can see, so holding it across groups would
   // keep the ones already swapped out unreclaimable and make the budget above
@@ -443,7 +442,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     auto& connection = ConnectionContext::Get(context);
     auto& transaction = connection.Transaction();
     transaction.SearchTxn().Rebuilt(
-      target.shard, rebuilt,
+      target.shard, std::move(rebuilt),
       connection.IsStableSnapshot() &&
         shard.GetTable().LastWrite() > transaction.Snapshot());
   }

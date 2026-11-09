@@ -1133,7 +1133,7 @@ class Cursor {
   KeyBuffer _peek;
   size_t _peeked = 0;
   PaddedKey _probe;
-  PinnedBytes _pinned;
+  PinnedRange _pinned;
   ReadWindow _blocks_ahead{.ahead = 0, .issued = 0, .size = kFirstWindow};
   ReadWindow _inline_ahead{
     .ahead = 0,

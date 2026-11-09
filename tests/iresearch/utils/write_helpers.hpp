@@ -37,11 +37,27 @@ StringType ToString(const byte_type* begin) {
     reinterpret_cast<const typename TraitsType::char_type*>(begin), size);
 }
 
+template<typename N>
+N ReadVarintBytes(auto& in) {
+  N value = 0;
+  for (uint32_t shift = 0;; shift += 7) {
+    const byte_type b = in.ReadByte();
+    value |= static_cast<N>(b & 0x7F) << shift;
+    if (b < 0x80) {
+      return value;
+    }
+  }
+}
+
+uint32_t ReadV32(auto& in) { return ReadVarintBytes<uint32_t>(in); }
+
+uint64_t ReadV64(auto& in) { return ReadVarintBytes<uint64_t>(in); }
+
 inline void WriteZV32(DataOutput& out, int32_t v) {
   out.WriteV32(irs::ZigZagEncode32(v));
 }
 
-int32_t ReadZV32(auto& in) { return irs::ZigZagDecode32(in.ReadV32()); }
+int32_t ReadZV32(auto& in) { return irs::ZigZagDecode32(ReadV32(in)); }
 
 inline void WriteZV64(DataOutput& out, int64_t v) {
   out.WriteV64(irs::ZigZagEncode64(v));
@@ -49,7 +65,7 @@ inline void WriteZV64(DataOutput& out, int64_t v) {
 
 template<typename StringType>
 StringType ReadString(auto& in) {
-  StringType str(in.ReadV32(), 0);
+  StringType str(ReadV32(in), 0);
   in.ReadData(reinterpret_cast<byte_type*>(str.data()), str.size());
   return str;
 }

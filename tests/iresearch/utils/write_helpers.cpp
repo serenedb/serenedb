@@ -20,6 +20,8 @@
 
 #include "utils/write_helpers.hpp"
 
+#include <absl/base/internal/endian.h>
+
 #include <bit>
 #include <iresearch/utils/numeric_utils.hpp>
 
@@ -28,8 +30,7 @@ namespace tests {
 uint16_t ReadU16(irs::IndexInput& in) {
   irs::byte_type bytes[sizeof(uint16_t)];
   in.ReadData(bytes, sizeof bytes);
-  const irs::byte_type* it = bytes;
-  return irs::read<uint16_t>(it);
+  return absl::little_endian::Load16(bytes);
 }
 
 void WriteZvfloat(irs::DataOutput& out, float_t v) {

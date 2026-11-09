@@ -38,7 +38,7 @@ class DataOutput {
 
   IRS_FORCE_INLINE void WriteByte(byte_type b) {
     if (_pos == _end) [[unlikely]] {
-      return Overflow(&b, 1);
+      return WriteSlow(b);
     }
     *_pos++ = b;
   }
@@ -88,12 +88,16 @@ class DataOutput {
   template<typename N>
   IRS_FORCE_INLINE void WriteFixed(N n) {
     n = absl::little_endian::FromHost(n);
-    const auto* b = reinterpret_cast<const byte_type*>(&n);
     if (Remain() < sizeof(n)) [[unlikely]] {
-      return Overflow(b, sizeof(n));
+      return WriteSlow(n);
     }
-    std::memcpy(_pos, b, sizeof(n));
+    std::memcpy(_pos, &n, sizeof(n));
     _pos += sizeof(n);
+  }
+
+  template<typename N>
+  IRS_NO_INLINE void WriteSlow(N n) {
+    Overflow(reinterpret_cast<const byte_type*>(&n), sizeof(n));
   }
 
   template<typename N>
@@ -101,7 +105,9 @@ class DataOutput {
     if (Remain() < bytes_io<N>::kMaxVSize) [[unlikely]] {
       return WriteVarintSlow(n);
     }
-    irs::WriteVarint(n, _pos);
+    auto* pos = _pos;
+    irs::WriteVarint(n, pos);
+    _pos = pos;
   }
 
   template<typename N>

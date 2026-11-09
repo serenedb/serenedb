@@ -23,6 +23,7 @@
 #include <fsst.h>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
@@ -41,6 +42,11 @@
 namespace irs::term_dict {
 
 class FieldReader;
+
+struct PinnedRange {
+  PinnedBytes pinned;
+  uint64_t start = std::numeric_limits<uint64_t>::max();
+};
 
 struct RangeLevel {
   const byte_type* starts;
@@ -140,7 +146,7 @@ class TermReaderImpl final : public TermReader {
       block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1);
     return lower.substr(0, CommonPrefixLength(lower, upper));
   }
-  const byte_type* Block(size_t block, PinnedBytes& pinned) const;
+  const byte_type* Block(size_t block, PinnedRange& pinned) const;
   uint64_t BlockOffset(size_t block) const noexcept;
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
   InlinePages::Span InlineSpan(uint32_t block) const noexcept;

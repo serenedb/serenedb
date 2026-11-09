@@ -53,6 +53,7 @@
 #include "store/simulated_object_store.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -700,7 +701,7 @@ void ReadValues(const tests::IndexDir& dir, uint32_t checksum) {
   irs::IndexInput in{*file};
   irs::bstring read(Chunk().size(), irs::byte_type{0});
   for (uint64_t i = 0; i != kValues; ++i) {
-    ASSERT_EQ(i * 2654435761, in.ReadV64());
+    ASSERT_EQ(i * 2654435761, ReadV64(in));
     ASSERT_EQ(static_cast<int32_t>(i), in.ReadI32());
     ASSERT_EQ(static_cast<irs::byte_type>(i), in.ReadByte());
     if (i % kChunkEvery == 0) {

@@ -138,7 +138,7 @@ const irs::term_dict::TermReaderImpl& Blocks(const irs::TermReader& reader) {
 
 std::array<size_t, 3> BlockKinds(const irs::term_dict::TermReaderImpl& reader) {
   std::array<size_t, 3> kinds{};
-  irs::PinnedBytes pinned;
+  irs::term_dict::PinnedRange pinned;
   for (uint32_t block = 0; block != reader.Blocks(); ++block) {
     ++kinds.at(*reader.Block(block, pinned));
   }
@@ -1366,7 +1366,7 @@ TEST_P(TermDictTest, small_fields_are_copied_at_open) {
     SCOPED_TRACE(testing::Message("field ") << field.id);
     const auto& impl = Blocks(*Get(field));
     ASSERT_EQ(field.id != 2, impl.Small());
-    irs::PinnedBytes pinned;
+    irs::term_dict::PinnedRange pinned;
     const auto* block = impl.Block(0, pinned);
     ASSERT_EQ(impl.Small(), block < begin || end <= block);
     for (const auto& entry : field.entries) {

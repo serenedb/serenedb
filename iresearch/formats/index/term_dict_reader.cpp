@@ -315,7 +315,7 @@ void TermReaderImpl::SampleTerms(
 }
 
 const byte_type* TermReaderImpl::Block(size_t block,
-                                       PinnedBytes& pinned) const {
+                                       PinnedRange& pinned) const {
   if (_small) {
     return _small;
   }
@@ -324,9 +324,16 @@ const byte_type* TermReaderImpl::Block(size_t block,
     return base + offset;
   }
   const auto& in = _owner->Input();
-  pinned =
-    in.Pin(offset, std::min(BlockOffset(block + 1), in.Length()) - offset);
-  return pinned.bytes.data();
+  const uint64_t end = std::min(BlockOffset(block + 1), in.Length());
+  if (offset < pinned.start ||
+      end - pinned.start > pinned.pinned.bytes.size()) {
+    constexpr uint64_t kCached = duckdb::BlockCache::BLOCK_SIZE;
+    const uint64_t first = offset - offset % kCached;
+    const uint64_t last = std::min(first + kCached, in.Length());
+    pinned.start = end <= last ? first : offset;
+    pinned.pinned = in.Pin(pinned.start, std::max(end, last) - pinned.start);
+  }
+  return pinned.pinned.bytes.data() + (offset - pinned.start);
 }
 
 void TermReaderImpl::PrefetchLookup(uint32_t block) const {
@@ -382,7 +389,7 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   const auto probe = padded.Assign(KeyPrefix(), term);
   const uint32_t block = BlockOf(probe);
   PrefetchLookup(block);
-  PinnedBytes pinned;
+  PinnedRange pinned;
   const auto view = Parse(Block(block, pinned), Fsst());
   const auto entry = Find(view, probe, Fsst());
   if (entry == kNoEntry) {
@@ -454,7 +461,7 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   }
   auto epoch = file_utils::ResidencyEpoch();
 
-  PinnedBytes pinned;
+  PinnedRange pinned;
   BlockView view{};
   uint32_t parsed = kNoBlock;
   for (const auto& probe : probes) {

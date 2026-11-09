@@ -191,28 +191,28 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
     irs::IndexInput in1{*in1_file};
     ASSERT_FALSE(!in1);
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(0, in0.ReadV32());
-    ASSERT_EQ(0, in1.ReadV32());
+    ASSERT_EQ(0, ReadV32(in0));
+    ASSERT_EQ(0, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(1, in0.ReadV32());
-    ASSERT_EQ(1, in1.ReadV32());
+    ASSERT_EQ(1, ReadV32(in0));
+    ASSERT_EQ(1, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(2, in0.ReadV32());
-    ASSERT_EQ(2, in1.ReadV32());
+    ASSERT_EQ(2, ReadV32(in0));
+    ASSERT_EQ(2, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(300, in0.ReadV32());
-    ASSERT_EQ(300, in1.ReadV32());
+    ASSERT_EQ(300, ReadV32(in0));
+    ASSERT_EQ(300, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(4, in0.ReadV32());
-    ASSERT_EQ(4, in1.ReadV32());
+    ASSERT_EQ(4, ReadV32(in0));
+    ASSERT_EQ(4, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(50000, in0.ReadV32());
-    ASSERT_EQ(50000, in1.ReadV32());
+    ASSERT_EQ(50000, ReadV32(in0));
+    ASSERT_EQ(50000, ReadV32(in1));
     ASSERT_EQ(in0.Position(), in0.Length());
     ASSERT_EQ(in1.Position(), in1.Length());
   }
@@ -226,28 +226,28 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
     ASSERT_FALSE(!in1);
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(0, in0.ReadV32());
-    ASSERT_EQ(0, in1.ReadV32());
+    ASSERT_EQ(0, ReadV32(in0));
+    ASSERT_EQ(0, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(1, in0.ReadV32());
-    ASSERT_EQ(1, in1.ReadV32());
+    ASSERT_EQ(1, ReadV32(in0));
+    ASSERT_EQ(1, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(2, in0.ReadV32());
-    ASSERT_EQ(2, in1.ReadV32());
+    ASSERT_EQ(2, ReadV32(in0));
+    ASSERT_EQ(2, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(300, in0.ReadV32());
-    ASSERT_EQ(300, in1.ReadV32());
+    ASSERT_EQ(300, ReadV32(in0));
+    ASSERT_EQ(300, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(4, in0.ReadV32());
-    ASSERT_EQ(4, in1.ReadV32());
+    ASSERT_EQ(4, ReadV32(in0));
+    ASSERT_EQ(4, ReadV32(in1));
     ASSERT_LT(in0.Position(), in0.Length());
     ASSERT_LT(in1.Position(), in1.Length());
-    ASSERT_EQ(50000, in0.ReadV32());
-    ASSERT_EQ(50000, in1.ReadV32());
+    ASSERT_EQ(50000, ReadV32(in0));
+    ASSERT_EQ(50000, ReadV32(in1));
     ASSERT_EQ(in0.Position(), in0.Length());
     ASSERT_EQ(in1.Position(), in1.Length());
   }
@@ -285,7 +285,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
           }
 
           for (size_t i = 0; i < 10000; ++i) {
-            ASSERT_EQ(i, input.ReadV32());
+            ASSERT_EQ(i, ReadV32(input));
           }
 
           ASSERT_EQ(input.Position(), input.Length());
@@ -437,7 +437,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
       irs::IndexInput in{*in_file};
       ASSERT_FALSE(!in);
       ASSERT_LT(in.Position(), in.Length());
-      EXPECT_EQ(strings.size(), in.ReadV32());
+      EXPECT_EQ(strings.size(), ReadV32(in));
       for (const auto& str : strings) {
         const auto read = ReadString<std::string>(in);
         EXPECT_EQ(str, read);
@@ -1971,7 +1971,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
       irs::IndexInput in{*in_file};
       ASSERT_FALSE(!in);
       ASSERT_LT(in.Position(), in.Length());
-      EXPECT_EQ(strings.size(), in.ReadV32());
+      EXPECT_EQ(strings.size(), ReadV32(in));
       for (const auto& str : strings) {
         const auto read = ReadString<std::string>(in);
         EXPECT_EQ(str, read);
@@ -3604,7 +3604,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
       irs::IndexInput in{*in_file};
       ASSERT_FALSE(!in);
       ASSERT_LT(in.Position(), in.Length());
-      EXPECT_EQ(strings.size(), in.ReadV32());
+      EXPECT_EQ(strings.size(), ReadV32(in));
       for (const auto& str : strings) {
         const auto read = ReadString<std::string>(in);
         EXPECT_EQ(str, read);
@@ -3798,23 +3798,23 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
     EXPECT_LT(in.Position(), in.Length());
 
     // check vint
-    EXPECT_EQ(std::numeric_limits<uint32_t>::min(), in.ReadV32());
+    EXPECT_EQ(std::numeric_limits<uint32_t>::min(), ReadV32(in));
     EXPECT_LT(in.Position(), in.Length());
-    EXPECT_EQ(0, in.ReadV32());
+    EXPECT_EQ(0, ReadV32(in));
     EXPECT_LT(in.Position(), in.Length());
-    EXPECT_EQ(8748374, in.ReadV32());
+    EXPECT_EQ(8748374, ReadV32(in));
     EXPECT_LT(in.Position(), in.Length());
-    EXPECT_EQ(std::numeric_limits<uint32_t>::max(), in.ReadV32());
+    EXPECT_EQ(std::numeric_limits<uint32_t>::max(), ReadV32(in));
     EXPECT_LT(in.Position(), in.Length());
 
     // check vlong
-    EXPECT_EQ(std::numeric_limits<uint64_t>::min(), in.ReadV64());
+    EXPECT_EQ(std::numeric_limits<uint64_t>::min(), ReadV64(in));
     EXPECT_LT(in.Position(), in.Length());
-    EXPECT_EQ(0, in.ReadV64());
+    EXPECT_EQ(0, ReadV64(in));
     EXPECT_LT(in.Position(), in.Length());
-    EXPECT_EQ(23289LL, in.ReadV64());
+    EXPECT_EQ(23289LL, ReadV64(in));
     EXPECT_LT(in.Position(), in.Length());
-    EXPECT_EQ(std::numeric_limits<uint64_t>::max(), in.ReadV64());
+    EXPECT_EQ(std::numeric_limits<uint64_t>::max(), ReadV64(in));
     EXPECT_LT(in.Position(), in.Length());
 
     // check string
@@ -4399,10 +4399,10 @@ TEST_P(DirectoryTestCase, numbers_across_cache_blocks) {
   ASSERT_EQ(4 * kBlock + 3, in.Length());
 
   in.Skip(kBlock - 2);
-  EXPECT_EQ(kV32, in.ReadV32());
+  EXPECT_EQ(kV32, ReadV32(in));
   EXPECT_EQ(kBlock + 3, in.Position());
   in.Skip(kBlock - 7);
-  EXPECT_EQ(kV64, in.ReadV64());
+  EXPECT_EQ(kV64, ReadV64(in));
   EXPECT_EQ(2 * kBlock + 6, in.Position());
   in.Skip(kBlock - 9);
   EXPECT_EQ(kU64, static_cast<uint64_t>(in.ReadI64()));
@@ -5142,7 +5142,7 @@ TEST(DirectoryTest, memory_files_written_through_windows_read_back) {
     irs::IndexInput in{*file};
     irs::bstring read(chunk.size(), irs::byte_type{0});
     for (uint64_t i = 0; i != kValues; ++i) {
-      ASSERT_EQ(i * 2654435761, in.ReadV64());
+      ASSERT_EQ(i * 2654435761, ReadV64(in));
       ASSERT_EQ(static_cast<int32_t>(i), in.ReadI32());
       ASSERT_EQ(static_cast<irs::byte_type>(i), in.ReadByte());
       if (i % kChunkEvery == 0) {

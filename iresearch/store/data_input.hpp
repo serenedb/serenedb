@@ -22,18 +22,18 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
-#include <iterator>
 #include <memory>
 #include <span>
 #include <string>
 #include <utility>
 
-#include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/string.hpp"
@@ -167,8 +167,6 @@ class BasicInput {
   }
   IRS_FORCE_INLINE int32_t ReadI32() { return ReadFixed<uint32_t>(); }
   IRS_FORCE_INLINE int64_t ReadI64() { return ReadFixed<uint64_t>(); }
-  IRS_FORCE_INLINE uint32_t ReadV32() { return ReadVarint<uint32_t>(); }
-  IRS_FORCE_INLINE uint64_t ReadV64() { return ReadVarint<uint64_t>(); }
 
   IRS_FORCE_INLINE void ReadData(byte_type* b, uint64_t count) {
     if (count > Remain()) [[unlikely]] {
@@ -266,19 +264,6 @@ class BasicInput {
   const InputFile* File() const noexcept { return _file; }
 
  private:
-  struct Bytes {
-    using iterator_category = std::input_iterator_tag;
-    using value_type = byte_type;
-    using difference_type = std::ptrdiff_t;
-    using pointer = const byte_type*;
-    using reference = byte_type;
-
-    byte_type operator*() const { return in.ReadByte(); }
-    Bytes& operator++() noexcept { return *this; }
-
-    BasicInput& in;
-  };
-
   IRS_FORCE_INLINE uint64_t Remain() const noexcept {
     return static_cast<uint64_t>(_end - _pos);
   }
@@ -287,22 +272,21 @@ class BasicInput {
   IRS_FORCE_INLINE T ReadFixed() {
     if constexpr (!Contiguous) {
       if (Remain() < sizeof(T)) [[unlikely]] {
-        Bytes bytes{*this};
-        return irs::read<T>(bytes);
+        return ReadFixedSlow<T>();
       }
     }
-    return irs::read<T>(_pos);
+    const auto value = absl::little_endian::Load<T>(_pos);
+    _pos += sizeof(T);
+    return value;
   }
 
   template<typename T>
-  IRS_FORCE_INLINE T ReadVarint() {
-    if constexpr (!Contiguous) {
-      if (Remain() < bytes_io<T>::kMaxVSize) [[unlikely]] {
-        Bytes bytes{*this};
-        return irs::vread<T>(bytes);
-      }
+  IRS_NO_INLINE T ReadFixedSlow() {
+    byte_type bytes[sizeof(T)];
+    for (auto& b : bytes) {
+      b = ReadByte();
     }
-    return irs::vread<T>(_pos);
+    return absl::little_endian::Load<T>(bytes);
   }
 
   IRS_NO_INLINE bytes_view PeekSlow(uint64_t count) {
@@ -369,7 +353,7 @@ class BasicInput {
     ThrowPastEnd(_file, Position(), Length());
   }
 
-  void SeekOutside(uint64_t position) {
+  IRS_NO_INLINE void SeekOutside(uint64_t position) {
     if (_file == nullptr) {
       _pos = _end;
       return;

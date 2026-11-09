@@ -130,7 +130,6 @@ void FileOutput::CommitWindow() {
   _crc.process_bytes(_begin, size);
   _writer->Commit(size);
   Advance(size);
-  _begin = _pos;
 }
 
 uint32_t FileOutput::Checksum() {

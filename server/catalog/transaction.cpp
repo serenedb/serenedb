@@ -112,7 +112,7 @@ SessionTransaction::~SessionTransaction() {
 }
 
 void SessionTransaction::Refresh() {
-  if (!_changes.empty()) {
+  if (HasChanges()) {
     return;
   }
   _search.NoteConflicts(Snapshot());
@@ -621,6 +621,7 @@ void SessionTransaction::Rollback() noexcept {
     it->set->Undo(*it->version, it->kind);
   }
   _changes.clear();
+  _change_count.store(0, std::memory_order_release);
   _lsn_updates.clear();
   Release();
   std::vector<duckdb::reference<duckdb::AttachedDatabase>> attached;

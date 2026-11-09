@@ -97,13 +97,20 @@ class SessionTransaction final {
   }
 
   duckdb::idx_t CatalogEpoch() const noexcept {
-    return _changes.empty() ? _catalog_epoch.load(std::memory_order_acquire)
-                            : duckdb::TRANSACTION_ID_START + _changes.size();
+    const auto changes = _change_count.load(std::memory_order_acquire);
+    return changes == 0 ? _catalog_epoch.load(std::memory_order_acquire)
+                        : duckdb::TRANSACTION_ID_START + changes;
   }
 
   void Refresh();
 
-  void Push(Change change) { _changes.push_back(std::move(change)); }
+  void Push(Change change) {
+    _changes.push_back(std::move(change));
+    _change_count.store(_changes.size(), std::memory_order_release);
+  }
+  bool HasChanges() const noexcept {
+    return _change_count.load(std::memory_order_acquire) != 0;
+  }
   const std::vector<Change>& Changes() const noexcept { return _changes; }
 
   void PushReplicationLsn(ReplicationLsnEntry& entry, uint64_t remote_lsn);
@@ -151,6 +158,7 @@ class SessionTransaction final {
   std::atomic<duckdb::idx_t> _catalog_epoch;
   std::optional<duckdb::transaction_t> _held;
   std::vector<Change> _changes;
+  std::atomic<size_t> _change_count{0};
   std::vector<LsnUpdate> _lsn_updates;
   absl::Mutex _mutex;
   std::vector<duckdb::reference<duckdb::AttachedDatabase>> _attached

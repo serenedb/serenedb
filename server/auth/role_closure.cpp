@@ -149,10 +149,9 @@ bool WritesCatalog(duckdb::ClientContext& context,
   }
   auto transaction = context.transaction.ActiveTransaction().TryGetTransaction(
     cluster.GetAttached());
-  return transaction && !transaction->Cast<catalog::DatabaseTransaction>()
-                           .Session()
-                           .Changes()
-                           .empty();
+  return transaction && transaction->Cast<catalog::DatabaseTransaction>()
+                          .Session()
+                          .HasChanges();
 }
 
 std::shared_ptr<const RoleGraph> Publish(catalog::ClusterCatalog& cluster,

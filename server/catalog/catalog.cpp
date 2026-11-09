@@ -573,7 +573,7 @@ std::shared_ptr<const CatalogSnapshot> CatalogSnapshots::Get(
   duckdb::ClientContext& context, EntrySet& set) {
   const auto& session = SessionOf(context, _catalog);
   const auto version = session.Snapshot();
-  const auto cache = session.Changes().empty();
+  const auto cache = !session.HasChanges();
   const auto collect = [&] {
     auto snapshot = std::make_shared<CatalogSnapshot>();
     set.Scan(_catalog.GetCatalogTransaction(context),

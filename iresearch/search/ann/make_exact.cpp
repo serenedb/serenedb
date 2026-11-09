@@ -43,8 +43,8 @@ double ScanCost(const QueryBuilder* prefilter, double docs,
   if (prefilter == nullptr || docs == 0) {
     return docs;
   }
-  const auto share = std::min(
-    1.0, static_cast<double>(prefilter->EstimateMatches()) / docs);
+  const auto share =
+    std::min(1.0, static_cast<double>(prefilter->EstimateMatches()) / docs);
   return docs * (1.0 - std::pow(1.0 - share, rows_per_decode) +
                  kExactSkipCost * share * (1.0 - share));
 }
@@ -61,8 +61,7 @@ ExactRoute RouteOf(const ExactVectorQuery& query, const Context& ctx) {
   }
   const auto docs = static_cast<double>(query.Segment().docs_count());
   const auto rows_per_decode = std::max(
-    1.0,
-    kVectorDecodeFloats / static_cast<double>(query.Column().ArraySize()));
+    1.0, kVectorDecodeFloats / static_cast<double>(query.Column().ArraySize()));
   if (ScanCost(inner, docs, rows_per_decode) <=
       ScanCost(query.IndexOnly(), docs, rows_per_decode)) {
     return {inner, ctx.table};
@@ -83,8 +82,8 @@ class ExactChain : public Root {
       _table{route.table},
       _boost{score.boost},
       _k{ctx.k},
-      _ranked{_codes.bound && !route.table && score.boost > 0.f &&
-              ctx.k != 0 && ctx.k < query.Segment().live_docs_count()} {
+      _ranked{_codes.bound && !route.table && score.boost > 0.f && ctx.k != 0 &&
+              ctx.k < query.Segment().live_docs_count()} {
     _score = irs::detail::PrepareBlockScorer(
       score, query.Segment(), irs::detail::NoField(), _provider, _block);
   }

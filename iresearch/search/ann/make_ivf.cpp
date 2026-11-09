@@ -40,8 +40,8 @@ double ProbeCost(const QueryBuilder* query, double candidates,
   if (query == nullptr) {
     return 0;
   }
-  const auto fold = static_cast<double>(
-    query->Postings() + irs::detail::SegmentWords(docs_count));
+  const auto fold = static_cast<double>(query->Postings() +
+                                        irs::detail::SegmentWords(docs_count));
   return std::min(fold, candidates * static_cast<double>(query->Leaves())) +
          candidates * kProbeCandidateCost;
 }
@@ -49,7 +49,8 @@ double ProbeCost(const QueryBuilder* query, double candidates,
 double ShareOf(const QueryBuilder* query, double docs) noexcept {
   return query == nullptr || docs == 0
            ? 1.0
-           : std::min(1.0, static_cast<double>(query->EstimateMatches()) / docs);
+           : std::min(1.0,
+                      static_cast<double>(query->EstimateMatches()) / docs);
 }
 
 double ColumnChecks(double k, double share, double candidates) noexcept {
@@ -78,9 +79,8 @@ Route RouteOf(const VectorQueryBase& query, const SubReader& segment,
   const auto index_share = ShareOf(index_only, docs);
   const auto column_share =
     index_share > 0 ? std::min(1.0, ShareOf(inner, docs) / index_share) : 0.0;
-  const auto checks =
-    ColumnChecks(static_cast<double>(ctx.k), column_share,
-                 candidates * index_share);
+  const auto checks = ColumnChecks(static_cast<double>(ctx.k), column_share,
+                                   candidates * index_share);
   if (ProbeCost(inner, candidates, docs_count) <=
       ProbeCost(index_only, candidates, docs_count) +
         checks * kColumnCheckCost) {

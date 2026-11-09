@@ -48,10 +48,9 @@ Root::ptr MakeShortcut(const BooleanQuery& query, const Context& ctx) {
     return MakeConstant(0);
   }
   if (ShouldSums(query, ctx)) {
-    return MakeWholeCount(SumOf(query.Terms(Occur::Should)), ctx,
-                          [&query, ctx] {
-                            return detail::MakeQuery<Family>(query, ctx);
-                          });
+    return MakeWholeCount(
+      SumOf(query.Terms(Occur::Should)), ctx,
+      [&query, ctx] { return detail::MakeQuery<Family>(query, ctx); });
   }
   const auto& segment = query.Segment();
   const auto must_terms = query.Terms(Occur::Must);

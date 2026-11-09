@@ -544,8 +544,7 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
       must_not.filters.empty() && count::Disjoint(must_not.postings)
         ? SumEstimate(must_not)
         : MaxEstimate(must_not);
-    estimate =
-      docs - static_cast<uint32_t>(std::min<uint64_t>(docs, excluded));
+    estimate = docs - static_cast<uint32_t>(std::min<uint64_t>(docs, excluded));
   }
   if (!must_not.empty()) {
     const auto excluded = SumEstimate(must_not);

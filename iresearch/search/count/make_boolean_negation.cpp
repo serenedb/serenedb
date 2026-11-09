@@ -88,10 +88,9 @@ Root::ptr Family::MakeNegation(
   }
   const auto plan_excluded = [=, &segment]() -> Root::ptr {
     if (exclude_terms.size() + exclude_filters.size() == 1) {
-      return exclude_terms.empty()
-               ? exclude_filters.front()->PlanCount(ctx)
-               : MakePosting(exclude_terms.front(), segment, ctx,
-                             ScoreMergeType::Noop);
+      return exclude_terms.empty() ? exclude_filters.front()->PlanCount(ctx)
+                                   : MakePosting(exclude_terms.front(), segment,
+                                                 ctx, ScoreMergeType::Noop);
     }
     if (exclude_filters.empty() &&
         SubtractsPair(exclude_terms,

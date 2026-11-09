@@ -604,8 +604,8 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     if (it == claim.columns->end()) {
       return std::nullopt;
     }
-    return optimizer::ResolveSearchColumnById(
-      context, scan, it->second.column, it->second.column_stored);
+    return optimizer::ResolveSearchColumnById(context, scan, it->second.column,
+                                              it->second.column_stored);
   };
   const ExpressionGetter expr_getter =
     [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {

@@ -80,7 +80,7 @@ class ListColumnReader final : public ColumnReader {
   static constexpr uint64_t kReadAheadLists = 2048;
   static constexpr uint64_t kWholeBlockElems = 1 << 19;
   static constexpr uint64_t kWholeBlockLists = 8192;
-  static constexpr uint64_t kRunGapLists = 256;
+  static constexpr uint64_t kRunGapLists = 16;
   static constexpr uint64_t kAnyElems = std::numeric_limits<uint64_t>::max();
 
   bool Reusable(const ScanState& s) const noexcept {

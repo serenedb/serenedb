@@ -840,7 +840,7 @@ QUERY PLAN
 │ │ Pattern: (?sL)\\A.*A_E.*\\z             │ │
 │ │ Syntax: perl                          │ │
 │ │ Has Pos: false                        │ │
-│ │ Query: Or("A_E", "a_E", "A_e", "a_e") │ │
+│ │ Query: Or("A_E", "A_e", "a_E", "a_e") │ │
 │ │ Verify: false                         │ │
 │ ╰───────────────────────────────────────╯ │
 │ Table Filter:                             │
@@ -849,7 +849,7 @@ QUERY PLAN
 │ │ Pattern: (?sL)\\A.*A_E.*\\z             │ │
 │ │ Syntax: perl                          │ │
 │ │ Has Pos: false                        │ │
-│ │ Query: Or("A_E", "a_E", "A_e", "a_e") │ │
+│ │ Query: Or("A_E", "A_e", "a_E", "a_e") │ │
 │ │ Verify: table filter                  │ │
 │ ╰───────────────────────────────────────╯ │
 │ Projections: id                           │
@@ -970,30 +970,22 @@ query
 EXPLAIN SELECT id FROM wdm_c_idx WHERE regexp_matches(msg, '^s', 'i')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: wdm_c_idx               │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Wildcard NGram ───────────╮ │
-│ │ Field: msg(string)         │ │
-│ │ Pattern: (?:(?i)^s)(?s:.*) │ │
-│ │ Syntax: perl               │ │
-│ │ Has Pos: false             │ │
-│ │ Query: ALL                 │ │
-│ │ Verify: false              │ │
-│ ╰────────────────────────────╯ │
-│ Table Filter:                  │
-│ ╭─ Wildcard NGram ───────────╮ │
-│ │ Field: msg(string)         │ │
-│ │ Pattern: (?:(?i)^s)(?s:.*) │ │
-│ │ Syntax: perl               │ │
-│ │ Has Pos: false             │ │
-│ │ Query: ALL                 │ │
-│ │ Verify: table filter       │ │
-│ ╰────────────────────────────╯ │
-│ Projections: id                │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: wdm_c_idx                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Wildcard NGram ─────────────────────╮ │
+│ │ Field: msg(string)                   │ │
+│ │ Pattern: (?:(?i)^s)(?s:.*)           │ │
+│ │ Syntax: perl                         │ │
+│ │ Has Pos: false                       │ │
+│ │ Query:                               │ │
+│ │ Or("\\xffS", "\\xffs", "\\xff\\xc5\\xbf") │ │
+│ │ Verify: false                        │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 query
 SELECT id FROM wdm_c_idx WHERE msg SIMILAR TO '%(nurse|lead)' ORDER BY id

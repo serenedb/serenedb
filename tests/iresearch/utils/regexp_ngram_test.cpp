@@ -155,12 +155,13 @@ TEST(RegexpNGramTest, exact_shapes) {
   for (const std::string_view pattern :
        {"abc", "^abc$", "(?s)abc.*", "(?s).*abc", "(?s).*abc.*", "(?s)a.*",
         "(?s).*a", "(?s).*", "", R"([\s\S]*abc)", "(ab){2}", R"(a\x1fb)",
-        R"((?s)\x{ff}.*)"}) {
+        R"((?s)\x{ff}.*)", "[ab]cd", "(?is).*a.*", "(?is)ab.*", "(?Ls).*i.*",
+        "(?s).*[ab].*", "(?is).*\xD0\xB6.*"}) {
     EXPECT_TRUE(Exact(pattern)) << pattern;
   }
   for (const std::string_view pattern :
        {"abc.*", ".*abc", "a.c", "(?s)a.c", "(?s)ab.*cd", "(?s).+abc",
-        "(?i)abc", "[ab]cd", "(abc)?", "a+", R"(\babc)"}) {
+        "(?i)abc", R"((?is).*\x{4E2D}.*)", "(abc)?", "a+", R"(\babc)"}) {
     EXPECT_FALSE(Exact(pattern)) << pattern;
   }
 }
@@ -260,7 +261,7 @@ TEST(RegexpNGramTest, case_folding_third_case) {
     {"(?i).*k12.*", R"(Or("K12", "k12", "\xe2\x84\xaa12"))"},
     {"(?i).*s12.*", R"(Or("S12", "s12", "\xc5\xbf12"))"},
     {"(?i).*ok1.*",
-     R"(Or("OK1", "oK1", "Ok1", "ok1", "O\xe2\x84\xaa1", "o\xe2\x84\xaa1"))"},
+     R"(Or("OK1", "Ok1", "O\xe2\x84\xaa1", "oK1", "ok1", "o\xe2\x84\xaa1"))"},
     {"[Kk]1", R"(Or("\xffK1\xff", "\xffk1\xff"))"},
   };
   Check(kCases);
@@ -499,8 +500,8 @@ TEST(RegexpNGramTest, folded_terms_satisfy_query) {
 }
 
 TEST(RegexpNGramTest, exact_plans_decide_terms) {
-  static constexpr std::string_view kAlphabet[]{"a",    "b",        "\n",
-                                                "\x1F", "\xC3\xBF", "\xD0\xB6"};
+  static constexpr std::string_view kAlphabet[]{
+    "a", "b", "\n", "\x1F", "\xC3\xBF", "\xD0\xB6", "A", "\xC4\xB0"};
   std::vector<std::string> terms{""};
   for (size_t from = 0, len = 0; len != 4; ++len) {
     const auto to = terms.size();
@@ -516,8 +517,9 @@ TEST(RegexpNGramTest, exact_plans_decide_terms) {
     "", "a", "ab", "(?s).*", "(?s)a.*", "(?s).*a", "(?s).*ab.*", "^ab$",
   };
   static constexpr std::string_view kAtoms[]{
-    "a",      "b", "\xD0\xB6", "ab",    "(?s:.*)", ".*",
-    "(?s:.)", ".", "\\n",      "\\x1f", "\\x{ff}",
+    "a",      "b",      "\xD0\xB6", "ab",      "(?s:.*)",       ".*",
+    "(?s:.)", ".",      "\\n",      "\\x1f",   "\\x{ff}",       "(?i:a)",
+    "(?L:a)", "(?L:i)", "[ab]",     "(?i:ab)", "(?L:\xD0\xB6)",
   };
   std::mt19937 rng{20261002};
   for (int i = 0; i != 400; ++i) {

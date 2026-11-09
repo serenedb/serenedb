@@ -56,8 +56,7 @@ void HnswGraphWriter::Reset(size_t nodes, uint32_t m) {
   _graph._m = m;
   _graph._m0 = 2 * _graph._m;
   const auto empty = [&]<typename T>(HugePageVector<T>& v) {
-    v = HugePageVector<T>{
-      typename HugePageVector<T>::allocator_type{_budget}};
+    v = HugePageVector<T>{typename HugePageVector<T>::allocator_type{_budget}};
   };
   empty(_graph._levels);
   empty(_graph._offsets);

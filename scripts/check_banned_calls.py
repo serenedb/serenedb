@@ -75,7 +75,7 @@ EXCEPTIONS = {
     "iresearch/utils/managed_allocator.hpp": {"ManagedAllocator"},
     "iresearch/utils/mmap_utils.hpp": FILE_LAYER,
     "iresearch/utils/resource_manager.hpp": FILE_LAYER
-    | {"ManagedStdAllocator", "ManagedTypedAllocator"},
+    | {"ManagedAllocator", "ManagedTypedAllocator"},
     "server/docs/docs_search.cpp": FILE_LAYER,
     "server/search/store.cpp": FILE_LAYER,
     "server/search/store.h": FILE_LAYER,

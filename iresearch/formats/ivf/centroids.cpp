@@ -80,8 +80,8 @@ TrainShape ShapeOf(size_t rows, const CentroidsBuildParams& params) noexcept {
 }
 
 size_t MaxClusterRows(size_t sample_size, size_t leaf_size) noexcept {
-  return kMaxRowsPerLeaf * std::max<size_t>(
-                             1, (sample_size + leaf_size - 1) / leaf_size);
+  return kMaxRowsPerLeaf *
+         std::max<size_t>(1, (sample_size + leaf_size - 1) / leaf_size);
 }
 
 struct LayerLayout {
@@ -298,19 +298,16 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
           static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto,
           rotation_for(sample_size, 1), settings.budget);
         nodes.emplace_back(CentroidsBuilder::Node{
-          .centroids = node_centroids(centroids),
-          .children = {0},
-          .leafs = 1});
+          .centroids = node_centroids(centroids), .children = {0}, .leafs = 1});
         rows += 1;
       }
       // centroid from parent will route to this posting
       continue;
     }
     const size_t n_clusters = settings.Fanout(sample_size);
-    auto centroids = BuildAndSplit(entry.sample, d, entry.ids, n_clusters,
-                                   settings.metric, settings.niter,
-                                   rotation_for(sample_size, n_clusters),
-                                   settings.budget);
+    auto centroids = BuildAndSplit(
+      entry.sample, d, entry.ids, n_clusters, settings.metric, settings.niter,
+      rotation_for(sample_size, n_clusters), settings.budget);
     size_t n_built = centroids.size() / d;
 
     if (n_built == 1) {
@@ -556,12 +553,9 @@ void CentroidsBuilder::BuildTree(TrackedVector<float> sample, size_t leaf_size,
   }
 }
 
-CentroidsBuilder CentroidsBuilder::BuildFromSample(TrackedVector<float> sample,
-                                                   uint32_t d,
-                                                   VectorMetric metric,
-                                                   size_t leaf_size,
-                                                   size_t max_fanout,
-                                                   MemoryBudget* budget) {
+CentroidsBuilder CentroidsBuilder::BuildFromSample(
+  TrackedVector<float> sample, uint32_t d, VectorMetric metric,
+  size_t leaf_size, size_t max_fanout, MemoryBudget* budget) {
   CentroidsBuilder builder;
   builder._metric = metric;
   builder._d = d;
@@ -575,9 +569,8 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
                                           VectorMetric metric, uint32_t d,
                                           const CentroidsBuildParams& params) {
   const auto shape = ShapeOf(rows, params);
-  auto sample = GatherTrainingSample(vector_column, rows, d, ctx,
-                                     shape.sample_size, kTrainSeed,
-                                     params.budget);
+  auto sample = GatherTrainingSample(
+    vector_column, rows, d, ctx, shape.sample_size, kTrainSeed, params.budget);
   return BuildFromSample(std::move(sample), d, metric, shape.tau,
                          params.max_fanout, params.budget);
 }

@@ -83,8 +83,9 @@ AnnFlushBound IvfBuilder::Bound(uint64_t rows, QuantizerWriter& qw) const {
   if (rows == 0 || d == 0) {
     return {};
   }
-  const auto centroids = CentroidsBuilder::Bound(
-    rows, static_cast<uint32_t>(_info.d), _info.metric, CentroidParams(nullptr));
+  const auto centroids =
+    CentroidsBuilder::Bound(rows, static_cast<uint32_t>(_info.d), _info.metric,
+                            CentroidParams(nullptr));
   const size_t train_cap = qw.TrainSamples(rows);
   const size_t train =
     train_cap != 0 && train_cap != QuantizerWriter::kTrainStreaming
@@ -122,9 +123,8 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool sample_train = train_cap != 0 && !stream_train;
   const bool train_residuals = sample_train && needs_centroid;
 
-  auto centroids = CentroidsBuilder::Create(vector_column, ctx, rows,
-                                            _info.metric, d,
-                                            CentroidParams(budget));
+  auto centroids = CentroidsBuilder::Create(
+    vector_column, ctx, rows, _info.metric, d, CentroidParams(budget));
   const size_t n_clusters = centroids.NumClusters();
 
   TrackedVector<float> train{TrackedAllocator<float>{budget}};
@@ -449,10 +449,9 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
 
 AnnFlushBound IvfWriter::FlushBound(uint64_t rows) {
   if (!_bound_qw) {
-    _bound_qw =
-      MakeQuantizerWriter(_info.quant, static_cast<uint32_t>(_info.d),
-                          EffectiveQuantMetric(_info.metric),
-                          kDefaultClusterIters);
+    _bound_qw = MakeQuantizerWriter(_info.quant, static_cast<uint32_t>(_info.d),
+                                    EffectiveQuantMetric(_info.metric),
+                                    kDefaultClusterIters);
   }
   return IvfBuilder{_info}.Bound(rows, *_bound_qw);
 }

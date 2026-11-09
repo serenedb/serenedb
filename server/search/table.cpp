@@ -248,12 +248,16 @@ LiveUnits::LiveUnits(
       .removed = removed == _removed.end() ? nullptr : &removed->second,
     });
   }
+  absl::c_sort(_units, [](const Unit& lhs, const Unit& rhs) {
+    return lhs.unit->id < rhs.unit->id;
+  });
 }
 
 const LiveUnits::Unit* LiveUnits::Find(uint64_t id) const noexcept {
-  const auto it = absl::c_find_if(
-    _units, [&](const Unit& unit) { return unit.unit->id == id; });
-  return it == _units.end() ? nullptr : &*it;
+  const auto it = absl::c_lower_bound(
+    _units, id,
+    [](const Unit& unit, uint64_t key) { return unit.unit->id < key; });
+  return it != _units.end() && it->unit->id == id ? &*it : nullptr;
 }
 
 Table::Table(irs::Directory& dir, irs::IndexReaderOptions options)

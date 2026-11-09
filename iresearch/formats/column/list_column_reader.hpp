@@ -142,8 +142,10 @@ class ListColumnReader final : public ColumnReader {
     auto& state = s.child_states[child + 1];
     uint64_t pos = reader.GatherCursor(state);
     if (target < pos) {
+      auto fresh = reader.InitScan(s.ctx);
+      KeepReadahead(state, fresh);
       s.retired_states.push_back(std::move(state));
-      state = reader.InitScan(s.ctx);
+      state = std::move(fresh);
       pos = 0;
     }
     if (target > pos) {

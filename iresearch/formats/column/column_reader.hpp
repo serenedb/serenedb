@@ -467,6 +467,15 @@ class ColumnReader {
                                            duckdb::Vector& result) const;
 };
 
+inline void KeepReadahead(const ColumnReader::ScanState& from,
+                          ColumnReader::ScanState& to) noexcept {
+  SDB_ASSERT(from.child_states.size() == to.child_states.size());
+  to.advised_end = from.advised_end;
+  for (size_t i = 0; i != to.child_states.size(); ++i) {
+    KeepReadahead(from.child_states[i], to.child_states[i]);
+  }
+}
+
 inline duckdb::Vector& ResetScratch(
   std::unique_ptr<ColumnReader::VectorScratch>& slot, const auto& type,
   duckdb::idx_t capacity = STANDARD_VECTOR_SIZE) {

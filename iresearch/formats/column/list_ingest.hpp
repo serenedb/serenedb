@@ -20,13 +20,14 @@
 
 #pragma once
 
+#include <absl/hash/hash.h>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/types.hpp>
-#include <duckdb/common/types/hash.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -35,6 +36,8 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -74,9 +77,7 @@ class ListKeys {
   void Clear() noexcept { _chunks = {}; }
 
   IRS_FORCE_INLINE uint64_t Hash(uint64_t offset, uint64_t length) const {
-    const uint64_t h =
-      duckdb::Hash(reinterpret_cast<const char*>(&length), sizeof(length));
-    return _chunks[kSource].HashRange(h, offset, length);
+    return absl::HashOf(Range{_chunks[kSource], offset, length});
   }
 
   IRS_FORCE_INLINE bool Equal(size_t chunk, uint64_t offset,
@@ -93,12 +94,6 @@ class ListKeys {
     List,
     Array,
   };
-
-  static constexpr uint64_t Mix(uint64_t h, uint64_t v) noexcept {
-    h ^= h >> 32;
-    h *= 0xd6e8feb86659fd93ULL;
-    return h ^ v;
-  }
 
   struct Node {
     duckdb::UnifiedVectorFormat format;
@@ -139,61 +134,55 @@ class ListKeys {
         format.data)[Index(e)];
     }
 
-    uint64_t Hash(uint64_t h, uint64_t e) const {
+    std::string_view Bytes(uint64_t e) const {
+      if (kind == Kind::String) {
+        const auto& s = *reinterpret_cast<const duckdb::string_t*>(At(e));
+        return {s.GetData(), s.GetSize()};
+      }
+      return {reinterpret_cast<const char*>(At(e)), width};
+    }
+
+    template<typename H>
+    H Hash(H h, uint64_t e) const {
       if (!Valid(e)) {
-        return Mix(h, 0x9e3779b97f4a7c15ULL);
+        return H::combine(std::move(h), false);
       }
       switch (kind) {
         case Kind::Fixed:
-          return Mix(h,
-                     duckdb::Hash(reinterpret_cast<const char*>(At(e)), width));
         case Kind::String:
-          return Mix(
-            h, duckdb::Hash(*reinterpret_cast<const duckdb::string_t*>(At(e))));
+          return H::combine(std::move(h), absl::HashOf(Bytes(e)));
         case Kind::Struct:
-          h = Mix(h, 1);
           for (const auto& child : children) {
-            h = child.Hash(h, e);
+            h = child.Hash(std::move(h), e);
           }
           return h;
         case Kind::List: {
           const auto& entry = Entry(e);
-          h = Mix(h, entry.length);
-          return children[0].HashRange(h, entry.offset, entry.length);
+          return children[0].HashRange(H::combine(std::move(h), entry.length),
+                                       entry.offset, entry.length);
         }
         case Kind::Array:
-          return children[0].HashRange(h, Index(e) * width, width);
+          return children[0].HashRange(std::move(h), Index(e) * width, width);
       }
       return h;
     }
 
-    uint64_t HashRange(uint64_t h, uint64_t e, uint64_t length) const {
+    template<typename H>
+    H HashRange(H h, uint64_t e, uint64_t length) const {
       if (kind == Kind::Struct && RangeValid(e, length)) {
-        h = Mix(h, 2);
         for (const auto& child : children) {
-          h = child.HashRange(h, e, length);
+          h = child.HashRange(std::move(h), e, length);
         }
         return h;
       }
-      if (!all_valid || !flat ||
-          (kind != Kind::Fixed && kind != Kind::String)) {
+      if (all_valid && flat && (kind == Kind::Fixed || kind == Kind::String)) {
         for (uint64_t k = e; k < e + length; ++k) {
-          h = Hash(h, k);
+          h = H::combine(std::move(h), absl::HashOf(Bytes(k)));
         }
         return h;
       }
-      if (kind == Kind::String) {
-        const auto* x =
-          reinterpret_cast<const duckdb::string_t*>(format.data) + e;
-        for (uint64_t k = 0; k < length; ++k) {
-          h = Mix(h, duckdb::Hash(x[k]));
-        }
-        return h;
-      }
-      const auto* x = format.data + e * width;
-      for (uint64_t k = 0; k < length; ++k) {
-        h = Mix(
-          h, duckdb::Hash(reinterpret_cast<const char*>(x + k * width), width));
+      for (uint64_t k = e; k < e + length; ++k) {
+        h = Hash(std::move(h), k);
       }
       return h;
     }
@@ -266,6 +255,18 @@ class ListKeys {
     }
   };
 
+  struct Range {
+    const Node& node;
+    uint64_t offset;
+    uint64_t length;
+
+    template<typename H>
+    friend H AbslHashValue(H h, const Range& range) {
+      return range.node.HashRange(H::combine(std::move(h), range.length),
+                                  range.offset, range.length);
+    }
+  };
+
   std::array<Node, 2> _chunks;
 };
 
@@ -309,10 +310,9 @@ class ListIngest {
 
   void FlushTail();
 
-  template<bool kCached>
   void AddRows(const duckdb::UnifiedVectorFormat& parent,
-               const duckdb::list_entry_t* entries, duckdb::idx_t off,
-               duckdb::idx_t count);
+               const duckdb::list_entry_t* entries, bool cached,
+               duckdb::idx_t off, duckdb::idx_t count);
 
   void OpenWindow() noexcept {
     _window_rows = 0;

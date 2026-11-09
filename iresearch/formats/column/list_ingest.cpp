@@ -139,11 +139,7 @@ void ListIngest::Add(const duckdb::Vector& vec, duckdb::idx_t off,
   _keys.SetChunk(ListKeys::kSource, child);
   _fresh.clear();
   _picked.clear();
-  if (TrackSource(vec)) {
-    AddRows<true>(parent, entries, off, count);
-  } else {
-    AddRows<false>(parent, entries, off, count);
-  }
+  AddRows(parent, entries, TrackSource(vec), off, count);
   Store(child);
 }
 
@@ -204,10 +200,9 @@ void ListIngest::FlushTail() {
   _tail.reset();
 }
 
-template<bool kCached>
 void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
-                         const duckdb::list_entry_t* entries, duckdb::idx_t off,
-                         duckdb::idx_t count) {
+                         const duckdb::list_entry_t* entries, bool cached,
+                         duckdb::idx_t off, duckdb::idx_t count) {
   for (duckdb::idx_t i = off; i < off + count; ++i) {
     const auto idx = parent.sel->get_index(i);
     if (!parent.validity.RowIsValid(idx)) {
@@ -215,19 +210,17 @@ void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
       continue;
     }
     ++_window_rows;
-    if constexpr (kCached) {
-      if (idx < _source_codes.size() && _source_codes[idx] != 0) {
-        _last_code = _source_codes[idx] - 1;
-        PushCode(_last_code);
-        _sequence = false;
-        continue;
-      }
+    if (cached && idx < _source_codes.size() && _source_codes[idx] != 0) {
+      _last_code = _source_codes[idx] - 1;
+      PushCode(_last_code);
+      _sequence = false;
+      continue;
     }
     const auto& entry = entries[idx];
     uint32_t rep = kNoRep;
     const auto found = FindDirect(entry, rep);
     _last_code = found != kNoCode ? found : _next_code++;
-    if constexpr (kCached) {
+    if (cached) {
       if (idx >= _source_codes.size()) {
         _source_codes.resize(idx + 1, 0);
       }

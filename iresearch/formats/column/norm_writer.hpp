@@ -139,7 +139,7 @@ class NormColumnWriter final {
   uint32_t Escape(uint64_t row, uint32_t value);
 
   field_id _id;
-  IndexOutput* _out = nullptr;
+  IndexOutput* _blocks = nullptr;
   Open _open;
   uint32_t _row_group_size;
   NormColumnMeta _meta;

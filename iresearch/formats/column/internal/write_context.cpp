@@ -32,8 +32,9 @@
 
 namespace irs {
 
-WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out)
-  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE}, _out{&out} {}
+WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& blocks)
+  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE},
+    _blocks{&blocks} {}
 
 WriteContext::~WriteContext() = default;
 
@@ -45,16 +46,16 @@ void WriteContext::WriteString(
              "string too long for overflow format");
   byte_type length[sizeof(uint32_t)];
   absl::little_endian::Store32(length, static_cast<uint32_t>(size));
-  result_block = static_cast<duckdb::block_id_t>(_out->Position());
+  result_block = static_cast<duckdb::block_id_t>(_blocks->Position());
   result_offset = 0;
-  _out->WriteData(length, sizeof(length));
-  _out->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), size);
+  _blocks->WriteData(length, sizeof(length));
+  _blocks->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), size);
 }
 
-duckdb::idx_t WriteContext::Position() const { return _out->Position(); }
+duckdb::idx_t WriteContext::Position() const { return _blocks->Position(); }
 
 void WriteContext::Append(duckdb::const_data_ptr_t data, duckdb::idx_t size) {
-  _out->WriteData(data, size);
+  _blocks->WriteData(data, size);
 }
 
 duckdb::block_id_t WriteContext::GetFreeBlockId() {

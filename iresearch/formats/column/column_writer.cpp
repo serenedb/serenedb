@@ -70,7 +70,7 @@ uint64_t AppendAligned(IndexOutput& out, std::string_view bytes) {
 void CaptureBlock(duckdb::DatabaseInstance& db,
                   const duckdb::CompressionFunction& codec,
                   duckdb::BaseStatistics stats, uint64_t tuple_count,
-                  std::string_view bytes, IndexOutput& out,
+                  std::string_view bytes, IndexOutput& blocks,
                   std::vector<ColumnBlockMeta>& sink) {
   if (tuple_count == 0) {
     return;
@@ -92,7 +92,7 @@ void CaptureBlock(duckdb::DatabaseInstance& db,
   }
   if (!bytes.empty()) {
     SDB_ASSERT(bytes.size() <= std::numeric_limits<uint32_t>::max());
-    m.file_offset = AppendAligned(out, bytes);
+    m.file_offset = AppendAligned(blocks, bytes);
     m.byte_size = bytes.size();
   }
   sink.push_back(std::move(m));
@@ -272,14 +272,14 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
     meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
   }
   auto& tuning = *meta.write_string_tuning;
-  auto& out = WriteCtx().Out();
+  auto& blocks = WriteCtx().Blocks();
   auto& buffers = db.GetBufferManager();
   const auto sink = [&](codecs::StringChoice choice,
                         duckdb::BaseStatistics stats, uint64_t rows,
                         std::string_view bytes) {
     const auto& codec = *codecs::GetCodec(db, codecs::TypeOf(choice),
                                           duckdb::PhysicalType::VARCHAR);
-    CaptureBlock(db, codec, std::move(stats), rows, bytes, out, meta.data);
+    CaptureBlock(db, codec, std::move(stats), rows, bytes, blocks, meta.data);
   };
   if (named && named->shape == codecs::Shape::Plain) {
     return codecs::SealSegments(chunks, *named, _codec_params, type, tuning,
@@ -363,7 +363,7 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
     db,
     *codecs::GetCodec(db, duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
                       type.InternalType()),
-    std::move(segment.stats), row_count, segment.bytes, WriteCtx().Out(),
+    std::move(segment.stats), row_count, segment.bytes, WriteCtx().Blocks(),
     meta.data);
   return false;
 }
@@ -382,13 +382,13 @@ bool ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     if (size != 0 && !handle.IsValid() && seg.GetBlockHandle()) {
       handle = db.GetBufferManager().Pin(seg.GetBlockHandle());
     }
-    const std::string_view bytes =
+    const std::string_view part =
       handle.IsValid()
         ? std::string_view{reinterpret_cast<const char*>(handle.Ptr()), size}
         : std::string_view{};
     CaptureBlock(db, seg.GetCompressionFunction(),
-                 std::move(seg.GetStatsMutable()), seg.count.load(), bytes,
-                 ctx.Out(), sink);
+                 std::move(seg.GetStatsMutable()), seg.count.load(), part,
+                 ctx.Blocks(), sink);
   };
   duckdb::ColumnDataCheckpointData ckp{
     codec_type,

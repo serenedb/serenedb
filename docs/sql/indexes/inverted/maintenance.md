@@ -17,7 +17,7 @@ flowchart LR
 
 ## Visibility
 
-A committed row is found at once by every query, through the table and through each inverted index on it. The first search of a table after writes indexes the rows written since the previous search, so it takes longer than the searches after it.
+A committed row is found at once by every query, through the table and through each inverted index on it. A transaction indexes its rows when it commits, so a search right after writes costs the same as any other search.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_001" />
 
@@ -45,7 +45,7 @@ The session settings of the same names hold the defaults a new table or index ta
 
 The same background task settles a table that received no writes since its previous run: it writes the rows the table holds in memory to segments and merges them, so a table left alone ends up in a few large segments.
 
-- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-table-options) for a table and `ALTER INDEX ... SET` for an index on a view. Segments are then merged only when you ask for it, the table is not settled in the background, and the rows it holds in memory reach its segments at a checkpoint or with `VACUUM (FLUSH_TABLE)`.
+- **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-table-options) for a table and `ALTER INDEX ... SET` for an index on a view. Segments are then merged only when you ask for it, the table is not settled in the background, and the rows it holds in memory reach its segments when they grow to [`segment_memory_max`](#write-memory), at a checkpoint or with `VACUUM (FLUSH_TABLE)`.
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
 - **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` -- see [below](#manual-maintenance-with-vacuum).
 
@@ -98,7 +98,7 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 
 ## Write memory {#write-memory}
 
-Memory held while writing to a table depends on `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB, and for a serial write also on [`checkpoint_threshold`](../../../configuration/overview.md), 16 MB by default: a serial write buffers up to that much of its rows before it writes them to the index. Estimate the peak for one writing transaction as:
+A table holds its committed rows in memory, indexed and searchable, until they reach `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB; it then writes them to disk as one segment in the background. A serial write also buffers up to [`checkpoint_threshold`](../../../configuration/overview.md) of its own rows, 16 MB by default, before it indexes them. Estimate the peak for one writing transaction as:
 
 | Write | Peak memory |
 | :--- | :--- |
@@ -124,7 +124,7 @@ A commit is durable once the server's write-ahead log holds it; one log serves e
 
 A server left idle settles on its own: once every table has written the rows it held in memory to segments (see [Background compaction](#background-compaction)) and nothing commits, the server removes the log files it no longer needs, so the log stays small and a restart replays little.
 
-A query sees every row committed before it, including the rows a table still holds in memory. A query that searches an inverted index -- full-text matching, relevance scoring, vector search or reading its terms -- writes those rows to segments first, without adding to the log; any other query reads them in memory. These segments are made durable by the next checkpoint or replaced by compaction; after a crash, their rows are replayed from the log.
+A query sees every row committed before it, including the rows a table still holds in memory, and reads them there, searches included: a query never writes. After a crash, the server replays those rows from the log.
 
 ## Session settings {#session-settings}
 

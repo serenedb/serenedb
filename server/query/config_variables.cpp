@@ -1210,9 +1210,11 @@ constexpr std::pair<std::string_view, VariableDescription>
       kSegmentMemoryMaxSetting,
       {
         LogicalTypeId::UBIGINT,
-        "In-memory bytes the segment writer of a table or of an inverted "
-        "index over a view fills before rolling over to a new on-disk segment "
-        "(also the CREATE INDEX backfill commit cadence). Their WITH "
+        "In-memory bytes of committed rows a table holds before writing them "
+        "to disk as one segment, and the bytes a parallel write to a table or "
+        "the segment writer of an inverted index over a view fills before "
+        "rolling over to a new on-disk segment (also the CREATE INDEX "
+        "backfill commit cadence). Their WITH "
         "(segment_memory_max = ...) overrides it. A serial write to a table "
         "also buffers up to checkpoint_threshold of rows. Default 268435456 "
         "(256MB).",

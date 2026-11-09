@@ -3635,6 +3635,30 @@ TEST_F(ColumnReaderTest, VariantRowGroupsKeepTheirStringTuning) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
+TEST_F(ColumnReaderTest, VariantRowGroupsOfOneShapeShredOnOneType) {
+  SetShreddingSize(Db(), 0);
+  irs::MemoryDirectory dir{};
+  irs::ColWriter w{dir, "vshape", Db(), irs::WriteTier::Merge};
+  auto& cw = w.OpenColumn(/*id=*/36, duckdb::LogicalType::VARIANT(),
+                          {.row_group_size = 256});
+  duckdb::Connection con{Db()};
+  auto result = con.Query(
+    "SELECT {'f': i, 'e': 'e' || i, 'd': i % 7, 'c': 'c' || (i % 13), "
+    "'b': i * 3, 'a': 'a' || i}::VARIANT FROM range(8192) t(i)");
+  ASSERT_FALSE(result->HasError()) << result->GetError();
+  while (auto chunk = result->Fetch()) {
+    cw.Append(chunk->data[0], chunk->size());
+  }
+  const auto& rgs = cw.Meta().variant_rgs;
+  ASSERT_GT(rgs.size(), 16u);
+  for (const auto& rg : rgs) {
+    ASSERT_TRUE(rg.shredded);
+    EXPECT_EQ(rg.shredded->type, rgs.front().shredded->type)
+      << rg.shredded->type.ToString();
+  }
+  ASSERT_TRUE(w.Commit(0));
+}
+
 // VARIANT, shredding forced on: shredded row groups reconstruct via unshred.
 TEST_F(ColumnReaderTest, VariantRoundTripShredded) {
   SetShreddingSize(Db(), 0);

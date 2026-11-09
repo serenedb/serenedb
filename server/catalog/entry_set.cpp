@@ -220,12 +220,7 @@ duckdb::weak_ptr<duckdb::AttachedDatabase> OidIndex::Database() const {
 void OidIndex::Add(duckdb::idx_t oid, EntrySet& set,
                    const duckdb::Identifier& name) {
   absl::MutexLock lock{&_mutex};
-  auto& slots = _slots[oid];
-  if (absl::c_none_of(slots, [&](const Slot& slot) {
-        return slot.set == &set && set.SameName(slot.name, name);
-      })) {
-    slots.push_back({&set, name});
-  }
+  _slots[oid].push_back({&set, name});
 }
 
 void OidIndex::Erase(duckdb::idx_t oid, const EntrySet& set,
@@ -245,7 +240,20 @@ void OidIndex::Erase(duckdb::idx_t oid, const EntrySet& set,
 void OidIndex::Remove(duckdb::idx_t oid, const EntrySet& set,
                       const duckdb::Identifier& name) {
   absl::MutexLock lock{&_mutex};
-  Erase(oid, set, name);
+  const auto it = _slots.find(oid);
+  if (it == _slots.end()) {
+    return;
+  }
+  auto& slots = it->second;
+  for (auto slot = slots.rbegin(); slot != slots.rend(); ++slot) {
+    if (slot->set == &set && set.SameName(slot->name, name)) {
+      slots.erase(std::next(slot).base());
+      break;
+    }
+  }
+  if (slots.empty()) {
+    _slots.erase(it);
+  }
 }
 
 void OidIndex::Forget(const EntrySet& set,
@@ -893,7 +901,7 @@ void EntrySet::Undo(duckdb::CatalogEntry& version, ChangeKind kind) {
     removed = std::move(it->second);
     it->second = removed->TakeChild();
     UnindexDependents(*removed);
-    unindex = removed->oid && !Holds(it->second.get(), removed->oid);
+    unindex = removed->oid && it->second->deleted;
     if (!it->second->deleted &&
         it->second->type != duckdb::CatalogType::INVALID) {
       it->second->SetAsRoot(nullptr, nullptr);

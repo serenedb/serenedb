@@ -3,7 +3,8 @@ CREATE TEXT SEARCH DICTIONARY pru_dict AS split_text(case := 'lower')
   WITH (frequency, position);
 
 statement ok
-CREATE TABLE pru (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2]);
+CREATE TABLE pru (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2])
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX pru_idx ON pru
@@ -14,7 +15,7 @@ INSERT INTO pru SELECT i, i % 10, CASE WHEN i = 7 THEN 'zeta alpha' ELSE 'alpha'
   [i, 0]::FLOAT[2] FROM range(100) t(i);
 
 statement ok
-VACUUM (FLUSH_TABLE) pru;
+CHECKPOINT;
 
 statement ok
 PREPARE pru_knn AS SELECT pk FROM pru_idx WHERE v = $1::INTEGER
@@ -60,7 +61,7 @@ statement ok
 INSERT INTO pru VALUES (200, 3, 'omega', [149, 0]);
 
 statement ok
-VACUUM (FLUSH_TABLE) pru;
+CHECKPOINT;
 
 statement ok
 SET sdb_faults = 'connector::ScanBind';

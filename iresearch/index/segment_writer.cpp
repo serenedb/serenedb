@@ -31,6 +31,7 @@
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/hot_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
@@ -169,6 +170,44 @@ void SegmentWriter::flush(IndexSegment& segment,
   meta.live_docs_count =
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
   meta.files = _dir.FlushTracked(meta.byte_size);
+}
+
+std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
+  const auto docs = buffered_docs();
+  SDB_ASSERT(docs != 0);
+  std::vector<std::unique_ptr<ColumnReader>> columns;
+  std::vector<NormColumnSpec> norms;
+  if (_col_writer) {
+    _fields.FinalizeNorms();
+    norms = _col_writer->SealNorms(docs);
+    for (auto& column : _col_writer->Snapshot(docs)) {
+      columns.push_back(HotColumnReader::Make(_db, std::move(column), nullptr));
+    }
+  }
+  auto fields = std::make_shared<PieceFields>();
+  FlushState state{.dir = &_dir, .name = _seg_name, .doc_count = docs};
+  PieceFieldWriter field_writer{*fields};
+  _fields.Flush(field_writer, state, {});
+  SegmentMeta meta;
+  meta.name = _seg_name;
+  meta.docs_count = static_cast<doc_id_t>(docs);
+  if (!_docs_mask.Empty()) {
+    meta.docs_mask = std::make_shared<const DocumentMask>(
+      DocumentMaskBuilder{_docs_mask}.Finish());
+  }
+  meta.live_docs_count = meta.docs_count - RemovalCount(meta);
+  meta.files = _dir.FlushTracked(meta.byte_size);
+  fields->Open(ReaderState{.dir = &_dir, .meta = &meta},
+               field_writer.Features());
+  IndexInput::ptr norms_in;
+  if (!norms.empty()) {
+    norms_in = _dir.open(FileName(_seg_name), IOAdvice::RANDOM);
+  }
+  return SegmentReaderImpl::OpenPiece(
+    _dir, meta, id,
+    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms_in),
+                                std::move(norms)),
+    std::move(fields));
 }
 
 void SegmentWriter::SetFieldOptions(

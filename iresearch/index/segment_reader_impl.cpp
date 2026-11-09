@@ -113,6 +113,21 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
   return reader;
 }
 
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenPiece(
+  const Directory& dir, const SegmentMeta& meta, uint64_t id,
+  std::unique_ptr<ColReader> columns,
+  std::shared_ptr<const PieceFields> fields) {
+  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
+  reader->_refs = GetRefs(dir, meta);
+  reader->_id = id;
+  reader->_doc_maps = std::make_shared<DocMapsSlot>();
+  reader->_data = std::make_shared<ColumnData>();
+  reader->_data->col_reader = std::move(columns);
+  reader->_pieces = std::move(fields);
+  reader->_in_memory = true;
+  return reader;
+}
+
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   std::shared_ptr<const DocumentMask> mask) const {
   SegmentMeta meta;
@@ -124,6 +139,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   reader->_id = _id;
   reader->_doc_maps = _doc_maps;
   reader->_field_reader = _field_reader;
+  reader->_pieces = _pieces;
   reader->_data = _data;
   reader->_in_memory = _in_memory;
   return reader;

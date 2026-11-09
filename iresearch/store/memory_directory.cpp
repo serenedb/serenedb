@@ -77,7 +77,9 @@ const byte_type* MemoryIndexInput::ReadStable(uint64_t count) noexcept {
 const byte_type* MemoryIndexInput::ReadStable(uint64_t offset,
                                               uint64_t count) noexcept {
   const auto idx = _file->buffer_offset(offset);
-  SDB_ASSERT(idx < _file->buffer_count());
+  if (idx >= _file->buffer_count()) {
+    return nullptr;
+  }
   const auto& buf = _file->get_buffer(idx);
   const auto begin = buf.data + offset - buf.offset;
   const auto end = begin + count;

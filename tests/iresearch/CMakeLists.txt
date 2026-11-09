@@ -106,6 +106,7 @@ add_executable(
     index/inverter_tests.cpp
     index/merge_writer_tests.cpp
     index/norm_test.cpp
+    index/piece_tests.cpp
     index/segment_writer_tests.cpp
     index/sorted_index_tests.cpp
     parser/lucene_parser_test.cpp

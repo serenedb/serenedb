@@ -260,6 +260,27 @@ std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
   return columns;
 }
 
+std::vector<NormColumnSpec> ColWriter::SealNorms(uint64_t rows) {
+  std::vector<NormColumnSpec> norms;
+  norms.reserve(_norms.size());
+  for (auto& writer : _norms) {
+    if (writer->RowCount() < rows) {
+      writer->PadTo(rows);
+    }
+    writer->Finalize();
+    if (!writer->Meta().regions.empty()) {
+      norms.push_back({.id = writer->Id(), .meta = writer->Meta()});
+    }
+  }
+  if (!norms.empty()) {
+    EnsureOut();
+  }
+  if (_out) {
+    _out->Flush();
+  }
+  return norms;
+}
+
 size_t ColWriter::StagedBytes() const noexcept {
   size_t bytes = 0;
   for (const auto& cw : _columns) {

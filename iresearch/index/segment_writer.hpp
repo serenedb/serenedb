@@ -30,6 +30,7 @@
 #include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -126,6 +127,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   DocContexts& docs_context() noexcept { return _docs_context; }
 
   void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask);
+
+  std::shared_ptr<const SegmentReaderImpl> SealPiece(uint64_t id);
 
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }

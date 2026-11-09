@@ -204,6 +204,25 @@ ColReader::ColReader(duckdb::DatabaseInstance& db,
   }
 }
 
+ColReader::ColReader(duckdb::DatabaseInstance& db,
+                     std::vector<std::unique_ptr<ColumnReader>> columns,
+                     IndexInput::ptr norms_in,
+                     std::vector<NormColumnSpec> norms)
+  : _db{&db}, _ctx{db, std::move(norms_in)}, _columns{std::move(columns)} {
+  for (const auto& col : _columns) {
+    const bool ok = _by_id.emplace(col->Id(), col.get()).second;
+    SDB_ENSURE(ok, "in-memory columns: duplicate column field_id ", col->Id());
+  }
+  SDB_ASSERT(norms.empty() || _ctx.HasIn());
+  for (auto& norm : norms) {
+    auto column = std::make_unique<NormColumnReader>(
+      norm.id, std::move(norm.meta), _ctx.In());
+    const bool ok = _norm_by_id.emplace(norm.id, column.get()).second;
+    SDB_ENSURE(ok, "in-memory columns: duplicate norm field_id ", norm.id);
+    _norm_columns.push_back(std::move(column));
+  }
+}
+
 ColReader::~ColReader() = default;
 
 const ColumnReader* ColReader::Column(field_id id) const noexcept {

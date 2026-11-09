@@ -67,6 +67,7 @@ class ColWriter final {
   }
 
   std::vector<StagedColumn> Snapshot(uint64_t rows) const;
+  std::vector<NormColumnSpec> SealNorms(uint64_t rows);
   size_t StagedBytes() const noexcept;
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);

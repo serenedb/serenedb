@@ -713,6 +713,13 @@ IndexWriter::Transaction::FlushSegments(bool sync) {
   return flushed;
 }
 
+std::shared_ptr<const SegmentReaderImpl> IndexWriter::Transaction::SealPiece(
+  uint64_t id) {
+  auto* segment = _active.Segment();
+  SDB_ASSERT(segment != nullptr && _hot);
+  return segment->writer->SealPiece(id);
+}
+
 void IndexWriter::Transaction::Remove(KeyRemoval removal) {
   SDB_ASSERT(_writer->_key_column != field_limits::invalid());
   SortUnique(removal.keys);

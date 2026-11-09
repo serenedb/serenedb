@@ -27,6 +27,7 @@ target_sources(
         index/term_dict_walk.cpp
         index_meta_reader.cpp
         index_meta_writer.cpp
+        piece_fields.cpp
         posting/block_codec.cpp
         segment_meta_reader.cpp
         segment_meta_writer.cpp

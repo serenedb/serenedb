@@ -307,6 +307,8 @@ class IndexWriter : private util::Noncopyable {
 
     std::span<const FlushedSegment> FlushSegments(bool sync);
 
+    std::shared_ptr<const SegmentReaderImpl> SealPiece(uint64_t id);
+
     void Abort() noexcept;
 
     void Flush() {

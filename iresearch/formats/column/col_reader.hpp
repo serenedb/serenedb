@@ -30,6 +30,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -63,6 +64,9 @@ class ColReader final {
             duckdb::DatabaseInstance& db, IOAdvice advice);
   ColReader(duckdb::DatabaseInstance& db,
             std::vector<std::unique_ptr<ColumnReader>> columns);
+  ColReader(duckdb::DatabaseInstance& db,
+            std::vector<std::unique_ptr<ColumnReader>> columns,
+            IndexInput::ptr norms_in, std::vector<NormColumnSpec> norms);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;

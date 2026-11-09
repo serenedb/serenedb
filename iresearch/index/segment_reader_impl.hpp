@@ -29,6 +29,7 @@
 
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/piece_fields.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -61,6 +62,11 @@ class SegmentReaderImpl final : public SubReader {
   static std::shared_ptr<const SegmentReaderImpl> OpenInMemory(
     const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns);
 
+  static std::shared_ptr<const SegmentReaderImpl> OpenPiece(
+    const Directory& dir, const SegmentMeta& meta, uint64_t id,
+    std::unique_ptr<ColReader> columns,
+    std::shared_ptr<const PieceFields> fields);
+
   std::shared_ptr<const SegmentReaderImpl> WithDocsMask(
     std::shared_ptr<const DocumentMask> mask) const;
 
@@ -91,6 +97,9 @@ class SegmentReaderImpl final : public SubReader {
   lead::Node::ptr docs_iterator() const final;
 
   std::span<const TermReader* const> fields(field_id id) const final {
+    if (_pieces) {
+      return _pieces->fields(id);
+    }
     if (!_field_reader) {
       return {};
     }
@@ -98,6 +107,9 @@ class SegmentReaderImpl final : public SubReader {
   }
 
   std::span<const field_id> field_ids() const final {
+    if (_pieces) {
+      return _pieces->field_ids();
+    }
     if (!_field_reader) {
       return {};
     }
@@ -129,6 +141,7 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<DocMapsSlot> _doc_maps;
   std::shared_ptr<ColumnData> _data;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
+  std::shared_ptr<const PieceFields> _pieces;
   bool _in_memory = false;
 };
 

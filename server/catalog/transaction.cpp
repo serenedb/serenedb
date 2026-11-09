@@ -247,28 +247,32 @@ void Transactions::Collect() {
   }
   std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> databases;
   std::vector<duckdb::unique_ptr<duckdb::CatalogEntry>> freed;
-  absl::MutexLock collect{&_collect_mutex};
-  std::vector<Garbage> ready;
   {
-    absl::MutexLock lock{&_snapshots_mutex};
-    const auto oldest = Oldest();
-    while (!_garbage.empty() && _garbage.front().commit <= oldest) {
-      ready.push_back(std::move(_garbage.front()));
-      _garbage.pop_front();
-    }
-  }
-  for (auto& garbage : ready) {
-    auto database = garbage.database.lock();
-    if (!database) {
-      continue;
-    }
-    if (!garbage.set_alive.expired()) {
-      if (auto older = garbage.set->Trim(*garbage.version)) {
-        freed.push_back(std::move(older));
+    absl::MutexLock collect{&_collect_mutex};
+    std::vector<Garbage> ready;
+    {
+      absl::MutexLock lock{&_snapshots_mutex};
+      const auto oldest = Oldest();
+      while (!_garbage.empty() && _garbage.front().commit <= oldest) {
+        ready.push_back(std::move(_garbage.front()));
+        _garbage.pop_front();
       }
     }
-    databases.push_back(std::move(database));
+    for (auto& garbage : ready) {
+      auto database =
+        duckdb::AttachedDatabase::TryGetReference(garbage.database);
+      if (!database) {
+        continue;
+      }
+      if (!garbage.set_alive.expired()) {
+        if (auto older = garbage.set->Trim(*garbage.version)) {
+          freed.push_back(std::move(older));
+        }
+      }
+      databases.push_back(std::move(database));
+    }
   }
+  SDB_PARK_ONCE_ON_FAILURE("catalog_collect_before_free");
 }
 
 void Transactions::ExpireSet(std::shared_ptr<const char>& alive) {

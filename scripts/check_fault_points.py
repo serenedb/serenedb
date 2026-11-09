@@ -31,7 +31,7 @@ SOURCE_DIRS = ("server", "iresearch")
 DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
 DUCKDB_FAULTS = frozenset({"slow_expression_bind"})
-DUCKDB_PARK_FAULTS = frozenset()
+DUCKDB_PARK_FAULTS = frozenset({"attached_database_close"})
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")

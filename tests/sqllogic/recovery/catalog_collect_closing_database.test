@@ -1,0 +1,88 @@
+statement ok
+CREATE DATABASE ccd_db;
+
+
+statement ok
+CREATE TABLE ccd_hold (a INTEGER);
+
+
+statement ok
+CREATE TABLE ccd_db.public.t (a INTEGER);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS n FROM ccd_hold;
+----
+n
+0
+
+
+connection default
+statement ok
+DROP TABLE ccd_db.public.t;
+
+
+connection default
+statement ok
+SET sdb_faults = 'attached_database_close';
+
+
+connection dropper
+statement async ok
+DROP DATABASE ccd_db;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-attached_database_close:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'catalog_collect_before_free';
+
+
+connection holder
+statement async ok
+COMMIT;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-catalog_collect_before_free:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'attached_database_close:release';
+
+
+connection dropper
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'ccd_db';
+----
+n
+0
+
+
+connection default
+statement ok
+SET sdb_faults = 'catalog_collect_before_free:release';
+
+
+connection holder
+wait
+
+
+connection default
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'ccd_db';
+----
+n
+0

@@ -338,8 +338,8 @@ Store::Piece Store::StartPiece() {
   return piece;
 }
 
-void Store::WriteOutWhenFull() {
-  if (_table->PieceBytes() < _segment_memory_max ||
+void Store::PiecesAdded() {
+  if ((_table->PieceBytes() < _segment_memory_max && !_table->HasFullTier()) ||
       !BackgroundScheduler::gInstance ||
       _write_out_scheduled.exchange(true, std::memory_order_acq_rel)) {
     return;
@@ -367,9 +367,49 @@ void Store::MaintainPieces() {
     return;
   }
   absl::MutexLock lock{&_write_out_mutex};
-  if (_table->PieceBytes() >= _segment_memory_max) {
-    WriteOutLocked(kNoLsn);
+  for (;;) {
+    if (_table->PieceBytes() >= _segment_memory_max) {
+      WriteOutLocked(kNoLsn);
+      return;
+    }
+    const auto tier = _table->FullTier();
+    if (tier.empty() || !MergePiecesLocked(tier)) {
+      return;
+    }
   }
+}
+
+bool Store::MergePiecesLocked(
+  std::span<const std::shared_ptr<const TableUnit>> pieces) {
+  const auto field_options = CompactionOptions();
+  auto merged = irs::GetBlocking(_piece_writer->WriteAsync(
+    _table->PieceView(pieces, /*keep_deleted=*/true), _writer->NextSegmentId(),
+    field_options.get(), [] { return true; }, &AnnBuildEnv()));
+  if (!merged.reader) {
+    return false;
+  }
+  auto& refs = _piece_dir->attributes().refs();
+  for (const auto& file : merged.segment.meta.files) {
+    _piece_dir->remove(file);
+    refs.remove(file);
+  }
+  _piece_dir->remove(merged.segment.filename);
+  refs.remove(merged.segment.filename);
+  std::vector<uint64_t> ids;
+  ids.reserve(pieces.size());
+  auto first_lsn = kNoLsn;
+  for (const auto& piece : pieces) {
+    ids.push_back(piece->id);
+    first_lsn = std::min(first_lsn, piece->first_lsn);
+  }
+  const auto target = merged.reader->Id();
+  CommitStorage(LogMerge(target, ids), [&](Tick tick, Lsn lsn) {
+    _table->MergePieces(tick, lsn, ids, std::move(merged.reader), first_lsn,
+                        std::move(merged.maps));
+    QueueReleaseCleanup(shared_from_this(), tick);
+  });
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_pieces_merged");
+  return true;
 }
 
 void Store::CommitStorage(std::string entry,
@@ -404,8 +444,8 @@ void Store::WriteOutLocked(Lsn before) {
   }
   const auto field_options = CompactionOptions();
   auto merged = irs::GetBlocking(_writer->WriteAsync(
-    _table->PieceView(pieces), field_options.get(), [] { return true; },
-    &AnnBuildEnv()));
+    _table->PieceView(pieces, /*keep_deleted=*/false), _writer->NextSegmentId(),
+    field_options.get(), [] { return true; }, &AnnBuildEnv()));
   SDB_IF_FAILURE("search_cleanup_during_write_out") {
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   }
@@ -1175,6 +1215,35 @@ void Store::ReplayReplace(std::span<const uint64_t> replaced,
       _replayed_rows.erase(id);
     }
     _table->ReplayReplace(replaced, segments, maps, lsn);
+  }
+}
+
+void Store::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
+                        Lsn lsn) {
+  EnsureOpen();
+  if (!_table) {
+    return;
+  }
+  std::vector<ReplayedRows> rows;
+  irs::doc_id_t offset = 0;
+  for (const auto id : sources) {
+    const auto it = _replayed_rows.find(id);
+    if (it == _replayed_rows.end()) {
+      continue;
+    }
+    irs::doc_id_t docs = 0;
+    for (auto& replayed : it->second) {
+      docs = std::max(docs, static_cast<irs::doc_id_t>(replayed.first +
+                                                       replayed.chunk->size()));
+      replayed.first = static_cast<irs::doc_id_t>(replayed.first + offset);
+      rows.push_back(std::move(replayed));
+    }
+    offset = static_cast<irs::doc_id_t>(offset + docs);
+    _replayed_rows.erase(it);
+  }
+  _table->ReplayMerge(target, sources, lsn);
+  if (!rows.empty()) {
+    _replayed_rows[target] = std::move(rows);
   }
 }
 

@@ -1432,7 +1432,7 @@ void Writes::Apply(Tick tick, Lsn lsn) noexcept {
           QueueReleaseCleanup(w.store, tick);
         }
         if (appended) {
-          w.store->WriteOutWhenFull();
+          w.store->PiecesAdded();
         }
       } catch (const std::exception& e) {
         SDB_FATAL(

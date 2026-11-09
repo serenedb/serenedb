@@ -41,6 +41,7 @@ std::string LogRemoval(const irs::DocRemoval& removal);
 std::string LogReplace(std::span<const uint64_t> replaced,
                        std::span<const ReplacedSegment> segments,
                        std::span<const irs::DocMap> maps);
+std::string LogMerge(uint64_t target, std::span<const uint64_t> sources);
 std::string LogState(std::span<const StateUnit> units);
 
 void ReplayLogEntry(duckdb::ClientContext& context,

@@ -174,7 +174,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   };
   Piece StartPiece();
   void WriteOut(Lsn before);
-  void WriteOutWhenFull();
+  void PiecesAdded();
 
   std::shared_ptr<const FileManifest> GetFileManifest() const {
     return std::atomic_load(&_file_manifest);
@@ -323,6 +323,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   void ReplayReplace(std::span<const uint64_t> replaced,
                      std::span<const ReplacedSegment> segments,
                      std::span<const irs::DocMap> maps, Lsn lsn);
+  void ReplayMerge(uint64_t target, std::span<const uint64_t> sources, Lsn lsn);
   void ReplayState(std::span<const StateUnit> units, Lsn lsn);
   void InvertReplayed(duckdb::ClientContext& context);
   bool FinishReplay();
@@ -379,6 +380,9 @@ class Store final : public std::enable_shared_from_this<Store>,
                      absl::FunctionRef<void(Tick, Lsn)> apply);
   void MaintainPieces();
   void WriteOutLocked(Lsn before)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
+  bool MergePiecesLocked(
+    std::span<const std::shared_ptr<const TableUnit>> pieces)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
   template<typename Remove>
   void CommitRemovalWith(const Remove& remove);

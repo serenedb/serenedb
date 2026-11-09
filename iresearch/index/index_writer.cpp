@@ -1618,11 +1618,11 @@ auto IndexWriter::MergeAsync(const CompactionPolicy& policy,
     }
     merged.claim = MergeClaim{*this, std::move(candidates)};
   }
-  co_return co_await FlushMerge(std::move(merged), field_options, progress,
-                                env);
+  co_return co_await FlushMerge(std::move(merged), NextSegmentId(),
+                                field_options, progress, env);
 }
 
-auto IndexWriter::WriteAsync(DirectoryReader source,
+auto IndexWriter::WriteAsync(DirectoryReader source, uint64_t id,
                              const IndexFieldOptions* field_options,
                              const MergeWriter::FlushProgress& progress,
                              const AnnBuildEnv* env) -> yaclib::Future<Merged> {
@@ -1636,18 +1636,18 @@ auto IndexWriter::WriteAsync(DirectoryReader source,
     co_return merged;
   }
   merged.claim.candidates = std::move(candidates);
-  co_return co_await FlushMerge(std::move(merged), field_options, progress,
+  co_return co_await FlushMerge(std::move(merged), id, field_options, progress,
                                 env);
 }
 
-auto IndexWriter::FlushMerge(Merged merged,
+auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
                              const IndexFieldOptions* field_options,
                              const MergeWriter::FlushProgress& progress,
                              const AnnBuildEnv* env) -> yaclib::Future<Merged> {
   const auto& candidates = merged.claim.candidates;
   IndexSegment segment;
   segment.meta.version = 0;
-  segment.meta.name = FileName(NextSegmentId());
+  segment.meta.name = FileName(id);
   RefTrackingDirectory dir{_dir};
   MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
   merger.Reset(candidates.begin(), candidates.end());

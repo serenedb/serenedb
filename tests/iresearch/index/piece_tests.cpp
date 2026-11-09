@@ -314,8 +314,8 @@ TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
   MemoryDirectory written_dir;
   auto writer = IndexWriter::Make(written_dir, kOmCreate,
                                   irs::tests::DefaultWriterOptions());
-  auto written = GetBlocking(
-    writer->WriteAsync(source, nullptr, [] { return true; }, nullptr));
+  auto written = GetBlocking(writer->WriteAsync(
+    source, writer->NextSegmentId(), nullptr, [] { return true; }, nullptr));
   ASSERT_NE(nullptr, written.reader);
   EXPECT_EQ(kDocs / kPieceDocs, written.maps.size());
   ExpectSameSegment(flushed[0], *written.reader);

@@ -484,7 +484,7 @@ class IndexWriter : private util::Noncopyable {
                   const MergeWriter::FlushProgress& progress,
                   const AnnBuildEnv* env) -> yaclib::Future<Merged>;
 
-  auto WriteAsync(DirectoryReader source,
+  auto WriteAsync(DirectoryReader source, uint64_t id,
                   const IndexFieldOptions* field_options,
                   const MergeWriter::FlushProgress& progress,
                   const AnnBuildEnv* env) -> yaclib::Future<Merged>;
@@ -836,7 +836,8 @@ class IndexWriter : private util::Noncopyable {
   SegmentWriterOptions GetSegmentWriterOptions(
     bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
-  auto FlushMerge(Merged merged, const IndexFieldOptions* field_options,
+  auto FlushMerge(Merged merged, uint64_t id,
+                  const IndexFieldOptions* field_options,
                   const MergeWriter::FlushProgress& progress,
                   const AnnBuildEnv* env) -> yaclib::Future<Merged>;
 

@@ -45,6 +45,7 @@ enum class LogEntryType : uint8_t {
   Removal,
   Replace,
   State,
+  Merge,
 };
 
 constexpr std::align_val_t kFrozenAlignment{32};
@@ -232,6 +233,16 @@ std::string LogReplace(std::span<const uint64_t> replaced,
   });
 }
 
+std::string LogMerge(uint64_t target, std::span<const uint64_t> sources) {
+  return Encode(LogEntryType::Merge, [&](duckdb::Serializer& serializer) {
+    serializer.WriteProperty<uint64_t>(101, "target", target);
+    serializer.WriteList(102, "sources", sources.size(),
+                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                           list.WriteElement<uint64_t>(sources[i]);
+                         });
+  });
+}
+
 std::string LogState(std::span<const StateUnit> units) {
   return Encode(LogEntryType::State, [&](duckdb::Serializer& serializer) {
     serializer.WriteList(101, "units", units.size(),
@@ -306,6 +317,16 @@ void ReplayLogEntry(duckdb::ClientContext& context,
           });
         });
       store.ReplayState(units, lsn);
+      break;
+    }
+    case LogEntryType::Merge: {
+      const auto target = deserializer.ReadProperty<uint64_t>(101, "target");
+      std::vector<uint64_t> sources;
+      deserializer.ReadList(
+        102, "sources", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+          sources.push_back(list.ReadElement<uint64_t>());
+        });
+      store.ReplayMerge(target, sources, lsn);
       break;
     }
     default:

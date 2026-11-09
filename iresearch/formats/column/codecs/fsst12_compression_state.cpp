@@ -123,7 +123,7 @@ void Fsst12CompressionState::FinalizeCompress() {
 
 const StringCompressionFunction& Fsst12CompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<Fsst12CompressionState>(ByteCodec::Fsst12);
+    CompressionFunctionOf<Fsst12CompressionState>();
   return kFunction;
 }
 

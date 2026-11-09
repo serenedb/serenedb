@@ -27,6 +27,7 @@
 #include "iresearch/formats/column/codecs/string_compression_function.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_window.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
 namespace {
@@ -164,10 +165,10 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
       .tune = tune,
       .tuned = tuned,
     };
+    SDB_ASSERT(function.init_analyze && function.analyze &&
+               function.final_analyze);
     auto state = function.init_analyze(input);
-    if (!function.analyze(*state, input)) {
-      continue;
-    }
+    function.analyze(*state, input);
     if (const auto score = function.final_analyze(*state); score < best_score) {
       best_score = score;
       best_config = state->config;

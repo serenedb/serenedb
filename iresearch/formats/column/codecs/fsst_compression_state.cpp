@@ -44,10 +44,9 @@ std::unique_ptr<StringAnalyzeState> FsstInitAnalyze(const AnalyzeInput& input) {
   return state;
 }
 
-bool FsstAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
+void FsstAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
   auto& state = base.Cast<FsstAnalyzeState>();
   state.trial = &input.window.TrialCompress(state.config);
-  return true;
 }
 
 uint64_t FsstFinalAnalyze(StringAnalyzeState& state) {
@@ -58,8 +57,7 @@ uint64_t FsstFinalAnalyze(StringAnalyzeState& state) {
 
 const StringCompressionFunction& FsstCompressionFunction() {
   static constexpr auto kFunction = [] {
-    auto function =
-      CompressionFunctionOf<FsstCompressionState>(ByteCodec::Fsst);
+    auto function = CompressionFunctionOf<FsstCompressionState>();
     function.init_analyze = &FsstInitAnalyze;
     function.analyze = &FsstAnalyze;
     function.final_analyze = &FsstFinalAnalyze;

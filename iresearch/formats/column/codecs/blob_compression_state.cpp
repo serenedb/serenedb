@@ -51,7 +51,7 @@ std::unique_ptr<StringAnalyzeState> BlobInitAnalyze(const AnalyzeInput& input) {
   return state;
 }
 
-bool BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
+void BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
   auto& state = base.Cast<BlobAnalyzeState>();
   auto& window = input.window;
   const auto& method = input.method;
@@ -72,7 +72,7 @@ bool BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
     config.layout = tuned.layout[leaf];
     state.config = config;
     state.score = score(config);
-    return true;
+    return;
   }
   uint64_t scores[kMaxLevels];
   uint64_t best_score = std::numeric_limits<uint64_t>::max();
@@ -108,7 +108,6 @@ bool BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
   if (state.config.level <= method.max_trial_level) {
     state.score = window.TrialCompress(state.config).Size();
   }
-  return true;
 }
 
 uint64_t BlobFinalAnalyze(StringAnalyzeState& state) {
@@ -117,8 +116,7 @@ uint64_t BlobFinalAnalyze(StringAnalyzeState& state) {
 
 template<typename Codec>
 constexpr StringCompressionFunction AnalyzedBlobFunction() {
-  auto function =
-    CompressionFunctionOf<BlobCompressionState<Codec>>(Codec::kCodec);
+  auto function = CompressionFunctionOf<BlobCompressionState<Codec>>();
   function.init_analyze = &BlobInitAnalyze<Codec::kCodec>;
   function.analyze = &BlobAnalyze;
   function.final_analyze = &BlobFinalAnalyze;
@@ -134,13 +132,13 @@ const StringCompressionFunction& Lz4CompressionFunction() {
 
 const StringCompressionFunction& Lz4HcCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<BlobCompressionState<Lz4Hc>>(ByteCodec::Lz4);
+    CompressionFunctionOf<BlobCompressionState<Lz4Hc>>();
   return kFunction;
 }
 
 const StringCompressionFunction& ZstdCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<BlobCompressionState<Zstd>>(ByteCodec::Zstd);
+    CompressionFunctionOf<BlobCompressionState<Zstd>>();
   return kFunction;
 }
 

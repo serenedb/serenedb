@@ -226,7 +226,7 @@ void FsstPlusCompressionState::Cleave(uint32_t first_entry) {
 
 const StringCompressionFunction& FsstPlusCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<FsstPlusCompressionState>(ByteCodec::FsstPlus);
+    CompressionFunctionOf<FsstPlusCompressionState>();
   return kFunction;
 }
 

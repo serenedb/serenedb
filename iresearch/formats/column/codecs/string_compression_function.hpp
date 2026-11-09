@@ -59,10 +59,9 @@ struct StringAnalyzeState {
 };
 
 struct StringCompressionFunction {
-  ByteCodec leaf = ByteCodec::Lz4;
   std::unique_ptr<StringAnalyzeState> (*init_analyze)(
     const AnalyzeInput& input) = nullptr;
-  bool (*analyze)(StringAnalyzeState& state,
+  void (*analyze)(StringAnalyzeState& state,
                   const AnalyzeInput& input) = nullptr;
   uint64_t (*final_analyze)(StringAnalyzeState& state) = nullptr;
   PooledSegment (*compress_segment)(StringCompressor& compressor,

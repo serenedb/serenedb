@@ -139,9 +139,8 @@ void CompressChunksWith(StringCompressor& compressor, const Config& config,
 }
 
 template<typename State>
-constexpr StringCompressionFunction CompressionFunctionOf(ByteCodec leaf) {
+constexpr StringCompressionFunction CompressionFunctionOf() {
   return {
-    .leaf = leaf,
     .compress_segment = &CompressSegmentWith<State>,
     .compress = &CompressWith<State>,
     .trial_compress = &TrialCompressWith<State>,

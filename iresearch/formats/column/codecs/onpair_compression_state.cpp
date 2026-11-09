@@ -119,7 +119,7 @@ void OnPairCompressionState::Pack(std::span<const duckdb::string_t> entries,
 
 const StringCompressionFunction& OnPairCompressionFunction() {
   static constexpr auto kFunction =
-    CompressionFunctionOf<OnPairCompressionState>(ByteCodec::OnPair);
+    CompressionFunctionOf<OnPairCompressionState>();
   return kFunction;
 }
 

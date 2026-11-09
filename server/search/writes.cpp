@@ -612,11 +612,14 @@ std::shared_ptr<irs::DirectoryReader> Writes::PinnedReader(
   return pinned->second.latest;
 }
 
-std::shared_ptr<const TableState> Writes::PinState(const Store& store) {
+std::shared_ptr<const TableState> Writes::PinState(const Store& store,
+                                                   Tick snapshot) {
   absl::MutexLock lock{&_mutex};
   auto& views = _readers[std::pair{store.GetDatabaseId(), store.GetId()}];
   if (!views.state) {
-    views.state = store.GetTable().State();
+    views.state = _writes.contains(store.GetId())
+                    ? store.GetTable().State()
+                    : store.GetTable().StateAt(snapshot, _walks);
   }
   return views.state;
 }
@@ -1249,7 +1252,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
 
 irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
                                   Tick snapshot, bool searchable) {
-  const auto state = PinState(store);
+  const auto state = PinState(store, snapshot);
   const bool search = searchable && store.HasIndexes();
   if (search) {
     store.MakeSearchable(snapshot);

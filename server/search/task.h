@@ -21,6 +21,7 @@
 #pragma once
 
 #include <memory>
+#include <span>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
@@ -34,5 +35,8 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs);
 void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released);
 void CleanupReleased(Tick oldest);
 bool ReleasedPending() noexcept;
+
+void PruneVersions(std::span<const Tick> running, Tick published);
+void FreeVersions();
 
 }  // namespace sdb::search

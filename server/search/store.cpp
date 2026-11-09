@@ -490,6 +490,7 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot, bool durable) {
       });
   } else {
     _table->Cooled(hot, std::move(written), kNoLsn);
+    catalog::Transactions::Get().RequestCollect();
   }
   absl::MutexLock lock{&hot->Mutex()};
   hot->Trx().Abort();
@@ -618,7 +619,12 @@ ResultWithTime Store::CleanupUnsafe() {
   }
   const auto begin = std::chrono::steady_clock::now();
   if (_table) {
-    _table->Collect(catalog::Transactions::Get().RefreshOldest());
+    auto& transactions = catalog::Transactions::Get();
+    _table->Collect(transactions.RefreshOldest());
+    const auto running = transactions.RunningSnapshots();
+    _table->Prune(running.snapshots, running.published);
+    transactions.AdvanceEpoch();
+    _table->FreeRetired();
   }
   auto result = _durability.Cleanup(*_dir);
   SDB_PARK_ONCE_ON_FAILURE("search_cleanup_after_remove");

@@ -38,6 +38,8 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
+#include "catalog/transaction.h"
+
 namespace sdb::search {
 namespace {
 
@@ -100,27 +102,6 @@ std::shared_ptr<const irs::SegmentReaderImpl> MaskedReader(
   return unit.reader->docs_mask() == mask.get()
            ? unit.reader
            : unit.reader->WithDocsMask(mask);
-}
-
-Tick SeenAt(const TableState& state, Tick snapshot) noexcept {
-  Tick seen = 0;
-  const auto see = [&](Tick tick) {
-    if (tick <= snapshot) {
-      seen = std::max(seen, tick);
-    }
-  };
-  for (const auto& unit : state.units) {
-    if (unit->replaced_at != 0) {
-      see(unit->replaced_at);
-    }
-    for (const auto& range : unit->inserts) {
-      see(range.tick);
-    }
-    for (const auto& generation : unit->deletes) {
-      see(generation.tick);
-    }
-  }
-  return seen;
 }
 
 const irs::DocumentMask* LatestDeletes(const TableUnit& unit) noexcept {
@@ -398,11 +379,100 @@ const LiveUnits::Unit* LiveUnits::Find(uint64_t id) const noexcept {
 Table::Table(irs::Directory& dir, irs::IndexReaderOptions options)
   : _dir{dir},
     _options{std::move(options)},
-    _state{std::make_shared<const TableState>()} {}
+    _head{new TableVersion{std::make_shared<const TableState>(), nullptr}} {}
 
-void Table::Publish(std::shared_ptr<const TableState> state) {
-  std::atomic_store(&_state, std::move(state));
-  std::atomic_store(&_view, std::shared_ptr<const CachedView>{});
+Table::~Table() {
+  auto* version = _head.load(std::memory_order_relaxed);
+  while (version) {
+    delete std::exchange(version,
+                         version->prev.load(std::memory_order_relaxed));
+  }
+}
+
+std::shared_ptr<const TableState> Table::StateAt(
+  Tick snapshot, catalog::WalkCounters& walks) const {
+  const catalog::WalkGuard guard{walks};
+  const auto* version = _head.load(std::memory_order_acquire);
+  while (version->tick > snapshot) {
+    const auto* older = version->prev.load(std::memory_order_acquire);
+    if (!older) {
+      break;
+    }
+    version = older;
+  }
+  return version->state;
+}
+
+void Table::Publish(std::shared_ptr<TableState> state, Tick tick) {
+  auto* head = _head.load(std::memory_order_relaxed);
+  SDB_ASSERT(tick >= head->tick);
+  if (tick == head->tick) {
+    Republish(std::move(state));
+    return;
+  }
+  state->tick = tick;
+  _head.store(new TableVersion{std::move(state), head},
+              std::memory_order_release);
+  const auto oldest = catalog::Transactions::Get().Oldest();
+  auto* version = _head.load(std::memory_order_relaxed);
+  while (version->tick > oldest) {
+    auto* older = version->prev.load(std::memory_order_relaxed);
+    if (!older) {
+      break;
+    }
+    version = older;
+  }
+  auto* tail = version->prev.exchange(nullptr, std::memory_order_acq_rel);
+  while (tail) {
+    auto* older = tail->prev.load(std::memory_order_relaxed);
+    RetireVersion(tail);
+    tail = older;
+  }
+  FreeRetiredVersions();
+}
+
+void Table::Republish(std::shared_ptr<TableState> state) {
+  auto* head = _head.load(std::memory_order_relaxed);
+  state->tick = head->tick;
+  _head.store(new TableVersion{std::move(state),
+                               head->prev.load(std::memory_order_relaxed)},
+              std::memory_order_release);
+  RetireVersion(head);
+  FreeRetiredVersions();
+}
+
+void Table::RetireVersion(TableVersion* version) {
+  auto& transactions = catalog::Transactions::Get();
+  _retired_versions.push_back(
+    {.epoch = transactions.Epoch(),
+     .version = std::unique_ptr<TableVersion>{version}});
+  transactions.GarbageQueued();
+}
+
+void Table::FreeRetiredVersions() {
+  const auto safe = catalog::Transactions::Get().SafeEpoch();
+  std::erase_if(_retired_versions, [&](const RetiredVersion& retired) {
+    return retired.epoch <= safe;
+  });
+}
+
+void Table::Prune(std::span<const Tick> running, Tick published) {
+  absl::MutexLock lock{&_state_mutex};
+  auto* newer = _head.load(std::memory_order_relaxed);
+  auto* version = newer->prev.load(std::memory_order_relaxed);
+  while (version) {
+    auto* older = version->prev.load(std::memory_order_relaxed);
+    const auto seen = absl::c_lower_bound(running, version->tick);
+    if (newer->tick > published ||
+        (seen != running.end() && *seen < newer->tick)) {
+      newer = version;
+    } else {
+      newer->prev.store(older, std::memory_order_release);
+      RetireVersion(version);
+    }
+    version = older;
+  }
+  FreeRetiredVersions();
 }
 
 void Table::Logged(Lsn lsn) {
@@ -436,21 +506,21 @@ irs::DirectoryReader Table::Assemble(
   };
   if (scope != Scope::All || !own.removals.empty() || !own.segments.empty() ||
       own.truncated || (own.rows != nullptr && own.rows->Count() != 0) ||
-      (searchable && hot_visible())) {
+      (searchable && hot_visible()) || snapshot < state->tick) {
     return Build(*state, snapshot, own, scope, searchable);
   }
-  const auto seen = SeenAt(*state, snapshot);
-  if (const auto cached = std::atomic_load(&_view);
-      cached && cached->state == state && cached->seen == seen) {
-    return cached->reader;
+  if (const auto* cached = state->reader.load(std::memory_order_acquire)) {
+    return *cached;
   }
-  auto reader = Build(*state, snapshot, own, scope, false);
-  if (State() == state) {
-    std::atomic_store(
-      &_view, std::make_shared<const CachedView>(
-                CachedView{.state = state, .seen = seen, .reader = reader}));
+  auto built = std::make_unique<const irs::DirectoryReader>(
+    Build(*state, snapshot, own, scope, false));
+  const irs::DirectoryReader* installed = nullptr;
+  if (state->reader.compare_exchange_strong(installed, built.get(),
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_acquire)) {
+    return *built.release();
   }
-  return reader;
+  return *installed;
 }
 
 irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
@@ -673,7 +743,7 @@ void Table::CheckConflicts(Tick snapshot,
 bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
   absl::MutexLock lock{&_state_mutex};
   Logged(commit.lsn);
-  auto next = std::make_shared<TableState>(*State());
+  auto next = std::make_shared<TableState>(*Head().state);
   auto& units = next->units;
   bool emptied = false;
   const auto rewrite = [&](size_t i, auto&& change) {
@@ -742,7 +812,7 @@ bool Table::Apply(Tick tick, Tick oldest, TableCommit&& commit) {
     }
   }
   Sweep(units, oldest);
-  Publish(std::move(next));
+  Publish(std::move(next), tick);
   return emptied;
 }
 
@@ -752,7 +822,7 @@ void Table::Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
                     std::vector<irs::DocMap>&& maps) {
   absl::MutexLock lock{&_state_mutex};
   Logged(lsn);
-  auto next = std::make_shared<TableState>(*State());
+  auto next = std::make_shared<TableState>(*Head().state);
   auto& units = next->units;
   std::vector<Tick> ticks{visible};
   for (const auto& map : maps) {
@@ -822,12 +892,12 @@ void Table::Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
     units.push_back(std::move(unit));
   }
   Sweep(units, oldest);
-  Publish(std::move(next));
+  Publish(std::move(next), tick);
 }
 
 void Table::Collect(Tick oldest) {
   absl::MutexLock lock{&_state_mutex};
-  const auto state = State();
+  const auto& state = Head().state;
   auto next = std::make_shared<TableState>();
   next->units.reserve(state->units.size());
   bool changed = false;
@@ -844,7 +914,7 @@ void Table::Collect(Tick oldest) {
   const auto before = next->units.size();
   Sweep(next->units, oldest);
   if (changed || next->units.size() != before) {
-    Publish(std::move(next));
+    Republish(std::move(next));
   }
 }
 
@@ -908,14 +978,14 @@ void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
     if (logged) {
       Logged(lsn);
     }
-    auto next = std::make_shared<TableState>(*State());
+    auto next = std::make_shared<TableState>(*Head().state);
     auto& units = next->units;
     const auto it = absl::c_find_if(
       units, [&](const auto& unit) { return unit->hot == hot; });
     SDB_ASSERT(it != units.end());
     if (!written.reader) {
       units.erase(it);
-      Publish(std::move(next));
+      Republish(std::move(next));
     } else {
       auto unit = std::make_shared<TableUnit>(**it);
       unit->hot.reset();
@@ -946,7 +1016,7 @@ void Table::Cooled(const std::shared_ptr<HotContext>& hot, OwnSegment&& written,
         generation.reader = MaskedReader(*unit, generation.mask);
       }
       *it = std::move(unit);
-      Publish(std::move(next));
+      Republish(std::move(next));
     }
   }
   absl::MutexLock lock{&_hot_mutex};
@@ -979,7 +1049,7 @@ void Table::Synced(std::span<const uint64_t> ids, Lsn lsn) {
   }
   absl::MutexLock lock{&_state_mutex};
   Logged(lsn);
-  auto next = std::make_shared<TableState>(*State());
+  auto next = std::make_shared<TableState>(*Head().state);
   for (auto& unit : next->units) {
     if (!unit->hot && unit->first_lsn != kNoLsn &&
         absl::c_linear_search(ids, unit->id)) {
@@ -988,7 +1058,7 @@ void Table::Synced(std::span<const uint64_t> ids, Lsn lsn) {
       unit = std::move(synced);
     }
   }
-  Publish(std::move(next));
+  Republish(std::move(next));
 }
 
 bool Table::Unsettled() const {
@@ -1022,7 +1092,7 @@ void Table::StateLogged(Lsn lsn) {
 Lsn Table::NeededFrom() const {
   absl::MutexLock lock{&_state_mutex};
   auto needed = _needed;
-  for (const auto& unit : State()->units) {
+  for (const auto& unit : Head().state->units) {
     if (unit->replaced_at == 0) {
       needed = std::min(needed, unit->first_lsn);
     }
@@ -1156,7 +1226,7 @@ bool Table::FinishReplay() {
   absl::MutexLock lock{&_state_mutex};
   _needed = std::exchange(_replay_needed, kNoLsn);
   const bool replayed_records = _needed != kNoLsn;
-  auto next = std::make_shared<TableState>(*State());
+  auto next = std::make_shared<TableState>(*Head().state);
   for (auto& [id, replayed] : _replay) {
     auto unit = std::make_shared<TableUnit>();
     unit->id = id;
@@ -1200,7 +1270,7 @@ bool Table::FinishReplay() {
     }
   }
   _replay.clear();
-  Publish(std::move(next));
+  Republish(std::move(next));
   return replayed_records;
 }
 

@@ -105,7 +105,7 @@ SessionTransaction::SessionTransaction(duckdb::transaction_t id,
     _slot{&slot},
     _snapshot{Transactions::Get().Acquire(slot.snapshot)},
     _catalog_epoch{Transactions::Get().CatalogEpoch(Snapshot())},
-    _search{id} {}
+    _search{id, slot.walks} {}
 
 void SessionTransaction::Refresh() {
   if (HasChanges()) {
@@ -220,16 +220,28 @@ void Transactions::Ended(duckdb::transaction_t snapshot) noexcept {
   }
 }
 
-duckdb::transaction_t Transactions::RefreshOldest() {
-  absl::MutexLock lock{&_walk_mutex};
-  auto oldest = _last_commit.load(std::memory_order_seq_cst);
+WalkGuard::WalkGuard(WalkCounters& walks) noexcept {
+  auto& transactions = Transactions::Get();
+  for (;;) {
+    const auto epoch = transactions.Epoch();
+    auto& counter = walks.parity[epoch & 1];
+    counter.fetch_add(1, std::memory_order_seq_cst);
+    if (transactions.Epoch() == epoch) {
+      _counter = &counter;
+      return;
+    }
+    counter.fetch_sub(1, std::memory_order_release);
+  }
+}
+
+template<typename Fn>
+void Transactions::WalkSlots(Fn&& fn) {
   SessionSlot* prev = nullptr;
   auto* slot = _slots.load(std::memory_order_acquire);
   while (slot) {
     auto* next = slot->next;
     if (!slot->left.load(std::memory_order_acquire)) {
-      oldest = std::min({oldest, slot->snapshot.load(std::memory_order_seq_cst),
-                         slot->held.load(std::memory_order_seq_cst)});
+      fn(*slot);
     } else if (prev) {
       prev->next = next;
       delete slot;
@@ -245,6 +257,57 @@ duckdb::transaction_t Transactions::RefreshOldest() {
     prev = slot;
     slot = next;
   }
+}
+
+bool Transactions::Drained(uint64_t parity) {
+  if (_shared_walks.parity[parity].load(std::memory_order_seq_cst) != 0) {
+    return false;
+  }
+  bool drained = true;
+  WalkSlots([&](const SessionSlot& slot) {
+    drained =
+      drained && slot.walks.parity[parity].load(std::memory_order_seq_cst) == 0;
+  });
+  return drained;
+}
+
+void Transactions::AdvanceEpoch() {
+  absl::MutexLock lock{&_walk_mutex};
+  for (int flips = 0; flips < 2; ++flips) {
+    const auto epoch = _epoch.load(std::memory_order_relaxed);
+    if (!Drained((epoch + 1) & 1)) {
+      return;
+    }
+    _epoch.store(epoch + 1, std::memory_order_seq_cst);
+    _safe_epoch.store(epoch - 1, std::memory_order_release);
+  }
+}
+
+Transactions::Running Transactions::RunningSnapshots() {
+  absl::MutexLock lock{&_walk_mutex};
+  Running running;
+  running.published = _last_commit.load(std::memory_order_seq_cst);
+  WalkSlots([&](const SessionSlot& slot) {
+    for (const auto* field : {&slot.snapshot, &slot.held}) {
+      if (const auto snapshot = field->load(std::memory_order_seq_cst);
+          snapshot != kNoSnapshot) {
+        running.snapshots.push_back(snapshot);
+      }
+    }
+  });
+  absl::c_sort(running.snapshots);
+  running.snapshots.erase(std::ranges::unique(running.snapshots).begin(),
+                          running.snapshots.end());
+  return running;
+}
+
+duckdb::transaction_t Transactions::RefreshOldest() {
+  absl::MutexLock lock{&_walk_mutex};
+  auto oldest = _last_commit.load(std::memory_order_seq_cst);
+  WalkSlots([&](const SessionSlot& slot) {
+    oldest = std::min({oldest, slot.snapshot.load(std::memory_order_seq_cst),
+                       slot.held.load(std::memory_order_seq_cst)});
+  });
   auto cached = _oldest.load(std::memory_order_relaxed);
   while (cached < oldest && !_oldest.compare_exchange_weak(
                               cached, oldest, std::memory_order_release,
@@ -311,6 +374,10 @@ void Transactions::CollectGarbage() {
   const auto oldest = RefreshOldest();
   Collect(oldest);
   search::CleanupReleased(oldest);
+  const auto running = RunningSnapshots();
+  search::PruneVersions(running.snapshots, running.published);
+  AdvanceEpoch();
+  search::FreeVersions();
   bool pending = search::ReleasedPending();
   if (!pending) {
     absl::MutexLock lock{&_garbage_mutex};

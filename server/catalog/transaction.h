@@ -46,6 +46,7 @@
 #include "catalog/entry/replication_lsn.h"
 #include "catalog/entry_set.h"
 #include "catalog/log.h"
+#include "catalog/walk.h"
 #include "search/store.h"
 #include "search/writes.h"
 #include "utils/drain_gate.h"
@@ -86,6 +87,7 @@ inline constexpr duckdb::transaction_t kNoSnapshot =
 struct alignas(64) SessionSlot {
   std::atomic<duckdb::transaction_t> snapshot{kNoSnapshot};
   std::atomic<duckdb::transaction_t> held{kNoSnapshot};
+  WalkCounters walks;
   std::atomic<bool> left{false};
   SessionSlot* next = nullptr;
 };
@@ -239,6 +241,22 @@ class Transactions final {
   void GarbageQueued() noexcept;
   void CollectGarbage();
 
+  struct Running {
+    duckdb::transaction_t published = 0;
+    std::vector<duckdb::transaction_t> snapshots;
+  };
+  Running RunningSnapshots() ABSL_LOCKS_EXCLUDED(_walk_mutex);
+
+  uint64_t Epoch() const noexcept {
+    return _epoch.load(std::memory_order_seq_cst);
+  }
+  uint64_t SafeEpoch() const noexcept {
+    return _safe_epoch.load(std::memory_order_acquire);
+  }
+  WalkCounters& SharedWalks() noexcept { return _shared_walks; }
+  void AdvanceEpoch() ABSL_LOCKS_EXCLUDED(_walk_mutex);
+  void RequestCollect() noexcept;
+
  private:
   struct Garbage {
     duckdb::transaction_t commit;
@@ -268,11 +286,16 @@ class Transactions final {
 
   static constexpr uint64_t kCollectEvery = 1024;
 
-  void RequestCollect() noexcept;
   void RunCollector() noexcept;
   void AfterCommit(duckdb::transaction_t commit) noexcept;
   void Collect(duckdb::transaction_t oldest);
+  template<typename Fn>
+  void WalkSlots(Fn&& fn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_walk_mutex);
+  bool Drained(uint64_t parity) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_walk_mutex);
 
+  std::atomic<uint64_t> _epoch{2};
+  std::atomic<uint64_t> _safe_epoch{0};
+  WalkCounters _shared_walks;
   std::atomic<SessionSlot*> _slots{nullptr};
   std::atomic<uint64_t> _joined{0};
   absl::Mutex _walk_mutex;

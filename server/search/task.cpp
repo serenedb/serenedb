@@ -372,6 +372,35 @@ bool ReleasedPending() noexcept {
   return GetReleased().next.load(std::memory_order_acquire) != kAllApplied;
 }
 
+namespace {
+
+std::vector<std::shared_ptr<Store>> LiveTables() {
+  std::vector<std::shared_ptr<Store>> stores;
+  auto& targets = GetTargets();
+  absl::MutexLock lock{&targets.mutex};
+  stores.reserve(targets.all.size());
+  for (const auto& target : targets.all) {
+    if (auto store = target->store.lock(); store && store->HasTable()) {
+      stores.push_back(std::move(store));
+    }
+  }
+  return stores;
+}
+
+}  // namespace
+
+void PruneVersions(std::span<const Tick> running, Tick published) {
+  for (const auto& store : LiveTables()) {
+    store->GetTable().Prune(running, published);
+  }
+}
+
+void FreeVersions() {
+  for (const auto& store : LiveTables()) {
+    store->GetTable().FreeRetired();
+  }
+}
+
 void CleanupReleased(Tick oldest) {
   auto& queue = GetReleased();
   if (oldest < queue.next.load(std::memory_order_acquire)) {

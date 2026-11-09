@@ -111,7 +111,8 @@ struct LogSection {
 
 class Writes {
  public:
-  explicit Writes(duckdb::transaction_t session) : _session{session} {}
+  Writes(duckdb::transaction_t session, catalog::WalkCounters& walks)
+    : _session{session}, _walks{walks} {}
   ~Writes() { Abort(); }
 
   // Registers this transaction as a writer of `store`, once, before anything
@@ -271,13 +272,14 @@ class Writes {
     std::shared_ptr<irs::DirectoryReader> latest;
   };
 
-  std::shared_ptr<const TableState> PinState(const Store& store);
+  std::shared_ptr<const TableState> PinState(const Store& store, Tick snapshot);
   irs::DirectoryReader BuildView(duckdb::ClientContext& context, Store& store,
                                  Tick snapshot,
                                  const std::shared_ptr<const TableState>& state,
                                  bool searchable);
 
   duckdb::transaction_t _session;
+  catalog::WalkCounters& _walks;
   bool _conflict = false;
   mutable absl::Mutex _mutex;
   std::vector<ReferenceCheck> _reference_checks;

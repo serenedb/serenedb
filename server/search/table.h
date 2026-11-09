@@ -46,6 +46,7 @@
 #include <string>
 #include <vector>
 
+#include "catalog/walk.h"
 #include "search/hot_keys.h"
 #include "search/store_stats.h"
 
@@ -143,7 +144,23 @@ struct TableUnit {
 };
 
 struct TableState {
+  TableState() = default;
+  TableState(const TableState& other) : units{other.units}, tick{other.tick} {}
+  TableState& operator=(const TableState&) = delete;
+  ~TableState() { delete reader.load(std::memory_order_relaxed); }
+
   std::vector<std::shared_ptr<const TableUnit>> units;
+  Tick tick = 0;
+  mutable std::atomic<const irs::DirectoryReader*> reader{nullptr};
+};
+
+struct TableVersion {
+  TableVersion(std::shared_ptr<const TableState> state, TableVersion* older)
+    : tick{state->tick}, state{std::move(state)}, prev{older} {}
+
+  const Tick tick;
+  const std::shared_ptr<const TableState> state;
+  std::atomic<TableVersion*> prev;
 };
 
 struct OwnSegment {
@@ -217,9 +234,20 @@ class LiveUnits {
 class Table final {
  public:
   Table(irs::Directory& dir, irs::IndexReaderOptions options);
+  ~Table();
 
-  std::shared_ptr<const TableState> State() const {
-    return std::atomic_load(&_state);
+  std::shared_ptr<const TableState> State() const
+    ABSL_LOCKS_EXCLUDED(_state_mutex) {
+    absl::ReaderMutexLock lock{&_state_mutex};
+    return Head().state;
+  }
+  std::shared_ptr<const TableState> StateAt(Tick snapshot,
+                                            catalog::WalkCounters& walks) const;
+  void Prune(std::span<const Tick> running, Tick published)
+    ABSL_LOCKS_EXCLUDED(_state_mutex);
+  void FreeRetired() ABSL_LOCKS_EXCLUDED(_state_mutex) {
+    absl::MutexLock lock{&_state_mutex};
+    FreeRetiredVersions();
   }
 
   irs::DirectoryReader View(Tick snapshot, const OwnWrites& own) const {
@@ -317,11 +345,14 @@ class Table final {
     irs::DocumentMaskBuilder removed;
   };
 
-  struct CachedView {
-    std::shared_ptr<const TableState> state;
-    Tick seen = 0;
-    irs::DirectoryReader reader;
+  struct RetiredVersion {
+    uint64_t epoch = 0;
+    std::unique_ptr<TableVersion> version;
   };
+
+  const TableVersion& Head() const noexcept {
+    return *_head.load(std::memory_order_acquire);
+  }
 
   irs::DirectoryReader Assemble(const std::shared_ptr<const TableState>& state,
                                 Tick snapshot, const OwnWrites& own,
@@ -329,7 +360,13 @@ class Table final {
   irs::DirectoryReader Build(const TableState& state, Tick snapshot,
                              const OwnWrites& own, Scope scope,
                              bool searchable) const;
-  void Publish(std::shared_ptr<const TableState> state);
+  void Publish(std::shared_ptr<TableState> state, Tick tick)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
+  void Republish(std::shared_ptr<TableState> state)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
+  void RetireVersion(TableVersion* version)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
+  void FreeRetiredVersions() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);
   void Saw(uint64_t id) noexcept { _replay_top = std::max(_replay_top, id); }
@@ -337,9 +374,9 @@ class Table final {
 
   irs::Directory& _dir;
   irs::IndexReaderOptions _options;
-  std::shared_ptr<const TableState> _state;
-  mutable std::shared_ptr<const CachedView> _view;
+  std::atomic<TableVersion*> _head;
   mutable absl::Mutex _state_mutex;
+  std::vector<RetiredVersion> _retired_versions ABSL_GUARDED_BY(_state_mutex);
   Lsn _needed ABSL_GUARDED_BY(_state_mutex) = kNoLsn;
   std::atomic<Tick> _last_append{0};
   std::atomic<Tick> _last_write{0};

@@ -34,7 +34,6 @@
 #include "iresearch/formats/column/codecs/string_compressor.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
-#include "iresearch/formats/column/codecs/zxc.hpp"
 
 namespace irs::codecs::text {
 
@@ -78,7 +77,6 @@ class StringWindow {
   struct Pricers {
     std::optional<BlobPricer<Lz4>> lz4;
     std::optional<BlobPricer<Lz4Hc>> lz4_hc;
-    std::optional<BlobPricer<Zxc>> zxc;
   };
 
   Segment* Encoded(const Config& config) const noexcept;

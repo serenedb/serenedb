@@ -1414,8 +1414,6 @@ TEST_F(ColCodecsTest, SampledPricesDoNotLoseToTheCandidatesTheyPrice) {
 TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
   using duckdb::CompressionType;
   const std::set<std::string> lz4{"1", "4", "6"};
-  const std::set<std::string> zstd{"9"};
-  const std::set<std::string> zxc{"1", "3"};
   const std::pair<const char*, const Value*> corpora[] = {
     {"low-cardinality", &kLowCardinalityWithNulls},
     {"unique-short", &kUniqueShort},
@@ -1434,14 +1432,6 @@ TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
         case CompressionType::COMPRESSION_LZ4:
         case CompressionType::COMPRESSION_DICT_LZ4:
           EXPECT_TRUE(lz4.contains(level)) << label;
-          break;
-        case CompressionType::COMPRESSION_COL_ZSTD:
-        case CompressionType::COMPRESSION_DICT_ZSTD:
-          EXPECT_TRUE(zstd.contains(level)) << label;
-          break;
-        case CompressionType::COMPRESSION_ZXC:
-        case CompressionType::COMPRESSION_DICT_ZXC:
-          EXPECT_TRUE(zxc.contains(level)) << label;
           break;
         case CompressionType::COMPRESSION_COL_FSST:
         case CompressionType::COMPRESSION_COL_DICT_FSST:
@@ -3349,10 +3339,10 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
                       .codec_params = {.tier = irs::WriteTier::Merge}});
       AppendValues(cw, 120000, value);
       ASSERT_TRUE(cw.Meta().write_string_tuning);
-      const auto zxc =
+      const auto lz4 =
         cw.Meta().write_string_tuning->tuned.level[static_cast<size_t>(
-          irs::codecs::ByteCodec::Zxc)];
-      EXPECT_EQ(tier == irs::WriteTier::Merge, zxc != 0);
+          irs::codecs::ByteCodec::Lz4)];
+      EXPECT_EQ(tier == irs::WriteTier::Merge, lz4 > 1);
       ASSERT_TRUE(w.Commit(0));
     }
     Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, 120000, value);

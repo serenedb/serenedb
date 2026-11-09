@@ -51,7 +51,6 @@ struct TierCandidates {
 
 constexpr uint8_t kLz4FlushLevels[] = {1};
 constexpr uint8_t kLz4MergeLevels[] = {1, 4, 6};
-constexpr uint8_t kZxcLevels[] = {1, 3};
 
 constexpr Candidate kFlushCandidates[] = {
   {.leaf = ByteCodec::Fsst},
@@ -67,7 +66,6 @@ constexpr Candidate kMergeCandidates[] = {
     .leaf = ByteCodec::Lz4,
     .method = {.levels = kLz4MergeLevels, .local = true, .max_trial_level = 1},
   },
-  {.leaf = ByteCodec::Zxc, .method = {.levels = kZxcLevels, .local = true}},
 };
 
 constexpr TierCandidates kFlush{

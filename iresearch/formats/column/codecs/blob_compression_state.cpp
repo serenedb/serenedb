@@ -143,7 +143,8 @@ const StringCompressionFunction& ZstdCompressionFunction() {
 }
 
 const StringCompressionFunction& ZxcCompressionFunction() {
-  static constexpr auto kFunction = AnalyzedBlobFunction<Zxc>();
+  static constexpr auto kFunction =
+    CompressionFunctionOf<BlobCompressionState<Zxc>>();
   return kFunction;
 }
 

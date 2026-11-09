@@ -500,7 +500,7 @@ GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
 body	LZ4
-host	ZXC
+host	LZ4
 url	DICT_FSST
 
 query

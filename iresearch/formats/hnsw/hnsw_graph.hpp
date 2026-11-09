@@ -379,8 +379,8 @@ class HnswGraphWriter {
 
  private:
   HnswGraph _graph;
-  std::vector<uint32_t> _proc_offsets;
-  std::vector<uint8_t> _processed;
+  TrackedVector<uint32_t> _proc_offsets;
+  TrackedVector<uint8_t> _processed;
   MemoryBudget* _budget = nullptr;
 };
 

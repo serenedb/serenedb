@@ -1244,9 +1244,11 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) const {
   const auto metric = EffectiveQuantMetric(_info.metric);
   const bool quant = _info.quant.kind != VectorQuantization::None;
   const uint64_t floats = sizeof(float) * rows * d;
+  const auto upper = HnswUpperLevelsBound(rows, m);
   const uint64_t graph =
     rows * (sizeof(uint8_t) + sizeof(uint64_t) + 2 * m * sizeof(uint32_t)) +
-    sizeof(uint64_t) + m * sizeof(uint32_t) * HnswUpperLevelsBound(rows, m);
+    sizeof(uint64_t) + m * sizeof(uint32_t) * upper +
+    (rows + 1) * sizeof(uint32_t) + (rows + upper) * sizeof(uint8_t);
   const uint64_t codes = quant
                            ? rows * QuantizerRecordSize(_info.quant, d, metric,
                                                         /*row_major=*/true) +

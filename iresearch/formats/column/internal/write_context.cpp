@@ -49,7 +49,8 @@ void WriteContext::WriteString(
   result_block = static_cast<duckdb::block_id_t>(_blocks->Position());
   result_offset = 0;
   _blocks->WriteData(length, sizeof(length));
-  _blocks->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), size);
+  _blocks->WriteData(reinterpret_cast<const byte_type*>(string.GetData()),
+                     size);
 }
 
 duckdb::idx_t WriteContext::Position() const { return _blocks->Position(); }

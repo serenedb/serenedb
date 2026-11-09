@@ -740,7 +740,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
 }
 
 void HnswQuery::PrepareDistance() const {
-  std::call_once(_distance_prepared, [&] {
+  absl::call_once(_distance_prepared, [&] {
     std::span<const float> query = _query;
     if (_data->rotation) {
       _panorama =

@@ -53,7 +53,7 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
 
 std::shared_ptr<const HnswData> HnswIndex::Load(
   const SubReader& segment) const {
-  std::call_once(_once, [&] {
+  absl::call_once(_once, [&] {
     auto in = segment.ReopenAnn();
     if (!in) {
       return;

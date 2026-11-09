@@ -21,6 +21,7 @@
 #include "connector/functions/es.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/call_once.h>
 #include <absl/functional/function_ref.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -65,7 +66,6 @@
 #include <iresearch/utils/serializer.hpp>
 #include <limits>
 #include <map>
-#include <mutex>
 #include <string_view>
 
 #include "catalog/catalog.h"
@@ -1069,7 +1069,7 @@ struct EsBulkState final : duckdb::GlobalTableFunctionState {
   std::vector<size_t> starts;
   std::vector<size_t> ends;
   EarliestFailure failure;
-  std::once_flag lines_once;
+  absl::once_flag lines_once;
   std::vector<size_t> chunk_lines;
 
   duckdb::idx_t MaxThreads() const final {
@@ -1077,7 +1077,7 @@ struct EsBulkState final : duckdb::GlobalTableFunctionState {
   }
 
   size_t LinesBefore(size_t pos) {
-    std::call_once(lines_once, [&] {
+    absl::call_once(lines_once, [&] {
       chunk_lines.resize(chunks);
       size_t lines = 0;
       for (size_t chunk = 0; chunk < chunks; ++chunk) {

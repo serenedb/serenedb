@@ -28,6 +28,7 @@
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
@@ -301,6 +302,18 @@ std::vector<duckdb::CatalogEntry*> VisibleEntries(
   return entries;
 }
 
+duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> RowConstraints(
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>& constraints) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> result;
+  for (auto& constraint : constraints) {
+    if (constraint->type == duckdb::ConstraintType::NOT_NULL ||
+        constraint->type == duckdb::ConstraintType::CHECK) {
+      result.push_back(std::move(constraint));
+    }
+  }
+  return result;
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
@@ -347,7 +360,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   }
   SDB_ASSERT(plan);
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
-    *entry, op.types, op.estimated_cardinality, op.return_chunk);
+    *entry, op.types, op.estimated_cardinality, op.return_chunk,
+    RowConstraints(op.bound_constraints));
   insert.children.emplace_back(*plan);
   return insert;
 }
@@ -404,7 +418,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   }
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     *entry, op.columns, std::move(op.expressions), op.types,
-    op.estimated_cardinality, op.return_chunk, op.row_id_handling);
+    op.estimated_cardinality, op.return_chunk, op.row_id_handling,
+    RowConstraints(op.bound_constraints));
   update.children.emplace_back(plan);
   return update;
 }
@@ -428,6 +443,14 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     for (const auto& [name, value] : info.options) {
       RequireSearchTableIndexOption(name);
     }
+  }
+  for (auto* expressions : {&info.expressions, &info.parsed_expressions}) {
+    for (auto& expression : *expressions) {
+      binder.QualifyUserFunctions(table.ParentCatalog(), *expression);
+    }
+  }
+  if (info.where_clause) {
+    binder.QualifyUserFunctions(table.ParentCatalog(), *info.where_clause);
   }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);

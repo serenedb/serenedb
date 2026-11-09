@@ -112,12 +112,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
                          duckdb::Value{absl::StrCat(datadir, "/secrets")});
   config.SetOptionByName("extension_directory",
                          duckdb::Value{absl::StrCat(datadir, "/extensions")});
-  // Dependency edges are built from what the binder resolved
-  // (CreateInfo::dependencies), so the collection must be on for every bind.
-  config.SetOptionByName("enable_view_dependencies",
-                         duckdb::Value::BOOLEAN(true));
-  config.SetOptionByName("enable_macro_dependencies",
-                         duckdb::Value::BOOLEAN(true));
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset, and publish the resolved
@@ -143,33 +137,16 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // connector/duckdb_client_state.cpp), which is what keeps `threads -
   // external_threads` from ever resolving to zero internal workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
-  // PostgreSQL's COPY ... TO writes no CSV header unless HEADER is given;
-  // DuckDB's writer defaults it on.
-  config.SetOptionByName("copy_csv_header_default",
-                         duckdb::Value::BOOLEAN(false));
-  // `/` between two integers truncates in PostgreSQL, where DuckDB produces a
-  // DOUBLE. A client that wants DuckDB's reading can still SET this back per
-  // session.
-  config.SetOptionByName("integer_division", duckdb::Value::BOOLEAN(true));
-  config.SetOptionByName("show_behavior", duckdb::Value("SETTING"));
-  config.SetOptionByName("autoinstall_known_extensions",
-                         duckdb::Value::BOOLEAN(false));
-  config.SetOptionByName("autoload_known_extensions",
-                         duckdb::Value::BOOLEAN(false));
 }
 
-void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
+void RegisterEngineModules(duckdb::DatabaseInstance& db) {
   connector::RegisterPgMathFunctions(db);
 
   connector::RegisterPgFormattingFunctions(db);
 
   connector::RegisterHashFunctions(db);
 
-  connector::RegisterSubscriptionPragma(db);
-
   connector::RegisterKeyEncodingFunctions(db);
-
-  pg::RegisterFunctions(db);
 
   pg::RegisterTypes(db);
 
@@ -179,23 +156,33 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterPgJsonFunctions(db);
 
+  connector::RegisterMetricsFunctions(db);
+
+  connector::RegisterMarkdownRenderFunctions(db);
+
+  docs::RegisterDocsFunctions(db);
+
+  connector::RegisterDuckDBAliases(db);
+
+  connector::RegisterAIFunctions(db);
+}
+
+void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
+  RegisterEngineModules(db);
+
+  connector::RegisterSubscriptionPragma(db);
+
+  pg::RegisterFunctions(db);
+
   connector::RegisterEsFunctions(db);
 
   connector::RegisterOtelFunctions(db);
 
   connector::RegisterBackupFunctions(db);
 
-  connector::RegisterMetricsFunctions(db);
-
   connector::RegisterCatalogIntrospectFunctions(db);
 
-  connector::RegisterMarkdownRenderFunctions(db);
-
-  docs::RegisterDocsFunctions(db);
-
   connector::RegisterJobFunctions(db);
-
-  connector::RegisterDuckDBAliases(db);
 
   connector::RegisterVacuumFunction(db);
 
@@ -212,8 +199,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterIResearchScanFunction(db);
 
   pg::RegisterSystemTableScanFunction(db);
-
-  connector::RegisterAIFunctions(db);
 
   connector::RegisterSereneDBOptimizers(db);
 

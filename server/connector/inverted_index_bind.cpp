@@ -1298,10 +1298,10 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
 
     const auto [slot, fresh] = entries.try_emplace(record.field_id);
     auto& field = slot->second;
+    const std::string_view title = bare_column ? "Column" : "Expression";
+    const std::string_view kind = bare_column ? "column" : "expression";
     if (opclass.IsTokenizer()) {
       if (!fresh && field.indexed_term_dict) {
-        const std::string_view title = bare_column ? "Column" : "Expression";
-        const std::string_view kind = bare_column ? "column" : "expression";
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG(title, " '", label,
@@ -1311,6 +1311,14 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
                   " instead, or remove the duplicate."));
       }
       field.indexed_term_dict = true;
+    }
+    if (opclass.IsAnn() && field.column_options.ann_info) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(title, " '", label,
+                "' is listed more than once with a vector opclass; the "
+                "catalog stores a single vector index per indexed ",
+                kind, ". Remove the duplicate."));
     }
     if (dict) {
       field.text_dictionary = dict->oid;

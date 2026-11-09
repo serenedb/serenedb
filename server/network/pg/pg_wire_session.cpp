@@ -3079,6 +3079,9 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
     _client_state->protocol_state = nullptr;
   }
   _proto.Clear();
+  if (_txn_state) {
+    _txn_state->Rollback();
+  }
   if (_connection_ctx) {
     _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
   }

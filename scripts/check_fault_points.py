@@ -30,7 +30,7 @@ RECOVERY_DIR = "tests/sqllogic/recovery"
 SOURCE_DIRS = ("server", "iresearch")
 DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
-DUCKDB_FAULTS = frozenset({"remote_write_cache_block", "slow_expression_bind"})
+DUCKDB_FAULTS = frozenset({"alter_log_without_dependencies", "remote_write_cache_block", "slow_expression_bind"})
 DUCKDB_PARK_FAULTS = frozenset(
     {"block_load_before_loaded", "block_unload_before_temporary_write", "pause_checkpoint", "pause_wal_sync"}
 )

@@ -35,6 +35,25 @@ SELECT current_user;
 current_user
 hbr_kuzya
 
+statement error
+SET hba = 'host all';
+----
+db error: ERROR: invalid hba ruleset: line 1: end-of-line before role specification
+
+
+query
+SELECT count(*) AS rules FROM pg_hba_file_rules;
+----
+rules
+6
+
+connection c_after_invalid user=hbr_kuzya password=kuzya_pw
+query
+SELECT current_user;
+----
+current_user
+hbr_kuzya
+
 statement ok
 SET hba = 'host all all 0.0.0.0/0 reject';
 

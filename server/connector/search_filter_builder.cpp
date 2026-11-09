@@ -347,6 +347,14 @@ absl::Status RequireKeywordAnalyzed(const SearchColumnInfo& info,
   return absl::OkStatus();
 }
 
+absl::Status RequireLeafValues(const SearchColumnInfo& info) {
+  if (irs::IsJson(info.layout) && info.logical_type.IsJSONType()) {
+    return absl::InvalidArgumentError(
+      "A JSON value compares as its JSON text, which the index doesn't keep");
+  }
+  return absl::OkStatus();
+}
+
 // Peels the TSQUERY_MODIFIER -> BOOLEAN coercion that the WhereBinder
 // inserts when a `(predicate)::boost(K)` cast appears at the WHERE
 // root. Returns the inner cast (whose return_type carries the boost
@@ -851,10 +859,6 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
     return FromInetEquality(filter, ctx, *inet, not_equal);
   }
 
-  // Use the JSON-path-aware resolver so `(content->>'val')::int = 42` is
-  // claimed by the index: the cast is peeled and routed to the numeric-
-  // mangled field, so rows whose leaf isn't numeric simply aren't in the
-  // posting list (no runtime cast on incompatible rows).
   const auto* column_info = FindColumnInfoForExpr(ctx, left_expr);
   const auto* const_val = TryGetConstant(right_expr);
 
@@ -862,6 +866,9 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
     return absl::InvalidArgumentError(
       "Expected indexed column reference on the left and constant on "
       "the right");
+  }
+  if (auto s = RequireLeafValues(*column_info); !s.ok()) {
+    return s;
   }
 
   if (const_val->IsNull()) {
@@ -1033,6 +1040,9 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
   if (!column_info || !const_val) {
     return absl::InvalidArgumentError(
       "Expected indexed column reference and constant for comparison");
+  }
+  if (auto s = RequireLeafValues(*column_info); !s.ok()) {
+    return s;
   }
 
   if (const_val->IsNull()) {
@@ -1213,6 +1223,9 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   if (!column_info) {
     return absl::InvalidArgumentError(
       "IN input is not a reference to an indexed column");
+  }
+  if (auto s = RequireLeafValues(*column_info); !s.ok()) {
+    return s;
   }
 
   if constexpr (GenericVersion) {
@@ -1587,6 +1600,9 @@ absl::Status FromFunctionExpression(
       if (!column_info) {
         return absl::InvalidArgumentError(absl::StrCat(
           name, ": first arg is not a reference to an indexed column"));
+      }
+      if (auto s = RequireLeafValues(*column_info); !s.ok()) {
+        return s;
       }
       if (!validator(column_info->tokenizer.analyzer->type())) {
         return absl::InvalidArgumentError(
@@ -2441,11 +2457,10 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
   std::optional<SearchColumnInfo> info;
   bool matched_unwrapped = false;
   if (ctx.expr_getter) {
-    info = (*ctx.expr_getter)(*unwrapped.expr);
-    if (info) {
-      matched_unwrapped = true;
-    } else if (unwrapped.expr != &expr) {
-      info = (*ctx.expr_getter)(expr);
+    info = (*ctx.expr_getter)(expr);
+    if (!info && unwrapped.expr != &expr) {
+      info = (*ctx.expr_getter)(*unwrapped.expr);
+      matched_unwrapped = static_cast<bool>(info);
     }
   }
   if (!info) {
@@ -2464,13 +2479,16 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
         return nullptr;
       }
     } else if (cast_type.id() != info->logical_type.id()) {
-      if (term_dict::IsNumeric(cast_type.id())) {
-        if (!irs::IsJson(info->layout)) {
+      if (!irs::IsJson(info->layout)) {
+        if (term_dict::IsNumeric(cast_type.id())) {
           return nullptr;
         }
-        info->logical_type = duckdb::LogicalType::DOUBLE;
-      } else {
         info->logical_type = cast_type;
+      } else if (cast_type.id() == duckdb::LogicalTypeId::DOUBLE ||
+                 cast_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
+        info->logical_type = cast_type;
+      } else if (cast_type.id() != duckdb::LogicalTypeId::BLOB) {
+        return nullptr;
       }
     }
   }

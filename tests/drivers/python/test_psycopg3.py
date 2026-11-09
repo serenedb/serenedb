@@ -908,6 +908,38 @@ def test_offset_without_guaranteed_order_warns():
         c.close()
 
 
+def test_reindex_forwards_the_notices_of_its_scan(tmp_path):
+    name = f"rnf_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    notices: list[str] = []
+    c.add_notice_handler(lambda d: notices.append(d.message_primary))
+    try:
+        with c.cursor() as cur:
+            cur.execute(
+                "COPY (SELECT i AS id, 'row ' || i AS body FROM range(3) t(i)) "
+                f"TO '{tmp_path}/{name}_1.parquet'")
+            cur.execute(
+                f'CREATE VIEW "{name}" AS SELECT id, body '
+                f"FROM read_parquet('{tmp_path}/{name}_*.parquet') "
+                "WHERE pg_cancel_backend(-1) IS NOT NULL")
+            cur.execute(
+                f'CREATE INDEX "{name}_idx" ON "{name}" '
+                "USING inverted (id, body) "
+                "WITH (reindex_interval = 0, compaction_interval = 0)")
+            cur.execute(
+                "COPY (SELECT i AS id, 'row ' || i AS body "
+                f"FROM range(3, 5) t(i)) TO '{tmp_path}/{name}_2.parquet'")
+            notices.clear()
+            cur.execute(f"SELECT * FROM serenedb_reindex('{name}_idx')")
+            assert cur.fetchall() == [("delta", 1, 0, 0, 0)]
+        assert notices == ["PID -1 is not a PostgreSQL backend process"] * 2, notices
+    finally:
+        with c.cursor() as cur:
+            cur.execute(f'DROP INDEX IF EXISTS "{name}_idx"')
+            cur.execute(f'DROP VIEW IF EXISTS "{name}"')
+        c.close()
+
+
 def test_copy_text_header():
     # PG honors HEADER in FORMAT text (DuckDB treats it as csv-only): TO STDOUT
     # emits the column-name header line, FROM STDIN skips the first line.

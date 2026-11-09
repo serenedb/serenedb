@@ -74,6 +74,10 @@ catalog::CatalogSnapshots& SnapshotsOf(duckdb::ClientContext& context,
   return database.Cast<catalog::SereneDBCatalog>().Snapshots();
 }
 
+bool OwnerKeyed(const SystemCondition<int64_t>& numbers) {
+  return numbers.keys && !absl::c_binary_search(*numbers.keys, int64_t{0});
+}
+
 }  // namespace
 
 const SystemIndex* SystemScan::Choose(std::span<const SystemIndex> indexes,
@@ -86,10 +90,10 @@ const SystemIndex* SystemScan::Choose(std::span<const SystemIndex> indexes,
                     index.lookup != SystemLookup::Dependents)) {
       continue;
     }
-    const auto probes = filter->numbers.keys ? filter->numbers.keys->size()
-                        : filter->texts.keys
-                          ? filter->texts.keys->size() * name_probes
-                          : fewest;
+    const auto probes =
+      OwnerKeyed(filter->numbers) ? filter->numbers.keys->size()
+      : filter->texts.keys        ? filter->texts.keys->size() * name_probes
+                                  : fewest;
     if (probes < fewest) {
       chosen = &index;
       fewest = probes;
@@ -150,7 +154,7 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
         break;
       case SystemLookup::Object:
       case SystemLookup::Dependents:
-        numbers = numbers || filter->numbers.keys;
+        numbers = numbers || OwnerKeyed(filter->numbers);
         names = names || filter->texts.keys;
         break;
     }

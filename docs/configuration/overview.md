@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
+SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `ieee_floating_point_ops` (`true`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
 
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md). They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
 
@@ -202,7 +202,6 @@ Planning, rewriting and the shape of query output.
 | `late_materialization_lookup_max_rows` | The maximum amount of rows in the LIMIT/TOP_N/SAMPLE for which a scan that can look up rows by their row id is late materialized through a `LOOKUP_JOIN`. `0` disables the `LOOKUP_JOIN`: late materialization then joins on the row ids, up to `late_materialization_max_rows`. | `UBIGINT` | `SESSION` | `2048` |
 | `late_materialization_max_rows` | The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization | `UBIGINT` | `SESSION` | `50` |
 | `match_recognize_max_states` | The maximum number of pattern states `MATCH_RECOGNIZE` explores for a single match before it refuses the pattern (0 = no limit). | `UBIGINT` | `SESSION` | `1000000` |
-| `max_expression_depth` | The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors. Only a superuser can change it. | `UBIGINT` | `SESSION` | `1000` |
 | `max_streaming_buffer_size` | The maximum number of bytes a streaming query result buffers (e.g. 1GB). | `VARCHAR` | `SESSION` | `10.0 MiB` |
 | `merge_join_threshold` | The maximum number of rows on either table to choose a merge join | `UBIGINT` | `SESSION` | `1000` |
 | `nested_loop_join_threshold` | The maximum number of rows on either table to choose a nested loop join | `UBIGINT` | `SESSION` | `5` |
@@ -313,7 +312,6 @@ What the server records about itself.
 | `enable_profiling` | Enables profiling, and sets the output format (`query_tree`, `query_tree_optimizer`, `json`, `text`, `html`, `graphviz`, `yaml`, `mermaid`, `compact` or `no_output`) | `VARCHAR` | `SESSION` | NULL |
 | `enable_progress_bar` | Tracks the progress of long queries, so that `enable_progress_bar_print` can print it. On in every server session. | `BOOLEAN` | `SESSION` | `true` |
 | `enable_progress_bar_print` | Prints a progress bar for long queries, when `enable_progress_bar` is on. The bar goes to the standard output of the `serened` process, not to the client. | `BOOLEAN` | `SESSION` | `false` |
-| `legacy_metrics_format` | Deprecated. When enabled, profiling output uses the legacy flat format instead of the current grouped format. | `BOOLEAN` | `SESSION` | `off` |
 | `log_query_path` | Specifies the path to which queries should be logged (default: NULL, queries are not logged). Queries are appended to the file, also when the session sets its own path again; a file another session logs to is refused. | `VARCHAR` | `SESSION` |  |
 | `logging_level` | The log level which will be recorded in the log | `VARCHAR` | `GLOBAL` | `INFO` |
 | `logging_mode` | Determines which types of log messages are logged | `VARCHAR` | `GLOBAL` | `LEVEL_ONLY` |
@@ -526,13 +524,13 @@ Everything that does not fall into the groups above.
 | `geometry_always_xy` | Ignore the axis order a coordinate reference system defines and always treat coordinates as (easting, northing) instead of, for example, (latitude, longitude). | `BOOLEAN` | `SESSION` | NULL |
 | `geometry_minimum_shredding_size` | Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup | `BIGINT` | `GLOBAL` | `30000` |
 | `httpfs_connection_caching` | Enable connection caching for HTTP requests | `BOOLEAN` | `GLOBAL` | `true` |
-| `ieee_floating_point_ops` | Use IEEE 754 floating-point operations: dividing a floating-point number by zero returns `Infinity`, `-Infinity` or `NaN` instead of failing or returning NULL. | `BOOLEAN` | `SESSION` | `true` |
+| `ieee_floating_point_ops` | Use IEEE 754 floating-point operations: dividing a floating-point number by zero returns `Infinity`, `-Infinity` or `NaN` instead of failing or returning NULL, and math functions such as `ln` and `sqrt` return `NaN` or `±Infinity` for an argument outside their domain instead of failing. | `BOOLEAN` | `SESSION` | `false` |
 | `ignore_unknown_crs` | Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data. | `BOOLEAN` | `SESSION` | `false` |
 | `index_scan_max_count` | The maximum index scan count sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage \* total_row_count) rows match, we perform an index scan instead of a table scan. | `UBIGINT` | `GLOBAL` | `2048` |
 | `index_scan_percentage` | The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage \* total_row_count) rows match, we perform an index scan instead of a table scan. | `DOUBLE` | `GLOBAL` | `0.001` |
 | `integer_division` | Whether or not the / operator defaults to integer division, or to floating point division | `BOOLEAN` | `SESSION` | `true` |
 | `integer_overflow` | What integer `+`, `-`, `*` and unary minus do when the result does not fit its type: `ERROR` raises an error, `WRAP` keeps the low bits of the result (two's complement wraparound). | `VARCHAR` | `SESSION` | `ERROR` |
-| `lambda_syntax` | Deprecated. Configures the use of the deprecated single arrow operator (->) for lambda functions. | `VARCHAR` | `SESSION` | `ENABLE_SINGLE_ARROW` |
+| `lambda_syntax` | Deprecated. Configures the use of the deprecated single arrow operator (->) for lambda functions. | `VARCHAR` | `SESSION` | `DEFAULT` |
 | `max_vacuum_tasks` | The maximum vacuum tasks to schedule during a checkpoint. | `UBIGINT` | `GLOBAL` | `100` |
 | `merge_http_secret_into_s3_request` | Merges http secret params into S3 requests | `BOOLEAN` | `SESSION` | `true` |
 | `perfect_ht_threshold` | Threshold in bytes for when to use a perfect hash table | `UBIGINT` | `SESSION` | `12` |

@@ -28,7 +28,6 @@
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
 #include "query/config_variable_names.h"
@@ -104,56 +103,13 @@ void Replay::FeedInParallel(
                   make_feed(_slots));
 }
 
-void Replay::RemovePositions(
-  std::shared_ptr<const duckdb::data_t> entry,
-  std::span<const duckdb::WALFrozenRowPositionGroup> groups) {
-  if (groups.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("Malformed doc removal: it names no segment"));
-  }
-  for (const auto& group : groups) {
-    _positions.groups.push_back(
-      {.segment = group.segment,
-       .docs =
-         irs::DocumentMask{{entry, group.docs.data()}, group.docs.size()}});
-  }
-}
-
-void Replay::MapPositions(
-  std::shared_ptr<const duckdb::data_t> entry, uint64_t source,
-  std::span<const duckdb::WALFrozenRowPositionMap> maps) {
-  auto& doc_maps = _doc_maps[source];
-  doc_maps.clear();
-  doc_maps.reserve(maps.size());
-  for (const auto& map : maps) {
-    if (source >= map.target) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DATA_CORRUPTED),
-        ERR_MSG("Malformed doc map: it does not lead to a newer segment"));
-    }
-    doc_maps.push_back({.source = source,
-                        .target = map.target,
-                        .mask = map.mask.empty()
-                                  ? nullptr
-                                  : std::make_shared<const irs::DocumentMask>(
-                                      std::shared_ptr<const irs::byte_type>{
-                                        entry, map.mask.data()},
-                                      map.mask.size()),
-                        .rank_begin = map.rank_begin,
-                        .rank_end = map.rank_end,
-                        .base = map.base});
-  }
-}
-
 void Replay::Truncate() {
   SDB_ASSERT(!_feeder);
   for (auto& slot : _slots) {
     slot.Abort();
   }
   _head.Abort();
-  _keys.clear();
-  _positions = {};
-  _doc_maps.clear();
+  _removals.Clear();
   _head.RemoveAll();
 }
 
@@ -173,12 +129,12 @@ void Replay::Finish() {
   if (_feeder) {
     _feeder->Finish();
   }
-  if (!_keys.empty()) {
-    _tail.Remove(irs::KeyRemoval{std::move(_keys)});
+  if (_removals.HasKeys()) {
+    _tail.Remove(irs::KeyRemoval{_removals.TakeKeys()});
   }
-  if (!_positions.groups.empty()) {
-    _tail.Remove(ReplayRemoval(std::move(_positions),
-                               _store.GetDirectoryReader(), _doc_maps));
+  if (auto positions =
+        std::move(_removals).Resolve(_store.GetDirectoryReader())) {
+    _tail.Remove(std::move(positions));
   }
   auto& storage = _db.GetStorageManager();
   const irs::SourcePosition end{

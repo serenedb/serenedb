@@ -65,6 +65,7 @@ DirectoryReaderImpl::Init::Init(IndexFileRefs& refs, const DirectoryMeta& meta,
   struct Accumulator {
     duckdb::unique_ptr<duckdb::BaseStatistics> stats;
     duckdb::unique_ptr<duckdb::HyperLogLog> hyperloglog;
+    uint64_t live_docs = 0;
   };
   irs::containers::FlatHashMap<field_id, Accumulator> col2stats;
 
@@ -95,7 +96,8 @@ DirectoryReaderImpl::Init::Init(IndexFileRefs& refs, const DirectoryMeta& meta,
       continue;
     }
     for (const auto& column : col_reader->Columns()) {
-      auto& [stats, hyperloglog] = col2stats[column->Id()];
+      auto& [stats, hyperloglog, live_docs] = col2stats[column->Id()];
+      live_docs += segment.live_docs_count;
       if (!stats) {
         stats = column->MergedStatistics().ToUnique();
       } else {
@@ -116,7 +118,10 @@ DirectoryReaderImpl::Init::Init(IndexFileRefs& refs, const DirectoryMeta& meta,
   }
 
   for (auto& [field, merged] : col2stats) {
-    auto& [stats, hyperloglog] = merged;
+    auto& [stats, hyperloglog, live_docs] = merged;
+    if (live_docs < live_docs_count) {
+      stats->SetHasNull();
+    }
     if (hyperloglog) {
       const auto cnt =
         std::min<uint64_t>(hyperloglog->Count(), live_docs_count);

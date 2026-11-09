@@ -35,6 +35,8 @@ namespace sdb::server::query {
 // duckdb::DuckDB ctor.
 void ConfigureServerDBConfig(duckdb::DBConfig& config);
 
+void RegisterEngineModules(duckdb::DatabaseInstance& db);
+
 // Post-construct fill on a live DatabaseInstance: every connector
 // function/cast/optimiser registration, the SereneDBCreateIndexPlan
 // index-type loop, the SereneDBCopyFileSystem subsystem install, and the

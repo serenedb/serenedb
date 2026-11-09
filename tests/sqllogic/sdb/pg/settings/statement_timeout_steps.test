@@ -2,7 +2,7 @@ statement ok
 SET statement_timeout = '200ms'
 
 statement error
-SELECT sum(r) FROM (SELECT list_reduce(range(i, i + 200), (acc, x) -> acc + damerau_levenshtein(repeat('ab', 1000 + x % 7), repeat('ba', 1000))) AS r FROM range(64) t(i))
+SELECT sum(r) FROM (SELECT list_reduce(range(i, i + 200), lambda acc, x: acc + damerau_levenshtein(repeat('ab', 1000 + x % 7), repeat('ba', 1000))) AS r FROM range(64) t(i))
 ----
 db error: ERROR: canceling statement due to statement timeout
 
@@ -11,7 +11,7 @@ statement ok
 RESET statement_timeout
 
 query
-SELECT list_reduce(range(3), (acc, x) -> acc + damerau_levenshtein(repeat('ab', 2 + x), repeat('ba', 2))) AS r
+SELECT list_reduce(range(3), lambda acc, x: acc + damerau_levenshtein(repeat('ab', 2 + x), repeat('ba', 2))) AS r
 ----
 r
 6

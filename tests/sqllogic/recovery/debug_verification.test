@@ -1,0 +1,17 @@
+statement ok
+SET debug_verification = true;
+
+query
+SELECT current_setting('debug_verification') AS verification, sum(i) AS total FROM range(1000) t(i);
+----
+verification	total
+on	499500
+
+statement ok
+RESET debug_verification;
+
+query
+SELECT current_setting('debug_verification') AS verification, sum(i) AS total FROM range(1000) t(i);
+----
+verification	total
+off	499500

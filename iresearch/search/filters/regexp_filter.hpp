@@ -54,15 +54,15 @@ auto ExecuteRegexp(bstring& buf, bytes_view pattern, Term&& t, Prefix&& p,
 struct ByRegexpFilterOptions {
   bstring pattern;
   RegexpSyntax syntax{RegexpSyntax::Perl};
+  bool bytes{false};
 
   ByRegexpFilterOptions() = default;
   explicit ByRegexpFilterOptions(bytes_view pattern,
-                                 RegexpSyntax syntax = RegexpSyntax::Perl)
-    : pattern{pattern}, syntax{syntax} {}
+                                 RegexpSyntax syntax = RegexpSyntax::Perl,
+                                 bool bytes = false)
+    : pattern{pattern}, syntax{syntax}, bytes{bytes} {}
 
-  bool operator==(const ByRegexpFilterOptions& rhs) const noexcept {
-    return pattern == rhs.pattern && syntax == rhs.syntax;
-  }
+  bool operator==(const ByRegexpFilterOptions& rhs) const noexcept = default;
 };
 
 struct ByRegexpOptions : ByRegexpFilterOptions {
@@ -75,10 +75,10 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
 
 Filter::ptr CreateByRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
                            RegexpSyntax syntax = RegexpSyntax::Perl,
-                           score_t boost = kNoBoost);
+                           score_t boost = kNoBoost, bool bytes = false);
 
 Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
-                        RegexpSyntax syntax, score_t boost);
+                        RegexpSyntax syntax, score_t boost, bool bytes);
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:

@@ -1,0 +1,191 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE sacr (id INT, a INT, b TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+INSERT INTO sacr VALUES (1, 10, 'one'), (2, 20, 'two');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sacr;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO sacr VALUES (3, 30, 'three');
+
+
+statement ok
+ALTER TABLE sacr ADD COLUMN c INT;
+
+
+statement ok
+INSERT INTO sacr VALUES (4, 40, 'four', 400);
+
+
+statement ok
+ALTER TABLE sacr DROP COLUMN a;
+
+
+statement ok
+INSERT INTO sacr VALUES (5, 'five', 500);
+
+
+statement ok
+ALTER TABLE sacr ADD COLUMN d TEXT DEFAULT 'x';
+
+
+statement ok
+ALTER TABLE sacr ALTER COLUMN c TYPE BIGINT;
+
+
+statement ok
+INSERT INTO sacr VALUES (6, 'six', 600, 'y');
+
+
+statement ok
+CREATE TABLE sacs (id SERIAL, v INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO sacs (v) VALUES (10), (20);
+
+
+statement ok
+ALTER TABLE sacs ALTER COLUMN id TYPE BIGINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection restarted
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) sacr;
+
+
+connection restarted
+query
+SELECT id, b, c, d, pg_typeof(c) AS ct FROM sacr ORDER BY id;
+----
+id	b	c	d	ct
+1	one	NULL	x	bigint
+2	two	NULL	x	bigint
+3	three	NULL	x	bigint
+4	four	400	x	bigint
+5	five	500	x	bigint
+6	six	600	y	bigint
+
+
+connection restarted
+query
+SELECT pg_get_serial_sequence('sacs', 'id') AS seq;
+----
+seq
+public.sacs_id_seq
+
+
+connection restarted
+statement ok
+INSERT INTO sacs (v) VALUES (30);
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) sacs;
+
+
+connection restarted
+query
+SELECT id, v, pg_typeof(id) AS t FROM sacs WHERE v < 30 ORDER BY id;
+----
+id	v	t
+1	10	bigint
+2	20	bigint
+
+
+connection restarted
+query
+SELECT id > 2 AS from_sequence FROM sacs WHERE v = 30;
+----
+from_sequence
+t
+
+
+connection restarted
+statement ok
+CREATE TABLE sacm (id INT, v INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+connection restarted
+statement ok
+INSERT INTO sacm VALUES (1, 10);
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) sacm;
+
+
+connection restarted
+statement ok
+INSERT INTO sacm VALUES (2, 20);
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) sacm;
+
+
+connection restarted
+statement ok
+SET search_backfill_group_bytes = 1;
+
+
+connection restarted
+statement ok
+SET sdb_faults = 'crash_after_search_backfill_group';
+
+
+connection restarted
+statement error connection closed
+ALTER TABLE sacm ALTER COLUMN v TYPE TEXT USING (v * 2)::TEXT;
+
+
+connection crashed_mid_rewrite
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, v, pg_typeof(v) AS vt FROM sacm ORDER BY id;
+----
+id	v	vt
+1	10	integer
+2	20	integer
+
+
+connection crashed_mid_rewrite
+statement ok
+ALTER TABLE sacm ALTER COLUMN v TYPE TEXT USING (v * 2)::TEXT;
+
+
+connection crashed_mid_rewrite
+query
+SELECT id, v, pg_typeof(v) AS vt FROM sacm ORDER BY id;
+----
+id	v	vt
+1	20	text
+2	40	text

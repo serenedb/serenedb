@@ -176,6 +176,7 @@ CREATE OR REPLACE SECRET local_chat_${__DATABASE__} (
 
 query
 SELECT ai_generate('What is 2 + 2? Reply with just the number.',
+                   temperature := 0,
                    secret_name := 'local_chat_${__DATABASE__}') LIKE '%4%' AS answered;
 ----
 answered
@@ -193,6 +194,7 @@ t
 query
 SELECT length(ai_generate('Explain what a B-tree is.',
                           system_prompt := 'You are a database expert. Answer in one sentence.',
+                          temperature := 0,
                           secret_name := 'local_chat_${__DATABASE__}')) > 0 AS answered;
 ----
 answered

@@ -34,7 +34,9 @@
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/index_files.hpp>
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -148,6 +150,15 @@ std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
   return {std::move(reader), std::move(stamp)};
 }
 
+irs::SegmentReader IndexDurability::OpenSegment(
+  std::string_view meta_file, irs::IndexReaderOptions options) const {
+  options.refs = _refs;
+  irs::SegmentMeta meta;
+  irs::segment_meta::Read(_fs, _root, meta, meta_file);
+  return irs::SegmentReader{
+    irs::SegmentReaderImpl::Open(_db, _fs, _root, meta, options)};
+}
+
 void IndexDurability::WritePayload(const irs::SourcePosition& position,
                                    const FileManifest* manifest,
                                    duckdb::BinarySerializer& out) {
@@ -203,6 +214,11 @@ void IndexDurability::MarkStaged(const irs::SourcePosition& position) {
   _staged = std::max(_staged, position);
 }
 
+irs::SourcePosition IndexDurability::PublishedPosition() const {
+  absl::MutexLock lock{&_positions_mutex};
+  return _published;
+}
+
 std::optional<uint64_t> IndexDurability::NeededWAL() const {
   absl::MutexLock lock{&_positions_mutex};
   if (_staged <= _durable) {
@@ -219,7 +235,8 @@ void IndexDurability::MarkPublished() {
 absl::Status IndexDurability::Refresh(
   irs::IndexWriter& writer, bool wait,
   const irs::ProgressReportCallback& progress, RefreshResult& code,
-  absl::FunctionRef<void()> unchanged, absl::FunctionRef<void()> published) {
+  absl::FunctionRef<void()> unchanged, absl::FunctionRef<void()> published,
+  const RefreshGate* gate) {
   code = RefreshResult::NoChanges;
 
   try {
@@ -251,11 +268,19 @@ absl::Status IndexDurability::Refresh(
     SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh");
     bool were_changes = false;
     try {
+      std::optional<absl::MutexLock> gate_lock;
+      if (gate) {
+        gate_lock.emplace(&gate->mutex);
+        if (!gate->open()) {
+          return absl::OkStatus();
+        }
+      }
       were_changes = writer.RefreshBegin({
         .progress = progress,
         .reopen_reader = _reopen.exchange(false, std::memory_order_acq_rel),
         .payload_changed = PayloadChanged(),
       });
+      gate_lock.reset();
       if (were_changes) {
         _directory_dirty.store(true, std::memory_order_relaxed);
       }
@@ -481,6 +506,14 @@ absl::Status IndexDurability::CompactFiles(irs::IndexWriter& writer) {
   }
   _reopen.store(true, std::memory_order_release);
   return absl::OkStatus();
+}
+
+bool IndexDurability::SyncPublished() {
+  if (!CanPersist()) {
+    return false;
+  }
+  SyncDirectory();
+  return true;
 }
 
 bool IndexDurability::PayloadChanged() const {

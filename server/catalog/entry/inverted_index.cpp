@@ -31,6 +31,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -627,7 +628,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
       break;
     }
     case duckdb::AlterIndexType::RESET_INDEX_OPTIONS: {
-      auto& options = index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options;
+      auto& reset = index_alter.Cast<duckdb::ResetIndexOptionsInfo>();
+      auto& options = reset.options;
       if (options.extract(duckdb::Identifier{kReindexIntervalSetting}) &&
           view_backed) {
         context.TryGetCurrentSetting(
@@ -640,8 +642,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
         if (_search_table) {
           RequireSearchTableIndexOption(name);
         }
-        context.TryGetCurrentSetting(identifier, new_options[name]);
+        auto& value = new_options[name];
+        if (const auto it = reset.values.find(name); it != reset.values.end()) {
+          value = it->second;
+        } else {
+          context.TryGetCurrentSetting(identifier, value);
+          reset.values.emplace(name, value);
+        }
       }
+      SDB_IF_FAILURE("reset_options_without_values") { reset.values.clear(); }
       break;
     }
     default:
@@ -680,10 +689,9 @@ void InvertedIndexEntry::CreateReindexJob(
   body->info->parameters.emplace_back(
     duckdb::ConstantExpression::FromValue(duckdb::Value::BIGINT(oid)));
   create.body.push_back(std::move(body));
-  create.permissions.owner =
-    ParentSchema(transaction)
-      .GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName())
-      ->permissions.owner;
+  const auto relation = GetRelation(transaction);
+  SDB_ASSERT(relation);
+  create.permissions.owner = relation->permissions.owner;
   catalog.CreateJob(transaction.GetContext(), create);
   SetJobOwnedBy(transaction, catalog, GetQualifiedName(name), name);
 }
@@ -741,7 +749,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
 void InvertedIndexEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
   if (_search_table && transaction.HasContext()) {
     _search_table->ClaimLayout(transaction.GetContext(),
-                               GetTableName().GetIdentifierName());
+                               GetTableName().GetIdentifierName(),
+                               search::TableChange::Layout);
   }
 }
 

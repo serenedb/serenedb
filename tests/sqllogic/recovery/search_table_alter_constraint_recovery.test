@@ -1,0 +1,84 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE sacr (id INT, b TEXT, n INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+INSERT INTO sacr VALUES (1, 'x', 1), (2, 'y', 2);
+
+
+statement ok
+ALTER TABLE sacr ALTER COLUMN b SET NOT NULL;
+
+
+statement ok
+ALTER TABLE sacr ADD CONSTRAINT sacr_n CHECK (n > 0);
+
+
+statement ok
+INSERT INTO sacr VALUES (3, 'z', NULL);
+
+
+statement error
+ALTER TABLE sacr ALTER COLUMN n SET NOT NULL;
+----
+db error: ERROR: NOT NULL constraint failed: sacr.n
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection restarted
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, b, n FROM sacr ORDER BY id;
+----
+id	b	n
+1	x	1
+2	y	2
+3	z	NULL
+
+
+connection restarted
+statement error
+INSERT INTO sacr VALUES (4, NULL, 4);
+----
+db error: ERROR: NOT NULL constraint failed: sacr.b
+
+
+connection restarted
+statement error
+INSERT INTO sacr VALUES (4, 'w', -4);
+----
+db error: ERROR: CHECK constraint failed on table "sacr" with expression CHECK((n > 0))
+
+
+connection restarted
+statement ok
+INSERT INTO sacr VALUES (4, 'w', NULL);
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) sacr;
+
+
+connection restarted
+query
+SELECT id, b, n FROM sacr ORDER BY id;
+----
+id	b	n
+1	x	1
+2	y	2
+3	z	NULL
+4	w	NULL

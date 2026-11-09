@@ -34,6 +34,7 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -60,8 +61,10 @@ struct TargetColumns {
   irs::containers::FlatHashMap<std::string, size_t> columns;
 };
 
-void BindTarget(duckdb::ClientContext& context, std::string_view schema_name,
-                std::string_view table_name, TargetColumns& data,
+void BindTarget(duckdb::ClientContext& context,
+                duckdb::optional_ptr<duckdb::Binder> binder,
+                std::string_view schema_name, std::string_view table_name,
+                TargetColumns& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
                 duckdb::vector<duckdb::Identifier>& names) {
   auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
@@ -76,6 +79,7 @@ void BindTarget(duckdb::ClientContext& context, std::string_view schema_name,
                             "\" does not exist; create the OpenTelemetry "
                             "schema first"));
   }
+  duckdb::Binder::RegisterEntryRead(binder, context, *table);
   size_t index = 0;
   for (const auto& column : table->GetColumns().Logical()) {
     return_types.push_back(column.Type());
@@ -360,12 +364,14 @@ duckdb::LogicalType Expected(const schema::Column& column) {
 
 template<typename Source>
 duckdb::unique_ptr<SourceBindData> BindSource(
-  duckdb::ClientContext& context, std::string_view schema_name,
+  duckdb::ClientContext& context, duckdb::optional_ptr<duckdb::Binder> binder,
+  std::string_view schema_name,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
   constexpr const auto& table = schema::TableOf(typename Source::Column{});
   TargetColumns target;
-  BindTarget(context, schema_name, table.name, target, return_types, names);
+  BindTarget(context, binder, schema_name, table.name, target, return_types,
+             names);
   auto data = duckdb::make_uniq<SourceBindData>();
   data->slots.reserve(table.columns.size());
   for (const auto& column : table.columns) {
@@ -935,7 +941,8 @@ duckdb::unique_ptr<duckdb::FunctionData> SourceBind(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("schema name cannot be NULL"));
   }
-  return BindSource<Source>(context, input.inputs[0].GetValue<std::string>(),
+  return BindSource<Source>(context, input.binder,
+                            input.inputs[0].GetValue<std::string>(),
                             return_types, names);
 }
 
@@ -1003,7 +1010,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ParseBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auto data = BindSource<Source>(context, kOtelSchema, return_types, names);
+  auto data =
+    BindSource<Source>(context, input.binder, kOtelSchema, return_types, names);
   const bool protobuf = ReadProtobufArgument(input.inputs);
   auto parsed = std::make_shared<ParsedPayload<typename Source::Request>>();
   parsed->wire = ReadBodyArgument(input.inputs[0]);

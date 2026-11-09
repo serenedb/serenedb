@@ -139,6 +139,8 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "ALTER INDEX";
     case ALTER_JOB:
       return "ALTER JOB";
+    case SET_SCHEMA:
+      return TagsOf(info.GetCatalogType(), false).alter;
     case ALTER_ROLE: {
       const auto& role = info.Cast<duckdb::AlterRoleInfo>();
       if (role.grant_role.empty()) {

@@ -263,16 +263,16 @@ constexpr SystemMacro kMacros[] = {
   // PG array functions missing from DuckDB
 
   {"pg_catalog","array_remove",
-   R"((arr, elem) AS list_filter(arr, x -> x IS DISTINCT FROM elem))"},
+   R"((arr, elem) AS list_filter(arr, lambda x: x IS DISTINCT FROM elem))"},
 
   {"pg_catalog","trim_array",
    R"((arr, n) AS arr[:len(arr) - n])"},
 
   {"pg_catalog","array_positions",
-   R"((arr, elem) AS list_filter(list_transform(arr, (x, i) -> CASE WHEN x IS NOT DISTINCT FROM elem THEN i ELSE NULL END), x -> x IS NOT NULL))"},
+   R"((arr, elem) AS list_filter(list_transform(arr, lambda x, i: CASE WHEN x IS NOT DISTINCT FROM elem THEN i ELSE NULL END), lambda x: x IS NOT NULL))"},
 
   {"pg_catalog","array_replace",
-   R"((arr, old_elem, new_elem) AS list_transform(arr, x -> CASE WHEN x IS NOT DISTINCT FROM old_elem THEN new_elem ELSE x END))"},
+   R"((arr, old_elem, new_elem) AS list_transform(arr, lambda x: CASE WHEN x IS NOT DISTINCT FROM old_elem THEN new_elem ELSE x END))"},
 
   {"pg_catalog","array_lower",
    R"((arr, dim) AS CASE WHEN array_length(arr, dim) IS NULL THEN NULL ELSE 1 END)"},
@@ -349,7 +349,7 @@ constexpr SystemMacro kMacros[] = {
 
   {"pg_catalog", "oidvectortypes",
    R"((v) AS array_to_string(
-        list_transform(v, x -> pg_catalog.format_type(x, NULL)), ', '))"},
+        list_transform(v, lambda x: pg_catalog.format_type(x, NULL)), ', '))"},
 
   {"pg_catalog", "pg_indexam_has_property",
    R"((am, property) AS
@@ -463,7 +463,7 @@ constexpr SystemMacro kMacros[] = {
            ELSE CAST(to_json(v) AS VARCHAR) END)"},
   {"pg_catalog", "sdb_json_array",
    R"((elements) AS
-      CAST('[' || array_to_string(list_transform(elements, (e, i) ->
+      CAST('[' || array_to_string(list_transform(elements, lambda e, i:
         CASE WHEN i > 1 AND e IS NOT NULL AND
                   (typeof(e) LIKE 'STRUCT%' OR typeof(e) LIKE '%]')
              THEN chr(10) || ' ' ELSE '' END || sdb_json_value(e)), ', ') ||
@@ -475,7 +475,7 @@ constexpr SystemMacro kMacros[] = {
       ' : ' || sdb_json_value(value))"},
   {"pg_catalog", "json_agg", "(x) AS sdb_json_array(list(x))"},
   {"pg_catalog", "json_agg_strict",
-   "(x) AS sdb_json_array(list_filter(list(x), e -> e IS NOT NULL))"},
+   "(x) AS sdb_json_array(list_filter(list(x), lambda e: e IS NOT NULL))"},
   {"pg_catalog", "json_object_agg",
    R"((key, value) AS
       CAST('{ ' || string_agg(sdb_json_member(key, value), ', ') || ' }'

@@ -194,15 +194,15 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   if (!database || database->GetCatalog().IsDropped() || Dropped(state)) {
     return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT, "Interrupted!"};
   }
-  auto connection = connector::MakeSystemConnection(
-    user, job.owner, database->GetName().GetIdentifierName(), database->oid,
-    temporary);
-  absl::Cleanup log_notices = [&] {
-    connection.ctx->ConsumeNotices([&](auto& notice) {
-      SDB_WARN(GENERAL, "job \"", job.name.GetIdentifierName(),
-               "\": ", notice.errmsg);
-    });
-  };
+  const auto& database_name = database->GetName().GetIdentifierName();
+  connector::SystemConnection connection{
+    {.user = user,
+     .role = job.owner,
+     .database = database_name,
+     .database_id = database->oid},
+    {.what = "job", .name = job.name.GetIdentifierName()},
+    temporary};
+  connector::SetDefaultSearchPath(*connection.conn->context, database_name);
   context = connection.conn->context;
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));

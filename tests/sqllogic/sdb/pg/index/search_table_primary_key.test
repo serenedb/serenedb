@@ -1,0 +1,299 @@
+# Nothing is published until a refresh is asked for, so what a row is certified
+# against is the tier this file puts it in rather than whichever one a timer
+# got to first.
+statement ok
+CREATE TABLE pk_dup(i INTEGER PRIMARY KEY, t TEXT)
+  WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+INSERT INTO pk_dup VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+# A key the index already holds.
+statement error
+INSERT INTO pk_dup VALUES (1, 'again');
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+
+
+# Two rows of one statement carrying the same key.
+statement error
+INSERT INTO pk_dup VALUES (3, 'x'), (3, 'y');
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+
+
+# A key committed but not published: the reader cannot answer for it, so the
+# WAL tail has to.
+statement ok
+INSERT INTO pk_dup VALUES (4, 'fresh');
+
+
+query
+SELECT count(*) AS published FROM pk_dup WHERE i = 4;
+----
+published
+0
+
+
+statement error
+INSERT INTO pk_dup VALUES (4, 'again');
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	a
+2	b
+4	fresh
+
+
+# An UPDATE writes the row back under the key it just deleted, which is its own
+# to take.
+statement ok
+UPDATE pk_dup SET t = 'updated' WHERE i = 1;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+# The same within one transaction, spelled out.
+statement ok
+BEGIN;
+
+
+statement ok
+DELETE FROM pk_dup WHERE i = 2;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (2, 'reinserted');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	updated
+2	reinserted
+4	fresh
+
+
+# Removing a row releases its key for a later statement to take again.
+statement ok
+DELETE FROM pk_dup WHERE i = 4;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (4, 'taken again');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	updated
+2	reinserted
+4	taken again
+
+
+# A composite key, with a boolean column: the member tells the two rows apart,
+# as it does in PostgreSQL, where (tenant_id, is_active) is a key like any
+# other.
+statement ok
+CREATE TABLE pk_bool(tenant_id INTEGER, is_active BOOLEAN, note TEXT,
+                     PRIMARY KEY (tenant_id, is_active))
+  WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO pk_bool VALUES (1, true, 'on'), (1, false, 'off'), (2, true, 'two');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_bool;
+
+
+statement error
+INSERT INTO pk_bool VALUES (1, true, 'again');
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_bool"
+
+
+statement ok
+INSERT INTO pk_bool VALUES (2, false, 'fits');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_bool;
+
+
+query
+SELECT tenant_id, is_active, note FROM pk_bool ORDER BY tenant_id, is_active;
+----
+tenant_id	is_active	note
+1	f	off
+1	t	on
+2	f	fits
+2	t	two
+
+
+# A TRUNCATE kills every row that exists before it, so the keys written after
+# it answer to each other and to nothing else -- including in the transaction
+# that truncates.
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (1, 'after truncate');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	after truncate
+
+
+# What the truncate does not excuse is a key repeated after it. The keys are
+# certified where the transaction commits, so inside an explicit one that is
+# the COMMIT and not the statement that wrote the rows.
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (5, 'x'), (5, 'y');
+
+
+statement error
+COMMIT;
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_dup"
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+# The rolled-back truncate left the table as it was.
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+1	after truncate
+
+
+# A truncate of its own, with the keys taken again afterwards.
+statement ok
+TRUNCATE pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (1, 'taken once more');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+# The barrier reaches the tail as well as the reader: this key is committed and
+# unpublished when the truncate kills it, and taking it again is not a
+# duplicate.
+statement ok
+INSERT INTO pk_dup VALUES (8, 'unpublished');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE pk_dup;
+
+
+statement ok
+INSERT INTO pk_dup VALUES (8, 'after the barrier');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_dup;
+
+
+query
+SELECT i, t FROM pk_dup ORDER BY i;
+----
+i	t
+8	after the barrier
+
+
+# Without a declared key nothing is certified, and repeated values are rows
+# like any other.
+statement ok
+CREATE TABLE pk_none(i INTEGER, t TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO pk_none VALUES (1, 'a'), (1, 'b');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_none;
+
+
+query
+SELECT i, t FROM pk_none ORDER BY t;
+----
+i	t
+1	a
+1	b

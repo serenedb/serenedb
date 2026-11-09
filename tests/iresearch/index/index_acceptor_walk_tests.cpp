@@ -1184,6 +1184,10 @@ TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
       case Kind::PosixEre:
         return irs::RegexpAcceptor{part.pattern, irs::RegexpSyntax::PosixEre}
           .Matches(term);
+      case Kind::WildcardBytes:
+      case Kind::PerlBytes:
+      case Kind::PosixEreBytes:
+        return irs::RegexpAcceptor{std::span{&part, 1}}.Matches(term);
     }
     return false;
   };

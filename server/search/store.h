@@ -21,20 +21,20 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
-#include <absl/time/time.h>
 
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/column_list.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/segment_reader.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/utils/async.hpp>
@@ -57,6 +57,7 @@
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
+#include "utils/drain_gate.h"
 
 namespace duckdb {
 
@@ -81,6 +82,11 @@ struct StoreSnapshot {
   const std::shared_ptr<const FileManifest> file_manifest;
 };
 using StoreSnapshotPtr = std::shared_ptr<StoreSnapshot>;
+
+enum class TableChange : uint8_t {
+  Layout,
+  Schema,
+};
 
 // The iresearch index the server owns for a search table, for an inverted
 // index of a DuckDB table and for an inverted index of a view. Lives in the
@@ -129,6 +135,25 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::pair<irs::DirectoryReader, irs::SourcePosition> SnapshotWithPosition() {
     return _durability.Snapshot(*_writer);
   }
+
+  // The same pair for a caller that must not wait: a commit, which a refresh
+  // holding its own lock would otherwise hold up for as long as it runs.
+  // The position is read first and the reader after, so the reader is never
+  // older than the position it is paired with -- the other way round would
+  // leave a span of the WAL in neither tier, and a key written there would go
+  // unseen. A reader ahead of its position only costs re-reading what it
+  // already holds.
+  std::pair<irs::DirectoryReader, irs::SourcePosition> SnapshotToCertify()
+    const {
+    const auto position = _durability.PublishedPosition();
+    return {_writer->GetSnapshot(), position};
+  }
+
+  // Opens a segment this store's directory holds but its published reader does
+  // not show yet, named by the meta file a committed transaction recorded. The
+  // segment is read-only and lives as long as the handle: a certifier reads
+  // such a segment to answer for rows that are committed but unpublished.
+  irs::SegmentReader OpenSegment(std::string_view meta_file) const;
 
   std::shared_ptr<const FileManifest> GetFileManifest() const {
     return std::atomic_load(&_file_manifest);
@@ -186,7 +211,8 @@ class Store final : public std::enable_shared_from_this<Store>,
                                RefreshResult& code);
   // `field_options` (nullable) is the per-merge per-column encoding config,
   // pinned by the caller for the whole merge.
-  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
+  auto CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
+                          const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
@@ -203,8 +229,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   [[nodiscard]] absl::Status OptimizeInMemory();
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   [[nodiscard]] absl::Status VacuumRefresh();
-  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments,
-                                           absl::FunctionRef<bool()> cancelled);
+  [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
+                                           uint32_t target_segments);
   void Publish();
 
   StoreStats GetStats() const;
@@ -223,10 +249,16 @@ class Store final : public std::enable_shared_from_this<Store>,
   void RemoveIndexConfig(duckdb::idx_t index_oid);
   void ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept;
 
-  void ClaimLayout(duckdb::ClientContext& context, std::string_view name);
+  void ClaimLayout(duckdb::ClientContext& context, std::string_view name,
+                   TableChange change);
   [[nodiscard]] bool AcquireLayout(duckdb::transaction_t owner,
-                                   std::string_view name);
-  void ReleaseLayout(duckdb::transaction_t owner) noexcept;
+                                   std::string_view name, TableChange change);
+  void ReleaseLayout(duckdb::transaction_t owner, bool committed) noexcept;
+
+  uint64_t SchemaEpoch() const noexcept { return _schema_epoch.load(); }
+  void AddTableColumns(const duckdb::ColumnList& columns);
+  void SetTableColumns(const duckdb::ColumnList& columns);
+  void SyncPublished();
 
   class [[nodiscard]] BuildClaim {
    public:
@@ -263,13 +295,13 @@ class Store final : public std::enable_shared_from_this<Store>,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
   bool BuildInFlight() const;
 
-  [[nodiscard]] std::optional<unsigned> RegisterWriter() {
+  [[nodiscard]] WriterGenerations::Writer RegisterWriter() noexcept {
     return _writers.Register();
   }
-  void DeregisterWriter(unsigned slot) noexcept { _writers.Deregister(slot); }
-  [[nodiscard]] bool ClaimTruncate() { return _writers.ClaimTruncate(); }
-  void ReleaseTruncate() noexcept { _writers.ReleaseTruncate(); }
-  void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
+  [[nodiscard]] WriterGenerations::Truncate ClaimTruncate() noexcept {
+    return _writers.ClaimTruncate();
+  }
+  void DrainPriorWriters(duckdb::ClientContext& context);
 
   void WatchTruncates();
   void RecordTruncateForBuild(const irs::SourcePosition& position);
@@ -312,31 +344,30 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).
-  class [[nodiscard]] ReindexClaim {
-   public:
-    static ReindexClaim TryAcquire(Store& store);
-    static ReindexClaim Acquire(Store& store,
-                                absl::FunctionRef<bool()> cancelled,
-                                absl::Duration poll);
-    ReindexClaim(ReindexClaim&& other) noexcept
-      : _store{std::exchange(other._store, nullptr)} {}
-    ReindexClaim& operator=(ReindexClaim&&) = delete;
-    ~ReindexClaim();
-    bool Claimed() const noexcept { return _store != nullptr; }
-
-   private:
-    explicit ReindexClaim(Store* store) noexcept : _store{store} {}
-
-    Store* _store;
+  struct ReindexReleaser {
+    void operator()(Store* store) const noexcept;
   };
+  using ReindexClaim = std::unique_ptr<Store, ReindexReleaser>;
+
+  [[nodiscard]] ReindexClaim TryClaimReindex() noexcept;
+  [[nodiscard]] ReindexClaim ClaimReindex(duckdb::ClientContext& context);
 
  private:
+  static constexpr uint32_t kReindexing = 1;
+  static constexpr uint32_t kReindexWaiter = 2;
+
   struct IndexConfig {
     duckdb::idx_t oid;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
+  struct SchemaUndo {
+    uint64_t epoch = 0;
+    irs::containers::FlatHashSet<irs::field_id> table_columns;
+    catalog::CompressionByColumn compression;
+  };
   struct Layout {
     duckdb::transaction_t owner = kNoLayoutOwner;
+    std::optional<SchemaUndo> schema_undo;
     std::vector<IndexConfig> configs;
     std::vector<IndexConfig> retired;
     std::optional<duckdb::idx_t> building_index;
@@ -393,25 +424,19 @@ class Store final : public std::enable_shared_from_this<Store>,
   catalog::CompressionByColumn _compression;
   mutable absl::Mutex _layout_mutex;
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);
+  std::atomic<uint64_t> _schema_epoch{0};
   WriterGenerations _writers;
   absl::Mutex _truncate_mutex;
   irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_truncate_mutex);
   std::unique_ptr<ReplaySession> _replay;
 
-  absl::Mutex _reindex_mutex;
-  bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
-  uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
+  std::atomic<uint32_t> _reindex_state{0};
 
   absl::Mutex _delete_log_mutex;
   std::atomic<bool> _delete_log_open{false};
   std::atomic<int64_t> _delete_log_rowid_end{
     std::numeric_limits<int64_t>::max()};
   std::vector<irs::KeyRemoval> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
-
-  // How often a waiting rebuild surfaces to check for cancellation. The
-  // CondVar does the blocking; this only bounds how long a cancelled statement
-  // keeps waiting.
-  static constexpr absl::Duration kWriterWaitPoll = absl::Milliseconds(100);
 
 #ifdef SDB_DEV
   // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't

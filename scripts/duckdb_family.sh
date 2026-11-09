@@ -35,10 +35,11 @@
 #   duckdb only. Builds the regen: commit of the patch commits under it (HEAD, or HEAD~1 when HEAD is
 #   a regen: commit) in a scratch clone: a DuckDB update's one regen: commit, or a pull request's own
 #   on top of a version branch. DuckDB's generators run in DuckDB's order: `make generate-files` (C
-#   API v1, functions, metrics, settings, serialization, util, storage info, enum util, HTML template,
-#   the PEG grammar and transformer, then format-main), then scripts/capi_v2_regen.sh (C API v2) and
-#   scripts/generate_enums.py (the json enums), the generators DuckDB runs outside generate-files. In
-#   the clone `main` is that commit, so format-main formats exactly the files the generators wrote.
+#   API v1, functions, metrics, settings, serialization, util, enum util, HTML template, the PEG
+#   grammar and transformer, then format-main), then scripts/capi_v2_regen.sh (C API v2) and
+#   scripts/generate_enums.py (the json enums), the generators DuckDB runs outside generate-files. The
+#   serialization generator reads the storage versions from third_party/duckdb_versions. In the
+#   clone `main` is that commit, so format-main formats exactly the files the generators wrote.
 #   All run a second time, which must change nothing. The new regen: commit replaces the old one or
 #   goes on top, and the generated files in the work tree are updated to it; the work tree must be
 #   clean. When the generators change nothing there is no regen: commit, and an old one is dropped.
@@ -80,7 +81,7 @@ FORMAT_PYTHON="$FORMAT_VENV/bin/python"
 CAPIGEN_VENV="$CACHE/capigen-venv"
 GENERATE_VENV="$CACHE/generate-venv"
 UV_VENV="$CACHE/uv-venv"
-REGEN_MESSAGE='regen: regenerate the grammar, settings, functions, serialization and storage info'
+REGEN_MESSAGE='regen: regenerate the grammar, settings, functions and serialization'
 
 usage() {
 	sed -n '2,/^$/{s/^# \{0,1\}//;p}' "$0"
@@ -311,6 +312,7 @@ regen() {
 	trap "rm -rf '$scratch'" EXIT
 	git clone --quiet --shared --no-checkout "$DUCKDB" "$scratch/duckdb"
 	git -C "$scratch/duckdb" checkout --quiet --force -B main "$base"
+	ln -s "$THIRD_PARTY/duckdb_versions" "$scratch/duckdb_versions"
 	mkdir -p "$CACHE"
 	local log="$CACHE/regen.log" tree second
 	: >"$log"

@@ -43,7 +43,7 @@ The query below runs a BM25 branch and a vector branch, ranks each independently
 
 <SqlLogicTest id="sql/indexes/inverted/hybrid-search/example_003" />
 
-Each branch caps its contribution with a per-branch `LIMIT` (the window size), assigns ranks with `ROW_NUMBER()` and the outer query sums `1 / (k + rank)` per id. See [Reciprocal Rank Fusion](../../../cookbook/search/reciprocal-rank-fusion.md) for the full treatment of `k`, window size and tuning.
+Each branch caps its contribution with a per-branch `LIMIT` (the window size), assigns ranks with `RANK()`, so rows that tie on score share a rank, and the outer query sums `1 / (k + rank)` per id. See [Reciprocal Rank Fusion](../../../cookbook/search/reciprocal-rank-fusion.md) for the full treatment of `k`, window size and tuning.
 
 ## See also
 

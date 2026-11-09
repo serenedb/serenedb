@@ -35,6 +35,25 @@ CREATE TYPE point_pair AS TUPLE(INTEGER, INTEGER);
 
 # DOCS_TEST: example_006
 
+statement ok
+CREATE SCHEMA archive;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE vibe AS ENUM ('chill', 'hyped');
+
+statement ok
+ALTER TYPE vibe SET SCHEMA archive;
+
+query
+SELECT 'hyped'::archive.vibe AS vibe;
+----
+vibe
+hyped
+
+# DOCS_TEST: example_007
+
 # DOCS_TEST_BODY
 
 statement ok

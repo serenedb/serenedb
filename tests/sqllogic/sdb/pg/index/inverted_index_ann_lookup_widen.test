@@ -39,6 +39,15 @@ INSERT INTO lw_ivf SELECT * FROM lw_hnsw;
 statement ok
 INSERT INTO lw_flat SELECT * FROM lw_hnsw;
 
+statement ok
+VACUUM (FLUSH_TABLE) lw_hnsw;
+
+statement ok
+VACUUM (FLUSH_TABLE) lw_ivf;
+
+statement ok
+VACUUM (FLUSH_TABLE) lw_flat;
+
 query
 SELECT id FROM lw_hnsw_idx WHERE extra = 7
   ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;

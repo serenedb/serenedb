@@ -31,7 +31,10 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/levenshtein_acceptor.hpp>
+#include <iresearch/utils/levenshtein_utils.hpp>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -397,6 +400,53 @@ TEST(PieceTest, SealsSingleDocumentPieces) {
     const ReadContext context{*piece->GetColReader(), /*random_access=*/false};
     EXPECT_EQ(DEFAULT_BLOCK_ALLOC_SIZE, context.GetBlockAllocSize());
   }
+}
+
+TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
+  constexpr uint32_t kDocs = 50;
+  MemoryDirectory flushed_dir;
+  auto flushed_writer = IndexWriter::Make(flushed_dir, kOmCreate,
+                                          irs::tests::DefaultWriterOptions());
+  {
+    auto trx = flushed_writer->GetBatch();
+    InsertDocs(trx, kDocs);
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(flushed_writer->RefreshCommit());
+  const auto flushed = flushed_writer->GetSnapshot();
+  ASSERT_EQ(1, flushed.size());
+
+  MemoryDirectory piece_dir;
+  auto piece_writer =
+    IndexWriter::Make(piece_dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  auto trx = piece_writer->GetBatch(/*exclusive_segment=*/true);
+  trx.SetHot(0);
+  InsertDocs(trx, kDocs);
+  const auto piece = trx.SealPiece(9);
+  trx.Abort();
+  ASSERT_NE(nullptr, piece);
+
+  const auto description = MakeParametricDescription(1, false);
+  const LevenshteinAcceptor fuzzy{
+    description, kEmptyStringView<byte_type>,
+    ViewCast<byte_type>(std::string_view{"cat1"})};
+  const auto walk = [&](const TermReader& field) {
+    std::vector<std::pair<std::string, byte_type>> terms;
+    auto it = field.iterator(fuzzy);
+    const auto* payload = irs::get<PayAttr>(*it);
+    EXPECT_NE(nullptr, payload);
+    if (!payload) {
+      return terms;
+    }
+    EXPECT_EQ(1, payload->value.size());
+    while (it->next()) {
+      terms.emplace_back(ViewCast<char>(it->value()), payload->value[0]);
+    }
+    return terms;
+  };
+  const auto expected = walk(*flushed[0].fields(kKeyword).front());
+  EXPECT_FALSE(expected.empty());
+  EXPECT_EQ(expected, walk(*piece->fields(kKeyword).front()));
 }
 
 TEST(PieceTest, SeeksAndRangesFollowTheSortedTerms) {

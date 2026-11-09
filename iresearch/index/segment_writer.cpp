@@ -182,8 +182,9 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
     _fields.FinalizeNorms();
     norms = _col_writer->SealNorms(docs);
     column_bytes = _col_writer->StagedBytes();
+    HotChunkStats stats;
     for (auto& column : _col_writer->Snapshot(docs)) {
-      columns.push_back(HotColumnReader::Make(_db, std::move(column), nullptr));
+      columns.push_back(HotColumnReader::Make(_db, std::move(column), &stats));
     }
   }
   auto fields = std::make_shared<PieceFields>();

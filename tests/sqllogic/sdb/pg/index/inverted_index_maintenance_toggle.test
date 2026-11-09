@@ -56,6 +56,10 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(1, 10) s(i)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) mt_s
+
+
 query
 SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
 ----
@@ -67,6 +71,10 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(11, 20) s(i)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) mt_s
+
+
 query
 SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
 ----
@@ -76,6 +84,10 @@ t
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(21, 30) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) mt_s
 
 
 query
@@ -116,6 +128,10 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(31, 40) s(i)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) mt_s
+
+
 query
 SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
 ----
@@ -125,6 +141,10 @@ t
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(41, 50) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) mt_s
 
 
 query
@@ -165,6 +185,10 @@ statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(51, 60) s(i)
 
 
+statement ok
+VACUUM (FLUSH_TABLE) mt_s
+
+
 query
 SELECT count(*) > 0 AS ok FROM mt_s WHERE body @@ 'fox'
 ----
@@ -174,6 +198,10 @@ t
 
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(61, 70) s(i)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) mt_s
 
 
 query

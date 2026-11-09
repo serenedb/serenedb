@@ -346,6 +346,18 @@ bool HotColumnReader::FetchPoint(PointReader&, uint64_t row,
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
+bool HotColumnReader::ValidPoint(PointReader&, uint64_t row,
+                                 duckdb::Vector&) const {
+  if (row >= _row_count) {
+    return false;
+  }
+  const auto chunk = ChunkOf(row);
+  duckdb::UnifiedVectorFormat format;
+  _chunks[chunk].data.ToUnifiedFormat(format);
+  const auto in_chunk = static_cast<duckdb::idx_t>(row - _starts[chunk]);
+  return format.validity.RowIsValid(format.sel->get_index(in_chunk));
+}
+
 uint64_t HotColumnReader::RowGroupEnd(uint64_t row) const noexcept {
   if (row >= _row_count) {
     return _row_count;

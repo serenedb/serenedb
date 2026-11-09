@@ -52,7 +52,11 @@ class PieceTermIterator : public SeekTermIterator {
       _matches{std::move(matches)},
       _payloads{std::move(payloads)},
       _count{_matches.size()},
-      _filtered{true} {}
+      _filtered{true} {
+    if constexpr (kHasPayload) {
+      _pay.value = {&_payload, sizeof(_payload)};
+    }
+  }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if constexpr (kHasPayload) {
@@ -124,7 +128,7 @@ class PieceTermIterator : public SeekTermIterator {
     _position = Position::At;
     _term.value = _field->TermOf(Entry());
     if constexpr (kHasPayload) {
-      _pay.value = {&_payloads[_at], 1};
+      _payload = _payloads[_at];
     }
     return true;
   }
@@ -134,6 +138,7 @@ class PieceTermIterator : public SeekTermIterator {
   std::vector<byte_type> _payloads;
   TermAttr _term;
   PayAttr _pay;
+  byte_type _payload = 0;
   size_t _count;
   size_t _at = 0;
   Position _position = Position::Before;

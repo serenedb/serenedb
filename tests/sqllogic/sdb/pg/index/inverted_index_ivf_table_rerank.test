@@ -184,6 +184,9 @@ INSERT INTO tr_flt VALUES
   (3, [0, 0, 12]::FLOAT[3]),
   (4, [9, 12, 0]::FLOAT[3])
 
+statement ok
+VACUUM (FLUSH_TABLE) tr_flt
+
 query
 SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_flt_sq8
 WHERE emb <-> [0, 0, 0]::FLOAT[3] > 9 ORDER BY d LIMIT 2;

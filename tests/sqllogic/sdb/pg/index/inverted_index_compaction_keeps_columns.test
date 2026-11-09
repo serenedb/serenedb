@@ -13,6 +13,9 @@ CREATE INDEX ckc_idx ON ckc USING inverted (id, n, body ckc_en, (lower(tag)) inc
 statement ok
 INSERT INTO ckc SELECT i, 'fox ' || repeat('dog ', i % 5), 'Tag' || (i % 3), CASE WHEN i % 4 = 0 THEN NULL ELSE i END FROM generate_series(1, 100) s(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) ckc;
+
 query
 SELECT count(*) AS n FROM ckc_idx WHERE body @@ ts_phrase('fox');
 ----
@@ -21,6 +24,9 @@ n
 
 statement ok
 INSERT INTO ckc SELECT i, 'fox ' || repeat('dog ', i % 5), 'Tag' || (i % 3), CASE WHEN i % 4 = 0 THEN NULL ELSE i END FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) ckc;
 
 query
 SELECT count(*) AS n FROM ckc_idx WHERE body @@ ts_phrase('fox');

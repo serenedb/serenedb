@@ -122,7 +122,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenPiece(
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->col_reader = std::move(columns);
   reader->_pieces = std::move(fields);
-  reader->_in_memory = true;
   return reader;
 }
 

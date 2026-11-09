@@ -70,9 +70,7 @@ class HotColumnReader final : public ColumnReader {
                   duckdb::idx_t out_offset) const final;
 
   bool ValidPoint(PointReader& reader, uint64_t row,
-                  duckdb::Vector& scratch) const final {
-    return FetchPoint(reader, row, scratch, 0);
-  }
+                  duckdb::Vector& scratch) const final;
 
   uint64_t RowGroupEnd(uint64_t row) const noexcept final;
 

@@ -33,6 +33,9 @@ struct ScatterScratch {
   static constexpr size_t kBlockShift = 16;
   static constexpr size_t kBlockValues = size_t{1} << kBlockShift;
   static constexpr size_t kBlockMask = kBlockValues - 1;
+  static constexpr size_t kBlockColumns = 4;
+  static constexpr size_t kRadixBuckets = 65536;
+  static constexpr size_t kRadixPasses = sizeof(uint64_t) / 2;
 
   struct RankedTerm {
     uint64_t key;
@@ -40,25 +43,31 @@ struct ScatterScratch {
   };
 
   explicit ScatterScratch(MemoryBudget* budget = nullptr)
-    : cursors{TrackedAllocator<uint32_t>{budget}},
+    : blocks{TrackedAllocator<duckdb::AllocatedData>{budget}},
+      cursors{TrackedAllocator<uint32_t>{budget}},
       bounds{TrackedAllocator<uint32_t>{budget}},
       ranked{TrackedAllocator<RankedTerm>{budget}},
-      ranked_alt{TrackedAllocator<RankedTerm>{budget}} {}
+      ranked_alt{TrackedAllocator<RankedTerm>{budget}},
+      radix_counts{TrackedAllocator<uint32_t>{budget}},
+      docs{TrackedAllocator<uint32_t*>{budget}},
+      pos{TrackedAllocator<uint32_t*>{budget}},
+      offs_start{TrackedAllocator<uint32_t*>{budget}},
+      offs_end{TrackedAllocator<uint32_t*>{budget}} {}
 
   static size_t Bytes(size_t terms, size_t blocks) noexcept;
 
   void Reserve(size_t terms, size_t blocks, duckdb::Allocator& allocator);
 
-  std::vector<duckdb::AllocatedData> blocks;
+  TrackedVector<duckdb::AllocatedData> blocks;
   TrackedVector<uint32_t> cursors;
   TrackedVector<uint32_t> bounds;
   TrackedVector<RankedTerm> ranked;
   TrackedVector<RankedTerm> ranked_alt;
-  std::vector<uint32_t> radix_counts;
-  std::vector<uint32_t*> docs;
-  std::vector<uint32_t*> pos;
-  std::vector<uint32_t*> offs_start;
-  std::vector<uint32_t*> offs_end;
+  TrackedVector<uint32_t> radix_counts;
+  TrackedVector<uint32_t*> docs;
+  TrackedVector<uint32_t*> pos;
+  TrackedVector<uint32_t*> offs_start;
+  TrackedVector<uint32_t*> offs_end;
 };
 
 class ScatteredField : util::Noncopyable {
@@ -115,7 +124,7 @@ class ScatteredField : util::Noncopyable {
   void RekeyPastSharedPrefix(std::span<const duckdb::string_t> entries,
                              uint64_t min_key, uint64_t max_key);
   uint64_t PrefixSums();
-  uint32_t** AssignBlocks(std::vector<uint32_t*>& col, size_t nblocks,
+  uint32_t** AssignBlocks(TrackedVector<uint32_t*>& col, size_t nblocks,
                           size_t& next);
   void RadixSortByKey();
 

@@ -753,8 +753,9 @@ struct TermMember {
   uint32_t last_terms = 0;
 };
 
-using TermMembers = std::deque<TermMember>;
-using DocMembers = std::deque<TrackedVector<doc_id_t>>;
+using TermMembers = std::deque<TermMember, TrackedAllocator<TermMember>>;
+using DocMembers = std::deque<TrackedVector<doc_id_t>,
+                              TrackedAllocator<TrackedVector<doc_id_t>>>;
 
 inline constexpr size_t kTermMembers = 2;
 inline constexpr size_t kDocMembers = kDictMembers - kTermMembers;
@@ -904,7 +905,9 @@ class FieldsInverter : util::Noncopyable {
     size_t docs = 0;
     DictLayout layout = DictLayout::String;
   };
-  using FieldsMap = irs::containers::FlatHashMap<field_id, Entry>;
+  using FieldsMap = irs::containers::FlatHashMap<
+    field_id, Entry, absl::Hash<field_id>, std::equal_to<field_id>,
+    TrackedAllocator<std::pair<const field_id, Entry>>>;
 
   struct FlushNeeds {
     size_t max_terms = 0;
@@ -945,7 +948,7 @@ class FieldsInverter : util::Noncopyable {
   InverterMemory _mem;
   duckdb::ArenaAllocator _arena;
   std::array<uint32_t, TokenBatch::kCapacity> _term_ids;
-  std::deque<FieldInverter> _fields;
+  std::deque<FieldInverter, TrackedAllocator<FieldInverter>> _fields;
   TermMembers _terms;
   DocMembers _docs;
   FieldsMap _fields_map;

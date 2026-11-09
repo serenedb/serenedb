@@ -109,10 +109,13 @@ size_t ScatterColumns(const FieldInverter& field) noexcept {
 }  // namespace
 
 size_t ScatterScratch::Bytes(size_t terms, size_t blocks) noexcept {
-  const size_t ranked = terms < kRadixThreshold ? 1 : 2;
-  return terms * (sizeof(uint32_t) + ranked * sizeof(RankedTerm)) +
+  const bool radix = terms >= kRadixThreshold;
+  return terms * (sizeof(uint32_t) + (radix ? 2 : 1) * sizeof(RankedTerm)) +
          (terms + 1) * sizeof(uint32_t) +
-         blocks * kBlockValues * sizeof(uint32_t);
+         (radix ? kRadixPasses * kRadixBuckets * sizeof(uint32_t) : 0) +
+         blocks *
+           (kBlockValues * sizeof(uint32_t) + sizeof(duckdb::AllocatedData) +
+            kBlockColumns * sizeof(uint32_t*));
 }
 
 void ScatterScratch::Reserve(size_t terms, size_t blocks,
@@ -121,8 +124,12 @@ void ScatterScratch::Reserve(size_t terms, size_t blocks,
   ranked.reserve(terms);
   if (terms >= kRadixThreshold) {
     ranked_alt.reserve(terms);
+    radix_counts.reserve(kRadixPasses * kRadixBuckets);
   }
   bounds.reserve(terms + 1);
+  for (auto* column : {&docs, &pos, &offs_start, &offs_end}) {
+    column->reserve(blocks);
+  }
   this->blocks.reserve(blocks);
   while (this->blocks.size() < blocks) {
     this->blocks.push_back(allocator.Allocate(kBlockValues * sizeof(uint32_t)));
@@ -241,8 +248,8 @@ void ScatteredField::RadixSortByKey() {
   auto& dst = _s->ranked_alt;
   const size_t n = src.size();
   dst.resize(n);
-  constexpr size_t kBuckets = 65536;
-  constexpr unsigned kPasses = sizeof(uint64_t) / 2;
+  constexpr size_t kBuckets = ScatterScratch::kRadixBuckets;
+  constexpr size_t kPasses = ScatterScratch::kRadixPasses;
   auto& counts = _s->radix_counts;
   counts.assign(kPasses * kBuckets, 0);
   for (const auto& term : src) {
@@ -311,7 +318,7 @@ uint64_t ScatteredField::PrefixSums() {
   return sum;
 }
 
-uint32_t** ScatteredField::AssignBlocks(std::vector<uint32_t*>& col,
+uint32_t** ScatteredField::AssignBlocks(TrackedVector<uint32_t*>& col,
                                         size_t nblocks, size_t& next) {
   auto& pool = _s->blocks;
   col.resize(nblocks);

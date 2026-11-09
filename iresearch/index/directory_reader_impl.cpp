@@ -76,9 +76,6 @@ struct DirectoryReaderImpl::Init {
   FileRefs file_refs;
   uint64_t docs_count{};
   uint64_t live_docs_count{};
-  irs::containers::FlatHashMap<field_id,
-                               duckdb::unique_ptr<duckdb::BaseStatistics>>
-    column_stats;
   irs::containers::FlatHashMap<std::pair<field_id, DictRef>, FieldTermRange>
     term_ranges;
 };
@@ -91,12 +88,6 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
 
   file_refs.reserve(segments.size() + size_t{has_segments_file});
 
-  struct Accumulator {
-    duckdb::unique_ptr<duckdb::BaseStatistics> stats;
-    duckdb::unique_ptr<duckdb::DistinctStatistics> distinct;
-    uint64_t live_docs = 0;
-  };
-  irs::containers::FlatHashMap<field_id, Accumulator> col2stats;
   irs::containers::FlatHashMap<std::pair<field_id, DictRef>,
                                std::vector<SegmentTerms>>
     field_terms;
@@ -121,27 +112,6 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
            .max = field->max(),
            .terms = field->size(),
            .docs = field->docs_count()});
-      }
-    }
-
-    const auto* col_reader = reader.GetColReader();
-    if (!col_reader) {
-      continue;
-    }
-    for (const auto& column : col_reader->Columns()) {
-      auto& [stats, distinct, live_docs] = col2stats[column->Id()];
-      live_docs += segment.live_docs_count;
-      if (!stats) {
-        stats = column->MergedStatistics().ToUnique();
-      } else {
-        stats->Merge(column->MergedStatistics());
-      }
-      if (const auto* src = column->Distinct()) {
-        if (!distinct) {
-          distinct = src->Copy();
-        } else {
-          distinct->Merge(*src);
-        }
       }
     }
   }
@@ -175,18 +145,58 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
     range.distinct += DistinctOfOverlapping(*largest, sum);
     term_ranges.emplace(key, range);
   }
+}
 
-  for (auto& [field, merged] : col2stats) {
-    auto& [stats, distinct, live_docs] = merged;
-    if (live_docs < live_docs_count) {
-      stats->SetHasNull();
+const duckdb::BaseStatistics* DirectoryReaderImpl::GetColumnStats(
+  field_id field) const {
+  {
+    absl::ReaderMutexLock lock{&_stats_mutex};
+    if (const auto it = _column_stats.find(field); it != _column_stats.end()) {
+      return it->second.get();
     }
-    if (distinct) {
-      stats->SetDistinctCount(
-        std::min<uint64_t>(distinct->GetCount(), live_docs_count));
-    }
-    column_stats[field] = std::move(stats);
   }
+  auto merged = MergeColumnStats(field);
+  absl::MutexLock lock{&_stats_mutex};
+  return _column_stats.try_emplace(field, std::move(merged))
+    .first->second.get();
+}
+
+duckdb::unique_ptr<duckdb::BaseStatistics>
+DirectoryReaderImpl::MergeColumnStats(field_id field) const {
+  duckdb::unique_ptr<duckdb::BaseStatistics> stats;
+  duckdb::unique_ptr<duckdb::DistinctStatistics> distinct;
+  uint64_t live_docs = 0;
+  for (const auto& reader : GetReaders()) {
+    const auto* col_reader = reader.GetColReader();
+    const auto* column = col_reader ? col_reader->Column(field) : nullptr;
+    if (!column) {
+      continue;
+    }
+    live_docs += reader.live_docs_count();
+    if (!stats) {
+      stats = column->MergedStatistics().ToUnique();
+    } else {
+      stats->Merge(column->MergedStatistics());
+    }
+    if (const auto* src = column->Distinct()) {
+      if (!distinct) {
+        distinct = src->Copy();
+      } else {
+        distinct->Merge(*src);
+      }
+    }
+  }
+  if (!stats) {
+    return nullptr;
+  }
+  if (live_docs < live_docs_count()) {
+    stats->SetHasNull();
+  }
+  if (distinct) {
+    stats->SetDistinctCount(
+      std::min<uint64_t>(distinct->GetCount(), live_docs_count()));
+  }
+  return stats;
 }
 
 namespace {
@@ -232,7 +242,6 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
     _file_refs{std::move(init.file_refs)},
     _meta{std::move(meta)},
     _opts{opts},
-    _column_stats{std::move(init.column_stats)},
     _term_ranges{std::move(init.term_ranges)} {}
 
 std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(

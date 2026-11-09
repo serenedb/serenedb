@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
+#include <absl/synchronization/mutex.h>
+
 #include <vector>
 
 #include "iresearch/index/composite_reader_impl.hpp"
@@ -51,10 +54,7 @@ class DirectoryReaderImpl final
 
   const IndexReaderOptions& Options() const noexcept { return _opts; }
 
-  const duckdb::BaseStatistics* GetColumnStats(field_id field) const noexcept {
-    const auto it = _column_stats.find(field);
-    return it == _column_stats.end() ? nullptr : it->second.get();
-  }
+  const duckdb::BaseStatistics* GetColumnStats(field_id field) const;
 
   const FieldTermRange* GetTermRange(field_id field,
                                      DictRef dict) const noexcept {
@@ -69,13 +69,17 @@ class DirectoryReaderImpl final
                       const IndexReaderOptions& opts, DirectoryMeta&& meta,
                       ReadersType&& readers);
 
+  duckdb::unique_ptr<duckdb::BaseStatistics> MergeColumnStats(
+    field_id field) const;
+
   const Directory& _dir;
   FileRefs _file_refs;
   DirectoryMeta _meta;
   IndexReaderOptions _opts;
-  irs::containers::FlatHashMap<field_id,
-                               duckdb::unique_ptr<duckdb::BaseStatistics>>
-    _column_stats;
+  mutable absl::Mutex _stats_mutex;
+  mutable irs::containers::FlatHashMap<
+    field_id, duckdb::unique_ptr<duckdb::BaseStatistics>>
+    _column_stats ABSL_GUARDED_BY(_stats_mutex);
   irs::containers::FlatHashMap<std::pair<field_id, DictRef>, FieldTermRange>
     _term_ranges;
 };

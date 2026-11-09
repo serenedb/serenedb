@@ -606,9 +606,19 @@ std::shared_ptr<irs::DirectoryReader> Writes::PinnedReader(
   absl::ReaderMutexLock lock{&_mutex};
   const auto pinned =
     _readers.find(std::pair{store.GetDatabaseId(), store.GetId()});
-  SDB_ENSURE(pinned != _readers.end(), "table ", store.GetId(),
+  SDB_ENSURE(pinned != _readers.end() && pinned->second.latest, "table ",
+             store.GetId(),
              ": deletes without the reader their positions come from");
-  return pinned->second.reader;
+  return pinned->second.latest;
+}
+
+std::shared_ptr<const TableState> Writes::PinState(const Store& store) {
+  absl::MutexLock lock{&_mutex};
+  auto& views = _readers[std::pair{store.GetDatabaseId(), store.GetId()}];
+  if (!views.state) {
+    views.state = store.GetTable().State();
+  }
+  return views.state;
 }
 
 void Writes::AddRemoval(duckdb::ClientContext& context,
@@ -1238,7 +1248,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w,
 }
 
 irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
-                                  Tick snapshot) {
+                                  Tick snapshot, bool searchable) {
   StoreWrites* w = nullptr;
   {
     absl::ReaderMutexLock lock{&_mutex};
@@ -1247,11 +1257,12 @@ irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
     }
   }
   const bool indexed = store.HasIndexes();
-  if (indexed) {
+  const auto state = PinState(store);
+  if (indexed && searchable) {
     store.MakeSearchable(snapshot);
   }
   if (!w) {
-    return store.View(snapshot, {});
+    return store.View(state, snapshot, {}, indexed && searchable);
   }
   absl::MutexLock lock{&w->mutex};
   if (w->rebuilt_newer) {
@@ -1260,7 +1271,8 @@ irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
   if (indexed && w->changes.HasBufferedRows()) {
     FlushRows(context, *w);
   }
-  return store.View(std::max(snapshot, w->rebuilt), OwnOf(*w));
+  return store.View(state, std::max(snapshot, w->rebuilt), OwnOf(*w),
+                    indexed && searchable);
 }
 
 void Writes::NoteConflicts(Tick snapshot) {

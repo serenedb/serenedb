@@ -408,19 +408,20 @@ OwnSegment Table::OpenSegment(std::string meta_file) const {
   return opened;
 }
 
-irs::DirectoryReader Table::Assemble(Tick snapshot, const OwnWrites& own,
-                                     Scope scope) const {
-  const auto state = State();
-  if (scope != Scope::All || !own.removals.empty() || !own.segments.empty() ||
-      own.truncated || (own.rows != nullptr && own.rows->Count() != 0)) {
-    return Build(*state, snapshot, own, scope);
+irs::DirectoryReader Table::Assemble(
+  const std::shared_ptr<const TableState>& state, Tick snapshot,
+  const OwnWrites& own, Scope scope, bool searchable) const {
+  if (searchable || scope != Scope::All || !own.removals.empty() ||
+      !own.segments.empty() || own.truncated ||
+      (own.rows != nullptr && own.rows->Count() != 0)) {
+    return Build(*state, snapshot, own, scope, searchable);
   }
   const auto seen = SeenAt(*state, snapshot);
   if (const auto cached = std::atomic_load(&_view);
       cached && cached->state == state && cached->seen == seen) {
     return cached->reader;
   }
-  auto reader = Build(*state, snapshot, own, scope);
+  auto reader = Build(*state, snapshot, own, scope, false);
   if (State() == state) {
     std::atomic_store(
       &_view, std::make_shared<const CachedView>(
@@ -430,7 +431,8 @@ irs::DirectoryReader Table::Assemble(Tick snapshot, const OwnWrites& own,
 }
 
 irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
-                                  const OwnWrites& own, Scope scope) const {
+                                  const OwnWrites& own, Scope scope,
+                                  bool searchable) const {
   auto& db = *_options.db;
   Mapped own_removed;
   for (const auto& removal : own.removals) {
@@ -481,6 +483,19 @@ irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
          (visible != unit->docs || unit->replaced_at != 0))) {
       continue;
     }
+    if (const auto cooled =
+          searchable && unit->hot ? unit->hot->Cooled() : nullptr) {
+      irs::DocumentMaskBuilder deleted;
+      if (const auto* hot_deleted = DeletesAt(*unit, snapshot)) {
+        deleted.Merge(*hot_deleted);
+      }
+      if (const auto* rolled_back = cooled->reader->docs_mask()) {
+        deleted.Merge(*rolled_back);
+      }
+      const auto mask = std::move(deleted).Finish();
+      add(cooled->filename, with_own(unit->id, &mask, visible, cooled->reader));
+      continue;
+    }
     const auto base =
       unit->hot ? unit->hot->Reader(db, unit->docs) : unit->reader;
     add(unit->segment.filename,
@@ -502,10 +517,10 @@ irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
 
 StoreStats Table::Stats(Tick snapshot) const {
   const auto state = State();
-  const auto cold = Build(*state, snapshot, {}, Scope::Cold);
+  const auto cold = Build(*state, snapshot, {}, Scope::Cold, false);
   auto stats = StoreStats::FromReader(cold);
   stats.numBufferedDocs =
-    Build(*state, snapshot, {}, Scope::All).live_docs_count() -
+    Build(*state, snapshot, {}, Scope::All, false).live_docs_count() -
     cold.live_docs_count();
   for (const auto& unit : state->units) {
     if (!unit->hot && VisibleEnd(*unit, snapshot) != 0) {

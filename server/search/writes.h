@@ -165,20 +165,26 @@ class Writes {
 
   template<typename Factory>
   PinnedSearchTable EnsureSearchTable(duckdb::idx_t database_id,
-                                      duckdb::idx_t store_id, Factory&& make) {
+                                      duckdb::idx_t store_id, bool searchable,
+                                      Factory&& make) {
     const std::pair key{database_id, store_id};
     {
       absl::ReaderMutexLock lock{&_mutex};
-      if (const auto it = _readers.find(key);
-          it != _readers.end() && it->second.reader) {
-        return it->second;
+      if (const auto it = _readers.find(key); it != _readers.end()) {
+        const auto& pinned =
+          searchable ? it->second.searchable : it->second.columns;
+        if (pinned.reader) {
+          return pinned;
+        }
       }
     }
     auto made = make();
     absl::MutexLock lock{&_mutex};
-    auto& pinned = _readers[key];
+    auto& views = _readers[key];
+    auto& pinned = searchable ? views.searchable : views.columns;
     if (!pinned.reader) {
       pinned = std::move(made);
+      views.latest = pinned.reader;
     }
     return pinned;
   }
@@ -194,7 +200,7 @@ class Writes {
   }
 
   irs::DirectoryReader View(duckdb::ClientContext& context, Store& store,
-                            Tick snapshot);
+                            Tick snapshot, bool searchable);
   std::shared_ptr<irs::DirectoryReader> PinnedReader(const Store& store) const;
 
   bool Empty() const noexcept { return _writes.empty(); }
@@ -256,6 +262,15 @@ class Writes {
     std::shared_ptr<const TableState> referenced;
   };
 
+  struct PinnedViews {
+    std::shared_ptr<const TableState> state;
+    PinnedSearchTable columns;
+    PinnedSearchTable searchable;
+    std::shared_ptr<irs::DirectoryReader> latest;
+  };
+
+  std::shared_ptr<const TableState> PinState(const Store& store);
+
   duckdb::transaction_t _session;
   bool _conflict = false;
   mutable absl::Mutex _mutex;
@@ -264,8 +279,8 @@ class Writes {
   // buffer is held by reference across a statement, so the nodes must not
   // move.
   irs::containers::NodeHashMap<duckdb::idx_t, StoreWrites> _writes;
-  irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
-                               PinnedSearchTable>
+  irs::containers::NodeHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
+                               PinnedViews>
     _readers;
 };
 

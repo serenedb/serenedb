@@ -363,6 +363,27 @@ std::optional<ColumnId> FetchableColumn(
   return col_id;
 }
 
+bool NeedsSearch(const DeferredBuild& built) noexcept {
+  return (built.filter && (built.index_only || built.dual_filters.empty())) ||
+         !built.scorers.empty();
+}
+
+void ApplyDeferredClaim(ScanGlobalState& state, DeferredBuild&& built) {
+  state.owned_where = std::move(built.filter);
+  state.owned_index_only = std::move(built.index_only);
+  state.owned_where_scorers = std::move(built.scorers);
+  for (auto& column_filter : built.column_filters) {
+    AddDeferredColumnFilter(state, std::move(column_filter));
+  }
+  for (auto& dual : built.dual_filters) {
+    const auto& owned =
+      state.deferred_filters.emplace_back(std::move(dual.filter));
+    AddDualFilter(state, dual.columns, dual.types, *owned);
+  }
+  state.deferred_checks = std::move(built.checks);
+  AddDeferredChecks(state, state.deferred_checks);
+}
+
 }  // namespace
 
 const irs::Filter& MatchAllFilter() {
@@ -451,22 +472,24 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
   }
 }
 
-void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
-                        const ScanBindData& bind_data) {
-  auto built = BuildDeferredFilter(context, bind_data, *state.snapshot);
-  state.owned_where = std::move(built.filter);
-  state.owned_index_only = std::move(built.index_only);
-  state.owned_where_scorers = std::move(built.scorers);
-  for (auto& column_filter : built.column_filters) {
-    AddDeferredColumnFilter(state, std::move(column_filter));
+void AcquireScanSnapshot(ScanGlobalState& state, duckdb::ClientContext& context,
+                         const ScanBindData& bind_data) {
+  bool searchable = bind_data.NeedsSearch();
+  state.snapshot = bind_data.Snapshot(context, searchable);
+  std::optional<DeferredBuild> built;
+  if (bind_data.plan_cache.deferred) {
+    built = BuildDeferredFilter(context, bind_data, *state.snapshot);
+    if (!searchable && NeedsSearch(*built)) {
+      searchable = true;
+      state.snapshot = bind_data.Snapshot(context, true);
+      built = BuildDeferredFilter(context, bind_data, *state.snapshot);
+    }
   }
-  for (auto& dual : built.dual_filters) {
-    const auto& owned =
-      state.deferred_filters.emplace_back(std::move(dual.filter));
-    AddDualFilter(state, dual.columns, dual.types, *owned);
+  state.reader = &state.snapshot->reader;
+  state.total_segments = state.snapshot->reader.size();
+  if (built) {
+    ApplyDeferredClaim(state, std::move(*built));
   }
-  state.deferred_checks = std::move(built.checks);
-  AddDeferredChecks(state, state.deferred_checks);
 }
 
 void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,

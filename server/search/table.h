@@ -101,6 +101,18 @@ class HotContext final {
   HotKeys& Keys() noexcept { return _keys; }
   const HotKeys& Keys() const noexcept { return _keys; }
 
+  struct CooledSegment {
+    std::string filename;
+    std::shared_ptr<const irs::SegmentReaderImpl> reader;
+  };
+
+  std::shared_ptr<const CooledSegment> Cooled() const noexcept {
+    return std::atomic_load(&_cooled);
+  }
+  void SetCooled(std::shared_ptr<const CooledSegment> cooled) noexcept {
+    std::atomic_store(&_cooled, std::move(cooled));
+  }
+
  private:
   std::shared_ptr<const irs::SegmentReaderImpl> Build(
     duckdb::DatabaseInstance& db, irs::doc_id_t docs)
@@ -110,6 +122,7 @@ class HotContext final {
   irs::IndexWriter::Transaction _trx ABSL_GUARDED_BY(_mutex);
   irs::HotChunkStats _stats ABSL_GUARDED_BY(_mutex);
   std::shared_ptr<const irs::SegmentReaderImpl> _cached;
+  std::shared_ptr<const CooledSegment> _cooled;
   HotKeys _keys;
 };
 
@@ -209,13 +222,18 @@ class Table final {
   }
 
   irs::DirectoryReader View(Tick snapshot, const OwnWrites& own) const {
-    return Assemble(snapshot, own, Scope::All);
+    return Assemble(State(), snapshot, own, Scope::All, false);
+  }
+  irs::DirectoryReader View(const std::shared_ptr<const TableState>& state,
+                            Tick snapshot, const OwnWrites& own,
+                            bool searchable) const {
+    return Assemble(state, snapshot, own, Scope::All, searchable);
   }
   irs::DirectoryReader ColdView(Tick snapshot) const {
-    return Assemble(snapshot, {}, Scope::Cold);
+    return Assemble(State(), snapshot, {}, Scope::Cold, false);
   }
   irs::DirectoryReader SettledView(Tick snapshot) const {
-    return Assemble(snapshot, {}, Scope::Settled);
+    return Assemble(State(), snapshot, {}, Scope::Settled, false);
   }
   StoreStats Stats(Tick snapshot) const;
   std::shared_ptr<const irs::SegmentReaderImpl> UnitReader(
@@ -304,10 +322,12 @@ class Table final {
     irs::DirectoryReader reader;
   };
 
-  irs::DirectoryReader Assemble(Tick snapshot, const OwnWrites& own,
-                                Scope scope) const;
+  irs::DirectoryReader Assemble(const std::shared_ptr<const TableState>& state,
+                                Tick snapshot, const OwnWrites& own,
+                                Scope scope, bool searchable) const;
   irs::DirectoryReader Build(const TableState& state, Tick snapshot,
-                             const OwnWrites& own, Scope scope) const;
+                             const OwnWrites& own, Scope scope,
+                             bool searchable) const;
   void Publish(std::shared_ptr<const TableState> state);
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);

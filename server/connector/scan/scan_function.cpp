@@ -222,13 +222,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
-  state->snapshot = ss.Snapshot(context);
-  const auto& snapshot = *state->snapshot;
-  state->reader = &snapshot.reader;
-  state->total_segments = snapshot.reader.size();
-  if (ss.plan_cache.deferred) {
-    ApplyDeferredClaim(*state, context, ss);
-  }
+  AcquireScanSnapshot(*state, context, ss);
   if (ss.score.text && ss.relation.kind == ScanEntryKind::SearchTable &&
       !state->ClaimedWhere()) {
     THROW_SQL_ERROR(

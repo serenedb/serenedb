@@ -10,6 +10,10 @@ statement ok
 INSERT INTO ibc VALUES (1, 'one common');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) ibc;
+
+
 query
 SELECT count(*) FROM ibc_idx;
 ----
@@ -21,6 +25,10 @@ statement ok
 INSERT INTO ibc VALUES (2, 'two common');
 
 
+statement ok
+VACUUM (FLUSH_TABLE) ibc;
+
+
 query
 SELECT count(*) FROM ibc_idx;
 ----
@@ -30,6 +38,10 @@ count
 
 statement ok
 INSERT INTO ibc VALUES (3, 'three common');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ibc;
 
 
 query

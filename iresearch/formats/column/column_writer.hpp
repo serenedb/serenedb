@@ -52,6 +52,7 @@ struct StagedColumn {
   field_id id;
   duckdb::LogicalType type;
   std::vector<WriteChunk> chunks;
+  DistinctStats distinct = DistinctStats::None;
 };
 
 class ColumnWriter final {

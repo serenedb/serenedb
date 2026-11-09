@@ -24,6 +24,12 @@ INSERT INTO cn SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(1,
 statement ok
 INSERT INTO cn_topk SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(1, 200) s(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) cn;
+
+statement ok
+VACUUM (FLUSH_TABLE) cn_topk;
+
 query
 SELECT (SELECT count(*) FROM cn) AS cn, (SELECT count(*) FROM cn_topk) AS cn_topk;
 ----
@@ -35,6 +41,12 @@ INSERT INTO cn SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(20
 
 statement ok
 INSERT INTO cn_topk SELECT i, 'fox ' || repeat('dog ', i % 5) FROM generate_series(201, 400) s(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) cn;
+
+statement ok
+VACUUM (FLUSH_TABLE) cn_topk;
 
 query
 SELECT (SELECT count(*) FROM cn) AS cn, (SELECT count(*) FROM cn_topk) AS cn_topk;

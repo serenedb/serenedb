@@ -23,13 +23,16 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <duckdb/common/operator/comparison_operators.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
+#include <duckdb/storage/statistics/string_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
+#include <optional>
 #include <utility>
 
 #include "iresearch/utils/assert.hpp"
@@ -66,6 +69,31 @@ void CollectNumeric(duckdb::BaseStatistics& stats, const WriteChunk& chunk) {
   duckdb::StatsWriter<T> writer;
   Collect<T>(writer, chunk);
   writer.Merge(stats);
+}
+
+void SetExactBounds(duckdb::BaseStatistics& stats, const WriteChunk& chunk) {
+  const auto values = chunk.data.Values<duckdb::string_t>();
+  std::optional<duckdb::string_t> min;
+  std::optional<duckdb::string_t> max;
+  for (duckdb::idx_t i = 0; i < chunk.count; ++i) {
+    const auto entry = values[i];
+    if (!entry.IsValid()) {
+      continue;
+    }
+    const auto value = entry.GetValue();
+    if (!min || duckdb::LessThan::Operation(value, *min)) {
+      min = value;
+    }
+    if (!max || duckdb::GreaterThan::Operation(value, *max)) {
+      max = value;
+    }
+  }
+  if (min) {
+    duckdb::StringStats::SetMin(stats, *min,
+                                duckdb::StringStatsType::EXACT_STATS);
+    duckdb::StringStats::SetMax(stats, *max,
+                                duckdb::StringStatsType::EXACT_STATS);
+  }
 }
 
 struct IntervalStatsWriter {
@@ -138,6 +166,9 @@ duckdb::BaseStatistics ChunkStatistics(const duckdb::LogicalType& type,
         duckdb::StatsWriter<duckdb::string_t> writer{type};
         Collect<duckdb::string_t>(writer, chunk);
         writer.Merge(stats);
+        if (stats.GetStatsType() == duckdb::StatisticsType::STRING_STATS) {
+          SetExactBounds(stats, chunk);
+        }
         return stats;
       }
       break;
@@ -161,6 +192,20 @@ duckdb::BaseStatistics HotChunkStats::Get(const duckdb::LogicalType& type,
     it->second = ChunkStatistics(type, chunk);
   }
   return it->second.Copy();
+}
+
+void HotChunkStats::MergeDistinct(DistinctStats mode, const WriteChunk& chunk,
+                                  duckdb::DistinctStatistics& out) {
+  if (chunk.count != STANDARD_VECTOR_SIZE) {
+    UpdateDistinct(out, mode, chunk.data, chunk.count, _hashes);
+    return;
+  }
+  auto& full = _full_distinct[chunk.data.GetBufferRef().get()];
+  if (!full) {
+    full = std::make_unique<duckdb::DistinctStatistics>();
+    UpdateDistinct(*full, mode, chunk.data, chunk.count, _hashes);
+  }
+  out.Merge(*full);
 }
 
 std::unique_ptr<ColumnReader> HotColumnReader::Make(
@@ -199,9 +244,18 @@ std::unique_ptr<ColumnReader> HotColumnReader::Make(
       });
     }
   }
-  return std::make_unique<HotColumnReader>(
+  duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
+  if (stats && column.distinct != DistinctStats::None) {
+    distinct = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
+    for (const auto& chunk : column.chunks) {
+      stats->MergeDistinct(column.distinct, chunk, *distinct);
+    }
+  }
+  auto reader = std::make_unique<HotColumnReader>(
     column.id, std::move(column.type), std::move(blocks),
     std::move(column.chunks), std::move(children));
+  reader->_distinct = std::move(distinct);
+  return reader;
 }
 
 HotColumnReader::HotColumnReader(

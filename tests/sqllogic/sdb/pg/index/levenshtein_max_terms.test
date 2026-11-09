@@ -252,6 +252,9 @@ CREATE INDEX mt_segs_idx ON mt_segs USING inverted(a, b mt_english);
 statement ok
 INSERT INTO mt_segs VALUES (1,'cat'), (2,'bat'), (3,'rat'), (4,'hat'), (5,'mat'), (6,'oat');
 
+statement ok
+VACUUM (FLUSH_TABLE) mt_segs;
+
 query
 SELECT count(*) FROM mt_segs_idx;
 ----
@@ -260,6 +263,9 @@ count
 
 statement ok
 INSERT INTO mt_segs VALUES (7,'cab'), (8,'cad'), (9,'can'), (10,'cap'), (11,'car'), (12,'caw');
+
+statement ok
+VACUUM (FLUSH_TABLE) mt_segs;
 
 statement ok
 SET sdb_levenshtein_max_terms = 3;

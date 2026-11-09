@@ -474,6 +474,9 @@ void Store::CoolOne(const std::shared_ptr<HotContext>& hot, bool durable) {
       }
       written.reader = irs::SegmentReaderImpl::Open(*_dir, written.segment.meta,
                                                     ReaderOptions());
+      hot->SetCooled(std::make_shared<const HotContext::CooledSegment>(
+        HotContext::CooledSegment{.filename = written.segment.filename,
+                                  .reader = written.reader}));
     }
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_cooling");

@@ -1626,7 +1626,7 @@ irs::DirectoryReader SearchTableEntry::RowsWithOwn(
   duckdb::ClientContext& context) const {
   return SessionOf(context, catalog)
     .SearchTxn()
-    .View(context, *_storage, search::kAllApplied);
+    .View(context, *_storage, search::kAllApplied, true);
 }
 
 void SearchTableEntry::AdoptAsWritten(duckdb::ClientContext& context) const {

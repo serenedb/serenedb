@@ -55,11 +55,7 @@ RowPositionDeduplicator::RowPositionDeduplicator(
         docs[i] = static_cast<irs::doc_id_t>(reader[i].docs_count());
       }
       return docs;
-    }()} {
-#ifdef SDB_DEV
-  _reader = &reader;
-#endif
-}
+    }()} {}
 
 RowPositionDeduplicator::~RowPositionDeduplicator() {
   for (auto& segment : _segments) {

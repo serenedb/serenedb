@@ -154,6 +154,11 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::DirectoryReader View(Tick snapshot, const OwnWrites& own) const {
     return _table->View(snapshot, own);
   }
+  irs::DirectoryReader View(const std::shared_ptr<const TableState>& state,
+                            Tick snapshot, const OwnWrites& own,
+                            bool searchable) const {
+    return _table->View(state, snapshot, own, searchable);
+  }
   Table& GetTable() noexcept { return *_table; }
   const Table& GetTable() const noexcept { return *_table; }
   Tick LastWrite() const noexcept { return _table ? _table->LastWrite() : 0; }

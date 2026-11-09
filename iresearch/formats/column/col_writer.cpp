@@ -252,8 +252,10 @@ std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
   std::vector<StagedColumn> columns;
   columns.reserve(_columns.size());
   for (const auto& cw : _columns) {
-    columns.push_back(StagedColumn{
-      .id = cw->Id(), .type = cw->Type(), .chunks = cw->Snapshot(rows)});
+    columns.push_back(StagedColumn{.id = cw->Id(),
+                                   .type = cw->Type(),
+                                   .chunks = cw->Snapshot(rows),
+                                   .distinct = cw->_distinct});
   }
   return columns;
 }

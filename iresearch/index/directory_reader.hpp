@@ -39,6 +39,7 @@ struct FieldTermRange {
   bytes_view min;
   bytes_view max;
   uint64_t distinct = 0;
+  uint64_t docs = 0;
 };
 
 // Interface for an index reader over a directory of segments

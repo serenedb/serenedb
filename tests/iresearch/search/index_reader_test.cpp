@@ -127,10 +127,12 @@ TEST(directory_reader_test, term_ranges_span_segments) {
   ASSERT_TRUE(both);
   EXPECT_EQ(irs::ViewCast<char>(both->min), "a");
   EXPECT_EQ(irs::ViewCast<char>(both->max), "m");
+  EXPECT_EQ(both->docs, 4);
   const auto* first = reader.GetTermRange(kFirst, irs::StringLayout::kStrings);
   ASSERT_TRUE(first);
   EXPECT_EQ(irs::ViewCast<char>(first->min), "x");
   EXPECT_EQ(irs::ViewCast<char>(first->max), "x");
+  EXPECT_EQ(first->docs, 1);
   EXPECT_FALSE(reader.GetTermRange(kAbsent, irs::StringLayout::kStrings));
   EXPECT_FALSE(reader.GetTermRange(kBoth, irs::StringLayout::kNulls));
 }

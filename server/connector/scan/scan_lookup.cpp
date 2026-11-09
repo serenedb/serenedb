@@ -43,7 +43,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> LookupInitGlobal(
   auto state = duckdb::make_uniq<ScanGlobalState>();
   InitScanState(*state, &context, bind, input);
   state->scan = &bind;
-  state->snapshot = bind.Snapshot(context);
+  state->snapshot = bind.Snapshot(context, false);
   state->reader = &state->snapshot->reader;
   state->total_segments = state->reader->size();
   state->workers =
@@ -160,7 +160,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SourceLookupInitLocal(
     types.push_back(column_index.HasType() ? column_index.GetScanType()
                                            : bind.columns.types[bind_col]);
   }
-  state->snapshot = bind.Snapshot(context.client);
+  state->snapshot = bind.Snapshot(context.client, false);
   state->source = MakeIndexSource(context.client, bind, *state->snapshot,
                                   columns, types, bind.columns.ids);
   return state;

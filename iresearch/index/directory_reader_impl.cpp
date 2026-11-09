@@ -165,6 +165,7 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
         largest = nullptr;
         sum = 0;
       }
+      range.docs += segment.docs;
       range.max = std::max(range.max, segment.max);
       if (!largest || segment.terms > largest->terms) {
         largest = &segment;

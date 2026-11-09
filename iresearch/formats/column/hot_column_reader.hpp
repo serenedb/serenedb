@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
 #include <memory>
 #include <vector>
 
@@ -42,9 +43,14 @@ class HotChunkStats final {
  public:
   duckdb::BaseStatistics Get(const duckdb::LogicalType& type,
                              const WriteChunk& chunk);
+  void MergeDistinct(DistinctStats mode, const WriteChunk& chunk,
+                     duckdb::DistinctStatistics& out);
 
  private:
   absl::flat_hash_map<const void*, duckdb::BaseStatistics> _full;
+  absl::flat_hash_map<const void*, std::unique_ptr<duckdb::DistinctStatistics>>
+    _full_distinct;
+  duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
 
 class HotColumnReader final : public ColumnReader {

@@ -6,7 +6,7 @@ CREATE TABLE srus (id INT, body TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX srus_idx ON srus USING inverted (id);
+CREATE INDEX srus_idx ON srus USING inverted (id, body);
 
 
 statement ok
@@ -26,6 +26,20 @@ buffered
 
 query
 SELECT count(*) AS n FROM srus WHERE id = 7;
+----
+n
+1
+
+
+query
+SELECT value AS buffered FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND relation_id = 'srus'::regclass;
+----
+buffered
+1000
+
+
+query
+SELECT count(*) AS n FROM srus WHERE body @@ 'row 7';
 ----
 n
 1

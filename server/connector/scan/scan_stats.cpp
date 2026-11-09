@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <cmath>
 #include <duckdb/common/types/variant.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
@@ -50,23 +51,76 @@ const duckdb::BaseStatistics* StoredColumnStats(
   return reader.GetColumnStats(col_id);
 }
 
-const irs::FieldTermRange* KeywordTermRange(const ScanBindData& bind,
-                                            const irs::DirectoryReader& reader,
-                                            duckdb::idx_t column_index) {
+duckdb::string_t AsStringT(irs::bytes_view bytes) {
+  return {reinterpret_cast<const char*>(bytes.data()),
+          static_cast<uint32_t>(bytes.size())};
+}
+
+uint64_t InMemoryDocs(const irs::DirectoryReader& reader) {
+  uint64_t docs = 0;
+  for (const auto& segment : reader) {
+    if (InMemorySegment(segment)) {
+      docs += segment.docs_count();
+    }
+  }
+  return docs;
+}
+
+uint64_t DistinctWith(const irs::FieldTermRange& terms, uint64_t unseen) {
+  if (unseen == 0 || terms.docs == 0) {
+    return terms.distinct;
+  }
+  const auto seen = static_cast<double>(std::min(terms.distinct, terms.docs));
+  const auto sampled = static_cast<double>(terms.docs);
+  const auto once = std::pow(seen / sampled, 2) * seen;
+  return static_cast<uint64_t>(seen +
+                               once / sampled * static_cast<double>(unseen));
+}
+
+bool ExactBounds(const duckdb::BaseStatistics& stats) {
+  const auto exact = [](duckdb::StringStatsType type) {
+    return type == duckdb::StringStatsType::EXACT_STATS ||
+           type == duckdb::StringStatsType::EMPTY_STATS;
+  };
+  return exact(duckdb::StringStats::GetMinType(stats)) &&
+         exact(duckdb::StringStats::GetMaxType(stats));
+}
+
+duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
+  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  duckdb::idx_t column_index, uint64_t& distinct) {
   if (!bind.relation.inverted_config ||
       bind.columns.types[column_index] != duckdb::LogicalType::VARCHAR) {
     return nullptr;
   }
   const auto& index = bind.relation.ScannedIndex();
-  const auto field_id = index.TermField(bind.columns.ids[column_index]);
-  return index.IsKeywordField(field_id)
-           ? reader.GetTermRange(field_id, irs::StringLayout::kStrings)
-           : nullptr;
-}
-
-duckdb::string_t AsStringT(irs::bytes_view bytes) {
-  return {reinterpret_cast<const char*>(bytes.data()),
-          static_cast<uint32_t>(bytes.size())};
+  const auto column = bind.columns.ids[column_index];
+  const auto field_id = index.TermField(column);
+  if (!index.IsKeywordField(field_id)) {
+    return nullptr;
+  }
+  auto bounds =
+    duckdb::StringStats::CreateEmpty(duckdb::LogicalType::VARCHAR).ToUnique();
+  if (const auto* terms =
+        reader.GetTermRange(field_id, irs::StringLayout::kStrings)) {
+    duckdb::StringStats::SetMin(*bounds, AsStringT(terms->min),
+                                duckdb::StringStatsType::EXACT_STATS);
+    duckdb::StringStats::SetMax(*bounds, AsStringT(terms->max),
+                                duckdb::StringStatsType::EXACT_STATS);
+    distinct = DistinctWith(*terms, InMemoryDocs(reader));
+  }
+  for (const auto& segment : reader) {
+    if (!InMemorySegment(segment)) {
+      continue;
+    }
+    const auto* columns = segment.GetColReader();
+    const auto* values = columns ? columns->Column(column) : nullptr;
+    if (!values || !ExactBounds(values->MergedStatistics())) {
+      return nullptr;
+    }
+    bounds->Merge(values->MergedStatistics());
+  }
+  return duckdb::StringStats::HasMinMax(*bounds) ? std::move(bounds) : nullptr;
 }
 
 uint64_t KeyDistinct(const ScanBindData& bind,
@@ -88,7 +142,7 @@ uint64_t KeyDistinct(const ScanBindData& bind,
     }
     if (const auto* terms =
           reader.GetTermRange(key.field, kConstraintKeyDict)) {
-      return terms->distinct;
+      return DistinctWith(*terms, InMemoryDocs(reader));
     }
   }
   return 0;
@@ -102,22 +156,25 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
   }
   const auto column = bind.columns.ids[column_index];
   const auto* stored = StoredColumnStats(bind, reader, column);
-  const auto* bounds = KeywordTermRange(bind, reader, column_index);
+  uint64_t term_distinct = 0;
+  const auto bounds = KeywordBounds(bind, reader, column_index, term_distinct);
   auto stats = stored ? stored->ToUnique() : nullptr;
   if (bounds) {
     if (!stats) {
       stats = duckdb::StringStats::CreateUnknown(duckdb::LogicalType::VARCHAR)
                 .ToUnique();
     }
-    duckdb::StringStats::SetMin(*stats, AsStringT(bounds->min),
+    const auto min = duckdb::StringStats::Min(*bounds);
+    const auto max = duckdb::StringStats::Max(*bounds);
+    duckdb::StringStats::SetMin(*stats, duckdb::string_t{min},
                                 duckdb::StringStatsType::EXACT_STATS);
-    duckdb::StringStats::SetMax(*stats, AsStringT(bounds->max),
+    duckdb::StringStats::SetMax(*stats, duckdb::string_t{max},
                                 duckdb::StringStatsType::EXACT_STATS);
   }
   if (stats && stats->GetDistinctCount() == 0) {
     auto distinct = KeyDistinct(bind, reader, column);
-    if (distinct == 0 && bounds) {
-      distinct = bounds->distinct;
+    if (distinct == 0) {
+      distinct = term_distinct;
     }
     if (distinct != 0) {
       stats->SetDistinctCount(
@@ -163,7 +220,7 @@ duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
   if (!bind.ReadsEveryRow()) {
     return result;
   }
-  auto snapshot = bind.Snapshot(context);
+  auto snapshot = bind.Snapshot(context, false);
   const auto& reader = snapshot->reader;
   auto& stats = result.emplace_back();
   stats.count = reader.live_docs_count();
@@ -186,7 +243,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto column_index = input.column_index.GetPrimaryIndex();
-  const auto snapshot = bind.Snapshot(context);
+  const auto snapshot = bind.Snapshot(context, false);
   if (!input.column_index.HasChildren()) {
     auto stats = ColumnStats(bind, snapshot->reader, column_index);
     SDB_ASSERT(!stats || stats->GetType() == bind.columns.types[column_index]);

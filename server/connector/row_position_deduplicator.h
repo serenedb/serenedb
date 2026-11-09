@@ -51,7 +51,12 @@ class RowPositionDeduplicator {
 
 #ifdef SDB_DEV
   bool Covers(const irs::DirectoryReader& reader) const noexcept {
-    return &reader == _reader;
+    for (size_t i = 0; i != _segments.size(); ++i) {
+      if (i >= reader.size() || reader[i].docs_count() < _segments[i].docs) {
+        return false;
+      }
+    }
+    return true;
   }
 #endif
 
@@ -66,9 +71,6 @@ class RowPositionDeduplicator {
   Word& WordOf(uint32_t index, irs::doc_id_t doc);
 
   std::vector<Segment> _segments;
-#ifdef SDB_DEV
-  const irs::DirectoryReader* _reader = nullptr;
-#endif
 };
 
 }  // namespace sdb::connector

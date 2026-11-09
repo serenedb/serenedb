@@ -25,6 +25,9 @@ ALTER TABLE mr_t SET (compaction_interval = 0);
 statement ok
 INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(1, 10) s(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) mr_s;
+
 query
 SELECT count(*) > 0 AS ok FROM mr_s WHERE body @@ 'fox';
 ----
@@ -33,6 +36,9 @@ t
 
 statement ok
 INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(11, 20) s(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) mr_s;
 
 query
 SELECT count(*) > 0 AS ok FROM mr_s WHERE body @@ 'fox';
@@ -43,6 +49,9 @@ t
 statement ok
 INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(21, 30) s(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) mr_s;
+
 query
 SELECT count(*) > 0 AS ok FROM mr_s WHERE body @@ 'fox';
 ----
@@ -51,6 +60,9 @@ t
 
 statement ok
 INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(1, 10) s(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) mr_t;
 
 query
 SELECT count(*) > 0 AS ok FROM mr_t WHERE body @@ 'fox';
@@ -61,6 +73,9 @@ t
 statement ok
 INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(11, 20) s(i);
 
+statement ok
+VACUUM (FLUSH_TABLE) mr_t;
+
 query
 SELECT count(*) > 0 AS ok FROM mr_t WHERE body @@ 'fox';
 ----
@@ -69,6 +84,9 @@ t
 
 statement ok
 INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(21, 30) s(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) mr_t;
 
 query
 SELECT count(*) > 0 AS ok FROM mr_t WHERE body @@ 'fox';

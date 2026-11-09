@@ -377,8 +377,7 @@ void Transactions::CollectGarbage() {
   const auto running = RunningSnapshots();
   search::PruneVersions(running.snapshots, running.published);
   AdvanceEpoch();
-  search::FreeVersions();
-  bool pending = search::ReleasedPending();
+  bool pending = search::FreeVersions() || search::ReleasedPending();
   if (!pending) {
     absl::MutexLock lock{&_garbage_mutex};
     pending = !_garbage.empty();

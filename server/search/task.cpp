@@ -339,6 +339,10 @@ yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs) {
       for (auto& target : compact) {
         jobs.Consume(Compact(std::move(target)));
       }
+      if (auto& transactions = catalog::Transactions::Get();
+          transactions.GarbagePending()) {
+        transactions.RequestCollect();
+      }
       if (settle_log) {
         const auto commit = catalog::Transactions::Get().LastCommit();
         if (commit == settled_commit) {
@@ -395,10 +399,12 @@ void PruneVersions(std::span<const Tick> running, Tick published) {
   }
 }
 
-void FreeVersions() {
+bool FreeVersions() {
+  bool remaining = false;
   for (const auto& store : LiveTables()) {
-    store->GetTable().FreeRetired();
+    remaining = store->GetTable().FreeRetired() || remaining;
   }
+  return remaining;
 }
 
 void CleanupReleased(Tick oldest) {

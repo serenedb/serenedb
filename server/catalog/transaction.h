@@ -239,6 +239,14 @@ class Transactions final {
   }
   duckdb::transaction_t RefreshOldest() ABSL_LOCKS_EXCLUDED(_walk_mutex);
   void GarbageQueued() noexcept;
+  void VersionsRetired() noexcept {
+    if (!_garbage_pending.load(std::memory_order_relaxed)) {
+      _garbage_pending.store(true, std::memory_order_relaxed);
+    }
+  }
+  bool GarbagePending() const noexcept {
+    return _garbage_pending.load(std::memory_order_relaxed);
+  }
   void CollectGarbage();
 
   struct Running {

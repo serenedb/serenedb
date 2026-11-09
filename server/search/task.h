@@ -37,6 +37,6 @@ void CleanupReleased(Tick oldest);
 bool ReleasedPending() noexcept;
 
 void PruneVersions(std::span<const Tick> running, Tick published);
-void FreeVersions();
+bool FreeVersions();
 
 }  // namespace sdb::search

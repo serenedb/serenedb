@@ -236,19 +236,12 @@ class Table final {
   Table(irs::Directory& dir, irs::IndexReaderOptions options);
   ~Table();
 
-  std::shared_ptr<const TableState> State() const
-    ABSL_LOCKS_EXCLUDED(_state_mutex) {
-    absl::ReaderMutexLock lock{&_state_mutex};
-    return Head().state;
-  }
+  std::shared_ptr<const TableState> State() const;
   std::shared_ptr<const TableState> StateAt(Tick snapshot,
                                             catalog::WalkCounters& walks) const;
   void Prune(std::span<const Tick> running, Tick published)
     ABSL_LOCKS_EXCLUDED(_state_mutex);
-  void FreeRetired() ABSL_LOCKS_EXCLUDED(_state_mutex) {
-    absl::MutexLock lock{&_state_mutex};
-    FreeRetiredVersions();
-  }
+  bool FreeRetired() ABSL_LOCKS_EXCLUDED(_state_mutex);
 
   irs::DirectoryReader View(Tick snapshot, const OwnWrites& own) const {
     return Assemble(State(), snapshot, own, Scope::All, false);
@@ -366,6 +359,7 @@ class Table final {
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void RetireVersion(TableVersion* version)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
+  void CountVersions() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void FreeRetiredVersions() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);
@@ -377,6 +371,8 @@ class Table final {
   std::atomic<TableVersion*> _head;
   mutable absl::Mutex _state_mutex;
   std::vector<RetiredVersion> _retired_versions ABSL_GUARDED_BY(_state_mutex);
+  std::atomic<uint32_t> _older_versions{0};
+  std::atomic<uint32_t> _retired_count{0};
   Lsn _needed ABSL_GUARDED_BY(_state_mutex) = kNoLsn;
   std::atomic<Tick> _last_append{0};
   std::atomic<Tick> _last_write{0};

@@ -389,6 +389,10 @@ Table::~Table() {
   }
 }
 
+std::shared_ptr<const TableState> Table::State() const {
+  return StateAt(kAllApplied, catalog::Transactions::Get().SharedWalks());
+}
+
 std::shared_ptr<const TableState> Table::StateAt(
   Tick snapshot, catalog::WalkCounters& walks) const {
   const catalog::WalkGuard guard{walks};
@@ -428,7 +432,7 @@ void Table::Publish(std::shared_ptr<TableState> state, Tick tick) {
     RetireVersion(tail);
     tail = older;
   }
-  FreeRetiredVersions();
+  CountVersions();
 }
 
 void Table::Republish(std::shared_ptr<TableState> state) {
@@ -438,7 +442,7 @@ void Table::Republish(std::shared_ptr<TableState> state) {
                                head->prev.load(std::memory_order_relaxed)},
               std::memory_order_release);
   RetireVersion(head);
-  FreeRetiredVersions();
+  CountVersions();
 }
 
 void Table::RetireVersion(TableVersion* version) {
@@ -446,7 +450,19 @@ void Table::RetireVersion(TableVersion* version) {
   _retired_versions.push_back(
     {.epoch = transactions.Epoch(),
      .version = std::unique_ptr<TableVersion>{version}});
-  transactions.GarbageQueued();
+  transactions.VersionsRetired();
+}
+
+void Table::CountVersions() {
+  uint32_t older = 0;
+  for (auto* version = _head.load(std::memory_order_relaxed)
+                         ->prev.load(std::memory_order_relaxed);
+       version; version = version->prev.load(std::memory_order_relaxed)) {
+    ++older;
+  }
+  _older_versions.store(older, std::memory_order_relaxed);
+  _retired_count.store(static_cast<uint32_t>(_retired_versions.size()),
+                       std::memory_order_relaxed);
 }
 
 void Table::FreeRetiredVersions() {
@@ -454,9 +470,22 @@ void Table::FreeRetiredVersions() {
   std::erase_if(_retired_versions, [&](const RetiredVersion& retired) {
     return retired.epoch <= safe;
   });
+  CountVersions();
+}
+
+bool Table::FreeRetired() {
+  if (_retired_count.load(std::memory_order_relaxed) == 0) {
+    return false;
+  }
+  absl::MutexLock lock{&_state_mutex};
+  FreeRetiredVersions();
+  return !_retired_versions.empty();
 }
 
 void Table::Prune(std::span<const Tick> running, Tick published) {
+  if (_older_versions.load(std::memory_order_relaxed) == 0) {
+    return;
+  }
   absl::MutexLock lock{&_state_mutex};
   auto* newer = _head.load(std::memory_order_relaxed);
   auto* version = newer->prev.load(std::memory_order_relaxed);
@@ -892,7 +921,7 @@ void Table::Replace(Tick visible, Tick tick, Tick oldest, Lsn lsn,
     units.push_back(std::move(unit));
   }
   Sweep(units, oldest);
-  Publish(std::move(next), tick);
+  Republish(std::move(next));
 }
 
 void Table::Collect(Tick oldest) {

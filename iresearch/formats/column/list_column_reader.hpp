@@ -156,12 +156,16 @@ class ListColumnReader final : public ColumnReader {
     const uint64_t* ends = nullptr;
   };
 
+  static uint64_t DecodedStart(const ListDictionary& d,
+                               uint64_t list) noexcept {
+    return list == 0 ? 0 : d.ends[list - 1 - d.ends_base];
+  }
+
   ListEnds ReadEnds(ScanState& s, uint64_t first, uint64_t count) const {
     if (const auto* d = s.list_dict.get(); d && d->ends_block != 0 &&
                                            first >= d->ends_begin &&
                                            first + count <= d->ends_end) {
-      const auto* ends = d->ends.data() + (first - d->ends_base);
-      return {first == 0 ? 0 : ends[-1], ends};
+      return {DecodedStart(*d, first), d->ends.data() + (first - d->ends_base)};
     }
     const bool chained =
       first == 0 || first == _children[1]->GatherCursor(s.child_states[2]);
@@ -350,6 +354,15 @@ class ListColumnReader final : public ColumnReader {
     }
     auto dictionary = NewLists(s, total);
     auto& lists = dictionary->data;
+    if (d.ends_block != 0 && lo >= d.ends_begin && hi < d.ends_end) {
+      uint64_t elems = 0;
+      for (uint64_t from = NextBit(bits, 0, true); from < limit;) {
+        const uint64_t to = NextBit(bits, from, false);
+        elems += DecodedStart(d, lo + to) - DecodedStart(d, lo + from);
+        from = NextBit(bits, to, true);
+      }
+      duckdb::ListVector::Reserve(lists, static_cast<duckdb::idx_t>(elems));
+    }
     auto* entries =
       duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(lists);
     uint64_t index = 1;

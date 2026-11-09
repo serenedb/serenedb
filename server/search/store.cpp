@@ -916,9 +916,10 @@ void Store::CommitRemoveAll() {
 }
 
 void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  const auto* writes =
-    ConnectionContext::Get(context).Transaction().SearchWrites();
-  _writers.Drain(context, writes ? writes->Registration(_id) : nullptr);
+  _writers.Drain(
+    context,
+    ConnectionContext::Get(context).Transaction().SearchTxn().Registration(
+      _id));
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> Store::Config() const {

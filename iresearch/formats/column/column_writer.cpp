@@ -657,10 +657,8 @@ void ColumnWriter::PadNestedNulls(uint64_t count) {
     const auto take = std::min<duckdb::idx_t>(
       {static_cast<duckdb::idx_t>(count - off),
        duckdb::idx_t{STANDARD_VECTOR_SIZE} - back.count, rg_room});
-    auto& validity = duckdb::FlatVector::ValidityMutable(back.data);
-    validity.EnsureWritable();
     for (duckdb::idx_t i = 0; i < take; ++i) {
-      validity.SetInvalidUnsafe(back.count + i);
+      duckdb::FlatVector::SetNull(back.data, back.count + i, true);
     }
     back.count += take;
     duckdb::FlatVector::SetSize(back.data, back.count);

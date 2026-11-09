@@ -886,7 +886,7 @@ std::string SerializeAlter(const duckdb::AlterInfo& info) {
 
 std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
                                  const SessionTransaction& transaction,
-                                 search::Writes* writes) {
+                                 search::Writes& writes) {
   std::vector<const Change*> changes;
   std::vector<const Change*> secrets;
   std::vector<duckdb::SequenceCatalogEntry*> sequences;
@@ -908,14 +908,11 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
       }
     }
   }
-  std::vector<search::LogSection> sections;
-  if (writes) {
-    sections = writes->TakeLog(context, transaction.Snapshot());
-    std::erase_if(sections, [](const search::LogSection& section) {
-      return section.entries.empty() ||
-             !section.table->ParentCatalog().Cast<BaseCatalog>().Durable();
-    });
-  }
+  auto sections = writes.TakeLog(context, transaction.Snapshot());
+  std::erase_if(sections, [](const search::LogSection& section) {
+    return section.entries.empty() ||
+           !section.table->ParentCatalog().Cast<BaseCatalog>().Durable();
+  });
   CatalogRecord record;
   for (const auto* change : changes) {
     auto& subject = change->Subject();

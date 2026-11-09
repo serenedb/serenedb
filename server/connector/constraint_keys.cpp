@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <deque>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
@@ -103,16 +104,17 @@ void ConstraintKeyEncoder::Encode(duckdb::DataChunk& chunk,
                                   duckdb::Vector& keys) const {
   const auto count = chunk.size();
   const auto parts = _key.columns.size();
-  std::vector<duckdb::Vector> evaluated;
-  evaluated.reserve(_expressions.size());
+  std::deque<EvaluatedExpression> evaluated;
   std::vector<duckdb::Vector*> values;
   values.reserve(parts);
   duckdb::vector<duckdb::LogicalType> types;
   types.reserve(parts);
   for (size_t i = 0; i != parts; ++i) {
     if (i < _expressions.size() && _expressions[i]) {
-      values.push_back(&evaluated.emplace_back(EvaluateExprOverChunk(
-        *_expressions[i], chunk, _table_id, column_ids, *_context)));
+      values.push_back(&evaluated
+                          .emplace_back(*_expressions[i], chunk, _table_id,
+                                        column_ids, *_context)
+                          .Result());
     } else {
       const auto slot =
         absl::c_find(column_ids, _key.columns[i]) - column_ids.begin();

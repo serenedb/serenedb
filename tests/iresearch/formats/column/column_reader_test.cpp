@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -3161,6 +3162,79 @@ TEST_F(ColumnReaderTest, SparseAppendNullPadding) {
   ASSERT_NE(ca, nullptr);
   ASSERT_EQ(ca->RowCount(), kTotal);
   VerifyBigint(*ca, r.Ctx(), kTotal, is_valid, val);
+}
+
+TEST_F(ColumnReaderTest, SparseArrayNullPaddingNullsChildren) {
+  constexpr uint64_t kTotal = 3000;
+  constexpr uint32_t kRgSize = 1024;
+  constexpr irs::field_id kArr = 91;
+  constexpr duckdb::idx_t kDim = 4;
+  const auto atype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+  struct Run {
+    uint64_t start;
+    uint64_t count;
+  };
+  const std::vector<Run> runs{{0, 100}, {500, 100}, {2500, 100}};
+  auto is_valid = [&](uint64_t g) {
+    return absl::c_any_of(runs, [&](const Run& r) {
+      return g >= r.start && g < r.start + r.count;
+    });
+  };
+  auto elem_val = [](uint64_t g, duckdb::idx_t i) {
+    return static_cast<float>(g * 10 + i);
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cwArr = w.OpenColumn(kArr, atype, /*skip_validity=*/false, kRgSize);
+    for (const auto& r : runs) {
+      duckdb::Vector v{atype, STANDARD_VECTOR_SIZE};
+      auto* cd = duckdb::FlatVector::GetDataMutable<float>(
+        duckdb::ArrayVector::GetChildMutable(v));
+      for (uint64_t k = 0; k < r.count; ++k) {
+        for (duckdb::idx_t i = 0; i < kDim; ++i) {
+          cd[k * kDim + i] = elem_val(r.start + k, i);
+        }
+      }
+      duckdb::FlatVector::SetSize(v, r.count);
+      cwArr.Append(r.start, v, r.count);
+    }
+    cwArr.PadNullsTo(kTotal);
+    w.Commit(kTotal);
+  }
+
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* ca = r.Column(kArr);
+  ASSERT_NE(ca, nullptr);
+  ASSERT_EQ(ca->RowCount(), kTotal);
+  auto state = ca->InitScan(r.Ctx());
+  uint64_t pos = 0;
+  while (pos < kTotal) {
+    const auto take =
+      std::min<duckdb::idx_t>(kTotal - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector result{atype, STANDARD_VECTOR_SIZE};
+    ca->Scan(state, result, take);
+    result.Flatten(take);
+    const auto& child = duckdb::ArrayVector::GetChild(result);
+    const auto* cd = duckdb::FlatVector::GetData<float>(child);
+    const auto& av = duckdb::FlatVector::Validity(result);
+    const auto& cv = duckdb::FlatVector::Validity(child);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      const auto g = pos + k;
+      ASSERT_EQ(av.RowIsValid(k), is_valid(g)) << "array row " << g;
+      for (duckdb::idx_t i = 0; i < kDim; ++i) {
+        ASSERT_EQ(cv.RowIsValid(k * kDim + i), is_valid(g))
+          << "elem " << g << ":" << i;
+        if (is_valid(g)) {
+          EXPECT_EQ(cd[k * kDim + i], elem_val(g, i))
+            << "elem " << g << ":" << i;
+        }
+      }
+    }
+    pos += take;
+  }
 }
 
 // DENSE VARCHAR with FEW distinct short repeated values -> forces the dict_fsst

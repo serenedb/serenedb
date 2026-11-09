@@ -296,9 +296,9 @@ int RunSubcommand(int argc, char* argv[],
   argv[1] = argv[0];
   gShellSubcommand = subcommand;
   docs::RegisterShellDocsBackend();
-  absl::Cleanup close = &CloseShellEngine;
-  return duckdb_shell::Run(argc - 1, argv + 1, subcommand,
-                           {.open = &OpenShellEngine});
+  return duckdb_shell::Run(
+    argc - 1, argv + 1, subcommand,
+    {.open = &OpenShellEngine, .close = &CloseShellEngine});
 }
 
 }  // namespace

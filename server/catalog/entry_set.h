@@ -61,7 +61,7 @@ class DependentIndex final {
  public:
   void Add(duckdb::idx_t subject, duckdb::idx_t dependent, OidIndex& index);
 
-  void Remove(duckdb::idx_t subject, duckdb::idx_t dependent);
+  void Remove(duckdb::idx_t subject, duckdb::idx_t dependent, OidIndex& index);
 
   std::vector<Dependent> Of(duckdb::idx_t subject);
 
@@ -69,14 +69,14 @@ class DependentIndex final {
 
  private:
   struct Versions {
-    OidIndex* index = nullptr;
     duckdb::weak_ptr<duckdb::AttachedDatabase> database;
     uint32_t count = 0;
   };
 
   absl::Mutex _mutex;
   irs::containers::FlatHashMap<
-    duckdb::idx_t, irs::containers::FlatHashMap<duckdb::idx_t, Versions>>
+    duckdb::idx_t,
+    irs::containers::FlatHashMap<std::pair<duckdb::idx_t, OidIndex*>, Versions>>
     _dependents ABSL_GUARDED_BY(_mutex);
 };
 
@@ -96,7 +96,11 @@ class OidIndex {
 
   void Add(duckdb::idx_t oid, EntrySet& set, const duckdb::Identifier& name);
 
-  void Remove(duckdb::idx_t oid, const EntrySet& set);
+  void Remove(duckdb::idx_t oid, const EntrySet& set,
+              const duckdb::Identifier& name);
+
+  void Forget(const EntrySet& set,
+              std::span<duckdb::CatalogEntry* const> versions);
 
   void Alias(std::span<const duckdb::idx_t> oids, duckdb::idx_t owner);
 
@@ -132,13 +136,20 @@ class OidIndex {
     duckdb::Identifier name;
   };
 
-  Slot Newest(duckdb::idx_t oid);
+  void VisitNewest(
+    duckdb::idx_t oid,
+    absl::FunctionRef<void(EntrySet&, const duckdb::Identifier&)> visit);
+
+  void Erase(duckdb::idx_t oid, const EntrySet& set,
+             const duckdb::Identifier& name)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   absl::Mutex _mutex;
   irs::containers::FlatHashMap<duckdb::idx_t, std::vector<Slot>> _slots
     ABSL_GUARDED_BY(_mutex);
+  absl::Mutex _owners_mutex;
   irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> _owners
-    ABSL_GUARDED_BY(_mutex);
+    ABSL_GUARDED_BY(_owners_mutex);
   duckdb::AttachedDatabase& _database;
   std::shared_ptr<DependentIndex> _dependents;
 };
@@ -167,6 +178,10 @@ class EntrySet {
 
   duckdb::optional_ptr<duckdb::CatalogEntry> Get(
     duckdb::CatalogTransaction transaction, const duckdb::Identifier& name);
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> GetByOid(
+    duckdb::CatalogTransaction transaction, const duckdb::Identifier& name,
+    duckdb::idx_t oid);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> GetCommitted(
     const duckdb::Identifier& name);
@@ -224,9 +239,10 @@ class EntrySet {
                              ChangeKind kind, std::string alter)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
-  bool PushNew(duckdb::CatalogTransaction transaction,
-               duckdb::unique_ptr<duckdb::CatalogEntry> entry, ChangeKind kind,
-               std::string alter) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  duckdb::CatalogEntry* PushNew(duckdb::CatalogTransaction transaction,
+                                duckdb::unique_ptr<duckdb::CatalogEntry>& entry,
+                                ChangeKind kind, std::string alter)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   bool PushTombstone(duckdb::CatalogTransaction transaction,
                      const duckdb::Identifier& name, ChangeKind kind)
@@ -235,7 +251,7 @@ class EntrySet {
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateDefault(
     duckdb::CatalogTransaction transaction, const duckdb::Identifier& name);
 
-  void Index(const duckdb::CatalogEntry& entry);
+  void Index(const duckdb::CatalogEntry& entry) ABSL_LOCKS_EXCLUDED(_mutex);
 
   void IndexDependents(const duckdb::CatalogEntry& version);
 

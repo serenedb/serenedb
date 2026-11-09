@@ -42,7 +42,7 @@ std::string SerializeAlter(const duckdb::AlterInfo& info);
 
 std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
                                  const SessionTransaction& transaction,
-                                 search::Writes* writes);
+                                 search::Writes& writes);
 
 std::vector<uint8_t> SequenceRecord(const BaseCatalog& catalog,
                                     const duckdb::SequenceValue& value);

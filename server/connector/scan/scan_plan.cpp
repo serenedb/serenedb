@@ -518,6 +518,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       state.projected_types.push_back(file_index ? duckdb::LogicalType::UBIGINT
                                                  : duckdb::LogicalType::BIGINT);
     } else if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
+      state.empty_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BOOLEAN);
       continue;
@@ -723,6 +724,10 @@ void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
     auto* tableoid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
       output.data[g.tableoid_output_idx]);
     std::fill_n(tableoid_data, num_rows, g.tableoid_value);
+  }
+  if (g.empty_output_idx != duckdb::DConstants::INVALID_INDEX) {
+    output.data[g.empty_output_idx].Reference(
+      duckdb::Value{duckdb::LogicalType::BOOLEAN}, duckdb::count_t(num_rows));
   }
   if (!g.ScanScore()) {
     return;

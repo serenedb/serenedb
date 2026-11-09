@@ -45,7 +45,6 @@
 #include "catalog/dependency.h"
 #include "catalog/record.h"
 #include "catalog/transaction.h"
-#include "pg/connection_context.h"
 
 namespace sdb::catalog {
 namespace {
@@ -317,13 +316,10 @@ void BaseCatalog::AlterSchema(duckdb::CatalogTransaction transaction,
 
 duckdb::optional_idx BaseCatalog::GetCatalogVersion(
   duckdb::ClientContext& context) {
-  const auto& session = duckdb::Transaction::Get(context, *this)
-                          .Cast<DatabaseTransaction>()
-                          .Session();
-  if (!session.Changes().empty()) {
-    return duckdb::TRANSACTION_ID_START + session.Changes().size();
-  }
-  return ConnectionContext::Get(context).CatalogEpoch();
+  return duckdb::Transaction::Get(context, *this)
+    .Cast<DatabaseTransaction>()
+    .Session()
+    .CatalogEpoch();
 }
 
 duckdb::PhysicalOperator& BaseCatalog::PlanCreateTableAs(

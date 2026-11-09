@@ -415,13 +415,9 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
 
 void RewriteOwnRows(duckdb::ClientContext& context,
                     const SearchBackfillTarget& target) {
-  auto* writes = ConnectionContext::Get(context).Transaction().SearchWrites();
-  if (!writes) {
-    return;
-  }
   RowSource source;
   InitRowSource(context, target, source);
-  writes->RewriteOwn(
+  ConnectionContext::Get(context).Transaction().SearchTxn().RewriteOwn(
     context, target.shard, *target.catalog,
     [&](const irs::SubReader& sub, SearchSinkInsertBaseImpl& sink) {
       FeedSegment(context, sub, source, sink, target);

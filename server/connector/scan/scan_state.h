@@ -200,6 +200,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t doc_address_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t file_index_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t row_number_output_idx = duckdb::DConstants::INVALID_INDEX;
+  duckdb::idx_t empty_output_idx = duckdb::DConstants::INVALID_INDEX;
   bool has_real_column = false;
   bool has_output_column = false;
 

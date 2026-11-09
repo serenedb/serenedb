@@ -776,6 +776,50 @@ void AddOwnRows(KeyProbe& probe, const StoreWrites& w, const LiveUnits& live) {
   }
 }
 
+class LockedWrites {
+ public:
+  LockedWrites(irs::containers::NodeHashMap<duckdb::idx_t, StoreWrites>& writes,
+               const StoreWrites& own) ABSL_NO_THREAD_SAFETY_ANALYSIS
+    : _own{&own} {
+    _locked.reserve(writes.size());
+    for (auto& [store_id, w] : writes) {
+      _locked.push_back({.store_id = store_id, .writes = &w});
+    }
+    absl::c_sort(_locked, [](const Locked& lhs, const Locked& rhs) {
+      return lhs.store_id < rhs.store_id;
+    });
+    for (const auto& locked : _locked) {
+      if (locked.writes == _own) {
+        locked.writes->mutex.Lock();
+      } else {
+        locked.writes->mutex.ReaderLock();
+      }
+    }
+  }
+
+  ~LockedWrites() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    for (auto it = _locked.rbegin(); it != _locked.rend(); ++it) {
+      if (it->writes == _own) {
+        it->writes->mutex.Unlock();
+      } else {
+        it->writes->mutex.ReaderUnlock();
+      }
+    }
+  }
+
+  LockedWrites(const LockedWrites&) = delete;
+  LockedWrites& operator=(const LockedWrites&) = delete;
+
+ private:
+  struct Locked {
+    duckdb::idx_t store_id = 0;
+    StoreWrites* writes = nullptr;
+  };
+
+  const StoreWrites* _own;
+  std::vector<Locked> _locked;
+};
+
 // The rows of a table holding keys, as one transaction sees them: the latest
 // committed rows but the ones it removed, and the rows it wrote.
 class TableRows {
@@ -848,12 +892,7 @@ void Writes::CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
     ThrowMissingReference(context, *w.table, spec, keys.front());
   }
   const auto& store = *parent->Storage();
-  auto* related = Related(store, w);
-  std::optional<absl::ReaderMutexLock> lock;
-  if (related && related != &w) {
-    lock.emplace(&related->mutex);
-  }
-  const TableRows rows{store, related};
+  const TableRows rows{store, Related(store, w)};
   auto probe = rows.Probe(spec.referenced_field);
   for (const auto& key : keys) {
     if (!probe.Exists(key)) {
@@ -891,12 +930,7 @@ void Writes::CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
       keys.assign(removed.keys.begin() + begin, removed.keys.end());
       absl::c_sort(keys);
       keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-      auto* related = Related(store, w);
-      std::optional<absl::ReaderMutexLock> lock;
-      if (related && related != &w) {
-        lock.emplace(&related->mutex);
-      }
-      const TableRows rows{store, related};
+      const TableRows rows{store, Related(store, w)};
       auto probe = rows.Probe(child.spec->key.field);
       std::optional<KeyProbe> held;
       for (const auto key : keys) {
@@ -927,7 +961,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     return;
   }
   auto& w = found->second;
-  absl::MutexLock lock{&w.mutex};
+  const LockedWrites locked{_writes, w};
   if (!w.table || (w.keys.empty() && w.removed_keys.empty())) {
     return;
   }

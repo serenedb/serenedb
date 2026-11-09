@@ -1084,8 +1084,9 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
     }
   }
   for (const auto& indexed_expr : sink.IndexedExpressions()) {
-    auto result = EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk,
-                                        table_id, column_ids, context);
+    EvaluatedExpression evaluated{*indexed_expr.normalized_expr, chunk,
+                                  table_id, column_ids, context};
+    auto& result = evaluated.Result();
     sink.SwitchExpressionImpl(indexed_expr.field_id, result.GetType(), result,
                               num_rows);
   }

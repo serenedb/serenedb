@@ -1624,16 +1624,13 @@ void SearchTableEntry::Backfill(
 
 irs::DirectoryReader SearchTableEntry::RowsWithOwn(
   duckdb::ClientContext& context) const {
-  if (auto* writes = SessionOf(context, catalog).SearchWrites()) {
-    return writes->View(context, *_storage, search::kAllApplied);
-  }
-  return _storage->View(search::kAllApplied, {});
+  return SessionOf(context, catalog)
+    .SearchTxn()
+    .View(context, *_storage, search::kAllApplied);
 }
 
 void SearchTableEntry::AdoptAsWritten(duckdb::ClientContext& context) const {
-  if (auto* writes = SessionOf(context, catalog).SearchWrites()) {
-    writes->AdoptTable(_storage, *this);
-  }
+  SessionOf(context, catalog).SearchTxn().AdoptTable(_storage, *this);
 }
 
 void SearchTableEntry::VerifyKey(duckdb::ClientContext& context,

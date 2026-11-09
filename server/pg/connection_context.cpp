@@ -233,12 +233,12 @@ void ConnectionContext::SetSettingChecked(std::string_view key,
 }
 
 void ConnectionContext::RefreshCatalogEpoch() noexcept {
-  if (_transaction && !_transaction->Changes().empty()) {
-    _catalog_epoch =
-      duckdb::TRANSACTION_ID_START + _transaction->Changes().size();
+  if (_transaction) {
+    _catalog_epoch = _transaction->CatalogEpoch();
     return;
   }
-  _catalog_epoch = catalog::Transactions::Get().CatalogVersion();
+  auto& transactions = catalog::Transactions::Get();
+  _catalog_epoch = transactions.CatalogEpoch(transactions.LastCommit());
 }
 
 std::shared_ptr<catalog::SessionTransaction>
@@ -246,6 +246,7 @@ ConnectionContext::AcquireTransaction() {
   const auto owner = duckdb::MetaTransaction::Get(*this).global_transaction_id;
   absl::MutexLock lock{&_transaction_mutex};
   if (!_transaction || _transaction_owner != owner) {
+    SDB_PARK_ONCE_ON_FAILURE("session_transaction_before_snapshot");
     _transaction = std::make_shared<catalog::SessionTransaction>(
       catalog::Transactions::Get().NextId());
     _transaction_owner = owner;
@@ -260,7 +261,7 @@ bool ConnectionContext::IsStableSnapshot() const {
 
 bool ConnectionContext::TryDropSearchReader(duckdb::idx_t database_id,
                                             duckdb::idx_t shard_id) {
-  if (IsStableSnapshot() || !_transaction || !_transaction->SearchWrites()) {
+  if (IsStableSnapshot() || !_transaction) {
     return false;
   }
   _transaction->ResetSearchReader(database_id, shard_id);

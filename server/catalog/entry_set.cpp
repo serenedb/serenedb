@@ -20,6 +20,7 @@
 
 #include "catalog/entry_set.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
@@ -57,6 +58,16 @@ duckdb::CatalogEntry* Visible(const duckdb::SnapshotView& view,
       return nullptr;
     }
   }
+}
+
+bool Holds(duckdb::CatalogEntry* chain, duckdb::idx_t oid) {
+  for (auto* version = chain; version;
+       version = version->HasChild() ? &version->Child() : nullptr) {
+    if (version->oid == oid) {
+      return true;
+    }
+  }
+  return false;
 }
 
 duckdb::CatalogEntry* Committed(duckdb::CatalogEntry& head) {
@@ -158,18 +169,18 @@ void DependentIndex::Add(duckdb::idx_t subject, duckdb::idx_t dependent,
                          OidIndex& index) {
   auto database = index.Database();
   absl::MutexLock lock{&_mutex};
-  auto& versions = _dependents[subject][dependent];
+  auto& versions = _dependents[subject][{dependent, &index}];
   if (versions.count++ == 0) {
-    versions.index = &index;
     versions.database = std::move(database);
   }
 }
 
-void DependentIndex::Remove(duckdb::idx_t subject, duckdb::idx_t dependent) {
+void DependentIndex::Remove(duckdb::idx_t subject, duckdb::idx_t dependent,
+                            OidIndex& index) {
   absl::MutexLock lock{&_mutex};
   const auto it = _dependents.find(subject);
   SDB_ASSERT(it != _dependents.end());
-  const auto versions = it->second.find(dependent);
+  const auto versions = it->second.find(std::pair{dependent, &index});
   SDB_ASSERT(versions != it->second.end());
   if (--versions->second.count == 0) {
     it->second.erase(versions);
@@ -184,9 +195,9 @@ std::vector<Dependent> DependentIndex::Of(duckdb::idx_t subject) {
   absl::ReaderMutexLock lock{&_mutex};
   if (const auto it = _dependents.find(subject); it != _dependents.end()) {
     dependents.reserve(it->second.size());
-    for (const auto& [oid, versions] : it->second) {
+    for (const auto& [key, versions] : it->second) {
       dependents.push_back(
-        {.oid = oid, .index = versions.index, .database = versions.database});
+        {.oid = key.first, .index = key.second, .database = versions.database});
     }
   }
   return dependents;
@@ -196,7 +207,7 @@ void DependentIndex::Forget(const OidIndex& index) {
   absl::MutexLock lock{&_mutex};
   absl::erase_if(_dependents, [&](auto& subject) {
     absl::erase_if(subject.second, [&](const auto& dependent) {
-      return dependent.second.index == &index;
+      return dependent.first.second == &index;
     });
     return subject.second.empty();
   });
@@ -209,59 +220,85 @@ duckdb::weak_ptr<duckdb::AttachedDatabase> OidIndex::Database() const {
 void OidIndex::Add(duckdb::idx_t oid, EntrySet& set,
                    const duckdb::Identifier& name) {
   absl::MutexLock lock{&_mutex};
-  _slots[oid].push_back({&set, name});
+  auto& slots = _slots[oid];
+  if (absl::c_none_of(slots, [&](const Slot& slot) {
+        return slot.set == &set && set.SameName(slot.name, name);
+      })) {
+    slots.push_back({&set, name});
+  }
 }
 
-void OidIndex::Remove(duckdb::idx_t oid, const EntrySet& set) {
-  absl::MutexLock lock{&_mutex};
+void OidIndex::Erase(duckdb::idx_t oid, const EntrySet& set,
+                     const duckdb::Identifier& name) {
   const auto it = _slots.find(oid);
-  SDB_ASSERT(it != _slots.end() && it->second.back().set == &set);
-  it->second.pop_back();
+  if (it == _slots.end()) {
+    return;
+  }
+  std::erase_if(it->second, [&](const Slot& slot) {
+    return slot.set == &set && set.SameName(slot.name, name);
+  });
   if (it->second.empty()) {
     _slots.erase(it);
   }
 }
 
-void OidIndex::Alias(std::span<const duckdb::idx_t> oids, duckdb::idx_t owner) {
+void OidIndex::Remove(duckdb::idx_t oid, const EntrySet& set,
+                      const duckdb::Identifier& name) {
   absl::MutexLock lock{&_mutex};
+  Erase(oid, set, name);
+}
+
+void OidIndex::Forget(const EntrySet& set,
+                      std::span<duckdb::CatalogEntry* const> versions) {
+  absl::MutexLock lock{&_mutex};
+  for (const auto* version : versions) {
+    Erase(version->oid, set, version->name);
+  }
+}
+
+void OidIndex::Alias(std::span<const duckdb::idx_t> oids, duckdb::idx_t owner) {
+  absl::MutexLock lock{&_owners_mutex};
   for (const auto oid : oids) {
     _owners.try_emplace(oid, owner);
   }
 }
 
 duckdb::idx_t OidIndex::Owner(duckdb::idx_t oid) {
-  absl::ReaderMutexLock lock{&_mutex};
+  absl::ReaderMutexLock lock{&_owners_mutex};
   const auto it = _owners.find(oid);
   return it == _owners.end() ? 0 : it->second;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> OidIndex::Find(
   duckdb::CatalogTransaction transaction, duckdb::idx_t oid) {
-  std::vector<Slot> slots;
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry;
+  duckdb::idx_t owner = 0;
   {
     absl::ReaderMutexLock lock{&_mutex};
     const auto it = _slots.find(oid);
     if (it == _slots.end()) {
       return nullptr;
     }
-    slots = it->second;
-  }
-  for (auto slot = slots.rbegin(); slot != slots.rend(); ++slot) {
-    if (auto entry = slot->set->Get(transaction, slot->name);
-        entry && entry->oid == oid) {
-      if (const auto owner = slot->set->Owner();
-          owner && !Find(transaction, owner)) {
-        return nullptr;
+    for (auto slot = it->second.rbegin(); slot != it->second.rend(); ++slot) {
+      entry = slot->set->GetByOid(transaction, slot->name, oid);
+      if (entry) {
+        owner = slot->set->Owner();
+        break;
       }
-      return entry;
     }
   }
-  return nullptr;
+  if (entry && owner && !Find(transaction, owner)) {
+    return nullptr;
+  }
+  return entry;
 }
 
 duckdb::idx_t OidIndex::SetOwner(duckdb::idx_t oid) {
-  const auto slot = Newest(oid);
-  return slot.set ? slot.set->Owner() : 0;
+  duckdb::idx_t owner = 0;
+  VisitNewest(oid, [&](EntrySet& set, const duckdb::Identifier&) {
+    owner = set.Owner();
+  });
+  return owner;
 }
 
 void OidIndex::AddDependents(const duckdb::CatalogEntry& version,
@@ -274,7 +311,7 @@ void OidIndex::AddDependents(const duckdb::CatalogEntry& version,
 void OidIndex::RemoveDependents(const duckdb::CatalogEntry& version,
                                 duckdb::idx_t dependent) {
   ForEachSubject(version, [&](duckdb::idx_t subject) {
-    _dependents->Remove(subject, dependent);
+    _dependents->Remove(subject, dependent, *this);
   });
 }
 
@@ -328,13 +365,13 @@ void OidIndex::ForEachForeignDependent(
   }
 }
 
-OidIndex::Slot OidIndex::Newest(duckdb::idx_t oid) {
+void OidIndex::VisitNewest(
+  duckdb::idx_t oid,
+  absl::FunctionRef<void(EntrySet&, const duckdb::Identifier&)> visit) {
   absl::ReaderMutexLock lock{&_mutex};
-  const auto it = _slots.find(oid);
-  if (it == _slots.end()) {
-    return {.set = nullptr, .name = {}};
+  if (const auto it = _slots.find(oid); it != _slots.end()) {
+    visit(*it->second.back().set, it->second.back().name);
   }
-  return it->second.back();
 }
 
 void OidIndex::CheckCreated(const duckdb::CatalogEntry& version) {
@@ -356,9 +393,10 @@ void OidIndex::CheckCreated(const duckdb::CatalogEntry& version) {
       }
       index = &database->GetCatalog().Cast<BaseCatalog>().Oids();
     }
-    if (const auto slot = index->Newest(subject); slot.set) {
-      slot.set->CheckSubjectLive(slot.name, subject);
-    }
+    index->VisitNewest(subject,
+                       [&](EntrySet& set, const duckdb::Identifier& name) {
+                         set.CheckSubjectLive(name, subject);
+                       });
   });
   if (version.deleted || version.type == duckdb::CatalogType::ROLE_ENTRY) {
     return;
@@ -368,9 +406,9 @@ void OidIndex::CheckCreated(const duckdb::CatalogEntry& version) {
     if (!role) {
       return;
     }
-    if (const auto slot = roles.Newest(role); slot.set) {
-      slot.set->CheckSubjectLive(slot.name, role);
-    }
+    roles.VisitNewest(role, [&](EntrySet& set, const duckdb::Identifier& name) {
+      set.CheckSubjectLive(name, role);
+    });
   };
   check_role(version.permissions.owner);
   for (const auto& item : version.permissions.acl) {
@@ -389,15 +427,31 @@ void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
         continue;
       }
     }
-    if (const auto slot = dependent.index->Newest(dependent.oid); slot.set) {
-      slot.set->CheckNoLaterDependent(view, slot.name, dependent.oid, dropped,
-                                      _database.GetName(),
-                                      dependent.index == this);
-    }
+    dependent.index->VisitNewest(
+      dependent.oid, [&](EntrySet& set, const duckdb::Identifier& name) {
+        set.CheckNoLaterDependent(view, name, dependent.oid, dropped,
+                                  _database.GetName(), dependent.index == this);
+      });
   }
 }
 
-EntrySet::~EntrySet() { Transactions::Get().ExpireSet(_alive); }
+EntrySet::~EntrySet() {
+  Transactions::Get().ExpireSet(_alive);
+  std::vector<duckdb::CatalogEntry*> indexed;
+  {
+    absl::ReaderMutexLock lock{&_mutex};
+    for (const auto& [name, head] : _entries) {
+      for (auto* version = head.get(); version;
+           version = version->HasChild() ? &version->Child() : nullptr) {
+        UnindexDependents(*version);
+        if (version->oid) {
+          indexed.push_back(version);
+        }
+      }
+    }
+  }
+  _oids.Forget(*this, indexed);
+}
 
 void EntrySet::CheckSubjectLive(const duckdb::Identifier& name,
                                 duckdb::idx_t oid) {
@@ -498,6 +552,21 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntrySet::Get(
   return CreateDefault(transaction, name);
 }
 
+duckdb::optional_ptr<duckdb::CatalogEntry> EntrySet::GetByOid(
+  duckdb::CatalogTransaction transaction, const duckdb::Identifier& name,
+  duckdb::idx_t oid) {
+  absl::ReaderMutexLock lock{&_mutex};
+  const auto it = _entries.find(name);
+  if (it == _entries.end()) {
+    return nullptr;
+  }
+  auto* entry = Visible(transaction.view, *it->second);
+  if (!entry || entry->deleted || entry->oid != oid) {
+    return nullptr;
+  }
+  return entry;
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> EntrySet::CreateDefault(
   duckdb::CatalogTransaction transaction, const duckdb::Identifier& name) {
   if (!_defaults || _defaults->created_all_entries) {
@@ -507,19 +576,26 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntrySet::CreateDefault(
   if (!entry) {
     return nullptr;
   }
-  absl::MutexLock lock{&_mutex};
-  auto& head = _entries[name];
-  if (!head) {
-    entry->timestamp = 0;
-    head = std::move(entry);
-    Index(*head);
-    IndexDependents(*head);
+  duckdb::CatalogEntry* created = nullptr;
+  duckdb::optional_ptr<duckdb::CatalogEntry> found;
+  {
+    absl::MutexLock lock{&_mutex};
+    auto& head = _entries[name];
+    if (!head) {
+      entry->timestamp = 0;
+      head = std::move(entry);
+      created = head.get();
+      IndexDependents(*head);
+    }
+    if (auto* visible = Visible(transaction.view, *head);
+        visible && !visible->deleted) {
+      found = visible;
+    }
   }
-  auto* visible = Visible(transaction.view, *head);
-  if (!visible || visible->deleted) {
-    return nullptr;
+  if (created) {
+    Index(*created);
   }
-  return visible;
+  return found;
 }
 
 void EntrySet::CreateDefaults(duckdb::CatalogTransaction transaction) {
@@ -536,13 +612,19 @@ void EntrySet::CreateDefaults(duckdb::CatalogTransaction transaction) {
     auto entry = _defaults->CreateDefaultEntry(transaction, name);
     SDB_ENSURE(entry, "failed to create the default entry ",
                name.GetIdentifierName());
-    absl::MutexLock lock{&_mutex};
-    auto& head = _entries[name];
-    if (!head) {
-      entry->timestamp = 0;
-      head = std::move(entry);
-      Index(*head);
-      IndexDependents(*head);
+    duckdb::CatalogEntry* created = nullptr;
+    {
+      absl::MutexLock lock{&_mutex};
+      auto& head = _entries[name];
+      if (!head) {
+        entry->timestamp = 0;
+        head = std::move(entry);
+        created = head.get();
+        IndexDependents(*head);
+      }
+    }
+    if (created) {
+      Index(*created);
     }
   }
   _defaults->created_all_entries = true;
@@ -585,9 +667,10 @@ duckdb::CatalogEntry& EntrySet::Push(
   return *head;
 }
 
-bool EntrySet::PushNew(duckdb::CatalogTransaction transaction,
-                       duckdb::unique_ptr<duckdb::CatalogEntry> entry,
-                       ChangeKind kind, std::string alter) {
+duckdb::CatalogEntry* EntrySet::PushNew(
+  duckdb::CatalogTransaction transaction,
+  duckdb::unique_ptr<duckdb::CatalogEntry>& entry, ChangeKind kind,
+  std::string alter) {
   auto& head = _entries[entry->name];
   if (!head) {
     head = duckdb::make_uniq<duckdb::CatalogEntry>(duckdb::CatalogType::INVALID,
@@ -597,11 +680,10 @@ bool EntrySet::PushNew(duckdb::CatalogTransaction transaction,
   } else {
     CheckWritable(transaction.view, *head);
     if (!head->deleted) {
-      return false;
+      return nullptr;
     }
   }
-  Index(Push(transaction, std::move(entry), kind, std::move(alter)));
-  return true;
+  return &Push(transaction, std::move(entry), kind, std::move(alter));
 }
 
 bool EntrySet::PushTombstone(duckdb::CatalogTransaction transaction,
@@ -631,8 +713,16 @@ void EntrySet::CheckNameWritable(duckdb::CatalogTransaction transaction,
 
 bool EntrySet::Create(duckdb::CatalogTransaction transaction,
                       duckdb::unique_ptr<duckdb::CatalogEntry> entry) {
-  absl::MutexLock lock{&_mutex};
-  return PushNew(transaction, std::move(entry), ChangeKind::Create, {});
+  duckdb::CatalogEntry* created = nullptr;
+  {
+    absl::MutexLock lock{&_mutex};
+    created = PushNew(transaction, entry, ChangeKind::Create, {});
+  }
+  if (!created) {
+    return false;
+  }
+  Index(*created);
+  return true;
 }
 
 void EntrySet::Alter(duckdb::CatalogTransaction transaction,
@@ -650,17 +740,24 @@ bool EntrySet::Rename(duckdb::CatalogTransaction transaction,
                       const duckdb::Identifier& name,
                       duckdb::unique_ptr<duckdb::CatalogEntry> entry,
                       std::string alter) {
-  absl::MutexLock lock{&_mutex};
-  const auto it = _entries.find(entry->name);
-  if (it != _entries.end()) {
-    CheckWritable(transaction.view, *it->second);
-    if (!it->second->deleted) {
-      return false;
+  duckdb::CatalogEntry* renamed = nullptr;
+  {
+    absl::MutexLock lock{&_mutex};
+    const auto it = _entries.find(entry->name);
+    if (it != _entries.end()) {
+      CheckWritable(transaction.view, *it->second);
+      if (!it->second->deleted) {
+        return false;
+      }
     }
+    PushTombstone(transaction, name, ChangeKind::Rename);
+    renamed = PushNew(transaction, entry, ChangeKind::Alter, std::move(alter));
   }
-  PushTombstone(transaction, name, ChangeKind::Rename);
-  return PushNew(transaction, std::move(entry), ChangeKind::Alter,
-                 std::move(alter));
+  if (!renamed) {
+    return false;
+  }
+  Index(*renamed);
+  return true;
 }
 
 bool EntrySet::Move(duckdb::CatalogTransaction transaction,
@@ -668,19 +765,27 @@ bool EntrySet::Move(duckdb::CatalogTransaction transaction,
                     duckdb::unique_ptr<duckdb::CatalogEntry> entry,
                     std::string alter) {
   SDB_ASSERT(&target != this);
-  const bool ours_first = this < &target;
-  absl::MutexLock first{ours_first ? &_mutex : &target._mutex};
-  absl::MutexLock second{ours_first ? &target._mutex : &_mutex};
-  const auto it = target._entries.find(entry->name);
-  if (it != target._entries.end()) {
-    CheckWritable(transaction.view, *it->second);
-    if (!it->second->deleted) {
-      return false;
+  duckdb::CatalogEntry* moved = nullptr;
+  {
+    const bool ours_first = this < &target;
+    absl::MutexLock first{ours_first ? &_mutex : &target._mutex};
+    absl::MutexLock second{ours_first ? &target._mutex : &_mutex};
+    const auto it = target._entries.find(entry->name);
+    if (it != target._entries.end()) {
+      CheckWritable(transaction.view, *it->second);
+      if (!it->second->deleted) {
+        return false;
+      }
     }
+    PushTombstone(transaction, name, ChangeKind::Rename);
+    moved =
+      target.PushNew(transaction, entry, ChangeKind::Alter, std::move(alter));
   }
-  PushTombstone(transaction, name, ChangeKind::Rename);
-  return target.PushNew(transaction, std::move(entry), ChangeKind::Alter,
-                        std::move(alter));
+  if (!moved) {
+    return false;
+  }
+  target.Index(*moved);
+  return true;
 }
 
 bool EntrySet::Drop(duckdb::CatalogTransaction transaction,
@@ -738,22 +843,33 @@ void EntrySet::Commit(duckdb::CatalogEntry& version) {
 
 duckdb::unique_ptr<duckdb::CatalogEntry> EntrySet::Trim(
   duckdb::CatalogEntry& version) {
-  absl::MutexLock lock{&_mutex};
-  version.previous_version.store(nullptr, std::memory_order_release);
   duckdb::unique_ptr<duckdb::CatalogEntry> trimmed;
-  if (version.deleted && !_defaults) {
-    if (const auto it = _entries.find(version.name);
-        it != _entries.end() && it->second.get() == &version) {
+  std::vector<duckdb::idx_t> gone;
+  {
+    absl::MutexLock lock{&_mutex};
+    version.previous_version.store(nullptr, std::memory_order_release);
+    const auto it = _entries.find(version.name);
+    duckdb::CatalogEntry* kept =
+      it == _entries.end() ? nullptr : it->second.get();
+    if (version.deleted && !_defaults && kept == &version) {
       trimmed = std::move(it->second);
       _entries.erase(it);
+      kept = nullptr;
+    }
+    if (!trimmed) {
+      trimmed = version.TakeChild();
+    }
+    for (auto* old = trimmed.get(); old;
+         old = old->HasChild() ? &old->Child() : nullptr) {
+      UnindexDependents(*old);
+      if (old->oid && !absl::c_linear_search(gone, old->oid) &&
+          !Holds(kept, old->oid)) {
+        gone.push_back(old->oid);
+      }
     }
   }
-  if (!trimmed) {
-    trimmed = version.TakeChild();
-  }
-  for (auto* old = trimmed.get(); old;
-       old = old->HasChild() ? &old->Child() : nullptr) {
-    UnindexDependents(*old);
+  for (const auto oid : gone) {
+    _oids.Remove(oid, *this, version.name);
   }
   return trimmed;
 }
@@ -769,21 +885,25 @@ void EntrySet::Undo(duckdb::CatalogEntry& version, ChangeKind kind) {
     version.Rollback(version.Child());
   }
   duckdb::unique_ptr<duckdb::CatalogEntry> removed;
-  absl::MutexLock lock{&_mutex};
-  const auto it = _entries.find(version.name);
-  SDB_ASSERT(it != _entries.end() && it->second.get() == &version);
-  removed = std::move(it->second);
-  it->second = removed->TakeChild();
-  UnindexDependents(*removed);
-  if (removed->oid && it->second->deleted) {
-    _oids.Remove(removed->oid, *this);
+  bool unindex = false;
+  {
+    absl::MutexLock lock{&_mutex};
+    const auto it = _entries.find(version.name);
+    SDB_ASSERT(it != _entries.end() && it->second.get() == &version);
+    removed = std::move(it->second);
+    it->second = removed->TakeChild();
+    UnindexDependents(*removed);
+    unindex = removed->oid && !Holds(it->second.get(), removed->oid);
+    if (!it->second->deleted &&
+        it->second->type != duckdb::CatalogType::INVALID) {
+      it->second->SetAsRoot(nullptr, nullptr);
+    }
+    if (it->second->type == duckdb::CatalogType::INVALID) {
+      _entries.erase(it);
+    }
   }
-  if (!it->second->deleted &&
-      it->second->type != duckdb::CatalogType::INVALID) {
-    it->second->SetAsRoot(nullptr, nullptr);
-  }
-  if (it->second->type == duckdb::CatalogType::INVALID) {
-    _entries.erase(it);
+  if (unindex) {
+    _oids.Remove(removed->oid, *this, removed->name);
   }
 }
 

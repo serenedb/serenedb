@@ -59,8 +59,7 @@ bool Published(Awaited* awaited) {
 }
 
 bool ModifiesUserDatabase(SessionTransaction& session) {
-  const auto* writes = session.SearchWrites();
-  return (writes && !writes->Empty()) ||
+  return !session.SearchTxn().Empty() ||
          absl::c_any_of(session.Changes(), [](const Change& change) {
            const auto& db = change.Subject().ParentCatalog().GetAttached();
            return !db.IsSystem() && !db.IsTemporary();
@@ -100,7 +99,10 @@ void CheckDependencies(SessionTransaction& transaction) {
 }  // namespace
 
 SessionTransaction::SessionTransaction(duckdb::transaction_t id)
-  : _id{id}, _snapshot{Transactions::Get().Begin()} {}
+  : _id{id},
+    _snapshot{Transactions::Get().Begin()},
+    _catalog_epoch{Transactions::Get().CatalogEpoch(Snapshot())},
+    _search{id} {}
 
 SessionTransaction::~SessionTransaction() {
   if (_held) {
@@ -113,15 +115,16 @@ void SessionTransaction::Refresh() {
   if (!_changes.empty()) {
     return;
   }
-  if (_search) {
-    _search->NoteConflicts(Snapshot());
-    if (!_held && !_search->Empty()) {
-      _held = Snapshot();
-      Transactions::Get().Hold(*_held);
-    }
+  _search.NoteConflicts(Snapshot());
+  if (!_held && !_search.Empty()) {
+    _held = Snapshot();
+    Transactions::Get().Hold(*_held);
   }
-  _snapshot.store(Transactions::Get().Advance(Snapshot()),
-                  std::memory_order_release);
+  auto& transactions = Transactions::Get();
+  const auto snapshot = transactions.Advance(Snapshot());
+  _snapshot.store(snapshot, std::memory_order_release);
+  _catalog_epoch.store(transactions.CatalogEpoch(snapshot),
+                       std::memory_order_release);
 }
 
 void ApplyLsnUpdate(const LsnUpdate& update) {
@@ -275,9 +278,9 @@ void Transactions::ExpireSet(std::shared_ptr<const char>& alive) {
 
 void Transactions::Commit(SessionTransaction& transaction,
                           duckdb::ClientContext& context) {
-  auto* writes = transaction.SearchWrites();
+  auto& writes = transaction.SearchTxn();
   if (transaction.Changes().empty() && transaction.LsnUpdates().empty() &&
-      (!writes || writes->Empty())) {
+      writes.Empty()) {
     return;
   }
   std::vector<uint8_t> record;
@@ -322,9 +325,7 @@ void Transactions::Commit(SessionTransaction& transaction,
         change.version->Child().OnDrop();
       }
     }
-    if (writes) {
-      writes->Apply(commit, OldestSnapshot(), range.begin);
-    }
+    writes.Apply(commit, OldestSnapshot(), range.begin);
     for (const auto& update : transaction.LsnUpdates()) {
       ApplyLsnUpdate(update);
     }
@@ -341,13 +342,9 @@ void Transactions::Commit(SessionTransaction& transaction,
   } else if (end != 0) {
     _log->Sync(end);
   }
-  if (writes) {
-    writes->BeforePublish();
-  }
+  writes.BeforePublish();
   Publish(commit, true);
-  if (writes) {
-    writes->Finish();
-  }
+  writes.Finish();
   std::vector<BaseCatalog*> catalogs;
   for (const auto& change : transaction.Changes()) {
     auto* catalog = &change.Subject().ParentCatalog().Cast<BaseCatalog>();
@@ -529,18 +526,20 @@ void Transactions::Publish(duckdb::transaction_t commit, bool wait) {
     own.ready = true;
   }
   duckdb::transaction_t last = 0;
-  bool catalog = false;
+  duckdb::transaction_t catalog = 0;
   while (!_pending.empty() && _pending.front().ready &&
          _pending.front().end <= durable) {
     last = _pending.front().commit;
-    catalog = catalog || _pending.front().catalog;
+    if (_pending.front().catalog) {
+      catalog = last;
+    }
     _pending.pop_front();
+  }
+  if (catalog != 0) {
+    _catalog_version.store(catalog, std::memory_order_release);
   }
   if (last != 0) {
     _last_commit.store(last, std::memory_order_release);
-    if (catalog) {
-      _catalog_version.fetch_add(1, std::memory_order_release);
-    }
   }
   if (wait) {
     Awaited awaited{.last = &_last_commit, .commit = commit};
@@ -551,6 +550,7 @@ void Transactions::Publish(duckdb::transaction_t commit, bool wait) {
 search::StoreSnapshotPtr SessionTransaction::EnsureSearchSnapshot(
   duckdb::idx_t index_id, const std::shared_ptr<search::Store>& storage) {
   SDB_ASSERT(storage);
+  absl::MutexLock lock{&_mutex};
   auto& snapshot =
     _search_snapshots.try_emplace(std::pair{storage->GetDatabaseId(), index_id})
       .first->second;
@@ -561,17 +561,16 @@ search::StoreSnapshotPtr SessionTransaction::EnsureSearchSnapshot(
 }
 
 void SessionTransaction::ResetSearchReaders() noexcept {
-  _search_snapshots.clear();
-  if (_search) {
-    _search->ResetReaders();
+  {
+    absl::MutexLock lock{&_mutex};
+    _search_snapshots.clear();
   }
+  _search.ResetReaders();
 }
 
 void SessionTransaction::ResetSearchReader(duckdb::idx_t database_id,
                                            duckdb::idx_t shard_id) noexcept {
-  if (_search) {
-    _search->ResetReader(database_id, shard_id);
-  }
+  _search.ResetReader(database_id, shard_id);
 }
 
 void SessionTransaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
@@ -583,9 +582,7 @@ void SessionTransaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
 }
 
 void SessionTransaction::PrepareCommit(duckdb::ClientContext& context) {
-  if (_search) {
-    _search->PrepareCommit(context, Snapshot());
-  }
+  _search.PrepareCommit(context, Snapshot());
 }
 
 void SessionTransaction::Release() noexcept {
@@ -593,8 +590,11 @@ void SessionTransaction::Release() noexcept {
     table->ReleaseLayout(_id, _state == SessionState::Committed);
   }
   _layout_claims.clear();
-  _search_snapshots.clear();
-  _search.reset();
+  {
+    absl::MutexLock lock{&_mutex};
+    _search_snapshots.clear();
+  }
+  _search.Abort();
   if (_held) {
     Transactions::Get().End(*std::exchange(_held, std::nullopt));
   }
@@ -618,11 +618,13 @@ void SessionTransaction::Rollback() noexcept {
   }
   _changes.clear();
   _lsn_updates.clear();
-  if (_search) {
-    _search->Abort();
-  }
   Release();
-  for (auto& db : _attached) {
+  std::vector<duckdb::reference<duckdb::AttachedDatabase>> attached;
+  {
+    absl::MutexLock lock{&_mutex};
+    attached.swap(_attached);
+  }
+  for (auto& db : attached) {
     auto& manager = duckdb::DatabaseManager::Get(db.get().GetDatabase());
     if (auto detached = manager.DetachInternal(db.get().name)) {
       if (auto deleter = detached->ExtractDeleter()) {
@@ -630,7 +632,6 @@ void SessionTransaction::Rollback() noexcept {
       }
     }
   }
-  _attached.clear();
   _state = SessionState::RolledBack;
 }
 

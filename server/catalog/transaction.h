@@ -96,6 +96,11 @@ class SessionTransaction final {
                                 duckdb::VisibilityBound::Through(Snapshot())};
   }
 
+  duckdb::idx_t CatalogEpoch() const noexcept {
+    return _changes.empty() ? _catalog_epoch.load(std::memory_order_acquire)
+                            : duckdb::TRANSACTION_ID_START + _changes.size();
+  }
+
   void Refresh();
 
   void Push(Change change) { _changes.push_back(std::move(change)); }
@@ -110,27 +115,18 @@ class SessionTransaction final {
     return _lsn_updates;
   }
 
-  void Attached(duckdb::AttachedDatabase& db) { _attached.emplace_back(db); }
+  void Attached(duckdb::AttachedDatabase& db) {
+    absl::MutexLock lock{&_mutex};
+    _attached.emplace_back(db);
+  }
 
-  search::Writes& SearchTxn() {
-    if (!_search) {
-      _search.emplace(_id);
-    }
-    return *_search;
-  }
-  search::Writes* SearchWrites() noexcept {
-    return _search ? &*_search : nullptr;
-  }
+  search::Writes& SearchTxn() noexcept { return _search; }
 
   search::StoreSnapshotPtr EnsureSearchSnapshot(
     duckdb::idx_t index_id, const std::shared_ptr<search::Store>& storage);
 
   void ResetSearchReaders() noexcept;
-  void ResetSearchViews() noexcept {
-    if (_search) {
-      _search->ResetReaders();
-    }
-  }
+  void ResetSearchViews() noexcept { _search.ResetReaders(); }
   void ResetSearchReader(duckdb::idx_t database_id,
                          duckdb::idx_t shard_id) noexcept;
 
@@ -152,14 +148,17 @@ class SessionTransaction final {
 
   duckdb::transaction_t _id;
   std::atomic<duckdb::transaction_t> _snapshot;
+  std::atomic<duckdb::idx_t> _catalog_epoch;
   std::optional<duckdb::transaction_t> _held;
   std::vector<Change> _changes;
   std::vector<LsnUpdate> _lsn_updates;
-  std::vector<duckdb::reference<duckdb::AttachedDatabase>> _attached;
+  absl::Mutex _mutex;
+  std::vector<duckdb::reference<duckdb::AttachedDatabase>> _attached
+    ABSL_GUARDED_BY(_mutex);
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
                                search::StoreSnapshotPtr>
-    _search_snapshots;
-  std::optional<search::Writes> _search;
+    _search_snapshots ABSL_GUARDED_BY(_mutex);
+  search::Writes _search;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
   std::vector<std::shared_ptr<search::Store>> _layout_claims;
   SessionState _state = SessionState::Active;
@@ -175,6 +174,11 @@ class Transactions final {
 
   duckdb::idx_t CatalogVersion() const noexcept {
     return _catalog_version.load(std::memory_order_acquire);
+  }
+
+  duckdb::idx_t CatalogEpoch(duckdb::transaction_t snapshot) const noexcept {
+    const auto version = CatalogVersion();
+    return version <= snapshot ? version : snapshot;
   }
 
   duckdb::transaction_t NextId() noexcept {
@@ -254,7 +258,8 @@ class Transactions final {
   std::atomic<duckdb::transaction_t> _last_commit{
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
   std::atomic<duckdb::transaction_t> _next_id{duckdb::TRANSACTION_ID_START};
-  std::atomic<duckdb::idx_t> _catalog_version{0};
+  std::atomic<duckdb::idx_t> _catalog_version{
+    duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
   std::unique_ptr<Log> _log;
   Lsn _replaying = 0;
   std::atomic<bool> _truncating{false};

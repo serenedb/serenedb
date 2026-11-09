@@ -32,6 +32,8 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/utils/string.hpp"
+
 namespace irs {
 
 inline constexpr duckdb::MemoryTag kMemoryTag = duckdb::MemoryTag::ALLOCATOR;
@@ -183,6 +185,8 @@ using TrackedVector = std::vector<T, TrackedAllocator<T>>;
 
 using TrackedString =
   std::basic_string<char, std::char_traits<char>, TrackedAllocator<char>>;
+
+using TrackedBstring = basic_string<byte_type, TrackedAllocator<byte_type>>;
 
 template<typename T>
 struct TrackedArrayDelete {

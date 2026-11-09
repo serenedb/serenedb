@@ -108,7 +108,7 @@ IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
 uint64_t HeadAt(bytes_view key, size_t skip) noexcept;
 
 struct Separators {
-  basic_string<byte_type, TrackedAllocator<byte_type>> arena;
+  TrackedBstring arena;
   TrackedVector<uint32_t> offsets{0};
 };
 

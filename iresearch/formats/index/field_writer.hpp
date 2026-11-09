@@ -110,10 +110,6 @@ class FieldWriter final {
   void ResetField() noexcept;
   void Reset() noexcept;
 
-  using InlineBytes = basic_string<byte_type, TrackedAllocator<byte_type>>;
-
-  static constexpr uint64_t kStringSlack = 16;
-
   static uint64_t InlineCapacity(uint64_t terms) noexcept {
     return terms * PostingMeta::kInlineBytes;
   }
@@ -122,7 +118,7 @@ class FieldWriter final {
   RecordOutput _record;
   BlockBuilder _block;
   RangeWriter _ranges;
-  InlineBytes _inline;
+  TrackedVector<byte_type> _inline;
   FsstEncoder _fsst;
   std::string _fsst_table;
   bstring _samples;

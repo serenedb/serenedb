@@ -67,8 +67,6 @@ class HnswWriter final : public AnnWriter {
   bool TrainQuantizer(const ColumnReader& col, ReadContext& ctx, bool normalize,
                       std::vector<float>& batch_buf, const AnnBuildEnv* env);
 
-  using Codes = basic_string<byte_type, TrackedAllocator<byte_type>>;
-
   AnnInfo _info;
   HnswBases* _bases;
   std::span<const MergeSource> _merge_sources;
@@ -77,7 +75,7 @@ class HnswWriter final : public AnnWriter {
   std::vector<float> _rotation;
   TrackedVector<float> _norms;
   TrackedVector<float> _tails;
-  Codes _codes;
+  TrackedVector<byte_type> _codes;
   bstring _stats_blob;
   std::unique_ptr<QuantizerWriter> _qw;
   std::vector<float> _centroid;

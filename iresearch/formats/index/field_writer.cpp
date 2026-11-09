@@ -337,8 +337,7 @@ bytes_view FieldWriter::EncodeSuffix(bytes_view suffix) {
 
 uint64_t FieldWriter::Bound(uint64_t terms, uint64_t docs,
                             bool ranges) noexcept {
-  return InlineCapacity(terms) + kStringSlack +
-         (ranges ? RangeWriter::Bound(docs) : 0);
+  return InlineCapacity(terms) + (ranges ? RangeWriter::Bound(docs) : 0);
 }
 
 void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts,
@@ -351,7 +350,7 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts,
                             OrdinalLimit(kMaxOrdinalBytes)));
   }
   Reset();
-  _inline = InlineBytes{TrackedAllocator<byte_type>{state.budget}};
+  _inline = TrackedVector<byte_type>{TrackedAllocator<byte_type>{state.budget}};
   _inline.reserve(InlineCapacity(terms));
   _docs = state.doc_count;
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
@@ -509,7 +508,7 @@ void FieldWriter::Commit(bytes_view term, const PostingMeta& meta) {
     Cut();
     Append(term, meta);
   }
-  _inline.append(meta.Inline());
+  _inline.append_range(meta.Inline());
   if (_first_block == kNoBlock) {
     _first_block = _blocks;
     _first_entry = static_cast<uint32_t>(_block.ends.size() - 1);
@@ -794,7 +793,9 @@ void FieldWriter::end() {
         _inline.empty() ? std::string{} : std::move(_inline_starts),
       .ordinal_bytes = _ordinal_bytes,
     };
-    out.WriteData(_inline.data(), _inline.size());
+    if (!_inline.empty()) {
+      out.WriteData(_inline.data(), _inline.size());
+    }
     out.WriteData(_range_regions.data(), _range_regions.size());
     _idx->SetTerms(std::move(terms));
   }

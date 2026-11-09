@@ -637,12 +637,10 @@ struct HnswCodeDistFactory {
   }
 };
 
-HnswCodeDistFactory MakeCodeFactory(bytes_view codes, uint32_t record_size,
-                                    const QuantizerStats& stats,
-                                    const std::vector<float>& centroid,
-                                    uint32_t d, const float* resident,
-                                    uint64_t rows,
-                                    TrackedVector<float>& pair_terms) {
+HnswCodeDistFactory MakeCodeFactory(
+  std::span<const byte_type> codes, uint32_t record_size,
+  const QuantizerStats& stats, const std::vector<float>& centroid, uint32_t d,
+  const float* resident, uint64_t rows, TrackedVector<float>& pair_terms) {
   HnswCodeDistFactory factory{
     .codes = codes.data(),
     .record_size = record_size,
@@ -1251,8 +1249,7 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) const {
     (rows + 1) * sizeof(uint32_t) + (rows + upper) * sizeof(uint8_t);
   const uint64_t codes = quant
                            ? rows * QuantizerRecordSize(_info.quant, d, metric,
-                                                        /*row_major=*/true) +
-                               16
+                                                        /*row_major=*/true)
                            : 0;
   const bool rotated =
     quant ? RotatesCodes(_info, d) : RotationApplies(_info.metric, d);
@@ -1383,7 +1380,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   _vectors = TrackedVector<float>{TrackedAllocator<float>{_budget}};
   _norms = TrackedVector<float>{TrackedAllocator<float>{_budget}};
   _tails = TrackedVector<float>{TrackedAllocator<float>{_budget}};
-  _codes = Codes{TrackedAllocator<byte_type>{_budget}};
+  _codes = TrackedVector<byte_type>{TrackedAllocator<byte_type>{_budget}};
   TrackedVector<uint8_t> valid(_rows, 1, TrackedAllocator<uint8_t>{_budget});
   std::vector<float> batch_buf;
   const bool normalize = _info.metric == VectorMetric::Cosine;

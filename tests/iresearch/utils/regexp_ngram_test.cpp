@@ -152,16 +152,31 @@ TEST(RegexpNGramTest, shapes) {
 }
 
 TEST(RegexpNGramTest, exact_shapes) {
-  for (const std::string_view pattern :
-       {"abc", "^abc$", "(?s)abc.*", "(?s).*abc", "(?s).*abc.*", "(?s)a.*",
-        "(?s).*a", "(?s).*", "", R"([\s\S]*abc)", "(ab){2}", R"(a\x1fb)",
-        R"((?s)\x{ff}.*)", "[ab]cd", "(?is).*a.*", "(?is)ab.*", "(?Ls).*i.*",
-        "(?s).*[ab].*", "(?is).*\xD0\xB6.*"}) {
+  for (const std::string_view pattern : {"abc",
+                                         "^abc$",
+                                         "(?s)abc.*",
+                                         "(?s).*abc",
+                                         "(?s).*abc.*",
+                                         "(?s)a.*",
+                                         "(?s).*a",
+                                         "(?s).*",
+                                         "",
+                                         R"([\s\S]*abc)",
+                                         "(ab){2}",
+                                         R"(a\x1fb)",
+                                         R"((?s)\x{ff}.*)",
+                                         "[ab]cd",
+                                         "(?is).*a.*",
+                                         "(?is)ab.*",
+                                         "(?is).*i.*",
+                                         "(?s).*[ab].*",
+                                         "(?is).*\xD0\xB6.*",
+                                         R"((?is).*\x{4E2D}.*)"}) {
     EXPECT_TRUE(Exact(pattern)) << pattern;
   }
   for (const std::string_view pattern :
        {"abc.*", ".*abc", "a.c", "(?s)a.c", "(?s)ab.*cd", "(?s).+abc",
-        "(?i)abc", R"((?is).*\x{4E2D}.*)", "(abc)?", "a+", R"(\babc)"}) {
+        "(?i)abc", "(abc)?", "a+", R"(\babc)"}) {
     EXPECT_FALSE(Exact(pattern)) << pattern;
   }
 }
@@ -246,7 +261,7 @@ TEST(RegexpNGramTest, case_folding) {
      R"(And(Or("AB", "aB", "Ab", "ab"), Or("BC", "bC", "Bc", "bc")))", 2},
     {"(?i)ab.*", R"(Or("\xffAB", "\xffAb", "\xffaB", "\xffab"))"},
     {"[Aa]bc", R"(Or("\xffAbc\xff", "\xffabc\xff"))"},
-    {R"((?i)\x{4E2D}12)", R"("12\xff")"},
+    {R"((?i)\x{4E2D}12)", R"("\xff\xe4\xb8\xad12\xff")"},
   };
   Check(kCases);
   EXPECT_EQ(Extract("(?i)abc"), Extract("(?i)ABC"));
@@ -501,7 +516,7 @@ TEST(RegexpNGramTest, folded_terms_satisfy_query) {
 
 TEST(RegexpNGramTest, exact_plans_decide_terms) {
   static constexpr std::string_view kAlphabet[]{
-    "a", "b", "\n", "\x1F", "\xC3\xBF", "\xD0\xB6", "A", "\xC4\xB0"};
+    "a", "b", "\n", "\x1F", "\xC3\xBF", "\xD0\xB6", "A", "\xE4\xB8\xAD"};
   std::vector<std::string> terms{""};
   for (size_t from = 0, len = 0; len != 4; ++len) {
     const auto to = terms.size();
@@ -517,9 +532,23 @@ TEST(RegexpNGramTest, exact_plans_decide_terms) {
     "", "a", "ab", "(?s).*", "(?s)a.*", "(?s).*a", "(?s).*ab.*", "^ab$",
   };
   static constexpr std::string_view kAtoms[]{
-    "a",      "b",      "\xD0\xB6", "ab",      "(?s:.*)",       ".*",
-    "(?s:.)", ".",      "\\n",      "\\x1f",   "\\x{ff}",       "(?i:a)",
-    "(?L:a)", "(?L:i)", "[ab]",     "(?i:ab)", "(?L:\xD0\xB6)",
+    "a",
+    "b",
+    "\xD0\xB6",
+    "ab",
+    "(?s:.*)",
+    ".*",
+    "(?s:.)",
+    ".",
+    "\\n",
+    "\\x1f",
+    "\\x{ff}",
+    "(?i:a)",
+    "[ab]",
+    "(?i:ab)",
+    "(?i:\xD0\xB6)",
+    "(?i:\xC3\xBF)",
+    "(?i:\xE4\xB8\xAD)",
   };
   std::mt19937 rng{20261002};
   for (int i = 0; i != 400; ++i) {

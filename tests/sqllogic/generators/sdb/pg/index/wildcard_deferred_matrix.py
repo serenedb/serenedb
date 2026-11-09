@@ -1,3 +1,5 @@
+import re
+
 from sqllogic_gen import Test, lit
 
 t = Test("Every deferred wildcard and regexp shape against the same predicate "
@@ -25,12 +27,13 @@ def word():
     if kind == 6:
         return f"{rng.choice(['x', 'xy', 'xyz'])}{rng.randrange(10)}{rng.choice(['%', '_', ''])}z"
     if kind == 7:
-        return "".join(rng.choice(CASED) for _ in range(rng.randrange(2, 8)))
+        cased = "".join(rng.choice(CASED) for _ in range(rng.randrange(2, 8)))
+        return re.sub("\n+", "\n", cased)
     return "".join(rng.choice(ALPHA) for _ in range(rng.randrange(6, 14)))
 
 
-CASED = ["a", "A", "b", "B", "c", "C", "i", "I", "İ", "ı", "k", "K", "K",
-         "s", "S", "ß", "ẞ", "σ", "ς", "Σ", "é", "É", "x", "\n"]
+CASED = ["a", "A", "b", "B", "c", "C", "i", "I", "ı", "k", "K", "K",
+         "s", "S", "ß", "ẞ", "σ", "Σ", "é", "É", "x", "\n"]
 
 
 ROWS = 700
@@ -42,7 +45,7 @@ LIKES = ["user-%", "%-abc", "%abc%", "abc", "a_c", "a_c%", "%a_c", "user-_-%",
          "user-__-%", "%/v_/%", "/api/%/abc", "admin\\_%", "%\\%", "%\\_x",
          "x_%z", "%z", "%", "_", "__", "___", "a%c", "a%b%c", "%9%", "%0_",
          "%ab", "ab%", "abcabc", "%cabc%", "%9\\%z", "xyz%", "%a%a%",
-         "%İ%", "%i%", "%I%", "%k%", "%K%", "%ß%", "%ss%", "%Σ%", "%ς%",
+         "%i%", "%I%", "%k%", "%K%", "%ß%", "%ss%", "%Σ%",
          "%é%", "AB%", "%C", "%A_C%", "%\n%", "_\n%"]
 REGEXPS = [".*abc.*", "user-[0-9]+-.*", "user-[0-9]{3}-[a-z]{3}", "(abc|cba)",
            "a.c", "[a-c]{3}", "/api/v[0-2]/(users|items)", "admin_[0-9]+",

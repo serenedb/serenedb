@@ -176,10 +176,8 @@ bool IsSurrogate(re2::Rune rune) noexcept {
   return rune >= 0xD800 && rune <= 0xDFFF;
 }
 
-// RE2 keeps `FoldCase` on a literal only for ASCII letters and for runes with
-// no other case; past ASCII we cannot tell those apart, so assume a fold.
 bool MayFold(re2::Rune rune) noexcept {
-  return rune >= 0x80 || absl::ascii_isalpha(static_cast<unsigned char>(rune));
+  return rune < 0x80 && absl::ascii_isalpha(static_cast<unsigned char>(rune));
 }
 
 bstring Encode(const Runes& runes, byte_type boundary, bool bytes) {
@@ -425,7 +423,7 @@ class Extractor {
       _poisoned = _poisoned || IsSurrogate(rune);
       if (fold && MayFold(rune)) {
         flush();
-        pieces.push_back(rune < 0x80 ? AsciiCases(rune) : AnyChar());
+        pieces.push_back(AsciiCases(rune));
       } else {
         run.push_back(static_cast<char32_t>(rune));
       }
@@ -776,9 +774,6 @@ class LikeShape {
     const bool fold = (re->parse_flags() & re2::Regexp::FoldCase) != 0;
     for (auto rune : runes) {
       if (fold && MayFold(rune)) {
-        if (rune >= 0x80) {
-          return false;
-        }
         const auto c = static_cast<unsigned char>(rune);
         const std::array<re2::Rune, 2> cases{absl::ascii_tolower(c),
                                              absl::ascii_toupper(c)};

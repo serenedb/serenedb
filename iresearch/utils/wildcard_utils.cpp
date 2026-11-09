@@ -90,7 +90,7 @@ std::string LikeRegexp(std::string_view pattern, bool ignore_case) {
   static constexpr std::string_view kMeta = "\\[](){}.*+?|^$";
   std::string regex;
   regex.reserve(pattern.size() * 2 + 9);
-  regex += ignore_case ? "(?sL)\\A" : "(?s)\\A";
+  regex += ignore_case ? "(?si)\\A" : "(?s)\\A";
   bool escaped = false;
   for (const auto c : pattern) {
     if (escaped) {

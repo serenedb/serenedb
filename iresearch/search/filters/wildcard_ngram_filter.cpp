@@ -311,8 +311,9 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   if (decided && !bytes && !analyzer.BinaryTerms()) {
     return;
   }
-  auto re = std::make_shared<const re2::RE2>(ViewCast<char>(regexp),
-                                             RegexpOptions(syntax, bytes));
+  auto options = RegexpOptions(syntax, bytes);
+  options.set_valid_utf8(!bytes && !analyzer.BinaryTerms());
+  auto re = std::make_shared<const re2::RE2>(ViewCast<char>(regexp), options);
   if (!re->ok()) {
     if (re->error_code() == re2::RE2::ErrorPatternTooLarge) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),

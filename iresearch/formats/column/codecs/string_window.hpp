@@ -44,6 +44,7 @@ class StringWindow {
     : _acc{acc},
       _compressor{compressor},
       _codes{codes},
+      _first{first},
       _begin{first.begin},
       _end{first.begin + first.rows},
       _encoded{&first} {}
@@ -52,6 +53,12 @@ class StringWindow {
   StringWindow& operator=(const StringWindow&) = delete;
 
   uint64_t Analyze(const Config& config);
+
+  bool Exact(const Config& config) const noexcept {
+    return static_cast<bool>(Encoded(config));
+  }
+
+  uint64_t Entries();
 
   Segment& TrialCompress(const Config& config);
 
@@ -68,8 +75,11 @@ class StringWindow {
   struct Measured {
     bool done = false;
     bool assembled = false;
+    bool coded = false;
     Profile profile;
     std::vector<uint32_t> codes;
+    ScratchVector<uint32_t> locals;
+    uint64_t codes_bytes = 0;
     std::string bytes;
     std::vector<Spans> spans;
   };
@@ -81,15 +91,20 @@ class StringWindow {
 
   Segment* Encoded(const Config& config) const noexcept;
 
+  uint64_t RawBound(Shape shape) const noexcept;
+
   Measured& Rows(Shape shape);
 
   std::string_view Bytes(Measured& rows);
+
+  uint64_t CodesSize(Measured& rows);
 
   const FrameSpans& Split(Measured& rows, FrameShape frame);
 
   const StringAccumulator& _acc;
   StringCompressor& _compressor;
   const NumericTuning& _codes;
+  const Segment& _first;
   uint64_t _begin;
   uint64_t _end;
   std::vector<Segment*> _encoded;

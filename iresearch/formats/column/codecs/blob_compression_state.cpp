@@ -59,11 +59,6 @@ void BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
   SDB_ASSERT(!levels.empty() && levels.size() <= kMaxLevels);
   const auto leaf = static_cast<size_t>(state.config.choice.leaf);
   auto& tuned = input.tuned;
-  const auto score = [&](const Config& config) {
-    return config.level <= method.max_trial_level
-             ? window.TrialCompress(config).Size()
-             : window.Analyze(config);
-  };
   auto config = state.config;
   if (!input.tune) {
     config.level = absl::c_linear_search(levels, tuned.level[leaf])
@@ -71,7 +66,7 @@ void BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
                      : levels.front();
     config.layout = tuned.layout[leaf];
     state.config = config;
-    state.score = score(config);
+    state.score = window.Analyze(config);
     return;
   }
   uint64_t scores[kMaxLevels];
@@ -105,9 +100,6 @@ void BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
   analyze_layout(FrameLayout::Wide, kWideFramesGain);
   tuned.level[leaf] = state.config.level;
   tuned.layout[leaf] = state.config.layout;
-  if (state.config.level <= method.max_trial_level) {
-    state.score = window.TrialCompress(state.config).Size();
-  }
 }
 
 uint64_t BlobFinalAnalyze(StringAnalyzeState& state) {

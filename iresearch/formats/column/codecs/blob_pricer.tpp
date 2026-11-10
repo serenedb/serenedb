@@ -42,11 +42,9 @@ class BlobPricer {
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  explicit BlobPricer(const NumericTuning& codes) noexcept : _codes{codes} {}
-
   uint64_t Price(const Profile& p, std::string_view bytes,
-                 const FrameSpans& spans, uint8_t level, FrameLayout layout,
-                 uint64_t begin) {
+                 const FrameSpans& spans, uint64_t codes_bytes, uint8_t level,
+                 FrameLayout layout, uint64_t begin) {
     if (!_codec || _level != level) {
       _codec.emplace(level);
       _level = level;
@@ -93,8 +91,7 @@ class BlobPricer {
     const auto entry_count = p.codes.size() + (p.shape == Shape::Dedup ? 1 : 0);
     Header h;
     return LayOut(h, data, spans.size(), Packed(entry_count, p.max_len), 0,
-                  CodesBytes(p.shape, p.rows, p.codes.size(), p.runs, _codes),
-                  0);
+                  codes_bytes, 0);
   }
 
  private:
@@ -115,7 +112,6 @@ class BlobPricer {
     return _frame;
   }
 
-  const NumericTuning& _codes;
   std::optional<typename Codec::Compressor> _codec;
   uint8_t _level = 0;
   std::string _frame;

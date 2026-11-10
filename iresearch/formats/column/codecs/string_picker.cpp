@@ -20,7 +20,9 @@
 
 #include "iresearch/formats/column/codecs/string_picker.hpp"
 
-#include <limits>
+#include <algorithm>
+#include <array>
+#include <iterator>
 #include <span>
 
 #include "iresearch/formats/column/codecs/numeric.hpp"
@@ -38,6 +40,8 @@ constexpr uint64_t kDedupMinRepeat = 2;
 constexpr uint64_t kLz4MaxRatio = 255;
 constexpr uint64_t kTuneMinEntries = 2;
 constexpr uint8_t kLz4Fast = 1;
+constexpr double kShapeSlack = 0.08;
+constexpr double kScoreSlack = 0.02;
 
 struct Candidate {
   ByteCodec leaf = ByteCodec::Lz4;
@@ -75,6 +79,15 @@ constexpr TierCandidates kFlush{
 
 constexpr TierCandidates kMerge{.candidates = kMergeCandidates};
 
+constexpr size_t kMaxCandidates =
+  std::max(std::size(kFlushCandidates), std::size(kMergeCandidates));
+
+struct Scored {
+  Config config;
+  double score = 0;
+  bool trial = false;
+};
+
 const TierCandidates& CandidatesOf(WriteTier tier) noexcept {
   return tier == WriteTier::Flush ? kFlush : kMerge;
 }
@@ -83,13 +96,13 @@ bool Repeats(uint64_t entries, uint64_t values) noexcept {
   return entries * kDedupMinRepeat <= values;
 }
 
-bool PlainWins(const Segment& dedup, uint64_t plain) noexcept {
-  if (!Repeats(dedup.entries, dedup.rows - dedup.nulls)) {
-    return plain <= dedup.Size();
+bool PlainWins(uint64_t entries, uint64_t values, double dedup,
+               double plain) noexcept {
+  if (!Repeats(entries, values)) {
+    return plain <= dedup;
   }
-  return static_cast<double>(plain) <
-           static_cast<double>(dedup.Size()) * kPlainWinsBelow &&
-         plain + kPlainMinSaving <= dedup.Size();
+  return plain < dedup * kPlainWinsBelow &&
+         plain + static_cast<double>(kPlainMinSaving) <= dedup;
 }
 
 Config Fast(Shape shape) noexcept {
@@ -140,19 +153,37 @@ bool StringPicker::Drifted(const Segment& seg) const noexcept {
 PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
                                                         bool drift) {
   const auto input = first->input;
+  const auto values = first->rows - first->nulls;
   StringWindow window{_acc, _compressor, *first, _tuning.estimators.codes};
-  const auto& dedup = window.TrialCompress(Fast(Shape::Dedup));
+  const auto entries = window.Entries();
+  const auto slack = [&](Shape shape) {
+    return window.Exact(Fast(shape)) ? 0.0 : kShapeSlack;
+  };
   auto shape = Shape::Dedup;
-  if (PlainWins(dedup, kHeaderSize + Packed(dedup.rows, dedup.max_len) +
-                         dedup.input / kLz4MaxRatio) &&
-      PlainWins(dedup, window.TrialCompress(Fast(Shape::Plain)).Size())) {
-    shape = Shape::Plain;
+  auto dedup = static_cast<double>(window.Analyze(Fast(Shape::Dedup)));
+  if (PlainWins(
+        entries, values, dedup * (1.0 + slack(Shape::Dedup)),
+        static_cast<double>(kHeaderSize + Packed(first->rows, first->max_len) +
+                            input / kLz4MaxRatio))) {
+    auto plain = static_cast<double>(window.Analyze(Fast(Shape::Plain)));
+    const auto margin = std::max(slack(Shape::Dedup), slack(Shape::Plain));
+    if (PlainWins(entries, values, dedup * (1.0 - margin), plain) !=
+        PlainWins(entries, values, dedup * (1.0 + margin), plain)) {
+      dedup =
+        static_cast<double>(window.TrialCompress(Fast(Shape::Dedup)).Size());
+      plain =
+        static_cast<double>(window.TrialCompress(Fast(Shape::Plain)).Size());
+    }
+    if (PlainWins(entries, values, dedup, plain)) {
+      shape = Shape::Plain;
+    }
   }
   auto& tuned = _tuning.tuned;
-  const bool tune = dedup.entries >= kTuneMinEntries && !tuned.done;
+  const bool tune = entries >= kTuneMinEntries && !tuned.done;
   const auto& tier = CandidatesOf(_params.tier);
-  Config best_config;
-  uint64_t best_score = std::numeric_limits<uint64_t>::max();
+  std::array<Scored, kMaxCandidates> scored;
+  size_t count = 0;
+  size_t best = 0;
   for (const auto& candidate : tier.candidates) {
     const auto& function =
       GetStringCompressionFunction({.choice = {shape, candidate.leaf}});
@@ -167,15 +198,30 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
                function.final_analyze);
     auto state = function.init_analyze(input);
     function.analyze(*state, input);
-    if (const auto score = function.final_analyze(*state); score < best_score) {
-      best_score = score;
-      best_config = state->config;
+    auto score = static_cast<double>(function.final_analyze(*state));
+    if (candidate.leaf != ByteCodec::Fsst) {
+      score *= 1.0 + tier.fsst_preference;
     }
+    scored[count] = {
+      .config = state->config,
+      .score = score,
+      .trial = state->config.level <= candidate.method.max_trial_level,
+    };
+    if (score < scored[best].score) {
+      best = count;
+    }
+    ++count;
   }
   if (tune) {
     tuned.done = true;
   }
-  auto* picked = &window.TrialCompress(best_config);
+  auto* picked = &window.TrialCompress(scored[best].config);
+  for (size_t i = 0; i < count; ++i) {
+    if (scored[i].trial &&
+        scored[i].score <= scored[best].score * (1.0 + kScoreSlack)) {
+      window.TrialCompress(scored[i].config);
+    }
+  }
   for (auto* seg : window.Encodings()) {
     if (seg->config.choice.shape == shape && seg->Size() < picked->Size()) {
       picked = seg;

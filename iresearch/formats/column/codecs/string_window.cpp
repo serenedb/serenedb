@@ -28,27 +28,35 @@
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::text {
+namespace {
+
+constexpr uint64_t kTrialRawBytes = 512 * 1024;
+
+}  // namespace
 
 uint64_t StringWindow::Analyze(const Config& config) {
   if (const auto* seg = Encoded(config)) {
     return seg->Size();
   }
-  auto& rows = Rows(config.choice.shape);
   const auto price =
     [&]<typename Codec>(std::optional<BlobPricer<Codec>>& slot) -> uint64_t {
+    auto& rows = Rows(config.choice.shape);
     if (!slot) {
-      slot.emplace(_codes);
+      slot.emplace();
     }
     const auto whole =
       config.layout == FrameLayout::Local ? Bytes(rows) : std::string_view{};
     return slot->Price(rows.profile, whole,
                        Split(rows, FrameShapeOf<Codec>(config.layout)),
-                       config.level, config.layout, _begin);
+                       CodesSize(rows), config.level, config.layout, _begin);
   };
   switch (config.choice.leaf) {
     case ByteCodec::Lz4:
       if (EffectiveLevel<Lz4>(config.level) > 1) {
         return price(_pricers.lz4_hc);
+      }
+      if (RawBound(config.choice.shape) <= kTrialRawBytes) {
+        return TrialCompress(config).Size();
       }
       return price(_pricers.lz4);
     case ByteCodec::Zstd:
@@ -60,6 +68,22 @@ uint64_t StringWindow::Analyze(const Config& config) {
       break;
   }
   SDB_UNREACHABLE();
+}
+
+uint64_t StringWindow::RawBound(Shape shape) const noexcept {
+  if (shape == Shape::Dedup && _first.config.choice.shape == Shape::Dedup) {
+    return std::min(_first.input, _first.entries * _first.max_len);
+  }
+  return _first.input;
+}
+
+uint64_t StringWindow::Entries() {
+  for (const auto* seg : _encoded) {
+    if (seg->config.choice.shape == Shape::Dedup) {
+      return seg->entries;
+    }
+  }
+  return Rows(Shape::Dedup).profile.codes.size();
 }
 
 Segment& StringWindow::TrialCompress(const Config& config) {
@@ -110,6 +134,7 @@ StringWindow::Measured& StringWindow::Rows(Shape shape) {
     }
   } else {
     _dedup.Begin(_acc.values.size());
+    rows.locals.resize(_end - _begin);
     uint32_t last = 0;
     for (auto row = _begin; row < _end; ++row) {
       const auto code = _acc.codes[row];
@@ -123,6 +148,7 @@ StringWindow::Measured& StringWindow::Rows(Shape shape) {
           add(code);
         }
       }
+      rows.locals[row - _begin] = local;
       if (row == _begin || local != last) {
         ++p.runs;
       }
@@ -131,6 +157,20 @@ StringWindow::Measured& StringWindow::Rows(Shape shape) {
     p.codes = rows.codes;
   }
   return rows;
+}
+
+uint64_t StringWindow::CodesSize(Measured& rows) {
+  if (rows.profile.shape != Shape::Dedup) {
+    return 0;
+  }
+  if (!rows.coded) {
+    rows.coded = true;
+    auto tuning = _codes;
+    rows.codes_bytes =
+      EncodeCodes(rows.locals, rows.codes.size(), rows.profile.runs, tuning)
+        .size();
+  }
+  return rows.codes_bytes;
 }
 
 std::string_view StringWindow::Bytes(Measured& rows) {

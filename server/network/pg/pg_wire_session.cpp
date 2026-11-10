@@ -2464,11 +2464,18 @@ PlanPtr PgWireSession<Kind>::ResolvePlan(
                         ? DeclaredNumericParamType(*plan, stmt, i, values)
                         : ResolveExpectedType(*plan, stmt.TypeHints(), i));
   }
+  if (auto cached = stmt.Resolution(plan, hints)) {
+    return cached;
+  }
   auto resolved = PrepareInternal(stmt.Source()->Copy(), &hints);
   if (resolved->HasError()) {
     return plan;
   }
-  return PlanPtr{std::move(resolved)};
+  PlanPtr result{std::move(resolved)};
+  if (plan == stmt.Plan()) {
+    stmt.SetResolution(std::move(hints), result);
+  }
+  return result;
 }
 
 template<SocketKind Kind>

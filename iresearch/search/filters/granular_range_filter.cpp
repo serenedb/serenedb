@@ -75,8 +75,12 @@ QueryBuilder::ptr Complement(const SubReader& segment,
   }
   auto tails = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Sum);
-  VisitInto(*tails, ctx, reader, {}, from);
-  VisitInto(*tails, ctx, reader, to, {});
+  if (!from.empty()) {
+    VisitInto(*tails, ctx, reader, {}, from);
+  }
+  if (!to.empty()) {
+    VisitInto(*tails, ctx, reader, to, {});
+  }
   BooleanBuilder builder{segment, ctx.memory, 0, ctx.boost,
                          ScoreMergeType::Sum};
   builder.Add(memory::make_tracked<AllQuery>(ctx.memory, segment, kNoBoost),
@@ -112,13 +116,8 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   }
   const bool has_min = rng.min_type != BoundType::Unbounded && !rng.min.empty();
   const bool has_max = rng.max_type != BoundType::Unbounded && !rng.max.empty();
-  const bytes_view type_tag = has_min   ? bytes_view{rng.min}.substr(0, 1)
-                              : has_max ? bytes_view{rng.max}.substr(0, 1)
-                                        : bytes_view{};
-  const bstring from =
-    has_min ? RangeLower(rng.min, rng.min_type) : bstring{type_tag};
-  const bstring to =
-    has_max ? RangeUpper(rng.max, rng.max_type) : UpperBoundOf(type_tag);
+  const bstring from = has_min ? RangeLower(rng.min, rng.min_type) : bstring{};
+  const bstring to = has_max ? RangeUpper(rng.max, rng.max_type) : bstring{};
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
   const auto inside = VisitInto(*query, ctx, *reader, from, to);

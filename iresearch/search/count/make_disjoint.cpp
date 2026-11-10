@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 
 #include <array>
+#include <compare>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -39,18 +40,44 @@ struct MemberClauses {
   bool exact = false;
 };
 
-bool DistinctSingles(std::span<const detail::PostingClause> clauses) {
-  std::vector<uint64_t> singles;
+struct TermKey {
+  enum class Kind : uint8_t {
+    Single,
+    Inline,
+    Stored,
+  };
+
+  DictMember member;
+  Kind kind;
+  uint64_t at;
+
+  auto operator<=>(const TermKey&) const = default;
+};
+
+TermKey KeyOf(const detail::PostingClause& clause) noexcept {
+  const auto& cookie = clause.state.cookie;
+  const auto member = clause.state.reader->meta().dict.member;
+  if (cookie.docs_count == 1) {
+    return {.member = member, .kind = TermKey::Kind::Single,
+            .at = cookie.doc_delta};
+  }
+  if (cookie.inline_size != 0) {
+    return {.member = member, .kind = TermKey::Kind::Inline,
+            .at = reinterpret_cast<uintptr_t>(cookie.inline_data)};
+  }
+  return {.member = member, .kind = TermKey::Kind::Stored,
+          .at = cookie.doc_start};
+}
+
+bool DistinctTerms(std::span<const detail::PostingClause> clauses) {
+  std::vector<TermKey> keys;
   for (const auto& clause : clauses) {
-    const auto& cookie = clause.state.cookie;
-    if (clause.group == 0 && cookie.docs_count == 1) {
-      const auto member =
-        static_cast<uint64_t>(clause.state.reader->meta().dict.member);
-      singles.push_back(member << 32 | cookie.doc_delta);
+    if (clause.group == 0) {
+      keys.push_back(KeyOf(clause));
     }
   }
-  absl::c_sort(singles);
-  return absl::c_adjacent_find(singles) == singles.end();
+  absl::c_sort(keys);
+  return absl::c_adjacent_find(keys) == keys.end();
 }
 
 bool NegationSums(const BooleanQuery& query) {
@@ -99,7 +126,7 @@ bool Disjoint(std::span<const detail::PostingClause> clauses) {
   if (several && IsList(meta.dict.layout)) {
     return false;
   }
-  return DistinctSingles(clauses);
+  return DistinctTerms(clauses);
 }
 
 uint64_t SumOf(std::span<const detail::PostingClause> clauses) noexcept {

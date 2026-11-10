@@ -307,3 +307,36 @@ QUERY PLAN
 │ Output: row-count only   │
 │ 1 row                0µs │
 ╰──────────────────────────╯
+
+
+# Three rows per value keep every posting inline in the dictionary: a term that
+# two overlapping clauses both select still counts its rows once.
+statement ok
+CREATE TABLE csv_dup (id INT PRIMARY KEY, v INT)
+
+
+statement ok
+CREATE INDEX csv_dup_idx ON csv_dup USING inverted (id, v)
+  WITH (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO csv_dup SELECT i, 1 + i % 100 FROM generate_series(0, 299) g(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) csv_dup
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_dup_idx
+     WHERE v BETWEEN 1 AND 2 OR v BETWEEN 2 AND 3) AS ranges,
+  (SELECT count(*) FROM csv_dup_idx WHERE v IN (1, 2) OR v IN (2, 3)) AS lists,
+  (SELECT count(*) FROM csv_dup_idx
+     WHERE NOT (v BETWEEN 1 AND 2 OR v BETWEEN 2 AND 3)) AS negated,
+  (SELECT count(*) FROM csv_dup_idx
+     WHERE v BETWEEN 1 AND 5 AND v BETWEEN 1 AND 5) AS repeated
+----
+ranges	lists	negated	repeated
+9	9	291	15

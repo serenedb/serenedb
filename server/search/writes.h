@@ -185,8 +185,10 @@ class Writes {
   void PrepareCommit(duckdb::ClientContext& context);
   std::vector<LogSection> TakeLog(duckdb::ClientContext& context);
   bool CrossTable() const;
-  std::vector<absl::Mutex*> CommitMutexes() const;
-  void Apply(Tick tick, Lsn lsn) noexcept;
+  std::vector<absl::Mutex*> CommitMutexes(
+    std::span<const std::shared_ptr<Store>> layouts) const;
+  void Apply(Tick tick, Lsn lsn,
+             std::span<const std::shared_ptr<Store>> layouts) noexcept;
   void BeforePublish() noexcept;
   void Finish() noexcept;
 

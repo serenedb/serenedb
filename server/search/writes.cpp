@@ -1436,11 +1436,17 @@ bool Writes::CrossTable() const {
   });
 }
 
-std::vector<absl::Mutex*> Writes::CommitMutexes() const {
+std::vector<absl::Mutex*> Writes::CommitMutexes(
+  std::span<const std::shared_ptr<Store>> layouts) const {
   std::vector<absl::Mutex*> mutexes;
   for (const auto& [store_id, w] : _writes) {
     if (w.prepared) {
       mutexes.push_back(&w.store->GetTable().CommitMutex());
+    }
+  }
+  for (const auto& store : layouts) {
+    if (store->HasTable()) {
+      mutexes.push_back(&store->GetTable().CommitMutex());
     }
   }
   absl::c_sort(mutexes);
@@ -1448,7 +1454,11 @@ std::vector<absl::Mutex*> Writes::CommitMutexes() const {
   return mutexes;
 }
 
-void Writes::Apply(Tick tick, Lsn lsn) noexcept {
+void Writes::Apply(Tick tick, Lsn lsn,
+                   std::span<const std::shared_ptr<Store>> layouts) noexcept {
+  for (const auto& store : layouts) {
+    store->CommitLayout(_session);
+  }
   for (auto& [store_id, w] : _writes) {
     if (!w.table) {
       ReleaseWriter(w);
@@ -1474,6 +1484,15 @@ void Writes::Apply(Tick tick, Lsn lsn) noexcept {
           " failed after the log took it: ", duckdb::ErrorData{e}.RawMessage());
       }
       w.transactions.clear();
+    }
+  }
+  for (const auto& store : layouts) {
+    try {
+      store->PublishLayout(tick);
+    } catch (const std::exception& e) {
+      SDB_FATAL(
+        SEARCH, "commit: publishing the layout of table ", store->GetId(),
+        " failed after the log took it: ", duckdb::ErrorData{e}.RawMessage());
     }
   }
 }

@@ -585,13 +585,12 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     }
   }
   RewriteOwnRows(context, target);
-  if (!target.added.empty()) {
-    auto& connection = ConnectionContext::Get(context);
-    auto& transaction = connection.Transaction();
-    transaction.SearchTxn().Rebuilt(
-      target.shard, std::move(rebuilt),
-      connection.IsStableSnapshot() &&
-        shard.GetTable().LastWrite() > transaction.Snapshot());
+  auto& connection = ConnectionContext::Get(context);
+  auto& transaction = connection.Transaction();
+  const bool newer = connection.IsStableSnapshot() &&
+                     shard.GetTable().LastWrite() > transaction.Snapshot();
+  if (rebuilt && (!target.added.empty() || !newer)) {
+    transaction.SearchTxn().Rebuilt(target.shard, std::move(rebuilt), newer);
   }
 }
 

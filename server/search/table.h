@@ -223,6 +223,12 @@ class Table final {
   Tick LastWrite() const noexcept {
     return _last_write.load(std::memory_order_acquire);
   }
+  Tick LastRewrite() const noexcept {
+    return _last_rewrite.load(std::memory_order_acquire);
+  }
+  void Rewritten(Tick tick) noexcept {
+    _last_rewrite.store(tick, std::memory_order_release);
+  }
 
   [[nodiscard]] bool Apply(Tick tick, TableCommit&& commit);
   std::shared_ptr<const TableState> Replace(Tick tick, Lsn lsn,
@@ -308,6 +314,7 @@ class Table final {
   Lsn _needed ABSL_GUARDED_BY(_state_mutex) = kNoLsn;
   std::atomic<Tick> _last_append{0};
   std::atomic<Tick> _last_write{0};
+  std::atomic<Tick> _last_rewrite{0};
   mutable absl::Mutex _commit_mutex;
   std::atomic<uint64_t> _piece_bytes{0};
   std::atomic<bool> _full_tier{false};

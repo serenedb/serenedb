@@ -165,9 +165,6 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
   }
   SetTasksSettings(options);
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  if (is_new) {
-    Open();
-  }
 }
 
 Store::~Store() {
@@ -250,8 +247,8 @@ void Store::Open() {
   if (IsSearchTable()) {
     {
       absl::MutexLock lock{&_layout_mutex};
-      _table =
-        std::make_unique<Table>(*_dir, ReaderOptions(), _layout.scan_config);
+      _table = std::make_unique<Table>(*_dir, ReaderOptions(),
+                                       _layout.published_config);
     }
     if (_writer) {
       _piece_dir = std::make_unique<irs::MemoryDirectory>();
@@ -907,6 +904,7 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   CommitStorage(LogReplace(ids, named, maps), [&](Tick tick, Lsn lsn) {
     published =
       _table->Replace(tick, lsn, ids, std::move(segments), std::move(maps));
+    _table->Rewritten(tick);
     QueueReleaseCleanup(shared_from_this(), tick);
   });
   return published;
@@ -1017,8 +1015,13 @@ void Store::RebuildConfig(Configs&& configs,
 }
 
 void Store::ScanConfigChanged() {
+  if (_layout.owner != kNoLayoutOwner) {
+    _layout.owner_changed = true;
+    return;
+  }
+  _layout.published_config = _layout.scan_config;
   if (_table) {
-    _table->SetConfig(_layout.scan_config);
+    _table->SetConfig(_layout.published_config);
   }
 }
 
@@ -1088,8 +1091,12 @@ void Store::ReleaseLayout(duckdb::transaction_t owner,
                           bool committed) noexcept {
   absl::MutexLock lock{&_layout_mutex};
   SDB_ASSERT(_layout.owner == owner);
+  if (committed) {
+    AdoptOwnConfig();
+  }
   _layout.owner = kNoLayoutOwner;
   _layout.exclusive = Exclusive::None;
+  _layout.owner_changed = false;
   auto undo = std::exchange(_layout.schema_undo, std::nullopt);
   if (undo && !committed) {
     _schema_epoch.store(undo->epoch);
@@ -1097,6 +1104,37 @@ void Store::ReleaseLayout(duckdb::transaction_t owner,
     _compression = std::move(undo->compression);
     _constraint_keys = std::move(undo->constraint_keys);
     RebuildConfig(_layout.configs, _layout.building_index);
+  }
+}
+
+std::shared_ptr<const catalog::InvertedIndexConfig> Store::OwnScanConfig(
+  duckdb::transaction_t owner) const {
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return _layout.owner == owner && _layout.owner_changed ? _layout.scan_config
+                                                         : nullptr;
+}
+
+void Store::CommitLayout(duckdb::transaction_t owner) noexcept {
+  absl::MutexLock lock{&_layout_mutex};
+  if (_layout.owner == owner) {
+    AdoptOwnConfig();
+  }
+}
+
+void Store::PublishLayout(Tick commit) {
+  if (_table) {
+    _table->PublishConfig(commit);
+  }
+}
+
+void Store::AdoptOwnConfig() noexcept {
+  if (!_layout.owner_changed ||
+      _layout.published_config == _layout.scan_config) {
+    return;
+  }
+  _layout.published_config = _layout.scan_config;
+  if (_table) {
+    _table->SetConfig(_layout.published_config);
   }
 }
 
@@ -1191,14 +1229,8 @@ Store::BuildClaim::~BuildClaim() {
 }
 
 void Store::BuildClaim::Finish() {
-  auto* store = std::exchange(_store, nullptr);
-  if (!store) {
-    return;
-  }
-  store->FinishIndexBuild(_index_oid);
-  if (store->_table && !store->_read_only) {
-    store->CommitUnlogged(
-      [&](Tick tick) { store->_table->PublishConfig(tick); });
+  if (auto* store = std::exchange(_store, nullptr)) {
+    store->FinishIndexBuild(_index_oid);
   }
 }
 

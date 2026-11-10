@@ -358,6 +358,9 @@ SearchTableEntry::SearchTableEntry(
   _referencing = std::move(referencing);
   if (fresh) {
     ApplyKeys();
+    if (base.oid == 0) {
+      _storage->Open();
+    }
   }
 }
 

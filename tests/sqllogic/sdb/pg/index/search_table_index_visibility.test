@@ -1,0 +1,230 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY stiv_text AS
+    split_text(case := 'lower', break := 'alpha')
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE stiv_t (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO stiv_t VALUES (1, 'quick brown fox'), (2, 'lazy dog');
+
+
+connection builder
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection builder
+statement ok
+CREATE INDEX stiv_idx ON stiv_t USING inverted (id, body stiv_text);
+
+
+connection builder
+query
+SELECT id FROM stiv_t WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+
+connection builder
+query
+SELECT id FROM stiv_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+
+connection builder
+query
+EXPLAIN SELECT id FROM stiv_t WHERE body @@ ts_phrase('fox');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────╮
+│ Table: stiv_t           │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: fox          │ │
+│ ╰─────────────────────╯ │
+│ Projections: id         │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+
+connection other
+statement error
+SELECT id FROM stiv_t WHERE body @@ ts_phrase('fox');
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
+
+
+connection writer
+statement ok
+INSERT INTO stiv_t VALUES (3, 'red fox');
+
+
+connection other
+statement error
+SELECT id FROM stiv_t WHERE body @@ ts_phrase('fox');
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
+
+
+connection builder
+query
+SELECT id FROM stiv_t WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+
+connection builder
+statement ok
+COMMIT;
+
+
+connection other
+query
+SELECT id FROM stiv_t WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+DROP INDEX stiv_idx;
+
+
+statement error
+SELECT id FROM stiv_t WHERE body @@ ts_phrase('fox');
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
+
+
+statement ok
+CREATE TABLE stiv_u (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO stiv_u VALUES (1, 'quick brown fox');
+
+
+connection other
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection other
+query
+SELECT count(*) AS n FROM stiv_u;
+----
+n
+1
+
+
+connection writer
+statement ok
+INSERT INTO stiv_u VALUES (2, 'red fox');
+
+
+connection other
+statement ok
+CREATE INDEX stiv_u_idx ON stiv_u USING inverted (body stiv_text);
+
+
+connection other
+query
+SELECT count(*) AS n FROM stiv_u;
+----
+n
+1
+
+
+connection other
+statement error
+SELECT id FROM stiv_u_idx WHERE body @@ ts_phrase('fox');
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection other
+statement ok
+ROLLBACK;
+
+
+connection other
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection other
+query
+SELECT count(*) AS n FROM stiv_u;
+----
+n
+2
+
+
+connection writer
+statement ok
+INSERT INTO stiv_u VALUES (3, 'old fox');
+
+
+connection other
+statement ok
+CREATE INDEX stiv_u_idx ON stiv_u USING inverted (body stiv_text);
+
+
+connection other
+statement error
+SELECT id FROM stiv_u WHERE body @@ ts_phrase('fox');
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
+
+
+connection other
+statement ok
+ROLLBACK;
+
+
+statement ok
+CREATE INDEX stiv_u_idx ON stiv_u USING inverted (body stiv_text);
+
+
+query
+SELECT id FROM stiv_u_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT id FROM stiv_u WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+statement ok
+DROP TABLE stiv_u;
+
+
+statement ok
+DROP TABLE stiv_t;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY stiv_text;

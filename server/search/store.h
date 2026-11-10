@@ -267,6 +267,10 @@ class Store final : public std::enable_shared_from_this<Store>,
   [[nodiscard]] bool AcquireLayout(duckdb::transaction_t owner,
                                    std::string_view name, TableChange change);
   void ReleaseLayout(duckdb::transaction_t owner, bool committed) noexcept;
+  std::shared_ptr<const catalog::InvertedIndexConfig> OwnScanConfig(
+    duckdb::transaction_t owner) const;
+  void CommitLayout(duckdb::transaction_t owner) noexcept;
+  void PublishLayout(Tick commit);
   Exclusive ExclusiveClaim() const;
 
   uint64_t SchemaEpoch() const noexcept { return _schema_epoch.load(); }
@@ -380,8 +384,10 @@ class Store final : public std::enable_shared_from_this<Store>,
     std::vector<IndexConfig> retired;
     std::optional<duckdb::idx_t> building_index;
     bool compaction_stale = false;
+    bool owner_changed = false;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
     std::shared_ptr<const catalog::InvertedIndexConfig> scan_config;
+    std::shared_ptr<const catalog::InvertedIndexConfig> published_config;
     std::shared_ptr<const catalog::InvertedIndexConfig> compaction_config;
   };
   bool IsSearchTable() const noexcept { return _table_columns.has_value(); }
@@ -425,6 +431,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
   void ScanConfigChanged() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
+  void AdoptOwnConfig() noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
 
   duckdb::idx_t _id;
   duckdb::idx_t _db_id;

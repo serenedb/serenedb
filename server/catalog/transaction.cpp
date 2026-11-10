@@ -482,11 +482,14 @@ void Transactions::Commit(SessionTransaction& transaction,
   Log::Range range;
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
+  const auto layouts = _replaying == 0
+                         ? transaction.LayoutClaims()
+                         : std::span<const std::shared_ptr<search::Store>>{};
   {
     const CommitGate gate{_commit_gate, !transaction.Changes().empty() ||
                                           !transaction.LsnUpdates().empty() ||
                                           writes.CrossTable()};
-    const TableLocks tables{writes.CommitMutexes()};
+    const TableLocks tables{writes.CommitMutexes(layouts)};
     if (_replaying == 0) {
       CheckDependencies(transaction);
     }
@@ -529,7 +532,7 @@ void Transactions::Commit(SessionTransaction& transaction,
         change.version->Child().OnDrop();
       }
     }
-    writes.Apply(commit, range.begin);
+    writes.Apply(commit, range.begin, layouts);
     for (const auto& update : transaction.LsnUpdates()) {
       ApplyLsnUpdate(update);
     }
@@ -810,6 +813,20 @@ void SessionTransaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
   if (table->AcquireLayout(_id, name, change)) {
     _layout_claims.emplace_back(std::move(table));
   }
+}
+
+std::shared_ptr<const InvertedIndexConfig> SessionTransaction::ScanConfig(
+  duckdb::ClientContext& context, search::Store& store) {
+  const auto view = _search.Read(context, store);
+  if (absl::c_any_of(
+        _layout_claims,
+        [&](const auto& claimed) { return claimed.get() == &store; }) &&
+      view.state->tick >= store.GetTable().LastRewrite()) {
+    if (auto own = store.OwnScanConfig(_id)) {
+      return own;
+    }
+  }
+  return view.state->config;
 }
 
 void SessionTransaction::PrepareCommit(duckdb::ClientContext& context) {

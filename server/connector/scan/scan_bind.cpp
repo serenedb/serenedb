@@ -325,6 +325,16 @@ duckdb::unique_ptr<ScanBindData> BindIndexScan(
                               search_table ? "search" : "table");
   data->relation.inverted_index = &entry;
   data->relation.inverted_config = entry.Config();
+  if (search_table) {
+    const auto config =
+      ConnectionContext::Get(context).Transaction().ScanConfig(
+        context, *search_table->Storage());
+    if (!absl::c_all_of(entry.Config()->fields, [&](const auto& field) {
+          return config->fields.contains(field.first);
+        })) {
+      search::ThrowConcurrentUpdate();
+    }
+  }
   data->relation.row_group_size =
     search_table ? search_table->Storage()->Config()->row_group_size
                  : entry.Config()->row_group_size;
@@ -338,7 +348,9 @@ duckdb::unique_ptr<ScanBindData> BindSearchTable(
   auto data =
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
   data->score.prune = entry.Storage()->TopKScorer();
-  data->relation.inverted_config = data->Read(context).state->config;
+  data->relation.inverted_config =
+    ConnectionContext::Get(context).Transaction().ScanConfig(context,
+                                                             *entry.Storage());
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   return data;

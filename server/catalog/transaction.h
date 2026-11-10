@@ -154,6 +154,12 @@ class SessionTransaction final {
 
   void ClaimSearchLayout(std::shared_ptr<search::Store> table,
                          std::string_view name, search::TableChange change);
+  std::span<const std::shared_ptr<search::Store>> LayoutClaims()
+    const noexcept {
+    return _layout_claims;
+  }
+  std::shared_ptr<const InvertedIndexConfig> ScanConfig(
+    duckdb::ClientContext& context, search::Store& store);
 
   SessionState State() const noexcept { return _state; }
 

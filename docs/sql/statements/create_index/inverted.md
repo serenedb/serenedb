@@ -90,6 +90,8 @@ The indexes of a table share its storage. A transaction that creates, replaces o
 
 Writes to a table never wait for an index change. `CREATE INDEX` and `CREATE OR REPLACE INDEX` on a table wait for the transactions that wrote to the table before the statement started to commit or roll back, so that their rows are indexed too; cancelling the statement ends the wait.
 
+The transaction that creates an index of a table can query with it as soon as `CREATE INDEX` returns; other transactions can once it commits. A `REPEATABLE READ` transaction whose snapshot predates writes of other transactions to the table keeps reading the table as of its snapshot, without the new index, until it commits: a query that needs the index, such as `@@` on the table's column, fails as it does on a table without the index, and a query of the index itself (`FROM <index_name>`) fails with `could not serialize access due to concurrent update`.
+
 An inverted index on a view has storage of its own, so transactions can create, replace or drop different indexes of the same view at the same time.
 
 ## Examples

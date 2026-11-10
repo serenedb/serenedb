@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <benchmark/benchmark.h>
@@ -126,8 +127,12 @@ constexpr Selectivity kSelectivities[]{
 };
 
 bytes_view Key(irs::byte_type* buf, uint64_t sortable, uint32_t shift) {
-  return {buf,
-          irs::numeric_utils::Encode<uint64_t>(sortable ^ kSign, buf, shift)};
+  const size_t size = 1 + (63 - shift) / 8;
+  irs::byte_type value[sizeof(uint64_t)];
+  absl::big_endian::Store64(value, sortable >> shift << shift);
+  buf[0] = static_cast<irs::byte_type>(shift);
+  std::memcpy(buf + 1, value, size);
+  return {buf, size + 1};
 }
 
 struct Terms {

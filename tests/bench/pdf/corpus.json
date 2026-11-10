@@ -1,5 +1,17 @@
 {
   "source": "https://raw.githubusercontent.com/jsvine/pdfplumber/4c64b92d5caccd71c645e98e0fabb0c4dba7ff45/tests/pdfs/",
+  "text_documents": [
+    {
+      "name": "chinese.pdf",
+      "url": "https://github.com/user-attachments/files/16128506/chinese.pdf",
+      "sha256": "1dbe1458dfdaefc07c1cc0e25c721a7c59963c9ccab05ed64c0f57aa2a7ac272",
+      "pages": 30,
+      "ordered_snippets": [
+        [1, ["文档智能分析与识别前沿：回顾与展望", "关键词：", "Frontiers of intelligent document"]],
+        [3, ["文档（含有文字", "一个完整的文档识别系统", "骤：图像预处理", "性能不足的地方"]]
+      ]
+    }
+  ],
   "documents": [
     {
       "name": "federal-register-2020-17221.pdf",

@@ -60,16 +60,35 @@ def evaluate(documents, results):
 
 def fetch_corpus(manifest, directory):
     directory.mkdir(parents=True, exist_ok=True)
-    for document in manifest["documents"]:
+    for document in manifest["documents"] + manifest.get("text_documents", []):
         path = directory / document["name"]
         if not path.exists():
-            with urllib.request.urlopen(manifest["source"] + document["name"], timeout=60) as response:
+            url = document.get("url", manifest["source"] + document["name"])
+            with urllib.request.urlopen(url, timeout=60) as response:
                 data = response.read()
             if hashlib.sha256(data).hexdigest() != document["sha256"]:
                 raise ValueError(f"Downloaded corpus hash mismatch: {path.name}")
             path.write_bytes(data)
         if hashlib.sha256(path.read_bytes()).hexdigest() != document["sha256"]:
             raise ValueError(f"Corpus hash mismatch: {path.name}")
+
+
+def evaluate_text(documents, results):
+    checks = []
+    for document in documents:
+        pages = {int(page): "".join(text.split()) for page, text in results[document["name"]]["rows"]}
+        for page, snippets in document["ordered_snippets"]:
+            cursor = 0
+            matched = True
+            for snippet in snippets:
+                position = pages.get(page, "").find("".join(snippet.split()), cursor)
+                if position < 0:
+                    matched = False
+                    break
+                cursor = position + len("".join(snippet.split()))
+            checks.append({"file": document["name"], "page": page, "ordered_snippets_match": matched,
+                           "page_count_match": len(pages) == document["pages"]})
+    return checks
 
 
 def measure(execute, documents, directory, repetitions):
@@ -117,6 +136,11 @@ def main():
                 "SELECT page, table_index, row_index, cells FROM read_pdf_tables(?, auto_ocr := false)", [path]
             ).fetchall(), manifest["documents"], args.corpus, args.repetitions,
         )
+        baseline_results.update(measure(
+            lambda path: baseline.execute(
+                "SELECT page, text FROM read_pdf(?, auto_ocr := false)", [path]
+            ).fetchall(), manifest.get("text_documents", []), args.corpus, args.repetitions,
+        ))
     if args.dsn:
         import psycopg
         with psycopg.connect(args.dsn, autocommit=True) as connection:
@@ -127,6 +151,10 @@ def main():
                     "SELECT page, table_index, row_index, cells FROM read_pdf_tables(%s)", (path,)
                 ).fetchall(), manifest["documents"], args.corpus, args.repetitions,
             )
+            candidate_results.update(measure(
+                lambda path: connection.execute("SELECT page, text FROM read_pdf(%s)", (path,)).fetchall(),
+                manifest.get("text_documents", []), args.corpus, args.repetitions,
+            ))
     else:
         candidate_results = json.loads(args.candidate_results.read_text())
     report = {
@@ -137,6 +165,8 @@ def main():
         "candidate": {"evaluation": evaluate(manifest["documents"], candidate_results), "documents": candidate_results},
         "baseline": {"evaluation": evaluate(manifest["documents"], baseline_results), "documents": baseline_results},
     }
+    for key, results in (("candidate", candidate_results), ("baseline", baseline_results)):
+        report[key]["text_evaluation"] = evaluate_text(manifest.get("text_documents", []), results)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({key: report[key]["evaluation"] for key in ("candidate", "baseline")}, indent=2))

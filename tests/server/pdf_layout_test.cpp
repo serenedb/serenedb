@@ -141,6 +141,15 @@ TEST(PdfLayoutTest, RightToLeftWordsKeepLatinAndNumbersInOrder) {
   EXPECT_EQ(GetReadingOrderText(words, 612), "שלום ABC 123 עולם");
 }
 
+TEST(PdfLayoutTest, NarrowColumnsBelowFullWidthText) {
+  const std::vector<TextWord> words = {
+    {0, 0, 480, 10, "Heading"}, {0, 40, 230, 50, "左上"},
+    {242, 40, 472, 50, "右上"}, {0, 55, 230, 65, "左下"},
+    {242, 55, 472, 65, "右下"},
+  };
+  EXPECT_EQ(GetReadingOrderText(words, 612), "Heading\n左上\n左下\n右上\n右下");
+}
+
 TEST(PdfLayoutTest, PaintedTableTransformsAndFormObjects) {
   PoDoFo::PdfMemDocument document;
   auto& page = document.GetPages().CreatePage(PoDoFo::Rect(0, 0, 300, 300));

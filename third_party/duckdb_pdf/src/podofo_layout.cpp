@@ -148,7 +148,7 @@ void AppendRegion(std::span<const TextWord> words, std::span<size_t> order, doub
 		size_t split = FindSeparation(words, order, 2 * height, 0, true);
 		bool rtl = false;
 		if (!split) {
-			split = FindSeparation(words, order, 3 * height, 0.15 * page_width, false);
+			split = FindSeparation(words, order, height, 0.15 * page_width, false);
 			rtl = RightToLeft(words, order);
 		}
 		if (split) {

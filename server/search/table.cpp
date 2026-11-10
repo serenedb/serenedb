@@ -657,6 +657,7 @@ std::shared_ptr<const TableState> Table::ReplaceUnits(
     if (i == units.size()) {
       continue;
     }
+    _needed = std::min(_needed, units[i]->first_lsn);
     MovedUnit source{.tick = tick};
     for (const auto& map : maps) {
       if (map.source == id) {

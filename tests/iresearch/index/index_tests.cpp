@@ -824,101 +824,6 @@ class IndexTestCase : public tests::IndexTestBase {
     }
   }
 
-  void OpenWriterCheckLock() {
-    {
-      // open writer
-      auto writer = tests::MakeWriter(dir(), irs::kOmCreate,
-                                      irs::tests::DefaultWriterOptions());
-      ASSERT_NE(nullptr, writer);
-      // can't open another writer at the same time on the same directory
-      ASSERT_SQL_ERROR(tests::MakeWriter(dir(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions()),
-                       ERRCODE_LOCK_NOT_AVAILABLE);
-      ASSERT_EQ(0, writer->BufferedDocs());
-    }
-
-    {
-      // open writer
-      auto writer = tests::MakeWriter(dir(), irs::kOmCreate,
-                                      irs::tests::DefaultWriterOptions());
-      ASSERT_NE(nullptr, writer);
-
-      writer->RefreshCommit();
-      AssertSnapshotEquality(*writer);
-      irs::RemoveUnreferenced(dir().Fs(), dir().Root(), dir().Refs());
-      // can't open another writer at the same time on the same directory
-      ASSERT_SQL_ERROR(tests::MakeWriter(dir(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions()),
-                       ERRCODE_LOCK_NOT_AVAILABLE);
-      ASSERT_EQ(0, writer->BufferedDocs());
-    }
-
-    {
-      // open writer
-      auto writer = tests::MakeWriter(dir(), irs::kOmCreate,
-                                      irs::tests::DefaultWriterOptions());
-      ASSERT_NE(nullptr, writer);
-
-      ASSERT_EQ(0, writer->BufferedDocs());
-    }
-
-    {
-      // open writer with NOLOCK hint
-      auto options0 = irs::tests::DefaultWriterOptions();
-      options0.lock_repository = false;
-      auto writer0 =
-        tests::MakeWriter(dir(), irs::kOmCreate, std::move(options0));
-      ASSERT_NE(nullptr, writer0);
-
-      // can open another writer at the same time on the same directory
-      auto options1 = irs::tests::DefaultWriterOptions();
-      options1.lock_repository = false;
-      auto writer1 =
-        tests::MakeWriter(dir(), irs::kOmCreate, std::move(options1));
-      ASSERT_NE(nullptr, writer1);
-
-      ASSERT_EQ(0, writer0->BufferedDocs());
-      ASSERT_EQ(0, writer1->BufferedDocs());
-    }
-
-    {
-      // open writer with NOLOCK hint
-      auto options0 = irs::tests::DefaultWriterOptions();
-      options0.lock_repository = false;
-      auto writer0 =
-        tests::MakeWriter(dir(), irs::kOmCreate, std::move(options0));
-      ASSERT_NE(nullptr, writer0);
-
-      // can open another writer at the same time on the same directory and
-      // acquire lock
-      auto writer1 = tests::MakeWriter(dir(), irs::kOmCreate | irs::kOmAppend,
-                                       irs::tests::DefaultWriterOptions());
-      ASSERT_NE(nullptr, writer1);
-
-      ASSERT_EQ(0, writer0->BufferedDocs());
-      ASSERT_EQ(0, writer1->BufferedDocs());
-    }
-
-    {
-      // open writer with NOLOCK hint
-      auto options0 = irs::tests::DefaultWriterOptions();
-      options0.lock_repository = false;
-      auto writer0 =
-        tests::MakeWriter(dir(), irs::kOmCreate, std::move(options0));
-      ASSERT_NE(nullptr, writer0);
-      writer0->RefreshCommit();
-
-      // can open another writer at the same time on the same directory and
-      // acquire lock
-      auto writer1 = tests::MakeWriter(dir(), irs::kOmAppend,
-                                       irs::tests::DefaultWriterOptions());
-      ASSERT_NE(nullptr, writer1);
-
-      ASSERT_EQ(0, writer0->BufferedDocs());
-      ASSERT_EQ(0, writer1->BufferedDocs());
-    }
-  }
-
   void WriterCheckOpenModes() {
     // APPEND to nonexisting index, shoud fail
     ASSERT_SQL_ERROR(tests::MakeWriter(dir(), irs::kOmAppend,
@@ -1705,8 +1610,6 @@ TEST_P(IndexTestCase, check_attributes_order) {
 }
 
 TEST_P(IndexTestCase, clear_writer) { ClearWriter(); }
-
-TEST_P(IndexTestCase, open_writer) { OpenWriterCheckLock(); }
 
 TEST_P(IndexTestCase, check_writer_open_modes) { WriterCheckOpenModes(); }
 

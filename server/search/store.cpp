@@ -205,16 +205,7 @@ void Store::OpenWriter(bool is_new) {
   IndexDurability::ManifestSource manifest;
   if (IsSearchTable()) {
     writer_options.cleanup_on_open = is_new;
-    writer_options.lock_repository = false;
   } else {
-#ifdef SDB_DEV
-    // Dev safety net: a second IndexWriter opening the same index directory (a
-    // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock
-    // with a clean error instead of silently corrupting segment files.
-    writer_options.lock_repository = true;
-#else
-    writer_options.lock_repository = false;
-#endif
     writer_options.key_column = connector::term_dict::kPKFieldId;
     SDB_IF_FAILURE("segment_1000_docs_max") {
       writer_options.segment_docs_max = 1000;

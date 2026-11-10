@@ -39,7 +39,6 @@ class MemoryIndex {
   std::shared_ptr<const irs::SubReader> IndexChunk(size_t row_count,
                                                    WriteDocs&& write_docs) {
     irs::IndexWriterOptions opts;
-    opts.lock_repository = false;
     opts.reader_options.refs = _refs;
     auto writer = irs::IndexWriter::Make(
       _db, _fs, _root, irs::OpenMode::kOmCreate, std::move(opts));

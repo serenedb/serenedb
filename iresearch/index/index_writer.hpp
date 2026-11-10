@@ -124,8 +124,6 @@ struct IndexWriterOptions : public SegmentOptions {
 
   size_t segment_pool_size = 128;
 
-  bool lock_repository = true;
-
   bool cleanup_on_open = true;
 
   ColumnOptionsProvider column_options;
@@ -160,11 +158,6 @@ class IndexWriter : private util::Noncopyable {
   struct ConstructToken {
     explicit ConstructToken() = default;
   };
-
-  struct RootRelease {
-    void operator()(const std::string* root) const noexcept;
-  };
-  using RootClaim = std::unique_ptr<const std::string, RootRelease>;
 
   class ActiveSegmentContext {
    public:
@@ -487,8 +480,7 @@ class IndexWriter : private util::Noncopyable {
 
   IndexWriter(ConstructToken, duckdb::DatabaseInstance& db,
               duckdb::FileSystem& fs, std::string_view root,
-              RootClaim root_claim, size_t segment_pool_size,
-              const SegmentOptions& segment_limits,
+              size_t segment_pool_size, const SegmentOptions& segment_limits,
               MetaPayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
@@ -809,7 +801,6 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
   uint64_t _last_gen;
   IndexMetaWriter _writer;
-  RootClaim _root_claim;
   std::array<FlushContext, 2> _flush_contexts;
 };
 

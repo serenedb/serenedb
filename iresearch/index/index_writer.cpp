@@ -62,7 +62,6 @@
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
-#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -210,16 +209,6 @@ Sync SyncOf(bool durable, bool meta_written) noexcept {
     return Sync::All;
   }
   return meta_written ? Sync::Meta : Sync::None;
-}
-
-struct WriterRoots {
-  absl::Mutex mutex;
-  containers::FlatHashSet<std::string> roots ABSL_GUARDED_BY(mutex);
-};
-
-WriterRoots& GetWriterRoots() {
-  static WriterRoots writers;
-  return writers;
 }
 
 uint64_t MaxSegmentId(duckdb::FileSystem& fs, std::string_view root) {
@@ -1171,19 +1160,9 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
   committed = true;
 }
 
-void IndexWriter::RootRelease::operator()(
-  const std::string* root) const noexcept {
-  auto& writers = GetWriterRoots();
-  {
-    absl::MutexLock lock{&writers.mutex};
-    writers.roots.erase(*root);
-  }
-  delete root;
-}
-
 IndexWriter::IndexWriter(
   ConstructToken, duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
-  std::string_view root, RootClaim root_claim, size_t segment_pool_size,
+  std::string_view root, size_t segment_pool_size,
   const SegmentOptions& segment_limits, MetaPayloadWriter&& meta_payload_writer,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
   : _db{db},
@@ -1196,7 +1175,6 @@ IndexWriter::IndexWriter(
     _seg_counter{_committed_reader->Meta().index_meta.seg_counter},
     _last_gen{_committed_reader->Meta().index_meta.gen},
     _writer{_fs, _root, std::move(meta_payload_writer)},
-    _root_claim{std::move(root_claim)},
     _flush_contexts{{FlushContext{*_refs}, FlushContext{*_refs}}} {
   _topk_scorer = _committed_reader->Options().scorer;
   if (_topk_scorer) {
@@ -1262,19 +1240,6 @@ IndexWriter::ptr IndexWriter::Make(duckdb::DatabaseInstance& db,
     options.reader_options.refs = std::make_shared<IndexFileRefs>();
   }
 
-  RootClaim root_claim;
-  if (options.lock_repository) {
-    auto claim = std::make_unique<const std::string>(PathOf(root, {}));
-    auto& writers = GetWriterRoots();
-    absl::MutexLock lock{&writers.mutex};
-    if (!writers.roots.emplace(*claim).second) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_LOCK_NOT_AVAILABLE),
-                      ERR_MSG("the index at '", *claim,
-                              "' already has a writer in this process"));
-    }
-    root_claim.reset(claim.release());
-  }
-
   // read from directory or create index metadata
   DirectoryMeta meta;
 
@@ -1313,9 +1278,9 @@ IndexWriter::ptr IndexWriter::Make(duckdb::DatabaseInstance& db,
   }(std::move(meta), options.reader_options);
 
   auto writer = std::make_shared<IndexWriter>(
-    ConstructToken{}, db, fs, root, std::move(root_claim),
-    options.segment_pool_size, SegmentOptions{options},
-    std::move(options.meta_payload_writer), std::move(reader));
+    ConstructToken{}, db, fs, root, options.segment_pool_size,
+    SegmentOptions{options}, std::move(options.meta_payload_writer),
+    std::move(reader));
   writer->_ann_env = options.ann_env;
   writer->_key_column = options.key_column;
   writer->_hnsw_bases = std::move(hnsw_bases);

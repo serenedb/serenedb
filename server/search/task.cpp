@@ -383,8 +383,6 @@ bool ReleasedPending() noexcept {
   return GetReleased().next.load(std::memory_order_acquire) != kAllApplied;
 }
 
-namespace {
-
 std::vector<std::shared_ptr<Store>> LiveStores() {
   std::vector<std::shared_ptr<Store>> stores;
   auto& targets = GetTargets();
@@ -397,8 +395,6 @@ std::vector<std::shared_ptr<Store>> LiveStores() {
   }
   return stores;
 }
-
-}  // namespace
 
 void PruneVersions(std::span<const Tick> running, Tick published,
                    std::span<const StoreSnapshots> stores) {

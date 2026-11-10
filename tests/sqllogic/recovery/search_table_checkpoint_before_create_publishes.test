@@ -1,0 +1,66 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE cbp_old (id INT) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO cbp_old VALUES (1);
+
+connection creator
+statement ok
+BEGIN;
+
+connection creator
+statement ok
+CREATE TABLE cbp_new (id INT) WITH (compaction_interval = 0);
+
+connection creator
+statement ok
+INSERT INTO cbp_new VALUES (1), (2);
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection creator
+statement async ok
+COMMIT;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection checkpointer
+statement ok
+CHECKPOINT;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection default
+query
+SELECT (SELECT count(*) FROM cbp_old) AS old, (SELECT count(*) FROM cbp_new) AS new;
+----
+old	new
+1	2
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM cbp_old) AS old, (SELECT count(*) FROM cbp_new) AS new;
+----
+old	new
+1	2

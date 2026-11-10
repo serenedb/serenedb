@@ -45,6 +45,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "search/store.h"
+#include "search/task.h"
 
 namespace sdb::search {
 namespace {
@@ -108,7 +109,7 @@ void RecoverSearchStorages(
 }
 
 void CoverLog(uint64_t target) {
-  std::vector<std::shared_ptr<Store>> tables;
+  auto tables = LiveStores();
   for (const auto& db : catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
          irs::DuckDBEngine::Instance().instance()))) {
     auto& catalog = db->GetCatalog().Cast<catalog::SereneDBCatalog>();
@@ -122,6 +123,8 @@ void CoverLog(uint64_t target) {
       },
       [](catalog::InvertedIndexEntry&) {});
   }
+  absl::c_sort(tables);
+  tables.erase(std::ranges::unique(tables).begin(), tables.end());
   SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
   for (const auto& table : tables) {
     table->Cover(target);

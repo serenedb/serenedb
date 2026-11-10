@@ -22,6 +22,7 @@
 
 #include <memory>
 #include <span>
+#include <vector>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
@@ -37,6 +38,7 @@ void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released);
 void CleanupReleased(Tick oldest, std::span<const StoreSnapshots> stores);
 void RequestCleanups() noexcept;
 bool ReleasedPending() noexcept;
+std::vector<std::shared_ptr<Store>> LiveStores();
 
 void PruneVersions(std::span<const Tick> running, Tick published,
                    std::span<const StoreSnapshots> stores);

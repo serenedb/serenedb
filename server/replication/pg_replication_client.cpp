@@ -705,16 +705,9 @@ yaclib::Task<> PgReplicationClient::Feeder() {
           const auto start =
             std::get<StreamStartMessage>(DecodePgOutput(message));
           _streamed_xid = start.xid;
-          const bool fresh = _spools.try_emplace(start.xid, buffers).second;
-          const auto received = _received_lsn.load(std::memory_order_relaxed);
-          if (fresh && start.first_segment && !_eager_xid &&
-              _spools.size() == 1 && _target.skip_lsn == 0 &&
-              received >= _max_sync_lsn) {
-            _eager_xid = start.xid;
-            _txn_open = true;
-            ok = co_await Enqueue(StreamStopMessage{}) &&
-                 co_await Enqueue(
-                   BeginMessage{.final_lsn = received, .xid = start.xid});
+          if (_spools.try_emplace(start.xid, buffers).second &&
+              start.first_segment) {
+            _eager_candidate = start.xid;
           }
           break;
         }
@@ -733,6 +726,13 @@ yaclib::Task<> PgReplicationClient::Feeder() {
               CommitMessage{.commit_lsn = commit.commit_lsn,
                             .end_lsn = commit.end_lsn,
                             .commit_time = commit.commit_time});
+            break;
+          }
+          if (const auto spool = _spools.find(commit.xid);
+              spool != _spools.end() && spool->second.Size() == 0 &&
+              commit.commit_lsn != _target.skip_lsn) {
+            _spools.erase(spool);
+            _subxacts.erase(commit.xid);
             break;
           }
           ok = (!_eager_xid || co_await CancelEager()) &&
@@ -767,6 +767,23 @@ yaclib::Task<> PgReplicationClient::Feeder() {
         default:
           if (_streamed_xid) {
             auto& spool = _spools.at(*_streamed_xid);
+            if (spool.Size() == 0 && _eager_candidate == _streamed_xid) {
+              _eager_candidate.reset();
+              const auto received =
+                _received_lsn.load(std::memory_order_relaxed);
+              if (!_eager_xid && _target.skip_lsn == 0 &&
+                  received >= _max_sync_lsn &&
+                  absl::c_all_of(_spools, [&](const auto& other) {
+                    return other.first == *_streamed_xid ||
+                           other.second.Size() == 0;
+                  })) {
+                _eager_xid = _streamed_xid;
+                _txn_open = true;
+                ok = co_await Enqueue(StreamStopMessage{}) &&
+                     co_await Enqueue(BeginMessage{.final_lsn = received,
+                                                   .xid = *_streamed_xid});
+              }
+            }
             const auto xid = StreamedMessageXid(message);
             if (xid != *_streamed_xid) {
               auto& subxacts = _subxacts[*_streamed_xid];
@@ -778,7 +795,7 @@ yaclib::Task<> PgReplicationClient::Feeder() {
               }
             }
             spool.Append(message);
-            if (_eager_xid == _streamed_xid) {
+            if (ok && _eager_xid == _streamed_xid) {
               ok = co_await Enqueue(message, true, frame.recv_consume != 0);
             }
           } else {

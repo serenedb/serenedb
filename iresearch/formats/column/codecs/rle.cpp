@@ -1117,7 +1117,6 @@ template<typename T, duckdb::PhysicalType kPhysical,
          bool kWriteStatistics = true>
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_RLE,
-  .data_type = kPhysical,
   .init_analyze = InitAnalyze<T>,
   .analyze = Analyze<T>,
   .final_analyze = FinalAnalyze<T>,

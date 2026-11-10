@@ -150,14 +150,6 @@ duckdb::CompressionType ForcedMethod(duckdb::DatabaseInstance& db,
     duckdb::DBConfig::GetConfig(db));
 }
 
-bool Applies(duckdb::CompressionType method, duckdb::PhysicalType physical) {
-  return method != duckdb::CompressionType::COMPRESSION_AUTO &&
-         absl::c_any_of(codecs::GetCompressionFunctions(physical),
-                        [&](const codecs::CompressionFunction* function) {
-                          return function->type == method;
-                        });
-}
-
 ColumnMeta TuningOf(ColumnMeta& from) {
   ColumnMeta to;
   to.id = from.id;
@@ -310,7 +302,7 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
                                duckdb::CompressionType forced,
                                ColumnMeta& meta) {
   auto& db = WriteCtx().Database();
-  if (Applies(ForcedMethod(db, forced), type.InternalType())) {
+  if (codecs::Compresses(ForcedMethod(db, forced), type.InternalType())) {
     return CompressData(type, chunks, forced, meta.data);
   }
   if (!meta.write_numeric_tuning) {
@@ -520,9 +512,9 @@ void ColumnWriter::CompressPlain(const duckdb::LogicalType& type,
   auto& db = WriteCtx().Database();
   const auto physical = type.InternalType();
   const auto* plain = codecs::GetCodec(codec, physical);
-  if (!plain ||
-      Applies(ForcedMethod(db, duckdb::CompressionType::COMPRESSION_AUTO),
-              physical)) {
+  if (!plain || codecs::Compresses(
+                  ForcedMethod(db, duckdb::CompressionType::COMPRESSION_AUTO),
+                  physical)) {
     CompressData(type, chunks, duckdb::CompressionType::COMPRESSION_AUTO, sink);
     return;
   }

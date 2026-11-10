@@ -1798,7 +1798,6 @@ void FetchRowsBoolean(const ColumnSegment& segment, ColumnFetchState& state,
 
 constexpr CompressionFunction kValidity{
   .type = duckdb::CompressionType::COMPRESSION_ROARING,
-  .data_type = duckdb::PhysicalType::BIT,
   .init_analyze = InitAnalyze,
   .analyze = Analyze<duckdb::PhysicalType::BIT>,
   .final_analyze = FinalAnalyze,
@@ -1814,7 +1813,6 @@ constexpr CompressionFunction kValidity{
 
 constexpr CompressionFunction kBoolean{
   .type = duckdb::CompressionType::COMPRESSION_ROARING,
-  .data_type = duckdb::PhysicalType::BOOL,
   .init_analyze = InitAnalyze,
   .analyze = Analyze<duckdb::PhysicalType::BOOL>,
   .final_analyze = FinalAnalyze,

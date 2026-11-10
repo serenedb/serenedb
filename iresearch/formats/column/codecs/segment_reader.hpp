@@ -27,7 +27,6 @@
 #include <type_traits>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -43,7 +42,6 @@ class SegmentReader {
   duckdb::idx_t Size() const noexcept { return _size; }
   duckdb::idx_t Position() const noexcept { return _position; }
   duckdb::idx_t Remaining() const noexcept { return _size - _position; }
-  bool Finished() const noexcept { return _position == _size; }
 
   template<typename T>
   T Read() {
@@ -52,14 +50,6 @@ class SegmentReader {
     const auto result = duckdb::Load<T>(_data + _position);
     _position += sizeof(T);
     return result;
-  }
-
-  template<typename T>
-  T ReadBackward() {
-    static_assert(std::is_trivially_copyable_v<T>);
-    CheckBackwardRead(sizeof(T));
-    _position -= sizeof(T);
-    return duckdb::Load<T>(_data + _position);
   }
 
   template<typename T>
@@ -76,22 +66,16 @@ class SegmentReader {
     return result;
   }
 
-  duckdb::unsafe_array_ptr<const uint8_t> ReadBytesBackward(
-    duckdb::idx_t length) {
-    CheckBackwardRead(length);
-    _position -= length;
-    return {_data + _position, length};
-  }
-
   template<typename T>
-  duckdb::unsafe_array_ptr<const T> ReadArrayBackward(duckdb::idx_t count) {
-    static_assert(std::is_trivially_copyable_v<T>);
-    if (count > _position / sizeof(T)) [[unlikely]] {
-      Throw("attempted to read before the start of the segment");
+  duckdb::unsafe_array_ptr<const uint8_t> ReadBytesAligned(
+    duckdb::idx_t length) {
+    CheckForwardRead(length);
+    if (reinterpret_cast<uintptr_t>(_data + _position) % alignof(T) != 0)
+      [[unlikely]] {
+      Throw("array offset is misaligned");
     }
-    const auto offset = _position - count * sizeof(T);
-    auto result = GetArray<T>(offset, count);
-    _position = offset;
+    duckdb::unsafe_array_ptr<const uint8_t> result{_data + _position, length};
+    _position += length;
     return result;
   }
 
@@ -119,19 +103,6 @@ class SegmentReader {
                   count * sizeof(T));
   }
 
-  template<typename T>
-  duckdb::unsafe_array_ptr<const uint8_t> ReadBytesAligned(
-    duckdb::idx_t length) {
-    CheckForwardRead(length);
-    if (reinterpret_cast<uintptr_t>(_data + _position) % alignof(T) != 0)
-      [[unlikely]] {
-      Throw("array offset is misaligned");
-    }
-    duckdb::unsafe_array_ptr<const uint8_t> result{_data + _position, length};
-    _position += length;
-    return result;
-  }
-
   duckdb::unsafe_array_ptr<const uint8_t> GetBytes(duckdb::idx_t offset,
                                                    duckdb::idx_t length) const {
     CheckRange(offset, length);
@@ -139,7 +110,8 @@ class SegmentReader {
   }
 
   template<typename T>
-  void CheckArray(duckdb::idx_t offset, duckdb::idx_t count) const {
+  duckdb::unsafe_array_ptr<const T> GetArray(duckdb::idx_t offset,
+                                             duckdb::idx_t count) const {
     static_assert(std::is_trivially_copyable_v<T>);
     CheckRange(offset, 0);
     if (reinterpret_cast<uintptr_t>(_data + offset) % alignof(T) != 0)
@@ -149,41 +121,7 @@ class SegmentReader {
     if (count > (_size - offset) / sizeof(T)) [[unlikely]] {
       Throw("array count extends past the end of the segment");
     }
-  }
-
-  template<typename T>
-  duckdb::unsafe_array_ptr<const T> GetArray(duckdb::idx_t offset,
-                                             duckdb::idx_t count) const {
-    return GetArraySlice<T>(offset, 0, count);
-  }
-
-  template<typename T>
-  duckdb::unsafe_array_ptr<const T> GetArraySlice(duckdb::idx_t offset,
-                                                  duckdb::idx_t start,
-                                                  duckdb::idx_t count) const {
-    CheckArray<T>(offset, start);
-    const auto capacity = (_size - offset) / sizeof(T);
-    if (count > capacity - start) [[unlikely]] {
-      Throw("array count extends past the end of the segment");
-    }
-    return {reinterpret_cast<const T*>(_data + offset) + start, count};
-  }
-
-  template<typename T>
-  T GetArrayElement(duckdb::idx_t offset, duckdb::idx_t array_count,
-                    duckdb::idx_t index) const {
-    CheckArray<T>(offset, array_count);
-    if (index >= array_count) [[unlikely]] {
-      Throw("array count extends past the end of the segment");
-    }
-    return duckdb::Load<T>(_data + offset + index * sizeof(T));
-  }
-
-  SegmentReader ReadSubReader(duckdb::idx_t length, const char* context) {
-    CheckForwardRead(length);
-    SegmentReader sub{_data + _position, length, context};
-    _position += length;
-    return sub;
+    return {reinterpret_cast<const T*>(_data + offset), count};
   }
 
   SegmentReader GetSubReader(duckdb::idx_t offset, duckdb::idx_t length,
@@ -192,49 +130,15 @@ class SegmentReader {
     return {_data + offset, length, context};
   }
 
-  template<typename T>
-  SegmentReader GetArraySubReader(duckdb::idx_t offset, duckdb::idx_t count,
-                                  const char* context) const {
-    CheckArray<T>(offset, count);
-    return GetSubReader(offset, count * sizeof(T), context);
-  }
-
   void Skip(duckdb::idx_t length) {
     CheckForwardRead(length);
     _position += length;
-  }
-
-  void SetPosition(duckdb::idx_t position) {
-    CheckRange(position, 0);
-    _position = position;
-  }
-
-  void Align(duckdb::idx_t alignment) {
-    SDB_ASSERT(alignment != 0);
-    const auto remainder = _position % alignment;
-    if (remainder == 0) {
-      return;
-    }
-    const auto padding = alignment - remainder;
-    CheckForwardRead(padding);
-    _position += padding;
-  }
-
-  void AlignBackward(duckdb::idx_t alignment) {
-    SDB_ASSERT(alignment != 0);
-    _position -= _position % alignment;
   }
 
  private:
   void CheckForwardRead(duckdb::idx_t length) const {
     if (length > _size - _position) [[unlikely]] {
       Throw("attempted to read past the end of the segment");
-    }
-  }
-
-  void CheckBackwardRead(duckdb::idx_t length) const {
-    if (length > _position) [[unlikely]] {
-      Throw("attempted to read before the start of the segment");
     }
   }
 

@@ -295,8 +295,8 @@ class ColumnReader {
 
   // Narrows `sel` (offsets within [0, span) of the requested rows, ascending)
   // to the subset whose value in [anchor, anchor+span) passes `filter`, exactly
-  // like RowGroup::Scan's per-column filter step. Uses the compression codec's
-  // ColumnSegment::Filter (dict evaluates the predicate once per entry) when
+  // like RowGroup::Scan's per-column filter step. Uses the codec's filter
+  // callback (dict evaluates the predicate once per entry) when
   // the codec self-describes nulls; a bare IS [NOT] NULL (`null_check`)
   // evaluates on the validity child alone, skipping the data decode;
   // otherwise decodes the span (data + validity) into `scratch` and narrows

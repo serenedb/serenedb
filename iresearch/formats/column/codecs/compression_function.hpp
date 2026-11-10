@@ -40,6 +40,7 @@
 
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/utils/down_cast.hpp"
 
 namespace irs::codecs {
 
@@ -68,7 +69,7 @@ struct SegmentScanState {
 
   template<typename T>
   T& Cast() noexcept {
-    return static_cast<T&>(*this);
+    return utils::downCast<T>(*this);
   }
 };
 
@@ -102,7 +103,7 @@ struct AnalyzeState {
 
   template<typename T>
   T& Cast() noexcept {
-    return static_cast<T&>(*this);
+    return utils::downCast<T>(*this);
   }
 };
 
@@ -124,7 +125,7 @@ struct CompressionState {
 
   template<typename T>
   T& Cast() noexcept {
-    return static_cast<T&>(*this);
+    return utils::downCast<T>(*this);
   }
 };
 
@@ -150,7 +151,6 @@ class CompressedSegment {
 
 struct CompressionFunction {
   duckdb::CompressionType type = duckdb::CompressionType::COMPRESSION_AUTO;
-  duckdb::PhysicalType data_type = duckdb::PhysicalType::INVALID;
   std::unique_ptr<AnalyzeState> (*init_analyze)(
     CompressionAnalyzeContext& ctx, duckdb::PhysicalType type) = nullptr;
   bool (*analyze)(AnalyzeState& state, const duckdb::Vector& input) = nullptr;

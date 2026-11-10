@@ -1056,7 +1056,6 @@ template<typename T>
 constexpr CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
   return {
     .type = duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
-    .data_type = physical,
     .init_scan = InitScan<T>,
     .scan_vector = ScanVector<T>,
     .scan_partial = ScanPartial<T>,

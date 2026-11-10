@@ -124,9 +124,8 @@ CandidateTable MakeCandidates() {
   CandidateTable table;
   for (size_t p = 0; p < std::size(kPhysicalTypes); ++p) {
     for (const auto type : kCandidates) {
-      const auto* function = GetCodec(type, kPhysicalTypes[p]);
-      if (function && function->init_analyze) {
-        table[p].push_back(function);
+      if (Compresses(type, kPhysicalTypes[p])) {
+        table[p].push_back(GetCodec(type, kPhysicalTypes[p]));
       }
     }
   }
@@ -164,6 +163,11 @@ const CompressionFunction* GetCodec(CompressionType type,
     return &text->function();
   }
   return nullptr;
+}
+
+bool Compresses(CompressionType type, PhysicalType physical) {
+  const auto* function = GetCodec(type, physical);
+  return function && function->init_analyze;
 }
 
 std::span<const CompressionFunction* const> GetCompressionFunctions(

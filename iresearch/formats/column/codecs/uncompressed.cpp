@@ -226,7 +226,6 @@ void FixedSizeFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 template<typename T, bool kList, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFixedSize{
   .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-  .data_type = kPhysical,
   .init_analyze = InitCountAnalyze,
   .analyze = CountRows,
   .final_analyze =
@@ -426,7 +425,6 @@ void ValidityFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 constexpr CompressionFunction kValidity{
   .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-  .data_type = duckdb::PhysicalType::BIT,
   .init_analyze = InitCountAnalyze,
   .analyze = CountRows,
   .final_analyze = ValidityFinalAnalyze,
@@ -711,7 +709,6 @@ void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 constexpr CompressionFunction kString{
   .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-  .data_type = duckdb::PhysicalType::VARCHAR,
   .init_analyze = StringInitAnalyze,
   .analyze = StringAnalyzeData,
   .final_analyze = StringFinalAnalyze,

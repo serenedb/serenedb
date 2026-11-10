@@ -56,6 +56,8 @@ const CompressionFunction* RoaringFunction(duckdb::PhysicalType physical);
 const CompressionFunction* GetCodec(duckdb::CompressionType type,
                                     duckdb::PhysicalType physical);
 
+bool Compresses(duckdb::CompressionType type, duckdb::PhysicalType physical);
+
 std::span<const CompressionFunction* const> GetCompressionFunctions(
   duckdb::PhysicalType physical);
 

@@ -388,8 +388,7 @@ void CheckColumnCodec(duckdb::ClientContext& context,
         irs::codecs::ChoiceOf(type)) {
       return true;
     }
-    const auto* function = irs::codecs::GetCodec(type, physical);
-    return function && function->init_analyze;
+    return irs::codecs::Compresses(type, physical);
   };
   const auto physical = column_type.InternalType();
   if (compresses(physical)) {

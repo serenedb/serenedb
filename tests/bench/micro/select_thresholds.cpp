@@ -18,10 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Measures duckdb compression methods DIRECTLY on a single ColumnSegment of
-// the desired size -- no reader abstractions in the timed path. Per
-// (codec/logical type, block size W, hits k) the arms are:
-//   fetch      -- per-hit ColumnSegment::FetchRow
+// Measures the columnstore codecs DIRECTLY on a single segment of the desired
+// size -- no reader abstractions in the timed path. Per (codec/logical type,
+// block size W, hits k) the arms are:
+//   fetch      -- per-hit codec fetch_rows
 //   select     -- one native codec select over the block window; skipped
 //                 where the codec's select can't take a block-sized window
 //   entire     -- decode the whole block + dictionary Slice of the hits;

@@ -1292,7 +1292,6 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
 template<typename T, duckdb::PhysicalType kPhysical, bool kStats, bool kFilter>
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_BITPACKING,
-  .data_type = kPhysical,
   .init_analyze = InitAnalyze<T>,
   .analyze = Analyze<T>,
   .final_analyze = FinalAnalyze<T>,

@@ -48,7 +48,6 @@ void FetchRows(const ColumnSegment&, ColumnFetchState&, const idx_t*, idx_t,
 
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_EMPTY,
-  .data_type = duckdb::PhysicalType::BIT,
   .init_scan = InitScan,
   .scan_vector = Scan,
   .scan_partial = ScanPartial,

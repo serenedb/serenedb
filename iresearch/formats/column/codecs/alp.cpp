@@ -1325,7 +1325,6 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 template<typename T, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_ALP,
-  .data_type = kPhysical,
   .init_analyze = AlpInitAnalyze<T>,
   .analyze = AlpAnalyze<T>,
   .final_analyze = AlpFinalAnalyze<T>,

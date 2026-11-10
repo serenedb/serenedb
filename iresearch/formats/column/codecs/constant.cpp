@@ -143,7 +143,6 @@ void FilterValidity(const ColumnSegment& segment, ColumnScanState& state,
 
 constexpr CompressionFunction kValidity{
   .type = duckdb::CompressionType::COMPRESSION_CONSTANT,
-  .data_type = duckdb::PhysicalType::BIT,
   .init_scan = InitScan,
   .scan_vector = ScanValidity,
   .scan_partial = ScanPartialValidity,
@@ -156,7 +155,6 @@ constexpr CompressionFunction kValidity{
 template<typename T, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_CONSTANT,
-  .data_type = kPhysical,
   .init_scan = InitScan,
   .scan_vector = Scan<T>,
   .scan_partial = ScanPartial<T>,

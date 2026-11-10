@@ -361,7 +361,6 @@ template<typename Scan>
 constexpr CompressionFunction StringFunction(duckdb::CompressionType type) {
   CompressionFunction f{
     .type = type,
-    .data_type = duckdb::PhysicalType::VARCHAR,
     .init_scan = InitScan<Scan>,
     .scan_vector = ScanVector<Scan>,
     .scan_partial = ScanPartial<Scan>,

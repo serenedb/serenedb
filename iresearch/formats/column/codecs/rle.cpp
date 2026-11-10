@@ -298,9 +298,7 @@ void Update(RleState<T>& state, const T* data,
 }
 
 template<typename T>
-struct RleAnalyzeState final : AnalyzeState {
-  RleState<T> state;
-  idx_t total_count = 0;
+struct RleRuns {
   idx_t run_count = 0;
   T min_value{};
   T max_value{};
@@ -309,24 +307,30 @@ struct RleAnalyzeState final : AnalyzeState {
 };
 
 template<typename T>
-void Observe(RleAnalyzeState<T>& analyze, T value, RleCount count) {
-  if (!analyze.run_count) {
-    analyze.min_value = analyze.max_value = value;
-    analyze.min_count = analyze.max_count = count;
+struct RleAnalyzeState final : AnalyzeState {
+  RleState<T> state;
+  RleRuns<T> runs;
+  idx_t total_count = 0;
+};
+
+template<typename T>
+void Observe(RleRuns<T>& runs, T value, RleCount count) {
+  if (!runs.run_count) {
+    runs.min_value = runs.max_value = value;
+    runs.min_count = runs.max_count = count;
   } else {
-    analyze.min_value = duckdb::MinValue<T>(analyze.min_value, value);
-    analyze.max_value = duckdb::MaxValue<T>(analyze.max_value, value);
-    analyze.min_count = duckdb::MinValue<RleCount>(analyze.min_count, count);
-    analyze.max_count = duckdb::MaxValue<RleCount>(analyze.max_count, count);
+    runs.min_value = duckdb::MinValue<T>(runs.min_value, value);
+    runs.max_value = duckdb::MaxValue<T>(runs.max_value, value);
+    runs.min_count = duckdb::MinValue<RleCount>(runs.min_count, count);
+    runs.max_count = duckdb::MaxValue<RleCount>(runs.max_count, count);
   }
-  ++analyze.run_count;
+  ++runs.run_count;
 }
 
 template<typename T>
-auto AnalyzeSink(RleAnalyzeState<T>& analyze) {
-  return [&analyze](T value, RleCount count, bool) {
-    Observe(analyze, value, count);
-  };
+auto AnalyzeSink(RleRuns<T>& runs) {
+  return
+    [&runs](T value, RleCount count, bool) { Observe(runs, value, count); };
 }
 
 template<typename T>
@@ -342,15 +346,18 @@ bool Analyze(AnalyzeState& state, const duckdb::Vector& input) {
   input.ToUnifiedFormat(vdata);
   const auto* data = duckdb::UnifiedVectorFormat::GetData<T>(vdata);
   const idx_t count = input.size();
-  const auto sink = AnalyzeSink(analyze);
+  auto run_state = analyze.state;
+  auto runs = analyze.runs;
+  const auto sink = AnalyzeSink(runs);
   if (!vdata.sel->IsSet() && vdata.validity.CannotHaveNull()) {
-    UpdateFlatValid(analyze.state, data, count, sink);
+    UpdateFlatValid(run_state, data, count, sink);
   } else {
     for (idx_t i = 0; i < count; ++i) {
-      Update(analyze.state, data, vdata.validity, vdata.sel->get_index(i),
-             sink);
+      Update(run_state, data, vdata.validity, vdata.sel->get_index(i), sink);
     }
   }
+  analyze.state = run_state;
+  analyze.runs = runs;
   analyze.total_count += count;
   return true;
 }
@@ -358,10 +365,11 @@ bool Analyze(AnalyzeState& state, const duckdb::Vector& input) {
 template<typename T>
 idx_t FinalAnalyze(AnalyzeState& state) {
   auto& analyze = state.Cast<RleAnalyzeState<T>>();
+  auto& runs = analyze.runs;
   if (analyze.state.last_seen_count > 0) {
-    FlushRun(analyze.state, AnalyzeSink(analyze));
+    FlushRun(analyze.state, AnalyzeSink(runs));
   }
-  const auto count = analyze.run_count;
+  const auto count = runs.run_count;
   if (!count) {
     return 0;
   }
@@ -371,9 +379,9 @@ idx_t FinalAnalyze(AnalyzeState& state) {
   T value_frame{};
   RleCount count_frame = 0;
   const auto value_width =
-    WidthForRange(analyze.min_value, analyze.max_value, value_frame);
+    WidthForRange(runs.min_value, runs.max_value, value_frame);
   const auto count_width =
-    WidthForRange(analyze.min_count, analyze.max_count, count_frame);
+    WidthForRange(runs.min_count, runs.max_count, count_frame);
   constexpr auto kEntries = kMaxEntryCount<T>;
   const auto full_size = PackedSize<T>(kEntries, value_width) +
                          PackedSize<RleCount>(kEntries, count_width);

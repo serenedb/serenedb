@@ -66,6 +66,7 @@
 #include "pg/progress_registry.h"
 #include "query/config_variable_names.h"
 #include "search/store.h"
+#include "search/task.h"
 #include "search/writes.h"
 
 namespace sdb::connector {
@@ -596,6 +597,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   }
   RewriteOwnRows(context, target);
   if (adopt && rebuilt) {
+    search::QueueReleaseCleanup(target.shard, rebuilt->tick);
     transaction.SearchTxn().Rebuilt(target.shard, std::move(rebuilt), newer());
   }
 }

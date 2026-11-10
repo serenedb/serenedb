@@ -105,6 +105,13 @@ statement ok
 COMMIT;
 
 
+query ok retry 40 backoff 250ms
+SELECT count(*) AS left_over FROM glob(getvariable('brs_dir')) g WHERE g.file IN (SELECT file FROM brs_old);
+----
+left_over
+0
+
+
 statement ok
 DELETE FROM brs_old;
 
@@ -137,6 +144,13 @@ n	lo	hi
 
 statement ok
 COMMIT;
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS left_over FROM glob(getvariable('brs_dir')) g WHERE g.file IN (SELECT file FROM brs_old);
+----
+left_over
+0
 
 
 query

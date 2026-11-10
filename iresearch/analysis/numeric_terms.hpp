@@ -33,7 +33,7 @@ inline constexpr bool kInlineNumericTerm =
 
 template<typename T, typename ValueAt>
 void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
-                             ValueAt&& value_at, byte_type* wide = nullptr) {
+                             ValueAt&& value_at, byte_type* keys = nullptr) {
   constexpr auto kSize =
     static_cast<uint32_t>(numeric_utils::kNumericTermSize<T>);
   for (size_t i = 0; i < count; ++i) {
@@ -42,8 +42,8 @@ void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
       numeric_utils::EncodeNumericTerm<T>(
         reinterpret_cast<byte_type*>(out[i].GetDataWriteable()), value_at(i));
     } else {
-      SDB_ASSERT(wide);
-      auto* bytes = wide + i * kSize;
+      SDB_ASSERT(keys);
+      auto* bytes = keys + i * kSize;
       numeric_utils::EncodeNumericTerm<T>(bytes, value_at(i));
       out[i] = duckdb::string_t{reinterpret_cast<const char*>(bytes), kSize};
     }

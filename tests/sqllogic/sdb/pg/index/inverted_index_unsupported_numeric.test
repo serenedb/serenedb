@@ -178,3 +178,38 @@ SELECT id FROM wide_ubigint_idx
   WHERE n @@ ts_gt(18446744073709551616::DOUBLE);
 ----
 id
+
+# A thousand 16-byte keys are inverted in several batches: values of the first,
+# a middle and the last batch are all found, and ranges count every one.
+statement ok
+INSERT INTO wide_hugeint
+SELECT i, (i * 3)::HUGEINT * 1000000000000000000000 FROM range(1000) r(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) wide_hugeint;
+
+query
+SELECT id FROM wide_hugeint_idx
+  WHERE big IN (15000000000000000000000, 390000000000000000000000,
+                2997000000000000000000000)
+  ORDER BY id;
+----
+id
+5
+130
+999
+
+query
+SELECT count(*) AS n FROM wide_hugeint_idx
+  WHERE big @@ ts_lt(1500000000000000000000000::HUGEINT);
+----
+n
+500
+
+query
+SELECT id FROM wide_hugeint_idx ORDER BY big DESC LIMIT 3;
+----
+id
+999
+998
+997

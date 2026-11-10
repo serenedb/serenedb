@@ -135,16 +135,12 @@ std::optional<SplitMode> ReadSplit(duckdb::ClientContext& context) {
   return static_cast<SplitMode>(i);
 }
 
-OrderMode ReadOrder(duckdb::ClientContext& context, bool scan_ordered,
-                    bool one_worker) {
+OrderMode ReadOrder(duckdb::ClientContext& context, bool scan_ordered) {
   const auto i = GetEnumSetting(context, "sdb_scan_order", kOrderModes);
-  if (i == kOrderModes.size()) {
-    if (scan_ordered) {
-      return OrderMode::Order;
-    }
-    return one_worker ? OrderMode::Stored : OrderMode::LargestFirst;
-  }
-  const auto mode = static_cast<OrderMode>(i);
+  const auto mode =
+    i == kOrderModes.size()
+      ? (scan_ordered ? OrderMode::Order : OrderMode::LargestFirst)
+      : static_cast<OrderMode>(i);
   return mode == OrderMode::Order && !scan_ordered ? OrderMode::LargestFirst
                                                    : mode;
 }
@@ -645,19 +641,11 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   g.rg_size = bind.relation.row_group_size != 0 ? bind.relation.row_group_size
                                                 : DEFAULT_ROW_GROUP_SIZE;
 
+  g.order = ReadOrder(context, scan_ordered);
+  const bool ordered = g.order == OrderMode::Order;
+
   const auto threads =
     static_cast<uint64_t>(duckdb::TaskScheduler::QueryThreads(context));
-  const auto where = g.ClaimedWhere();
-  const auto bound = where ? UniqueMatchBound(bind, *where) : std::nullopt;
-  const bool point = bound && *bound <= STANDARD_VECTOR_SIZE;
-  uint64_t docs = 0;
-  for (const auto seg : g.segment_order) {
-    docs += (*g.reader)[seg].Meta().docs_count;
-  }
-  g.order =
-    ReadOrder(context, scan_ordered,
-              threads == 1 || point || (!g.stats_stage && docs <= g.rg_size));
-  const bool ordered = g.order == OrderMode::Order;
 
   g.segments = std::make_unique<SegmentWork[]>(g.total_segments);
   g.live_segments = static_cast<uint32_t>(g.segment_order.size());
@@ -681,6 +669,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     });
   }
 
+  const auto where = g.ClaimedWhere();
   const bool constant_count = g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
@@ -756,8 +745,11 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);
   }
-  if (point) {
-    parallel = 1;
+  if (where) {
+    if (const auto rows = UniqueMatchBound(bind, *where);
+        rows && *rows <= STANDARD_VECTOR_SIZE) {
+      parallel = 1;
+    }
   }
   g.workers = static_cast<uint32_t>(std::clamp<uint64_t>(
     std::min(threads, parallel), 1, std::numeric_limits<uint32_t>::max()));

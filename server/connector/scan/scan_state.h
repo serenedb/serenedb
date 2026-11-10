@@ -84,7 +84,6 @@ enum class OrderMode : uint8_t {
   SmallestFirst,
   LargestFirst,
   Order,
-  Stored,
 };
 
 struct ScanUnit {

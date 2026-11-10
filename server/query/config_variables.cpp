@@ -1093,9 +1093,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         "'smallest_first' and 'largest_first' order them by live document "
         "count; 'order' is best-first by the ORDER BY column's row-group "
         "statistics when the query has a scan order (and 'largest_first' "
-        "otherwise); 'auto' (default) is 'order' under a scan order, "
-        "'largest_first' for a scan that can run on several threads, and the "
-        "order the table stores its segments in for a scan on one thread.",
+        "otherwise); 'auto' (default) is 'order' under a scan order and "
+        "'largest_first' otherwise.",
         [] { return duckdb::Value{"auto"}; },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto mode = value.ToString();

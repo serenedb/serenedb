@@ -528,6 +528,49 @@ ABC	own
 
 
 statement ok
+SET search_path = tesp_own, public;
+
+
+statement ok
+CREATE TABLE tesp_own.tesp_dc (s TEXT CHECK (lower(s) = 'own'), d TEXT DEFAULT lower('ABC'));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO tesp_own.tesp_dc (s) VALUES ('ABC');
+
+
+connection shadow
+statement ok
+INSERT INTO tesp_own.tesp_dc (s) VALUES ('XYZ');
+
+
+query
+SELECT s, d FROM tesp_own.tesp_dc ORDER BY s;
+----
+s	d
+ABC	own
+XYZ	own
+
+
+query
+SELECT pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'tesp_own.tesp_dc'::regclass;
+----
+def
+tesp_own.lower('ABC')
+
+
+query
+SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'tesp_own.tesp_dc'::regclass AND contype = 'c';
+----
+def
+CHECK ((tesp_own.lower(s) = 'own'))
+
+
+statement ok
 CREATE TABLE tesp_db_${__DATABASE__}.public.tesp_q (a INT CHECK (public.tesp_pub(a)));
 
 
@@ -614,8 +657,127 @@ CREATE TEMPORARY SEQUENCE tesp_tseq;
 statement error
 CREATE TABLE public.tesp_seq (a INT DEFAULT nextval('tesp_tseq'));
 ----
-db error: ERROR: Sequence with name tesp_tseq does not exist!
-Did you mean "temp.tesp_tseq"?
+db error: ERROR: Cannot use temporary sequence "tesp_tseq" in a non-temporary relation
+
+
+statement ok
+CREATE SCHEMA tesp_sq;
+
+
+statement ok
+CREATE SEQUENCE tesp_sq.tesp_seq1;
+
+
+statement ok
+CREATE SEQUENCE tesp_sq.tesp_seq2;
+
+
+statement ok
+SET search_path = tesp_sq, public;
+
+
+statement ok
+CREATE TABLE public.tesp_nv (id INT, n BIGINT DEFAULT nextval('tesp_seq1'), r BIGINT DEFAULT nextval('tesp_seq2'::regclass),
+  c BIGINT DEFAULT currval('tesp_seq1'));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO public.tesp_nv (id, c) VALUES (1, 0);
+
+
+statement ok
+INSERT INTO public.tesp_nv VALUES (2, DEFAULT, DEFAULT, 0);
+
+
+query
+SELECT id, n, r FROM public.tesp_nv ORDER BY id;
+----
+id	n	r
+1	1	1
+2	2	2
+
+
+query
+SELECT pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'public.tesp_nv'::regclass ORDER BY adnum;
+----
+def
+nextval('tesp_sq.tesp_seq1')
+nextval(CAST('tesp_sq.tesp_seq2' AS regclass))
+currval('tesp_sq.tesp_seq1')
+
+
+statement ok
+CREATE SEQUENCE tesp_sq.tesp_own_seq;
+
+
+statement ok
+CREATE TABLE tesp_sq.tesp_mvs (n BIGINT DEFAULT nextval('tesp_own_seq'));
+
+
+statement error
+ALTER TABLE tesp_sq.tesp_mvs SET SCHEMA public;
+----
+db error: ERROR: Cannot move table "tesp_mvs" to schema "public": its expressions use sequence "tesp_own_seq", which would resolve to a different sequence there
+
+
+statement ok
+CREATE TABLE tesp_sq.tesp_mvo (id SERIAL, a INT);
+
+
+statement ok
+ALTER TABLE tesp_sq.tesp_mvo SET SCHEMA public;
+
+
+statement ok
+INSERT INTO public.tesp_mvo (a) VALUES (1);
+
+
+statement ok
+CREATE TABLE tesp_n1.tesp_n2.tesp_ser (id SERIAL, a INT);
+
+
+statement ok
+INSERT INTO tesp_n1.tesp_n2.tesp_ser (a) VALUES (1), (2);
+
+
+statement ok
+ALTER TABLE tesp_n1.tesp_n2.tesp_ser ADD COLUMN b SERIAL;
+
+
+statement ok
+INSERT INTO tesp_n1.tesp_n2.tesp_ser (a) VALUES (3);
+
+
+query
+SELECT id, a, b FROM tesp_n1.tesp_n2.tesp_ser ORDER BY id;
+----
+id	a	b
+1	1	1
+2	2	2
+3	3	3
+
+
+query
+SELECT id, a FROM public.tesp_mvo;
+----
+id	a
+1	1
+
+
+statement ok
+DROP TABLE public.tesp_mvo;
+
+
+statement ok
+DROP TABLE public.tesp_nv;
+
+
+statement ok
+DROP SCHEMA tesp_sq CASCADE;
 
 
 statement ok

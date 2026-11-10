@@ -121,6 +121,70 @@ RESET search_path;
 
 
 statement ok
+CREATE SCHEMA tesr_own;
+
+
+statement ok
+CREATE FUNCTION tesr_own.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''own''';
+
+
+statement ok
+SET search_path = tesr_own, public;
+
+
+statement ok
+CREATE TABLE tesr_own.tesr_dc (s TEXT CHECK (lower(s) = 'own'), d TEXT DEFAULT lower('ABC'));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO tesr_own.tesr_dc (s) VALUES ('ABC');
+
+
+statement ok
+CREATE SCHEMA tesr_sq;
+
+
+statement ok
+CREATE SEQUENCE tesr_sq.tesr_seq;
+
+
+statement ok
+SET search_path = tesr_sq, public;
+
+
+statement ok
+CREATE TABLE public.tesr_nv (id INT, n BIGINT DEFAULT nextval('tesr_seq'));
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO public.tesr_nv (id) VALUES (1);
+
+
+statement ok
+CREATE SCHEMA tesr_sn1;
+
+
+statement ok
+CREATE SCHEMA tesr_sn1.tesr_sn2;
+
+
+statement ok
+CREATE TABLE tesr_sn1.tesr_sn2.tesr_ser (id SERIAL, a INT);
+
+
+statement ok
+INSERT INTO tesr_sn1.tesr_sn2.tesr_ser (a) VALUES (1);
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -216,3 +280,49 @@ statement error
 INSERT INTO public.tesr_mt VALUES (-1, 1);
 ----
 db error: ERROR: CHECK constraint failed on table "tesr_mt" with expression CHECK(tesr_app.tesr_ispos(c))
+
+
+connection with_macro
+statement ok
+INSERT INTO tesr_own.tesr_dc (s) VALUES ('MNO');
+
+
+connection plain
+statement ok
+INSERT INTO tesr_own.tesr_dc (s) VALUES ('XYZ');
+
+
+connection plain
+query
+SELECT s, d FROM tesr_own.tesr_dc ORDER BY s;
+----
+s	d
+ABC	own
+MNO	own
+XYZ	own
+
+
+connection plain
+statement ok
+INSERT INTO public.tesr_nv (id) VALUES (2);
+
+
+connection plain
+query
+SELECT count(*) AS rows, count(DISTINCT n) AS values, min(n) AS first FROM public.tesr_nv;
+----
+rows	values	first
+2	2	1
+
+
+connection plain
+statement ok
+INSERT INTO tesr_sn1.tesr_sn2.tesr_ser (a) VALUES (2);
+
+
+connection plain
+query
+SELECT count(*) AS rows, count(DISTINCT id) AS ids, min(id) AS first FROM tesr_sn1.tesr_sn2.tesr_ser;
+----
+rows	ids	first
+2	2	1

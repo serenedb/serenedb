@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
           state=pending
-          description="Waiting for $(sed -n 's/.* is pending: head of open \([^ ]*\) .*/\1/p' gitlinks.log | paste -sd' ' -)"
+          description="Waiting for $(sed -n 's/.* is pending: head of open \([^ ]*\) .*/\1/p' gitlinks.log | paste -sd' ')"
         else
           contexts=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" --jq '.statuses[].context')
           grep -qx pre-commit <<<"$contexts" || exit 0

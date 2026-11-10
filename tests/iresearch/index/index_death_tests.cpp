@@ -23,6 +23,7 @@
 
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <thread>
 
@@ -2309,6 +2310,47 @@ TEST(index_death_test_formats_15,
     } else if (segment.Meta().name == second) {
       EXPECT_EQ(1, segment.live_docs_count());
     }
+  }
+}
+
+TEST(index_death_test_formats_15,
+     cleanup_after_failed_implicit_flush_keeps_the_flushed_segment) {
+  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                              &tests::PayloadedJsonFieldFactory);
+  const auto* doc1 = gen.next();
+  const auto* doc2 = gen.next();
+  const auto* doc3 = gen.next();
+
+  irs::MemoryDirectory impl;
+  FailingDirectory dir(impl);
+  auto opts = irs::tests::DefaultWriterOptions();
+  opts.segment_docs_max = 1;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  ASSERT_NE(nullptr, writer);
+
+  auto trx = writer->GetBatch();
+  const auto insert = [&](const tests::Document& doc) {
+    auto inserted = trx.Insert();
+    return tests::InsertFields(inserted, doc.indexed.begin(),
+                               doc.indexed.end());
+  };
+  ASSERT_TRUE(insert(*doc1));
+  ASSERT_TRUE(insert(*doc2));
+  dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_2.idx");
+  ASSERT_SQL_ERROR(insert(*doc3), ERRCODE_IO_ERROR);
+  ASSERT_TRUE(dir.NoFailures());
+  irs::directory_utils::RemoveAllUnreferenced(dir);
+  ASSERT_TRUE(trx.Commit());
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  const auto reader = writer->GetSnapshot();
+  ASSERT_EQ(1, reader.live_docs_count());
+  const auto& segments = reader.Meta().index_meta.segments;
+  ASSERT_EQ(1, segments.size());
+  for (const auto& file : segments.front().meta.files) {
+    bool exists = false;
+    ASSERT_TRUE(impl.exists(exists, file));
+    EXPECT_TRUE(exists) << file;
   }
 }
 

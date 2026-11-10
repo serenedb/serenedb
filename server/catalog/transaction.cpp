@@ -456,8 +456,8 @@ void Transactions::CollectGarbage() {
     search::CleanupReleased(oldest, running.stores);
     search::PruneVersions(running.snapshots, running.published, running.stores);
     AdvanceEpoch();
-    search::FreeVersions();
-    bool pending = search::ReleasedPending();
+    bool pending = search::FreeVersions();
+    pending = pending || search::ReleasedPending();
     if (!pending) {
       absl::MutexLock lock{&_garbage_mutex};
       pending = !_garbage.empty();

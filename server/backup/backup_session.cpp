@@ -44,6 +44,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/transaction.h"
 #include "search/store.h"
+#include "search/task.h"
 #include "storage_engine/search_engine.h"
 #include "utils/file_utils.h"
 
@@ -131,6 +132,7 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
   catalog::DeferRemovals();
   absl::Cleanup resume_removals = [] { catalog::ResumeRemovals(); };
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
+  absl::Cleanup resume_cleanups = [] { search::RequestCleanups(); };
   auto maintenance = search::GetSearchEngine().Maintenance().Close(context);
   auto cut = RecordCut(context, backup_dir, pins, progress);
   auto& positions = PositionSource::Instance();
@@ -138,6 +140,7 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
   cut.log_link = cut.log_link.lexically_relative(layout.directory);
   auto label_file = BuildBackupLabel(
     label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
+  std::move(resume_cleanups).Cancel();
   std::move(resume_removals).Cancel();
   std::move(remove_backup_dir).Cancel();
 
@@ -183,6 +186,7 @@ void BackupSession::End() noexcept {
 
 void BackupSession::Stop() noexcept {
   _maintenance.reset();
+  search::RequestCleanups();
   _checkpoints.reset();
   catalog::ResumeRemovals();
   _pins.clear();

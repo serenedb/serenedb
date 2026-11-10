@@ -1081,10 +1081,11 @@ void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
     writer->reset();  // try to reduce number of files flushed below
   }
 
-  // TODO(mbkkt) Is it ok to release refs in case of store_flushed?
   // release refs only after clearing writer state to ensure
   // 'writer_' does not hold any files
-  dir.clear_refs();
+  if (!store_flushed) {
+    dir.clear_refs();
+  }
 }
 
 void IndexWriter::SegmentContext::Rollback() noexcept {

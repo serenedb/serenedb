@@ -1,0 +1,247 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE rrs_own (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX rrs_own_idx ON rrs_own USING inverted (body);
+
+
+statement ok
+INSERT INTO rrs_own SELECT i, 'fox ' || i FROM range(0, 1000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET VARIABLE rrs_own_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_own') || '/*';
+
+
+statement ok
+CREATE TEMP TABLE rrs_own_files AS SELECT file FROM glob(getvariable('rrs_own_dir'));
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO rrs_own SELECT i, 'fox ' || i FROM range(1000, 6000) t(i);
+
+
+query
+SELECT count(*) AS n FROM rrs_own_idx WHERE body = 'fox 5000';
+----
+n
+1
+
+
+query
+SELECT count(*) > 0 AS flushed FROM glob(getvariable('rrs_own_dir')) g WHERE g.file NOT IN (SELECT file FROM rrs_own_files);
+----
+flushed
+t
+
+
+statement ok
+ROLLBACK;
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS left_over FROM glob(getvariable('rrs_own_dir')) g WHERE g.file NOT IN (SELECT file FROM rrs_own_files);
+----
+left_over
+0
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id >= 1000) AS rolled_back FROM rrs_own;
+----
+n	rolled_back
+1000	0
+
+
+statement ok
+CREATE TABLE rrs_re (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX rrs_re_idx ON rrs_re USING inverted (body);
+
+
+statement ok
+INSERT INTO rrs_re SELECT i, 'fox ' || i FROM range(0, 1000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO rrs_re SELECT i, 'fox ' || i FROM range(1000, 2000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO rrs_re SELECT i, 'fox ' || i FROM range(2000, 3000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET VARIABLE rrs_re_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_re') || '/*';
+
+
+statement ok
+CREATE MACRO rrs_re_stale() AS (
+  (SELECT count(DISTINCT regexp_extract(file, '/(_[0-9]+)\.[^/]*$', 1))
+   FROM glob(getvariable('rrs_re_dir'))
+   WHERE regexp_extract(file, '/(_[0-9]+)\.[^/]*$', 1) <> '')
+  - (SELECT value FROM sdb_metrics
+     WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'rrs_re') AND metric = 'num_segments'));
+
+
+query
+SELECT rrs_re_stale() AS stale, (SELECT value FROM sdb_metrics WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'rrs_re') AND metric = 'num_segments') AS segments;
+----
+stale	segments
+0	3
+
+
+connection rebuild
+statement ok
+BEGIN;
+
+
+connection rebuild
+statement ok
+SET search_backfill_group_bytes = 1;
+
+
+connection rebuild
+statement ok
+CREATE OR REPLACE INDEX rrs_re_idx ON rrs_re USING inverted (body, id);
+
+
+connection merge
+statement ok
+VACUUM (COMPACT_TABLE) rrs_re;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT (SELECT value FROM sdb_metrics WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'rrs_re') AND metric = 'num_segments') AS segments, rrs_re_stale() > 0 AS held;
+----
+segments	held
+1	t
+
+
+connection rebuild
+statement ok
+ROLLBACK;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT rrs_re_stale() AS stale;
+----
+stale
+0
+
+
+connection default
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'rrs_re_idx';
+----
+def
+CREATE INDEX rrs_re_idx ON public.rrs_re USING inverted (body)
+
+
+connection default
+query
+SELECT (SELECT count(*) FROM rrs_re) AS n, (SELECT count(*) FROM rrs_re_idx WHERE body = 'fox 1500') AS hit;
+----
+n	hit
+3000	1
+
+
+statement ok
+CREATE TABLE rrs_bk (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX rrs_bk_idx ON rrs_bk USING inverted (body);
+
+
+statement ok
+INSERT INTO rrs_bk SELECT i, 'fox ' || i FROM range(0, 1000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET VARIABLE rrs_bk_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_bk') || '/*';
+
+
+statement ok
+CREATE TEMP TABLE rrs_bk_files AS SELECT file FROM glob(getvariable('rrs_bk_dir'));
+
+
+connection backup
+query
+SELECT pg_backup_start('rrs') IS NOT NULL AS started;
+----
+started
+t
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO rrs_bk SELECT i, 'fox ' || i FROM range(1000, 6000) t(i);
+
+
+query
+SELECT count(*) AS n FROM rrs_bk_idx WHERE body = 'fox 5000';
+----
+n
+1
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) > 0 AS kept FROM glob(getvariable('rrs_bk_dir')) g WHERE g.file NOT IN (SELECT file FROM rrs_bk_files);
+----
+kept
+t
+
+
+connection backup
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
+----
+label
+t
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS left_over FROM glob(getvariable('rrs_bk_dir')) g WHERE g.file NOT IN (SELECT file FROM rrs_bk_files);
+----
+left_over
+0

@@ -70,6 +70,7 @@
 #include "search/scorer_options.h"
 #include "search/task.h"
 #include "search/version_chain.tpp"
+#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 #include "utils/file_utils.h"
 
@@ -565,6 +566,12 @@ void Store::StartTasks() {
   const bool already = _tasks_started.exchange(true);
   SDB_ASSERT(!already, "Store::StartTasks called twice for store ", _id);
 #endif
+  _dir->attributes().refs().refs().OnRelease(
+    [weak = weak_from_this()](const std::string&) noexcept {
+      if (const auto store = weak.lock()) {
+        store->RequestCleanup();
+      }
+    });
   GetSearchEngine().StartTasks(shared_from_this());
 }
 
@@ -647,13 +654,51 @@ ResultWithTime Store::CleanupUnsafe() {
     PruneVersions(own ? std::span<const Tick>{own->running} : running.snapshots,
                   running.published);
     transactions.AdvanceEpoch();
-    FreeVersions();
+    if (FreeVersions()) {
+      transactions.GarbageQueued();
+    }
   }
   auto result = _durability.Cleanup(*_dir);
   SDB_PARK_ONCE_ON_FAILURE("search_cleanup_after_remove");
   const auto time_ms = MillisSince(begin);
   _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
+}
+
+void Store::RequestCleanup() noexcept {
+  if (!BackgroundScheduler::gInstance || lifecycle::IsStopping() ||
+      BackgroundScheduler::instance().IsStopping() ||
+      _cleanup_requests.fetch_add(1, std::memory_order_acq_rel) != 0) {
+    return;
+  }
+  try {
+    BackgroundScheduler::instance()
+      .Run([weak = weak_from_this()] {
+        const auto store = weak.lock();
+        if (!store) {
+          return;
+        }
+        auto requests =
+          store->_cleanup_requests.load(std::memory_order_acquire);
+        do {
+          try {
+            DoCleanup(*store);
+          } catch (const std::exception& e) {
+            store->_cleanup_requests.store(0, std::memory_order_release);
+            SDB_WARN(SEARCH, "table ", store->_id,
+                     ": cleaning up its files failed: ",
+                     duckdb::ErrorData{e}.RawMessage());
+            return;
+          }
+          requests = store->_cleanup_requests.fetch_sub(
+                       requests, std::memory_order_acq_rel) -
+                     requests;
+        } while (requests != 0);
+      })
+      .Detach();
+  } catch (...) {
+    _cleanup_requests.store(0, std::memory_order_release);
+  }
 }
 
 auto Store::CompactUnsafeAsync(utils::DrainGate::Pass maintenance,

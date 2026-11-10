@@ -76,7 +76,7 @@ Queries and writes run as usual. These commands behave differently until `pg_bac
 | `DROP TABLE`, `DROP INDEX`, `DROP DATABASE`, `DETACH` | Commit at once. The files of the dropped objects are removed after `pg_backup_stop`. |
 | Background compaction of tables and indexes | Paused. |
 
-Because nothing is checkpointed, the write-ahead logs keep growing, and dropped objects keep their disk space until `pg_backup_stop`. Plan disk space for the length of the backup.
+Because nothing is checkpointed, the write-ahead logs keep growing, and dropped objects and the segment files tables stop using keep their disk space until `pg_backup_stop`. Plan disk space for the length of the backup.
 
 ## Monitoring
 

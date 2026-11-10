@@ -239,6 +239,7 @@ class Store final : public std::enable_shared_from_this<Store>,
                           const irs::AnnBuildEnv* env)
     -> yaclib::Future<ResultWithTime>;
   ResultWithTime CleanupUnsafe();
+  void RequestCleanup() noexcept;
 
   // The field options a background merge encodes against, pinned for it; null
   // once the store's definition is gone.
@@ -489,6 +490,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::unique_ptr<Table> _table;
   bool _on_disk = false;
   std::atomic<uint64_t> _piece_requests{0};
+  std::atomic<uint64_t> _cleanup_requests{0};
   std::atomic<uint32_t> _merges{0};
   struct ReplayedRows {
     irs::doc_id_t first = 0;

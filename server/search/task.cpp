@@ -99,19 +99,6 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings, bool small,
   return irs::index_utils::MakePolicy(tier);
 }
 
-void DoCleanup(Store& idx) {
-  metrics::Scoped guard{metrics::Gauge::CleanupActive};
-  auto [res, time_ms] = idx.CleanupUnsafe();
-  if (res.ok()) {
-    SDB_TRACE(SEARCH, "successful cleanup of Search index '", idx.GetId(),
-              "', took: ", time_ms, "ms");
-  } else {
-    SDB_WARN(SEARCH, "error after running for ", time_ms,
-             "ms while cleaning up Search index '", idx.GetId(),
-             "': ", res.message());
-  }
-}
-
 auto DoCompaction(std::shared_ptr<Store> idx, irs::CompactionPolicy policy,
                   SearchEngine& engine) -> yaclib::Future<bool> {
   absl::Cleanup release_slot = [&engine] { engine.ReleaseCompaction(); };
@@ -249,7 +236,7 @@ yaclib::Future<> Compact(std::shared_ptr<Target> target) {
   }
   if (produced && !engine.IsBackupActive()) {
     if (const auto live = target->store.lock()) {
-      DoCleanup(*live);
+      live->RequestCleanup();
     }
   }
   absl::MutexLock lock{&GetTargets().mutex};
@@ -284,6 +271,19 @@ ReleasedQueue& GetReleased() {
 }
 
 }  // namespace
+
+void DoCleanup(Store& idx) {
+  metrics::Scoped guard{metrics::Gauge::CleanupActive};
+  auto [res, time_ms] = idx.CleanupUnsafe();
+  if (res.ok()) {
+    SDB_TRACE(SEARCH, "successful cleanup of Search index '", idx.GetId(),
+              "', took: ", time_ms, "ms");
+  } else {
+    SDB_WARN(SEARCH, "error after running for ", time_ms,
+             "ms while cleaning up Search index '", idx.GetId(),
+             "': ", res.message());
+  }
+}
 
 void AddMaintenanceTarget(const std::shared_ptr<Store>& store) {
   auto target = std::make_shared<Target>();
@@ -446,17 +446,18 @@ void CleanupReleased(Tick oldest, std::span<const StoreSnapshots> stores) {
       queue.pending.empty() ? kAllApplied : queue.pending.front().tick,
       std::memory_order_release);
   }
-  if (!BackgroundScheduler::gInstance) {
-    return;
+  for (const auto& store : due) {
+    store->RequestCleanup();
   }
-  for (auto& store : due) {
-    BackgroundScheduler::instance()
-      .Run([weak = std::weak_ptr<Store>{store}] {
-        if (const auto live = weak.lock()) {
-          DoCleanup(*live);
-        }
-      })
-      .Detach();
+}
+
+void RequestCleanups() noexcept {
+  auto& targets = GetTargets();
+  absl::MutexLock lock{&targets.mutex};
+  for (const auto& target : targets.all) {
+    if (const auto store = target->store.lock(); store && store->Opened()) {
+      store->RequestCleanup();
+    }
   }
 }
 

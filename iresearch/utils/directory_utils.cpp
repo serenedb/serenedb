@@ -52,10 +52,10 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name) {
 
 bool RemoveAllUnreferenced(Directory& dir) {
   duckdb::TaskScheduler::BlockingScope blocking;
-  auto& refs = dir.attributes().refs();
+  auto& refs = dir.attributes().refs().refs();
 
   dir.visit([&refs](std::string_view name) {
-    refs.add(name);  // Ensure all files in dir are tracked
+    refs.Track(name);  // Ensure all files in dir are tracked
     return true;
   });
 

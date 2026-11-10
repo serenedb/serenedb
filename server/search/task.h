@@ -32,8 +32,10 @@ namespace sdb::search {
 void AddMaintenanceTarget(const std::shared_ptr<Store>& store);
 yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs);
 
+void DoCleanup(Store& idx);
 void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released);
 void CleanupReleased(Tick oldest, std::span<const StoreSnapshots> stores);
+void RequestCleanups() noexcept;
 bool ReleasedPending() noexcept;
 
 void PruneVersions(std::span<const Tick> running, Tick published,

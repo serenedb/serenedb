@@ -45,6 +45,8 @@ The session settings of the same names hold the defaults a new table or index ta
 
 The same background task settles a table that received no writes since its previous run: it writes the rows the table holds in memory to segments and merges them, so a table left alone ends up in a few large segments.
 
+A table deletes the files of the segments it no longer uses as soon as no running query or statement reads them, whether or not compaction is enabled: those a merge, a rebuild or a write of in-memory rows replaced, and those a rolled-back transaction wrote. While a [backup](../../../operations/backup.md) runs, they stay until it ends.
+
 While a table receives writes, compaction keeps the bytes it rewrites low: a merge never takes a segment larger than all the others it merges together, so small segments merge with each other until they reach the size of the large ones, and a segment is rewritten on its own to drop its deleted rows only once a fifth of its rows are deleted. A steady stream of writes therefore does not keep rewriting large segments. A table left alone merges its segments without these limits and drops all of its deleted rows.
 
 - **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-table-options) for a table and `ALTER INDEX ... SET` for an index on a view. Segments are then merged only when you ask for it, the table is not settled in the background, and the rows it holds in memory reach its segments when they grow to [`segment_memory_max`](#write-memory), at a checkpoint or with `VACUUM (FLUSH_TABLE)`.
@@ -90,7 +92,7 @@ See [Rewrites and concurrent changes](../../statements/alter_table/index.md#rewr
 
 Tuning is mostly about the background cadence and segment layout; use only the options that exist:
 
-- **Compaction cadence** -- `compaction_interval` governs how aggressively segments merge; the files merged segments replace are deleted after each compaction.
+- **Compaction cadence** -- `compaction_interval` governs how aggressively segments merge; the files of the segments a merge replaces are deleted once nothing reads them.
 - **Row-group size** -- `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
 - **Block size** -- `block_size` sets the size in bytes of the blocks a table's columns are compressed in: a power of two from 16384 to 262144 (the default). It is fixed at `CREATE TABLE`, and its default comes from the database's `BLOCK_SIZE` and then the `default_block_size` setting.
 - **Build then index** -- for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.

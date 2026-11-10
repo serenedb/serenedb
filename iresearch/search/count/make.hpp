@@ -32,8 +32,6 @@ namespace irs::count {
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx = {});
 
-detail::BitsetStorage FoldTerms(const QueryBuilder& query, doc_id_t unit_docs);
-
 bool IsConstant(const QueryBuilder& query);
 
 Root::ptr MakeConstant(uint64_t count);

@@ -22,7 +22,6 @@
 
 #include <cstdint>
 
-#include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/utils/memory.hpp"
 
@@ -32,7 +31,6 @@ struct Context {
   detail::TableFilter* table = nullptr;
   doc_id_t span = 0;
   bool partial = false;
-  const detail::BitsetStorage* fold = nullptr;
 };
 
 struct Root : memory::Managed {

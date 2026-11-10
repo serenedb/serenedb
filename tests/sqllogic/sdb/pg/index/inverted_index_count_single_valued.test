@@ -143,6 +143,24 @@ narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
 108	21546	27000	24	3018	3240	16200	21600	900
 
 
+# A column filter keeps the count off term statistics: each unit counts the
+# rows of a many-term range that fall inside it.
+query
+SELECT count(*) AS dense_filtered FROM csv_t
+WHERE v BETWEEN 10 AND 4000 AND id % 7 = 0
+----
+dense_filtered
+3078
+
+
+query
+SELECT count(*) AS dense_filtered FROM csv_idx
+WHERE v BETWEEN 10 AND 4000 AND id % 7 = 0
+----
+dense_filtered
+3078
+
+
 statement ok
 DELETE FROM csv_t WHERE id BETWEEN 5000 AND 9000
 

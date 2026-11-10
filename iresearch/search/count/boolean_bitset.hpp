@@ -34,34 +34,6 @@
 
 namespace irs::count {
 
-struct BitWindow {
-  uint64_t lo;
-  uint64_t hi;
-};
-
-inline BitWindow WindowOf(const detail::BitsetStorage& set, doc_id_t min,
-                          doc_id_t max) noexcept {
-  constexpr auto kMin = detail::BitsetStorage::kMin;
-  const auto bits = uint64_t{set.WordCount()} * detail::BitsetStorage::kBits;
-  return {
-    .lo = uint64_t{min} - kMin,
-    .hi = std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits),
-  };
-}
-
-class FoldWindow : public Root {
- public:
-  explicit FoldWindow(const detail::BitsetStorage& set) noexcept : _set{&set} {}
-
-  uint64_t Run(doc_id_t min, doc_id_t max) final {
-    const auto [lo, hi] = WindowOf(*_set, min, max);
-    return lo < hi ? detail::CountBitRange(_set->Words(), lo, hi) : 0;
-  }
-
- private:
-  const detail::BitsetStorage* _set;
-};
-
 template<typename Table>
 class BooleanBitset : public Root {
  public:
@@ -73,37 +45,27 @@ class BooleanBitset : public Root {
       _table{table} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
-    constexpr auto kMin = detail::BitsetStorage::kMin;
     constexpr auto kBits = detail::BitsetStorage::kBits;
-    if (!_built) {
-      _set = detail::BuildBitset(_buckets, *_doc, _docs_count);
-      _built = true;
-    }
-    const auto [lo, hi] = WindowOf(_set, min, max);
-    if (lo >= hi) {
+    max = std::min<doc_id_t>(max, detail::BitsetStorage::kMin + _docs_count);
+    if (min >= max) {
       return 0;
     }
-    if constexpr (kTable) {
-      auto* const words = _set.Words();
-      const auto first = static_cast<uint32_t>(lo / kBits);
-      const auto last = static_cast<uint32_t>((hi - 1) / kBits);
-      const auto head = ~uint64_t{0} << (lo % kBits);
-      const auto tail =
-        hi % kBits != 0 ? (uint64_t{1} << (hi % kBits)) - 1 : ~uint64_t{0};
-      if (first == last) {
-        uint64_t edge = words[first] & head & tail;
-        return _table.Count(kMin + first * kBits, &edge, 1);
-      }
-      uint64_t edge = words[first] & head;
-      auto total = _table.Count(kMin + first * kBits, &edge, 1);
-      if (last - first > 1) {
-        total += _table.Count(kMin + (first + 1) * kBits, words + first + 1,
-                              last - first - 1);
-      }
-      edge = words[last] & tail;
-      return total + _table.Count(kMin + last * kBits, &edge, 1);
+    const auto docs = max - min;
+    const auto count = static_cast<uint32_t>((docs + kBits - 1) / kBits);
+    if (_set.WordCount() < count) {
+      _set = detail::BitsetStorage{docs};
     } else {
-      return detail::CountBitRange(_set.Words(), lo, hi);
+      std::fill_n(_set.Words(), count, uint64_t{0});
+    }
+    auto* const words = _set.Words();
+    detail::FillBitset(_buckets, *_doc, _docs_count, min, max, words);
+    if (const auto tail = docs % kBits; tail != 0) {
+      words[count - 1] &= (uint64_t{1} << tail) - 1;
+    }
+    if constexpr (kTable) {
+      return _table.Count(min, words, count);
+    } else {
+      return detail::CountBitRange(words, 0, docs);
     }
   }
 
@@ -112,7 +74,6 @@ class BooleanBitset : public Root {
 
   detail::BitsetBuckets _buckets;
   detail::BitsetStorage _set;
-  bool _built = false;
   const IndexInput* _doc;
   doc_id_t _docs_count;
   [[no_unique_address]] detail::Narrowing<Table> _table;
@@ -122,7 +83,7 @@ class BooleanBitset : public Root {
 namespace irs::detail {
 
 template<>
-inline constexpr uint64_t kFoldPostings<count::Root::ptr> = 4;
+inline constexpr bool kRangeBitset<count::Root::ptr> = true;
 template<>
 inline constexpr FoldEmit kFoldEmit<count::Root::ptr>{0.3, 1.0, false};
 

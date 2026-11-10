@@ -21,15 +21,21 @@
 #include <absl/strings/str_cat.h>
 
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/search/count/boolean_bitset.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/count/root.hpp>
+#include <iresearch/search/detail/bitset_build.hpp>
+#include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/search/queries/multiterm_query.hpp>
+#include <iresearch/search/queries/term_query.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/empty.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -45,7 +51,10 @@ using irs::doc_id_t;
 inline constexpr irs::field_id kSingle = 1;
 inline constexpr irs::field_id kUnique = 2;
 inline constexpr irs::field_id kMulti = 3;
+inline constexpr irs::field_id kParity = 4;
+inline constexpr irs::field_id kHead = 5;
 inline constexpr doc_id_t kRows = 30000;
+inline constexpr doc_id_t kHeadRows = 1000;
 inline constexpr int64_t kValues = 9001;
 inline constexpr int64_t kMultiValues = 3000;
 
@@ -100,6 +109,8 @@ class CountSingleValuedTest : public tests::IndexTestBase {
       };
       add(kSingle, "single", SingleOf(row));
       add(kUnique, "unique", row);
+      add(kParity, "parity", row % 2);
+      add(kHead, "head", row < kHeadRows ? 0 : 1);
       for (const auto value : MultiOf(row)) {
         add(kMulti, "multi", value);
       }
@@ -405,45 +416,128 @@ TEST_P(CountSingleValuedTest,
   }
 }
 
-TEST_P(CountSingleValuedTest,
-       split_counts_fold_only_disjunctions_of_many_terms) {
+TEST_P(CountSingleValuedTest, split_counts_fill_their_range_of_many_terms) {
   auto writer = open_writer(irs::kOmCreate);
   Build(*writer);
   auto reader = open_reader();
   ASSERT_EQ(1, reader.size());
-  constexpr doc_id_t kRowGroupDocs = 122880;
   constexpr struct {
     int64_t lo;
     int64_t hi;
+    bool bitset;
   } kRanges[]{
-    {100, 109},
-    {4500, kValues - 1},
+    {100, 109, false},
+    {1000, 1999, false},
+    {100, 1500, true},
   };
-  for (const auto& [lo, hi] : kRanges) {
-    SCOPED_TRACE(lo);
-    const auto range = Range(kSingle, lo, hi);
-    auto query = irs::PrepareMasked(*range, reader[0], {});
+  for (const auto& [lo, hi, bitset] : kRanges) {
+    SCOPED_TRACE(absl::StrCat(lo, "..", hi));
+    auto query = irs::PrepareMasked(*Range(kMulti, lo, hi), reader[0], {});
     ASSERT_NE(nullptr, query);
     ASSERT_EQ(irs::QueryKind::Terms, query->Kind());
-    EXPECT_EQ(
-      0, irs::count::FoldTerms(*query, std::numeric_limits<doc_id_t>::max())
-           .WordCount());
-    if (hi - lo < 16) {
-      EXPECT_EQ(0, irs::count::FoldTerms(*query, kRowGroupDocs).WordCount());
-    }
-    const auto fold =
-      irs::count::FoldTerms(*query, irs::detail::BitsetStorage::kBits);
-    ASSERT_NE(0, fold.WordCount());
-    auto count = irs::count::MakeRoot(*query, {.partial = true, .fold = &fold});
+    ASSERT_EQ(
+      bitset,
+      irs::utils::downCast<irs::MultiTermQuery>(*query).State().TermsSize() >=
+        irs::detail::kWindowWords);
+    auto count = irs::count::MakeRoot(*query, {.span = 4096, .partial = true});
     ASSERT_NE(nullptr, count);
+    EXPECT_EQ(
+      bitset,
+      nullptr != dynamic_cast<irs::count::BooleanBitset<irs::utils::Empty>*>(
+                   count.get()));
     constexpr doc_id_t kBounds[]{
       irs::doc_limits::min(), 777, 9001, 16384, 20001, irs::doc_limits::eof()};
     uint64_t parts = 0;
     for (size_t i = 1; i != std::size(kBounds); ++i) {
       parts += count->Run(kBounds[i - 1], kBounds[i]);
     }
-    EXPECT_EQ(SingleIn(lo, hi), parts + count->Finish());
+    EXPECT_EQ(MultiIn(lo, hi), parts + count->Finish());
   }
+}
+
+TEST_P(CountSingleValuedTest, bitset_fills_skip_what_earlier_clauses_emptied) {
+  auto writer = open_writer(irs::kOmCreate);
+  Build(*writer);
+  Remove(*writer, 2000, 2099);
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  const auto& segment = reader[0];
+  const auto* const doc = irs::detail::SegmentDoc(segment);
+  ASSERT_NE(nullptr, doc);
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  std::vector<irs::Filter::ptr> filters;
+  std::vector<irs::QueryBuilder::ptr> queries;
+  const auto prepare = [&](irs::field_id field, int64_t lo,
+                           int64_t hi) -> const irs::QueryBuilder& {
+    const auto& filter = *filters.emplace_back(Range(field, lo, hi));
+    return *queries.emplace_back(filter.PrepareSegment(segment, {}));
+  };
+  const auto clauses = [&](irs::field_id field, int64_t lo, int64_t hi) {
+    const auto& query = prepare(field, lo, hi);
+    std::vector<irs::detail::PostingClause> out;
+    if (query.Kind() == irs::QueryKind::Term) {
+      out.emplace_back(irs::utils::downCast<irs::TermQuery>(query).State());
+      return out;
+    }
+    EXPECT_EQ(irs::QueryKind::Terms, query.Kind());
+    if (query.Kind() == irs::QueryKind::Terms) {
+      const auto& state =
+        irs::utils::downCast<irs::MultiTermQuery>(query).State();
+      for (const auto& entry : state.Terms()) {
+        out.emplace_back(irs::detail::ClauseOf(entry, state.Reader()));
+      }
+    }
+    return out;
+  };
+  const auto make = [&] {
+    irs::detail::BitsetBuckets buckets;
+    auto seed = clauses(kUnique, 0, 2999);
+    auto late = clauses(kUnique, 20000, 20999);
+    seed.insert(seed.end(), late.begin(), late.end());
+    buckets.must.push_back(std::move(seed));
+    buckets.must.push_back(clauses(kMulti, 0, 1499));
+    buckets.must.push_back(clauses(kParity, 0, 0));
+    buckets.must_not = clauses(kHead, 0, 0);
+    buckets.exclude_fills.push_back(
+      prepare(kSingle, 5000, 5999).PlanFill({}, irs::ScoreMergeType::Noop));
+    buckets.masked = &segment;
+    return buckets;
+  };
+  const auto expected = [&](doc_id_t d) {
+    const auto row = d - irs::doc_limits::min();
+    const auto single = SingleOf(row);
+    return _live[row] && (row < 3000 || (20000 <= row && row < 21000)) &&
+           absl::c_any_of(MultiOf(row), [](int64_t v) { return v < 1500; }) &&
+           row % 2 == 0 && row >= kHeadRows && (single < 5000 || single > 5999);
+  };
+  const auto check = [&](irs::detail::BitsetBuckets& buckets, doc_id_t min,
+                         doc_id_t max) {
+    SCOPED_TRACE(absl::StrCat(min, "..", max));
+    irs::detail::BitsetStorage bits{max - min};
+    irs::detail::FillBitset(buckets, *doc, docs_count, min, max, bits.Words());
+    uint64_t found = 0;
+    for (auto d = min; d != max; ++d) {
+      const auto offset = d - min;
+      const bool bit = ((bits.Words()[offset / 64] >> (offset % 64)) & 1) != 0;
+      EXPECT_EQ(expected(d), bit) << d;
+      found += bit;
+    }
+    return found;
+  };
+
+  const auto end = irs::doc_limits::min() + docs_count;
+  auto whole = make();
+  ASSERT_EQ(1, whole.must.back().size());
+  ASSERT_EQ(1, whole.must_not.size());
+  EXPECT_NE(0, check(whole, irs::doc_limits::min(), end));
+
+  auto split = make();
+  constexpr doc_id_t kParts[][2]{
+    {irs::doc_limits::min(), 500}, {9001, 16384}, {16384, 20001}};
+  for (const auto& [min, max] : kParts) {
+    check(split, min, max);
+  }
+  check(split, 20001, end);
 }
 
 INSTANTIATE_TEST_SUITE_P(count_single_valued_test, CountSingleValuedTest,

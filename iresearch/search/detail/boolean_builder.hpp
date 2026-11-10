@@ -140,7 +140,7 @@ Result<Family> MakeSortedDocs(std::span<const Term> terms,
                               doc_id_t docs_count, const Ctx& ctx) {
   if (Family::BitsetSpan(ctx, docs_count) < docs_count ||
       !SparseFold(SumDocs(terms), docs_count) ||
-      !TakeBitset<Result<Family>>(terms, doc, docs_count)) {
+      !TakeBitset<Result<Family>>(terms, docs_count)) {
     return {};
   }
   auto docs = SortedDocsOf(terms, field, doc);
@@ -161,7 +161,8 @@ Result<Family> MakeDisjunctionOfTerms(std::span<const Term> terms,
         MakeSortedDocs<Family>(terms, field, doc, docs_count, ctx)) {
     return sorted;
   }
-  if (Family::BitsetSpan(ctx, docs_count) >= docs_count) {
+  if (kRangeBitset<Result<Family>> ||
+      Family::BitsetSpan(ctx, docs_count) >= docs_count) {
     if (auto folded = MakeBitsetOf<Result<Family>>(
           terms, field, doc, docs_count, Family::BitsetTable(ctx))) {
       return folded;

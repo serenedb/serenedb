@@ -740,10 +740,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       PrepareSegmentNow(g, seg);
       const auto& query = *g.queries[seg];
       split = !SegmentStaysWhole(g.shape, query, exact_counts, g.rg_size);
-      if (split && g.shape == ScanShape::Count) {
-        work.fold =
-          irs::count::FoldTerms(query, static_cast<irs::doc_id_t>(g.rg_size));
-      }
     }
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);

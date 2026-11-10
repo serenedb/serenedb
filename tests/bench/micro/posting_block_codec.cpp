@@ -912,16 +912,16 @@ void BmBiasSink(benchmark::State& state) {
   constexpr bool kClear = std::is_same_v<Sink, irs::detail::ClearBits>;
   std::vector<uint64_t> words(docs.back() / kBits + 2 * kBlock,
                               kClear ? ~uint64_t{0} : 0);
-  irs::PostingMeta meta;
-  meta.docs_count = kBiasDocs;
   irs::detail::HoleBuf holes;
   irs::DocsBuf buf;
   for (auto _ : state) {
     irs::BytesViewInput in{
       irs::bytes_view{encoded.data(), encoded.size() - kSlack}};
     Sink sink{words.data()};
-    irs::detail::ReadPosting(meta, in, nullptr, holes.data, buf.data(), false,
-                             false, sink);
+    irs::detail::ReadPosting(in, nullptr, holes.data, buf.data(), false,
+                             irs::doc_limits::invalid(), kBiasDocs,
+                             irs::doc_limits::min(), irs::doc_limits::eof(),
+                             nullptr, nullptr, sink);
     benchmark::DoNotOptimize(words.data());
     benchmark::ClobberMemory();
   }

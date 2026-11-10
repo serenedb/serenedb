@@ -24,7 +24,6 @@
 
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/boolean_bitset.hpp"
 #include "iresearch/search/count/disjoint.hpp"
 #include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/subtract.hpp"
@@ -34,8 +33,6 @@
 
 namespace irs::count {
 namespace {
-
-constexpr uint64_t kFoldLeafWords = 2;
 
 Root::ptr PlanTerms(const MultiTermQuery& query, const Context& ctx) {
   const auto& state = query.State();
@@ -59,35 +56,8 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeConstant(0);
   }
-  if (ctx.fold != nullptr) {
-    return memory::make_managed<FoldWindow>(*ctx.fold);
-  }
   const detail::FoldReachScope reach{ctx.span};
   return query.PlanCount(ctx);
-}
-
-detail::BitsetStorage FoldTerms(const QueryBuilder& query, doc_id_t unit_docs) {
-  if (query.Kind() != QueryKind::Terms) {
-    return {};
-  }
-  const auto& terms_query = irs::utils::downCast<MultiTermQuery>(query);
-  const auto& state = terms_query.State();
-  const auto* const field = state.Reader();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  const auto* const doc = field != nullptr ? detail::DocOf(*field) : nullptr;
-  if (doc == nullptr || terms.size() < 2 ||
-      terms.size() * kFoldLeafWords <
-        uint64_t{unit_docs} / detail::BitsetStorage::kBits) {
-    return {};
-  }
-  const auto docs_count =
-    static_cast<doc_id_t>(terms_query.Segment().docs_count());
-  const detail::FoldReachScope whole{0};
-  if (!detail::TakeBitset<Root::ptr>(terms, *doc, docs_count)) {
-    return {};
-  }
-  auto buckets = detail::DisjunctionBuckets(terms, field);
-  return detail::BuildBitset(buckets, *doc, docs_count);
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {

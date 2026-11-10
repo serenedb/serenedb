@@ -394,22 +394,16 @@ constexpr auto kBitmaskTable = [] {
   return table;
 }();
 
-template<bool kUpdateStats, bool kAllValid>
+template<bool kAllValid>
 void BitPackBooleans(data_ptr_t dst, const duckdb::UnifiedVectorFormat& input,
-                     idx_t count, duckdb::StatsWriter<bool>* statistics) {
+                     idx_t count) {
   const auto* src = duckdb::UnifiedVectorFormat::GetData<bool>(input);
   uint8_t byte = 0;
   uint32_t bit_pos = 0;
   uint8_t src_bit = false;
   if constexpr (kAllValid) {
-    if constexpr (kUpdateStats) {
-      statistics->SetHasValid();
-    }
     for (idx_t i = 0; i < count; ++i) {
       src_bit = src[input.sel->get_index(i)];
-      if constexpr (kUpdateStats) {
-        statistics->Update(src_bit);
-      }
       byte |= src_bit << bit_pos;
       ++bit_pos;
       if (bit_pos == 8) {
@@ -428,14 +422,6 @@ void BitPackBooleans(data_ptr_t dst, const duckdb::UnifiedVectorFormat& input,
       byte |= bit << bit_pos;
       ++bit_pos;
       last_bit_value = src_bit;
-      if constexpr (kUpdateStats) {
-        if (valid) {
-          statistics->Update(src_bit);
-          statistics->SetHasValid();
-        } else {
-          statistics->SetHasNull();
-        }
-      }
       if (bit_pos == 8) {
         *dst++ = byte;
         byte = 0;
@@ -448,16 +434,14 @@ void BitPackBooleans(data_ptr_t dst, const duckdb::UnifiedVectorFormat& input,
   }
 }
 
-template<bool kUpdateStats>
 void PackBooleans(ValidityMask& packed,
-                  const duckdb::UnifiedVectorFormat& input, idx_t count,
-                  duckdb::StatsWriter<bool>* statistics) {
+                  const duckdb::UnifiedVectorFormat& input, idx_t count) {
   packed.EnsureWritable();
   auto* dst = reinterpret_cast<data_ptr_t>(packed.GetData());
   if (input.validity.CannotHaveNull()) {
-    BitPackBooleans<kUpdateStats, true>(dst, input, count, statistics);
+    BitPackBooleans<true>(dst, input, count);
   } else {
-    BitPackBooleans<kUpdateStats, false>(dst, input, count, statistics);
+    BitPackBooleans<false>(dst, input, count);
   }
 }
 
@@ -1036,14 +1020,15 @@ void AppendBytes(State& state, validity_t entry, idx_t bits) {
   }
 }
 
-template<typename State>
+template<typename State, typename OnRows>
 void AppendValidity(State& state, const ValidityMask& validity,
-                    idx_t input_size) {
+                    idx_t input_size, OnRows&& on_rows) {
   if (validity.CannotHaveNull()) {
     idx_t appended = 0;
     while (appended < input_size) {
       const idx_t to_append =
         std::min<idx_t>(kContainerSize - Count(state), input_size - appended);
+      on_rows(appended, to_append);
       HandleAllValid(state, to_append);
       if (Count(state) == kContainerSize) {
         Flush(state);
@@ -1056,6 +1041,7 @@ void AppendValidity(State& state, const ValidityMask& validity,
   while (appended < input_size) {
     idx_t to_append =
       std::min<idx_t>(kContainerSize - Count(state), input_size - appended);
+    on_rows(appended, to_append);
 
     idx_t entry_offset = appended / kBitsPerValue;
     const idx_t previous_entry_remainder = appended % kBitsPerValue;
@@ -1668,12 +1654,13 @@ bool Analyze(AnalyzeState& state_p, const duckdb::Vector& input) {
   const auto count = input.size();
   duckdb::UnifiedVectorFormat unified;
   input.ToUnifiedFormat(unified);
+  const auto no_stats = [](idx_t, idx_t) {};
   if constexpr (kPhysical == duckdb::PhysicalType::BOOL) {
     ValidityMask packed{count};
-    PackBooleans<false>(packed, unified, count, nullptr);
-    AppendValidity(state, packed, count);
+    PackBooleans(packed, unified, count);
+    AppendValidity(state, packed, count, no_stats);
   } else {
-    AppendValidity(state, unified.validity, count);
+    AppendValidity(state, unified.validity, count, no_stats);
   }
   state.total_count += count;
   return true;
@@ -1702,10 +1689,20 @@ void Compress(CompressionState& state_p, const duckdb::Vector& input) {
   input.ToUnifiedFormat(unified);
   if constexpr (kPhysical == duckdb::PhysicalType::BOOL) {
     ValidityMask packed{count};
-    PackBooleans<true>(packed, unified, count, &state.bool_stats_writer);
-    AppendValidity(state, packed, count);
+    PackBooleans(packed, unified, count);
+    const auto* values = duckdb::UnifiedVectorFormat::GetData<bool>(unified);
+    AppendValidity(state, packed, count, [&](idx_t begin, idx_t rows) {
+      for (idx_t i = begin; i < begin + rows; ++i) {
+        const auto idx = unified.sel->get_index(i);
+        if (unified.validity.RowIsValid(idx)) {
+          state.bool_stats_writer.Update(values[idx]);
+        } else {
+          state.bool_stats_writer.SetHasNull();
+        }
+      }
+    });
   } else {
-    AppendValidity(state, unified.validity, count);
+    AppendValidity(state, unified.validity, count, [](idx_t, idx_t) {});
   }
 }
 

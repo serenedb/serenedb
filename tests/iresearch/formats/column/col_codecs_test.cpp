@@ -44,10 +44,12 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/object_cache.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/fsst.hpp>
 #include <iresearch/formats/column/codecs/onpair.hpp>
@@ -61,6 +63,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/immutable_payloads.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
+#include <iresearch/formats/column/internal/write_context.hpp>
 #include <iresearch/formats/column/list_ingest.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
@@ -3287,6 +3290,89 @@ TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << e.what();
     }
+  }
+}
+
+TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
+  constexpr uint64_t kChunk = STANDARD_VECTOR_SIZE;
+  const auto& fn = *irs::codecs::GetCodec(
+    duckdb::CompressionType::COMPRESSION_ROARING, duckdb::PhysicalType::BOOL);
+  struct Flushed {
+    duckdb::BaseStatistics stats;
+    uint64_t rows;
+  };
+  const auto value = [](uint64_t g) -> bool {
+    return ((g * 0x9E3779B97F4A7C15ULL) >> 61) & 1;
+  };
+  const auto seal = [&](std::span<const uint64_t> chunk_ends) {
+    irs::MemoryDirectory dir;
+    auto out = dir.create("blocks");
+    irs::WriteContext ctx{Db(), *out};
+    std::vector<duckdb::Vector> chunks;
+    uint64_t pos = 0;
+    for (const auto end : chunk_ends) {
+      auto& v = chunks.emplace_back(duckdb::LogicalType::BOOLEAN, end - pos);
+      auto* data = duckdb::FlatVector::GetDataMutable<bool>(v);
+      for (uint64_t g = pos; g < end; ++g) {
+        data[g - pos] = value(g);
+      }
+      duckdb::FlatVector::SetSize(v, end - pos);
+      pos = end;
+    }
+    irs::codecs::CompressionAnalyzeContext actx{ctx};
+    auto analyze = fn.init_analyze(actx, duckdb::PhysicalType::BOOL);
+    for (const auto& v : chunks) {
+      EXPECT_TRUE(fn.analyze(*analyze, v));
+    }
+    EXPECT_NE(fn.final_analyze(*analyze), duckdb::DConstants::INVALID_INDEX);
+    std::vector<Flushed> flushed;
+    const auto flush = [&](duckdb::BaseStatistics stats, uint64_t n,
+                           std::string_view) {
+      flushed.push_back({std::move(stats), n});
+    };
+    irs::codecs::ColumnDataCheckpointData checkpoint{
+      .type = duckdb::LogicalType::BOOLEAN,
+      .ctx = ctx,
+      .flush = flush,
+    };
+    auto state = fn.init_compression(checkpoint, std::move(analyze));
+    for (const auto& v : chunks) {
+      fn.compress(*state, v);
+    }
+    fn.compress_finalize(*state);
+    return flushed;
+  };
+  std::vector<uint64_t> ends;
+  for (uint64_t end = kChunk; end <= 3'000'000; end += kChunk) {
+    ends.push_back(end);
+  }
+  const auto probe = seal(ends);
+  ASSERT_GE(probe.size(), 2u);
+  const uint64_t first = probe.front().rows;
+  constexpr uint64_t kBefore = 5;
+  ends.clear();
+  for (uint64_t end = kChunk; end < first - kBefore; end += kChunk) {
+    ends.push_back(end);
+  }
+  ends.push_back(first - kBefore);
+  ends.push_back(first - kBefore + kChunk);
+  const auto flushed = seal(ends);
+  ASSERT_EQ(flushed.size(), 2u);
+  ASSERT_EQ(flushed[0].rows, first);
+  ASSERT_EQ(flushed[1].rows, kChunk - kBefore);
+  uint64_t begin = 0;
+  for (const auto& [stats, rows] : flushed) {
+    bool any_true = false;
+    bool any_false = false;
+    for (uint64_t g = begin; g < begin + rows; ++g) {
+      any_true |= value(g);
+      any_false |= !value(g);
+    }
+    SCOPED_TRACE(begin);
+    EXPECT_EQ(duckdb::NumericStats::Max(stats).GetValue<bool>(), any_true);
+    EXPECT_EQ(duckdb::NumericStats::Min(stats).GetValue<bool>(), !any_false);
+    EXPECT_EQ(stats.IsConstant(), !(any_true && any_false));
+    begin += rows;
   }
 }
 

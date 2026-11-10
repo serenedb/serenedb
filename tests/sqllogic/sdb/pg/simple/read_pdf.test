@@ -1,5 +1,19 @@
 control substitution on
 
+query
+SELECT text
+FROM read_pdf('${RESOURCES}/tests/pdf/basic/rtl.pdf');
+----
+text
+שלום עולם
+
+query
+SELECT text, round(width::NUMERIC, 2) AS width
+FROM read_pdf_blocks('${RESOURCES}/tests/pdf/basic/scaled_words.pdf');
+----
+text	width
+12 34	25.02
+
 system ok
 ln -sfn ${RESOURCES}/tests/pdf/basic "$__TEST_DIR__/pdf"
 

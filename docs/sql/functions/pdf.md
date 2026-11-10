@@ -22,7 +22,7 @@ The PDF readers are available in SereneDB SQL and in `serened shell`, with no se
 | `height` | `DOUBLE` | Page height in PDF points. |
 | `has_text_layer` | `BOOLEAN` | Whether the page yielded nonblank text. |
 
-The default `layout := 'auto'` groups text into lines and detects reading columns from their positions. Columns read left to right, with lines top to bottom within each column; line-ending hyphens are removed when a word continues onto the next line. Complex layouts may need manual interpretation using `read_pdf_blocks`. Use `layout := 'raw'` for the document's content order, with a newline between text fragments. Extraction depends on the PDF's character mappings; documents with missing or incorrect mappings can produce incomplete or incorrect text.
+The default `layout := 'auto'` groups text into lines and detects reading columns from their positions. Lines read top to bottom within each column. Predominantly Arabic or Hebrew lines and columns read right to left, while consecutive Latin words and numbers retain their left-to-right order. The characters within each word follow the PDF's Unicode mapping; arbitrary bidirectional embeddings and visually reversed character sequences require manual interpretation. Line-ending hyphens are removed when a word continues onto the next line. Complex layouts may need manual interpretation using `read_pdf_blocks`. Use `layout := 'raw'` for the document's content order, with a newline between text fragments. Extraction depends on the PDF's character mappings; documents with missing or incorrect mappings can produce incomplete or incorrect text.
 
 ## Read positioned text
 
@@ -47,9 +47,27 @@ Provide `password` for password-protected documents. A missing or incorrect pass
 
 <SqlLogicTest id="sql/functions/pdf/page_range" />
 
+## Read ruled tables
+
+`read_pdf_tables(path, password := '', first_page := 1, last_page := ...)` returns one row per detected table row. It accepts the same file paths, globs, passwords, and inclusive page bounds as `read_pdf`.
+
+<SqlLogicTest id="sql/functions/pdf/read_tables" />
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `filename` | `VARCHAR` | Source path. |
+| `page` | `BIGINT` | Page number, starting at 1. |
+| `table_index` | `BIGINT` | Table number within the page, starting at 1 in top-to-bottom order. |
+| `row_index` | `BIGINT` | Row number within the table, starting at 1. |
+| `cells` | `VARCHAR[]` | Cell text from left to right, including empty cells. |
+
 ## Limits and errors
 
-OCR and table extraction are not supported. `read_pdf` reports pages without extractable text with empty `text` and `has_text_layer = false`; `read_pdf_blocks` emits no fragments for those pages. A completed scan of a file whose selected pages have no extractable text raises an error. An empty text result does not establish that a page is scanned: it may be blank, contain outlines, or lack usable character mappings.
+Tables need at least two horizontal rules spanning their width, two vertical rules, and two rows and two columns. Missing outer borders can be inferred from the ends of the remaining rules. Horizontal and vertical borders, including boundaries of filled shapes, define cells. A merged cell's text appears in its top-left position; the other positions are empty strings. A multiline cell contains newline-separated text. Cells are not split into additional rows solely because their text has multiple lines. Tables spanning pages remain separate tables.
+
+Unruled tables, diagonal borders, nonrectangular merged cells, and arbitrary clipping paths are not supported. Text without a detectable grid produces no table rows. Complex pages exceeding 10,000 line segments or four million grid comparisons raise an error. Extraction is approximate: verify results against the document before using them as structured data.
+
+OCR is not supported. `read_pdf` reports pages without extractable text with empty `text` and `has_text_layer = false`; `read_pdf_blocks` emits no fragments for those pages. A completed scan of a file whose selected pages have no extractable text raises an error. An empty text result does not establish that a page is scanned: it may be blank, contain outlines, or lack usable character mappings.
 
 Files must be nonempty and seekable. Each PDF must fit in memory along with its parsed content. A malformed or unreadable PDF aborts the query. Use `ORDER BY filename, page` for page order, or `ORDER BY filename, page, block` for fragment order.
 

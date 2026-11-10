@@ -57,12 +57,17 @@ def write_pdf(path, pages, password=None, unicode_map=False):
         return number
 
     if unicode_map:
+        mapping = {0x41: "П", 0x42: "中"} if unicode_map is True else unicode_map
+        mappings = b"".join(
+            f"<{code:02X}> <{text.encode('utf-16-be').hex().upper()}>\n".encode()
+            for code, text in mapping.items()
+        )
         cmap = stream(
             b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
             b"/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n"
             b"/CMapName /Fixture def\n/CMapType 2 def\n"
             b"1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"
-            b"2 beginbfchar\n<41> <041F>\n<42> <4E2D>\nendbfchar\n"
+            + f"{len(mapping)} beginbfchar\n".encode() + mappings + b"endbfchar\n"
             b"endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend"
         )
         objects[2] = (
@@ -134,7 +139,31 @@ def generate(directory):
     write_pdf(directory / "unicode.pdf", [
         b"BT /F1 12 Tf 72 720 Td <4142> Tj ET"
     ], unicode_map=True)
+    write_pdf(directory / "rtl.pdf", [
+        b"BT /F1 12 Tf 20 720 Td <45464748> Tj ET "
+        b"BT /F1 12 Tf 100 720 Td <41424344> Tj ET"
+    ], unicode_map=dict(zip(range(0x41, 0x49), "שלוםעולם")))
+    write_pdf(directory / "scaled_words.pdf", [
+        b"BT /F1 1 Tf 10 0 0 10 20 700 Tm (12 34) Tj ET"
+    ])
+    spaced_table = (
+        b"0 70 120 40 re S 40 70 m 40 110 l S 80 70 m 80 110 l S 0 90 m 120 90 l S "
+        b"BT /F1 1 Tf 4.1107 Tc 5.76 0 0 5.76 20 100 Tm "
+        b"[(02) 4125 (,) 4098 (2) 4125 (4) 4125 (81) 4125 (,) 4098 (1) 4125 (3) 4125 (5)] TJ ET "
+        b"BT 0 Tc /F1 8 Tf 1 0 0 1 20 80 Tm (A) Tj 40 0 Td (B) Tj 40 0 Td (C) Tj ET"
+    )
+    write_pdf(directory / "spaced_table.pdf", [spaced_table])
     write_pdf(directory / "many_pages.pdf", [first] * 2050)
+    table = []
+    for row in range(34):
+        y = 750 - row * 20
+        table.append(f"50 {y} m 250 {y} l S".encode())
+        if row < 33:
+            for col, text in enumerate((f"Row {row + 1}", str(row + 1))):
+                table.append(f"BT /F1 10 Tf {60 + col * 100} {y - 14} Td ({text}) Tj ET".encode())
+    for x in (50, 150, 250):
+        table.append(f"{x} 750 m {x} 90 l S".encode())
+    write_pdf(directory / "many_tables.pdf", [b"\n".join(table)] * 65)
     write_pdf(directory / "many_blocks.pdf", [b"\n".join(
         f"BT /F1 1 Tf 72 {i} Td (x) Tj ET".encode() for i in range(2050)
     )])

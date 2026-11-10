@@ -14,6 +14,18 @@ page	text
 1	Hello PDF
 2	Second page
 
+# DOCS_TEST: read_tables
+# DOCS_TEST_BODY
+query
+SELECT cells[1] AS item, cells[4] AS amount
+FROM read_pdf_tables('${RESOURCES}/tests/pdf/rendered/business_report.pdf')
+WHERE row_index IN (2, 3)
+ORDER BY row_index;
+----
+item	amount
+Document review	100.00
+Archive storage	37.50
+
 # DOCS_TEST: read_blocks
 # DOCS_TEST_BODY
 query

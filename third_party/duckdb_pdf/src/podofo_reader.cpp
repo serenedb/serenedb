@@ -20,12 +20,14 @@
 
 #include "podofo_reader.hpp"
 #include "podofo_layout.hpp"
+#include "podofo_tables.hpp"
 
 #include <absl/strings/ascii.h>
 #include <podofo/main/PdfError.h>
 #include <podofo/main/PdfMemDocument.h>
 #include <podofo/main/PdfPage.h>
 #include <podofo/main/PdfPageCollection.h>
+#include <podofo/main/PdfMath.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -35,6 +37,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -54,6 +57,7 @@ struct PdfBindData final : duckdb::TableFunctionData {
 	uint32_t first_page = 1;
 	uint32_t last_page = std::numeric_limits<uint32_t>::max();
 	bool blocks = false;
+	bool tables = false;
 	bool raw = false;
 };
 
@@ -62,6 +66,9 @@ struct PdfState final : duckdb::GlobalTableFunctionState {
 	std::string bytes;
 	std::unique_ptr<PoDoFo::PdfMemDocument> document;
 	std::vector<PoDoFo::PdfTextEntry> entries;
+	std::vector<pdf::Table> tables;
+	size_t table = 0;
+	size_t table_row = 0;
 	size_t entry = 0;
 	uint32_t page = 0;
 	uint32_t end_page = 0;
@@ -76,6 +83,7 @@ duckdb::unique_ptr<duckdb::FunctionData> PdfBind(duckdb::ClientContext &context,
                                                  duckdb::vector<duckdb::Identifier> &names) {
 	auto data = duckdb::make_uniq<PdfBindData>();
 	data->blocks = input.table_function.GetName() == "read_pdf_blocks";
+	data->tables = input.table_function.GetName() == "read_pdf_tables";
 	for (const auto &[key, value] : input.named_parameters) {
 		if (value.IsNull()) {
 			throw InvalidInputException("read_pdf: options must not be NULL");
@@ -113,6 +121,11 @@ duckdb::unique_ptr<duckdb::FunctionData> PdfBind(duckdb::ClientContext &context,
 		types = {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT,
 		         duckdb::LogicalType::VARCHAR, duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE,
 		         duckdb::LogicalType::DOUBLE,  duckdb::LogicalType::DOUBLE};
+	}
+	if (data->tables) {
+		names = {"filename", "page", "table_index", "row_index", "cells"};
+		types = {LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
+		         LogicalType::LIST(LogicalType::VARCHAR)};
 	}
 	return data;
 }
@@ -155,6 +168,22 @@ void OpenPdf(duckdb::ClientContext &context, const PdfBindData &bind, PdfState &
 	state.page_loaded = false;
 }
 
+std::vector<pdf::TextWord> PageWords(const PdfState &state, bool rotate = false) {
+	const auto &page = state.document->GetPages().GetPageAt(state.page);
+	const auto raw = page.GetRectRaw().GetNormalized();
+	const auto rotation = PoDoFo::GetFrameRotationTransform(raw, rotate ? page.GetRotationRadians() : 0);
+	const auto rect = raw * rotation;
+	std::vector<pdf::TextWord> words;
+	words.reserve(state.entries.size());
+	for (const auto &entry : state.entries) {
+		const auto box =
+		    (entry.BoundingBox ? *entry.BoundingBox : PoDoFo::Rect(entry.X, entry.Y, entry.Length, 1.0)) * rotation;
+		words.push_back(
+		    {box.X - rect.X, rect.GetTop() - box.GetTop(), box.GetRight() - rect.X, rect.GetTop() - box.Y, entry.Text});
+	}
+	return words;
+}
+
 void LoadPdfPage(duckdb::ClientContext &context, const PdfBindData &bind, PdfState &state) {
 	context.InterruptCheck();
 	state.entries.clear();
@@ -176,6 +205,13 @@ void LoadPdfPage(duckdb::ClientContext &context, const PdfBindData &bind, PdfSta
 	state.width = rect.Width;
 	state.height = rect.Height;
 	state.found_text |= !state.entries.empty();
+	if (bind.tables) {
+		auto interrupt = [&] {
+			context.InterruptCheck();
+		};
+		state.tables = pdf::GetRuledTables(pdf::GetPageRules(page, interrupt), PageWords(state, true), interrupt);
+		state.table = state.table_row = 0;
+	}
 	state.page_loaded = true;
 }
 
@@ -213,9 +249,32 @@ void PdfScan(duckdb::ClientContext &context, duckdb::TableFunctionInput &input, 
 				state.page_loaded = false;
 				continue;
 			}
+			if (bind.tables && state.table == state.tables.size()) {
+				++state.page;
+				state.page_loaded = false;
+				continue;
+			}
 			SetPdfString(output.data[0], count, bind.files[state.file].path);
 			duckdb::FlatVector::GetDataMutable<int64_t>(output.data[1])[count] = state.page + 1;
-			if (bind.blocks) {
+			if (bind.tables) {
+				const auto &rows = state.tables[state.table].rows;
+				FlatVector::GetDataMutable<int64_t>(output.data[2])[count] = state.table + 1;
+				FlatVector::GetDataMutable<int64_t>(output.data[3])[count] = state.table_row + 1;
+				auto &list = output.data[4];
+				const auto &cells = rows[state.table_row];
+				const auto offset = ListVector::GetListSize(list);
+				ListVector::Reserve(list, offset + cells.size());
+				auto &child = ListVector::GetChildMutable(list);
+				for (size_t i = 0; i < cells.size(); ++i) {
+					SetPdfString(child, offset + i, cells[i]);
+				}
+				ListVector::SetListSize(list, offset + cells.size());
+				FlatVector::GetDataMutable<list_entry_t>(list)[count] = {offset, cells.size()};
+				if (++state.table_row == rows.size()) {
+					++state.table;
+					state.table_row = 0;
+				}
+			} else if (bind.blocks) {
 				const auto &entry = state.entries[state.entry];
 				duckdb::FlatVector::GetDataMutable<int64_t>(output.data[2])[count] = state.entry + 1;
 				SetPdfString(output.data[3], count, entry.Text);
@@ -231,27 +290,16 @@ void PdfScan(duckdb::ClientContext &context, duckdb::TableFunctionInput &input, 
 				++state.entry;
 			} else {
 				std::string text;
-				std::vector<pdf::TextWord> words;
 				const auto page_rect = state.document->GetPages().GetPageAt(state.page).GetRectRaw().GetNormalized();
 				if (!bind.raw) {
-					words.reserve(state.entries.size());
-				}
-				for (const auto &entry : state.entries) {
-					if (!bind.raw) {
-						const auto box =
-						    entry.BoundingBox ? *entry.BoundingBox : PoDoFo::Rect(entry.X, entry.Y, entry.Length, 1.0);
-						words.push_back({box.X - page_rect.X, page_rect.GetTop() - box.GetTop(),
-						                 box.GetRight() - page_rect.X, page_rect.GetTop() - box.Y, entry.Text});
-						continue;
+					text = pdf::GetReadingOrderText(PageWords(state), page_rect.Width);
+				} else
+					for (const auto &entry : state.entries) {
+						if (!text.empty()) {
+							text.push_back('\n');
+						}
+						text.append(entry.Text);
 					}
-					if (!text.empty()) {
-						text.push_back('\n');
-					}
-					text.append(entry.Text);
-				}
-				if (!bind.raw) {
-					text = pdf::GetReadingOrderText(words, page_rect.Width);
-				}
 				SetPdfString(output.data[2], count, text);
 				duckdb::FlatVector::GetDataMutable<double>(output.data[3])[count] = state.width;
 				duckdb::FlatVector::GetDataMutable<double>(output.data[4])[count] = state.height;
@@ -261,6 +309,8 @@ void PdfScan(duckdb::ClientContext &context, duckdb::TableFunctionInput &input, 
 			}
 			++count;
 		}
+	} catch (const std::length_error &error) {
+		throw InvalidInputException("%s", error.what());
 	} catch (const PoDoFo::PdfError &error) {
 		if (error.GetCode() == PoDoFo::PdfErrorCode::InvalidPassword) {
 			throw InvalidInputException("read_pdf: PDF is encrypted; supply the correct password");
@@ -273,7 +323,7 @@ void PdfScan(duckdb::ClientContext &context, duckdb::TableFunctionInput &input, 
 } // namespace
 
 void LoadPdfFunctions(ExtensionLoader &loader) {
-	for (const auto name : {"read_pdf", "read_pdf_blocks"}) {
+	for (const auto name : {"read_pdf", "read_pdf_blocks", "read_pdf_tables"}) {
 		duckdb::FunctionSignature signature;
 		signature.AddPositionalOnly("path", duckdb::LogicalType::VARCHAR)
 		    .WithTypedKwargs("options", [name](duckdb::TypedKwargs &options) {

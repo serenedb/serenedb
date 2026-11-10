@@ -21,6 +21,7 @@
 #include "podofo_layout.hpp"
 
 #include <absl/algorithm/container.h>
+#include <utf8proc.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -30,6 +31,34 @@
 
 namespace duckdb::pdf {
 namespace {
+
+int Direction(std::string_view text) {
+	while (!text.empty()) {
+		utf8proc_int32_t code;
+		const auto length =
+		    utf8proc_iterate(reinterpret_cast<const utf8proc_uint8_t *>(text.data()), text.size(), &code);
+		if (length <= 0) {
+			return 0;
+		}
+		text.remove_prefix(length);
+		const auto direction = utf8proc_get_property(code)->bidi_class;
+		if (direction == UTF8PROC_BIDI_CLASS_R || direction == UTF8PROC_BIDI_CLASS_AL) {
+			return -1;
+		}
+		if (direction == UTF8PROC_BIDI_CLASS_L) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+bool RightToLeft(std::span<const TextWord> words, std::span<const size_t> order) {
+	int direction = 0;
+	for (size_t i : order) {
+		direction += Direction(words[i].text);
+	}
+	return direction < 0;
+}
 
 void AppendRows(std::span<const TextWord> words, std::span<size_t> order, std::string &text) {
 	absl::c_stable_sort(order, [&](size_t a, size_t b) { return words[a].top < words[b].top; });
@@ -51,6 +80,21 @@ void AppendRows(std::span<const TextWord> words, std::span<size_t> order, std::s
 		}
 		auto row = order.subspan(begin, end - begin);
 		absl::c_stable_sort(row, [&](size_t a, size_t b) { return words[a].left < words[b].left; });
+		if (RightToLeft(words, row)) {
+			std::reverse(row.begin(), row.end());
+			for (size_t i = 0; i < row.size();) {
+				if (Direction(words[row[i]].text) < 0) {
+					++i;
+					continue;
+				}
+				size_t end = i + 1;
+				while (end < row.size() && Direction(words[row[end]].text) >= 0) {
+					++end;
+				}
+				std::reverse(row.begin() + i, row.begin() + end);
+				i = end;
+			}
+		}
 		if (!text.empty() && !continuation) {
 			text.push_back('\n');
 		}
@@ -102,12 +146,14 @@ void AppendRegion(std::span<const TextWord> words, std::span<size_t> order, doub
                   uint32_t depth, std::string &text) {
 	if (depth < 32 && order.size() > 1) {
 		size_t split = FindSeparation(words, order, 2 * height, 0, true);
+		bool rtl = false;
 		if (!split) {
 			split = FindSeparation(words, order, 3 * height, 0.15 * page_width, false);
+			rtl = RightToLeft(words, order);
 		}
 		if (split) {
-			AppendRegion(words, order.first(split), height, page_width, depth + 1, text);
-			AppendRegion(words, order.subspan(split), height, page_width, depth + 1, text);
+			AppendRegion(words, rtl ? order.subspan(split) : order.first(split), height, page_width, depth + 1, text);
+			AppendRegion(words, rtl ? order.first(split) : order.subspan(split), height, page_width, depth + 1, text);
 			return;
 		}
 	}

@@ -1137,6 +1137,9 @@ std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
 
 bool UpdateConstant(const duckdb::Vector& input,
                     duckdb::BaseStatistics& stats) {
+  if (stats.GetStatsType() != duckdb::StatisticsType::NUMERIC_STATS) {
+    return false;
+  }
   return WithNumericType(stats.GetType().InternalType(),
                          [&]<typename T>(std::type_identity<T>) {
                            for (const auto value : input.Values<T>()) {

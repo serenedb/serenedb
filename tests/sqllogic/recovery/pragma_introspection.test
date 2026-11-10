@@ -1,4 +1,7 @@
 statement ok
+SET threads = 1;
+
+statement ok
 CREATE TABLE pin_txn (i INTEGER PRIMARY KEY, s VARCHAR USING COMPRESSION zstd, j INTEGER);
 
 statement ok

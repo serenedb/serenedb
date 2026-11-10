@@ -349,6 +349,7 @@ def test_own_schema_with_its_own_tokenizer_and_expression_index(
             "GROUP BY ALL ORDER BY 2 DESC, 1").fetchall() == [
             ("timeout", 2), ("downstream_remote_disconnect", 1),
             ("remote", 1)]
+        server.pg.execute("VACUUM (FLUSH_TABLE) otel_logs")
         assert server.pg.execute(
             "SELECT DISTINCT compression FROM pragma_storage_info('otel_logs') "
             "WHERE column_name = 'body'").fetchall() == [("ZSTD",)]

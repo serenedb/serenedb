@@ -194,7 +194,7 @@ Facet the attribute with `GROUP BY` on the indexed expression, which the index a
 
 <SqlLogicTest id="data_import_and_export/opentelemetry/attribute_counts" />
 
-`pragma_storage_info` shows the codec of each column:
+`pragma_storage_info` shows the codec each column is stored with. The rows a table still holds in memory are not compressed until it writes them to its segments, so write them out first:
 
 <SqlLogicTest id="data_import_and_export/opentelemetry/body_compression" />
 

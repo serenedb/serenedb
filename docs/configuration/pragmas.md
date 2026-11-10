@@ -78,7 +78,7 @@ This call returns the following information for the given table:
 | `segment_type` | `VARCHAR` |                                                                                                                                                    |
 | `start`        | `BIGINT`  | The start row id of this chunk                                                                                                                     |
 | `count`        | `BIGINT`  | The amount of entries in this storage chunk                                                                                                        |
-| `compression`  | `VARCHAR` | Compression type used for this column                                                                                                              |
+| `compression`  | `VARCHAR` | Compression type used for this column; `Uncompressed` for the rows a table still holds in memory                                                  |
 | `stats`        | `VARIANT` |                                                                                                                                                    |
 | `has_updates`  | `BOOLEAN` |                                                                                                                                                    |
 | `persistent`   | `BOOLEAN` | `false` if temporary table                                                                                                                         |

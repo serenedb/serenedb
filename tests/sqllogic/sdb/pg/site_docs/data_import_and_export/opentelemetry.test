@@ -185,6 +185,9 @@ remote	1
 
 # DOCS_TEST_BODY
 
+statement ok
+VACUUM (FLUSH_TABLE) otel_logs;
+
 query
 SELECT DISTINCT compression
 FROM pragma_storage_info('otel_logs')

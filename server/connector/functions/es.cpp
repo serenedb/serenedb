@@ -571,17 +571,17 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     for (auto table : tables) {
       uint64_t docs_count = 0;
       bool first = true;
-      VisitInvertedIndexes(
-        context, table.get(), [&](catalog::InvertedIndexEntry& index) {
-          if (!first) {
-            return;
-          }
-          first = false;
-          const auto& storage = index.SearchStore();
-          if (auto snapshot = storage ? storage->Snapshot() : nullptr) {
-            docs_count = snapshot->reader.live_docs_count();
-          }
-        });
+      VisitInvertedIndexes(context, table.get(),
+                           [&](catalog::InvertedIndexEntry& index) {
+                             if (!first) {
+                               return;
+                             }
+                             first = false;
+                             if (const auto& storage = index.SearchStore();
+                                 storage && storage->HasTable()) {
+                               docs_count = storage->GetTable().LiveDocs();
+                             }
+                           });
       state.rows.emplace_back(table.get().name.GetIdentifierName(), docs_count);
     }
     absl::c_sort(state.rows);

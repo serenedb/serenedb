@@ -548,6 +548,11 @@ void SearchTableEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
 
 void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
+duckdb::optional_idx SearchTableEntry::GetDataVersion(
+  duckdb::ClientContext& context) const {
+  return SessionOf(context, catalog).SearchTxn().PlanVersion(*_storage);
+}
+
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (CreatedObject(prev_entry)) {
     OnDrop();

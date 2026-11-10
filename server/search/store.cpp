@@ -69,6 +69,7 @@
 #include "search/log_entry.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
+#include "search/version_chain.tpp"
 #include "storage_engine/search_engine.h"
 #include "utils/file_utils.h"
 
@@ -247,7 +248,11 @@ void Store::Open() {
   _writer = std::move(writer);
   SetFileManifest(std::move(stamp.manifest));
   if (IsSearchTable()) {
-    _table = std::make_unique<Table>(*_dir, ReaderOptions());
+    {
+      absl::MutexLock lock{&_layout_mutex};
+      _table =
+        std::make_unique<Table>(*_dir, ReaderOptions(), _layout.scan_config);
+    }
     if (_writer) {
       _piece_dir = std::make_unique<irs::MemoryDirectory>();
       irs::IndexWriterOptions piece_options;
@@ -258,8 +263,11 @@ void Store::Open() {
       _piece_writer = irs::IndexWriter::Make(*_piece_dir, irs::kOmCreate,
                                              std::move(piece_options));
     }
+  } else {
+    _index =
+      std::make_unique<VersionChain<IndexState>>(std::make_shared<IndexState>(
+        IndexState{_writer->GetSnapshot(), GetFileManifest()}));
   }
-  PublishSnapshot();
 }
 
 void Store::EnsureOpen() {
@@ -294,11 +302,23 @@ void Store::SyncSegments() const {
   }
 }
 
-StoreSnapshotPtr Store::Snapshot() const {
+std::shared_ptr<const IndexState> Store::LatestIndex() const {
+  return _index->Latest(catalog::Transactions::Get().SharedWalks());
+}
+
+void Store::PruneVersions(std::span<const Tick> running, Tick published) {
   if (_table) {
-    return std::make_shared<StoreSnapshot>(_table->View({}), nullptr);
+    _table->Versions().Prune(running, published);
+  } else if (_index) {
+    _index->Prune(running, published);
   }
-  return std::atomic_load(&_snapshot);
+}
+
+bool Store::FreeVersions() {
+  if (_table) {
+    return _table->Versions().FreeRetired();
+  }
+  return _index && _index->FreeRetired();
 }
 
 irs::DirectoryReader Store::BuildSnapshot() {
@@ -439,7 +459,20 @@ void Store::CommitStorage(std::string entry,
       }
       return record;
     },
-    apply);
+    [&](Tick tick, Lsn lsn) {
+      apply(tick, lsn);
+      _storage_tick.store(tick, std::memory_order_release);
+    });
+}
+
+void Store::CommitUnlogged(absl::FunctionRef<void(Tick)> apply) {
+  catalog::Transactions::Get().CommitStorage(
+    _table ? _table->CommitMutex() : _publish_mutex,
+    [] { return std::vector<uint8_t>{}; },
+    [&](Tick tick, Lsn) {
+      apply(tick);
+      _storage_tick.store(tick, std::memory_order_release);
+    });
 }
 
 void Store::WriteOut(Lsn before) {
@@ -506,11 +539,6 @@ void Store::Cover(Lsn target) {
     [&](Lsn lsn) { _table->StateLogged(lsn); });
 }
 
-void Store::PublishSnapshot() {
-  std::atomic_store(&_snapshot, std::make_shared<StoreSnapshot>(
-                                  _writer->GetSnapshot(), GetFileManifest()));
-}
-
 void Store::ApplyOptions(const catalog::InvertedIndexSettings& options) {
   SetTasksSettings(options);
   _segment_memory_max = options.segment_memory_max;
@@ -561,15 +589,39 @@ void Store::ReindexReleaser::operator()(Store* store) const noexcept {
   }
 }
 
-void Store::Commit(const irs::ProgressReportCallback& progress) {
+void Store::CommitIndex(
+  const irs::ProgressReportCallback& progress,
+  absl::FunctionRef<void(Tick, std::shared_ptr<const IndexState>)> published) {
   SDB_ASSERT(_writer && !_table);
   SDB_IF_FAILURE("Search::FailOnCommit") {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("debug failure point"));
   }
   _durability.Commit(*_writer, progress);
-  PublishSnapshot();
+  auto state = std::make_shared<const IndexState>(
+    IndexState{_writer->GetSnapshot(), GetFileManifest()});
+  Tick tick = 0;
+  CommitUnlogged([&](Tick commit) {
+    _index->Publish(state, commit);
+    tick = commit;
+  });
+  published(tick, std::move(state));
   SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
+}
+
+void Store::Commit(const irs::ProgressReportCallback& progress) {
+  CommitIndex(progress, [](Tick, std::shared_ptr<const IndexState>) {});
+}
+
+void Store::CommitOwn(duckdb::ClientContext& context,
+                      const irs::ProgressReportCallback& progress) {
+  CommitIndex(progress,
+              [&](Tick tick, std::shared_ptr<const IndexState> state) {
+                _index_refreshed.store(tick, std::memory_order_release);
+                ConnectionContext::Get(context).Transaction().PublishedIndex(
+                  *this, tick, std::move(state));
+                catalog::Transactions::Get().AwaitPublished(tick);
+              });
 }
 
 ResultWithTime Store::CleanupUnsafe() {
@@ -578,17 +630,18 @@ ResultWithTime Store::CleanupUnsafe() {
     return {absl::OkStatus(), 0};
   }
   const auto begin = std::chrono::steady_clock::now();
-  if (_table) {
+  if (_table || _index) {
     auto& transactions = catalog::Transactions::Get();
-    const auto oldest = transactions.RefreshOldest();
-    {
-      absl::MutexLock lock{&_table->CommitMutex()};
-      _table->Collect(oldest);
+    if (_table) {
+      const auto oldest = transactions.RefreshOldest();
+      if (!_read_only && _table->Collectable(oldest)) {
+        CommitUnlogged([&](Tick tick) { _table->Collect(tick, oldest); });
+      }
     }
     const auto running = transactions.RunningSnapshots();
-    _table->Prune(running.snapshots, running.published);
+    PruneVersions(running.snapshots, running.published);
     transactions.AdvanceEpoch();
-    _table->FreeRetired();
+    FreeVersions();
   }
   auto result = _durability.Cleanup(*_dir);
   SDB_PARK_ONCE_ON_FAILURE("search_cleanup_after_remove");
@@ -801,7 +854,10 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
       break;
     }
   }
-  return CleanupUnsafe().res;
+  auto cleanup = CleanupUnsafe().res;
+  catalog::Transactions::Get().AwaitPublished(
+    _storage_tick.load(std::memory_order_acquire));
+  return cleanup;
 }
 
 void Store::AwaitMerges(duckdb::ClientContext& context) {
@@ -895,11 +951,6 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::Config() const {
   return _layout.config;
 }
 
-std::shared_ptr<const catalog::InvertedIndexConfig> Store::ScanConfig() const {
-  absl::ReaderMutexLock lock{&_layout_mutex};
-  return _layout.scan_config;
-}
-
 bool Store::IsCurrentConfig(const irs::IndexFieldOptions* options) const {
   absl::ReaderMutexLock lock{&_layout_mutex};
   return _layout.compaction_config.get() == options;
@@ -962,6 +1013,13 @@ void Store::RebuildConfig(Configs&& configs,
   _layout.scan_config = std::move(scan_config);
   _layout.compaction_config = std::move(compaction_config);
   _layout.compaction_stale = false;
+  ScanConfigChanged();
+}
+
+void Store::ScanConfigChanged() {
+  if (_table) {
+    _table->SetConfig(_layout.scan_config);
+  }
 }
 
 void Store::MergeIndexConfig(
@@ -1110,6 +1168,7 @@ void Store::FinishIndexBuild(duckdb::idx_t index_oid) noexcept {
   }
   _layout.building_index.reset();
   _layout.scan_config = _layout.config;
+  ScanConfigChanged();
 }
 
 void Store::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
@@ -1125,18 +1184,22 @@ void Store::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
   _layout.compaction_stale = true;
 }
 
-void Store::BuildClaim::Finish() noexcept { Release(/*finished=*/true); }
-
-void Store::BuildClaim::Release(bool finished) noexcept {
-  if (!_store) {
-    return;
-  }
-  if (finished) {
-    _store->FinishIndexBuild(_index_oid);
-  } else {
+Store::BuildClaim::~BuildClaim() {
+  if (_store) {
     _store->AbortIndexBuild(_index_oid);
   }
-  _store = nullptr;
+}
+
+void Store::BuildClaim::Finish() {
+  auto* store = std::exchange(_store, nullptr);
+  if (!store) {
+    return;
+  }
+  store->FinishIndexBuild(_index_oid);
+  if (store->_table && !store->_read_only) {
+    store->CommitUnlogged(
+      [&](Tick tick) { store->_table->PublishConfig(tick); });
+  }
 }
 
 bool Store::BuildInFlight() const {

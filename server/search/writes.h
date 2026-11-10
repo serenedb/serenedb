@@ -61,6 +61,15 @@ struct StoreWrites {
   uint64_t rows_generation = 0;
   std::shared_ptr<const TableState> rebuilt;
   bool rebuilt_newer = false;
+  uint64_t revision = 0;
+  struct Pin {
+    const TableState* state = nullptr;
+    irs::DirectoryReader own;
+    uint64_t revision = 0;
+  };
+  std::optional<Pin> pin;
+  std::atomic<const Pin*> pinned{nullptr};
+  StoreWrites* listed = nullptr;
   std::shared_ptr<const irs::SegmentReaderImpl> piece;
   duckdb::vector<std::string> log;
   bool prepared = false;
@@ -100,8 +109,9 @@ struct LogSection {
 
 class Writes {
  public:
-  Writes(duckdb::transaction_t session, catalog::WalkCounters& walks)
-    : _session{session}, _walks{walks} {}
+  Writes(duckdb::transaction_t session, const std::atomic<Tick>& snapshot,
+         catalog::WalkCounters& walks)
+    : _session{session}, _snapshot{snapshot}, _walks{walks} {}
   ~Writes() { Abort(); }
 
   // Registers this transaction as a writer of `store`, once, before anything
@@ -149,45 +159,12 @@ class Writes {
   void ClaimExclusive(const std::shared_ptr<Store>& store,
                       Store::Exclusive kind);
 
-  struct PinnedSearchTable {
-    std::shared_ptr<irs::DirectoryReader> reader;
-    std::shared_ptr<const catalog::InvertedIndexConfig> config;
-  };
-
-  template<typename Factory>
-  PinnedSearchTable EnsureSearchTable(duckdb::idx_t database_id,
-                                      duckdb::idx_t store_id, Factory&& make) {
-    const std::pair key{database_id, store_id};
-    {
-      absl::ReaderMutexLock lock{&_mutex};
-      if (const auto it = _readers.find(key);
-          it != _readers.end() && it->second.pinned.reader) {
-        return it->second.pinned;
-      }
-    }
-    auto made = make();
-    absl::MutexLock lock{&_mutex};
-    auto& pinned = _readers[key].pinned;
-    if (!pinned.reader) {
-      pinned = std::move(made);
-    }
-    return pinned;
-  }
-
-  void ResetReaders() noexcept {
-    absl::MutexLock lock{&_mutex};
-    _readers.clear();
-  }
-
-  void ResetReader(duckdb::idx_t database_id, duckdb::idx_t store_id) noexcept {
-    absl::MutexLock lock{&_mutex};
-    _readers.erase(std::pair{database_id, store_id});
-  }
-
-  irs::DirectoryReader View(duckdb::ClientContext& context, Store& store,
-                            Tick snapshot);
+  ReadView Read(duckdb::ClientContext& context, Store& store);
+  Tick PlanVersion(const Store& store);
+  const irs::DirectoryReader& PinnedReader(duckdb::ClientContext& context,
+                                           Store& store);
+  void ResetPins(bool all) noexcept;
   irs::DirectoryReader LatestView(duckdb::ClientContext& context, Store& store);
-  std::shared_ptr<irs::DirectoryReader> PinnedReader(const Store& store) const;
 
   bool Empty() const noexcept { return _writes.empty(); }
 
@@ -217,6 +194,12 @@ class Writes {
 
  private:
   StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
+  StoreWrites* FindStoreWrites(duckdb::idx_t store_id) const;
+  const StoreWrites::Pin& EnsurePin(duckdb::ClientContext& context,
+                                    StoreWrites& w);
+  Tick Snapshot() const noexcept {
+    return _snapshot.load(std::memory_order_acquire);
+  }
   void Adopt(StoreWrites& w, const catalog::SearchTableEntry& table);
   void Flush(duckdb::ClientContext& context, StoreWrites& w);
   StoreWrites* Related(const Store& store, StoreWrites& w);
@@ -241,27 +224,16 @@ class Writes {
     std::shared_ptr<const TableState> referenced;
   };
 
-  struct PinnedViews {
-    std::shared_ptr<const TableState> state;
-    PinnedSearchTable pinned;
-  };
-
-  std::shared_ptr<const TableState> PinState(const Store& store, Tick snapshot);
-  irs::DirectoryReader BuildView(
-    duckdb::ClientContext& context, Store& store,
-    const std::shared_ptr<const TableState>& state);
-
   duckdb::transaction_t _session;
+  const std::atomic<Tick>& _snapshot;
   catalog::WalkCounters& _walks;
   mutable absl::Mutex _mutex;
+  std::atomic<StoreWrites*> _listed{nullptr};
   std::vector<ReferenceCheck> _reference_checks;
   // Node-based: the entry is well past FlatHashMap's size cut-off, and the
   // buffer is held by reference across a statement, so the nodes must not
   // move.
   irs::containers::NodeHashMap<duckdb::idx_t, StoreWrites> _writes;
-  irs::containers::NodeHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
-                               PinnedViews>
-    _readers;
 };
 
 }  // namespace sdb::search

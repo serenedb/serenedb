@@ -64,15 +64,9 @@ namespace {
 int64_t SearchTableBytes(const catalog::SearchTableEntry& table) {
   // Introspection must not open a store as a side effect: report only what
   // is already open.
-  auto reader = table.Storage()->GetDirectoryReader();
-  if (!reader) {
-    return 0;
-  }
-  int64_t total = 0;
-  for (const auto& segment : reader.Meta().index_meta.segments) {
-    total += static_cast<int64_t>(segment.meta.byte_size);
-  }
-  return total;
+  const auto& store = *table.Storage();
+  return store.HasTable() ? static_cast<int64_t>(store.GetTable().ByteSize())
+                          : 0;
 }
 
 void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& catalog,

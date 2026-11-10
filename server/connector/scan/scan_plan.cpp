@@ -469,13 +469,13 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
 
 void AcquireScanSnapshot(ScanGlobalState& state, duckdb::ClientContext& context,
                          const ScanBindData& bind_data) {
-  state.snapshot = bind_data.Snapshot(context);
+  state.view = bind_data.Read(context);
   std::optional<DeferredBuild> built;
   if (bind_data.plan_cache.deferred) {
-    built = BuildDeferredFilter(context, bind_data, *state.snapshot);
+    built = BuildDeferredFilter(context, bind_data, *state.view.reader);
   }
-  state.reader = &state.snapshot->reader;
-  state.total_segments = state.snapshot->reader.size();
+  state.reader = state.view.reader;
+  state.total_segments = state.view.reader->size();
   if (built) {
     ApplyDeferredClaim(state, std::move(*built));
   }
@@ -883,10 +883,10 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     return collected;
   }
   if (!f.index_source) {
-    f.index_source =
-      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
-                      g.projected_types, g.Bind().columns.ids,
-                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+    f.index_source = MakeIndexSource(
+      ctx, g.Bind(), g.view.manifest, g.lookup_projected_columns,
+      g.projected_types, g.Bind().columns.ids,
+      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
   }
   SDB_ASSERT(f.pk_column);
   const auto rows =

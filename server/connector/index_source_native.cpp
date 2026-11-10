@@ -62,7 +62,7 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
 NativeIndexSource::NativeIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table,
-  std::shared_ptr<const search::FileManifest> file_manifest,
+  const search::FileManifest* file_manifest,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const ColumnId> bind_column_ids,
@@ -76,7 +76,7 @@ NativeIndexSource::NativeIndexSource(
     BindTable(context, ResolveTableEntry(context, _fast_path),
               projected_columns, projected_types, bind_column_ids, false);
   } else {
-    BindFiles(context, file_manifest.get(), projected_columns, projected_types,
+    BindFiles(context, file_manifest, projected_columns, projected_types,
               bind_column_ids);
   }
   if (_no_files) {

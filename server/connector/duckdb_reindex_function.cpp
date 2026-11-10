@@ -736,9 +736,9 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   // above them. A crash between the two loses the removed rows until the next
   // tick: the manifest version only moves at the end, so the tick re-runs the
   // delta.
-  if (auto removal =
-        ResolveRemoves(storage.Snapshot()->reader, std::move(files.del_files),
-                       std::move(masks), std::move(eq_rows));
+  if (auto removal = ResolveRemoves(storage.LatestIndex()->reader,
+                                    std::move(files.del_files),
+                                    std::move(masks), std::move(eq_rows));
       !removal->groups.empty()) {
     SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
     storage.CommitRemoval(std::move(removal));
@@ -748,7 +748,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     // Removes-only tick: no pass, publish directly -- REINDEX returning
     // means the deletions are visible.
     storage.SetFileManifest(std::move(manifest_next));
-    storage.Commit();
+    storage.CommitOwn(context);
     return;
   }
 
@@ -799,7 +799,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
         auto restamped = std::make_shared<search::FileManifest>(manifest);
         restamped->version = files.version;
         storage.SetFileManifest(std::move(restamped));
-        storage.Commit();
+        storage.CommitOwn(context);
       }
     }
     return {ReindexAction::UpToDate, files.added, files.changed, files.removed};
@@ -900,7 +900,7 @@ ReindexOutcome RunClaimed(duckdb::ClientContext& context,
     return {};
   }
   if (manifest->version && manifest->entries.empty() &&
-      storage->Snapshot()->reader.live_docs_count() > 0) {
+      storage->LatestIndex()->reader.live_docs_count() > 0) {
     RunFullRebuild(context, conn_ctx, target);
     return {};
   }

@@ -226,10 +226,6 @@ class ConnectionContext final : public duckdb::ClientContext {
     ++_internal_statements;
     return absl::Cleanup{[this] { --_internal_statements; }};
   }
-  void MarkStatementDml() noexcept { _statement_is_dml = true; }
-
-  bool TryDropSearchReader(duckdb::idx_t database_id, duckdb::idx_t shard_id);
-
   pg::ProgressMetrics& Progress() const noexcept { return _progress->metrics; }
   const std::shared_ptr<pg::ProgressSource>& ProgressSource() const noexcept {
     return _progress;
@@ -306,7 +302,6 @@ class ConnectionContext final : public duckdb::ClientContext {
   uint32_t _internal_statements = 0;
   bool _query_in_transaction = false;
   bool _had_query_in_transaction = false;
-  bool _statement_is_dml = false;
 };
 
 duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(

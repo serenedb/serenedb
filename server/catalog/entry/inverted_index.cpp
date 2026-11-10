@@ -783,6 +783,18 @@ void InvertedIndexEntry::OnDrop() {
   }
 }
 
+duckdb::optional_idx InvertedIndexEntry::GetDataVersion(
+  duckdb::ClientContext& context) const {
+  auto& session = SessionOf(context, catalog);
+  if (_search_table) {
+    return session.SearchTxn().PlanVersion(*_search_table);
+  }
+  if (_storage) {
+    return session.IndexPlanVersion(*_storage);
+  }
+  return duckdb::optional_idx{};
+}
+
 InvertedIndexEntry::~InvertedIndexEntry() {
   if (_retired) {
     _search_table->ReleaseRetiredConfig(oid);
@@ -814,13 +826,13 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   if (state.position++ != 0 || !_storage) {
     return false;
   }
-  const auto snapshot = _storage->Snapshot();
+  const auto index = _storage->LatestIndex();
   const auto keys = connector::primary_key::KeyColumns(table);
   const auto key_column =
     keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID
                  : table.GetColumns().LogicalToPhysical(keys.front()).index;
   result = SearchTableEntry::ColumnSegmentRows(
-    context, snapshot->reader, table, key_column,
+    context, index->reader, table, key_column,
     state.options.include_segment_info);
   return true;
 }

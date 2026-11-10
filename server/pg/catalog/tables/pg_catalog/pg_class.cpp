@@ -209,9 +209,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       if (row.table.IsDuckTable()) {
         return static_cast<float>(row.table.GetStorage().GetTotalRows());
       }
-      if (row.search) {
-        return static_cast<float>(
-          row.search->Storage()->GetDirectoryReader().live_docs_count());
+      if (row.search && row.search->Storage()->HasTable()) {
+        return static_cast<float>(row.search->Storage()->GetTable().LiveDocs());
       }
       return -1.0F;
     }),

@@ -530,14 +530,6 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
 
-  // The statement pinned a reader of this shard at bind time and only drops it
-  // at a statement boundary, so every segment it saw would outlive the build
-  // and none of the ones this rewrites could be reclaimed while it runs. The
-  // plan here produces no rows (LogicalEmptyResult), so nothing reads it. A
-  // frozen view keeps its pin and pays the disk instead.
-  ConnectionContext::Get(context).TryDropSearchReader(target.catalog->GetOid(),
-                                                      target.table_id);
-
   shard.DrainPriorWriters(context);
 
   irs::IndexWriter::CompactionFloorGuard floor;

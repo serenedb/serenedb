@@ -40,6 +40,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/transaction.h"
 #include "connector/constraint_keys.h"
 #include "connector/full_scanner.h"
 #include "connector/search_sink_writer.hpp"
@@ -451,8 +452,24 @@ StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
   auto& w = _writes[store->GetId()];
   if (!w.store) {
     w.store = store;
+    if (store->HasTable()) {
+      w.pin.emplace(StoreWrites::Pin{
+        .state = store->GetTable().VersionAt(Snapshot(), _walks).state.get()});
+      w.pinned.store(&*w.pin, std::memory_order_relaxed);
+    }
+    w.listed = _listed.load(std::memory_order_relaxed);
+    _listed.store(&w, std::memory_order_release);
   }
   return w;
+}
+
+StoreWrites* Writes::FindStoreWrites(duckdb::idx_t store_id) const {
+  for (auto* w = _listed.load(std::memory_order_acquire); w; w = w->listed) {
+    if (w->store->GetId() == store_id) {
+      return w;
+    }
+  }
+  return nullptr;
 }
 
 void Writes::Adopt(StoreWrites& w, const catalog::SearchTableEntry& table) {
@@ -471,14 +488,7 @@ void Writes::Adopt(StoreWrites& w, const catalog::SearchTableEntry& table) {
 
 void Writes::AdoptTable(const std::shared_ptr<Store>& store,
                         const catalog::SearchTableEntry& table) {
-  StoreWrites* w = nullptr;
-  {
-    absl::ReaderMutexLock lock{&_mutex};
-    if (const auto it = _writes.find(store->GetId()); it != _writes.end()) {
-      w = &it->second;
-    }
-  }
-  if (w) {
+  if (auto* w = FindStoreWrites(store->GetId())) {
     absl::MutexLock lock{&w->mutex};
     Adopt(*w, table);
   }
@@ -522,6 +532,7 @@ void Writes::AddOwnSegments(
     w.own_segments.push_back(std::move(segment));
   }
   w.transactions.push_back(std::move(trx));
+  ++w.revision;
 }
 
 void Writes::AddInlineRows(duckdb::ClientContext& context,
@@ -533,6 +544,7 @@ void Writes::AddInlineRows(duckdb::ClientContext& context,
   auto& w = EnsureStoreWrites(store);
   absl::MutexLock lock{&w.mutex};
   w.changes.AppendInsertRows(std::move(rows), column_ids, catalog);
+  ++w.revision;
   if (w.changes.BufferedBytes() > flush_above) {
     FlushRows(context, w);
   }
@@ -544,13 +556,7 @@ void Writes::RewriteOwn(
   absl::FunctionRef<void(const irs::SubReader&,
                          connector::SearchSinkInsertBaseImpl&)>
     feed) {
-  StoreWrites* found = nullptr;
-  {
-    absl::ReaderMutexLock lock{&_mutex};
-    if (const auto it = _writes.find(store->GetId()); it != _writes.end()) {
-      found = &it->second;
-    }
-  }
+  auto* found = FindStoreWrites(store->GetId());
   if (!found) {
     return;
   }
@@ -592,56 +598,101 @@ void Writes::RewriteOwn(
     w.checked_segments = 0;
     w.buffered_keys.Clear();
     w.keyed_rows = 0;
+    ++w.revision;
+    w.pinned.store(nullptr, std::memory_order_relaxed);
+    w.pin.reset();
   }
-  ResetReader(store->GetDatabaseId(), store->GetId());
 }
 
 void Writes::Rebuilt(const std::shared_ptr<Store>& store,
                      std::shared_ptr<const TableState> state, bool newer) {
-  {
-    auto& w = EnsureStoreWrites(store);
-    absl::MutexLock lock{&w.mutex};
-    if (state) {
-      w.rebuilt = std::move(state);
-    }
-    w.rebuilt_newer = w.rebuilt_newer || newer;
+  auto& w = EnsureStoreWrites(store);
+  absl::MutexLock lock{&w.mutex};
+  if (state) {
+    w.rebuilt = std::move(state);
   }
-  ResetReader(store->GetDatabaseId(), store->GetId());
+  w.rebuilt_newer = w.rebuilt_newer || newer;
+  ++w.revision;
+  w.pinned.store(nullptr, std::memory_order_relaxed);
+  w.pin.reset();
 }
 
-std::shared_ptr<irs::DirectoryReader> Writes::PinnedReader(
-  const Store& store) const {
-  absl::ReaderMutexLock lock{&_mutex};
-  const auto pinned =
-    _readers.find(std::pair{store.GetDatabaseId(), store.GetId()});
-  SDB_ENSURE(pinned != _readers.end() && pinned->second.pinned.reader, "table ",
-             store.GetId(),
+const StoreWrites::Pin& Writes::EnsurePin(duckdb::ClientContext& context,
+                                          StoreWrites& w) {
+  if (const auto* pin = w.pinned.load(std::memory_order_acquire)) {
+    return *pin;
+  }
+  absl::MutexLock lock{&w.mutex};
+  if (w.pin) {
+    return *w.pin;
+  }
+  if (w.rebuilt_newer) {
+    ThrowConcurrentUpdate();
+  }
+  const auto& table = w.store->GetTable();
+  const auto* state = table.VersionAt(Snapshot(), _walks).state.get();
+  if (w.rebuilt && w.rebuilt->tick > state->tick) {
+    state = w.rebuilt.get();
+  }
+  if (w.store->HasIndexes() && w.changes.HasBufferedRows()) {
+    FlushRows(context, w);
+  }
+  auto& pin =
+    w.pin.emplace(StoreWrites::Pin{.state = state, .revision = w.revision});
+  if (const auto own = OwnOf(w); HasOwn(own)) {
+    pin.own = table.View(*state, own);
+  }
+  w.pinned.store(&pin, std::memory_order_release);
+  return pin;
+}
+
+ReadView Writes::Read(duckdb::ClientContext& context, Store& store) {
+  const auto& table = store.GetTable();
+  if (auto* w = FindStoreWrites(store.GetId())) {
+    const auto& pin = EnsurePin(context, *w);
+    return {.reader = pin.own ? &pin.own : &table.Reader(*pin.state),
+            .state = pin.state};
+  }
+  const auto& version = table.VersionAt(Snapshot(), _walks);
+  return {.reader = &table.Reader(*version.state),
+          .state = version.state.get()};
+}
+
+Tick Writes::PlanVersion(const Store& store) {
+  bool own = false;
+  if (auto* w = FindStoreWrites(store.GetId())) {
+    absl::MutexLock lock{&w->mutex};
+    own = w->rebuilt || HasOwn(OwnOf(*w));
+  }
+  const auto last = store.GetTable().LastWrite();
+  return own || last > Snapshot() ? catalog::Transactions::Get().NextId()
+                                  : last;
+}
+
+const irs::DirectoryReader& Writes::PinnedReader(duckdb::ClientContext& context,
+                                                 Store& store) {
+  auto* w = FindStoreWrites(store.GetId());
+  SDB_ENSURE(w, "table ", store.GetId(),
              ": deletes without the reader their positions come from");
-  return pinned->second.pinned.reader;
+  const auto& pin = EnsurePin(context, *w);
+  return pin.own ? pin.own : store.GetTable().Reader(*pin.state);
 }
 
-std::shared_ptr<const TableState> Writes::PinState(const Store& store,
-                                                   Tick snapshot) {
+void Writes::ResetPins(bool all) noexcept {
   absl::MutexLock lock{&_mutex};
-  auto& views = _readers[std::pair{store.GetDatabaseId(), store.GetId()}];
-  if (!views.state) {
-    std::shared_ptr<const TableState> rebuilt;
-    if (const auto it = _writes.find(store.GetId()); it != _writes.end()) {
-      absl::ReaderMutexLock writes{&it->second.mutex};
-      rebuilt = it->second.rebuilt;
+  for (auto& [store_id, w] : _writes) {
+    if (all || (w.pin && w.pin->revision != w.revision)) {
+      w.pinned.store(nullptr, std::memory_order_relaxed);
+      w.pin.reset();
     }
-    auto state = store.GetTable().StateAt(snapshot, _walks);
-    views.state = rebuilt && rebuilt->tick > state->tick ? std::move(rebuilt)
-                                                         : std::move(state);
   }
-  return views.state;
 }
 
 void Writes::AddRemoval(duckdb::ClientContext& context,
                         const std::shared_ptr<Store>& store,
                         irs::DocRemovalBuilder&& positions) {
-  const auto reader = PinnedReader(*store);
-  auto removal = std::move(positions).Finish(*reader);
+  const auto& reader = PinnedReader(context, *store);
+  auto removal = std::move(positions).Finish(reader);
   auto& w = EnsureStoreWrites(store);
   std::vector<StoreWrites::RemovedKeys> removed;
   if (const auto referencing = store->ReferencingKeys(); !referencing.empty()) {
@@ -658,7 +709,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
       }
     }
     absl::flat_hash_map<uint64_t, const irs::SubReader*> segments;
-    for (const auto& segment : *reader) {
+    for (const auto& segment : reader) {
       segments.emplace(
         irs::utils::downCast<irs::SegmentReader>(segment).GetImpl()->Id(),
         &segment);
@@ -690,6 +741,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
     }
   }
   w.removed_rows = true;
+  ++w.revision;
   const auto flushed_rows = [&](uint64_t id) {
     return id > OwnRowsId(w.rows_generation);
   };
@@ -758,6 +810,7 @@ void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
   w.checked_segments = 0;
   ++w.rows_generation;
   w.changes.AppendTruncate(false);
+  ++w.revision;
 }
 
 void Writes::ClaimExclusive(const std::shared_ptr<Store>& store,
@@ -1254,28 +1307,13 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
   w.checked.emplace(std::move(now));
 }
 
-irs::DirectoryReader Writes::View(duckdb::ClientContext& context, Store& store,
-                                  Tick snapshot) {
-  return BuildView(context, store, PinState(store, snapshot));
-}
-
 irs::DirectoryReader Writes::LatestView(duckdb::ClientContext& context,
                                         Store& store) {
-  return BuildView(context, store, store.GetTable().State());
-}
-
-irs::DirectoryReader Writes::BuildView(
-  duckdb::ClientContext& context, Store& store,
-  const std::shared_ptr<const TableState>& state) {
-  StoreWrites* w = nullptr;
-  {
-    absl::ReaderMutexLock lock{&_mutex};
-    if (const auto it = _writes.find(store.GetId()); it != _writes.end()) {
-      w = &it->second;
-    }
-  }
+  const auto& table = store.GetTable();
+  const auto state = table.State();
+  auto* w = FindStoreWrites(store.GetId());
   if (!w) {
-    return store.View(state, {});
+    return table.View(*state, {});
   }
   absl::MutexLock lock{&w->mutex};
   if (w->rebuilt_newer) {
@@ -1284,7 +1322,7 @@ irs::DirectoryReader Writes::BuildView(
   if (store.HasIndexes() && w->changes.HasBufferedRows()) {
     FlushRows(context, *w);
   }
-  return store.View(state, OwnOf(*w));
+  return table.View(*state, OwnOf(*w));
 }
 
 void Writes::PrepareCommit(duckdb::ClientContext& context) {
@@ -1467,8 +1505,8 @@ void Writes::Abort() noexcept {
     w.transactions.clear();
     ReleaseWriter(w);
   }
+  _listed.store(nullptr, std::memory_order_relaxed);
   _writes.clear();
-  _readers.clear();
   _reference_checks.clear();
 }
 

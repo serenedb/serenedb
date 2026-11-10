@@ -54,7 +54,6 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   duckdb::vector<duckdb::column_t> new_row_src;
 
   primary_key::PKColumn rowid;
-  std::shared_ptr<irs::DirectoryReader> pinned;
   std::optional<RowPositionDeduplicator> updated_rows;
 
   absl::Mutex mutex;
@@ -146,8 +145,8 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   SDB_ASSERT(_table.GetRowIdColumns().size() == 1 && !input_types.empty());
   state->rowid = {input_types.size() - 1, input_types.back()};
   if (_row_id_handling != duckdb::RowIdHandling::ASSUME_UNIQUE) {
-    state->pinned = transaction.SearchTxn().PinnedReader(*target.store);
-    state->updated_rows.emplace(*state->pinned);
+    state->updated_rows.emplace(
+      transaction.SearchTxn().PinnedReader(context, *target.store));
   }
 
   state->sdb_txn = &transaction;
@@ -212,9 +211,9 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
   absl::MutexLock lock{&gstate.mutex};
   auto& search_txn = gstate.sdb_txn->SearchTxn();
 #ifdef SDB_DEV
-  SDB_ASSERT(
-    !gstate.updated_rows ||
-    gstate.updated_rows->Covers(*search_txn.PinnedReader(*gstate.table.store)));
+  SDB_ASSERT(!gstate.updated_rows ||
+             gstate.updated_rows->Covers(
+               search_txn.PinnedReader(context.client, *gstate.table.store)));
 #endif
   lstate.rows.HandOver(context.client, gstate.table, search_txn);
   if (!lstate.positions.Empty()) {

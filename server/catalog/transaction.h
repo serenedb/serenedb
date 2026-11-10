@@ -141,13 +141,12 @@ class SessionTransaction final {
 
   search::Writes& SearchTxn() noexcept { return _search; }
 
-  search::StoreSnapshotPtr EnsureSearchSnapshot(
-    duckdb::idx_t index_id, const std::shared_ptr<search::Store>& storage);
+  search::ReadView ReadIndex(const search::Store& store);
+  search::Tick IndexPlanVersion(const search::Store& store);
+  void PublishedIndex(const search::Store& store, search::Tick tick,
+                      std::shared_ptr<const search::IndexState> state);
 
-  void ResetSearchReaders() noexcept;
-  void ResetSearchViews() noexcept { _search.ResetReaders(); }
-  void ResetSearchReader(duckdb::idx_t database_id,
-                         duckdb::idx_t shard_id) noexcept;
+  void ResetSearchPins(bool all) noexcept { _search.ResetPins(all); }
 
   void DeferToCommit(absl::AnyInvocable<void()> action) {
     _on_commit.push_back(std::move(action));
@@ -163,7 +162,15 @@ class SessionTransaction final {
   void Rollback() noexcept;
 
  private:
+  struct OwnIndex {
+    const search::Store* store = nullptr;
+    search::Tick tick = 0;
+    std::shared_ptr<const search::IndexState> state;
+  };
+
   void Release() noexcept;
+  const OwnIndex* FindOwnIndex(const search::Store& store) const
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   duckdb::transaction_t _id;
   SessionSlot* _slot;
@@ -176,9 +183,8 @@ class SessionTransaction final {
   absl::Mutex _mutex;
   std::vector<duckdb::reference<duckdb::AttachedDatabase>> _attached
     ABSL_GUARDED_BY(_mutex);
-  irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
-                               search::StoreSnapshotPtr>
-    _search_snapshots ABSL_GUARDED_BY(_mutex);
+  std::vector<OwnIndex> _own_indexes ABSL_GUARDED_BY(_mutex);
+  std::atomic<bool> _published_indexes{false};
   search::Writes _search;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
   std::vector<std::shared_ptr<search::Store>> _layout_claims;
@@ -219,6 +225,7 @@ class Transactions final {
   void CommitState(absl::Mutex& table,
                    absl::FunctionRef<std::vector<uint8_t>()> build,
                    absl::FunctionRef<void(Lsn)> logged);
+  void AwaitPublished(duckdb::transaction_t commit) const;
 
   absl::Status TruncateLog(
     bool switch_chunk,

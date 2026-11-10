@@ -298,20 +298,6 @@ inline bool IsTemporaryCreate(const duckdb::SQLStatement& statement) {
          statement.Cast<duckdb::CreateStatement>().info->temporary;
 }
 
-bool IsCatalogDdl(duckdb::StatementType type) {
-  using duckdb::StatementType;
-  switch (type) {
-    case StatementType::CREATE_STATEMENT:
-    case StatementType::DROP_STATEMENT:
-    case StatementType::ALTER_STATEMENT:
-    case StatementType::ATTACH_STATEMENT:
-    case StatementType::DETACH_STATEMENT:
-      return true;
-    default:
-      return false;
-  }
-}
-
 [[noreturn]] void ThrowAbortedTransaction() {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_IN_FAILED_SQL_TRANSACTION),
                   ERR_MSG("current transaction is aborted, commands ignored "
@@ -632,7 +618,6 @@ PgWireSession<Kind>::PendingQueryEnsured(
       StagePendingCopyProgress(*_connection_ctx, *unbound);
     }
   }
-  const bool is_ddl = IsCatalogDdl(prepared.GetStatementType());
   // Once an explicit transaction has run a snapshot-taking statement it can no
   // longer change its isolation level (SET TRANSACTION ISOLATION LEVEL must
   // precede any query -- enforced by ValidateIsolationLevel). A statement
@@ -642,12 +627,6 @@ PgWireSession<Kind>::PendingQueryEnsured(
     const auto& props = prepared.GetStatementProperties();
     if (!props.read_databases.empty() || !props.modified_databases.empty()) {
       _connection_ctx->MarkQueryInTransaction();
-    }
-    // Classify the statement for the snapshot lifecycle (see Transaction).
-    // Genuine DML pins all views; DDL does not, and duckdb reports a modified
-    // database for DDL too, so the two are told apart here.
-    if (!is_ddl && !props.modified_databases.empty()) {
-      _connection_ctx->MarkStatementDml();
     }
   }
   if (!wire) {
@@ -675,15 +654,9 @@ PgWireSession<Kind>::PendingStatementEnsured(
   _connection_ctx->wire_sink.reset();
   if (pending && !pending->HasError() &&
       _connection_ctx->IsExplicitTransaction()) {
-    // Post-bind statement classification; see PendingQueryEnsured. Consumed at
-    // statement end, so running after Submit (bind) is early enough.
     const auto& props = pending->GetStatementProperties();
     if (!props.read_databases.empty() || !props.modified_databases.empty()) {
       _connection_ctx->MarkQueryInTransaction();
-    }
-    if (!IsCatalogDdl(pending->GetStatementType()) &&
-        !props.modified_databases.empty()) {
-      _connection_ctx->MarkStatementDml();
     }
   }
   return pending;

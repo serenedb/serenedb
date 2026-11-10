@@ -186,16 +186,15 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
 
 class ScanPartition final : public duckdb::PartitionRowGroup {
  public:
-  explicit ScanPartition(const ScanBindData& bind,
-                         search::StoreSnapshotPtr snapshot)
-    : _bind{bind}, _snapshot{std::move(snapshot)} {}
+  ScanPartition(const ScanBindData& bind, const irs::DirectoryReader& reader)
+    : _bind{bind}, _reader{reader} {}
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetColumnStatistics(
     const duckdb::StorageIndex& index) final {
     if (index.HasChildren()) {
       return nullptr;
     }
-    return ColumnStats(_bind, _snapshot->reader,
+    return ColumnStats(_bind, _reader,
                        ScanColumnOfStorage(_bind, index.GetPrimaryIndex()));
   }
 
@@ -205,7 +204,7 @@ class ScanPartition final : public duckdb::PartitionRowGroup {
 
  private:
   const ScanBindData& _bind;
-  search::StoreSnapshotPtr _snapshot;
+  const irs::DirectoryReader& _reader;
 };
 
 }  // namespace
@@ -220,14 +219,13 @@ duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
   if (!bind.ReadsEveryRow()) {
     return result;
   }
-  auto snapshot = bind.Snapshot(context);
-  const auto& reader = snapshot->reader;
+  const auto& reader = *bind.Read(context).reader;
   auto& stats = result.emplace_back();
   stats.count = reader.live_docs_count();
   stats.count_type = duckdb::CountType::COUNT_EXACT;
   if (reader.docs_count() == reader.live_docs_count()) {
     stats.partition_row_group =
-      duckdb::make_shared_ptr<ScanPartition>(bind, std::move(snapshot));
+      duckdb::make_shared_ptr<ScanPartition>(bind, reader);
   }
   return result;
 }
@@ -243,9 +241,9 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto column_index = input.column_index.GetPrimaryIndex();
-  const auto snapshot = bind.Snapshot(context);
+  const auto& reader = *bind.Read(context).reader;
   if (!input.column_index.HasChildren()) {
-    auto stats = ColumnStats(bind, snapshot->reader, column_index);
+    auto stats = ColumnStats(bind, reader, column_index);
     SDB_ASSERT(!stats || stats->GetType() == bind.columns.types[column_index]);
     return stats;
   }
@@ -253,7 +251,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto* stats =
-    StoredColumnStats(bind, snapshot->reader, bind.columns.ids[column_index]);
+    StoredColumnStats(bind, reader, bind.columns.ids[column_index]);
   if (!stats) {
     return nullptr;
   }

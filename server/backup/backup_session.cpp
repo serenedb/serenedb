@@ -59,8 +59,7 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
   catalog::ForEachSearchStorage(
     catalog,
     [&](catalog::SearchTableEntry& table) {
-      stores.push_back({database, table.oid,
-                        GenerationOf(table.Storage()->GetDirectoryReader())});
+      stores.push_back({database, table.oid, 0});
     },
     [&](catalog::InvertedIndexEntry& index) {
       stores.push_back({database, index.oid,

@@ -584,7 +584,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   const auto projected_ids = BuildProjectedColumnIds(get, bind_data);
   const auto table_index = get.table_index;
   const bool table_backed = !bind_data.IsViewBacked();
-  const auto snapshot = bind_data.Snapshot(context);
+  const auto& reader = *bind_data.Read(context).reader;
 
   irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
   irs::containers::FlatHashMap<connector::ColumnId, bool> not_null_cache;
@@ -605,7 +605,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       }
       column_info->column_stored = bind_data.relation.IsSearchTable();
       if (column && column_info->column_stored) {
-        column_info->stats = snapshot->reader.GetColumnStats(*column);
+        column_info->stats = reader.GetColumnStats(*column);
       }
       if (column && table_backed && column_not_null(*column)) {
         column_info->nullable = false;
@@ -1638,8 +1638,7 @@ bool ClaimSearchConjuncts(
   irs::OptimizeContext optimize{.scored = static_cast<bool>(scan.score.text),
                                 .analyzed_fields = std::move(analyzed_fields),
                                 .scorer = scorer.get()};
-  const auto snapshot = scan.Snapshot(context);
-  irs::Deferral deferral{.reader = snapshot->reader};
+  irs::Deferral deferral{.reader = *scan.Read(context).reader};
   if (scan.DefersChecks()) {
     optimize.deferral = &deferral;
   }

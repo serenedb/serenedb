@@ -41,6 +41,7 @@
 #include <utility>
 
 #include "catalog/transaction.h"
+#include "search/version_chain.tpp"
 
 namespace sdb::search {
 namespace {
@@ -125,11 +126,6 @@ bool LeaveDead(TableState& state, Tick tick) {
   }
   state.moved = std::move(moved);
   return true;
-}
-
-size_t VersionBytes(const TableVersion& version) noexcept {
-  return sizeof(TableVersion) + sizeof(TableState) +
-         version.state->units.size() * sizeof(std::shared_ptr<const TableUnit>);
 }
 
 std::shared_ptr<const irs::SegmentReaderImpl> Masked(
@@ -219,7 +215,19 @@ bool Conflicting(const TableState& state, uint64_t id,
   });
 }
 
+std::shared_ptr<const TableState> InitialState(
+  std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+  auto initial = std::make_shared<TableState>();
+  initial->config = std::move(config);
+  return initial;
+}
+
 }  // namespace
+
+size_t VersionBytes(const TableState& state) noexcept {
+  return sizeof(TableState) +
+         state.units.size() * sizeof(std::shared_ptr<const TableUnit>);
+}
 
 irs::doc_id_t PieceDocs(const irs::IndexWriter::Transaction& trx) noexcept {
   const auto* writer = trx.HotWriter();
@@ -260,56 +268,24 @@ const LiveUnits::Unit* LiveUnits::Find(uint64_t id) const noexcept {
   return it != _units.end() && it->unit->id == id ? &*it : nullptr;
 }
 
-Table::Table(irs::Directory& dir, irs::IndexReaderOptions options)
+Table::Table(irs::Directory& dir, irs::IndexReaderOptions options,
+             std::shared_ptr<const catalog::InvertedIndexConfig> config)
   : _dir{dir},
     _options{std::move(options)},
-    _head{new TableVersion{std::make_shared<const TableState>(), nullptr}},
-    _tail{_head.load(std::memory_order_relaxed)} {}
+    _config{config},
+    _versions{InitialState(std::move(config))} {}
 
-Table::~Table() {
-  auto* version = _head.load(std::memory_order_relaxed);
-  while (version) {
-    delete std::exchange(version,
-                         version->prev.load(std::memory_order_relaxed));
-  }
-}
+Table::~Table() = default;
 
 std::shared_ptr<const TableState> Table::State() const {
-  return StateAt(kAllApplied, catalog::Transactions::Get().SharedWalks());
-}
-
-std::shared_ptr<const TableState> Table::StateAt(
-  Tick snapshot, catalog::WalkCounters& walks) const {
-  const catalog::WalkGuard guard{walks};
-  const auto* version = _head.load(std::memory_order_acquire);
-  while (version->tick > snapshot) {
-    const auto* older = version->prev.load(std::memory_order_acquire);
-    if (!older) {
-      break;
-    }
-    version = older;
-  }
-  return version->state;
+  return _versions.Latest(catalog::Transactions::Get().SharedWalks());
 }
 
 void Table::Publish(std::shared_ptr<TableState> state, Tick tick) {
-  auto* head = _head.load(std::memory_order_relaxed);
-  SDB_ASSERT(tick >= head->tick);
-  if (tick == head->tick) {
-    Republish(std::move(state));
-    return;
-  }
   state->tick = tick;
+  state->config = _config;
   CountPieces(*state);
-  auto* version = new TableVersion{std::move(state), head};
-  head->next = version;
-  _head.store(version, std::memory_order_release);
-  _older_versions.fetch_add(1, std::memory_order_relaxed);
-  const auto oldest = catalog::Transactions::Get().Oldest();
-  while (_tail != version && _tail->next->tick <= oldest) {
-    Unlink(_tail);
-  }
-  AddGarbage(*head);
+  _versions.Publish(std::move(state), tick);
 }
 
 void Table::CountPieces(const TableState& state) noexcept {
@@ -326,100 +302,14 @@ void Table::CountPieces(const TableState& state) noexcept {
   _full_tier.store(full, std::memory_order_relaxed);
 }
 
-void Table::Republish(std::shared_ptr<TableState> state) {
-  auto* head = _head.load(std::memory_order_relaxed);
-  state->tick = head->tick;
-  CountPieces(*state);
-  auto* older = head->prev.load(std::memory_order_relaxed);
-  auto* version = new TableVersion{std::move(state), older};
-  if (older) {
-    older->next = version;
-  } else {
-    _tail = version;
-  }
-  _head.store(version, std::memory_order_release);
-  RetireVersion(head);
-  AddGarbage(*head);
-}
-
-void Table::AddGarbage(const TableVersion& version) {
-  _garbage_bytes += VersionBytes(version);
-  if (_garbage_bytes > _garbage_trigger) {
-    _garbage_trigger = std::numeric_limits<size_t>::max();
-    catalog::Transactions::Get().RequestCollect();
-  }
-}
-
-void Table::Unlink(TableVersion* version) {
-  auto* newer = version->next;
-  auto* older = version->prev.load(std::memory_order_relaxed);
-  newer->prev.store(older, std::memory_order_release);
-  if (older) {
-    older->next = newer;
-  } else {
-    _tail = newer;
-  }
-  _older_versions.fetch_sub(1, std::memory_order_relaxed);
-  RetireVersion(version);
-}
-
-void Table::RetireVersion(TableVersion* version) {
-  _retired_versions.push_back(
-    {.epoch = catalog::Transactions::Get().Epoch(),
-     .version = std::unique_ptr<TableVersion>{version}});
-  _retired_count.store(static_cast<uint32_t>(_retired_versions.size()),
+std::shared_ptr<TableState> Table::SameUnits() const {
+  const auto& state = *Head().state;
+  auto next = std::make_shared<TableState>(state);
+  if (const auto* cached = state.reader.load(std::memory_order_acquire)) {
+    next->reader.store(new irs::DirectoryReader{*cached},
                        std::memory_order_relaxed);
-}
-
-std::vector<std::unique_ptr<TableVersion>> Table::TakeFreeVersions() {
-  const auto safe = catalog::Transactions::Get().SafeEpoch();
-  const auto kept = absl::c_stable_partition(
-    _retired_versions,
-    [&](const RetiredVersion& retired) { return retired.epoch > safe; });
-  std::vector<std::unique_ptr<TableVersion>> freed;
-  freed.reserve(static_cast<size_t>(_retired_versions.end() - kept));
-  for (auto it = kept; it != _retired_versions.end(); ++it) {
-    _garbage_bytes -= VersionBytes(*it->version);
-    freed.push_back(std::move(it->version));
   }
-  _retired_versions.erase(kept, _retired_versions.end());
-  _retired_count.store(static_cast<uint32_t>(_retired_versions.size()),
-                       std::memory_order_relaxed);
-  _garbage_trigger =
-    std::max({kMinGarbageBytes, VersionBytes(Head()), 2 * _garbage_bytes});
-  return freed;
-}
-
-bool Table::FreeRetired() {
-  if (_retired_count.load(std::memory_order_relaxed) == 0) {
-    return false;
-  }
-  std::vector<std::unique_ptr<TableVersion>> freed;
-  absl::MutexLock lock{&_state_mutex};
-  freed = TakeFreeVersions();
-  return !_retired_versions.empty();
-}
-
-void Table::Prune(std::span<const Tick> running, Tick published) {
-  if (_older_versions.load(std::memory_order_relaxed) == 0) {
-    return;
-  }
-  std::vector<std::unique_ptr<TableVersion>> freed;
-  absl::MutexLock lock{&_state_mutex};
-  auto* newer = _head.load(std::memory_order_relaxed);
-  auto* version = newer->prev.load(std::memory_order_relaxed);
-  while (version) {
-    auto* older = version->prev.load(std::memory_order_relaxed);
-    const auto seen = absl::c_lower_bound(running, version->tick);
-    if (newer->tick > published ||
-        (seen != running.end() && *seen < newer->tick)) {
-      newer = version;
-    } else {
-      Unlink(version);
-    }
-    version = older;
-  }
-  freed = TakeFreeVersions();
+  return next;
 }
 
 void Table::Logged(Lsn lsn) {
@@ -443,25 +333,24 @@ OwnSegment Table::OpenSegment(std::string meta_file) const {
   return opened;
 }
 
-irs::DirectoryReader Table::Assemble(
-  const std::shared_ptr<const TableState>& state, const OwnWrites& own,
-  Scope scope) const {
-  if (scope != Scope::All || !own.removals.empty() || !own.segments.empty() ||
-      own.truncated || (own.rows != nullptr && own.rows->Count() != 0)) {
-    return Build(*state, own, scope);
-  }
-  if (const auto* cached = state->reader.load(std::memory_order_acquire)) {
+const irs::DirectoryReader& Table::Reader(const TableState& state) const {
+  if (const auto* cached = state.reader.load(std::memory_order_acquire)) {
     return *cached;
   }
   auto built =
-    std::make_unique<const irs::DirectoryReader>(Build(*state, own, scope));
+    std::make_unique<const irs::DirectoryReader>(Build(state, {}, Scope::All));
   const irs::DirectoryReader* installed = nullptr;
-  if (state->reader.compare_exchange_strong(installed, built.get(),
-                                            std::memory_order_acq_rel,
-                                            std::memory_order_acquire)) {
+  if (state.reader.compare_exchange_strong(installed, built.get(),
+                                           std::memory_order_acq_rel,
+                                           std::memory_order_acquire)) {
     return *built.release();
   }
   return *installed;
+}
+
+irs::DirectoryReader Table::View(const TableState& state,
+                                 const OwnWrites& own) const {
+  return HasOwn(own) ? Build(state, own, Scope::All) : Reader(state);
 }
 
 irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
@@ -533,13 +422,29 @@ StoreStats Table::Stats() const {
   const auto cold = Build(*state, {}, Scope::Cold);
   auto stats = StoreStats::FromReader(cold);
   stats.numBufferedDocs =
-    Assemble(state, {}, Scope::All).live_docs_count() - cold.live_docs_count();
+    Reader(*state).live_docs_count() - cold.live_docs_count();
   for (const auto& unit : state->units) {
     if (!unit->piece) {
       stats.numFiles += unit->segment.meta.files.size();
     }
   }
   return stats;
+}
+
+uint64_t Table::LiveDocs() const {
+  uint64_t live = 0;
+  for (const auto& unit : State()->units) {
+    live += unit->docs - (unit->deleted ? unit->deleted->Count() : 0);
+  }
+  return live;
+}
+
+uint64_t Table::ByteSize() const {
+  uint64_t bytes = 0;
+  for (const auto& unit : State()->units) {
+    bytes += unit->reader->Meta().byte_size;
+  }
+  return bytes;
 }
 
 irs::DirectoryReader Table::PieceView(
@@ -776,28 +681,48 @@ std::shared_ptr<const TableState> Table::ReplaceUnits(
     units.push_back(std::move(unit));
   }
   LeaveDead(*next, tick);
-  Republish(next);
+  Publish(next, tick);
   return next;
 }
 
-void Table::Collect(Tick oldest) {
+bool Table::Collectable(Tick oldest) const {
+  const auto state = State();
+  return state->moved && absl::c_any_of(*state->moved, [&](const auto& entry) {
+           return entry.second->tick <= oldest;
+         });
+}
+
+void Table::Collect(Tick tick, Tick oldest) {
   absl::MutexLock lock{&_state_mutex};
-  const auto& state = Head().state;
+  const auto& state = *Head().state;
   const auto settled = [&](const auto& entry) {
     return entry.second->tick <= oldest;
   };
-  if (!state->moved || absl::c_none_of(*state->moved, settled)) {
+  if (!state.moved || absl::c_none_of(*state.moved, settled)) {
     return;
   }
-  auto next = std::make_shared<TableState>(*state);
-  auto moved = std::make_shared<MovedUnits>(*state->moved);
+  auto next = SameUnits();
+  auto moved = std::make_shared<MovedUnits>(*state.moved);
   absl::erase_if(*moved, settled);
   if (moved->empty()) {
     next->moved.reset();
   } else {
     next->moved = std::move(moved);
   }
-  Republish(std::move(next));
+  Publish(std::move(next), tick);
+}
+
+void Table::SetConfig(
+  std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+  absl::MutexLock lock{&_state_mutex};
+  _config = std::move(config);
+}
+
+void Table::PublishConfig(Tick tick) {
+  absl::MutexLock lock{&_state_mutex};
+  if (Head().state->config != _config) {
+    Publish(SameUnits(), tick);
+  }
 }
 
 bool Table::Unsettled() const {
@@ -1029,7 +954,9 @@ bool Table::FinishReplay() {
     }
   }
   _replay.clear();
-  Republish(std::move(next));
+  next->config = _config;
+  CountPieces(*next);
+  _versions.ReplaceInitial(std::move(next));
   return replayed_records;
 }
 

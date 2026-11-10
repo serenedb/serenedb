@@ -36,7 +36,7 @@ namespace sdb::connector {
 
 std::unique_ptr<irs::IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const ScanBindData& bind_data,
-  const search::StoreSnapshot& snapshot,
+  const search::FileManifest* manifest,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const ColumnId> bind_column_ids,
@@ -58,8 +58,8 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
     // from: the pin travels with the pinned snapshot's manifest, so a
     // refresh mid-query cannot skew this read. No manifest = an external-pk
     // view index, which has no pin to carry.
-    if (snapshot.file_manifest) {
-      fp.pinned_iceberg_snapshot_id = snapshot.file_manifest->version;
+    if (manifest) {
+      fp.pinned_iceberg_snapshot_id = manifest->version;
     }
     if (fp.catalog_ref && IsExternalPK(fp.pk_spec)) {
       return std::make_unique<ExternalLookupIndexSource>(
@@ -67,8 +67,8 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
         bind_column_ids);
     }
     return std::make_unique<NativeIndexSource>(
-      context, std::move(fp), nullptr, snapshot.file_manifest,
-      projected_columns, projected_types, bind_column_ids, pushed_filters);
+      context, std::move(fp), nullptr, manifest, projected_columns,
+      projected_types, bind_column_ids, pushed_filters);
   }
   SDB_ASSERT(bind_data.relation.table_entry);
   // The bind data is const, but the entry it points at is the live catalog

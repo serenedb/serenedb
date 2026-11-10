@@ -540,12 +540,12 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   if (gstate.index_storage) {
     auto& inverted_storage = *gstate.index_storage;
     SDB_IF_FAILURE("commit_before_manifest_publish") {
-      inverted_storage.Commit();
+      inverted_storage.CommitOwn(context);
     }
     if (gstate.file_manifest) {
       inverted_storage.SetFileManifest(gstate.file_manifest);
     }
-    inverted_storage.Commit();
+    inverted_storage.CommitOwn(context);
   }
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 

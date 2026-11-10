@@ -385,13 +385,13 @@ bool ReleasedPending() noexcept {
 
 namespace {
 
-std::vector<std::shared_ptr<Store>> LiveTables() {
+std::vector<std::shared_ptr<Store>> LiveStores() {
   std::vector<std::shared_ptr<Store>> stores;
   auto& targets = GetTargets();
   absl::MutexLock lock{&targets.mutex};
   stores.reserve(targets.all.size());
   for (const auto& target : targets.all) {
-    if (auto store = target->store.lock(); store && store->HasTable()) {
+    if (auto store = target->store.lock(); store && store->Opened()) {
       stores.push_back(std::move(store));
     }
   }
@@ -401,15 +401,15 @@ std::vector<std::shared_ptr<Store>> LiveTables() {
 }  // namespace
 
 void PruneVersions(std::span<const Tick> running, Tick published) {
-  for (const auto& store : LiveTables()) {
-    store->GetTable().Prune(running, published);
+  for (const auto& store : LiveStores()) {
+    store->PruneVersions(running, published);
   }
 }
 
 bool FreeVersions() {
   bool remaining = false;
-  for (const auto& store : LiveTables()) {
-    remaining = store->GetTable().FreeRetired() || remaining;
+  for (const auto& store : LiveStores()) {
+    remaining = store->FreeVersions() || remaining;
   }
   return remaining;
 }

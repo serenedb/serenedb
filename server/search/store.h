@@ -78,15 +78,22 @@ using persistence::InvertedIndexSettings;
 }  // namespace sdb::catalog
 namespace sdb::search {
 
-struct StoreSnapshot {
-  StoreSnapshot(irs::DirectoryReader&& index,
-                std::shared_ptr<const FileManifest> manifest)
-    : reader{std::move(index)}, file_manifest{std::move(manifest)} {}
-
+struct IndexState {
   irs::DirectoryReader reader;
-  const std::shared_ptr<const FileManifest> file_manifest;
+  std::shared_ptr<const FileManifest> manifest;
 };
-using StoreSnapshotPtr = std::shared_ptr<StoreSnapshot>;
+
+inline size_t VersionBytes(const IndexState&) noexcept {
+  return sizeof(IndexState);
+}
+
+using IndexVersion = Version<IndexState>;
+
+struct ReadView {
+  const irs::DirectoryReader* reader = nullptr;
+  const TableState* state = nullptr;
+  const FileManifest* manifest = nullptr;
+};
 
 struct StorageDirectory {
   std::unique_ptr<irs::Directory> directory;
@@ -147,16 +154,20 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _dropped.load(std::memory_order_acquire);
   }
 
-  StoreSnapshotPtr Snapshot() const;
-  irs::DirectoryReader GetDirectoryReader() const { return Snapshot()->reader; }
+  const IndexVersion& IndexAt(Tick snapshot,
+                              catalog::WalkCounters& walks) const {
+    return _index->At(snapshot, walks);
+  }
+  std::shared_ptr<const IndexState> LatestIndex() const;
+  irs::DirectoryReader GetDirectoryReader() const {
+    return _table ? _table->View({}) : LatestIndex()->reader;
+  }
   irs::DirectoryReader BuildSnapshot();
+  void PruneVersions(std::span<const Tick> running, Tick published);
+  bool FreeVersions();
 
   irs::DirectoryReader View(const OwnWrites& own) const {
     return _table->View(own);
-  }
-  irs::DirectoryReader View(const std::shared_ptr<const TableState>& state,
-                            const OwnWrites& own) const {
-    return _table->View(state, own);
   }
   uint32_t RowGroupSize() const noexcept { return _row_group_size; }
   bool HasTable() const noexcept { return static_cast<bool>(_table); }
@@ -176,11 +187,15 @@ class Store final : public std::enable_shared_from_this<Store>,
   void WriteOut(Lsn before);
   void PiecesAdded();
 
-  std::shared_ptr<const FileManifest> GetFileManifest() const {
-    return std::atomic_load(&_file_manifest);
+  std::shared_ptr<const FileManifest> GetFileManifest() const
+    ABSL_LOCKS_EXCLUDED(_index_mutex) {
+    absl::MutexLock lock{&_index_mutex};
+    return _file_manifest;
   }
-  void SetFileManifest(std::shared_ptr<const FileManifest> manifest) {
-    std::atomic_store(&_file_manifest, std::move(manifest));
+  void SetFileManifest(std::shared_ptr<const FileManifest> manifest)
+    ABSL_LOCKS_EXCLUDED(_index_mutex) {
+    absl::MutexLock lock{&_index_mutex};
+    _file_manifest = std::move(manifest);
   }
 
   // `exclusive_segment` is required of a writer that will record its flushed
@@ -216,6 +231,11 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::shared_ptr<const irs::IndexFieldOptions> CompactionOptions();
 
   void Commit(const irs::ProgressReportCallback& progress = nullptr);
+  void CommitOwn(duckdb::ClientContext& context,
+                 const irs::ProgressReportCallback& progress = nullptr);
+  Tick IndexRefreshed() const noexcept {
+    return _index_refreshed.load(std::memory_order_acquire);
+  }
   bool Settle();
   [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
                                            uint32_t target_segments);
@@ -229,7 +249,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   // A search table's merged index layout: the configs of its indexes, with a
   // build in flight hidden from scans until it finishes.
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
-  std::shared_ptr<const catalog::InvertedIndexConfig> ScanConfig() const;
   void MergeIndexConfig(
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
@@ -270,9 +289,9 @@ class Store final : public std::enable_shared_from_this<Store>,
       BuildClaim{std::move(other)}.Swap(*this);
       return *this;
     }
-    ~BuildClaim() { Release(/*finished=*/false); }
+    ~BuildClaim();
 
-    void Finish() noexcept;
+    void Finish();
 
    private:
     friend class Store;
@@ -284,7 +303,6 @@ class Store final : public std::enable_shared_from_this<Store>,
       std::swap(_store, other._store);
       std::swap(_index_oid, other._index_oid);
     }
-    void Release(bool finished) noexcept;
 
     Store* _store = nullptr;
     duckdb::idx_t _index_oid = 0;
@@ -369,7 +387,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool IsSearchTable() const noexcept { return _table_columns.has_value(); }
   irs::IndexReaderOptions ReaderOptions() const;
   void OpenWriter();
-  void PublishSnapshot();
   void EnsureOpen();
   void ClaimColumnOids(const irs::DirectoryReader& reader) const;
   void SyncSegments() const;
@@ -378,6 +395,10 @@ class Store final : public std::enable_shared_from_this<Store>,
   }
   void CommitStorage(std::string entry,
                      absl::FunctionRef<void(Tick, Lsn)> apply);
+  void CommitUnlogged(absl::FunctionRef<void(Tick)> apply);
+  void CommitIndex(
+    const irs::ProgressReportCallback& progress,
+    absl::FunctionRef<void(Tick, std::shared_ptr<const IndexState>)> published);
   void MaintainPieces();
   void WriteOutLocked(Lsn before)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
@@ -403,6 +424,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool IsCurrentConfig(const irs::IndexFieldOptions* options) const;
   void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
+  void ScanConfigChanged() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
 
   duckdb::idx_t _id;
   duckdb::idx_t _db_id;
@@ -422,10 +444,13 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::unique_ptr<irs::Directory> _piece_dir;
   std::shared_ptr<irs::IndexWriter> _piece_writer;
   absl::Mutex _write_out_mutex;
-  // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
-  // std::atomic<std::shared_ptr>).
-  StoreSnapshotPtr _snapshot;
-  std::shared_ptr<const FileManifest> _file_manifest;
+  std::unique_ptr<VersionChain<IndexState>> _index;
+  std::atomic<Tick> _index_refreshed{0};
+  std::atomic<Tick> _storage_tick{0};
+  absl::Mutex _publish_mutex;
+  mutable absl::Mutex _index_mutex;
+  std::shared_ptr<const FileManifest> _file_manifest
+    ABSL_GUARDED_BY(_index_mutex);
 
   // A search table's columns and layout; empty for an inverted index.
   std::optional<irs::containers::FlatHashSet<irs::field_id>> _table_columns;

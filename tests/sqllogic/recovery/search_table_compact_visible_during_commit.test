@@ -52,12 +52,12 @@ SET sdb_faults = '-pause_search_commit_before_irs:parked'
 
 
 connection compactor
-statement ok
+statement async ok
 VACUUM (COMPACT_TABLE) cvd
 
 
-connection compactor
-query
+connection default
+query ok retry 40 backoff 250ms
 SELECT count(DISTINCT row_group_id) AS segments
 FROM pragma_storage_info('cvd') WHERE column_name = 'id';
 ----
@@ -65,7 +65,7 @@ segments
 1
 
 
-connection compactor
+connection default
 query
 SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM cvd;
 ----

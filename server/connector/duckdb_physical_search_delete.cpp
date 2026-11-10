@@ -47,7 +47,6 @@ namespace {
 
 struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   catalog::SessionTransaction* sdb_txn = nullptr;
-  std::shared_ptr<irs::DirectoryReader> pinned;
   std::optional<RowPositionDeduplicator> deleted_rows;
   std::shared_ptr<search::Store> search_table;
   absl::Mutex mutex;
@@ -124,8 +123,8 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   transaction.SearchTxn().RegisterWriter(state->search_table, *_table);
 
   if (_row_id_handling != duckdb::RowIdHandling::ASSUME_UNIQUE) {
-    state->pinned = transaction.SearchTxn().PinnedReader(*state->search_table);
-    state->deleted_rows.emplace(*state->pinned);
+    state->deleted_rows.emplace(
+      transaction.SearchTxn().PinnedReader(context, *state->search_table));
   }
 
   state->sdb_txn = &transaction;
@@ -192,8 +191,8 @@ duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
 #ifdef SDB_DEV
   SDB_ASSERT(
     !gstate.deleted_rows ||
-    gstate.deleted_rows->Covers(
-      *gstate.sdb_txn->SearchTxn().PinnedReader(*gstate.search_table)));
+    gstate.deleted_rows->Covers(gstate.sdb_txn->SearchTxn().PinnedReader(
+      context.client, *gstate.search_table)));
 #endif
   if (!lstate.positions.Empty()) {
     gstate.sdb_txn->SearchTxn().AddRemoval(context.client, gstate.search_table,

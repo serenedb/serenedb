@@ -263,15 +263,6 @@ bool ConnectionContext::IsStableSnapshot() const {
          GetIsolationLevel() == IsolationLevel::REPEATABLE_READ;
 }
 
-bool ConnectionContext::TryDropSearchReader(duckdb::idx_t database_id,
-                                            duckdb::idx_t shard_id) {
-  if (IsStableSnapshot() || !_transaction) {
-    return false;
-  }
-  _transaction->ResetSearchReader(database_id, shard_id);
-  return true;
-}
-
 void ConnectionContext::ReleaseSnapshot() noexcept {
   const auto snapshot = std::min(_slot.snapshot.load(std::memory_order_relaxed),
                                  _slot.held.load(std::memory_order_relaxed));
@@ -288,7 +279,6 @@ void ConnectionContext::EndTransaction() noexcept {
   _transaction.reset();
   _transaction_owner = duckdb::MAX_TRANSACTION_ID;
   _had_query_in_transaction = false;
-  _statement_is_dml = false;
 }
 
 void ConnectionContext::OnSet(std::string_view name, bool is_local,
@@ -491,11 +481,8 @@ void ConnectionContext::OnQueryEnd() {
   copy_stdin_done = false;
   _progress->EndQuery();
   RefreshCatalogEpoch();
-  const bool dml = std::exchange(_statement_is_dml, false);
-  if (_transaction && !IsStableSnapshot()) {
-    _transaction->ResetSearchReaders();
-  } else if (_transaction && dml) {
-    _transaction->ResetSearchViews();
+  if (_transaction) {
+    _transaction->ResetSearchPins(!IsStableSnapshot());
   }
   _commit_pass.reset();
 }

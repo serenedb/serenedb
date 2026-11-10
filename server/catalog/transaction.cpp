@@ -142,7 +142,7 @@ SessionTransaction::SessionTransaction(duckdb::transaction_t id,
     _slot{&slot},
     _snapshot{Transactions::Get().Acquire(slot.snapshot)},
     _catalog_epoch{Transactions::Get().CatalogEpoch(Snapshot())},
-    _search{id, slot.walks} {}
+    _search{id, _snapshot, slot.walks} {}
 
 void SessionTransaction::Refresh() {
   if (HasChanges()) {
@@ -750,39 +750,58 @@ void Transactions::Publish(duckdb::transaction_t commit, bool catalog,
   if (advanced) {
     _last_commit.notify_all();
   }
-  if (!wait) {
-    return;
+  if (wait) {
+    AwaitPublished(commit);
   }
+}
+
+void Transactions::AwaitPublished(duckdb::transaction_t commit) const {
   for (auto seen = _last_commit.load(std::memory_order_acquire); seen < commit;
        seen = _last_commit.load(std::memory_order_acquire)) {
     _last_commit.wait(seen, std::memory_order_acquire);
   }
 }
 
-search::StoreSnapshotPtr SessionTransaction::EnsureSearchSnapshot(
-  duckdb::idx_t index_id, const std::shared_ptr<search::Store>& storage) {
-  SDB_ASSERT(storage);
-  absl::MutexLock lock{&_mutex};
-  auto& snapshot =
-    _search_snapshots.try_emplace(std::pair{storage->GetDatabaseId(), index_id})
-      .first->second;
-  if (!snapshot) {
-    snapshot = storage->Snapshot();
-  }
-  return snapshot;
+const SessionTransaction::OwnIndex* SessionTransaction::FindOwnIndex(
+  const search::Store& store) const {
+  const auto it = absl::c_find_if(
+    _own_indexes, [&](const OwnIndex& own) { return own.store == &store; });
+  return it == _own_indexes.end() ? nullptr : &*it;
 }
 
-void SessionTransaction::ResetSearchReaders() noexcept {
-  {
+search::ReadView SessionTransaction::ReadIndex(const search::Store& store) {
+  const auto& version = store.IndexAt(Snapshot(), _slot->walks);
+  const auto* state = version.state.get();
+  if (_published_indexes.load(std::memory_order_acquire)) {
     absl::MutexLock lock{&_mutex};
-    _search_snapshots.clear();
+    if (const auto* own = FindOwnIndex(store);
+        own && own->tick > version.tick) {
+      state = own->state.get();
+    }
   }
-  _search.ResetReaders();
+  return {.reader = &state->reader, .manifest = state->manifest.get()};
 }
 
-void SessionTransaction::ResetSearchReader(duckdb::idx_t database_id,
-                                           duckdb::idx_t shard_id) noexcept {
-  _search.ResetReader(database_id, shard_id);
+search::Tick SessionTransaction::IndexPlanVersion(const search::Store& store) {
+  bool own = false;
+  if (_published_indexes.load(std::memory_order_acquire)) {
+    absl::MutexLock lock{&_mutex};
+    own = FindOwnIndex(store) != nullptr;
+  }
+  const auto refreshed = store.IndexRefreshed();
+  return own || refreshed > Snapshot() ? Transactions::Get().NextId()
+                                       : refreshed;
+}
+
+void SessionTransaction::PublishedIndex(
+  const search::Store& store, search::Tick tick,
+  std::shared_ptr<const search::IndexState> state) {
+  absl::MutexLock lock{&_mutex};
+  std::erase_if(_own_indexes,
+                [&](const OwnIndex& own) { return own.store == &store; });
+  _own_indexes.push_back(
+    {.store = &store, .tick = tick, .state = std::move(state)});
+  _published_indexes.store(true, std::memory_order_release);
 }
 
 void SessionTransaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
@@ -804,8 +823,9 @@ void SessionTransaction::Release() noexcept {
   _layout_claims.clear();
   {
     absl::MutexLock lock{&_mutex};
-    _search_snapshots.clear();
+    _own_indexes.clear();
   }
+  _published_indexes.store(false, std::memory_order_release);
   _search.Abort();
   _held.reset();
   _on_commit.clear();

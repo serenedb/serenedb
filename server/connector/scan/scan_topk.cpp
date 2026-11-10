@@ -258,10 +258,10 @@ void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
 void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                        FetchLocalState& l) {
   if (!l.index_source) {
-    l.index_source =
-      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
-                      g.projected_types, g.Bind().columns.ids,
-                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+    l.index_source = MakeIndexSource(
+      ctx, g.Bind(), g.view.manifest, g.lookup_projected_columns,
+      g.projected_types, g.Bind().columns.ids,
+      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
   }
 }
 

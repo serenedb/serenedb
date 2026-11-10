@@ -46,6 +46,8 @@ struct SystemTableBindData final : duckdb::FunctionData {
            entry == data.entry;
   }
 
+  bool RegistersDataVersions() const final { return true; }
+
   const SystemTable& table;
   catalog::BaseCatalog& catalog;
   catalog::SystemTableEntry* entry;

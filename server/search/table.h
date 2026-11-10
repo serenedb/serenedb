@@ -46,12 +46,13 @@
 #include <string>
 #include <vector>
 
+#include "catalog/entry/inverted_index.h"
 #include "catalog/walk.h"
 #include "search/store_stats.h"
+#include "search/version_chain.h"
 
 namespace sdb::search {
 
-using Tick = duckdb::transaction_t;
 using Lsn = uint64_t;
 
 inline constexpr Tick kAllApplied = std::numeric_limits<Tick>::max();
@@ -85,25 +86,23 @@ using MovedUnits =
 struct TableState {
   TableState() = default;
   TableState(const TableState& other)
-    : units{other.units}, moved{other.moved}, tick{other.tick} {}
+    : units{other.units},
+      moved{other.moved},
+      config{other.config},
+      tick{other.tick} {}
   TableState& operator=(const TableState&) = delete;
   ~TableState() { delete reader.load(std::memory_order_relaxed); }
 
   std::vector<std::shared_ptr<const TableUnit>> units;
   std::shared_ptr<const MovedUnits> moved;
+  std::shared_ptr<const catalog::InvertedIndexConfig> config;
   Tick tick = 0;
   mutable std::atomic<const irs::DirectoryReader*> reader{nullptr};
 };
 
-struct TableVersion {
-  TableVersion(std::shared_ptr<const TableState> state, TableVersion* older)
-    : tick{state->tick}, state{std::move(state)}, prev{older} {}
+size_t VersionBytes(const TableState& state) noexcept;
 
-  const Tick tick;
-  const std::shared_ptr<const TableState> state;
-  std::atomic<TableVersion*> prev;
-  TableVersion* next = nullptr;
-};
+using TableVersion = Version<TableState>;
 
 struct OwnSegment {
   irs::IndexSegment segment;
@@ -118,6 +117,11 @@ struct OwnWrites {
   std::span<const std::shared_ptr<const irs::DocRemoval>> removals;
   bool truncated = false;
 };
+
+inline bool HasOwn(const OwnWrites& own) noexcept {
+  return !own.removals.empty() || !own.segments.empty() || own.truncated ||
+         (own.rows != nullptr && own.rows->Count() != 0);
+}
 
 struct TableCommit {
   std::shared_ptr<const irs::SegmentReaderImpl> piece;
@@ -173,30 +177,32 @@ class LiveUnits {
 
 class Table final {
  public:
-  Table(irs::Directory& dir, irs::IndexReaderOptions options);
+  Table(irs::Directory& dir, irs::IndexReaderOptions options,
+        std::shared_ptr<const catalog::InvertedIndexConfig> config);
   ~Table();
 
   std::shared_ptr<const TableState> State() const;
-  std::shared_ptr<const TableState> StateAt(Tick snapshot,
-                                            catalog::WalkCounters& walks) const;
-  void Prune(std::span<const Tick> running, Tick published)
-    ABSL_LOCKS_EXCLUDED(_state_mutex);
-  bool FreeRetired() ABSL_LOCKS_EXCLUDED(_state_mutex);
-
-  irs::DirectoryReader View(const OwnWrites& own) const {
-    return Assemble(State(), own, Scope::All);
+  const TableVersion& VersionAt(Tick snapshot,
+                                catalog::WalkCounters& walks) const {
+    return _versions.At(snapshot, walks);
   }
-  irs::DirectoryReader View(const std::shared_ptr<const TableState>& state,
-                            const OwnWrites& own) const {
-    return Assemble(state, own, Scope::All);
+  VersionChain<TableState>& Versions() noexcept { return _versions; }
+
+  const irs::DirectoryReader& Reader(const TableState& state) const;
+  irs::DirectoryReader View(const TableState& state,
+                            const OwnWrites& own) const;
+  irs::DirectoryReader View(const OwnWrites& own) const {
+    return View(*State(), own);
   }
   irs::DirectoryReader ColdView() const {
-    return Assemble(State(), {}, Scope::Cold);
+    return Build(*State(), {}, Scope::Cold);
   }
   irs::DirectoryReader PieceView(
     std::span<const std::shared_ptr<const TableUnit>> pieces,
     bool keep_deleted) const;
   StoreStats Stats() const;
+  uint64_t LiveDocs() const;
+  uint64_t ByteSize() const;
   OwnSegment OpenSegment(std::string meta_file) const;
 
   std::vector<std::shared_ptr<const TableUnit>> Pieces(Lsn before) const;
@@ -228,7 +234,11 @@ class Table final {
     std::shared_ptr<const irs::SegmentReaderImpl> merged, Lsn first_lsn,
     std::vector<irs::DocMap>&& maps);
 
-  void Collect(Tick oldest);
+  bool Collectable(Tick oldest) const;
+  void Collect(Tick tick, Tick oldest);
+  void SetConfig(std::shared_ptr<const catalog::InvertedIndexConfig> config)
+    ABSL_LOCKS_EXCLUDED(_state_mutex);
+  void PublishConfig(Tick tick) ABSL_LOCKS_EXCLUDED(_state_mutex);
 
   absl::Mutex& CommitMutex() const noexcept ABSL_LOCK_RETURNED(_commit_mutex) {
     return _commit_mutex;
@@ -272,36 +282,17 @@ class Table final {
     irs::DocumentMaskBuilder removed;
   };
 
-  struct RetiredVersion {
-    uint64_t epoch = 0;
-    std::unique_ptr<TableVersion> version;
-  };
+  const TableVersion& Head() const noexcept { return _versions.Head(); }
 
-  static constexpr size_t kMinGarbageBytes = size_t{1} << 20;
-
-  const TableVersion& Head() const noexcept {
-    return *_head.load(std::memory_order_acquire);
-  }
-
-  irs::DirectoryReader Assemble(const std::shared_ptr<const TableState>& state,
-                                const OwnWrites& own, Scope scope) const;
   irs::DirectoryReader Build(const TableState& state, const OwnWrites& own,
                              Scope scope) const;
   std::shared_ptr<const TableState> ReplaceUnits(
     Tick tick, Lsn lsn, std::span<const uint64_t> replaced,
     std::vector<std::shared_ptr<TableUnit>>&& added,
     std::vector<irs::DocMap>&& maps);
+  std::shared_ptr<TableState> SameUnits() const
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Publish(std::shared_ptr<TableState> state, Tick tick)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void Republish(std::shared_ptr<TableState> state)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void RetireVersion(TableVersion* version)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void Unlink(TableVersion* version)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void AddGarbage(const TableVersion& version)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  std::vector<std::unique_ptr<TableVersion>> TakeFreeVersions()
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);
@@ -310,14 +301,10 @@ class Table final {
 
   irs::Directory& _dir;
   irs::IndexReaderOptions _options;
-  std::atomic<TableVersion*> _head;
   mutable absl::Mutex _state_mutex;
-  TableVersion* _tail ABSL_GUARDED_BY(_state_mutex);
-  std::vector<RetiredVersion> _retired_versions ABSL_GUARDED_BY(_state_mutex);
-  size_t _garbage_bytes ABSL_GUARDED_BY(_state_mutex) = 0;
-  size_t _garbage_trigger ABSL_GUARDED_BY(_state_mutex) = kMinGarbageBytes;
-  std::atomic<uint32_t> _older_versions{0};
-  std::atomic<uint32_t> _retired_count{0};
+  std::shared_ptr<const catalog::InvertedIndexConfig> _config
+    ABSL_GUARDED_BY(_state_mutex);
+  VersionChain<TableState> _versions;
   Lsn _needed ABSL_GUARDED_BY(_state_mutex) = kNoLsn;
   std::atomic<Tick> _last_append{0};
   std::atomic<Tick> _last_write{0};

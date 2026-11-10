@@ -79,9 +79,6 @@ struct SearchSpec {
   std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   std::vector<RowFilter> row_filters;
-  std::function<search::StoreSnapshotPtr(duckdb::ClientContext&)>
-    acquire_snapshot;
-  std::weak_ptr<const irs::DirectoryReaderImpl> planned_reader;
 
   bool MatchAll() const noexcept { return !filter; }
 };
@@ -240,11 +237,9 @@ struct ScanBindData final : duckdb::FunctionData {
   }
   bool Equals(const duckdb::FunctionData& other) const final;
   bool ReadsParametersAtExecution() const final;
-  duckdb::shared_ptr<duckdb::PlanDataVersion> GetPlanDataVersion() const final;
+  bool RegistersDataVersions() const final { return true; }
 
-  search::StoreSnapshotPtr Snapshot(duckdb::ClientContext& context) const {
-    return search.acquire_snapshot(context);
-  }
+  search::ReadView Read(duckdb::ClientContext& context) const;
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
   bool DefersChecks() const noexcept {
@@ -343,7 +338,7 @@ struct DeferredBuild {
 
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
-                                  const search::StoreSnapshot& snapshot);
+                                  const irs::DirectoryReader& reader);
 
 bool InMemorySegment(const irs::SubReader& segment);
 

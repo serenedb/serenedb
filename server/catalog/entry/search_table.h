@@ -159,6 +159,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
 
   void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
+  duckdb::optional_idx GetDataVersion(
+    duckdb::ClientContext& context) const final;
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
 

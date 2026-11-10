@@ -27,6 +27,7 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <iterator>
 #include <limits>
 
 #include "iresearch/utils/assert.hpp"
@@ -168,6 +169,25 @@ bytes_view SharedPrefix(SeparatorsView separators) noexcept {
     0, CommonPrefixLength(first, SeparatorAt(separators, count - 1)));
 }
 
+struct Packed {
+  uint32_t shared;
+  bytes_view suffix;
+};
+
+IRS_FORCE_INLINE Packed NextPacked(const byte_type*& p) noexcept {
+  const auto shared = vread<uint32_t>(p);
+  const auto size = vread<uint32_t>(p);
+  const bytes_view suffix{p, size};
+  p += size;
+  return {.shared = shared, .suffix = suffix};
+}
+
+IRS_FORCE_INLINE bool After(bytes_view lhs, bytes_view rhs,
+                            size_t common) noexcept {
+  return common != lhs.size() &&
+         (common == rhs.size() || lhs[common] > rhs[common]);
+}
+
 }  // namespace
 
 uint64_t HeadAt(bytes_view key, size_t skip) noexcept {
@@ -305,12 +325,6 @@ size_t EytzingerRoot::Find(Probe key) const noexcept {
   return Resolve(k);
 }
 
-size_t EytzingerRoot::FindFrom(size_t from, Probe key) const noexcept {
-  return GallopIndex(from, SeparatorCount(_separators), [&](size_t i) {
-    return SeparatorAt(_separators, i) <= KeyOf(key);
-  });
-}
-
 std::vector<size_t> TreeRoot::LevelSizes(size_t count) {
   std::vector<size_t> sizes{
     std::max<size_t>(1, (count + kFanout - 1) / kFanout)};
@@ -383,14 +397,14 @@ size_t TreeRoot::Descend(uint64_t head) const noexcept {
   return node * kFanout + CountNotAfter(_nodes[_leaves + node].heads, head);
 }
 
-size_t TreeRoot::Resolve(size_t from, size_t upper, uint64_t head,
+size_t TreeRoot::Resolve(size_t upper, uint64_t head,
                          bytes_view key) const noexcept {
   const auto* heads = Heads();
-  if (upper == from || heads[upper - 1] != head) {
+  if (upper == 0 || heads[upper - 1] != head) {
     return upper;
   }
   const size_t lower =
-    PartitionIndex(from, upper, [&](size_t i) { return heads[i] < head; });
+    PartitionIndex(0, upper, [&](size_t i) { return heads[i] < head; });
   return PartitionIndex(
     lower, upper, [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
 }
@@ -403,42 +417,7 @@ size_t TreeRoot::Find(Probe probe) const noexcept {
   }
   const size_t upper =
     located.head == kMaxHead ? _count : Descend(located.head);
-  return Resolve(0, upper, located.head, key);
-}
-
-size_t TreeRoot::FindFrom(size_t from, Probe probe) const noexcept {
-  if (from >= _count) {
-    return from;
-  }
-  const auto key = KeyOf(probe);
-  const auto located = Locate(key);
-  if (located.outside != kInside) {
-    return std::max(from, located.outside);
-  }
-  size_t upper = _count;
-  if (located.head != kMaxHead) {
-    const auto* heads = Heads();
-    upper = from + CountNotAfter(heads + from, located.head);
-    if (upper == from + kFanout) {
-      upper = GallopIndex(upper, _count,
-                          [&](size_t i) { return heads[i] <= located.head; });
-    }
-  }
-  return Resolve(from, upper, located.head, key);
-}
-
-bool TreeRoot::NotAfter(size_t block, Probe probe) const noexcept {
-  SDB_ASSERT(block != 0 && block <= _count);
-  const auto key = KeyOf(probe);
-  const auto located = Locate(key);
-  if (located.outside != kInside) {
-    return located.outside != 0;
-  }
-  const uint64_t head = Heads()[block - 1];
-  if (head != located.head) {
-    return head < located.head;
-  }
-  return SeparatorAt(_separators, block - 1) <= key;
+  return Resolve(upper, located.head, key);
 }
 
 ArtRoot::ArtRoot(SeparatorsView separators) : SeparatorRoot{separators} {
@@ -611,33 +590,6 @@ size_t ArtRoot::Find(Probe probe) const noexcept {
   }
 }
 
-namespace {
-
-IRS_FORCE_INLINE uint32_t ReadPacked(const byte_type*& p) noexcept {
-  uint32_t value = 0;
-  uint32_t shift = 0;
-  byte_type b = 0;
-  do {
-    b = *p++;
-    value |= uint32_t{b & 0x7Fu} << shift;
-    shift += 7;
-  } while ((b & 0x80) != 0);
-  return value;
-}
-
-IRS_FORCE_INLINE int Order(bytes_view lhs, bytes_view rhs,
-                           size_t matched) noexcept {
-  if (matched == lhs.size()) {
-    return matched == rhs.size() ? 0 : -1;
-  }
-  if (matched == rhs.size()) {
-    return 1;
-  }
-  return lhs[matched] < rhs[matched] ? -1 : 1;
-}
-
-}  // namespace
-
 Root::Root(SeparatorsView separators, bool fixed)
   : _restarts{std::make_unique<Separators>()},
     _count{SeparatorCount(separators)} {
@@ -645,7 +597,7 @@ Root::Root(SeparatorsView separators, bool fixed)
   const size_t groups = (_count + kGroup - 1) / kGroup;
   restarts.offsets.reserve(groups + 1);
   _groups.reserve(groups + 1);
-  const auto push = [&](byte_type b) { _packed.push_back(b); };
+  auto out = std::back_inserter(_packed);
   for (size_t group = 0; group != groups; ++group) {
     const size_t first = group * kGroup;
     restarts.arena.append(SeparatorAt(separators, first));
@@ -656,8 +608,8 @@ Root::Root(SeparatorsView separators, bool fixed)
       const auto previous = SeparatorAt(separators, i - 1);
       const auto current = SeparatorAt(separators, i);
       const size_t shared = CommonPrefixLength(previous, current);
-      WriteVarint(static_cast<uint32_t>(shared), push);
-      WriteVarint(static_cast<uint32_t>(current.size() - shared), push);
+      WriteVarint(static_cast<uint32_t>(shared), out);
+      WriteVarint(static_cast<uint32_t>(current.size() - shared), out);
       _packed.append(current.substr(shared));
     }
   }
@@ -713,20 +665,15 @@ size_t Root::FindFrom(size_t from, Probe probe) const noexcept {
 }
 
 size_t Root::FindFrom(size_t from, Probe probe, SeparatorBuffer& buffer) const {
-  if (from == 0 || from > _count) {
+  if (from == 0 || from > _count ||
+      (!Resumes(buffer, from) && (from - 1) % kGroup != 0)) {
     return FindFrom(from, probe);
   }
   const size_t group = (from - 1) / kGroup;
-  const bool resume = buffer.root == this && buffer.block != 0 &&
-                      buffer.block <= from &&
-                      (buffer.block - 1) / kGroup == group;
-  if (!resume && (from - 1) % kGroup != 0) {
-    return FindFrom(from, probe);
-  }
   const auto key = KeyOf(probe);
   const auto current = Separator(from, buffer);
   const size_t matched = CommonPrefixLength(current, key);
-  if (Order(current, key, matched) > 0) {
+  if (After(current, key, matched)) {
     return from;
   }
   const auto scanned = ScanFrom(
@@ -747,96 +694,45 @@ size_t Root::Scan(size_t group, bytes_view key) const noexcept {
 Root::Scanned Root::ScanFrom(const byte_type* p, const byte_type* end,
                              size_t count, size_t matched,
                              bytes_view key) noexcept {
-  while (p != end) {
-    const uint32_t shared = ReadPacked(p);
-    const uint32_t size = ReadPacked(p);
-    const bytes_view suffix{p, size};
-    p += size;
+  for (; p != end; ++count) {
+    const auto [shared, suffix] = NextPacked(p);
     if (shared < matched) {
       return {.count = count, .exhausted = false};
     }
     if (shared == matched) {
       const auto rest = key.substr(matched);
       const size_t common = CommonPrefixLength(suffix, rest);
-      if (common != size &&
-          (common == rest.size() || suffix[common] > rest[common])) {
+      if (After(suffix, rest, common)) {
         return {.count = count, .exhausted = false};
       }
       matched += common;
     }
-    ++count;
   }
   return {.count = count, .exhausted = true};
-}
-
-bool Root::NotAfter(size_t block, Probe probe) const noexcept {
-  SDB_ASSERT(block != 0 && block <= _count);
-  const size_t index = block - 1;
-  const size_t group = index / kGroup;
-  const auto key = KeyOf(probe);
-  const auto restart = Restart(group);
-  size_t matched = CommonPrefixLength(restart, key);
-  int order = Order(restart, key, matched);
-  const auto* p = _packed.data() + _groups[group];
-  for (size_t i = group * kGroup + 1; i <= index; ++i) {
-    const uint32_t shared = ReadPacked(p);
-    const uint32_t size = ReadPacked(p);
-    const bytes_view suffix{p, size};
-    p += size;
-    if (shared < matched) {
-      order = 1;
-      matched = shared;
-    } else if (shared == matched) {
-      const auto rest = key.substr(matched);
-      const size_t common = CommonPrefixLength(suffix, rest);
-      order = Order(suffix, rest, common);
-      matched += common;
-    }
-  }
-  return order <= 0;
 }
 
 bytes_view Root::Separator(size_t block, SeparatorBuffer& buffer) const {
   SDB_ASSERT(block != 0 && block <= _count);
   const size_t group = (block - 1) / kGroup;
-  const bool resume = buffer.root == this && buffer.block != 0 &&
-                      buffer.block <= block &&
-                      (buffer.block - 1) / kGroup == group;
-  if (resume && buffer.block == block) {
-    return buffer.restart ? Restart(group) : bytes_view{buffer.key};
-  }
-  if (!resume && (block - 1) % kGroup == 0) {
+  if (!Resumes(buffer, block)) {
     buffer.root = this;
-    buffer.block = block;
+    buffer.block = group * kGroup + 1;
     buffer.next = _packed.data() + _groups[group];
     buffer.restart = true;
-    return Restart(group);
   }
-  const byte_type* p = nullptr;
-  size_t from = 0;
-  if (resume) {
-    if (buffer.restart) {
-      buffer.key.assign(Restart(group));
-    }
-    p = buffer.next;
-    from = buffer.block;
-  } else {
-    buffer.key.assign(Restart(group));
-    p = _packed.data() + _groups[group];
-    from = group * kGroup + 1;
+  if (buffer.block == block) {
+    return buffer.restart ? Restart(group) : bytes_view{buffer.key};
   }
   auto& key = buffer.key;
-  for (; from != block; ++from) {
-    const uint32_t shared = ReadPacked(p);
-    const uint32_t size = ReadPacked(p);
-    key.resize(shared);
-    key.append(p, size);
-    p += size;
+  if (buffer.restart) {
+    key.assign(Restart(group));
+    buffer.restart = false;
   }
-  buffer.root = this;
-  buffer.block = block;
-  buffer.next = p;
-  buffer.restart = false;
+  for (; buffer.block != block; ++buffer.block) {
+    const auto [shared, suffix] = NextPacked(buffer.next);
+    key.resize(shared);
+    key.append(suffix);
+  }
   return key;
 }
 
@@ -847,8 +743,8 @@ size_t Root::SharedWithNext(size_t block, const SeparatorBuffer& buffer,
   if (block % kGroup == 0) {
     return CommonPrefixLength(separator, Restart(block / kGroup));
   }
-  const byte_type* p = buffer.next;
-  return std::min<size_t>(ReadPacked(p), separator.size());
+  const auto* p = buffer.next;
+  return std::min<size_t>(vread<uint32_t>(p), separator.size());
 }
 
 }  // namespace irs::term_dict

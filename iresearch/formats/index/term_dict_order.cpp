@@ -42,11 +42,15 @@ void TermReaderImpl::VisitDocsInOrder(bytes_view from, bytes_view to,
     return;
   }
   bool going = true;
+  TermPostings::ptr docs;
   const auto read = [&](bytes_view term, const PostingMeta& meta) {
-    ReadPostingDocs(*this, meta, [&](doc_id_t doc) {
-      going = visit(term, doc);
-      return going;
-    });
+    ReadPostingDocs(
+      *this, meta,
+      [&](doc_id_t doc) {
+        going = visit(term, doc);
+        return going;
+      },
+      docs);
     return going;
   };
   Cursor cursor{*this};
@@ -73,12 +77,7 @@ void TermReaderImpl::VisitDocsInOrder(bytes_view from, bytes_view to,
   bstring keys;
   std::vector<OrderedEntry> entries;
   for (uint32_t block = last + 1; block-- != 0;) {
-    if (block == 0) {
-      cursor.First();
-    } else {
-      cursor.Load(block);
-      cursor.Next();
-    }
+    cursor.Start(block);
     keys.clear();
     entries.clear();
     bool below = false;

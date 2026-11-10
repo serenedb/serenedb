@@ -60,7 +60,6 @@ struct BlockBuilder {
   std::vector<uint32_t> ends;
   bstring records;
   std::vector<uint16_t> record_starts;
-  std::vector<uint32_t> lcps;
   VarColumns columns;
   uint64_t size = 0;
   uint64_t deferred = 0;
@@ -94,7 +93,7 @@ class FieldWriter final {
   void TrainFsst();
   bytes_view EncodeSuffix(bytes_view suffix);
   void EncodeEntries(VarColumns& columns, uint32_t from, uint32_t to,
-                     bytes_view last, size_t last_lcp);
+                     bytes_view last);
   void EncodeDeferred();
   bool OwnsBlock() const noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
@@ -102,8 +101,8 @@ class FieldWriter final {
   bool Append(bytes_view term, const PostingMeta& meta);
   bool AppendFixedKey(bytes_view key, uint64_t records);
   bool AppendVarKey(bytes_view key, uint64_t records);
-  bool EncodeBlock(bytes_view key, size_t lcp, uint64_t records);
-  bool AppendCodedKey(bytes_view key, size_t lcp, uint64_t records);
+  bool EncodeBlock(bytes_view key, uint64_t records);
+  bool AppendCodedKey(bytes_view key, uint64_t records);
   void Seal();
   void Cut();
   void WriteBlock();

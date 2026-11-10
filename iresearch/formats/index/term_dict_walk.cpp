@@ -25,7 +25,6 @@
 #include <cstring>
 #include <limits>
 #include <span>
-#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -1171,10 +1170,19 @@ void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
 
 template<typename A>
 bool MatchesByLiteral(const A& a) noexcept {
-  if constexpr (std::is_same_v<A, RegexpAcceptor>) {
+  if constexpr (requires { a.MatchesByLiteral(); }) {
     return a.MatchesByLiteral();
   } else {
     return false;
+  }
+}
+
+template<typename A>
+RegexpAcceptor::Quick QuickMatch(const A& a, bytes_view term) noexcept {
+  if constexpr (requires { a.QuickMatch(term); }) {
+    return a.QuickMatch(term);
+  } else {
+    return RegexpAcceptor::Quick::Unknown;
   }
 }
 
@@ -1558,31 +1566,23 @@ class AcceptorIterator : public SeekTermIterator {
       }
       _cursor.Materialize();
       const auto key = _cursor.Key();
-      if constexpr (std::is_same_v<A, RegexpAcceptor>) {
-        const auto quick = _a->QuickMatch(key.substr(_k));
-        if (quick == RegexpAcceptor::Quick::Accept) {
-          _position = Position::At;
-          _term.value = key.substr(_k);
-          return true;
-        }
-        if (quick == RegexpAcceptor::Quick::Reject) {
-          if (!Advance()) {
+      const auto term = key.substr(_k);
+      const auto quick = QuickMatch(*_a, term);
+      bool accepted = quick == RegexpAcceptor::Quick::Accept;
+      if (quick == RegexpAcceptor::Quick::Unknown) {
+        size_t depth = StepAlong(key, _valid);
+        _valid = depth;
+        if (depth != key.size()) {
+          if (!NextTarget(key, depth) || !Hop(depth)) {
             return End();
           }
           continue;
         }
+        accepted = Accepts(term, _states[depth]);
       }
-      size_t depth = StepAlong(key, _valid);
-      _valid = depth;
-      if (depth != key.size()) {
-        if (!NextTarget(key, depth) || !Hop(depth)) {
-          return End();
-        }
-        continue;
-      }
-      if (Accepts(key.substr(_k), _states[depth])) {
+      if (accepted) {
         _position = Position::At;
-        _term.value = key.substr(_k);
+        _term.value = term;
         return true;
       }
       if (!Advance()) {

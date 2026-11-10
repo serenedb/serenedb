@@ -151,12 +151,6 @@ inline size_t SeparatorBytes(const Separators& separators) noexcept {
 class SeparatorRoot {
  public:
   size_t Blocks() const noexcept { return SeparatorCount(_separators) + 1; }
-  bytes_view Separator(size_t block) const noexcept {
-    return SeparatorAt(_separators, block - 1);
-  }
-  bool NotAfter(size_t block, Probe key) const noexcept {
-    return Separator(block) <= KeyOf(key);
-  }
 
  protected:
   SeparatorRoot() = default;
@@ -179,9 +173,7 @@ class EytzingerRoot : public SeparatorRoot {
   EytzingerRoot(EytzingerRoot&&) noexcept = default;
   EytzingerRoot& operator=(EytzingerRoot&&) noexcept = default;
 
-  using SeparatorRoot::NotAfter;
   size_t Find(Probe key) const noexcept;
-  size_t FindFrom(size_t from, Probe key) const noexcept;
   size_t MemoryBytes() const noexcept {
     return _storage.capacity() * sizeof(Node);
   }
@@ -205,8 +197,6 @@ class TreeRoot : public SeparatorRoot {
   static size_t Height(size_t count) { return LevelSizes(count).size(); }
 
   size_t Find(Probe key) const noexcept;
-  size_t FindFrom(size_t from, Probe key) const noexcept;
-  bool NotAfter(size_t block, Probe key) const noexcept;
   size_t MemoryBytes() const noexcept {
     return _nodes.capacity() * sizeof(Node) +
            _levels.capacity() * sizeof(size_t);
@@ -227,8 +217,7 @@ class TreeRoot : public SeparatorRoot {
   static std::vector<size_t> LevelSizes(size_t count);
   Located Locate(bytes_view key) const noexcept;
   size_t Descend(uint64_t head) const noexcept;
-  size_t Resolve(size_t from, size_t upper, uint64_t head,
-                 bytes_view key) const noexcept;
+  size_t Resolve(size_t upper, uint64_t head, bytes_view key) const noexcept;
   const uint64_t* Heads() const noexcept {
     return reinterpret_cast<const uint64_t*>(_nodes.data() + _leaves);
   }
@@ -246,9 +235,6 @@ class ArtRoot : public SeparatorRoot {
   explicit ArtRoot(SeparatorsView separators);
 
   size_t Find(Probe key) const noexcept;
-  size_t FindFrom(size_t from, Probe key) const noexcept {
-    return std::max(from, Find(key));
-  }
   size_t MemoryBytes() const noexcept {
     return _words.capacity() * sizeof(uint64_t);
   }
@@ -293,7 +279,6 @@ class Root {
   size_t Find(Probe key) const noexcept;
   size_t FindFrom(size_t from, Probe key) const noexcept;
   size_t FindFrom(size_t from, Probe key, SeparatorBuffer& buffer) const;
-  bool NotAfter(size_t block, Probe key) const noexcept;
   bytes_view Separator(size_t block, SeparatorBuffer& buffer) const;
   size_t SharedWithNext(size_t block, const SeparatorBuffer& buffer,
                         bytes_view separator) const noexcept;
@@ -313,6 +298,10 @@ class Root {
   };
 
   size_t Groups() const noexcept { return _groups.size() - 1; }
+  bool Resumes(const SeparatorBuffer& buffer, size_t block) const noexcept {
+    return buffer.root == this && buffer.block != 0 && buffer.block <= block &&
+           (buffer.block - 1) / kGroup == (block - 1) / kGroup;
+  }
   size_t Scan(size_t group, bytes_view key) const noexcept;
   static Scanned ScanFrom(const byte_type* p, const byte_type* end,
                           size_t count, size_t matched,

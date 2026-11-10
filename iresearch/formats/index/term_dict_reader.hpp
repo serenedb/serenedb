@@ -57,7 +57,8 @@ struct RangeLevel {
 
 template<typename Field>
 void ReadPostingDocs(const Field& field, const PostingMeta& meta,
-                     TermReader::Acceptor acceptor) {
+                     TermReader::Acceptor acceptor,
+                     TermPostings::ptr& docs_it) {
   if (meta.docs_count == 0) {
     return;
   }
@@ -65,7 +66,7 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
     acceptor(doc_limits::min() + meta.doc_delta);
     return;
   }
-  auto docs_it = field.PostingsOf(IndexFeatures::None, meta, {});
+  docs_it = field.PostingsOf(IndexFeatures::None, meta, std::move(docs_it));
   doc_id_t docs[doc_limits::kBlockSize];
   while (const auto n = docs_it->NextDocs(docs, nullptr)) {
     for (uint32_t i = 0; i != n; ++i) {
@@ -75,6 +76,13 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
       }
     }
   }
+}
+
+template<typename Field>
+void ReadPostingDocs(const Field& field, const PostingMeta& meta,
+                     TermReader::Acceptor acceptor) {
+  TermPostings::ptr docs_it;
+  ReadPostingDocs(field, meta, acceptor, docs_it);
 }
 
 class TermReaderImpl final : public TermReader {
@@ -126,11 +134,6 @@ class TermReaderImpl final : public TermReader {
   const Root& GetRoot() const noexcept { return _root; }
   uint32_t BlockOf(Probe key) const noexcept {
     return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
-  }
-  uint32_t BlockFrom(uint32_t block, Probe key) const noexcept {
-    return block + 1 < _blocks && _root.NotAfter(block + 1, key)
-             ? static_cast<uint32_t>(_root.FindFrom(block + 1, key))
-             : block;
   }
   uint32_t BlockEnd(bytes_view upper) const;
   bytes_view KeyPrefix() const noexcept {

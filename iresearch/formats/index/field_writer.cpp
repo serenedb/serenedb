@@ -80,14 +80,11 @@ struct VarEntry {
   bool restart;
 };
 
-size_t LcpAt(const BlockBuilder& block, uint32_t index,
-             bytes_view key) noexcept {
-  return index == 0 ? 0 : CommonPrefixLength(KeyAt(block, index - 1), key);
-}
-
-VarEntry VarEntryAt(const BlockBuilder& block, uint32_t index, bytes_view key,
-                    size_t lcp) noexcept {
+VarEntry VarEntryAt(const BlockBuilder& block, uint32_t index,
+                    bytes_view key) noexcept {
   const bool restart = index % kRestartInterval == 0;
+  const size_t lcp =
+    index == 0 ? 0 : CommonPrefixLength(KeyAt(block, index - 1), key);
   uint32_t head_skip = block.head_skip;
   if (restart) {
     head_skip = static_cast<uint32_t>(
@@ -114,7 +111,6 @@ void Clear(BlockBuilder& block) noexcept {
   block.ends.clear();
   block.records.clear();
   block.record_starts.clear();
-  block.lcps.clear();
   Clear(block.columns);
   block.size = 0;
   block.deferred = 0;
@@ -166,6 +162,14 @@ void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
   columns.lcps.push_back(static_cast<uint32_t>(lcp));
   columns.lens.push_back(static_cast<uint32_t>(suffix.size()));
   columns.suffixes.append(suffix);
+}
+
+uint64_t SizeWith(const VarColumns& columns, uint32_t count,
+                  const VarEntry& entry, size_t suffix,
+                  uint64_t records) noexcept {
+  return VarBytes(count + 1, entry.head_skip,
+                  ColumnMax(columns, entry.lcp, suffix),
+                  columns.suffixes.size() + suffix, records);
 }
 
 void WriteColumn(DataOutput& out, std::span<const uint32_t> values,
@@ -300,13 +304,11 @@ bool FieldWriter::OwnsBlock() const noexcept {
 }
 
 void FieldWriter::EncodeEntries(VarColumns& columns, uint32_t from, uint32_t to,
-                                bytes_view last, size_t last_lcp) {
+                                bytes_view last) {
   auto& block = _block;
   const auto count = static_cast<uint32_t>(block.ends.size());
-  SDB_ASSERT(block.lcps.size() == count);
   const auto entry_at = [&](uint32_t i) {
-    return i < count ? VarEntryAt(block, i, KeyAt(block, i), block.lcps[i])
-                     : VarEntryAt(block, i, last, last_lcp);
+    return VarEntryAt(block, i, i < count ? KeyAt(block, i) : last);
   };
   _batch_lengths.clear();
   _batch_starts.clear();
@@ -349,7 +351,7 @@ void FieldWriter::EncodeDeferred() {
   if (block.coded == count) {
     return;
   }
-  EncodeEntries(block.columns, block.coded, count, {}, 0);
+  EncodeEntries(block.columns, block.coded, count, {});
   block.coded = count;
   block.deferred = 0;
   block.deferred_max = 0;
@@ -605,59 +607,45 @@ bool FieldWriter::AppendFixedKey(bytes_view key, uint64_t records) {
 
 bool FieldWriter::AppendVarKey(bytes_view key, uint64_t records) {
   auto& block = _block;
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  const auto lcp = LcpAt(block, count, key);
   if (block.kind == BlockKind::VarFsst) {
-    if (!AppendCodedKey(key, lcp, records)) {
-      return false;
-    }
-    block.lcps.push_back(static_cast<uint32_t>(lcp));
-    return true;
+    return AppendCodedKey(key, records);
   }
+  const auto count = static_cast<uint32_t>(block.ends.size());
   const bool converts = block.kind == BlockKind::FixedStride;
   if (converts) {
     for (uint32_t i = 0; i != count; ++i) {
-      const auto at = KeyAt(block, i);
-      const auto entry = VarEntryAt(block, i, at, LcpAt(block, i, at));
+      const auto entry = VarEntryAt(block, i, KeyAt(block, i));
       block.head_skip = entry.head_skip;
-      block.lcps.push_back(static_cast<uint32_t>(entry.lcp));
       AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
     }
   }
-  const auto entry = VarEntryAt(block, count, key, lcp);
+  const auto entry = VarEntryAt(block, count, key);
   const uint64_t size =
-    VarBytes(count + 1, entry.head_skip,
-             ColumnMax(block.columns, entry.lcp, entry.suffix.size()),
-             block.columns.suffixes.size() + entry.suffix.size(), records);
+    SizeWith(block.columns, count, entry, entry.suffix.size(), records);
   if (count != 0 && size > kPage) {
     if (converts) {
       Clear(block.columns);
-      block.lcps.clear();
       block.head_skip = 0;
       return false;
     }
-    if (!OwnsBlock() || !EncodeBlock(key, lcp, records)) {
-      return false;
-    }
-  } else {
-    block.kind = BlockKind::Var;
-    AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
-    block.size = size;
-    block.head_skip = entry.head_skip;
+    return OwnsBlock() && EncodeBlock(key, records);
   }
-  block.lcps.push_back(static_cast<uint32_t>(lcp));
+  block.kind = BlockKind::Var;
+  AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
+  block.size = size;
+  block.head_skip = entry.head_skip;
   return true;
 }
 
-bool FieldWriter::EncodeBlock(bytes_view key, size_t lcp, uint64_t records) {
+bool FieldWriter::EncodeBlock(bytes_view key, uint64_t records) {
   if (!Encoder()) {
     return false;
   }
   auto& block = _block;
   const auto count = static_cast<uint32_t>(block.ends.size());
   Clear(_encoded);
-  EncodeEntries(_encoded, 0, count + 1, key, lcp);
-  const auto head_skip = VarEntryAt(block, count, key, lcp).head_skip;
+  EncodeEntries(_encoded, 0, count + 1, key);
+  const auto head_skip = VarEntryAt(block, count, key).head_skip;
   const uint64_t size = VarBytes(count + 1, head_skip, _encoded.max,
                                  _encoded.suffixes.size(), records);
   if (size > kPage) {
@@ -672,10 +660,10 @@ bool FieldWriter::EncodeBlock(bytes_view key, size_t lcp, uint64_t records) {
   return true;
 }
 
-bool FieldWriter::AppendCodedKey(bytes_view key, size_t lcp, uint64_t records) {
+bool FieldWriter::AppendCodedKey(bytes_view key, uint64_t records) {
   auto& block = _block;
   const auto count = static_cast<uint32_t>(block.ends.size());
-  const auto entry = VarEntryAt(block, count, key, lcp);
+  const auto entry = VarEntryAt(block, count, key);
   const uint64_t worst = entry.suffix.size() * (entry.restart ? 1 : 2);
   const auto deferred_max =
     std::max({block.deferred_max, static_cast<uint32_t>(entry.lcp),
@@ -693,9 +681,7 @@ bool FieldWriter::AppendCodedKey(bytes_view key, size_t lcp, uint64_t records) {
   EncodeDeferred();
   const auto suffix = entry.restart ? entry.suffix : EncodeSuffix(entry.suffix);
   const uint64_t size =
-    VarBytes(count + 1, entry.head_skip,
-             ColumnMax(block.columns, entry.lcp, suffix.size()),
-             block.columns.suffixes.size() + suffix.size(), records);
+    SizeWith(block.columns, count, entry, suffix.size(), records);
   if (size > kPage) {
     return false;
   }

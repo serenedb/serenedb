@@ -39,7 +39,6 @@
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/shared.hpp"
 
 #if defined(__x86_64__)

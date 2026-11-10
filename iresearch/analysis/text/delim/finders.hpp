@@ -36,6 +36,7 @@
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 

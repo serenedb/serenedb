@@ -38,6 +38,7 @@
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
+#include <concepts>
 #include <random>
 
 #include "formats_test_case_base.hpp"
@@ -3941,12 +3942,11 @@ void AssertRoot(std::vector<irs::bstring> separators) {
     const auto view = padded.View();
     const size_t expected = absl::c_upper_bound(views, key) - views.begin();
     ASSERT_EQ(expected, root.Find(view));
-    for (const size_t from : {size_t{0}, expected / 2, expected}) {
-      ASSERT_EQ(expected, root.FindFrom(from, view));
-    }
-    ASSERT_EQ(views.size() + 1, root.FindFrom(views.size() + 1, view));
-    for (size_t block = 1; block < root.Blocks(); block += 1 + block / 64) {
-      ASSERT_EQ(views[block - 1] <= key, root.NotAfter(block, view));
+    if constexpr (std::derived_from<Root, irs::term_dict::Root>) {
+      for (const size_t from : {size_t{0}, expected / 2, expected}) {
+        ASSERT_EQ(expected, root.FindFrom(from, view));
+      }
+      ASSERT_EQ(views.size() + 1, root.FindFrom(views.size() + 1, view));
     }
   }
 }

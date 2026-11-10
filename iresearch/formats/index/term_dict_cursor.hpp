@@ -34,6 +34,7 @@
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -823,6 +824,15 @@ class Cursor {
     }
     LowerBound(_probe.Assign(_field->MinKey()));
     SDB_ASSERT(_entry == _field->FirstEntry());
+  }
+
+  void Start(uint32_t block) {
+    if (block == 0) {
+      First();
+      return;
+    }
+    Load(block);
+    Next();
   }
 
   uint32_t Next() {

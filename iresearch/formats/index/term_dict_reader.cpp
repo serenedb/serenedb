@@ -329,12 +329,7 @@ void TermReaderImpl::SampleTerms(
   std::array<bytes_view, kRun> run;
   uint64_t taken = 0;
   for (uint32_t block = 0; block < _blocks && taken < bytes; block += step) {
-    if (block == 0) {
-      cursor.First();
-    } else {
-      cursor.Load(block);
-      cursor.Next();
-    }
+    cursor.Start(block);
     size_t n = 0;
     for (;;) {
       keys[n].assign(cursor.Term());
@@ -456,7 +451,8 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
     uint32_t block = 0;
     if (!Small()) {
       const Probe probe{key, size};
-      block = last == kNoBlock ? BlockOf(probe) : BlockFrom(last, probe);
+      block = static_cast<uint32_t>(
+        _root.FindFrom(last == kNoBlock ? 0 : last, probe));
       if (block != last) {
         ++visited;
         AppendRange(blocks, BlockOffset(block), BlockOffset(block + 1));

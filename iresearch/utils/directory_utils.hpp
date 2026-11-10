@@ -87,7 +87,7 @@ struct TrackingDirectory final : public Directory {
 
   std::vector<std::string> FlushTracked(uint64_t& files_size);
 
-  void ClearTracked() noexcept;
+  void RemoveTracked() noexcept;
 
  private:
   using FileSet = absl::flat_hash_set<std::string>;

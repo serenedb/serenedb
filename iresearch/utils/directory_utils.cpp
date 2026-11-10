@@ -107,7 +107,10 @@ bool TrackingDirectory::rename(std::string_view src,
   return false;
 }
 
-void TrackingDirectory::ClearTracked() noexcept {
+void TrackingDirectory::RemoveTracked() noexcept {
+  for (const auto& file : _files) {
+    _impl.remove(file);
+  }
   _files_size = 0;
   _files.clear();
 }

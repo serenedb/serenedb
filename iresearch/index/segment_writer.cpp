@@ -237,7 +237,6 @@ void SegmentWriter::SetFieldOptions(
 
 void SegmentWriter::ResetState() noexcept {
   _initialized = false;
-  _dir.ClearTracked();
   _docs_context.Clear();
   _docs_mask.Clear();
   _batch_first_doc_id = doc_limits::eof();
@@ -247,6 +246,7 @@ void SegmentWriter::ResetState() noexcept {
     _col_writer->Rollback();
     _col_writer.reset();
   }
+  _dir.RemoveTracked();
 }
 
 void SegmentWriter::reset() noexcept {

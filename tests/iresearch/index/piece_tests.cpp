@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 
 #include <array>
+#include <duckdb/storage/storage_info.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -433,6 +434,33 @@ TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
        ++doc) {
     EXPECT_EQ(expected_norms->Get(doc), actual_norms->Get(doc));
   }
+}
+
+TEST(PieceTest, AbortedPieceRemovesItsFiles) {
+  MemoryDirectory dir;
+  auto writer =
+    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  {
+    auto trx = writer->GetBatch(/*exclusive_segment=*/true);
+    trx.SetHot(0);
+    const std::vector<ReplayToken> short_doc = {{"word", 1, 0, 4}};
+    const std::vector<ReplayToken> long_doc = {{"word", 1, 0, 4},
+                                               {"more", 1, 5, 9}};
+    ReplayStream text;
+    for (uint64_t d = 0; d <= DEFAULT_ROW_GROUP_SIZE; ++d) {
+      text.Reset(d % 2 == 0 ? &short_doc : &long_doc);
+      auto doc = trx.Insert();
+      ASSERT_TRUE(
+        ::tests::InsertField(doc, ReplayField{kText, kTextFeatures, &text}));
+    }
+    trx.Abort();
+  }
+  size_t files = 0;
+  dir.visit([&](std::string_view) {
+    ++files;
+    return true;
+  });
+  EXPECT_EQ(0, files);
 }
 
 TEST(PieceTest, SealsSingleDocumentPieces) {

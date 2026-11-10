@@ -543,14 +543,6 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_EQ(2, reader.live_docs_count());
       }
 
-      // add insert/remove
-      {
-        auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-
-        ASSERT_TRUE(InsertWithName(*writer, *doc3));
-        tests::Remove(*writer, std::move(query_doc1));
-      }
-
       size_t file_count = 0;
 
       {
@@ -558,6 +550,14 @@ class IndexTestCase : public tests::IndexTestBase {
           ++file_count;
           return true;
         });
+      }
+
+      // add insert/remove
+      {
+        auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+
+        ASSERT_TRUE(InsertWithName(*writer, *doc3));
+        tests::Remove(*writer, std::move(query_doc1));
       }
 
       writer->Clear();

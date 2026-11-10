@@ -1,0 +1,54 @@
+control substitution on
+
+query
+SELECT page, replace(text, E'\n', '|') AS text, width, height, has_text_layer
+FROM read_pdf('${RESOURCES}/tests/pdf/basic/varusik.pdf')
+ORDER BY page;
+----
+page	text	width	height	has_text_layer
+1	varusik banochka|sopley 42	612	792	t
+2	varusik poesh	612	792	t
+
+query
+SELECT page, block, text, round(x) AS x, round(y) AS y,
+       width > 0 AS has_width, height > 0 AS has_height
+FROM read_pdf_blocks('${RESOURCES}/tests/pdf/basic/varusik.pdf')
+ORDER BY page, block;
+----
+page	block	text	x	y	has_width	has_height
+1	1	varusik	60	710	t	t
+1	2	banochka	260	710	t	t
+1	3	sopley	60	670	t	t
+1	4	42	260	670	t	t
+2	1	varusik poesh	72	720	t	t
+
+query
+SELECT page, table_index, row_index, cells[1] AS first, cells[2] AS second
+FROM read_pdf_tables('${RESOURCES}/tests/pdf/basic/varusik.pdf')
+ORDER BY page, table_index, row_index;
+----
+page	table_index	row_index	first	second
+1	1	1	varusik	banochka
+1	1	2	sopley	42
+
+query
+SELECT p.page, p.text = b.text AS same_text
+FROM read_pdf('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf', password := 'varusik', first_page := 2) p
+JOIN read_pdf_blocks('${RESOURCES}/tests/pdf/basic/varusik_encrypted.pdf', password := 'varusik', first_page := 2) b USING (page);
+----
+page	same_text
+2	t
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS rows
+FROM read_pdf_tables('${RESOURCES}/tests/pdf/basic/varusik*.pdf', password := 'varusik');
+----
+files	rows
+2	4
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS blocks
+FROM read_pdf_blocks('${RESOURCES}/tests/pdf/basic/varusik*.pdf', password := 'varusik');
+----
+files	blocks
+2	10

@@ -116,6 +116,16 @@ def generate(directory):
     first = b"BT /F1 12 Tf 72 720 Td (Hello PDF) Tj ET"
     second = b"BT /F1 12 Tf 72 720 Td (Second page) Tj ET"
     write_pdf(directory / "text.pdf", [first, second])
+    varusik = (
+        b"50 650 400 80 re S 250 650 m 250 730 l S 50 690 m 450 690 l S\n"
+        b"BT /F1 12 Tf 60 710 Td (varusik) Tj ET\n"
+        b"BT /F1 12 Tf 260 710 Td (banochka) Tj ET\n"
+        b"BT /F1 12 Tf 60 670 Td (sopley) Tj ET\n"
+        b"BT /F1 12 Tf 260 670 Td (42) Tj ET"
+    )
+    varusik_pages = [varusik, b"BT /F1 12 Tf 72 720 Td (varusik poesh) Tj ET"]
+    write_pdf(directory / "varusik.pdf", varusik_pages)
+    write_pdf(directory / "varusik_encrypted.pdf", varusik_pages, password="varusik")
     write_pdf(directory / "invalid_path.pdf", [first + b"\n10 m"])
     write_pdf(directory / "more_text.pdf", [second])
     write_pdf(directory / "encrypted.pdf", [first], password="secret")

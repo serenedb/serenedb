@@ -18,13 +18,14 @@ from .. import reports, store
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Fixture, Outcome, Unit
 from . import BELOW_RESOLUTION, Skip, plan, skipped
 
-SUITES = ("core", "cpp", "avro", "azure", "httpfs", "iceberg", "inet", "markdown",
+SUITES = ("core", "cpp", "avro", "azure", "httpfs", "iceberg", "inet", "markdown", "pdf",
           "postgres_scanner", "spatial", "interop")
 SUITE_DIRS = {
     "core": "third_party/duckdb", "cpp": "third_party/duckdb", "avro": "third_party/duckdb_avro",
     "azure": "third_party/duckdb_azure", "httpfs": "third_party/duckdb_httpfs",
     "iceberg": "third_party/duckdb_iceberg", "inet": "third_party/duckdb_inet",
     "markdown": "third_party/duckdb_markdown", "postgres_scanner": "third_party/duckdb_postgres",
+    "pdf": "third_party/duckdb_pdf",
     "spatial": "third_party/duckdb_spatial",
 }
 CORE_SERIAL = (

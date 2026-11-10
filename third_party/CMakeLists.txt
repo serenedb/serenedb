@@ -733,6 +733,7 @@ sdb_update_module(
     postgres
     duckdb_inet
     duckdb_markdown
+    duckdb_pdf
     duckdb_spatial
     database-connector
 )

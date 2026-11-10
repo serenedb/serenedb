@@ -1,5 +1,0 @@
-duckdb_extension_load(pdf
-    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
-    INCLUDE_DIR ${CMAKE_CURRENT_LIST_DIR}/src/include
-    EXTENSION_VERSION 1.0.0
-)

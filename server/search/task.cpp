@@ -175,7 +175,7 @@ auto DoCompaction(std::shared_ptr<Store> idx, irs::CompactionPolicy policy,
              "ms while compacting Search index '", idx->GetId(),
              "': ", res.message());
   }
-  co_return !empty_compaction;
+  co_return res.ok() && !empty_compaction;
 }
 
 // Fan out one CompactUnsafe per currently-free global slot. Each merge is

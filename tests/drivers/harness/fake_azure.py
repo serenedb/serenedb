@@ -2,12 +2,13 @@
 
 Path-style URLs under one storage account, containers that exist on first use, block blobs
 staged and committed by block lists with the metadata the commit sets, Data Lake files created,
-appended in order and flushed, ranged reads with conditions, blob listings, same-account copies,
-single and batched deletes. Requests are not authenticated, except that while
+appended in order and flushed, Data Lake directories created, listed, renamed into and deleted with
+what is below them, ranged reads with conditions, blob listings, same-account copies, single and
+batched deletes. Requests are not authenticated, except that while
 `sas_signatures` is set, a request whose SAS signature is not one of them is refused with 403
-AuthenticationFailed, as an expired SAS is. It counts requests by kind. The next `drop[kind]`
-requests of a kind (PUT_BLOCK_LIST) take effect but get no response: the connection closes, and
-their blob names are listed in `dropped`.
+AuthenticationFailed, as an expired SAS is. It counts requests by kind. `trickle` sends the bodies
+of reads at that many bytes a second. The next `drop[kind]` requests of a kind (PUT_BLOCK_LIST) take
+effect but get no response: the connection closes, and their blob names are listed in `dropped`.
 
 Point a secret at it with `connection_string`, or with `sas_connection_string(signature)`.
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 import base64
 import collections
 import hashlib
+import json
 import time
 import urllib.parse
 import uuid
@@ -46,6 +48,8 @@ class FakeAzure(FakeStore):
         self.blobs: dict[tuple[str, str], _Blob] = {}
         self.staged: dict[tuple[str, str], dict[str, bytes]] = {}
         self.appended: dict[tuple[str, str], bytearray] = {}
+        self.directories: set[tuple[str, str]] = set()
+        self.trickle = 0
         self.drop: collections.Counter[str] = collections.Counter()
         self.dropped: list[str] = []
 
@@ -71,6 +75,11 @@ class FakeAzure(FakeStore):
         with self.lock:
             self.blobs[(container, name)] = _Blob(data)
 
+    def add_parents(self, container: str, name: str) -> None:
+        while "/" in name:
+            name = name.rpartition("/")[0]
+            self.directories.add((container, name))
+
 
 class _Handler(Handler):
     account = ACCOUNT
@@ -89,7 +98,7 @@ class _Handler(Handler):
         return True
 
     def _reply(self, status: int, body: bytes = b"", headers: dict[str, str] | None = None,
-               content_length: int | None = None) -> None:
+               content_length: int | None = None, trickle: bool = False) -> None:
         self.send_response(status)
         self.send_header("x-ms-request-id", str(uuid.uuid4()))
         self.send_header("x-ms-version", self.headers.get("x-ms-version", "2026-06-06"))
@@ -98,8 +107,20 @@ class _Handler(Handler):
             self.send_header(name, value)
         self.send_header("Content-Length", str(len(body) if content_length is None else content_length))
         self.end_headers()
-        if body and self.command != "HEAD":
+        if not body or self.command == "HEAD":
+            return
+        rate = self.fake.trickle if trickle else 0
+        if not rate:
             self.wfile.write(body)
+            return
+        chunk = max(1, rate // 10)
+        try:
+            for offset in range(0, len(body), chunk):
+                self.wfile.write(body[offset:offset + chunk])
+                self.wfile.flush()
+                time.sleep(chunk / rate)
+        except OSError:
+            self.close_connection = True
 
     def _error(self, status: int, code: str) -> None:
         if self.command == "HEAD":
@@ -112,6 +133,11 @@ class _Handler(Handler):
     def _find(self, container: str, name: str) -> _Blob | None:
         with self.fake.lock:
             return self.fake.blobs.get((container, name))
+
+    def _not_found(self, container: str) -> str:
+        with self.fake.lock:
+            data_lake = any(c == container for c, _ in self.fake.directories)
+        return "PathNotFound" if data_lake else "BlobNotFound"
 
     def _properties(self, blob: _Blob) -> dict[str, str]:
         return {"ETag": blob.etag, "Last-Modified": http_date(blob.modified),
@@ -143,7 +169,13 @@ class _Handler(Handler):
         self.fake.count("HEAD")
         blob = self._find(container, name)
         if blob is None:
-            self._error(404, "BlobNotFound")
+            with self.fake.lock:
+                directory = (container, name.rstrip("/")) in self.fake.directories
+            if not directory:
+                self._error(404, self._not_found(container))
+                return
+            self._reply(200, headers={**self._properties(_Blob(b"")), "x-ms-resource-type": "directory",
+                                      "x-ms-meta-hdi_isfolder": "true"}, content_length=0)
             return
         self._reply(200, headers=self._properties(blob), content_length=len(blob.data))
 
@@ -155,10 +187,14 @@ class _Handler(Handler):
             self.fake.count("LIST")
             self._list(container, query)
             return
+        if query.get("resource", [""])[0] == "filesystem":
+            self.fake.count("LIST_PATHS")
+            self._list_paths(container, query)
+            return
         self.fake.count("GET")
         blob = self._find(container, name)
         if blob is None:
-            self._error(404, "BlobNotFound")
+            self._error(404, self._not_found(container))
             return
         if self._conditions_fail(blob):
             self._error(412, "ConditionNotMet")
@@ -166,14 +202,14 @@ class _Handler(Handler):
         headers = self._properties(blob)
         ranged = self.headers.get("x-ms-range")
         if not ranged:
-            self._reply(200, blob.data, headers)
+            self._reply(200, blob.data, headers, trickle=True)
             return
         part = byte_range(ranged, blob.data)
         if part is None:
             self._error(416, "InvalidRange")
             return
         headers["Content-Range"] = part[1]
-        self._reply(206, part[0], headers)
+        self._reply(206, part[0], headers, trickle=True)
 
     def _list(self, container: str, query: dict[str, list[str]]) -> None:
         prefix = query.get("prefix", [""])[0]
@@ -205,11 +241,70 @@ class _Handler(Handler):
         body.append(f"<NextMarker>{escape(page[-1][0]) if truncated else ''}</NextMarker></EnumerationResults>")
         self._reply(200, "".join(body).encode(), {"Content-Type": "application/xml"})
 
+    def _list_paths(self, container: str, query: dict[str, list[str]]) -> None:
+        directory = query.get("directory", [""])[0].strip("/")
+        recursive = query.get("recursive", ["false"])[0] == "true"
+        prefix = f"{directory}/" if directory else ""
+        with self.fake.lock:
+            known = not directory or (container, directory) in self.fake.directories
+            files = {name: blob for (c, name), blob in self.fake.blobs.items()
+                     if c == container and name.startswith(prefix)}
+            directories = {name for c, name in self.fake.directories
+                           if c == container and name.startswith(prefix)}
+        if not known:
+            self._error(404, "PathNotFound")
+            return
+        paths = []
+        for name in sorted(files.keys() | directories):
+            if not recursive and "/" in name[len(prefix):]:
+                continue
+            blob = files.get(name)
+            entry = {"name": name, "owner": "$superuser", "group": "$superuser", "permissions": "rw-r-----",
+                     "contentLength": str(len(blob.data) if blob else 0),
+                     "lastModified": http_date(blob.modified if blob else time.time()),
+                     "etag": (blob.etag if blob else '"0x0"').strip('"')}
+            if blob is None:
+                entry["isDirectory"] = "true"
+            paths.append(entry)
+        self._reply(200, json.dumps({"paths": paths}).encode(), {"Content-Type": "application/json"})
+
+    def _rename(self, container: str, name: str, source: str) -> None:
+        self.fake.count("RENAME")
+        src_container, src_name = split_path(urllib.parse.urlsplit(source).path, ACCOUNT)
+        with self.fake.lock:
+            blob = self.fake.blobs.pop((src_container, src_name), None)
+            if blob is not None:
+                self.fake.blobs[(container, name)] = blob
+                self.fake.add_parents(container, name)
+        if blob is None:
+            self._error(404, "SourcePathNotFound")
+            return
+        self._reply(201, headers={"ETag": blob.etag, "Last-Modified": http_date(blob.modified)})
+
     def do_PUT(self) -> None:
         if self._forbidden():
             return
         container, name, query = self._target()
         body = self._body()
+        source = self.headers.get("x-ms-rename-source")
+        if source:
+            self._rename(container, name, source)
+            return
+        if query.get("resource", [""])[0] == "directory":
+            self.fake.count("CREATE_DIRECTORY")
+            directory = name.rstrip("/")
+            with self.fake.lock:
+                exists = (self.headers.get("If-None-Match") == "*"
+                          and (container, directory) in self.fake.directories)
+                if not exists:
+                    self.fake.directories.add((container, directory))
+                    self.fake.add_parents(container, directory)
+            if exists:
+                self._error(409, "PathAlreadyExists")
+                return
+            self._reply(201, headers={"ETag": '"0x0"', "Last-Modified": http_date(time.time()),
+                                      "x-ms-request-server-encrypted": "true"})
+            return
         if query.get("resource", [""])[0] == "file":
             self.fake.count("CREATE_FILE")
             with self.fake.lock:
@@ -218,6 +313,7 @@ class _Handler(Handler):
                     blob = _Blob(b"")
                     self.fake.blobs[(container, name)] = blob
                     self.fake.appended[(container, name)] = bytearray()
+                    self.fake.add_parents(container, name)
             if exists:
                 self._error(409, "PathAlreadyExists")
                 return
@@ -310,12 +406,28 @@ class _Handler(Handler):
     def do_DELETE(self) -> None:
         if self._forbidden():
             return
-        container, name, _ = self._target()
+        container, name, query = self._target()
+        if "recursive" in query:
+            self.fake.count("DELETE_DIRECTORY")
+            directory = name.rstrip("/")
+            with self.fake.lock:
+                known = (container, directory) in self.fake.directories
+                for key in [key for key in self.fake.blobs
+                            if key[0] == container and key[1].startswith(f"{directory}/")]:
+                    del self.fake.blobs[key]
+                self.fake.directories = {
+                    key for key in self.fake.directories
+                    if key[0] != container or (key[1] != directory and not key[1].startswith(f"{directory}/"))}
+            if not known:
+                self._error(404, "PathNotFound")
+                return
+            self._reply(200)
+            return
         self.fake.count("DELETE")
         with self.fake.lock:
             removed = self.fake.blobs.pop((container, name), None)
         if removed is None:
-            self._error(404, "BlobNotFound")
+            self._error(404, self._not_found(container))
             return
         self._reply(202, headers={"x-ms-delete-type-permanent": "true"})
 

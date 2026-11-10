@@ -317,6 +317,39 @@ TEST(ObjectStoreIndexTest, large_reads_fetch_their_range_at_once) {
   EXPECT_EQ(1, tests::ObjectStore().Requests().get);
 }
 
+TEST(ObjectStoreIndexTest, large_reads_fetch_their_range_past_capped_hints) {
+  constexpr uint64_t kHinted = duckdb::ExternalFileCache::MAX_FILE_IN_FLIGHT;
+  constexpr uint64_t kRead = kBlocks * kBlock;
+  auto& store = tests::ObjectStore();
+  auto& cache = duckdb::ExternalFileCache::Get(Db());
+  const tests::IndexDir dir{Db(), Root()};
+  {
+    const std::vector<irs::byte_type> block(kBlock, 0x5A);
+    auto out = dir.Create("large");
+    for (uint64_t written = 0; written != kHinted + kRead; written += kBlock) {
+      out->WriteData(block.data(), block.size());
+    }
+    out->Close();
+  }
+  DropCachedBlocks(cache);
+  const auto file = dir.Open("large", duckdb::MappedFileAccess::NORMAL);
+  store.SetLatency(std::chrono::milliseconds{100});
+  absl::Cleanup restore = [&] {
+    store.SetLatency(std::chrono::microseconds{0});
+  };
+  store.ResetRequests();
+  file->Prefetch(0, kHinted);
+  irs::IndexInput in{*file};
+  in.Seek(kHinted);
+  irs::bstring buf(kRead, 0);
+  in.ReadData(buf.data(), buf.size());
+  EXPECT_EQ(irs::bstring(kRead, 0x5A), buf);
+  irs::bstring hinted(kHinted, 0);
+  in.Seek(0);
+  in.ReadData(hinted.data(), hinted.size());
+  EXPECT_EQ(kHinted / kPieceSize + 1, store.Requests().get);
+}
+
 struct Rows {
   std::span<const uint64_t> rows;
   size_t size() const noexcept { return rows.size(); }

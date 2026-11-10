@@ -57,9 +57,7 @@ void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
   }
   for (uint64_t done = 0; done < count;) {
     const auto n = std::min(count - done, kChunk);
-    if (!mapped) {
-      file->Prefetch(start + done, count - done);
-    } else if (done + kAhead < count) {
+    if (mapped && done + kAhead < count) {
       file->Prefetch(start + done + kAhead,
                      std::min(count - done - kAhead, kChunk));
     }
@@ -127,6 +125,21 @@ void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
   }
 }
 
+uint64_t InputFile::Need(uint64_t position, uint64_t needed,
+                         uint64_t end) const noexcept {
+  constexpr uint64_t kWindow = duckdb::ExternalFileCache::MAX_FILE_IN_FLIGHT;
+  if (!_blocks || needed >= end || position + kWindow / 2 < needed) {
+    return needed;
+  }
+  const auto until = std::min(end, position + kWindow);
+  const auto& blocks = _blocks->Blocks();
+  if (blocks.BlockOf(needed) != blocks.BlockOf(until - 1)) {
+    TryPrefetch(_blocks, needed, until - needed,
+                duckdb::ExternalFileCachePrefetch::NEED);
+  }
+  return until;
+}
+
 void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
   if (_blocks) {
     _blocks->GetCache().MarkUnused(*_blocks, offset, size);
@@ -165,19 +178,7 @@ uint64_t InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
   if (!_paged) {
     return size;
   }
-  if (size == 0 || offset >= _length ||
-      !_residency.Valid(file_utils::ResidencyEpoch())) {
-    return 0;
-  }
-  const uint64_t first = offset / file_utils::kPage;
-  const uint64_t last =
-    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
-  const uint64_t pages = _residency.Test(first, last);
-  if (pages > last - first) {
-    return size;
-  }
-  const uint64_t warm = (first + pages) * file_utils::kPage;
-  return warm - std::min(warm, offset);
+  return size == 0 ? 0 : WarmPaged(offset, size);
 }
 
 bool InputFile::Evicted(uint64_t offset, uint64_t size,
@@ -208,7 +209,7 @@ bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
          (!_paged || file_utils::IsResident(_span.data() + offset, size));
 }
 
-bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
+bool InputFile::HintSlow(uint64_t offset, uint64_t size) const noexcept {
   if (_blocks) {
     if (_blocks->GetCache().IsCached(*_blocks, offset, size)) {
       return false;

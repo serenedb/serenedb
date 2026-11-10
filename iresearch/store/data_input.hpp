@@ -84,8 +84,16 @@ class InputFile {
   bytes_view Refill(uint64_t position, CursorBlock& block, bool ahead) const;
   PinnedBytes Pin(uint64_t offset, uint64_t size) const;
 
-  bool Hint(uint64_t offset, uint64_t size) const noexcept;
+  IRS_FORCE_INLINE bool Hint(uint64_t offset, uint64_t size) const noexcept {
+    if (_paged && size != 0 && WarmPaged(offset, size) == size &&
+        !file_utils::PollResidency(size)) [[likely]] {
+      return false;
+    }
+    return HintSlow(offset, size);
+  }
   void Prefetch(uint64_t offset, uint64_t size) const noexcept;
+  uint64_t Need(uint64_t position, uint64_t needed,
+                uint64_t end) const noexcept;
   void PrefetchExtents(
     std::span<duckdb::ExternalFileCacheRange> extents) const noexcept;
   void Evict(uint64_t offset, uint64_t size) const noexcept;
@@ -95,6 +103,24 @@ class InputFile {
   bool Evicted(uint64_t offset, uint64_t size, uint32_t& epoch) const noexcept;
 
  private:
+  IRS_FORCE_INLINE uint64_t WarmPaged(uint64_t offset,
+                                      uint64_t size) const noexcept {
+    SDB_ASSERT(_paged && size != 0);
+    if (offset >= _length || !_residency.Valid(file_utils::ResidencyEpoch())) {
+      return 0;
+    }
+    const uint64_t first = offset / file_utils::kPage;
+    const uint64_t last =
+      (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
+    const uint64_t pages = _residency.Test(first, last);
+    if (pages > last - first) {
+      return size;
+    }
+    const uint64_t warm = (first + pages) * file_utils::kPage;
+    return warm - std::min(warm, offset);
+  }
+  bool HintSlow(uint64_t offset, uint64_t size) const noexcept;
+
   uint64_t _length;
   bytes_view _span;
   std::unique_ptr<duckdb::MemoryMappedFile> _mapping;
@@ -332,16 +358,14 @@ class BasicInput {
   IRS_NO_INLINE void ReadDataSlow(byte_type* b, uint64_t count) {
     if constexpr (!Contiguous) {
       if (_file != nullptr) {
-        const auto at = Position();
-        const auto from = at + Remain();
-        const auto to = at + count;
-        const auto block_size = _file->BlockSize();
-        if (from / block_size != (to - 1) / block_size) {
-          _file->Prefetch(from, to - from);
-        }
+        const auto to = Position() + count;
+        auto needed = Position() + Remain();
         do {
-          if (_pos == _end && !Refill(false)) {
-            break;
+          if (_pos == _end) {
+            needed = _file->Need(Position(), needed, to);
+            if (!Refill(false)) {
+              break;
+            }
           }
           const auto chunk = std::min(count, Remain());
           std::memcpy(b, _pos, chunk);

@@ -513,14 +513,17 @@ def test_uploads_without_a_checksum_send_their_body_hash(tmp_path: Path) -> None
     assert fake.requests["UNSIGNED_PAYLOAD"] == 0, fake.requests
 
 
-def test_a_trickling_read_fails_by_its_deadline(tmp_path: Path) -> None:
-    location = f"s3://bucket/trickle-{tmp_path.name}"
-    with FakeS3() as fake:
+@pytest.mark.parametrize("kind", ["s3", "azure"])
+def test_a_trickling_read_fails_by_its_deadline(tmp_path: Path, kind: str) -> None:
+    with FakeS3() if kind == "s3" else FakeAzure() as fake:
         server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
-            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
-                           location)
+            if kind == "s3":
+                _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                               f"s3://bucket/trickle-{tmp_path.name}")
+            else:
+                _create_azure_secret(server, fake, f"az://indexes/trickle-{tmp_path.name}")
             with server.connect() as conn:
                 conn.execute("SET GLOBAL http_timeout = 2")
                 conn.execute("SET GLOBAL http_retries = 1")
@@ -1132,6 +1135,30 @@ def test_a_copy_to_a_dfs_file_reads_back(tmp_path: Path) -> None:
         finally:
             server.stop()
     assert fake.requests["APPEND"] > 1 and fake.requests["FLUSH"] > 0, fake.requests
+
+
+def test_an_index_in_a_dfs_tablespace_commits_and_survives_a_restart(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    with FakeAzure() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_azure_secret(server, fake, f"abfss://indexes/dfs-{tmp_path.name}")
+            _fill_docs(server, 2000)
+            with server.connect() as conn:
+                conn.execute(CREATE_INDEX)
+            assert _count_fox(server) == 2000
+        finally:
+            server.stop()
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _count_fox(again) == 2000
+            with again.connect() as conn:
+                conn.execute("DROP INDEX docs_body")
+        finally:
+            again.stop()
+    assert fake.requests["RENAME"] > 0, fake.requests
 
 
 @pytest.mark.parametrize("kind", ["s3", "azure"])

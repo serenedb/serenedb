@@ -43,7 +43,10 @@ void Prefetch(const void* addr, size_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;
 size_t Residency(const void* addr, size_t size,
                  std::span<unsigned char> pages) noexcept;
-uint32_t ResidencyEpoch() noexcept;
+inline constinit std::atomic<uint32_t> gResidencyEpoch{1};
+inline uint32_t ResidencyEpoch() noexcept {
+  return gResidencyEpoch.load(std::memory_order_relaxed);
+}
 void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
 bool PollResidency(uint64_t bytes) noexcept;

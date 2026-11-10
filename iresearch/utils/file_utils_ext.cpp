@@ -53,8 +53,6 @@ std::pair<uintptr_t, size_t> PageRange(const void* addr, size_t size) noexcept {
   return {aligned, size + (begin - aligned)};
 }
 
-std::atomic<uint32_t> gResidencyEpoch{1};
-
 }  // namespace
 #endif
 
@@ -117,14 +115,6 @@ size_t Residency(const void* addr, size_t size,
     return 0;
   }
   return page;
-#else
-  return 0;
-#endif
-}
-
-uint32_t ResidencyEpoch() noexcept {
-#ifndef _WIN32
-  return gResidencyEpoch.load(std::memory_order_relaxed);
 #else
   return 0;
 #endif

@@ -285,7 +285,7 @@ Result BuildExcludeFills(std::span<const Term> metas,
                          std::span<const QueryBuilder::ptr> filters,
                          const TermReader* field, const SubReader& segment,
                          Make&& make) {
-  std::vector<FillNode::ptr> fills;
+  TrackedVector<FillNode::ptr> fills;
   if (!CollectFills(metas, filters, field, segment, fills)) {
     return {};
   }

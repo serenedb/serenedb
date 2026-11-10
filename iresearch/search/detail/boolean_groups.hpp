@@ -44,7 +44,7 @@ struct BooleanGroups {
   std::span<const QueryBuilder::ptr> must_filters;
   std::span<const PostingClause> should;
   std::span<const QueryBuilder::ptr> should_filters;
-  std::vector<FillNode::ptr>* should_fills = nullptr;
+  TrackedVector<FillNode::ptr>* should_fills = nullptr;
   std::span<const PostingClause> must_not;
   std::span<const QueryBuilder::ptr> must_not_filters;
 };

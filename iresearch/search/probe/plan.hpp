@@ -103,7 +103,7 @@ Node::ptr MakeWindowDisjunction(std::span<const Term> terms,
                                 const detail::ScoredCtx& ctx,
                                 score_t absorbed) {
   const IndexInput* doc = nullptr;
-  std::vector<detail::FillNode::ptr> rest;
+  TrackedVector<detail::FillNode::ptr> rest;
   if (!detail::CollectDense(terms, filters, field, doc, rest,
                             [&](const QueryBuilder& child) {
                               return child.PlanFill(ctx, scoring.merge);

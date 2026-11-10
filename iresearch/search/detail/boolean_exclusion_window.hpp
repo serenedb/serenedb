@@ -79,7 +79,7 @@ Result<Family> MakeExclusionWindow(const BooleanQuery& query, const Ctx& ctx,
       return {};
     }
     const IndexInput* doc = nullptr;
-    std::vector<FillNode::ptr> rest;
+    TrackedVector<FillNode::ptr> rest;
     if (!CollectDense(terms, filters, nullptr, doc, rest,
                       [&](const QueryBuilder& filter) {
                         return filter.PlanFill(Family::Scoring(ctx), merge);

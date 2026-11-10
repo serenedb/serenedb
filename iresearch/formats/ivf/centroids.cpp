@@ -252,7 +252,7 @@ void ForEachGroup(std::span<const size_t> ids, size_t n_groups, Fn&& fn) {
   }
 }
 
-void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
+void Build(TrackedVector<CentroidsBuilder::Node>& nodes, std::span<float> data,
            size_t d, std::span<size_t> ids, const BuildSettings& settings) {
   std::vector<float> rotation;
   const auto rotation_for = [&](size_t n, size_t k) -> const float* {
@@ -280,6 +280,11 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     return TrackedVector<float>{centroids.begin(), centroids.end(),
                                 TrackedAllocator<float>{settings.budget}};
   };
+  const auto node_children = [&](size_t rows) {
+    TrackedVector<size_t> children{TrackedAllocator<size_t>{settings.budget}};
+    children.reserve(rows);
+    return children;
+  };
   size_t rows = 0;
   while (!centroids_build.empty()) {
     const auto entry = centroids_build.front();
@@ -297,8 +302,12 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
           static_cast<uint32_t>(kLeafClusterIters),
           static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto,
           rotation_for(sample_size, 1), settings.budget);
-        nodes.emplace_back(CentroidsBuilder::Node{
-          .centroids = node_centroids(centroids), .children = {0}, .leafs = 1});
+        auto& node = nodes.emplace_back(CentroidsBuilder::Node{
+          .centroids = node_centroids(centroids),
+          .children = node_children(1),
+          .leafs = 1,
+        });
+        node.children.push_back(0);
         rows += 1;
       }
       // centroid from parent will route to this posting
@@ -332,8 +341,10 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     if (entry.parent < nodes.size()) {
       nodes[entry.parent].children.emplace_back(nodes.size());
     }
-    nodes.emplace_back(
-      CentroidsBuilder::Node{.centroids = node_centroids(centroids)});
+    nodes.emplace_back(CentroidsBuilder::Node{
+      .centroids = node_centroids(centroids),
+      .children = node_children(n_built),
+    });
     rows += n_built;
     ForEachGroup(entry.ids, n_built, [&](size_t, size_t start, size_t count) {
       centroids_build.emplace_back(CentroidsEntry{
@@ -541,12 +552,15 @@ void CentroidsBuilder::BuildTree(TrackedVector<float> sample, size_t leaf_size,
     .niter = kClusterIters,
     .budget = budget,
   };
-  std::vector<size_t> ids(n);
+  TrackedVector<size_t> ids(n, TrackedAllocator<size_t>{budget});
   if (_metric == VectorMetric::Cosine) {
     NormalizeRows(sample.data(), n, _d);
   }
+  _nodes = TrackedVector<Node>{TrackedAllocator<Node>{budget}};
+  _nodes.reserve(settings.max_rows);
   Build(_nodes, sample, _d, ids, settings);
-  _row_bases.resize(_nodes.size());
+  _row_bases =
+    TrackedVector<size_t>(_nodes.size(), TrackedAllocator<size_t>{budget});
   for (size_t j = 0; j < _nodes.size(); ++j) {
     _row_bases[j] = _n_rows;
     _n_rows += _nodes[j].Rows(_d);

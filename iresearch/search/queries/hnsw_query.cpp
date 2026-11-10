@@ -109,7 +109,7 @@ struct HnswCodeDist {
 
 struct HnswColumnDist {
   detail::RawVectorReader* reader;
-  std::vector<doc_id_t>* docs;
+  TrackedVector<doc_id_t>* docs;
 
   void Batch(std::span<const uint32_t> ids, score_t* out,
              score_t = kHnswNoThreshold) {
@@ -217,8 +217,8 @@ TrackedVector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
 struct WalkFilterScratch {
   HnswVisited known;
   HnswVisited pass;
-  std::vector<doc_id_t> ask;
-  std::vector<uint32_t> keep;
+  TrackedVector<doc_id_t> ask;
+  TrackedVector<uint32_t> keep;
   uint64_t asked = 0;
   uint64_t admitted = 0;
 };
@@ -486,9 +486,9 @@ void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
   s.batch.clear();
 }
 
-std::vector<uint32_t> AdmittedSeeds(detail::LazyBitset& set,
-                                    const HnswGraph& graph, uint32_t want) {
-  std::vector<uint32_t> seeds;
+TrackedVector<uint32_t> AdmittedSeeds(detail::LazyBitset& set,
+                                      const HnswGraph& graph, uint32_t want) {
+  TrackedVector<uint32_t> seeds;
   const auto size = static_cast<uint64_t>(graph.Size());
   for (uint32_t k = 0; k < want; ++k) {
     const auto from =
@@ -781,7 +781,7 @@ void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
   detail::RawVectorReader reader{*_exact, *_segment.GetColReader(), _d};
   reader.SetQuery(_query, _metric);
-  std::vector<doc_id_t> docs;
+  TrackedVector<doc_id_t> docs;
   HnswColumnDist dist{.reader = &reader, .docs = &docs};
   HnswScanTopK(IndexDocs(*_inner, nullptr, docs_count), _data->graph, dist, _ef,
                s);

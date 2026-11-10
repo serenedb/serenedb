@@ -117,7 +117,7 @@ template<typename Term, typename PlanChild>
 bool CollectDense(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
                   const TermReader* field, const IndexInput*& doc,
-                  std::vector<FillNode::ptr>& rest, PlanChild&& plan) {
+                  TrackedVector<FillNode::ptr>& rest, PlanChild&& plan) {
   if (!terms.empty()) {
     doc = DocOf(FieldOf(terms.front(), field));
     if (doc == nullptr) {
@@ -207,7 +207,8 @@ Result BuildWindowTerms(std::span<const Term> terms, const TermReader* field,
 template<typename Result, typename Leaf, typename Plain, typename Term,
          typename Scoring, typename Make>
 Result BuildWindowMix(std::span<const Term> terms, const TermReader* field,
-                      const IndexInput* input, std::vector<FillNode::ptr>& rest,
+                      const IndexInput* input,
+                      TrackedVector<FillNode::ptr>& rest,
                       const Scoring& scoring, Make&& make) {
   SDB_ASSERT(!terms.empty());
   if (rest.empty()) {
@@ -266,7 +267,7 @@ inline fill::Node::ptr ScoredTermOf(const PostingClause& term,
 
 template<typename Result, typename Term, typename Scoring, typename Make>
 Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
-                      const IndexInput* doc, std::vector<FillNode::ptr>& rest,
+                      const IndexInput* doc, TrackedVector<FillNode::ptr>& rest,
                       const Scoring& scoring, Make&& make) {
   SDB_ASSERT(!terms.empty() || !rest.empty());
   if (terms.empty()) {
@@ -290,7 +291,7 @@ Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
                                                      scoring, make);
         });
     }
-    std::vector<FillNode::ptr> leaves;
+    TrackedVector<FillNode::ptr> leaves;
     leaves.reserve(terms.size() + rest.size());
     for (size_t i = 0; i != terms.size(); ++i) {
       auto node =

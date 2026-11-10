@@ -362,10 +362,10 @@ inline void ReadFill(FillNode& node, doc_id_t end,
 }
 
 struct BitsetBuckets {
-  std::vector<TrackedVector<PostingClause>> must;
+  TrackedVector<TrackedVector<PostingClause>> must;
   TrackedVector<PostingClause> must_not;
-  std::vector<FillNode::ptr> fills;
-  std::vector<FillNode::ptr> exclude_fills;
+  TrackedVector<FillNode::ptr> fills;
+  TrackedVector<FillNode::ptr> exclude_fills;
   const SubReader* masked = nullptr;
 
   size_t Seed(doc_id_t docs_count) const noexcept {

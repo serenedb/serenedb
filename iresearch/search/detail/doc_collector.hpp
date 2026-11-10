@@ -41,6 +41,7 @@
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -53,7 +54,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   auto& allocator = duckdb::Allocator::DefaultAllocator();
   StatsArena stats_arena{allocator};
   PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
-  std::vector<QueryBuilder::ptr> queries;
+  TrackedVector<QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
     queries.emplace_back(

@@ -56,13 +56,13 @@ struct CentroidsNodeView {
 };
 
 struct LayerBuffers {
-  std::vector<TrackedVector<float>> centroids;
-  std::vector<std::vector<size_t>> child_offsets;
+  TrackedVector<TrackedVector<float>> centroids;
+  TrackedVector<TrackedVector<size_t>> child_offsets;
 };
 
 struct CentroidsNode {
   TrackedVector<float> centroids;
-  std::vector<size_t> child_offsets;
+  TrackedVector<size_t> child_offsets;
   size_t size;
   size_t level;
   size_t d;
@@ -206,7 +206,7 @@ class CentroidsBuilder {
  public:
   struct Node {
     TrackedVector<float> centroids;
-    std::vector<size_t> children;
+    TrackedVector<size_t> children;
     size_t leafs = 0;
 
     size_t Rows(size_t d) const noexcept { return centroids.size() / d; }
@@ -248,8 +248,8 @@ class CentroidsBuilder {
     std::span<size_t> perm,
     std::span<std::span<const float>> centroids_out) const;
 
-  std::vector<Node> _nodes;
-  std::vector<size_t> _row_bases;
+  TrackedVector<Node> _nodes;
+  TrackedVector<size_t> _row_bases;
   VectorMetric _metric = VectorMetric::L2Sqr;
   uint32_t _d = 0;
   size_t _n_rows = 0;

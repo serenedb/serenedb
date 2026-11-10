@@ -80,7 +80,7 @@ template<typename Term>
 bool CollectFills(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
                   const TermReader* field, const SubReader& segment,
-                  std::vector<FillNode::ptr>& nodes) {
+                  TrackedVector<FillNode::ptr>& nodes) {
   nodes.reserve(nodes.size() + terms.size() + filters.size());
   const auto take = [&](FillNode::ptr node) {
     if (!node) {

@@ -151,7 +151,7 @@ template<typename Family, typename Ctx>
 Result<Family> MakeWindowOfNodes(std::span<const PostingClause> terms,
                                  std::span<const QueryBuilder::ptr> filters,
                                  const SubReader& segment, const Ctx& ctx) {
-  std::vector<FillNode::ptr> nodes;
+  TrackedVector<FillNode::ptr> nodes;
   nodes.reserve(terms.size() + filters.size());
   const auto take = [&](FillNode::ptr node) {
     if (!node) {
@@ -206,7 +206,7 @@ template<typename Family, typename Term, typename Scoring, typename Ctx>
 Result<Family> MakeWindowDisjunction(std::span<const Term> terms,
                                      const TermReader* field,
                                      const IndexInput* doc,
-                                     std::vector<FillNode::ptr>& rest,
+                                     TrackedVector<FillNode::ptr>& rest,
                                      const Scoring& scoring, const Ctx& ctx,
                                      score_t absorbed) {
   return BuildWindowSet<Result<Family>>(
@@ -258,7 +258,7 @@ Result BuildNegationWindow(std::span<const Term> terms,
       return make.template operator()<Lead, utils::Empty>(
         std::forward<decltype(lead)>(lead), std::forward_as_tuple());
     }
-    std::vector<FillNode::ptr> nodes;
+    TrackedVector<FillNode::ptr> nodes;
     if (!CollectFills(terms, split.rest, nullptr, segment, nodes)) {
       return {};
     }
@@ -370,7 +370,7 @@ Result<Family> MakeWindowExclusion(
 template<typename Family, typename Scoring, typename Ctx>
 Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
                                    const IndexInput* doc,
-                                   std::vector<FillNode::ptr>& rest,
+                                   TrackedVector<FillNode::ptr>& rest,
                                    uint32_t min_match, const Scoring& scoring,
                                    const Ctx& ctx, score_t absorbed) {
   SDB_ASSERT(min_match > 1);
@@ -576,7 +576,7 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
                                const Ctx& ctx, score_t absorbed) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   const IndexInput* doc = nullptr;
-  std::vector<FillNode::ptr> rest;
+  TrackedVector<FillNode::ptr> rest;
   if (!CollectDense(terms, filters, field, doc, rest,
                     [&](const QueryBuilder& child) {
                       return PlanFillOf<Family>(child, ctx, scoring);
@@ -602,7 +602,7 @@ Result<Family> MakeThreshold(std::span<const PostingClause> terms,
                              score_t absorbed) {
   SDB_ASSERT(min_match > 1);
   const IndexInput* doc = nullptr;
-  std::vector<FillNode::ptr> rest;
+  TrackedVector<FillNode::ptr> rest;
   if (!CollectDense(terms, filters, nullptr, doc, rest,
                     [&](const QueryBuilder& child) {
                       return PlanFillOf<Family>(child, ctx, scoring);

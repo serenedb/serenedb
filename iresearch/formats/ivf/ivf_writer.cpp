@@ -93,10 +93,13 @@ AnnFlushBound IvfBuilder::Bound(uint64_t rows) const {
     train_cap != 0 && train_cap != QuantizerWriter::kTrainStreaming
       ? std::min<size_t>(train_cap, rows)
       : 0;
-  const size_t tree = sizeof(float) * d * centroids.cluster_rows;
+  const size_t tree =
+    (sizeof(float) * d + sizeof(CentroidsBuilder::Node) + 2 * sizeof(size_t)) *
+    centroids.cluster_rows;
   const size_t docs = sizeof(doc_id_t) * rows;
   const size_t build =
-    sizeof(float) * d * centroids.sample_rows + centroids.train_bytes;
+    (sizeof(float) * d + sizeof(size_t)) * centroids.sample_rows +
+    centroids.train_bytes;
   const size_t assign = sizeof(float) * d * train + 3 * docs;
   return {
     .compute = tree + std::max(build, assign),

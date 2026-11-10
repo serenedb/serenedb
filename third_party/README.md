@@ -12,8 +12,8 @@ it tracks its upstream remote and carries no serenedb branches.
 
 **2. DuckDB extensions are separate submodules.** The `duckdb_*` directories sit
 alongside `duckdb` rather than inside it, and are wired in through
-`BUILD_EXTENSIONS` and `DUCKDB_EXTENSION_CONFIGS`. `duckdb_clickhouse` and
-`duckdb_pdf` are the reverse case: our own code, here only to sit with the extensions. So is
+`BUILD_EXTENSIONS` and `DUCKDB_EXTENSION_CONFIGS`. `duckdb_clickhouse` is the
+reverse case: our own code, here only to sit with the extensions. So is
 `duckdb_versions`, the storage version list DuckDB is built with: a new SereneDB
 storage version changes it, never the fork.
 
@@ -29,16 +29,16 @@ fork introduces, on our version branch.
 
 # Layout
 
-51 submodules, all serenedb forks except `yaclib` and `cmocka`.
+52 submodules, all serenedb forks except `yaclib` and `cmocka`.
 
 7 wrappers: `azure-cmake`, `freetype-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
 `libxml2-cmake`, `openssl-cmake`, `podofo-cmake`. Three of them carry
 generated per-arch config headers: `jemalloc-cmake`, `libxml2-cmake`,
 `openssl-cmake`.
 
-7 directories in-tree rather than submodules -- mostly historical, to be fixed:
+6 directories in-tree rather than submodules -- mostly historical, to be fixed:
 `fastText`, `llhttp`, `magic_enum`, `sse2neon`, plus our own
-`duckdb_clickhouse`, `duckdb_pdf` and `duckdb_versions`.
+`duckdb_clickhouse` and `duckdb_versions`.
 
 Anything non-obvious about a specific library is commented where it happens in
 `CMakeLists.txt` -- the OpenSSL pre-seeding and its drift guard, the header-only

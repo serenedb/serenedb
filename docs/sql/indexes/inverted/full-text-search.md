@@ -162,7 +162,7 @@ Numeric, `UUID`, temporal, boolean, text and `BLOB` columns support range matchi
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_015" />
 
-A bound on a numeric column, `DECIMAL`, `UBIGINT`, `HUGEINT` and `UHUGEINT` included, may be of any numeric type and selects the rows the same comparison selects on the table: a bound the column can't hold exactly, such as `5.125` on a `DECIMAL(9,2)` column or `6.5` on an `INTEGER` column, keeps the values on its side, and an equality with such a value matches no row. A bound outside the column type's range keeps every value or none. A `UUID` column takes `UUID` bounds and orders its values like their text:
+A bound on a numeric column may be of any numeric type and selects the rows the same comparison selects on the table: a bound the column can't hold exactly, such as `5.125` on a `DECIMAL(9,2)` column or `6.5` on an `INTEGER` column, keeps the values on its side, and an equality with such a value matches no row. A bound outside the column type's range keeps every value or none. A `UUID` column takes `UUID` bounds and orders its values like their text:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/range_bounds_by_column_type" />
 
@@ -176,7 +176,7 @@ See the [Range Queries](../../../cookbook/search/range-queries.md) recipe for le
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/numeric_top_k" />
 
-A query reads and sorts every matching row instead when it orders by a second key or by an expression of the column, filters on another column, uses an `IN` list, takes its `LIMIT` from a parameter, orders by a `UUID` or `TIMETZ` column, or runs with [`sdb_disable_top_k_optimization`](./maintenance.md#session-settings) on.
+A query reads and sorts every matching row instead when it orders by a second key or by an expression of the column, filters on another column, uses an `IN` list, takes its `LIMIT` from a parameter, or orders by a `UUID` or `TIMETZ` column.
 
 ## PostgreSQL-compatible query parsers
 

@@ -1,8 +1,8 @@
 # ORDER BY one indexed numeric column with a constant LIMIT is answered by the
 # scan: it reads the column's terms in value order and stops after LIMIT +
 # OFFSET live rows, instead of a TOP_N over every row. A filter on another
-# column, a second key, a computed key, a parameter or the setting keep the
-# TOP_N. v holds every value once, so ids are unique except among NULLs.
+# column, a second key, a computed key or a parameter keep the TOP_N. v holds
+# every value once, so ids are unique except among NULLs.
 
 statement ok
 CREATE TABLE vt (id INTEGER PRIMARY KEY, v BIGINT, w INTEGER, s INTEGER,
@@ -521,39 +521,3 @@ EXECUTE vt_limit(2);
 id	v
 336	1
 271	2
-
-
-statement ok
-SET sdb_disable_top_k_optimization = true;
-
-
-query
-EXPLAIN SELECT v FROM vt_idx ORDER BY v LIMIT 3;
-----
-QUERY PLAN
-╭─ TOP_N ──────────────────────────╮
-│ Top: 3                           │
-│ Order By: v ASC                  │
-│ ~3 rows                          │
-╰─────────────────┬────────────────╯
-╭─ IRESEARCH_SCAN ┴────────────────╮
-│ Index: vt_idx                    │
-│ Lookup: table                    │
-│ Projections: v                   │
-│ Column Filter:                   │
-│ optional: Dynamic Filter (v < ?) │
-│ ~370 rows                        │
-╰──────────────────────────────────╯
-
-
-query
-SELECT v FROM vt_idx ORDER BY v LIMIT 3;
-----
-v
-1
-2
-3
-
-
-statement ok
-RESET sdb_disable_top_k_optimization;

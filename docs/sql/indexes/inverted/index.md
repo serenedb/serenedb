@@ -59,7 +59,7 @@ Each indexed column carries its **own operator class** — the `column [dictiona
 
 - a column with a **dictionary** is analyzed into tokens (full-text);
 - a column with **no dictionary** is indexed verbatim — one token per value — giving exact, case-sensitive matching, ideal for ids, tags and enum-like categories;
-- a numeric (`DECIMAL`, `UBIGINT`, `HUGEINT` and `UHUGEINT` included), `UUID` or temporal column is indexed for [exact and range queries](./full-text-search.md#range-queries);
+- a numeric, `UUID` or temporal column is indexed for [exact and range queries](./full-text-search.md#range-queries);
 - an `INET` or `CIDR` column, indexed with no dictionary, serves equality, range and network-containment predicates (see [`INET` indexing](../../data_types/inet.md#indexing));
 - a `FLOAT[N]` column with `ivf (...)` or `hnsw (...)` is indexed for [vector search](./vector-search.md), and a `JSON`/`GEOMETRY` column with a geo dictionary for [geospatial search](./geospatial-search.md).
 

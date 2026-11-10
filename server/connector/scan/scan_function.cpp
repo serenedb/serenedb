@@ -567,9 +567,8 @@ void IResearchSetScanOrder(
       (!options->row_limit.IsValid() && !options->row_limit_expression)) {
     return;
   }
-  if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
-    return;
-  }
+  const bool disabled =
+    GetBoolSetting(context, "sdb_disable_top_k_optimization");
   const auto order_col =
     ScanColumnOfStorage(bd, options->column_idx.GetPrimaryIndex());
   if (order_col >= bd.columns.ids.size()) {
@@ -577,7 +576,7 @@ void IResearchSetScanOrder(
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
-    if (bd.relation.Stores(col_id) && !bd.scan_order) {
+    if (!disabled && bd.relation.Stores(col_id) && !bd.scan_order) {
       bd.scan_order =
         ScanOrderSpec{col_id, options->order_type, options->null_order,
                       options->order_by, options->column_type};
@@ -585,6 +584,9 @@ void IResearchSetScanOrder(
     if (!bd.value_order) {
       bd.value_order = ValueOrderOf(context, bd, col_id, *options);
     }
+    return;
+  }
+  if (disabled) {
     return;
   }
   if (bd.score.HasTopK()) {

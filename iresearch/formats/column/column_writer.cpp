@@ -314,6 +314,20 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
   auto& tuning = *meta.write_numeric_tuning;
   auto& reuse = tuning.reuse;
   const bool merge = _codec_params.tier == WriteTier::Merge;
+  bool due = reuse.Due();
+  auto stats = duckdb::BaseStatistics::CreateEmpty(type);
+  if ((merge || !due) && absl::c_all_of(chunks, [&](const WriteChunk& c) {
+        return codecs::UpdateConstant(c.data, stats);
+      })) {
+    if (merge) {
+      reuse.clock.Restart();
+    }
+    CaptureBlock(
+      *codecs::GetCodec(duckdb::CompressionType::COMPRESSION_CONSTANT,
+                        type.InternalType()),
+      std::move(stats), row_count, {}, WriteCtx().Blocks(), meta.data);
+    return false;
+  }
   std::unique_ptr<codecs::AnalyzeState> state;
   const codecs::CompressionFunction* fn = nullptr;
   duckdb::idx_t score = codecs::kNoRival;
@@ -324,7 +338,6 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
     analyze(forced);
     tuning.rival = fn->type;
   };
-  bool due = reuse.Due();
   if (!due && !reuse.pick) {
     const auto held = tuning.rival;
     if (merge) {

@@ -1089,6 +1089,127 @@ TEST_F(ColNumericCodecTest, AllNullAndSingleRow) {
   }
 }
 
+TEST_F(ColNumericCodecTest, ConstantRowGroupsAreConstantBlocks) {
+  constexpr uint32_t kRowGroup = 2048;
+  constexpr bool kConstant[] = {true,  true, true,  false,
+                                false, true, false, true};
+  constexpr uint64_t kRows = std::size(kConstant) * kRowGroup;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    const auto row = static_cast<int64_t>(g % kRowGroup);
+    switch (g / kRowGroup) {
+      case 0:
+        return 7;
+      case 1:
+        if (row % 3 == 0) {
+          return std::nullopt;
+        }
+        return 9;
+      case 2:
+        return std::nullopt;
+      case 3:
+        return static_cast<int64_t>(Mix(g) % 1000);
+      case 4:
+        return row + 1 == kRowGroup ? 12 : 11;
+      case 5:
+        return 13;
+      case 6:
+        return row;
+      default:
+        return 7;
+    }
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    for (const auto& type : Types()) {
+      SCOPED_TRACE(type.ToString() +
+                   (tier == irs::WriteTier::Flush ? " flush" : " merge"));
+      irs::MemoryDirectory dir{};
+      Write(dir, type, {.tier = tier}, kRows, kRowGroup, gen);
+      Verify(dir, type, kRows, gen);
+
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      uint64_t row = 0;
+      for (const auto& block : col->DataBlocks()) {
+        const bool constant =
+          block.codec->type == duckdb::CompressionType::COMPRESSION_CONSTANT;
+        EXPECT_EQ(constant, kConstant[row / kRowGroup]) << "row " << row;
+        if (constant) {
+          EXPECT_EQ(block.byte_size, 0u) << "row " << row;
+        }
+        row += block.tuple_count;
+      }
+      EXPECT_EQ(row, kRows);
+    }
+  }
+}
+
+TEST_F(ColNumericCodecTest, ConstantRowGroupsKeepZeroSigns) {
+  constexpr uint32_t kRowGroup = 2048;
+  constexpr bool kConstant[] = {true, false, true};
+  constexpr uint64_t kRows = std::size(kConstant) * kRowGroup;
+  const auto check = [&]<typename T, typename Bits>(
+                       const duckdb::LogicalType& type, irs::WriteTier tier) {
+    SCOPED_TRACE(type.ToString() +
+                 (tier == irs::WriteTier::Flush ? " flush" : " merge"));
+    const auto at = [](uint64_t g) -> T {
+      switch (g / kRowGroup) {
+        case 0:
+          return -T{0};
+        case 1:
+          return g % 2 == 0 ? T{0} : -T{0};
+        default:
+          return T{0};
+      }
+    };
+    irs::MemoryDirectory dir{};
+    {
+      irs::ColWriter w{dir, kSeg, Db(), tier};
+      auto& cw = w.OpenColumn(
+        kField, type,
+        {.row_group_size = kRowGroup, .codec_params = {.tier = tier}});
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        duckdb::Vector vec{type, STANDARD_VECTOR_SIZE};
+        auto* data = duckdb::FlatVector::GetDataMutable<T>(vec);
+        for (uint64_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+          data[k] = at(pos + k);
+        }
+        duckdb::FlatVector::SetSize(vec, STANDARD_VECTOR_SIZE);
+        cw.Append(vec, STANDARD_VECTOR_SIZE);
+      }
+      ASSERT_TRUE(w.Commit(0));
+    }
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    uint64_t row = 0;
+    for (const auto& block : col->DataBlocks()) {
+      EXPECT_EQ(
+        block.codec->type == duckdb::CompressionType::COMPRESSION_CONSTANT,
+        kConstant[row / kRowGroup])
+        << "row " << row;
+      row += block.tuple_count;
+    }
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+      out.Flatten(STANDARD_VECTOR_SIZE);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        EXPECT_EQ(std::bit_cast<Bits>(duckdb::FlatVector::GetData<T>(out)[k]),
+                  std::bit_cast<Bits>(at(pos + k)))
+          << "row " << pos + k;
+      }
+    }
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    check.template operator()<float, uint32_t>(duckdb::LogicalType::FLOAT,
+                                               tier);
+    check.template operator()<double, uint64_t>(duckdb::LogicalType::DOUBLE,
+                                                tier);
+  }
+}
+
 TEST_F(ColNumericCodecTest, FloatSpecialsKeepTheirBits) {
   constexpr uint64_t kRows = 20000;
   const auto check = [&]<typename T, typename Bits>(

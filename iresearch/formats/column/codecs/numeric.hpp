@@ -59,6 +59,8 @@ struct NumericTuning {
 
 uint64_t Packed(uint64_t count, uint64_t max_value) noexcept;
 
+bool UpdateConstant(const duckdb::Vector& input, duckdb::BaseStatistics& stats);
+
 uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
                        uint64_t entries, uint64_t runs) noexcept;
 

@@ -1135,6 +1135,22 @@ std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
   return bytes;
 }
 
+bool UpdateConstant(const duckdb::Vector& input,
+                    duckdb::BaseStatistics& stats) {
+  return WithNumericType(stats.GetType().InternalType(),
+                         [&]<typename T>(std::type_identity<T>) {
+                           for (const auto value : input.Values<T>()) {
+                             if (!value.IsValid()) {
+                               stats.SetHasNullFast();
+                               continue;
+                             }
+                             stats.SetHasNoNullFast();
+                             stats.UpdateNumericStats<T>(value.GetValue());
+                           }
+                           return duckdb::NumericStats::IsConstant(stats);
+                         });
+}
+
 std::unique_ptr<NumericSealer> NumericSealer::Make(
   const duckdb::LogicalType& type, uint64_t rows) {
   return WithNumericType(

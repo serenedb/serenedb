@@ -37,7 +37,6 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -174,73 +173,23 @@ irs::bytes_view AsRawBytes(const duckdb::Value& value) {
     std::string_view{duckdb::StringValue::Get(value)});
 }
 
+duckdb::Value CastConstant(const duckdb::Value& value,
+                           const duckdb::LogicalType& type) {
+  std::string error;
+  auto cast = value.DefaultTryCastAs(type, &error);
+  if (!cast) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                    ERR_MSG(error));
+  }
+  return std::move(*cast);
+}
+
 bool BoolConstant(const duckdb::Value& value) {
   if (value.type().id() != duckdb::LogicalTypeId::BOOLEAN) {
     return CastConstant(value, duckdb::LogicalType::BOOLEAN).GetValue<bool>();
   }
   return value.GetValue<bool>();
 }
-
-enum class Encoded : uint8_t {
-  Term,
-  NoValue,
-  Unsupported,
-};
-
-Encoded TryEncodeTerm(irs::DictLayout layout, const duckdb::LogicalType& type,
-                      const duckdb::Value& value, irs::TermClause& out) {
-  const auto type_id = type.id();
-  if (type_id == duckdb::LogicalTypeId::VARCHAR ||
-      type_id == duckdb::LogicalTypeId::BLOB) {
-    out.dict = {.layout = layout, .member = irs::DictMember::Strings};
-    out.term.assign(AsRawBytes(value));
-    return Encoded::Term;
-  }
-  if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.dict = {.layout = layout,
-                .member = irs::BoolMember(BoolConstant(value))};
-    out.term.clear();
-    return Encoded::Term;
-  }
-  if (term_dict::IsNumeric(type_id)) {
-    out.dict = {.layout = layout, .member = irs::DictMember::Numbers};
-    const bool exact = WithExactNumericValue(type, value, [&](auto v) {
-      irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
-      out.term.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
-    });
-    return exact ? Encoded::Term : Encoded::NoValue;
-  }
-  return Encoded::Unsupported;
-}
-
-}  // namespace
-
-absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
-                                     const SearchColumnInfo& column_info,
-                                     const duckdb::Value& value) {
-  SDB_ASSERT(!value.IsNull(),
-             "UNKNOWN and Nulls should be handled as part of IS NULL operator. "
-             "For regular filter it should be just irs::Empty!");
-
-  auto type_id = column_info.logical_type.id();
-
-  if (!term_dict::IsIndexable(type_id)) {
-    return absl::UnimplementedError(absl::StrCat(
-      "Unsupported type id ", static_cast<int>(type_id), " for filter"));
-  }
-
-  const auto encoded =
-    TryEncodeTerm(column_info.layout, column_info.logical_type, value, clause);
-  if (encoded == Encoded::Unsupported) {
-    return absl::UnimplementedError(absl::StrCat(
-      "Unsupported type for term filter: ", static_cast<int>(type_id)));
-  }
-
-  clause.field = column_info.field_id;
-  return encoded == Encoded::Term;
-}
-
-namespace {
 
 ComparisonOp GetComparisonOp(duckdb::ExpressionType type) {
   switch (type) {
@@ -1021,17 +970,9 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
     }
   } else if (term_dict::IsNumeric(type_id)) {
     const bool upper = op == ComparisonOp::Lt || op == ComparisonOp::Le;
-    auto bound =
-      ResolveNumericBound(column_info->logical_type, *const_val, upper,
-                          op == ComparisonOp::Lt || op == ComparisonOp::Gt);
-    if (bound.kind == NumericBound::Kind::Empty) {
-      AddFilter<irs::Empty>(filter);
-      return absl::OkStatus();
-    }
-    auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
-    setup_base_filter(range_filter);
-    SetNumericBound(range_filter.mutable_options()->range, upper,
-                    std::move(bound));
+    const bool strict = op == ComparisonOp::Lt || op == ComparisonOp::Gt;
+    AddNumericRange(filter, ctx, *column_info, upper ? nullptr : const_val,
+                    strict, upper ? const_val : nullptr, strict);
   } else {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for range comparison: ", static_cast<int>(type_id)));
@@ -2490,21 +2431,6 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
   }
 }
 
-bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
-  return term_dict::IsNumeric(id) || id == duckdb::LogicalTypeId::DECIMAL;
-}
-
-duckdb::Value CastConstant(const duckdb::Value& value,
-                           const duckdb::LogicalType& type) {
-  std::string error;
-  auto cast = value.DefaultTryCastAs(type, &error);
-  if (!cast) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                    ERR_MSG(error));
-  }
-  return std::move(*cast);
-}
-
 namespace {
 
 bool IsTextConstant(const duckdb::Value& value) {
@@ -2563,7 +2489,10 @@ int CompareDecimalText(std::string_view lhs, std::string_view rhs) {
   return a.negative ? -order : order;
 }
 
-}  // namespace
+struct ColumnCast {
+  duckdb::Value value;
+  int outside = 0;
+};
 
 ColumnCast CastToColumn(const duckdb::Value& value,
                         const duckdb::LogicalType& type) {
@@ -2575,6 +2504,15 @@ ColumnCast CastToColumn(const duckdb::Value& value,
     return {.value = std::move(*cast)};
   }
   if (!IsTextConstant(value)) {
+    if (value.type().IsNumeric() && type.IsNumeric()) {
+      return {
+        .value = duckdb::Value{},
+        .outside = duckdb::ValueOperations::GreaterThan(
+                     value, duckdb::Value::INTEGER(0))
+                     ? 1
+                     : -1,
+      };
+    }
     if (duckdb::ValueOperations::GreaterThan(
           value, duckdb::Value::MaximumValue(type))) {
       return {.value = duckdb::Value{}, .outside = 1};
@@ -2589,8 +2527,8 @@ ColumnCast CastToColumn(const duckdb::Value& value,
 }
 
 int CastOrder(const duckdb::Value& cast, const duckdb::Value& value) {
-  if (IsTextConstant(value) ||
-      (IntegerKindOf(cast.type().id()) && IntegerKindOf(value.type().id()))) {
+  if (cast.type() == value.type() || IsTextConstant(value) ||
+      (IntegerKindOf(value.type().id()) && IsExactNumber(cast.type()))) {
     return 0;
   }
   if (IsExactNumber(cast.type()) && IsExactNumber(value.type())) {
@@ -2601,6 +2539,41 @@ int CastOrder(const duckdb::Value& cast, const duckdb::Value& value) {
   }
   return duckdb::ValueOperations::GreaterThan(value, cast) ? -1 : 0;
 }
+
+template<typename F>
+void WithNumericValue(const duckdb::LogicalType& type,
+                      const duckdb::Value& value, F&& f) {
+  SDB_ASSERT(value.type() == type);
+  const bool numeric = term_dict::DispatchNumericKind(
+    term_dict::IndexedKind(type), [&]<duckdb::LogicalTypeId Kind>() {
+      f(term_dict::PromoteNumericValue(term_dict::NumericValueOf<Kind>(
+        [&]<typename T>() { return value.GetValueUnsafe<T>(); })));
+    });
+  SDB_ASSERT(numeric);
+}
+
+template<typename F>
+bool WithExactNumericValue(const duckdb::LogicalType& type,
+                           const duckdb::Value& value, F&& f) {
+  auto cast = CastToColumn(value, type);
+  if (cast.outside != 0 || CastOrder(cast.value, value) != 0) {
+    return false;
+  }
+  WithNumericValue(type, cast.value, std::forward<F>(f));
+  return true;
+}
+
+struct NumericBound {
+  enum class Kind : uint8_t {
+    Unbounded,
+    Term,
+    Empty,
+  };
+
+  Kind kind = Kind::Unbounded;
+  irs::bstring term;
+  bool strict = false;
+};
 
 NumericBound ResolveNumericBound(const duckdb::LogicalType& type,
                                  const duckdb::Value& value, bool upper,
@@ -2635,6 +2608,90 @@ void SetNumericBound(irs::ByGranularRangeOptions::range_type& range, bool upper,
   }
   term = std::move(bound.term);
   type = bound.strict ? irs::BoundType::Exclusive : irs::BoundType::Inclusive;
+}
+
+enum class Encoded : uint8_t {
+  Term,
+  NoValue,
+  Unsupported,
+};
+
+Encoded TryEncodeTerm(irs::DictLayout layout, const duckdb::LogicalType& type,
+                      const duckdb::Value& value, irs::TermClause& out) {
+  const auto type_id = type.id();
+  if (type_id == duckdb::LogicalTypeId::VARCHAR ||
+      type_id == duckdb::LogicalTypeId::BLOB) {
+    out.dict = {.layout = layout, .member = irs::DictMember::Strings};
+    out.term.assign(AsRawBytes(value));
+    return Encoded::Term;
+  }
+  if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
+    out.dict = {.layout = layout,
+                .member = irs::BoolMember(BoolConstant(value))};
+    out.term.clear();
+    return Encoded::Term;
+  }
+  if (term_dict::IsNumeric(type_id)) {
+    out.dict = {.layout = layout, .member = irs::DictMember::Numbers};
+    const bool exact = WithExactNumericValue(
+      type, value, [&](auto v) { irs::SetGranularNumericTerm(out.term, v); });
+    return exact ? Encoded::Term : Encoded::NoValue;
+  }
+  return Encoded::Unsupported;
+}
+
+}  // namespace
+
+void AddNumericRange(BoolTarget target, const FilterContext& ctx,
+                     const SearchColumnInfo& info, const duckdb::Value* min,
+                     bool min_strict, const duckdb::Value* max,
+                     bool max_strict) {
+  const auto& type = info.logical_type;
+  NumericBound lower;
+  NumericBound upper;
+  if (min) {
+    lower = ResolveNumericBound(type, *min, false, min_strict);
+  }
+  if (max) {
+    upper = ResolveNumericBound(type, *max, true, max_strict);
+  }
+  if (lower.kind == NumericBound::Kind::Empty ||
+      upper.kind == NumericBound::Kind::Empty) {
+    AddFilter<irs::Empty>(target);
+    return;
+  }
+  auto& range = AddFilter<irs::ByGranularRange>(target);
+  SetField(range, info, RefOf(info, irs::DictMember::Numbers));
+  range.SetBoost(ctx.boost);
+  SetLeafScorer(range, info);
+  auto& bounds = range.mutable_options()->range;
+  SetNumericBound(bounds, false, std::move(lower));
+  SetNumericBound(bounds, true, std::move(upper));
+}
+
+absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
+                                     const SearchColumnInfo& column_info,
+                                     const duckdb::Value& value) {
+  SDB_ASSERT(!value.IsNull(),
+             "UNKNOWN and Nulls should be handled as part of IS NULL operator. "
+             "For regular filter it should be just irs::Empty!");
+
+  auto type_id = column_info.logical_type.id();
+
+  if (!term_dict::IsIndexable(type_id)) {
+    return absl::UnimplementedError(absl::StrCat(
+      "Unsupported type id ", static_cast<int>(type_id), " for filter"));
+  }
+
+  const auto encoded =
+    TryEncodeTerm(column_info.layout, column_info.logical_type, value, clause);
+  if (encoded == Encoded::Unsupported) {
+    return absl::UnimplementedError(absl::StrCat(
+      "Unsupported type for term filter: ", static_cast<int>(type_id)));
+  }
+
+  clause.field = column_info.field_id;
+  return encoded == Encoded::Term;
 }
 
 // Sees through the transit casts

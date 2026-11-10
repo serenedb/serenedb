@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <absl/status/statusor.h>
 
 #include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -31,7 +30,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
-#include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
@@ -186,10 +184,6 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 // throws THROW_SQL_ERROR("Unsupported type id ... for filter").
 void ValidateFilterType(duckdb::LogicalTypeId type_id);
 
-bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
-duckdb::Value CastConstant(const duckdb::Value& value,
-                           const duckdb::LogicalType& type);
-
 struct ArgError {
   std::string_view label;
   std::string_view hint;
@@ -201,124 +195,12 @@ void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
 void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
 void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 
-// Dispatches `value` as the numeric type the sink indexed for `type`
-// (TIME_TZ order-preserving remap, raw INT64 for types BIGINT casts can't
-// represent, a DECIMAL's stored integer) and invokes `f` with it.
-template<typename F>
-void WithNumericValue(const duckdb::LogicalType& type,
-                      const duckdb::Value& value, F&& f) {
-  SDB_ASSERT(value.type() == type);
-  using enum duckdb::LogicalTypeId;
-  if (type.id() == DECIMAL) {
-    switch (type.InternalType()) {
-      case duckdb::PhysicalType::INT16:
-        f(int32_t{value.GetValueUnsafe<int16_t>()});
-        return;
-      case duckdb::PhysicalType::INT32:
-        f(value.GetValueUnsafe<int32_t>());
-        return;
-      case duckdb::PhysicalType::INT64:
-        f(value.GetValueUnsafe<int64_t>());
-        return;
-      default:
-        f(static_cast<__int128>(
-          value.GetValueUnsafe<duckdb::hugeint_t>().ToInt128()));
-        return;
-    }
-  }
-  const auto type_id = type.id();
-  switch (type_id) {
-    case UBIGINT:
-      f(value.GetValue<uint64_t>());
-      break;
-    case HUGEINT:
-    case UUID:
-      f(static_cast<__int128>(
-        value.GetValueUnsafe<duckdb::hugeint_t>().ToInt128()));
-      break;
-    case UHUGEINT:
-      f(static_cast<unsigned __int128>(
-        value.GetValueUnsafe<duckdb::uhugeint_t>().ToUint128()));
-      break;
-    case TINYINT:
-    case SMALLINT:
-    case INTEGER:
-    case UTINYINT:
-    case USMALLINT:
-    case DATE:
-      f(value.GetValue<int32_t>());
-      break;
-    case TIME_TZ:
-      f(term_dict::TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
-      break;
-    case BIGINT:
-    case UINTEGER:
-    case TIME:
-    case TIME_NS:
-    case TIMESTAMP:
-    case TIMESTAMP_TZ:
-    case TIMESTAMP_SEC:
-    case TIMESTAMP_MS:
-    case TIMESTAMP_NS:
-    case TIMESTAMP_TZ_NS:
-      if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
-        f(value.GetValueUnsafe<int64_t>());
-      } else {
-        f(value.GetValue<int64_t>());
-      }
-      break;
-    case FLOAT:
-      f(value.GetValue<float>());
-      break;
-    case DOUBLE:
-      f(value.GetValue<double>());
-      break;
-    default:
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("Expected a numeric value, got type id ",
-                static_cast<int>(type_id)),
-        ERR_HINT("The value's type must match the column's indexed type."));
-  }
-}
-
-struct ColumnCast {
-  duckdb::Value value;
-  int outside = 0;
-};
-
-ColumnCast CastToColumn(const duckdb::Value& value,
-                        const duckdb::LogicalType& type);
-int CastOrder(const duckdb::Value& cast, const duckdb::Value& value);
-
-template<typename F>
-bool WithExactNumericValue(const duckdb::LogicalType& type,
-                           const duckdb::Value& value, F&& f) {
-  auto cast = CastToColumn(value, type);
-  if (cast.outside != 0 || CastOrder(cast.value, value) != 0) {
-    return false;
-  }
-  WithNumericValue(type, cast.value, std::forward<F>(f));
-  return true;
-}
-
-struct NumericBound {
-  enum class Kind : uint8_t {
-    Unbounded,
-    Term,
-    Empty,
-  };
-
-  Kind kind = Kind::Unbounded;
-  irs::bstring term;
-  bool strict = false;
-};
-
-NumericBound ResolveNumericBound(const duckdb::LogicalType& type,
-                                 const duckdb::Value& value, bool upper,
-                                 bool strict);
-void SetNumericBound(irs::ByGranularRangeOptions::range_type& range, bool upper,
-                     NumericBound&& bound);
+// The rows of a numeric column between `min` and `max`, a null bound being
+// unbounded; the bounds compare as the table compares them.
+void AddNumericRange(BoolTarget target, const FilterContext& ctx,
+                     const SearchColumnInfo& info, const duckdb::Value* min,
+                     bool min_strict, const duckdb::Value* max,
+                     bool max_strict);
 
 // Throws THROW_SQL_ERROR on invalid arguments: ts_* syntax is only
 // reachable through the inverted index, so there is no fallback plan.

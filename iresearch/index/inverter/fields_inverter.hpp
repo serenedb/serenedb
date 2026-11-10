@@ -603,12 +603,9 @@ class FieldInverter : util::Noncopyable {
     SDB_ASSERT(Layout() == TokenLayout::Terms);
     auto& log = *std::get_if<PostingLog<TokenLayout::Terms>>(&_log);
     duckdb::string_t terms[kMaxValues];
-    struct NoWideTerms {
-      static byte_type* data() noexcept { return nullptr; }
-    };
-    std::conditional_t<
-      kInlineNumericTerm<P>, NoWideTerms,
-      std::array<byte_type, kMaxValues * numeric_utils::kNumericTermSize<P>>>
+    std::array<byte_type, kInlineNumericTerm<P>
+                            ? 0
+                            : kMaxValues * numeric_utils::kNumericTermSize<P>>
       wide;
     for (size_t base = 0; base < n;) {
       const auto m =

@@ -141,24 +141,21 @@ inline int64_t TimeTzIndexTerm(int64_t raw_bits) noexcept {
     duckdb::dtime_tz_t{static_cast<uint64_t>(raw_bits)}.sort_key());
 }
 
-// The value of row `idx`, at the width its terms are built from. Whoever reads
-// a column must read it this way: a value written at one width and looked up at
-// another is a different term, so the two sides share this one definition.
-template<duckdb::LogicalTypeId Kind>
-auto ExtractNumericValue(const duckdb::UnifiedVectorFormat& fmt,
-                         duckdb::idx_t idx) {
+// A value at the width its terms are built from, read as `load<T>()` of the
+// physical type T. Whoever reads a column must read it this way: a value written
+// at one width and looked up at another is a different term, so the sink and the
+// query share this one definition.
+template<duckdb::LogicalTypeId Kind, typename Load>
+auto NumericValueOf(Load&& load) {
   if constexpr (Kind == duckdb::LogicalTypeId::TINYINT) {
-    return static_cast<int32_t>(
-      duckdb::UnifiedVectorFormat::GetData<int8_t>(fmt)[idx]);
+    return static_cast<int32_t>(load.template operator()<int8_t>());
   } else if constexpr (Kind == duckdb::LogicalTypeId::SMALLINT) {
-    return static_cast<int32_t>(
-      duckdb::UnifiedVectorFormat::GetData<int16_t>(fmt)[idx]);
+    return static_cast<int32_t>(load.template operator()<int16_t>());
   } else if constexpr (Kind == duckdb::LogicalTypeId::INTEGER ||
                        Kind == duckdb::LogicalTypeId::DATE) {
-    return duckdb::UnifiedVectorFormat::GetData<int32_t>(fmt)[idx];
+    return load.template operator()<int32_t>();
   } else if constexpr (Kind == duckdb::LogicalTypeId::TIME_TZ) {
-    return TimeTzIndexTerm(
-      duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx]);
+    return TimeTzIndexTerm(load.template operator()<int64_t>());
   } else if constexpr (Kind == duckdb::LogicalTypeId::BIGINT ||
                        Kind == duckdb::LogicalTypeId::TIME ||
                        Kind == duckdb::LogicalTypeId::TIME_NS ||
@@ -168,33 +165,37 @@ auto ExtractNumericValue(const duckdb::UnifiedVectorFormat& fmt,
                        Kind == duckdb::LogicalTypeId::TIMESTAMP_MS ||
                        Kind == duckdb::LogicalTypeId::TIMESTAMP_NS ||
                        Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS) {
-    return duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx];
+    return load.template operator()<int64_t>();
   } else if constexpr (Kind == duckdb::LogicalTypeId::UTINYINT) {
-    return static_cast<int32_t>(
-      duckdb::UnifiedVectorFormat::GetData<uint8_t>(fmt)[idx]);
+    return static_cast<int32_t>(load.template operator()<uint8_t>());
   } else if constexpr (Kind == duckdb::LogicalTypeId::USMALLINT) {
-    return static_cast<int32_t>(
-      duckdb::UnifiedVectorFormat::GetData<uint16_t>(fmt)[idx]);
+    return static_cast<int32_t>(load.template operator()<uint16_t>());
   } else if constexpr (Kind == duckdb::LogicalTypeId::UINTEGER) {
-    return duckdb::UnifiedVectorFormat::GetData<uint32_t>(fmt)[idx];
+    return load.template operator()<uint32_t>();
   } else if constexpr (Kind == duckdb::LogicalTypeId::UBIGINT) {
-    return duckdb::UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx];
+    return load.template operator()<uint64_t>();
   } else if constexpr (Kind == duckdb::LogicalTypeId::HUGEINT ||
                        Kind == duckdb::LogicalTypeId::UUID) {
     return static_cast<__int128>(
-      duckdb::UnifiedVectorFormat::GetData<duckdb::hugeint_t>(fmt)[idx]
-        .ToInt128());
+      load.template operator()<duckdb::hugeint_t>().ToInt128());
   } else if constexpr (Kind == duckdb::LogicalTypeId::UHUGEINT) {
     return static_cast<unsigned __int128>(
-      duckdb::UnifiedVectorFormat::GetData<duckdb::uhugeint_t>(fmt)[idx]
-        .ToUint128());
+      load.template operator()<duckdb::uhugeint_t>().ToUint128());
   } else if constexpr (Kind == duckdb::LogicalTypeId::FLOAT) {
-    return duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx];
+    return load.template operator()<float>();
   } else {
     static_assert(Kind == duckdb::LogicalTypeId::DOUBLE,
-                  "ExtractNumericValue: unsupported Kind");
-    return duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx];
+                  "NumericValueOf: unsupported Kind");
+    return load.template operator()<double>();
   }
+}
+
+template<duckdb::LogicalTypeId Kind>
+auto ExtractNumericValue(const duckdb::UnifiedVectorFormat& fmt,
+                         duckdb::idx_t idx) {
+  return NumericValueOf<Kind>([&]<typename T>() {
+    return duckdb::UnifiedVectorFormat::GetData<T>(fmt)[idx];
+  });
 }
 
 template<typename T>

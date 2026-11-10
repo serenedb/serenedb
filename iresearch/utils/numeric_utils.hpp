@@ -22,14 +22,15 @@
 
 #pragma once
 
-#include <absl/base/internal/endian.h>
-
+#include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <type_traits>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::numeric_utils {
@@ -54,9 +55,9 @@ inline constexpr Key kSignBit = Key{1} << (sizeof(Key) * 8 - 1);
 template<typename T>
 struct NumericEncodeOf;
 
-template<typename Signed, typename Unsigned>
+template<typename Signed>
 struct SignedKeyOf {
-  using Key = Unsigned;
+  using Key = std::make_unsigned_t<Signed>;
   static constexpr Key ToKey(Signed value) noexcept {
     return static_cast<Key>(value) ^ kSignBit<Key>;
   }
@@ -73,13 +74,13 @@ struct UnsignedKeyOf {
 };
 
 template<>
-struct NumericEncodeOf<int32_t> : SignedKeyOf<int32_t, uint32_t> {};
+struct NumericEncodeOf<int32_t> : SignedKeyOf<int32_t> {};
 
 template<>
-struct NumericEncodeOf<int64_t> : SignedKeyOf<int64_t, uint64_t> {};
+struct NumericEncodeOf<int64_t> : SignedKeyOf<int64_t> {};
 
 template<>
-struct NumericEncodeOf<__int128> : SignedKeyOf<__int128, unsigned __int128> {};
+struct NumericEncodeOf<__int128> : SignedKeyOf<__int128> {};
 
 template<>
 struct NumericEncodeOf<uint64_t> : UnsignedKeyOf<uint64_t> {};
@@ -121,37 +122,19 @@ inline constexpr size_t kNumericTermMaxSize = sizeof(unsigned __int128);
 
 template<typename T>
 bytes_view EncodeNumericTerm(byte_type* buf, T value) {
-  using Key = NumericKey<T>;
-  const Key key = NumericEncodeOf<T>::ToKey(value);
-  if constexpr (sizeof(Key) == sizeof(unsigned __int128)) {
-    absl::big_endian::Store64(buf, static_cast<uint64_t>(key >> 64));
-    absl::big_endian::Store64(buf + sizeof(uint64_t),
-                              static_cast<uint64_t>(key));
-  } else if constexpr (sizeof(Key) == sizeof(uint64_t)) {
-    absl::big_endian::Store64(buf, key);
-  } else {
-    static_assert(sizeof(Key) == sizeof(uint32_t));
-    absl::big_endian::Store32(buf, key);
-  }
-  return {buf, sizeof(Key)};
+  static_assert(std::endian::native == std::endian::little);
+  const auto key = std::byteswap(NumericEncodeOf<T>::ToKey(value));
+  std::memcpy(buf, &key, sizeof(key));
+  return {buf, sizeof(key)};
 }
 
 template<typename T>
 T DecodeNumericTerm(bytes_view term) {
-  using Key = NumericKey<T>;
-  SDB_ASSERT(term.size() == sizeof(Key));
-  const auto* in = term.data();
-  Key key = 0;
-  if constexpr (sizeof(Key) == sizeof(unsigned __int128)) {
-    key = Key{absl::big_endian::Load64(in)} << 64 |
-          absl::big_endian::Load64(in + sizeof(uint64_t));
-  } else if constexpr (sizeof(Key) == sizeof(uint64_t)) {
-    key = absl::big_endian::Load64(in);
-  } else {
-    static_assert(sizeof(Key) == sizeof(uint32_t));
-    key = absl::big_endian::Load32(in);
-  }
-  return NumericEncodeOf<T>::FromKey(key);
+  static_assert(std::endian::native == std::endian::little);
+  NumericKey<T> key;
+  SDB_ASSERT(term.size() == sizeof(key));
+  std::memcpy(&key, term.data(), sizeof(key));
+  return NumericEncodeOf<T>::FromKey(std::byteswap(key));
 }
 
 }  // namespace irs::numeric_utils

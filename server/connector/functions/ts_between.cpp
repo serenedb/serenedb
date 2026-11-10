@@ -21,7 +21,6 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
-#include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -156,7 +155,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
       type_mismatch();
     }
   } else if (term_dict::IsNumeric(col_type)) {
-    if (!IsRangeNumericValueType(val_type)) {
+    if (!term_dict::IsNumeric(val_type)) {
       type_mismatch();
     }
   } else {
@@ -207,17 +206,9 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
     return;
   }
 
-  auto bound = ResolveNumericBound(column_info.logical_type, *bound_val,
-                                   !is_lower, !inclusive);
-  if (bound.kind == NumericBound::Kind::Empty) {
-    AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
-    return;
-  }
-  auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-  SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
-  range.SetBoost(ctx.boost);
-  SetLeafScorer(range, column_info);
-  SetNumericBound(range.mutable_options()->range, !is_lower, std::move(bound));
+  AddNumericRange(MaybeNegated(parent, ctx, column_info), ctx, column_info,
+                  is_lower ? bound_val : nullptr, !inclusive,
+                  is_lower ? nullptr : bound_val, !inclusive);
 }
 
 void FromBetween(BoolTarget parent, const FilterContext& ctx,
@@ -257,7 +248,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
       type_mismatch();
     }
   } else if (term_dict::IsNumeric(col_type)) {
-    if (!IsRangeNumericValueType(val_type)) {
+    if (!term_dict::IsNumeric(val_type)) {
       type_mismatch();
     }
   } else {
@@ -315,29 +306,8 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     AddBools(MaybeNegated(parent, ctx, column_info), column_info,
              accepts(false), accepts(true), ctx.boost);
   } else {
-    NumericBound min;
-    NumericBound max;
-    if (args.min) {
-      min = ResolveNumericBound(column_info.logical_type, *args.min, false,
-                                !args.min_incl);
-    }
-    if (args.max) {
-      max = ResolveNumericBound(column_info.logical_type, *args.max, true,
-                                !args.max_incl);
-    }
-    if (min.kind == NumericBound::Kind::Empty ||
-        max.kind == NumericBound::Kind::Empty) {
-      AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
-      return;
-    }
-    auto& range =
-      AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-    SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
-    range.SetBoost(ctx.boost);
-    SetLeafScorer(range, column_info);
-    auto& rng = range.mutable_options()->range;
-    SetNumericBound(rng, false, std::move(min));
-    SetNumericBound(rng, true, std::move(max));
+    AddNumericRange(MaybeNegated(parent, ctx, column_info), ctx, column_info,
+                    args.min, !args.min_incl, args.max, !args.max_incl);
   }
 }
 

@@ -121,3 +121,60 @@ SELECT id FROM filter_bigint_idx WHERE n = 200::DECIMAL(20,4);
 ----
 id
 2
+
+# A DOUBLE bound just past the column's range, where the type's limit rounds
+# to the bound itself, keeps every value on its side.
+query
+SELECT id FROM filter_bigint_idx
+  WHERE n @@ ts_le(9223372036854775808::DOUBLE) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM filter_bigint_idx
+  WHERE n @@ ts_lt(9223372036854775808::DOUBLE) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM filter_bigint_idx
+  WHERE n @@ ts_ge(9223372036854775808::DOUBLE);
+----
+id
+
+query
+SELECT id FROM filter_bigint_idx
+  WHERE n @@ ts_between(-9223372036854775808::DOUBLE,
+                        9223372036854775808::DOUBLE, true, false)
+  ORDER BY id;
+----
+id
+1
+2
+3
+
+statement ok
+INSERT INTO wide_ubigint VALUES (1, 0), (2, 18446744073709551615);
+
+statement ok
+VACUUM (REFRESH_TABLE) wide_ubigint;
+
+query
+SELECT id FROM wide_ubigint_idx
+  WHERE n @@ ts_lt(18446744073709551616::DOUBLE) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM wide_ubigint_idx
+  WHERE n @@ ts_gt(18446744073709551616::DOUBLE);
+----
+id

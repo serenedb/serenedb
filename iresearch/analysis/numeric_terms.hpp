@@ -52,13 +52,13 @@ void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
 
 template<typename T>
 void AppendNumericTermsBlock(duckdb::string_t* out, std::span<const T> values) {
+  static_assert(kInlineNumericTerm<T>);
   AppendNumericTermsBlock<T>(out, values.size(),
                              [values](size_t i) noexcept { return values[i]; });
 }
 
 template<typename T>
 void AppendNumericTermsBlock(TokenBatch& batch, std::span<const T> values) {
-  static_assert(kInlineNumericTerm<T>);
   SDB_ASSERT(batch.count + values.size() <= TokenBatch::kCapacity);
   AppendNumericTermsBlock<T>(batch.terms + batch.count, values);
   batch.count += static_cast<uint32_t>(values.size());

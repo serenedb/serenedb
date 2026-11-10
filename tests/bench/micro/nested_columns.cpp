@@ -365,6 +365,28 @@ void DenseGather(benchmark::State& state, Shape shape) {
                           static_cast<int64_t>(rows.size()));
 }
 
+void PointGather(benchmark::State& state, Shape shape) {
+  constexpr size_t kPointRows = 8;
+  const auto& seg = GetSeg(shape);
+  const auto& rows = ScatteredRows();
+  irs::ReadContext ctx{*seg.reader};
+  duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
+                            seg.col->Type(), STANDARD_VECTOR_SIZE};
+  duckdb::Vector batch{cache};
+  for (auto _ : state) {
+    auto st = seg.col->InitScan(ctx);
+    for (size_t i = 0; i < rows.size(); i += kPointRows) {
+      batch.ResetFromCache(cache);
+      irs::column_internal::GatherRows(
+        *seg.col, st, RowSpan{&rows[i], std::min(rows.size() - i, kPointRows)},
+        batch, 0);
+      benchmark::DoNotOptimize(batch);
+    }
+  }
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *
+                          static_cast<int64_t>(rows.size()));
+}
+
 }  // namespace
 
 #define NESTED_CASES(fn)                                          \
@@ -396,6 +418,7 @@ NESTED_CASES(Rewrite);
 NESTED_CASES(FullScan);
 NESTED_CASES(SparseGather);
 NESTED_CASES(DenseGather);
+NESTED_CASES(PointGather);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();

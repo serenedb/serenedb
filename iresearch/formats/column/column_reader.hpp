@@ -41,6 +41,7 @@
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -121,6 +122,11 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d);
 
 struct VariantScanState;
 
+struct ListRun {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+};
+
 struct ListDictionary {
   uint64_t begin = 0;
   uint64_t end = 0;
@@ -131,8 +137,9 @@ struct ListDictionary {
   uint64_t ends_begin = 0;
   uint64_t ends_end = 0;
   duckdb::buffer_ptr<duckdb::DictionaryEntry> lists;
-  std::vector<uint64_t> decoded;
+  bitset decoded;
   std::vector<uint32_t> ranks;
+  std::vector<ListRun> runs;
   ScratchVector<uint64_t> ends;
 };
 

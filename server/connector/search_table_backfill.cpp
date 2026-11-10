@@ -297,32 +297,86 @@ void AppendReplacements(const Slice& slice,
 
 // By rows, not by segment count: a group is only as fast as its heaviest
 // slice, and one big segment would otherwise leave every other thread idle.
+bool StartsBlock(const irs::ColumnReader& column, uint64_t row) {
+  return row >= column.RowCount() || column.InMemory() ||
+         column.DataBlocks().empty() || column.Locate(row).begin == row;
+}
+
+uint64_t BlockBoundaryNear(const irs::ColReader& columns,
+                           std::span<const irs::field_id> copied, uint64_t row,
+                           uint64_t docs) {
+  const irs::ColumnReader* coarsest = nullptr;
+  for (const auto id : copied) {
+    const auto* column = columns.Column(id);
+    if (column && !column->InMemory() && !column->DataBlocks().empty() &&
+        row < column->RowCount() &&
+        (!coarsest ||
+         column->DataBlocks().size() < coarsest->DataBlocks().size())) {
+      coarsest = column;
+    }
+  }
+  if (!coarsest) {
+    return row;
+  }
+  const auto common = [&](uint64_t at) {
+    return absl::c_all_of(copied, [&](irs::field_id id) {
+      const auto* column = columns.Column(id);
+      return !column || StartsBlock(*column, at);
+    });
+  };
+  const auto window = coarsest->Locate(row);
+  auto down = window.begin;
+  auto up = std::min(window.end, docs);
+  for (;;) {
+    const bool lower = row - down <= up - row;
+    if (const auto at = lower ? down : up; common(at)) {
+      return at;
+    }
+    if (lower) {
+      down = coarsest->Locate(down - 1).begin;
+    } else {
+      up = up < coarsest->RowCount() ? std::min(coarsest->Locate(up).end, docs)
+                                     : docs;
+    }
+  }
+}
+
 std::vector<std::vector<Piece>> CutPieces(
-  std::span<const irs::SubReader* const> group, size_t slices) {
-  constexpr uint64_t kChunk = STANDARD_VECTOR_SIZE;
+  std::span<const irs::SubReader* const> group, size_t slices,
+  std::span<const irs::field_id> copied) {
   uint64_t total = 0;
   for (const auto* sub : group) {
     total += sub->Meta().docs_count;
   }
-  const auto budget = std::max(kChunk, (total + slices - 1) / slices);
+  std::vector<uint64_t> cuts;
+  cuts.reserve(slices - 1);
+  uint64_t start = 0;
+  for (const auto* sub : group) {
+    const uint64_t docs = sub->Meta().docs_count;
+    for (auto target = (cuts.size() + 1) * total / slices;
+         cuts.size() + 1 < slices && target < start + docs;
+         target = (cuts.size() + 1) * total / slices) {
+      cuts.push_back(start + BlockBoundaryNear(*sub->GetColReader(), copied,
+                                               target - start, docs));
+    }
+    start += docs;
+  }
+  cuts.resize(slices - 1, total);
   std::vector<std::vector<Piece>> out(slices);
   size_t slice = 0;
-  uint64_t load = 0;
+  start = 0;
   for (const auto* sub : group) {
     const uint64_t docs = sub->Meta().docs_count;
     for (uint64_t row = 0; row < docs;) {
-      auto take = docs - row;
-      if (slice + 1 < slices) {
-        take = std::min(take, (budget - load + kChunk - 1) / kChunk * kChunk);
-      }
-      out[slice].push_back({.segment = sub, .begin = row, .end = row + take});
-      row += take;
-      load += take;
-      if (load >= budget && slice + 1 < slices) {
+      while (slice < cuts.size() && cuts[slice] <= start + row) {
         ++slice;
-        load = 0;
       }
+      const auto end =
+        slice < cuts.size() ? std::min(docs, cuts[slice] - start) : docs;
+      out[slice].push_back({.segment = sub, .begin = row, .end = end});
+      row = end;
     }
+    start += docs;
   }
   return out;
 }
@@ -380,7 +434,6 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   const auto slice_count = static_cast<size_t>(
     std::clamp<uint64_t>((rows + slice_rows - 1) / slice_rows, 1,
                          duckdb::TaskScheduler::QueryThreads(context)));
-  auto assignment = CutPieces(group, slice_count);
 
   // Built here, never on a worker: the sink factory reads the catalog and
   // InitRowSource takes the context allocator.
@@ -389,7 +442,6 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   std::optional<ColumnPlan> plan;
   for (size_t k = 0; k < slice_count; ++k) {
     auto slice = std::make_unique<Slice>();
-    slice->pieces = std::move(assignment[k]);
     // Exclusive: FlushAndFsync hands back exactly this slice's segments, and
     // they must not share one with a concurrent writer.
     slice->trx = shard.GetTransaction(/*exclusive_segment=*/true);
@@ -400,6 +452,11 @@ std::shared_ptr<const search::TableState> RebuildGroup(
     }
     InitRowSource(context, target, slice->source, &*plan);
     slices.push_back(std::move(slice));
+  }
+  auto assignment =
+    CutPieces(group, slice_count, slices.front()->source.copied);
+  for (size_t k = 0; k < slice_count; ++k) {
+    slices[k]->pieces = std::move(assignment[k]);
   }
 
   const auto abort_all = [&slices] {

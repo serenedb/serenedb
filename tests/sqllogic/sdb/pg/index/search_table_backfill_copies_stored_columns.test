@@ -123,3 +123,64 @@ FROM bsc_plain;
 ----
 rows	right_rows	ids
 29970	29970	449520030
+
+statement ok
+CREATE TABLE bsc_layout (id BIGINT, body TEXT, s VARCHAR)
+WITH (compaction_interval = 0, row_group_size = 10240);
+
+statement ok
+SET threads = 1;
+
+statement ok
+INSERT INTO bsc_layout
+SELECT i, 'word' || (i % 100), 'layout_' || (i % 41) FROM range(0, 25000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bsc_layout;
+
+statement ok
+INSERT INTO bsc_layout
+SELECT i, 'word' || (i % 100), 'layout_' || (i % 41) FROM range(25000, 50000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bsc_layout;
+
+statement ok
+VACUUM (COMPACT_TABLE) bsc_layout;
+
+statement ok
+CREATE TABLE bsc_layout_before AS
+SELECT column_name, compression, count FROM pragma_storage_info('bsc_layout')
+WHERE column_name IN ('id', 'body', 's');
+
+query
+SELECT
+  count(DISTINCT segment_id) AS segments,
+  count(*) FILTER (WHERE start % 10240 <> 0) > 0 AS off_row_groups
+FROM pragma_storage_info('bsc_layout')
+WHERE column_name IN ('id', 'body', 's');
+----
+segments	off_row_groups
+1	t
+
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE INDEX bsc_layout_idx ON bsc_layout USING inverted (body);
+
+query
+SELECT
+  NOT EXISTS (
+    SELECT column_name, compression, count FROM pragma_storage_info('bsc_layout')
+    WHERE column_name IN ('id', 'body', 's')
+    EXCEPT ALL
+    SELECT * FROM bsc_layout_before)
+  AND NOT EXISTS (
+    SELECT * FROM bsc_layout_before
+    EXCEPT ALL
+    SELECT column_name, compression, count FROM pragma_storage_info('bsc_layout')
+    WHERE column_name IN ('id', 'body', 's')) AS blocks_kept;
+----
+blocks_kept
+t

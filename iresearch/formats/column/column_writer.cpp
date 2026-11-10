@@ -167,21 +167,6 @@ bool InCodec(duckdb::CompressionType forced,
          block.codec->type == forced;
 }
 
-size_t BlockAt(const ColumnReader& column, uint64_t row) noexcept {
-  const auto blocks = column.DataBlocks();
-  size_t lo = 0;
-  size_t hi = blocks.size();
-  while (lo < hi) {
-    const auto mid = lo + (hi - lo) / 2;
-    if (column.DataBlockFirstRow(mid) + blocks[mid].tuple_count <= row) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo;
-}
-
 }  // namespace
 
 WriteContext& ColumnWriter::WriteCtx() const noexcept {
@@ -782,7 +767,7 @@ bool ColumnWriter::ValidityCopyable(const ColumnReader& column, uint64_t first,
     return true;
   }
   const auto blocks = validity->DataBlocks();
-  for (auto v = BlockAt(*validity, first); v < blocks.size(); ++v) {
+  for (auto v = validity->Locate(first).block; v < blocks.size(); ++v) {
     const auto v_first = validity->DataBlockFirstRow(v);
     if (v_first >= end) {
       break;
@@ -810,7 +795,7 @@ void ColumnWriter::CopyValidity(const ColumnReader& column, ReadContext& source,
     return;
   }
   const auto blocks = validity->DataBlocks();
-  for (auto v = BlockAt(*validity, first); v < blocks.size(); ++v) {
+  for (auto v = validity->Locate(first).block; v < blocks.size(); ++v) {
     const auto v_first = validity->DataBlockFirstRow(v);
     if (v_first >= end) {
       break;
@@ -857,7 +842,7 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
     const auto forced = ForcedCodec();
     const auto blocks = column.DataBlocks();
     std::vector<byte_type> buffer;
-    for (auto b = BlockAt(column, first); b < blocks.size(); ++b) {
+    for (auto b = column.Locate(first).block; b < blocks.size(); ++b) {
       const auto block_first = column.DataBlockFirstRow(b);
       const auto block_end = block_first + blocks[b].tuple_count;
       if (block_first >= end) {

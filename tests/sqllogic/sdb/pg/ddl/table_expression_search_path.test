@@ -619,6 +619,25 @@ Did you mean "temp.tesp_tseq"?
 
 
 statement ok
+CREATE TABLE public.tesp_cat (a INT, c TEXT DEFAULT CURRENT_CATALOG, d TEXT DEFAULT main.current_database());
+
+
+statement ok
+INSERT INTO public.tesp_cat (a) VALUES (1);
+
+
+query
+SELECT count(*) AS n FROM public.tesp_cat WHERE c = current_database() AND d = current_database();
+----
+n
+1
+
+
+statement ok
+DROP TABLE public.tesp_cat;
+
+
+statement ok
 DROP DATABASE tesp_db_${__DATABASE__};
 
 

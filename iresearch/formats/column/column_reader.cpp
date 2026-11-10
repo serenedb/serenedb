@@ -387,10 +387,20 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
     .count = m.tuple_count,
     .size = m.byte_size,
   });
+  const bool ours = duckdb::IsSereneDBCompressionType(codec.type);
   if (m.byte_size == 0) {
+    if (codec.type != duckdb::CompressionType::COMPRESSION_CONSTANT &&
+        codec.type != duckdb::CompressionType::COMPRESSION_EMPTY) [[unlikely]] {
+      codecs::ThrowCorrupted(duckdb::CompressionTypeToString(codec.type),
+                             "segment has no bytes");
+    }
     return segment;
   }
-  if (duckdb::IsSereneDBCompressionType(codec.type)) {
+  if (!ours && m.byte_size > codecs::kBlockSize) [[unlikely]] {
+    codecs::ThrowCorrupted(duckdb::CompressionTypeToString(codec.type),
+                           "segment is larger than a block");
+  }
+  if (ours) {
     auto& slot = segment->cache_slot;
     slot.file_id = _file_id;
     slot.file_offset = m.file_offset;

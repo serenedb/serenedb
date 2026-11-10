@@ -54,6 +54,8 @@
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <latch>
 #include <numeric>
@@ -3471,6 +3473,149 @@ void OpenWithCorruptedFooter(duckdb::DatabaseInstance& db, const char* error,
   EXPECT_ANY_THROW(
     (irs::ColReader{dir, "fseg", db, irs::IOAdvice::SEQUENTIAL}));
 #endif
+}
+
+void FetchWithCorruptedFooter(duckdb::DatabaseInstance& db,
+                              const duckdb::LogicalType& type,
+                              duckdb::CompressionType codec,
+                              std::string_view error, uint64_t row,
+                              auto corrupt) {
+  constexpr irs::field_id kId = 1;
+  constexpr irs::field_id kPad = 2;
+  constexpr duckdb::idx_t kRows = STANDARD_VECTOR_SIZE;
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "cseg", db};
+    auto& cw = w.OpenColumn(kId, type, {.compression = codec});
+    duckdb::Vector v{type, STANDARD_VECTOR_SIZE};
+    for (duckdb::idx_t i = 0; i < kRows; ++i) {
+      v.SetValue(i, duckdb::Value::BIGINT(static_cast<int64_t>(i % 1000))
+                      .DefaultCastAs(type));
+    }
+    duckdb::FlatVector::SetSize(v, kRows);
+    cw.Append(v, kRows);
+    cw.Finish();
+    auto& pad = w.OpenColumn(
+      kPad, duckdb::LogicalType::BIGINT,
+      {.compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED});
+    for (int64_t chunk = 0; chunk < 64; ++chunk) {
+      duckdb::Vector p{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(p);
+      for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
+        data[i] = static_cast<int64_t>((chunk * STANDARD_VECTOR_SIZE + i) *
+                                       0x9E3779B97F4A7C15ULL);
+      }
+      duckdb::FlatVector::SetSize(p, STANDARD_VECTOR_SIZE);
+      pad.Append(p, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(kRows);
+  }
+  const auto file = irs::FileName("cseg");
+  std::string bytes;
+  std::vector<irs::ColumnMeta> metas;
+  {
+    auto in = dir.open(file, irs::IOAdvice::SEQUENTIAL);
+    ASSERT_NE(in, nullptr);
+    const auto stored = irs::format_utils::ReadFooter(
+      *in, file, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+        footer.Set<duckdb::DatabaseInstance&>(db);
+        footer.ReadOptionalList(
+          irs::kColFieldColumns, "columns",
+          [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+            list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+              metas.emplace_back(irs::DeserializeColumnMeta(obj));
+            });
+          });
+        footer.Unset<duckdb::DatabaseInstance>();
+      });
+    bytes.resize(stored.data_len);
+    in->ReadData(0, reinterpret_cast<irs::byte_type*>(bytes.data()),
+                 bytes.size());
+  }
+  ASSERT_EQ(metas.size(), 2);
+  ASSERT_EQ(metas.front().id, kId);
+  ASSERT_EQ(metas.front().data.front().codec->type, codec);
+  corrupt(metas.front());
+  {
+    auto out = dir.create(file);
+    ASSERT_NE(out, nullptr);
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
+                   bytes.size());
+    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
+      footer.WriteList(
+        irs::kColFieldColumns, "columns", metas.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            irs::SerializeColumnMeta(obj, metas[i]);
+          });
+        });
+    });
+  }
+  irs::ColReader r{dir, "cseg", db, irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  try {
+    irs::ColumnReader::PointReader cursor{r, *col};
+    duckdb::Vector out{type, 1};
+    cursor.FetchRow(row, out, 0);
+    ADD_FAILURE() << "the point read accepted a corrupted footer";
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << e.what();
+    EXPECT_EQ(e.message(), error);
+  }
+}
+
+TEST_F(ColumnReaderTest, FooterBlocksWithoutBytesAreIndexCorruption) {
+  FetchWithCorruptedFooter(
+    Db(), duckdb::LogicalType::BIGINT,
+    duckdb::CompressionType::COMPRESSION_BITPACKING,
+    "Corrupted BitPacking segment: segment has no bytes", 10,
+    [](irs::ColumnMeta& meta) { meta.data.front().byte_size = 0; });
+}
+
+TEST_F(ColumnReaderTest, FooterBlocksLargerThanABlockAreIndexCorruption) {
+  FetchWithCorruptedFooter(
+    Db(), duckdb::LogicalType::BIGINT,
+    duckdb::CompressionType::COMPRESSION_BITPACKING,
+    "Corrupted BitPacking segment: segment is larger than a block", 10,
+    [](irs::ColumnMeta& meta) {
+      meta.data.front().byte_size = irs::codecs::kBlockSize + 8;
+    });
+}
+
+TEST_F(ColumnReaderTest, FooterRowCountsBeyondUncompressedBlocks) {
+  constexpr uint64_t kCount = (uint64_t{1} << 61) + 512;
+  FetchWithCorruptedFooter(
+    Db(), duckdb::LogicalType::BIGINT,
+    duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+    "Corrupted uncompressed segment: rows exceed the segment size", 100000,
+    [&](irs::ColumnMeta& meta) {
+      meta.data.front().tuple_count = kCount;
+      meta.validity.front().tuple_count = kCount;
+    });
+}
+
+TEST_F(ColumnReaderTest, FooterRowCountsBeyondAlpBlocks) {
+  constexpr uint64_t kCount = std::numeric_limits<uint64_t>::max();
+  FetchWithCorruptedFooter(
+    Db(), duckdb::LogicalType::DOUBLE, duckdb::CompressionType::COMPRESSION_ALP,
+    "Corrupted ALP segment: metadata offset table exceeds the segment",
+    10'000'000, [&](irs::ColumnMeta& meta) {
+      meta.data.front().tuple_count = kCount;
+      meta.validity.front().tuple_count = kCount;
+    });
+}
+
+TEST_F(ColumnReaderTest, FooterRowCountsBeyondAlpRdBlocks) {
+  constexpr uint64_t kCount = std::numeric_limits<uint64_t>::max();
+  FetchWithCorruptedFooter(
+    Db(), duckdb::LogicalType::DOUBLE,
+    duckdb::CompressionType::COMPRESSION_ALPRD,
+    "Corrupted ALPRD segment: metadata offset table exceeds the segment",
+    10'000'000, [&](irs::ColumnMeta& meta) {
+      meta.data.front().tuple_count = kCount;
+      meta.validity.front().tuple_count = kCount;
+    });
 }
 
 TEST_F(ColumnReaderTest, FooterBlockRangesThatWrapAreRejected) {

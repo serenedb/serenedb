@@ -678,7 +678,7 @@ AlpRdSegmentLayout ReadAlpRdSegmentLayout(duckdb::const_data_ptr_t base,
               (kMaxDictionarySize - dictionary_count) * kDictionaryElementSize);
 
   const idx_t data_start = reader.Position();
-  const idx_t vector_count = (count + kVectorSize - 1) / kVectorSize;
+  const idx_t vector_count = count / kVectorSize + (count % kVectorSize != 0);
   if (vector_count > (metadata_end - data_start) / kMetadataPointerSize) {
     ThrowAlpRdMetadataTableOutOfBounds();
   }

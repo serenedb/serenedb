@@ -175,7 +175,8 @@ template<typename T>
 const T* FixedSizeRows(const ColumnSegment& segment, const_data_ptr_t base,
                        idx_t start, idx_t count) {
   SDB_ASSERT(start <= segment.count && count <= segment.count - start);
-  if ((start + count) * sizeof(T) > segment.size) [[unlikely]] {
+  const auto capacity = segment.size / sizeof(T);
+  if (start > capacity || count > capacity - start) [[unlikely]] {
     ThrowCorrupted("uncompressed", "rows exceed the segment size");
   }
   return reinterpret_cast<const T*>(base) + start;

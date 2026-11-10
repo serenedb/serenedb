@@ -81,12 +81,13 @@ class BlobPricer {
       }
       uint64_t sampled_raw = 0;
       uint64_t sampled = 0;
-      spans.Sample([&](size_t j) { return Jitter(begin, j); },
-                   [&](size_t i) {
-                     const auto raw = frame(i);
-                     sampled_raw += raw.size();
-                     sampled += CompressedSize<Codec>(raw, _scratch, *_codec);
-                   });
+      spans.Sample(
+        kPriceFrames, [&](size_t j) { return Jitter(begin, j); },
+        [&](size_t i) {
+          const auto raw = frame(i);
+          sampled_raw += raw.size();
+          sampled += CompressedSize<Codec>(raw, _scratch, *_codec);
+        });
       data += Scale(sampled, sampled_raw, p.raw - spans[0].raw);
     }
     const auto entry_count = p.codes.size() + (p.shape == Shape::Dedup ? 1 : 0);

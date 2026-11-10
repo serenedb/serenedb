@@ -35,6 +35,7 @@
 namespace irs::codecs::text {
 
 inline constexpr size_t kPriceFrames = 8;
+inline constexpr size_t kProbeFrames = 1;
 inline constexpr size_t kLocalMinFrames = 8;
 
 struct FrameShape {
@@ -105,20 +106,20 @@ class FrameSpans {
   std::span<const Span> All() const noexcept { return _spans; }
 
   template<typename Offset, typename Visit>
-  void Sample(Offset&& offset, Visit&& visit) const {
+  void Sample(size_t count, Offset&& offset, Visit&& visit) const {
     const size_t rest = _spans.size() - 1;
-    if (rest <= kPriceFrames) {
+    if (rest <= count) {
       for (size_t i = 1; i < _spans.size(); ++i) {
         visit(i);
       }
       return;
     }
     size_t last = 0;
-    for (size_t j = 0; j < kPriceFrames; ++j) {
+    for (size_t j = 0; j < count; ++j) {
       const auto i =
         1 + static_cast<size_t>((static_cast<double>(j) + offset(j)) *
                                 static_cast<double>(rest) /
-                                static_cast<double>(kPriceFrames));
+                                static_cast<double>(count));
       if (i != last) {
         last = i;
         visit(i);

@@ -229,14 +229,14 @@ class BlobCompressionState {
     uint64_t sampled_raw = 0;
     uint64_t sampled_trained = 0;
     uint64_t sampled_first = 0;
-    _spans.Sample([](size_t) { return 0.0; },
-                  [&](size_t i) {
-                    const auto raw = Slice(i);
-                    sampled_raw += raw.size();
-                    sampled_trained += _frames[i].comp_len;
-                    sampled_first +=
-                      text::CompressedSize<Codec>(raw, _scratch, *_probe);
-                  });
+    _spans.Sample(
+      kProbeFrames, [](size_t) { return 0.5; },
+      [&](size_t i) {
+        const auto raw = Slice(i);
+        sampled_raw += raw.size();
+        sampled_trained += _frames[i].comp_len;
+        sampled_first += text::CompressedSize<Codec>(raw, _scratch, *_probe);
+      });
     const auto rest_raw = _frame.size() - first.size();
     return _frames[0].comp_len + _codec->Stored().size() +
              Scale(sampled_trained, sampled_raw, rest_raw) <

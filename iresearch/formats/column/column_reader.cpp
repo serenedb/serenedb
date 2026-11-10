@@ -596,8 +596,7 @@ bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
   const uint64_t cur = ColumnReader::GatherCursor(s);
   SDB_ASSERT(first >= cur);
   const auto window = Locate(first, s.window);
-  if (last >= window.end || (s.initialized && window.block == s.window.block) ||
-      (s.fetch.segment && s.fetch_window.block == window.block)) {
+  if (s.initialized && window.block == s.window.block) {
     return false;
   }
   if (first > cur) {

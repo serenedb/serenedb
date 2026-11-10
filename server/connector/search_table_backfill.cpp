@@ -295,8 +295,6 @@ void AppendReplacements(const Slice& slice,
              "index build: fed fewer rows than its segments hold");
 }
 
-// By rows, not by segment count: a group is only as fast as its heaviest
-// slice, and one big segment would otherwise leave every other thread idle.
 bool StartsBlock(const irs::ColumnReader& column, uint64_t row) {
   return row >= column.RowCount() || column.InMemory() ||
          column.DataBlocks().empty() || column.Locate(row).begin == row;
@@ -341,6 +339,8 @@ uint64_t BlockBoundaryNear(const irs::ColReader& columns,
   }
 }
 
+// By rows, not by segment count: a group is only as fast as its heaviest
+// slice, and one big segment would otherwise leave every other thread idle.
 std::vector<std::vector<Piece>> CutPieces(
   std::span<const irs::SubReader* const> group, size_t slices,
   std::span<const irs::field_id> copied) {

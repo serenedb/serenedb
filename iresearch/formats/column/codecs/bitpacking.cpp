@@ -135,11 +135,6 @@ bitpacking_width_t ValidateWidth(T stored_width) {
   return static_cast<bitpacking_width_t>(stored_width);
 }
 
-BitpackingMode ForcedMode(duckdb::DatabaseInstance& db) {
-  return duckdb::Settings::Get<duckdb::ForceBitpackingModeSetting>(
-    duckdb::DBConfig::GetConfig(db));
-}
-
 template<typename T>
 struct NoWriter {
   void WriteConstant(T, idx_t) {}
@@ -152,7 +147,7 @@ template<typename T>
 struct BitpackingState {
   using S = Signed<T>;
 
-  explicit BitpackingState(BitpackingMode mode_p) : mode{mode_p} {
+  BitpackingState() {
     compression_buffer_internal[0] = T(0);
     Reset();
   }
@@ -244,8 +239,7 @@ struct BitpackingState {
     if (compression_buffer_idx == 0) {
       return true;
     }
-    if ((all_invalid || maximum == minimum) &&
-        (mode == BitpackingMode::AUTO || mode == BitpackingMode::CONSTANT)) {
+    if (all_invalid || maximum == minimum) {
       writer.WriteConstant(maximum, compression_buffer_idx);
       total_size += sizeof(T) + kMetaSize;
       return true;
@@ -254,8 +248,7 @@ struct BitpackingState {
     CalculateDeltaStats();
     T* buffer = Buffer();
     if (can_do_delta) {
-      if (maximum_delta == minimum_delta && mode != BitpackingMode::FOR &&
-          mode != BitpackingMode::DELTA_FOR) {
+      if (maximum_delta == minimum_delta) {
         const T frame_of_reference = buffer[0];
         writer.WriteConstantDelta(maximum_delta, frame_of_reference,
                                   compression_buffer_idx);
@@ -269,7 +262,7 @@ struct BitpackingState {
         BitpackingPrimitives::MinimumBitWidth(min_max_diff);
       const bool prefer_for =
         can_do_for && delta_required_bitwidth >= regular_required_bitwidth;
-      if (!prefer_for && mode != BitpackingMode::FOR) {
+      if (!prefer_for) {
         SubtractFrameOfReference(delta_buffer, minimum_delta);
         writer.WriteDeltaFor(
           reinterpret_cast<T*>(delta_buffer), delta_required_bitwidth,
@@ -366,20 +359,17 @@ struct BitpackingState {
   bool has_invalid = false;
   bool can_do_delta = false;
   bool can_do_for = false;
-  BitpackingMode mode = BitpackingMode::AUTO;
 };
 
 template<typename T>
 struct BitpackingAnalyze final : AnalyzeState {
-  explicit BitpackingAnalyze(BitpackingMode mode) : state{mode} {}
-
   BitpackingState<T> state;
 };
 
 template<typename T>
-std::unique_ptr<AnalyzeState> InitAnalyze(CompressionAnalyzeContext& ctx,
+std::unique_ptr<AnalyzeState> InitAnalyze(CompressionAnalyzeContext&,
                                           duckdb::PhysicalType) {
-  return std::make_unique<BitpackingAnalyze<T>>(ForcedMode(ctx.ctx.Database()));
+  return std::make_unique<BitpackingAnalyze<T>>();
 }
 
 template<typename T>
@@ -409,9 +399,7 @@ class BitpackingCompress final : public CompressionState {
   using S = Signed<T>;
 
   explicit BitpackingCompress(ColumnDataCheckpointData& checkpoint_data)
-    : _checkpoint_data{&checkpoint_data},
-      _segment{checkpoint_data.type},
-      _state{ForcedMode(checkpoint_data.ctx.Database())} {}
+    : _checkpoint_data{&checkpoint_data}, _segment{checkpoint_data.type} {}
 
   void Append(const duckdb::Vector& input) {
     _state.Update(input.Values<T>(), *this);

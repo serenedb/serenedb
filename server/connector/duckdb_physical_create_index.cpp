@@ -34,6 +34,7 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
+#include <duckdb/execution/operator/scan/physical_empty_result.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -617,6 +618,12 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   auto& create_index = input.planner.Make<SereneDBPhysicalCreateIndex>(
     op.table, database_id, std::move(op.info),
     std::move(op.unbound_expressions), schema_entry, op.estimated_cardinality);
+  if (catalog::IsSearchTable(op.table)) {
+    create_index.children.push_back(
+      input.planner.Make<duckdb::PhysicalEmptyResult>(input.table_scan.types,
+                                                      0));
+    return create_index;
+  }
   if (projected_exprs.empty()) {
     create_index.children.push_back(input.table_scan);
     return create_index;

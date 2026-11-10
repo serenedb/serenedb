@@ -191,6 +191,7 @@ void PieceTermReader::Seal(uint64_t docs, uint64_t total_freq) {
              "piece: total frequency ", total_freq, " exceeds uint32_t::max");
   _docs = docs;
   _freq.value = static_cast<uint32_t>(total_freq);
+  _inline.append(term_dict::kSlack, 0);
   for (auto& entry : _entries) {
     entry.meta.inline_data =
       entry.meta.inline_size == 0 ? nullptr : _inline.data() + entry.inline_at;

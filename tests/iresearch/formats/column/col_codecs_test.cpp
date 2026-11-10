@@ -66,6 +66,8 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -3203,6 +3205,88 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
 #else
     EXPECT_ANY_THROW(scan());
 #endif
+  }
+}
+
+TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
+  struct Case {
+    std::string_view name;
+    duckdb::LogicalType type;
+    duckdb::CompressionType codec;
+  };
+  const Case cases[] = {
+    {"rle", duckdb::LogicalType::BIGINT,
+     duckdb::CompressionType::COMPRESSION_RLE},
+    {"bitpacking", duckdb::LogicalType::INTEGER,
+     duckdb::CompressionType::COMPRESSION_BITPACKING},
+    {"alp", duckdb::LogicalType::DOUBLE,
+     duckdb::CompressionType::COMPRESSION_ALP},
+    {"alprd", duckdb::LogicalType::DOUBLE,
+     duckdb::CompressionType::COMPRESSION_ALPRD},
+    {"roaring", duckdb::LogicalType::BOOLEAN,
+     duckdb::CompressionType::COMPRESSION_ROARING},
+    {"uncompressed", duckdb::LogicalType::VARCHAR,
+     duckdb::CompressionType::COMPRESSION_UNCOMPRESSED},
+  };
+  constexpr uint64_t kRows = 5000;
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    const auto path =
+      test_dir() / absl::StrCat("col_codecs_corrupt_header_", c.name);
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      irs::MMapDirectory dir{path};
+      irs::ColWriter w{dir, kSeg, Db()};
+      auto& cw = w.OpenColumn(kField, c.type,
+                              {.row_group_size = 4096, .compression = c.codec});
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector v{c.type, STANDARD_VECTOR_SIZE};
+        for (uint64_t k = 0; k < take; ++k) {
+          const auto g = static_cast<int64_t>(pos + k);
+          v.SetValue(k, c.type.id() == duckdb::LogicalTypeId::VARCHAR
+                          ? duckdb::Value{absl::StrCat("row-", g % 97)}
+                          : duckdb::Value::BIGINT(g / 7).DefaultCastAs(c.type));
+        }
+        duckdb::FlatVector::SetSize(v, take);
+        cw.Append(v, take);
+      }
+      ASSERT_TRUE(w.Commit(0));
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      const auto& block = col->DataBlocks().front();
+      ASSERT_EQ(block.codec->type, c.codec);
+      offset = block.file_offset;
+      size = block.byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_GE(size, sizeof(uint64_t));
+    ASSERT_LE(offset + size, bytes.size());
+    std::memset(bytes.data() + offset, 0xFF, sizeof(uint64_t));
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    irs::MMapDirectory dir{path};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    try {
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+      ADD_FAILURE() << "the scan accepted a corrupted segment";
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << e.what();
+    }
   }
 }
 

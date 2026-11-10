@@ -515,7 +515,7 @@ class IndexWriter : private util::Noncopyable {
     }
     ~CompactionFloorGuard() { Release(); }
 
-    bool Held() const noexcept { return _writer != nullptr; }
+    bool Arm() noexcept;
     uint64_t Floor() const noexcept { return _floor; }
 
    private:
@@ -525,7 +525,8 @@ class IndexWriter : private util::Noncopyable {
     uint64_t _floor = 0;
   };
 
-  CompactionFloorGuard ArmCompactionFloor();
+  CompactionFloorGuard ClaimCompactionFloor();
+  bool Compacting();
 
   uint64_t NextSegmentId() noexcept;
   uint64_t CurrentSegmentId() const noexcept;
@@ -867,6 +868,9 @@ class IndexWriter : private util::Noncopyable {
   field_id _key_column = field_limits::invalid();
   std::unique_ptr<HnswBases> _hnsw_bases;
   std::shared_ptr<const IndexFieldOptions> _field_options;
+  static constexpr uint64_t kPendingFloor =
+    std::numeric_limits<uint64_t>::max();
+
   absl::Mutex _commit_lock;
   struct {
     std::recursive_mutex lock;

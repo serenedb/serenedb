@@ -1,0 +1,118 @@
+control substitution on
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE buc (id INT, body TEXT)
+WITH (compaction_interval = 0);
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+INSERT INTO buc SELECT i, 'alpha' FROM range(0, 10) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO buc SELECT i, 'alpha' FROM range(10, 20) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO buc SELECT i, 'alpha' FROM range(20, 30) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO buc SELECT i, 'alpha' FROM range(30, 40) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish';
+
+
+statement ok
+ALTER TABLE buc SET (compaction_interval = 10);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_compact_before_publish:parked';
+
+
+statement ok
+ALTER TABLE buc SET (compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = 'search_compaction_before_selection';
+
+
+connection vacuum
+statement async ok
+VACUUM (COMPACT_TABLE) buc;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_compaction_before_selection:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_backfill_floor_retry';
+
+
+connection build
+statement async ok
+CREATE INDEX buc_idx ON buc USING inverted (body);
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_backfill_floor_retry:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish:release';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_backfill_floor_retry:release';
+
+
+connection build
+statement ok
+SELECT 1;
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_compaction_before_selection:release';
+
+
+wait
+
+
+connection default
+query
+SELECT count(*) AS n FROM buc WHERE body @@ 'alpha';
+----
+n
+40

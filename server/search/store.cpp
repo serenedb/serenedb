@@ -358,7 +358,7 @@ Store::Piece Store::StartPiece() {
 void Store::PiecesAdded() {
   if ((_table->PieceBytes() < _segment_memory_max && !_table->HasFullTier()) ||
       !BackgroundScheduler::gInstance ||
-      _write_out_scheduled.exchange(true, std::memory_order_acq_rel)) {
+      _piece_requests.fetch_add(1, std::memory_order_acq_rel) != 0) {
     return;
   }
   BackgroundScheduler::instance()
@@ -367,14 +367,21 @@ void Store::PiecesAdded() {
       if (!store) {
         return;
       }
-      store->_write_out_scheduled.store(false, std::memory_order_release);
-      try {
-        store->MaintainPieces();
-      } catch (const std::exception& e) {
-        SDB_WARN(SEARCH, "table ", store->_id,
-                 ": writing out the rows it holds in memory failed: ",
-                 duckdb::ErrorData{e}.RawMessage());
-      }
+      auto requests = store->_piece_requests.load(std::memory_order_acquire);
+      do {
+        try {
+          store->MaintainPieces();
+        } catch (const std::exception& e) {
+          store->_piece_requests.store(0, std::memory_order_release);
+          SDB_WARN(SEARCH, "table ", store->_id,
+                   ": writing out the rows it holds in memory failed: ",
+                   duckdb::ErrorData{e}.RawMessage());
+          return;
+        }
+        requests = store->_piece_requests.fetch_sub(requests,
+                                                    std::memory_order_acq_rel) -
+                   requests;
+      } while (requests != 0);
     })
     .Detach();
 }
@@ -683,9 +690,8 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
   empty_compaction = false;
   _merges.fetch_add(1, std::memory_order_relaxed);
   absl::Cleanup counted = [this] {
-    if (_merges.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-      duckdb::ClientContext::Notify();
-    }
+    _merges.fetch_sub(1, std::memory_order_acq_rel);
+    duckdb::ClientContext::Notify();
   };
   SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
   if (_table) {
@@ -862,6 +868,22 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
 void Store::AwaitMerges(duckdb::ClientContext& context) {
   absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
   context.Await([this] { return _merges.load() == 0; });
+}
+
+irs::IndexWriter::CompactionFloorGuard Store::ArmCompactionFloor(
+  duckdb::ClientContext& context) {
+  auto floor = _writer->ClaimCompactionFloor();
+  if (floor.Arm()) {
+    return floor;
+  }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_retry");
+  {
+    absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+    context.Await([this] { return !_writer->Compacting(); });
+  }
+  [[maybe_unused]] const bool armed = floor.Arm();
+  SDB_ASSERT(armed);
+  return floor;
 }
 
 StoreStats Store::GetStats() const {

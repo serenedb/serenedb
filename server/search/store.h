@@ -341,9 +341,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool SoleWriter() const noexcept { return _writers.SoleWriter(); }
   void DrainPriorWriters(duckdb::ClientContext& context);
 
-  irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
-    return _writer->ArmCompactionFloor();
-  }
+  irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor(
+    duckdb::ClientContext& context);
   void AwaitMerges(duckdb::ClientContext& context);
   std::shared_ptr<const TableState> ReplaceSegments(
     std::span<const irs::SubReader* const> replaced,
@@ -489,7 +488,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   WriterGenerations _writers;
   std::unique_ptr<Table> _table;
   bool _on_disk = false;
-  std::atomic<bool> _write_out_scheduled{false};
+  std::atomic<uint64_t> _piece_requests{0};
   std::atomic<uint32_t> _merges{0};
   struct ReplayedRows {
     irs::doc_id_t first = 0;

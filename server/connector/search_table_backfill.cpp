@@ -532,17 +532,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   auto& shard = *target.shard;
 
   shard.DrainPriorWriters(context);
-
-  irs::IndexWriter::CompactionFloorGuard floor;
-  for (;;) {
-    shard.WriteOut(search::kNoLsn);
-    floor = shard.ArmCompactionFloor();
-    if (floor.Held()) {
-      break;
-    }
-    SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_retry");
-    shard.AwaitMerges(context);
-  }
+  shard.WriteOut(search::kNoLsn);
+  const auto floor = shard.ArmCompactionFloor(context);
 
   // Groups by byte budget: peak disk is ~2x one group, and each publish is
   // proportional to one group rather than the table. A zero budget is "no

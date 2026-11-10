@@ -37,6 +37,7 @@
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -2065,8 +2066,8 @@ TEST_F(IndexAdoptTest, CompactionFloorProtectsStaleAndFreesFresh) {
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
-  auto guard = _writer->ArmCompactionFloor();
-  ASSERT_TRUE(guard.Held());
+  auto guard = _writer->ClaimCompactionFloor();
+  ASSERT_TRUE(guard.Arm());
   const auto floor = guard.Floor();
   ASSERT_GT(floor, 0);
 
@@ -2146,8 +2147,8 @@ TEST_F(IndexAdoptTest, ABudgetedPolicySpendsItsBudgetAboveTheFloor) {
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
-  auto guard = _writer->ArmCompactionFloor();
-  ASSERT_TRUE(guard.Held());
+  auto guard = _writer->ClaimCompactionFloor();
+  ASSERT_TRUE(guard.Arm());
   const auto floor = guard.Floor();
 
   for (const auto* value : {"fresh_a", "fresh_b"}) {
@@ -2185,6 +2186,48 @@ TEST_F(IndexAdoptTest, ABudgetedPolicySpendsItsBudgetAboveTheFloor) {
   EXPECT_EQ(2, stale) << "segments below the floor were consolidated";
   EXPECT_EQ(1, fresh) << "the segments above the floor did not consolidate";
   EXPECT_EQ(4, _writer->GetSnapshot().live_docs_count());
+}
+
+TEST_F(IndexAdoptTest, AClaimedFloorStopsNewMergesUntilTheRunningOnesFinish) {
+  Restart(/*cleanup_on_open=*/false);
+
+  for (const auto* value : {"running_a", "running_b"}) {
+    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+    ASSERT_TRUE(InsertDoc(trx, value));
+    ASSERT_TRUE(trx.Commit());
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+
+  static const auto kFullMerge = irs::index_utils::MakePolicy(
+    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+  const irs::MergeWriter::FlushProgress progress = [] { return true; };
+  irs::IndexWriter::CompactionFloorGuard guard;
+  {
+    auto running = irs::GetBlocking(_writer->MergeAsync(
+      kFullMerge, _writer->GetSnapshot(), nullptr, progress, nullptr));
+    ASSERT_TRUE(running.reader);
+
+    guard = _writer->ClaimCompactionFloor();
+    EXPECT_FALSE(guard.Arm()) << "armed under a merge that holds segments";
+
+    for (const auto* value : {"later_a", "later_b"}) {
+      auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+      ASSERT_TRUE(InsertDoc(trx, value));
+      ASSERT_TRUE(trx.Commit());
+      ASSERT_TRUE(_writer->RefreshCommit());
+    }
+    const auto later = irs::GetBlocking(_writer->MergeAsync(
+      kFullMerge, _writer->GetSnapshot(), nullptr, progress, nullptr));
+    EXPECT_FALSE(later.reader) << "a merge started while the floor was claimed";
+    EXPECT_FALSE(guard.Arm());
+  }
+
+  ASSERT_TRUE(guard.Arm()) << "the floor did not arm once the merge finished";
+  const auto snapshot = _writer->GetSnapshot();
+  ASSERT_EQ(4, snapshot.size());
+  for (const auto& segment : snapshot) {
+    EXPECT_LE(SegmentIdOf(segment.Meta().name), guard.Floor());
+  }
 }
 
 TEST_F(IndexAdoptTest,
@@ -2337,7 +2380,7 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
   const irs::MergeWriter::FlushProgress progress = [&] {
     if (!attempted) {
       attempted = true;
-      held = _writer->ArmCompactionFloor().Held();
+      held = _writer->ClaimCompactionFloor().Arm();
     }
     return true;
   };
@@ -2348,10 +2391,8 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
   ASSERT_TRUE(_writer->RefreshCommit());
 
   // Idle again, it arms -- so the refusal above was the in-flight merge.
-  auto guard = _writer->ArmCompactionFloor();
-  EXPECT_TRUE(guard.Held());
-  // And it is not reentrant while held.
-  EXPECT_FALSE(_writer->ArmCompactionFloor().Held());
+  auto guard = _writer->ClaimCompactionFloor();
+  EXPECT_TRUE(guard.Arm());
 }
 
 // --- why a build must adopt before it aborts --------------------------------

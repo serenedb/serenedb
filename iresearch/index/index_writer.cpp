@@ -1709,20 +1709,31 @@ void IndexWriter::CompactionFloorGuard::Release() noexcept {
   _writer = nullptr;
 }
 
-IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
-  std::lock_guard lock{_compacting.lock};
-  if (!_compacting.segments.empty()) {
+bool IndexWriter::CompactionFloorGuard::Arm() noexcept {
+  SDB_ASSERT(_writer);
+  SDB_ASSERT(_floor == kPendingFloor);
+  std::lock_guard lock{_writer->_compacting.lock};
+  if (!_writer->_compacting.segments.empty()) {
     // A compaction is between selecting candidates and minting its output id,
     // so it could still stamp a fresh id on segments below the floor we are
     // about to set. The caller should retry once it finishes.
-    return {};
+    return false;
   }
-  if (_compacting.floor != 0) {
-    return {};  // already armed; one holder at a time
-  }
-  const auto floor = CurrentSegmentId();
-  _compacting.floor = floor;
-  return {*this, floor};
+  _floor = _writer->CurrentSegmentId();
+  _writer->_compacting.floor = _floor;
+  return true;
+}
+
+IndexWriter::CompactionFloorGuard IndexWriter::ClaimCompactionFloor() {
+  std::lock_guard lock{_compacting.lock};
+  SDB_ASSERT(_compacting.floor == 0);
+  _compacting.floor = kPendingFloor;
+  return {*this, kPendingFloor};
+}
+
+bool IndexWriter::Compacting() {
+  std::lock_guard lock{_compacting.lock};
+  return !_compacting.segments.empty();
 }
 
 void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,

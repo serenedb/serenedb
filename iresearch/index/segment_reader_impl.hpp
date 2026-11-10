@@ -87,8 +87,6 @@ class SegmentReaderImpl final : public SubReader {
 
   uint64_t Id() const noexcept { return _id; }
 
-  bool InMemory() const noexcept { return _in_memory; }
-
   const std::shared_ptr<DocMapsSlot>& DocMaps() const noexcept {
     return _doc_maps;
   }
@@ -141,7 +139,6 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<ColumnData> _data;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
   std::shared_ptr<const PieceFields> _pieces;
-  bool _in_memory = false;
 };
 
 }  // namespace irs

@@ -204,7 +204,7 @@ void ClassifySegmentColFilters(
 
 bool UsesColumnForms(const ScanGlobalState& g, const irs::SubReader& seg) {
   return g.vector_scorer == nullptr && !g.dual_filters.empty() &&
-         InMemorySegment(seg);
+         RowsOnlySegment(seg);
 }
 
 void ScanLocalState::Classify(ScanGlobalState& g, uint32_t seg) {

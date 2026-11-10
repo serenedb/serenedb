@@ -109,7 +109,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
   reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->col_reader = std::move(columns);
-  reader->_in_memory = true;
   return reader;
 }
 
@@ -138,7 +137,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   reader->_field_reader = _field_reader;
   reader->_pieces = _pieces;
   reader->_data = _data;
-  reader->_in_memory = _in_memory;
   return reader;
 }
 

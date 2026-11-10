@@ -1545,7 +1545,7 @@ bool ClaimSearchConjuncts(
                               : connector::WideRanges::Build;
   std::vector<std::shared_ptr<const duckdb::Expression>> claimed_exprs;
   const bool keeps_columns =
-    scan.KeepsColumnForms() || scan.ReadsInMemorySegments();
+    scan.KeepsColumnForms() || scan.ReadsRowsOnlySegments();
   const auto stored_row = [&](const duckdb::Expression& conjunct)
     -> std::optional<connector::RowFilter> {
     auto form = RowFormOf(conjunct);

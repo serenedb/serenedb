@@ -56,10 +56,10 @@ duckdb::string_t AsStringT(irs::bytes_view bytes) {
           static_cast<uint32_t>(bytes.size())};
 }
 
-uint64_t InMemoryDocs(const irs::DirectoryReader& reader) {
+uint64_t RowsOnlyDocs(const irs::DirectoryReader& reader) {
   uint64_t docs = 0;
   for (const auto& segment : reader) {
-    if (InMemorySegment(segment)) {
+    if (RowsOnlySegment(segment)) {
       docs += segment.docs_count();
     }
   }
@@ -107,10 +107,10 @@ duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
                                 duckdb::StringStatsType::EXACT_STATS);
     duckdb::StringStats::SetMax(*bounds, AsStringT(terms->max),
                                 duckdb::StringStatsType::EXACT_STATS);
-    distinct = DistinctWith(*terms, InMemoryDocs(reader));
+    distinct = DistinctWith(*terms, RowsOnlyDocs(reader));
   }
   for (const auto& segment : reader) {
-    if (!InMemorySegment(segment)) {
+    if (!RowsOnlySegment(segment)) {
       continue;
     }
     const auto* columns = segment.GetColReader();
@@ -142,7 +142,7 @@ uint64_t KeyDistinct(const ScanBindData& bind,
     }
     if (const auto* terms =
           reader.GetTermRange(key.field, kConstraintKeyDict)) {
-      return DistinctWith(*terms, InMemoryDocs(reader));
+      return DistinctWith(*terms, RowsOnlyDocs(reader));
     }
   }
   return 0;

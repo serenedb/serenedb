@@ -249,7 +249,7 @@ struct ScanBindData final : duckdb::FunctionData {
     return score.vector && score.vector->kind == irs::AnnKind::Hnsw &&
            score.vector->radius == std::numeric_limits<float>::max();
   }
-  bool ReadsInMemorySegments() const noexcept {
+  bool ReadsRowsOnlySegments() const noexcept {
     return relation.kind != ScanEntryKind::InvertedIndex && !score.vector;
   }
   bool IsMatchAll() const noexcept {
@@ -340,7 +340,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
                                   const irs::DirectoryReader& reader);
 
-bool InMemorySegment(const irs::SubReader& segment);
+bool RowsOnlySegment(const irs::SubReader& segment);
 
 std::optional<uint64_t> UniqueMatchBound(const ScanBindData& scan,
                                          const irs::Filter& filter);

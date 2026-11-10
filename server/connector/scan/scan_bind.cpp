@@ -625,10 +625,8 @@ std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
   return std::nullopt;
 }
 
-bool InMemorySegment(const irs::SubReader& segment) {
-  return irs::utils::downCast<irs::SegmentReader>(segment)
-    .GetImpl()
-    ->InMemory();
+bool RowsOnlySegment(const irs::SubReader& segment) {
+  return segment.field_ids().empty();
 }
 
 std::optional<uint64_t> UniqueMatchBound(const ScanBindData& scan,
@@ -651,7 +649,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> index_only;
   conjuncts.reserve(claim.conjuncts.size() + claim.ranges.size());
   const bool keeps_columns =
-    scan.KeepsColumnForms() || scan.ReadsInMemorySegments();
+    scan.KeepsColumnForms() || scan.ReadsRowsOnlySegments();
   const auto keep_column_form = [&](const duckdb::Expression& conjunct) {
     auto form = optimizer::RowFormOf(conjunct);
     if (!form) {

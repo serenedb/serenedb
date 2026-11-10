@@ -26,8 +26,8 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/detail/term_iterator.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <limits>
 #include <utility>
 
@@ -47,36 +47,6 @@ struct ValueLess {
   }
 };
 
-irs::bstring After(irs::bytes_view term) {
-  irs::bstring next{term};
-  next.push_back(0);
-  return next;
-}
-
-irs::bstring Lower(const irs::bstring& bound, irs::BoundType type) {
-  switch (type) {
-    case irs::BoundType::Inclusive:
-      return bound;
-    case irs::BoundType::Exclusive:
-      return After(bound);
-    case irs::BoundType::Unbounded:
-      return {};
-  }
-  SDB_UNREACHABLE();
-}
-
-irs::bstring Upper(const irs::bstring& bound, irs::BoundType type) {
-  switch (type) {
-    case irs::BoundType::Inclusive:
-      return After(bound);
-    case irs::BoundType::Exclusive:
-      return bound;
-    case irs::BoundType::Unbounded:
-      return {};
-  }
-  SDB_UNREACHABLE();
-}
-
 void Intersect(ValueOrderSpec& spec, irs::bstring from, irs::bstring to) {
   if (!from.empty() && (spec.from.empty() || from > spec.from)) {
     spec.from = std::move(from);
@@ -92,7 +62,7 @@ bool Equal(ValueOrderSpec& spec, irs::field_id field, irs::DictRef dict,
   if (field != spec.field || dict != irs::NumericLayout::kNumbers) {
     return false;
   }
-  Intersect(spec, irs::bstring{term}, After(term));
+  Intersect(spec, irs::bstring{term}, irs::AfterKey(term));
   return true;
 }
 
@@ -108,8 +78,8 @@ bool Narrow(ValueOrderSpec& spec, const irs::Filter& filter) {
       return false;
     }
     const auto& bounds = range.options().range;
-    Intersect(spec, Lower(bounds.min, bounds.min_type),
-              Upper(bounds.max, bounds.max_type));
+    Intersect(spec, irs::RangeLower(bounds.min, bounds.min_type),
+              irs::RangeUpper(bounds.max, bounds.max_type));
     return true;
   }
   if (type != irs::Type<irs::BooleanFilter>::id()) {

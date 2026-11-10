@@ -630,8 +630,6 @@ void MarkLiveRowGroups(std::span<LivePass> passes,
   executor.WorkOnTasks();
 }
 
-}  // namespace
-
 bool SegmentStaysWhole(ScanShape shape, const irs::QueryBuilder& query,
                        bool exact_counts, uint64_t rg_size) {
   if (query.Kind() == irs::QueryKind::Empty) {
@@ -644,6 +642,8 @@ bool SegmentStaysWhole(ScanShape shape, const irs::QueryBuilder& query,
   return std::max<uint64_t>(query.Postings(), query.EstimateMax()) <
          STANDARD_VECTOR_SIZE;
 }
+
+}  // namespace
 
 std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads) {
   const auto live_count = static_cast<uint32_t>(live.count());

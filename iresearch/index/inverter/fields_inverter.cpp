@@ -33,8 +33,11 @@ bool HasTerms(const FieldInverter* field) noexcept {
 
 }  // namespace
 
-FieldsInverter::FlushNeeds FieldsInverter::Needs() const noexcept {
+FieldsInverter::FlushNeeds FieldsInverter::Needs(size_t docs) const {
   FlushNeeds needs;
+  if (_col_writer) {
+    needs.terms = _col_writer->AnnBound(docs).terms;
+  }
   for (const auto& field : _fields) {
     if (!HasTerms(&field)) {
       continue;
@@ -51,18 +54,15 @@ FieldsInverter::FlushNeeds FieldsInverter::Needs() const noexcept {
   return needs;
 }
 
-size_t FieldsInverter::FlushBound(size_t docs,
-                                  size_t extra_terms) const noexcept {
-  const auto needs = Needs();
+size_t FieldsInverter::FlushBound(size_t docs) const {
+  const auto needs = Needs(docs);
   return sizeof(const FieldsMap::value_type*) * _fields_map.size() +
          ScatterScratch::Bytes(needs.max_terms, needs.blocks) +
-         term_dict::FieldWriter::Bound(needs.terms + extra_terms, docs,
-                                       needs.ranges);
+         term_dict::FieldWriter::Bound(needs.terms, docs, needs.ranges);
 }
 
 void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
-                           std::span<const BasicTermReader* const> extra,
-                           uint64_t extra_terms) {
+                           std::span<const BasicTermReader* const> extra) {
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();
 
@@ -102,7 +102,7 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
       return lhs->id() < rhs->id();
     }));
 
-  const auto needs = Needs();
+  const auto needs = Needs(state.doc_count);
   auto budget_allocator = BudgetAllocator(&state.budget);
   InverterMemory mem{budget_allocator};
   ScatterScratch scratch{&state.budget};
@@ -110,7 +110,7 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
   ScatteredField scattered{mem, scratch};
   ColumnarTermReader terms;
 
-  fw.prepare(state, keyed_dicts, needs.terms + extra_terms);
+  fw.prepare(state, keyed_dicts, needs.terms);
   size_t ei = 0;
   for (const auto* item : sorted) {
     const auto id = item->first;

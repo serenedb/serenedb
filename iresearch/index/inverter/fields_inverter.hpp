@@ -870,10 +870,9 @@ class FieldsInverter : util::Noncopyable {
   }
 
   void Flush(term_dict::FieldWriter& fw, FlushState& state,
-             std::span<const BasicTermReader* const> extra,
-             uint64_t extra_terms);
+             std::span<const BasicTermReader* const> extra);
 
-  size_t FlushBound(size_t docs, size_t extra_terms) const noexcept;
+  size_t FlushBound(size_t docs) const;
 
   size_t MemoryActive() const noexcept {
     return _arena.SizeInBytes() + FieldsMemory();
@@ -916,7 +915,7 @@ class FieldsInverter : util::Noncopyable {
     bool ranges = false;
   };
 
-  FlushNeeds Needs() const noexcept;
+  FlushNeeds Needs(size_t docs) const;
 
   Entry Find(field_id id, DictLayout layout) {
     const auto [it, emplaced] = _fields_map.try_emplace(id);

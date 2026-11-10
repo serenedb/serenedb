@@ -256,9 +256,7 @@ AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows) {
 AnnFlushBound ColWriter::AnnBound(uint64_t rows) const {
   AnnFlushBound total;
   for (const auto& entry : _ann_writers) {
-    if (entry->writer) {
-      Accumulate(total, irs::AnnBound(entry->info, rows));
-    }
+    Accumulate(total, irs::AnnBound(entry->info, rows));
   }
   return total;
 }

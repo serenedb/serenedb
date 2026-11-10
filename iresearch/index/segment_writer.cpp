@@ -102,12 +102,11 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _hnsw_bases{options.hnsw_bases} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
-                                std::span<const BasicTermReader* const> extra,
-                                uint64_t extra_terms) {
+                                std::span<const BasicTermReader* const> extra) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.Flush(*_field_writer, state, extra, extra_terms);
+    _fields.Flush(*_field_writer, state, extra);
   } catch (...) {
     _field_writer.reset();
     throw;
@@ -123,8 +122,8 @@ size_t SegmentWriter::FlushBound() {
   if (_col_writer) {
     ann = _col_writer->AnnBound(docs);
   }
-  return std::max({ColWriter::kSealBound, ann.compute,
-                   ann.kept + _fields.FlushBound(docs, ann.terms)});
+  return std::max(
+    {ColWriter::kSealBound, ann.compute, ann.kept + _fields.FlushBound(docs)});
 }
 
 void SegmentWriter::ReserveFlush() {
@@ -158,10 +157,8 @@ void SegmentWriter::flush(IndexSegment& segment,
 
   IdxWriter idx{_dir, _seg_name};
 
-  uint64_t cluster_terms = 0;
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
-    cluster_terms = _col_writer->AnnBound(state.doc_count).terms;
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
     _col_writer->Commit(buffered_docs());
@@ -171,7 +168,6 @@ void SegmentWriter::flush(IndexSegment& segment,
       GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
     }
     ann_writers = _col_writer->TakeAnnWriters();
-    _col_writer.reset();
   }
 
   if (state.doc_count != 0) {
@@ -181,8 +177,10 @@ void SegmentWriter::flush(IndexSegment& segment,
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
       PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
-    FlushFields(state, cluster_readers, cluster_terms);
+    FlushFields(state, cluster_readers);
   }
+  _fields.SetColWriter(nullptr);
+  _col_writer.reset();
 
   for (const auto& w : ann_writers) {
     if (w) {
@@ -227,6 +225,7 @@ void SegmentWriter::ResetState() noexcept {
   _batch_first_doc_id = doc_limits::eof();
   _fields.Reset();
   _col_reader.reset();
+  _fields.SetColWriter(nullptr);
   if (_col_writer) {
     _col_writer->Rollback();
     _col_writer.reset();

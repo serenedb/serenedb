@@ -30,6 +30,7 @@
 #include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/storage_info.hpp>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -101,9 +102,18 @@ duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
                                          int32_t offset) {
   SDB_ASSERT(offset == 0);
   const auto pos = static_cast<uint64_t>(block);
+  const uint64_t file_size = _in->Length();
   uint32_t len;
+  if (file_size < sizeof(len) || pos > file_size - sizeof(len)) {
+    codecs::ThrowCorrupted("uncompressed string",
+                           "overflow string is outside the file");
+  }
   _in->ReadData(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
   len = absl::little_endian::Load32(reinterpret_cast<byte_type*>(&len));
+  if (len > file_size - pos - sizeof(len)) {
+    codecs::ThrowCorrupted("uncompressed string",
+                           "overflow string runs past the end of the file");
+  }
   if (const auto* body = _in->ReadStable(pos + sizeof(len), len)) {
     return duckdb::string_t{reinterpret_cast<const char*>(body), len};
   }

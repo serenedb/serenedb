@@ -28,6 +28,8 @@
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs {
@@ -246,7 +248,8 @@ class SegmentReader {
   }
 
   [[noreturn]] IRS_NO_INLINE void Throw(const char* what) const {
-    ThrowCorrupted(_context, what);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG("Corrupted ", _context, ": ", what));
   }
 
   duckdb::const_data_ptr_t _data;

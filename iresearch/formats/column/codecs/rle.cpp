@@ -75,6 +75,10 @@ constexpr RleCount kMaxRunCount = std::numeric_limits<RleCount>::max();
   ThrowCorrupted("RLE", "bitpacking width exceeds the value width");
 }
 
+[[noreturn]] void ThrowEntryCountInvalid() {
+  ThrowCorrupted("RLE", "entry count exceeds the segment capacity");
+}
+
 [[noreturn]] void ThrowRunCountArrayExhausted() {
   ThrowCorrupted("RLE", "run counts do not cover the segment row count");
 }
@@ -523,13 +527,16 @@ RleLayout<T> ParseLayout(const duckdb::BufferHandle& handle,
   const auto marked = reader.Read<uint64_t>();
   const auto counts_offset = marked & ~kPackedMarker;
   if (!(marked & kPackedMarker) || counts_offset < kHeaderSize<T> ||
-      counts_offset > reader.Size()) {
+      counts_offset > reader.Size() || counts_offset % alignof(RleCount)) {
     ThrowCountOffsetInvalid();
   }
   const auto header = reader.Get<RleHeader<T>>(0);
   if (header.value_width > kFullWidth<T> ||
       header.count_width > kFullWidth<RleCount>) {
     ThrowWidthInvalid();
+  }
+  if (header.entry_count > kMaxEntryCount<T>) {
+    ThrowEntryCountInvalid();
   }
   const idx_t entry_capacity = header.entry_count;
   const auto values_size = PackedSize<T>(entry_capacity, header.value_width);

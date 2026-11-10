@@ -3293,6 +3293,133 @@ TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
   }
 }
 
+TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
+  struct Case {
+    std::string_view name;
+    duckdb::LogicalType type;
+    duckdb::CompressionType codec;
+    std::function<duckdb::Value(int64_t)> value;
+    std::function<void(std::string&, uint64_t, uint64_t)> corrupt;
+    std::string_view error;
+  };
+  const auto store32 = [](std::string& bytes, uint64_t at, uint32_t v) {
+    absl::little_endian::Store32(bytes.data() + at, v);
+  };
+  const auto store64 = [](std::string& bytes, uint64_t at, uint64_t v) {
+    absl::little_endian::Store64(bytes.data() + at, v);
+  };
+  const auto runs = [](int64_t g) { return duckdb::Value::BIGINT(g / 7); };
+  const auto sparse = [](int64_t g) {
+    return duckdb::Value::BOOLEAN(g % 100 == 0);
+  };
+  const std::string long_text(5000, 'q');
+  const auto overflowing = [&](int64_t g) {
+    return duckdb::Value{absl::StrCat("row-", g, "-", long_text)};
+  };
+  const Case cases[] = {
+    {"rle entry count", duckdb::LogicalType::BIGINT,
+     duckdb::CompressionType::COMPRESSION_RLE, runs,
+     [&](std::string& b, uint64_t at, uint64_t) {
+       store32(b, at + 8, std::numeric_limits<uint32_t>::max());
+       b[at + 14] = 0;
+       b[at + 15] = 0;
+     },
+     "Corrupted RLE segment: entry count exceeds the segment capacity"},
+    {"rle misaligned counts", duckdb::LogicalType::BIGINT,
+     duckdb::CompressionType::COMPRESSION_RLE, runs,
+     [&](std::string& b, uint64_t at, uint64_t) {
+       store64(b, at, (uint64_t{1} << 63) | 25);
+       b[at + 14] = 0;
+     },
+     "Corrupted RLE segment: rle_count_offset is corrupted"},
+    {"roaring metadata offset", duckdb::LogicalType::BOOLEAN,
+     duckdb::CompressionType::COMPRESSION_ROARING, sparse,
+     [&](std::string& b, uint64_t at, uint64_t size) {
+       store64(b, at, size - sizeof(uint64_t) + 1);
+     },
+     "Corrupted roaring segment: metadata offset exceeds the segment"},
+    {"roaring short metadata", duckdb::LogicalType::BOOLEAN,
+     duckdb::CompressionType::COMPRESSION_ROARING, sparse,
+     [&](std::string& b, uint64_t at, uint64_t size) {
+       store64(b, at, size - sizeof(uint64_t) - 2);
+     },
+     "Corrupted roaring segment: container metadata extends past the segment"},
+    {"roaring container data", duckdb::LogicalType::BOOLEAN,
+     duckdb::CompressionType::COMPRESSION_ROARING, sparse,
+     [&](std::string& b, uint64_t at, uint64_t size) {
+       b[at + size - 1] = static_cast<char>(250);
+     },
+     "Corrupted roaring segment: container data extends into the metadata"},
+    {"overflow string length", duckdb::LogicalType::VARCHAR,
+     duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, overflowing,
+     [&](std::string& b, uint64_t, uint64_t) {
+       const auto at = b.find(absl::StrCat("row-0-", long_text));
+       ASSERT_NE(at, std::string::npos);
+       store32(b, at - sizeof(uint32_t), 0xFFFFFFF0);
+     },
+     "Corrupted uncompressed string segment: overflow string runs past the end "
+     "of the file"},
+  };
+  constexpr uint64_t kRows = 4096;
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    const auto path =
+      test_dir() / absl::StrCat("col_codecs_corrupt_body_", &c - cases);
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      irs::MMapDirectory dir{path};
+      irs::ColWriter w{dir, kSeg, Db()};
+      auto& cw = w.OpenColumn(kField, c.type,
+                              {.row_group_size = 4096, .compression = c.codec});
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        duckdb::Vector v{c.type, STANDARD_VECTOR_SIZE};
+        for (uint64_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+          v.SetValue(k, c.value(static_cast<int64_t>(pos + k)));
+        }
+        duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+        cw.Append(v, STANDARD_VECTOR_SIZE);
+      }
+      ASSERT_TRUE(w.Commit(0));
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      const auto& block = col->DataBlocks().front();
+      ASSERT_EQ(block.codec->type, c.codec);
+      offset = block.file_offset;
+      size = block.byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_LE(offset + size, bytes.size());
+    c.corrupt(bytes, offset, size);
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    irs::MMapDirectory dir{path};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    try {
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+        col->Scan(state, out, STANDARD_VECTOR_SIZE);
+      }
+      ADD_FAILURE() << "the scan accepted a corrupted segment";
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << e.what();
+      EXPECT_EQ(e.message(), c.error);
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
   constexpr uint64_t kChunk = STANDARD_VECTOR_SIZE;
   const auto& fn = *irs::codecs::GetCodec(

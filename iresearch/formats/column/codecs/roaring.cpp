@@ -307,13 +307,20 @@ idx_t Serialize(ContainerMetadataCollection& collection, data_ptr_t dest) {
 }
 
 void Deserialize(ContainerMetadataCollection& collection, const_data_ptr_t src,
-                 idx_t container_count) {
+                 idx_t container_count, idx_t available) {
+  const auto take = [&](idx_t size) {
+    if (size > available) [[unlikely]] {
+      ThrowCorrupted("roaring", "container metadata extends past the segment");
+    }
+    available -= size;
+  };
   collection.container_type.resize(
     duckdb::AlignValue<idx_t, kPackGroupSize>(container_count));
   collection.count_in_segment = container_count;
 
   const idx_t types_size = BitpackingPrimitives::GetRequiredSize(
     collection.container_type.size(), kContainerTypeWidth);
+  take(types_size);
   BitpackingPrimitives::UnPackBuffer<uint8_t>(collection.container_type.data(),
                                               src, container_count,
                                               kContainerTypeWidth, true);
@@ -331,6 +338,7 @@ void Deserialize(ContainerMetadataCollection& collection, const_data_ptr_t src,
   if (runs_count) {
     const idx_t runs_size =
       BitpackingPrimitives::GetRequiredSize(runs_count, kRunContainerSizeWidth);
+    take(runs_size);
     BitpackingPrimitives::UnPackBuffer<uint8_t>(
       collection.number_of_runs.data(), src, runs_count, kRunContainerSizeWidth,
       true);
@@ -339,6 +347,7 @@ void Deserialize(ContainerMetadataCollection& collection, const_data_ptr_t src,
 
   if (!collection.cardinality.empty()) {
     const idx_t arrays_size = sizeof(uint8_t) * collection.cardinality.size();
+    take(arrays_size);
     collection.arrays_in_segment = arrays_size;
     std::memcpy(collection.cardinality.data(), src, arrays_size);
   }
@@ -1226,7 +1235,9 @@ struct RunContainerScanState : ContainerScanState {
       const auto run_or_scan_end =
         std::min<idx_t>(run_end, scanned_count + to_scan);
 
-      SDB_ASSERT(run_or_scan_end >= start_of_run);
+      if (run_or_scan_end < start_of_run) [[unlikely]] {
+        ThrowCorrupted("roaring", "runs overlap or are out of order");
+      }
       if (run_or_scan_end > start_of_run) {
         const idx_t amount = run_or_scan_end - start_of_run;
         const idx_t start = result_offset + result_idx;
@@ -1294,7 +1305,9 @@ struct CompressedRunContainerScanState final : RunContainerScanState {
     auto end = segment.Next();
     end += data[(run_index * 2) + 1];
 
-    SDB_ASSERT(end > start);
+    if (end <= start) [[unlikely]] {
+      ThrowCorrupted("roaring", "run ends before it starts");
+    }
     run = RunContainerRLEPair{
       .start = start,
       .length = static_cast<uint16_t>(end - 1 - start),
@@ -1426,22 +1439,24 @@ struct RoaringScanState final : SegmentScanState {
     data_ptr = base_ptr + sizeof(idx_t);
 
     const auto metadata_offset = duckdb::Load<idx_t>(base_ptr);
-    if (metadata_offset >= segment_size) [[unlikely]] {
+    if (metadata_offset > segment_size - sizeof(idx_t)) [[unlikely]] {
       ThrowCorrupted("roaring", "metadata offset exceeds the segment");
     }
     const auto* metadata_ptr = data_ptr + metadata_offset;
+    const idx_t metadata_size = segment_size - sizeof(idx_t) - metadata_offset;
 
     auto container_count = count / kContainerSize;
     if (count % kContainerSize != 0) {
       ++container_count;
     }
-    if (container_count > segment_size - metadata_offset) [[unlikely]] {
+    if (container_count > metadata_size) [[unlikely]] {
       ThrowCorrupted("roaring",
                      "container count exceeds available metadata space");
     }
 
     ContainerMetadataCollection metadata_collection;
-    Deserialize(metadata_collection, metadata_ptr, container_count);
+    Deserialize(metadata_collection, metadata_ptr, container_count,
+                metadata_size);
     ContainerMetadataCollectionScanner scanner{metadata_collection};
     container_metadata.reserve(container_count);
     data_start_position.reserve(container_count);
@@ -1460,7 +1475,13 @@ struct RoaringScanState final : SegmentScanState {
           duckdb::AlignValue<idx_t, sizeof(RunContainerRLEPair)>(position);
       }
       data_start_position.emplace_back(position);
-      position += DataSizeInBytes(metadata, kContainerSize);
+      const auto rows =
+        std::min<idx_t>(kContainerSize, count - i * kContainerSize);
+      position += DataSizeInBytes(
+        metadata, duckdb::AlignValue<idx_t, kBitsPerValue>(rows));
+      if (position > metadata_offset) [[unlikely]] {
+        ThrowCorrupted("roaring", "container data extends into the metadata");
+      }
     }
   }
 

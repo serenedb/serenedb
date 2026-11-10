@@ -954,7 +954,7 @@ void Table::ReplayReplace(std::span<const uint64_t> replaced,
   }
 }
 
-void Table::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
+bool Table::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
                         Lsn lsn) {
   Replayed(lsn);
   Saw(target);
@@ -962,6 +962,7 @@ void Table::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
   merged.pending = true;
   irs::doc_id_t offset = 0;
   auto at = _replay_order.size();
+  bool rows = true;
   for (const auto id : sources) {
     Saw(id);
     if (const auto i = ReplayPosition(id); i != _replay_order.size()) {
@@ -969,8 +970,13 @@ void Table::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
       at = std::min(at, i);
     }
     const auto it = _replay.find(id);
-    SDB_ENSURE(it != _replay.end() && it->second.pending,
-               "search log: merged piece ", id, " has no rows");
+    if (it == _replay.end() || !it->second.pending) {
+      rows = false;
+      if (it != _replay.end()) {
+        _replay.erase(it);
+      }
+      continue;
+    }
     auto& source = it->second;
     merged.first_lsn = std::min(merged.first_lsn, source.first_lsn);
     if (!source.removed.Empty()) {
@@ -984,10 +990,14 @@ void Table::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
     offset = static_cast<irs::doc_id_t>(offset + source.docs);
     _replay.erase(it);
   }
+  if (!rows) {
+    return false;
+  }
   merged.docs = offset;
   if (_replay.insert_or_assign(target, std::move(merged)).second) {
     _replay_order.insert(_replay_order.begin() + at, target);
   }
+  return true;
 }
 
 void Table::ReplayState(std::span<const StateUnit> units, Lsn lsn) {

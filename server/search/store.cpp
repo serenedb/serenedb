@@ -1237,6 +1237,7 @@ void Store::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
   if (!_table) {
     return;
   }
+  const bool rebuilt = _table->ReplayMerge(target, sources, lsn);
   std::vector<ReplayedRows> rows;
   irs::doc_id_t offset = 0;
   for (const auto id : sources) {
@@ -1244,17 +1245,18 @@ void Store::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
     if (it == _replayed_rows.end()) {
       continue;
     }
-    irs::doc_id_t docs = 0;
-    for (auto& replayed : it->second) {
-      docs = std::max(docs, static_cast<irs::doc_id_t>(replayed.first +
-                                                       replayed.chunk->size()));
-      replayed.first = static_cast<irs::doc_id_t>(replayed.first + offset);
-      rows.push_back(std::move(replayed));
+    if (rebuilt) {
+      irs::doc_id_t docs = 0;
+      for (auto& replayed : it->second) {
+        docs = std::max(docs, static_cast<irs::doc_id_t>(
+                                replayed.first + replayed.chunk->size()));
+        replayed.first = static_cast<irs::doc_id_t>(replayed.first + offset);
+        rows.push_back(std::move(replayed));
+      }
+      offset = static_cast<irs::doc_id_t>(offset + docs);
     }
-    offset = static_cast<irs::doc_id_t>(offset + docs);
     _replayed_rows.erase(it);
   }
-  _table->ReplayMerge(target, sources, lsn);
   if (!rows.empty()) {
     _replayed_rows[target] = std::move(rows);
   }

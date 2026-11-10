@@ -252,7 +252,7 @@ class Table final {
   void ReplayReplace(std::span<const uint64_t> replaced,
                      std::span<const ReplacedSegment> segments,
                      std::span<const irs::DocMap> maps, Lsn lsn);
-  void ReplayMerge(uint64_t target, std::span<const uint64_t> sources, Lsn lsn);
+  bool ReplayMerge(uint64_t target, std::span<const uint64_t> sources, Lsn lsn);
   void ReplayState(std::span<const StateUnit> units, Lsn lsn);
   uint64_t ReplayTop() const noexcept { return _replay_top; }
   bool FinishReplay();

@@ -297,29 +297,56 @@ struct BitpackingState {
   }
 
   template<typename Writer>
-  bool Update(const typename duckdb::VectorIterator<T>::ValueEntry& entry,
-              Writer& writer) {
-    const bool is_valid = entry.IsValid();
-    has_valid = has_valid || is_valid;
-    has_invalid = has_invalid || !is_valid;
-    all_valid = all_valid && is_valid;
-    all_invalid = all_invalid && !is_valid;
-    T* buffer = Buffer();
-    if (is_valid) {
-      const T value = entry.GetValue();
-      buffer[compression_buffer_idx] = value;
-      minimum = duckdb::MinValue<T>(minimum, value);
-      maximum = duckdb::MaxValue<T>(maximum, value);
-    } else if constexpr (!std::is_same_v<Writer, NoWriter<T>>) {
-      buffer[compression_buffer_idx] = T(0);
+  bool Update(const duckdb::VectorIterator<T>& values, Writer& writer) {
+    bool success = true;
+    const bool nulls = values.CanHaveNull();
+    for (idx_t i = 0; i < values.size();) {
+      const idx_t take = std::min(values.size() - i,
+                                  kMetadataGroupSize - compression_buffer_idx);
+      T* buffer = Buffer() + compression_buffer_idx;
+      T lo = minimum;
+      T hi = maximum;
+      bool any_valid = false;
+      bool any_invalid = false;
+      if (!nulls) {
+        for (idx_t k = 0; k < take; ++k) {
+          const T value = values.GetValueUnsafe(i + k);
+          buffer[k] = value;
+          lo = duckdb::MinValue<T>(lo, value);
+          hi = duckdb::MaxValue<T>(hi, value);
+        }
+        any_valid = take != 0;
+      } else {
+        for (idx_t k = 0; k < take; ++k) {
+          const auto entry = values[i + k];
+          if (!entry.IsValid()) {
+            any_invalid = true;
+            if constexpr (!std::is_same_v<Writer, NoWriter<T>>) {
+              buffer[k] = T(0);
+            }
+            continue;
+          }
+          const T value = entry.GetValue();
+          buffer[k] = value;
+          lo = duckdb::MinValue<T>(lo, value);
+          hi = duckdb::MaxValue<T>(hi, value);
+          any_valid = true;
+        }
+      }
+      minimum = lo;
+      maximum = hi;
+      has_valid = has_valid || any_valid;
+      has_invalid = has_invalid || any_invalid;
+      all_valid = all_valid && !any_invalid;
+      all_invalid = all_invalid && !any_valid;
+      compression_buffer_idx += take;
+      i += take;
+      if (compression_buffer_idx == kMetadataGroupSize) {
+        success = Flush(writer) && success;
+        Reset();
+      }
     }
-    compression_buffer_idx++;
-    if (compression_buffer_idx == kMetadataGroupSize) {
-      const bool success = Flush(writer);
-      Reset();
-      return success;
-    }
-    return true;
+    return success;
   }
 
   T compression_buffer_internal[kMetadataGroupSize + 1];
@@ -363,12 +390,7 @@ bool Analyze(AnalyzeState& state, const duckdb::Vector& input) {
   }
   auto& analyze = state.Cast<BitpackingAnalyze<T>>();
   NoWriter<T> writer;
-  for (auto entry : input.Values<T>()) {
-    if (!analyze.state.Update(entry, writer)) {
-      return false;
-    }
-  }
-  return true;
+  return analyze.state.Update(input.Values<T>(), writer);
 }
 
 template<typename T>
@@ -392,9 +414,7 @@ class BitpackingCompress final : public CompressionState {
       _state{ForcedMode(checkpoint_data.ctx.Database())} {}
 
   void Append(const duckdb::Vector& input) {
-    for (auto entry : input.Values<T>()) {
-      _state.Update(entry, *this);
-    }
+    _state.Update(input.Values<T>(), *this);
   }
 
   void Finalize() {

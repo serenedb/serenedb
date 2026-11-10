@@ -191,6 +191,15 @@ bool BoolConstant(const duckdb::Value& value) {
   return value.GetValue<bool>();
 }
 
+enum class Encoded : uint8_t {
+  Term,
+  NoValue,
+  Unsupported,
+};
+
+Encoded TryEncodeTerm(irs::DictLayout layout, const duckdb::LogicalType& type,
+                      const duckdb::Value& value, irs::TermClause& out);
+
 ComparisonOp GetComparisonOp(duckdb::ExpressionType type) {
   switch (type) {
     case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
@@ -2507,10 +2516,10 @@ ColumnCast CastToColumn(const duckdb::Value& value,
     if (value.type().IsNumeric() && type.IsNumeric()) {
       return {
         .value = duckdb::Value{},
-        .outside = duckdb::ValueOperations::GreaterThan(
-                     value, duckdb::Value::INTEGER(0))
-                     ? 1
-                     : -1,
+        .outside =
+          duckdb::ValueOperations::GreaterThan(value, duckdb::Value::INTEGER(0))
+            ? 1
+            : -1,
       };
     }
     if (duckdb::ValueOperations::GreaterThan(
@@ -2609,12 +2618,6 @@ void SetNumericBound(irs::ByGranularRangeOptions::range_type& range, bool upper,
   term = std::move(bound.term);
   type = bound.strict ? irs::BoundType::Exclusive : irs::BoundType::Inclusive;
 }
-
-enum class Encoded : uint8_t {
-  Term,
-  NoValue,
-  Unsupported,
-};
 
 Encoded TryEncodeTerm(irs::DictLayout layout, const duckdb::LogicalType& type,
                       const duckdb::Value& value, irs::TermClause& out) {

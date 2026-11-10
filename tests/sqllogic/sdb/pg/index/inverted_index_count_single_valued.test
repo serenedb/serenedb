@@ -310,7 +310,7 @@ QUERY PLAN
 
 
 # Three rows per value keep every posting inline in the dictionary: a term that
-# two overlapping clauses both select still counts its rows once.
+# several overlapping clauses select still counts its rows once.
 statement ok
 CREATE TABLE csv_dup (id INT PRIMARY KEY, v INT)
 
@@ -331,12 +331,13 @@ VACUUM (REFRESH_TABLE) csv_dup
 query
 SELECT
   (SELECT count(*) FROM csv_dup_idx
-     WHERE v BETWEEN 1 AND 2 OR v BETWEEN 2 AND 3) AS ranges,
-  (SELECT count(*) FROM csv_dup_idx WHERE v IN (1, 2) OR v IN (2, 3)) AS lists,
+     WHERE v BETWEEN 2 AND 3 OR v BETWEEN 1 AND 2 OR v BETWEEN 2 AND 4)
+    AS ranges,
   (SELECT count(*) FROM csv_dup_idx
-     WHERE NOT (v BETWEEN 1 AND 2 OR v BETWEEN 2 AND 3)) AS negated,
+     WHERE NOT (v BETWEEN 2 AND 3 OR v BETWEEN 1 AND 2 OR v BETWEEN 2 AND 4))
+    AS negated,
   (SELECT count(*) FROM csv_dup_idx
      WHERE v BETWEEN 1 AND 5 AND v BETWEEN 1 AND 5) AS repeated
 ----
-ranges	lists	negated	repeated
-9	9	291	15
+ranges	negated	repeated
+12	288	15

@@ -29,6 +29,7 @@
 #include <iresearch/analysis/text/words/masks.hpp>
 #include <iresearch/analysis/text/words/split_by_non_alpha.hpp>
 #include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/utils/byte_set.hpp>
 #include <string>
 #include <string_view>
 #include <utility>

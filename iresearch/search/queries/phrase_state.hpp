@@ -51,7 +51,7 @@ struct PhraseState : PostingsState {
   }
 
   TrackedVector<score_t> boosts;
-  std::vector<uint32_t> offsets;
+  TrackedVector<uint32_t> offsets;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<NGramState>);

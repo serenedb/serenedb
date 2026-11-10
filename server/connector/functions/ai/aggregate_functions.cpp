@@ -23,14 +23,12 @@
 #include <absl/strings/substitute.h>
 #include <simdjson.h>
 
-#include <cstring>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/function/aggregate_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/storage/arena_allocator.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/tracked.hpp>
@@ -94,19 +92,8 @@ struct AggBindData final : public duckdb::FunctionData {
   }
 };
 
-duckdb::string_t StoreValue(const duckdb::string_t& value,
-                            duckdb::ArenaAllocator& arena) {
-  if (value.IsInlined()) {
-    return value;
-  }
-  auto* data = arena.Allocate(value.GetSize());
-  std::memcpy(data, value.GetData(), value.GetSize());
-  return duckdb::string_t{reinterpret_cast<const char*>(data),
-                          static_cast<uint32_t>(value.GetSize())};
-}
-
 struct AggState {
-  irs::TrackedVector<duckdb::string_t>* values;
+  irs::TrackedVector<irs::TrackedString>* values;
 };
 
 struct AggOperation {
@@ -117,11 +104,11 @@ struct AggOperation {
 
   template<class INPUT_TYPE, class STATE, class OP>
   static void Operation(STATE& state, const INPUT_TYPE& input,
-                        duckdb::AggregateUnaryInput& unary) {
+                        duckdb::AggregateUnaryInput&) {
     if (!state.values) {
-      state.values = new irs::TrackedVector<duckdb::string_t>();
+      state.values = new irs::TrackedVector<irs::TrackedString>();
     }
-    state.values->push_back(StoreValue(input, unary.input.allocator));
+    state.values->emplace_back(input.GetData(), input.GetSize());
   }
 
   template<class INPUT_TYPE, class STATE, class OP>
@@ -140,11 +127,15 @@ struct AggOperation {
       return;
     }
     if (!target.values) {
-      target.values = new irs::TrackedVector<duckdb::string_t>();
+      target.values = new irs::TrackedVector<irs::TrackedString>();
     }
-    target.values->reserve(target.values->size() + source.values->size());
-    for (const auto& value : *source.values) {
-      target.values->push_back(StoreValue(value, input.allocator));
+    auto& values = *source.values;
+    if (input.combine_type == duckdb::AggregateCombineType::ALLOW_DESTRUCTIVE) {
+      target.values->insert(target.values->end(),
+                            std::make_move_iterator(values.begin()),
+                            std::make_move_iterator(values.end()));
+    } else {
+      target.values->insert(target.values->end(), values.begin(), values.end());
     }
   }
 
@@ -399,10 +390,7 @@ void AggFinalize(duckdb::Vector& states,
   for (size_t g = 0; g != groups.size(); ++g) {
     if (const auto* values = data[g]->values) {
       groups[g].size = values->size();
-      groups[g].values.reserve(values->size());
-      for (const auto& value : *values) {
-        groups[g].values.emplace_back(value.GetData(), value.GetSize());
-      }
+      groups[g].values.assign(values->begin(), values->end());
     }
   }
   work.Plan();

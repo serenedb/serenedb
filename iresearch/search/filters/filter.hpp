@@ -52,6 +52,7 @@
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -89,7 +90,7 @@ enum class QueryKind : uint32_t {
   Ann,
 };
 
-class QueryBuilder : public memory::Managed {
+class QueryBuilder : public memory::Managed, public Tracked {
  public:
   using ptr = memory::managed_ptr<const QueryBuilder>;
 

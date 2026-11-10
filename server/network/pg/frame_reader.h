@@ -22,13 +22,10 @@
 
 #include <absl/base/internal/endian.h>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <duckdb/common/exception.hpp>
 #include <iresearch/utils/string_utils.hpp>
-#include <iresearch/utils/tracked.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -95,7 +92,6 @@ class FrameReader {
   // Linearization buffer for a frame that spans recv chunks (resized on demand,
   // reused across frames); the parser needs a contiguous payload.
   std::string _scratch;
-  irs::MemoryCharge _scratch_charge;
 };
 
 inline Frame FrameReader::TryAssemble(FrameKind kind, uint32_t max_len) {
@@ -129,11 +125,6 @@ inline Frame FrameReader::TryAssemble(FrameKind kind, uint32_t max_len) {
     if (_recv.ReadableSize() >= *total) {
       // Uninitialized resize -- CopyInto overwrites every byte, so skip the
       // value-init memset; capacity is reused across spanning frames.
-      try {
-        _scratch_charge.Resize(std::max<size_t>(_scratch.capacity(), *total));
-      } catch (const duckdb::OutOfMemoryException&) {
-        return Frame{.status = FrameStatus::OutOfMemory};
-      }
       irs::utils::StrResizeAmortized(_scratch, *total);
       CopyInto(reinterpret_cast<uint8_t*>(_scratch.data()), *total);
       _recv.Consume(*total);

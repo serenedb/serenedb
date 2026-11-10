@@ -33,7 +33,6 @@
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/error_data.hpp>
-#include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/prepared_statement.hpp>
@@ -44,7 +43,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
-#include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -365,7 +363,6 @@ class HttpSession final
     std::string_view error;
   };
   BodyDecoding DecodeRequestBody(HttpRequest& request);
-  bool ChargeBody(const HttpRequest& request);
 
   asio_ns::io_context& _io;
   asio_ns::steady_timer _deadline;
@@ -385,7 +382,6 @@ class HttpSession final
 
   message::Buffer _dechunk{kReadBlock, kWireChunkMax};
   message::Buffer _decoded{kReadBlock, kWireChunkMax};
-  irs::MemoryCharge _body_charge;
 
   std::atomic<ReadPhase> _read_phase{ReadPhase::Idle};
   std::chrono::steady_clock::time_point _last_read;
@@ -593,16 +589,6 @@ yaclib::Task<bool> HttpSession<Kind>::ReadBody(HttpRequest& request,
 }
 
 template<SocketKind Kind>
-bool HttpSession<Kind>::ChargeBody(const HttpRequest& request) {
-  try {
-    _body_charge.Resize(http::BodyBytes(request.body));
-    return true;
-  } catch (const duckdb::OutOfMemoryException&) {
-    return false;
-  }
-}
-
-template<SocketKind Kind>
 auto HttpSession<Kind>::DecodeRequestBody(HttpRequest& request)
   -> BodyDecoding {
   const auto field = request.Header(HttpHeader::ContentEncoding);
@@ -625,10 +611,7 @@ auto HttpSession<Kind>::DecodeRequestBody(HttpRequest& request)
       _codec.MaxBodyBytes());
     out.Commit(false);
     request.body = _decoded.Written();
-    _body_charge.Resize(_body_charge.Bytes() + http::BodyBytes(request.body));
     return {};
-  } catch (const duckdb::OutOfMemoryException&) {
-    return {http::HttpStatus::ServiceUnavailable, "out_of_memory"};
   } catch (const irs::SqlException& error) {
     switch (error.error().errcode) {
       case ERRCODE_PROGRAM_LIMIT_EXCEEDED:
@@ -753,8 +736,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           writer.Fixed(auth.status, http::kJsonContentType,
                        R"({"error":"unauthorized"})",
                        "WWW-Authenticate: Basic realm=\"serenedb\"\r\n");
-        } else if (!ChargeBody(request)) {
-          writer.Error(http::HttpStatus::ServiceUnavailable, "out_of_memory");
         } else if (const auto decoding = DecodeRequestBody(request);
                    decoding.status != http::HttpStatus::None) {
           writer.Error(decoding.status, decoding.error);
@@ -764,11 +745,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
           try {
             co_await handler->Handle(*this, request, writer);
-          } catch (const duckdb::OutOfMemoryException&) {
-            if (!writer.HeadWritten()) {
-              writer.Error(http::HttpStatus::ServiceUnavailable,
-                           "out_of_memory");
-            }
           } catch (const std::exception& e) {
             SDB_ERROR(HTTP, "request handler failed: ",
                       duckdb::ErrorData{e}.RawMessage());
@@ -804,7 +780,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       if (pinned_body != 0) {
         _recv.Consume(pinned_body);
       }
-      _body_charge.Resize(0);
       if (!keep_alive || SendBroken()) {
         break;
       }

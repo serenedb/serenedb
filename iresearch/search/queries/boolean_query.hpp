@@ -41,11 +41,11 @@ struct TermReader;
 
 class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
  public:
-  using Filters = std::vector<QueryBuilder::ptr>;
+  using Filters = TrackedVector<QueryBuilder::ptr>;
 
   struct PreparedBucket {
     TrackedVector<detail::PostingClause> postings;
-    std::vector<detail::AllDocsClause> all_docs;
+    TrackedVector<detail::AllDocsClause> all_docs;
     Filters filters;
     detail::Terms uniformity = detail::Terms::Mixed;
 

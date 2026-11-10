@@ -21,7 +21,6 @@
 #pragma once
 
 #include <cstdint>
-#include <iresearch/utils/tracked.hpp>
 #include <string>
 #include <string_view>
 
@@ -79,9 +78,6 @@ std::string SqlIdentifier(std::string_view name);
 // Flattens a request-body view (chunks pinned in the recv channel) into one
 // string for parsers that need contiguous bytes (simdjson padded input).
 // `padding` zero bytes follow the body in the returned string.
-irs::TrackedString FlattenBody(const message::SequenceView& body,
-                               size_t padding = 0);
-
-size_t BodyBytes(const message::SequenceView& body);
+std::string FlattenBody(const message::SequenceView& body, size_t padding = 0);
 
 }  // namespace sdb::network::http

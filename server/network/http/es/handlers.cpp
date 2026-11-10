@@ -30,7 +30,6 @@
 #include <chrono>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/query_result.hpp>
-#include <iresearch/utils/tracked.hpp>
 #include <memory>
 #include <optional>
 #include <yaclib/async/make.hpp>
@@ -801,7 +800,6 @@ class SearchHandler final : public HttpHandler {
 
     // Fetch _source for just this page, by PK -- point lookups, not a scan.
     irs::containers::FlatHashMap<std::string, std::string> source_by_id;
-    irs::MemoryCharge source_charge;
     if (spec.include_source && rows > 0) {
       std::string ids;
       for (duckdb::idx_t row = 0; row < rows; ++row) {
@@ -820,10 +818,8 @@ class SearchHandler final : public HttpHandler {
       const auto sources = source_result->Collection().GetRows();
       source_by_id.reserve(sources.size());
       for (duckdb::idx_t row = 0; row < sources.size(); ++row) {
-        auto id = sources.GetValue(0, row).GetValue<std::string>();
-        auto source = sources.GetValue(1, row).GetValue<std::string>();
-        source_charge.Resize(source_charge.Bytes() + id.size() + source.size());
-        source_by_id.emplace(std::move(id), std::move(source));
+        source_by_id.emplace(sources.GetValue(0, row).GetValue<std::string>(),
+                             sources.GetValue(1, row).GetValue<std::string>());
       }
     }
 
@@ -1020,7 +1016,8 @@ class ScrollHandler final : public HttpHandler {
   }
 
  private:
-  static bool ParseScrollIdBody(std::string_view body, std::string& scroll_id) {
+  static bool ParseScrollIdBody(const std::string& body,
+                                std::string& scroll_id) {
     if (body.empty()) {
       return false;
     }
@@ -1360,7 +1357,8 @@ class MgetHandler final : public HttpHandler {
   }
 
  private:
-  static bool ParseMgetIds(std::string_view body, std::vector<std::string>& ids,
+  static bool ParseMgetIds(const std::string& body,
+                           std::vector<std::string>& ids,
                            http::HttpResponseWriter& writer) {
     try {
       simdjson::padded_string padded{body};

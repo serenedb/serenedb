@@ -27,6 +27,7 @@
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/huge_page_allocator.hpp>
 #include <iresearch/utils/tracked.hpp>
 
@@ -75,6 +76,15 @@ TEST(TrackedTest, ObjectChargesItsSize) {
   auto object = std::make_unique<Object>();
   EXPECT_EQ(base + sizeof(Object), TrackedMemory());
   object.reset();
+  EXPECT_EQ(base, TrackedMemory());
+}
+
+TEST(TrackedTest, QueryChargesItsSize) {
+  const auto base = TrackedMemory();
+  irs::QueryBuilder::ptr query =
+    irs::memory::make_managed<irs::AllQuery>(irs::SubReader::empty(), 1.f);
+  EXPECT_EQ(base + sizeof(irs::memory::OnHeap<irs::AllQuery>), TrackedMemory());
+  query.reset();
   EXPECT_EQ(base, TrackedMemory());
 }
 

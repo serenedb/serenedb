@@ -38,6 +38,7 @@
 #include <functional>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/numeric.hpp>
+#include <iresearch/formats/column/codecs/numeric_kernels.hpp>
 #include <iresearch/formats/column/codecs/numeric_layout.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -1371,6 +1372,45 @@ TEST(ColNumericCodesTest, EstimateFollowsWhatTheEncoderWrote) {
     EXPECT_LE(estimate, bytes);
     EXPECT_GE(estimate + 1, bytes);
   }
+}
+
+TEST(ColNumericKernelsTest, PrefixSumOfEveryWidthAndLength) {
+  static constexpr uint8_t kWidths[] = {1, 2, 4, 8};
+  const auto check = []<typename U>() {
+    for (const auto stored : kWidths) {
+      if (stored > sizeof(U)) {
+        continue;
+      }
+      for (size_t n = 0; n <= 37; ++n) {
+        SCOPED_TRACE(testing::Message()
+                     << sizeof(U) << " " << int{stored} << " " << n);
+        std::vector<uint8_t> in(n * stored);
+        for (size_t i = 0; i != in.size(); ++i) {
+          in[i] = static_cast<uint8_t>(Mix(i + n * 131 + stored));
+        }
+        const auto acc = static_cast<U>(Mix(n));
+        const auto offset = static_cast<U>(~U{0} - stored);
+        std::vector<U> out(n + 1, U{0x5a});
+        const auto last = irs::codecs::numeric::WidenPrefixSum<true>(
+          in.data(), n, stored, acc, offset, out.data());
+        U expected = acc;
+        for (size_t i = 0; i != n; ++i) {
+          U value = 0;
+          std::memcpy(&value, in.data() + i * stored, stored);
+          expected = static_cast<U>(expected + static_cast<U>(value + offset));
+          ASSERT_EQ(out[i], expected) << i;
+        }
+        EXPECT_EQ(last, expected);
+        EXPECT_EQ(out[n], U{0x5a});
+        EXPECT_EQ(
+          irs::codecs::numeric::WidenPrefixSum<false>(
+            in.data(), n, stored, acc, offset, static_cast<U*>(nullptr)),
+          expected);
+      }
+    }
+  };
+  check.template operator()<uint64_t>();
+  check.template operator()<uint32_t>();
 }
 
 }  // namespace

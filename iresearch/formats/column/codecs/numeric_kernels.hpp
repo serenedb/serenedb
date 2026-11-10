@@ -22,6 +22,10 @@
 
 #include <emmintrin.h>
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -202,10 +206,53 @@ void WidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
                 [&]<typename S> { WidenAddAs<U, S>(in, n, base, out); });
 }
 
+#ifdef __AVX2__
+template<typename S>
+__m256i WidenLanes(const uint8_t* in) noexcept {
+  if constexpr (sizeof(S) == 8) {
+    return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(in));
+  } else if constexpr (sizeof(S) == 4) {
+    return _mm256_cvtepu32_epi64(
+      _mm_loadu_si128(reinterpret_cast<const __m128i*>(in)));
+  } else if constexpr (sizeof(S) == 2) {
+    return _mm256_cvtepu16_epi64(
+      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(in)));
+  } else {
+    return _mm256_cvtepu8_epi64(_mm_cvtsi32_si128(duckdb::Load<int32_t>(in)));
+  }
+}
+
+template<typename S>
+size_t WidenPrefixSumLanes(const uint8_t* in, size_t n, uint64_t& acc,
+                           uint64_t offset, uint64_t* out) noexcept {
+  const auto off = _mm256_set1_epi64x(static_cast<int64_t>(offset));
+  auto carry = _mm256_set1_epi64x(static_cast<int64_t>(acc));
+  size_t i = 0;
+  for (; i + 4 <= n; i += 4) {
+    auto x = _mm256_add_epi64(WidenLanes<S>(in + i * sizeof(S)), off);
+    x = _mm256_add_epi64(x, _mm256_slli_si256(x, 8));
+    x =
+      _mm256_add_epi64(x, _mm256_blend_epi32(_mm256_permute4x64_epi64(x, 0x55),
+                                             _mm256_setzero_si256(), 0x0F));
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + i),
+                        _mm256_add_epi64(x, carry));
+    carry = _mm256_add_epi64(carry, _mm256_permute4x64_epi64(x, 0xFF));
+  }
+  acc = static_cast<uint64_t>(_mm256_extract_epi64(carry, 0));
+  return i;
+}
+#endif
+
 template<typename U, typename S, bool kWrite>
 U WidenPrefixSumAs(const uint8_t* in, size_t n, U acc, U offset,
                    U* out) noexcept {
-  for (size_t i = 0; i < n; ++i) {
+  size_t i = 0;
+#ifdef __AVX2__
+  if constexpr (kWrite && sizeof(U) == sizeof(uint64_t)) {
+    i = WidenPrefixSumLanes<S>(in, n, acc, offset, out);
+  }
+#endif
+  for (; i < n; ++i) {
     const auto s = duckdb::Load<S>(in + i * sizeof(S));
     acc = static_cast<U>(acc + static_cast<U>(static_cast<U>(s) + offset));
     if constexpr (kWrite) {

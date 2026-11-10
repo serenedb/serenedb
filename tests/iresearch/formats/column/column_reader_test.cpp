@@ -374,6 +374,196 @@ TEST_F(ColumnReaderTest, InMemoryColumnsAreNotCopied) {
                  .CopyableFrom(*hot));
 }
 
+TEST_F(ColumnReaderTest, CopiedRowsReadBackLikeTheirSource) {
+  constexpr uint32_t kRgSize = 4096;
+  constexpr uint64_t kRows = 10000;
+  struct Case {
+    irs::field_id id;
+    duckdb::LogicalType type;
+    duckdb::CompressionType compression;
+    std::function<duckdb::Value(uint64_t)> value_of;
+  };
+  const std::vector<Case> cases = {
+    {.id = 1,
+     .type = duckdb::LogicalType::BIGINT,
+     .compression = duckdb::CompressionType::COMPRESSION_AUTO,
+     .value_of =
+       [](uint64_t g) {
+         return g % 7 == 0 ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                           : duckdb::Value::BIGINT(static_cast<int64_t>(g * 3));
+       }},
+    {.id = 2,
+     .type = duckdb::LogicalType::VARCHAR,
+     .compression = duckdb::CompressionType::COMPRESSION_AUTO,
+     .value_of =
+       [](uint64_t g) {
+         return g % 5 == 0
+                  ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                  : duckdb::Value{absl::StrCat("copied_value_", g % 37)};
+       }},
+    {.id = 3,
+     .type = duckdb::LogicalType::VARCHAR,
+     .compression = duckdb::CompressionType::COMPRESSION_ZSTD,
+     .value_of =
+       [](uint64_t g) {
+         return g % 3 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                           : duckdb::Value{absl::StrCat("zstd_value_", g)};
+       }},
+  };
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "src", Db()};
+    for (const auto& c : cases) {
+      auto& cw = w.OpenColumn(c.id, c.type, /*skip_validity=*/false, kRgSize,
+                              c.compression);
+      for (uint64_t pos = 0; pos < kRows;) {
+        const auto take =
+          std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector v{c.type, STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t k = 0; k < take; ++k) {
+          v.SetValue(k, c.value_of(pos + k));
+        }
+        duckdb::FlatVector::SetSize(v, take);
+        cw.Append(v, take);
+        pos += take;
+      }
+    }
+    w.Commit(0);
+  }
+  irs::ColReader src{dir, "src", Db(), irs::IOAdvice::SEQUENTIAL};
+
+  struct Run {
+    uint64_t first;
+    uint64_t count;
+  };
+  const std::vector<Run> runs = {
+    {.first = 0, .count = kRgSize},
+    {.first = kRgSize + 100, .count = kRgSize - 100},
+    {.first = 2 * kRgSize, .count = kRows - 2 * kRgSize},
+    {.first = 50, .count = 10},
+  };
+  std::vector<uint64_t> rows;
+  for (const auto& run : runs) {
+    for (uint64_t row = run.first; row < run.first + run.count; ++row) {
+      rows.push_back(row);
+    }
+  }
+  {
+    irs::ColWriter w{dir, "dst", Db()};
+    for (const auto& c : cases) {
+      auto& cw = w.OpenColumn(c.id, c.type, /*skip_validity=*/false, kRgSize,
+                              c.compression);
+      irs::ReadContext context{src};
+      uint64_t row = 0;
+      for (const auto& run : runs) {
+        cw.CopyRows(row, *src.Column(c.id), context, run.first, run.count);
+        row += run.count;
+      }
+    }
+    w.Commit(0);
+  }
+  irs::ColReader dst{dir, "dst", Db(), irs::IOAdvice::SEQUENTIAL};
+
+  for (const auto& c : cases) {
+    const auto* column = dst.Column(c.id);
+    ASSERT_NE(nullptr, column);
+    ASSERT_EQ(rows.size(), column->RowCount());
+    auto state = column->InitScan(dst.Ctx());
+    for (uint64_t pos = 0; pos < rows.size();) {
+      const auto take =
+        std::min<duckdb::idx_t>(rows.size() - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector batch{c.type, STANDARD_VECTOR_SIZE};
+      column->Scan(state, batch, take);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto expected = c.value_of(rows[pos + k]);
+        EXPECT_TRUE(duckdb::Value::NotDistinctFrom(expected, batch.GetValue(k)))
+          << "column " << c.id << " row " << pos + k << ": "
+          << expected.ToString() << " != " << batch.GetValue(k).ToString();
+      }
+      pos += take;
+    }
+  }
+
+  const auto source = src.Column(1)->DataBlocks();
+  const auto copied = dst.Column(1)->DataBlocks();
+  ASSERT_EQ(4, copied.size());
+  for (const size_t block : {0, 2}) {
+    EXPECT_EQ(source[block].tuple_count, copied[block].tuple_count);
+    EXPECT_EQ(source[block].byte_size, copied[block].byte_size);
+    EXPECT_EQ(source[block].codec, copied[block].codec);
+  }
+}
+
+TEST_F(ColumnReaderTest, CopiesOnlyBlocksInTheForcedCodec) {
+  constexpr uint32_t kRgSize = 4096;
+  constexpr uint64_t kRows = 3 * kRgSize;
+  constexpr irs::field_id kId = 1;
+  const auto value_of = [](uint64_t g) {
+    return g % 5 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                      : duckdb::Value{absl::StrCat("forced_value_", g % 37)};
+  };
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "src", Db()};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::VARCHAR,
+                            /*skip_validity=*/false, kRgSize);
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        v.SetValue(k, value_of(pos + k));
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+  irs::ColReader src{dir, "src", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto& source = *src.Column(kId);
+  ASSERT_TRUE(absl::c_none_of(source.DataBlocks(), [](const auto& block) {
+    return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;
+  }));
+
+  {
+    irs::ColWriter w{dir, "probe", Db()};
+    EXPECT_TRUE(w.OpenColumn(kId, duckdb::LogicalType::VARCHAR,
+                             /*skip_validity=*/false, kRgSize)
+                  .CopyableFrom(source));
+  }
+  {
+    irs::ColWriter w{dir, "dst", Db()};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::VARCHAR,
+                            /*skip_validity=*/false, kRgSize,
+                            duckdb::CompressionType::COMPRESSION_ZSTD);
+    EXPECT_FALSE(cw.CopyableFrom(source));
+    irs::ReadContext context{src};
+    cw.CopyRows(0, source, context, 0, kRows);
+    w.Commit(0);
+  }
+  irs::ColReader dst{dir, "dst", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* column = dst.Column(kId);
+  ASSERT_NE(nullptr, column);
+  ASSERT_EQ(kRows, column->RowCount());
+  for (const auto& block : column->DataBlocks()) {
+    EXPECT_EQ(duckdb::CompressionType::COMPRESSION_ZSTD, block.codec->type);
+  }
+  auto state = column->InitScan(dst.Ctx());
+  for (uint64_t pos = 0; pos < kRows;) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector batch{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    column->Scan(state, batch, take);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      EXPECT_TRUE(
+        duckdb::Value::NotDistinctFrom(value_of(pos + k), batch.GetValue(k)))
+        << "row " << pos + k;
+    }
+    pos += take;
+  }
+}
+
 struct HotLayout {
   std::vector<duckdb::idx_t> chunks;
   uint64_t rows;

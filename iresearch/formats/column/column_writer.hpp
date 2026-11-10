@@ -86,8 +86,10 @@ class ColumnWriter final {
 
   void PadNullsTo(uint64_t target_row);
 
-  bool CopyableFrom(const ColumnReader& column) const noexcept;
+  bool CopyableFrom(const ColumnReader& column) const;
   void CopyBlocks(const ColumnReader& column, ReadContext& source);
+  void CopyRows(uint64_t start_row, const ColumnReader& column,
+                ReadContext& source, uint64_t first, uint64_t count);
 
   std::vector<WriteChunk> Snapshot(uint64_t rows) const;
   size_t StagedBytes() const noexcept;
@@ -104,6 +106,19 @@ class ColumnWriter final {
   void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
   void PadNestedNulls(uint64_t count);
   WriteChunk& OpenChunk();
+
+  bool LayoutMatches(const ColumnReader& column) const noexcept;
+  duckdb::CompressionType ForcedCodec() const;
+  bool ValidityCopyable(const ColumnReader& column, uint64_t first,
+                        uint64_t end) const noexcept;
+  void CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
+                 std::vector<ColumnBlockMeta>& sink,
+                 std::vector<byte_type>& buffer);
+  void CopyValidity(const ColumnReader& column, ReadContext& source,
+                    uint64_t first, uint64_t end,
+                    std::vector<byte_type>& buffer);
+  void DecodeRows(const ColumnReader& column, ReadContext& source,
+                  uint64_t first, uint64_t count);
 
   void SealRowGroup();
 

@@ -309,6 +309,12 @@ class IndexWriter : private util::Noncopyable {
 
     std::shared_ptr<const SegmentReaderImpl> SealPiece(uint64_t id);
 
+    void CopyRows(const ColReader& source, std::span<const field_id> columns,
+                  uint64_t first, uint64_t count) {
+      SDB_ASSERT(_active.Segment());
+      _active.Segment()->writer->CopyRows(source, columns, first, count);
+    }
+
     void Abort() noexcept;
 
     void Flush() {

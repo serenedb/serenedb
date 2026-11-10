@@ -43,6 +43,8 @@ struct KeyRead {
   duckdb::LogicalType type;
 };
 
+void CollectReads(const duckdb::Expression& expr, std::vector<KeyRead>& reads);
+
 class ConstraintKeyEncoder {
  public:
   ConstraintKeyEncoder(duckdb::ClientContext& context, duckdb::idx_t table_id,

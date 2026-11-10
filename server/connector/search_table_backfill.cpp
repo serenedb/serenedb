@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
 #include <duckdb/common/allocator.hpp>
@@ -33,6 +34,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
@@ -46,6 +49,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -54,7 +58,9 @@
 #include <vector>
 
 #include "catalog/transaction.h"
+#include "connector/constraint_keys.h"
 #include "connector/full_scanner.h"
+#include "connector/index_expression.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
@@ -72,38 +78,118 @@ struct RowSource {
   duckdb::SelectionVector live{STANDARD_VECTOR_SIZE +
                                irs::doc_limits::kDocsSlack};
   std::vector<ColumnId> write_ids;
+  std::vector<irs::field_id> copied;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   std::optional<duckdb::ExpressionExecutor> executor;
   duckdb::DataChunk added;
   duckdb::DataChunk written;
 };
 
+struct ColumnPlan {
+  absl::flat_hash_set<ColumnId> scanned;
+  absl::flat_hash_set<ColumnId> copied;
+};
+
+ColumnPlan PlanColumns(const SearchSinkInsertBaseImpl& sink,
+                       const irs::IndexFieldOptions& options,
+                       const SearchBackfillTarget& target) {
+  ColumnPlan plan;
+  for (const auto column : target.column_ids) {
+    if (!options.AnnFields(column).empty() ||
+        options.GetColumnOptions(column).distinct != irs::DistinctStats::None) {
+      plan.scanned.insert(column);
+      continue;
+    }
+    plan.copied.insert(column);
+    if (!sink.TermFieldsForColumn(column).empty()) {
+      plan.scanned.insert(column);
+    }
+  }
+  std::vector<KeyRead> expression_reads;
+  for (const auto& expression : sink.IndexedExpressions()) {
+    CollectReads(*expression.normalized_expr, expression_reads);
+  }
+  for (const auto& key : sink.ConstraintKeys()) {
+    plan.scanned.insert(key.Key().columns.begin(), key.Key().columns.end());
+    absl::c_move(key.ExpressionReads(), std::back_inserter(expression_reads));
+  }
+  for (const auto& read : expression_reads) {
+    plan.scanned.insert(read.column);
+  }
+  for (const auto& expression : target.added) {
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundReferenceExpression>(
+      *expression, [&](const duckdb::BoundReferenceExpression& reference) {
+        plan.scanned.insert(target.column_ids[reference.Index()]);
+      });
+  }
+  return plan;
+}
+
 // In place: RowSource owns a DataChunk and a selection vector, neither
 // copyable.
 void InitRowSource(duckdb::ClientContext& context,
-                   const SearchBackfillTarget& target, RowSource& source) {
-  source.projections.reserve(target.column_ids.size());
+                   const SearchBackfillTarget& target, RowSource& source,
+                   const ColumnPlan* plan = nullptr) {
+  duckdb::vector<duckdb::LogicalType> types;
+  std::vector<duckdb::idx_t> slots(target.column_ids.size(),
+                                   duckdb::DConstants::INVALID_INDEX);
   for (size_t i = 0; i < target.column_ids.size(); ++i) {
+    const auto column = target.column_ids[i];
+    if (plan && plan->copied.contains(column)) {
+      source.copied.push_back(column);
+    }
+    if (plan && !plan->scanned.contains(column)) {
+      continue;
+    }
+    slots[i] = types.size();
     source.projections.emplace_back(irs::ColumnstoreProjection{
-      .output_slot = i, .column_id = target.column_ids[i]});
+      .output_slot = types.size(), .column_id = column});
+    source.write_ids.push_back(column);
+    types.push_back(target.column_types[i]);
   }
   auto& allocator = duckdb::Allocator::Get(context);
-  source.chunk.Initialize(allocator, target.column_types);
-  source.write_ids = target.column_ids;
+  source.chunk.Initialize(allocator, types);
   if (target.added.empty()) {
     return;
   }
   source.write_ids.insert(source.write_ids.end(), target.added_ids.begin(),
                           target.added_ids.end());
   source.executor.emplace(context);
-  auto types = target.column_types;
   duckdb::vector<duckdb::LogicalType> added_types;
-  for (const auto& expression : target.added) {
+  for (const auto& added : target.added) {
+    auto& expression = source.expressions.emplace_back(added->Copy());
+    duckdb::ExpressionIterator::VisitExpressionMutable<
+      duckdb::BoundReferenceExpression>(
+      expression, [&](duckdb::BoundReferenceExpression& reference, auto&) {
+        SDB_ASSERT(slots[reference.Index()] !=
+                   duckdb::DConstants::INVALID_INDEX);
+        reference.IndexMutable() = slots[reference.Index()];
+      });
     source.executor->AddExpression(*expression);
     added_types.push_back(expression->GetReturnType());
     types.push_back(expression->GetReturnType());
   }
   source.added.Initialize(allocator, added_types);
   source.written.InitializeEmpty(types);
+}
+
+void CopyLiveRows(irs::IndexWriter::Transaction& trx,
+                  const irs::ColReader& from,
+                  std::span<const irs::field_id> columns, uint64_t row,
+                  uint64_t count, std::span<const duckdb::sel_t> live) {
+  if (live.empty()) {
+    trx.CopyRows(from, columns, row, count);
+    return;
+  }
+  for (size_t i = 0; i < live.size();) {
+    auto j = i + 1;
+    while (j < live.size() && live[j] == live[j - 1] + 1) {
+      ++j;
+    }
+    trx.CopyRows(from, columns, row + live[i], j - i);
+    i = j;
+  }
 }
 
 duckdb::DataChunk& Rewritten(RowSource& source, duckdb::DataChunk& chunk) {
@@ -129,16 +215,24 @@ duckdb::DataChunk& Rewritten(RowSource& source, duckdb::DataChunk& chunk) {
 uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      uint64_t begin, uint64_t end, RowSource& source,
                      SearchSinkInsertBaseImpl& sink,
-                     const SearchBackfillTarget& target) {
+                     const SearchBackfillTarget& target,
+                     irs::IndexWriter::Transaction* trx = nullptr) {
   uint64_t fed = 0;
-  ScanLiveRows(
-    context, sub, begin, end, source.projections, source.filter_states,
-    source.live, source.chunk, [&](duckdb::DataChunk& chunk) {
-      WriteChunkToSearchSink(sink, Rewritten(source, chunk), source.write_ids,
-                             target.table_id, context);
-      fed += chunk.size();
-      return true;
-    });
+  ScanLiveRows(context, sub, begin, end, source.projections,
+               source.filter_states, source.live, source.chunk,
+               [&](duckdb::DataChunk& chunk, uint64_t row,
+                   std::span<const duckdb::sel_t> live) {
+                 WriteChunkToSearchSink(sink, Rewritten(source, chunk),
+                                        source.write_ids, target.table_id,
+                                        context, source.copied);
+                 if (!source.copied.empty()) {
+                   SDB_ASSERT(trx);
+                   CopyLiveRows(*trx, *sub.GetColReader(), source.copied, row,
+                                chunk.size(), live);
+                 }
+                 fed += chunk.size();
+                 return true;
+               });
   return fed;
 }
 
@@ -249,7 +343,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       const auto& piece = slice.pieces[next++];
       const auto fed =
         FeedSegment(context, *piece.segment, piece.begin, piece.end,
-                    slice.source, *slice.sink, target);
+                    slice.source, *slice.sink, target, &slice.trx);
       if (progress) {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
@@ -292,6 +386,7 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   // InitRowSource takes the context allocator.
   std::vector<std::unique_ptr<Slice>> slices;
   slices.reserve(slice_count);
+  std::optional<ColumnPlan> plan;
   for (size_t k = 0; k < slice_count; ++k) {
     auto slice = std::make_unique<Slice>();
     slice->pieces = std::move(assignment[k]);
@@ -300,7 +395,10 @@ std::shared_ptr<const search::TableState> RebuildGroup(
     slice->trx = shard.GetTransaction(/*exclusive_segment=*/true);
     slice->sink =
       MakeSearchTableInsertSink(slice->trx, shard, *target.catalog, context);
-    InitRowSource(context, target, slice->source);
+    if (!plan) {
+      plan = PlanColumns(*slice->sink, *shard.Config(), target);
+    }
+    InitRowSource(context, target, slice->source, &*plan);
     slices.push_back(std::move(slice));
   }
 

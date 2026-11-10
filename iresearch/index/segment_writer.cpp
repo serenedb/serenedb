@@ -23,6 +23,8 @@
 
 #include "iresearch/index/segment_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/storage/buffer_manager.hpp>
 
 #include "index_meta.hpp"
@@ -134,6 +136,7 @@ void SegmentWriter::flush(IndexSegment& segment,
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
+    CopyColumns();
     _col_writer->Commit(buffered_docs());
     if (_ann_env != nullptr) {
       GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
@@ -172,9 +175,53 @@ void SegmentWriter::flush(IndexSegment& segment,
   meta.files = _dir.FlushTracked(meta.byte_size);
 }
 
+void SegmentWriter::CopyRows(const ColReader& source,
+                             std::span<const field_id> columns, uint64_t first,
+                             uint64_t count) {
+  SDB_ASSERT(_copied_rows.empty() || absl::c_equal(_copied_columns, columns));
+  if (_copied_rows.empty()) {
+    _copied_columns.assign(columns.begin(), columns.end());
+  } else if (auto& last = _copied_rows.back();
+             last.source == &source && last.first + last.count == first) {
+    last.count += count;
+    return;
+  }
+  _copied_rows.push_back({.source = &source, .first = first, .count = count});
+}
+
+void SegmentWriter::CopyColumns() {
+  if (_copied_rows.empty()) {
+    return;
+  }
+  SDB_ASSERT(absl::c_accumulate(_copied_rows, uint64_t{0},
+                                [](uint64_t rows, const CopiedRows& run) {
+                                  return rows + run.count;
+                                }) == buffered_docs());
+  for (const auto id : _copied_columns) {
+    ColumnWriter* writer = nullptr;
+    uint64_t row = 0;
+    for (const auto& run : _copied_rows) {
+      const auto* column = run.source->Column(id);
+      if (column && run.first < column->RowCount()) {
+        if (!writer) {
+          writer = &_col_writer->OpenColumn(id, column->Type());
+        }
+        ReadContext context{*run.source};
+        writer->CopyRows(row, *column, context, run.first,
+                         std::min(run.count, column->RowCount() - run.first));
+      }
+      row += run.count;
+    }
+    if (writer) {
+      writer->PadNullsTo(row);
+    }
+  }
+}
+
 std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   const auto docs = buffered_docs();
   SDB_ASSERT(docs != 0);
+  SDB_ASSERT(_copied_rows.empty());
   std::vector<std::unique_ptr<ColumnReader>> columns;
   std::vector<NormColumnSpec> norms;
   size_t column_bytes = 0;
@@ -246,6 +293,8 @@ void SegmentWriter::ResetState() noexcept {
     _col_writer->Rollback();
     _col_writer.reset();
   }
+  _copied_columns.clear();
+  _copied_rows.clear();
   _dir.RemoveTracked();
 }
 

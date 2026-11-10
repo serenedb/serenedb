@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/col_writer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
@@ -225,6 +226,12 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   auto& back = *_ann_writers.emplace_back(std::move(entry));
   _ann_by_id.emplace(back.info.index_id, &back);
   return *back.writer;
+}
+
+bool ColWriter::HasAnn(field_id column_id) const noexcept {
+  return absl::c_any_of(_ann_writers, [&](const auto& entry) {
+    return entry->column_id == column_id;
+  });
 }
 
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {

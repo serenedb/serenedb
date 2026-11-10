@@ -183,7 +183,9 @@ void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
                   std::span<const irs::ColumnstoreProjection> projections,
                   irs::ColFilterStateCache& filter_states,
                   duckdb::SelectionVector& live, duckdb::DataChunk& chunk,
-                  absl::FunctionRef<bool(duckdb::DataChunk&)> visit) {
+                  absl::FunctionRef<bool(duckdb::DataChunk&, uint64_t,
+                                         std::span<const duckdb::sel_t>)>
+                    visit) {
   const auto* col_reader = segment.GetColReader();
   SDB_ENSURE(col_reader, "table segment has no columnstore");
   SDB_ASSERT(begin <= end && end <= segment.Meta().docs_count);
@@ -196,6 +198,7 @@ void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
     const auto produced = scanner.Scan(row, take, chunk);
     SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");
     chunk.SetChildCardinality(produced);
+    std::span<const duckdb::sel_t> kept;
     if (has_mask) {
       const duckdb::idx_t keep =
         mask.FillLive(static_cast<irs::doc_id_t>(row + irs::doc_limits::min()),
@@ -205,9 +208,10 @@ void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
       }
       if (keep != produced) {
         chunk.Slice(live, keep);
+        kept = {live.data(), keep};
       }
     }
-    if (!visit(chunk)) {
+    if (!visit(chunk, row, kept)) {
       return;
     }
   }

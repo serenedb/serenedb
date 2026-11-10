@@ -42,21 +42,6 @@ namespace {
 const duckdb::OrderModifiers kKeyOrder{duckdb::OrderType::ASCENDING,
                                        duckdb::OrderByNullType::NULLS_LAST};
 
-void CollectReads(const duckdb::Expression& expr, std::vector<KeyRead>& reads) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    const auto& ref = expr.Cast<duckdb::BoundColumnRefExpression>();
-    const auto column =
-      static_cast<ColumnId>(ref.Binding().column_index.GetIndex());
-    if (absl::c_none_of(
-          reads, [&](const KeyRead& read) { return read.column == column; })) {
-      reads.push_back({.column = column, .type = ref.GetReturnType()});
-    }
-    return;
-  }
-  duckdb::ExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::Expression& child) { CollectReads(child, reads); });
-}
-
 duckdb::vector<duckdb::Value> DecodeKey(
   std::string_view key, std::span<const duckdb::LogicalType> types) {
   duckdb::DataChunk chunk;
@@ -76,6 +61,21 @@ duckdb::vector<duckdb::Value> DecodeKey(
 }
 
 }  // namespace
+
+void CollectReads(const duckdb::Expression& expr, std::vector<KeyRead>& reads) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    const auto& ref = expr.Cast<duckdb::BoundColumnRefExpression>();
+    const auto column =
+      static_cast<ColumnId>(ref.Binding().column_index.GetIndex());
+    if (absl::c_none_of(
+          reads, [&](const KeyRead& read) { return read.column == column; })) {
+      reads.push_back({.column = column, .type = ref.GetReturnType()});
+    }
+    return;
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) { CollectReads(child, reads); });
+}
 
 ConstraintKeyEncoder::ConstraintKeyEncoder(duckdb::ClientContext& context,
                                            duckdb::idx_t table_id,

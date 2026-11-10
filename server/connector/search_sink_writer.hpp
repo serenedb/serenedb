@@ -366,6 +366,7 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
                             duckdb::idx_t table_id,
-                            duckdb::ClientContext& context);
+                            duckdb::ClientContext& context,
+                            std::span<const ColumnId> copied = {});
 
 }  // namespace sdb::connector

@@ -1072,13 +1072,16 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
                             duckdb::idx_t table_id,
-                            duckdb::ClientContext& context) {
+                            duckdb::ClientContext& context,
+                            std::span<const ColumnId> copied) {
   const auto num_rows = chunk.size();
   sink.InitImpl(num_rows);
   for (size_t col = 0; col < column_ids.size(); ++col) {
     const auto& vec = chunk.data[col];
     const auto& type = vec.GetType();
-    sink.AppendToColumn(column_ids[col], type, vec, num_rows);
+    if (!absl::c_linear_search(copied, column_ids[col])) {
+      sink.AppendToColumn(column_ids[col], type, vec, num_rows);
+    }
     for (const auto term_field : sink.TermFieldsForColumn(column_ids[col])) {
       sink.SwitchFieldImpl(term_field, type, vec, num_rows);
     }

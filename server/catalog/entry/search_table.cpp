@@ -1662,7 +1662,8 @@ void SearchTableEntry::VerifyExistingRows(
   for (const auto& segment : RowsWithOwn(context)) {
     connector::ScanLiveRows(
       context, segment, 0, segment.Meta().docs_count, projections,
-      filter_states, live_rows, chunk, [&](duckdb::DataChunk& rows) {
+      filter_states, live_rows, chunk,
+      [&](duckdb::DataChunk& rows, uint64_t, std::span<const duckdb::sel_t>) {
         context.InterruptCheck();
         VerifyExistingChunk(context, *this, constraint, rows);
         return true;

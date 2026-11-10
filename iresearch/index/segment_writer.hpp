@@ -130,6 +130,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   std::shared_ptr<const SegmentReaderImpl> SealPiece(uint64_t id);
 
+  void CopyRows(const ColReader& source, std::span<const field_id> columns,
+                uint64_t first, uint64_t count);
+
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
   bool initialized() const noexcept { return _initialized; }
@@ -264,8 +267,15 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     FieldInverter* slot;
   };
 
+  struct CopiedRows {
+    const ColReader* source;
+    uint64_t first;
+    uint64_t count;
+  };
+
   void FlushFields(FlushState& state,
                    std::span<const BasicTermReader* const> extra);
+  void CopyColumns();
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.
@@ -290,6 +300,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;
   std::unique_ptr<ColWriter> _col_writer;
+  std::vector<field_id> _copied_columns;
+  std::vector<CopiedRows> _copied_rows;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;

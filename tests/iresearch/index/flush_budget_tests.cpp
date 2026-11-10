@@ -23,10 +23,14 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <random>
 #include <span>
 #include <string>
@@ -55,6 +59,7 @@ class NoMemoryHeadroom {
 };
 
 constexpr irs::field_id kTermFieldId = tests::FieldIdFor("budget_terms");
+constexpr irs::field_id kMarkId = tests::FieldIdFor("budget_mark");
 constexpr irs::field_id kVec = tests::FieldIdFor("budget_vector");
 constexpr size_t kTermDocs = 50000;
 
@@ -67,13 +72,34 @@ void InsertDistinctTerms(irs::IndexWriter::Transaction& trx) {
   }
 }
 
-void InsertVectors(irs::IndexWriter::Transaction& trx, size_t rows,
-                   uint32_t d) {
+void Mark(const irs::IndexWriter::Document& doc, size_t i) {
+  tests::StringField mark{"budget_mark", i % 3 == 0 ? "drop" : "keep"};
+  mark.id = kMarkId;
+  ASSERT_TRUE(tests::InsertFields(doc, &mark, &mark + 1));
+}
+
+void InsertMarkedTerms(irs::IndexWriter::Transaction& trx, size_t first,
+                       size_t count) {
+  for (size_t i = first; i < first + count; ++i) {
+    const auto value = absl::StrCat("term", i);
+    tests::StringField field{"budget_terms", value, irs::IndexFeatures::Norm};
+    field.id = kTermFieldId;
+    auto doc = trx.Insert();
+    ASSERT_TRUE(tests::InsertFields(doc, &field, &field + 1));
+    Mark(doc, i);
+  }
+}
+
+void InsertVectors(irs::IndexWriter::Transaction& trx, size_t rows, uint32_t d,
+                   bool marked = false) {
   const auto type = duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, d);
   std::mt19937 rng{7};
   std::uniform_real_distribution<float> dist{-1.f, 1.f};
   for (size_t i = 0; i < rows; ++i) {
     auto doc = trx.Insert();
+    if (marked) {
+      Mark(doc, i);
+    }
     auto& cw = doc.GetColWriter()->OpenColumn(kVec, type);
     duckdb::Vector v{type, 1};
     auto& child = duckdb::ArrayVector::GetChildMutable(v);
@@ -195,29 +221,32 @@ class VectorFlushBudgetTest : public TestBase,
                               public ::testing::WithParamInterface<VectorCase> {
 };
 
+irs::AnnInfo AnnInfoOf(const VectorCase& c) {
+  return {
+    .kind = c.kind,
+    .index_id = kVec,
+    .column_id = kVec,
+    .d = static_cast<int>(c.d),
+    .metric = irs::VectorMetric::L2Sqr,
+    .quant = {.kind = c.quant,
+              .pq_m = c.quant == irs::VectorQuantization::PQ ? c.d / 4 : 0,
+              .nb_bits = c.quant == irs::VectorQuantization::TQ ||
+                             c.quant == irs::VectorQuantization::RaBitQ
+                           ? 4U
+                           : 0U},
+    .sample_factor = 0.2f,
+    .posting_size = 256,
+    .m = 8,
+    .ef_construction = 32,
+  };
+}
+
 TEST_P(VectorFlushBudgetTest, FlushRunsInsideItsReservation) {
   const auto [kind, quant, d, rows] = GetParam();
   irs::MMapDirectory dir{test_dir(), irs::DirectoryAttributes{},
                          GetResourceManager().options};
-  auto writer = irs::IndexWriter::Make(
-    dir, irs::kOmCreate,
-    WithAnn(irs::AnnInfo{
-      .kind = kind,
-      .index_id = kVec,
-      .column_id = kVec,
-      .d = static_cast<int>(d),
-      .metric = irs::VectorMetric::L2Sqr,
-      .quant = {.kind = quant,
-                .pq_m = quant == irs::VectorQuantization::PQ ? d / 4 : 0,
-                .nb_bits = quant == irs::VectorQuantization::TQ ||
-                               quant == irs::VectorQuantization::RaBitQ
-                             ? 4U
-                             : 0U},
-      .sample_factor = 0.2f,
-      .posting_size = 256,
-      .m = 8,
-      .ef_construction = 32,
-    }));
+  auto writer =
+    irs::IndexWriter::Make(dir, irs::kOmCreate, WithAnn(AnnInfoOf(GetParam())));
   auto trx = writer->GetBatch(/*exclusive_segment=*/true);
   InsertVectors(trx, rows, d);
   const auto flushed = FlushAtTheLimit(trx);
@@ -249,6 +278,129 @@ INSTANTIATE_TEST_SUITE_P(
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::None, 256, 3000},
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::SQ8, 256, 3000},
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::SQ8, 8, 40000}),
+  VectorCaseName);
+
+constexpr size_t kMergeSegments = 3;
+
+irs::FunctionFieldOptions FieldOptionsOf(const irs::IndexWriterOptions& opts) {
+  return {opts.column_options, opts.norm_column_id, opts.row_group_size,
+          opts.anns};
+}
+
+size_t MergeBudgetLeft(const irs::DirectoryReader& reader,
+                       const irs::IndexFieldOptions& field_options,
+                       bool flush) {
+  irs::MemoryDirectory out;
+  auto budget = irs::EmptyBudget();
+  {
+    irs::MergeWriter merger{out,
+                            {
+                              .db = &irs::DuckDBEngine::Instance().instance(),
+                              .field_options = &field_options,
+                            },
+                            budget};
+    merger.Reset(reader.begin(), reader.end());
+    merger.Reserve();
+    if (flush) {
+      irs::SegmentMeta meta;
+      EXPECT_TRUE(irs::GetReady(merger.Flush(meta)));
+    }
+  }
+  return budget.size;
+}
+
+void ExpectMergeInsideItsReservation(
+  irs::IndexWriter& writer, const irs::IndexFieldOptions& field_options) {
+  tests::Remove(writer, tests::Terms{kMarkId, {"drop"}});
+  ASSERT_TRUE(writer.RefreshCommit());
+  const auto reader = writer.GetSnapshot();
+  ASSERT_EQ(kMergeSegments, reader.size());
+  ASSERT_LT(reader.live_docs_count(), reader.docs_count());
+  EXPECT_EQ(MergeBudgetLeft(reader, field_options, false),
+            MergeBudgetLeft(reader, field_options, true));
+}
+
+TEST(MergeBudgetTest, TextMergeRunsInsideItsReservation) {
+  irs::MemoryDirectory dir;
+  auto opts = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
+  const auto field_options = FieldOptionsOf(opts);
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  for (size_t s = 0; s < kMergeSegments; ++s) {
+    auto trx = writer->GetBatch();
+    InsertMarkedTerms(trx, s * kTermDocs, kTermDocs);
+    ASSERT_TRUE(trx.Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+  ExpectMergeInsideItsReservation(*writer, field_options);
+}
+
+TEST(MergeBudgetTest, CompactionWithoutItsReservationFailsBeforeItStarts) {
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(
+    dir, irs::kOmCreate,
+    tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
+  for (size_t s = 0; s < kMergeSegments; ++s) {
+    auto trx = writer->GetBatch();
+    InsertMarkedTerms(trx, s * kTermDocs, kTermDocs);
+    ASSERT_TRUE(trx.Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+  const auto files = [&] {
+    std::vector<std::string> names;
+    dir.visit([&](std::string_view name) {
+      names.emplace_back(name);
+      return true;
+    });
+    absl::c_sort(names);
+    return names;
+  };
+  const auto policy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{});
+  const auto before = files();
+  {
+    NoMemoryHeadroom limit;
+    EXPECT_THROW(writer->Compact(policy), duckdb::OutOfMemoryException);
+  }
+  EXPECT_EQ(before, files());
+  EXPECT_EQ(kMergeSegments, writer->GetSnapshot().size());
+  EXPECT_EQ(kMergeSegments * kTermDocs,
+            writer->GetSnapshot().live_docs_count());
+
+  EXPECT_TRUE(writer->Compact(policy));
+  ASSERT_TRUE(writer->RefreshCommit());
+  const auto merged = writer->GetSnapshot();
+  EXPECT_EQ(1, merged.size());
+  EXPECT_EQ(kMergeSegments * kTermDocs, merged.live_docs_count());
+}
+
+class VectorMergeBudgetTest : public TestBase,
+                              public ::testing::WithParamInterface<VectorCase> {
+};
+
+TEST_P(VectorMergeBudgetTest, MergeRunsInsideItsReservation) {
+  const auto& param = GetParam();
+  irs::MMapDirectory dir{test_dir(), irs::DirectoryAttributes{},
+                         GetResourceManager().options};
+  auto opts = WithAnn(AnnInfoOf(param));
+  const auto field_options = FieldOptionsOf(opts);
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  for (size_t s = 0; s < kMergeSegments; ++s) {
+    auto trx = writer->GetBatch();
+    InsertVectors(trx, param.rows / kMergeSegments, param.d, /*marked=*/true);
+    ASSERT_TRUE(trx.Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+  ExpectMergeInsideItsReservation(*writer, field_options);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  MergeBudget, VectorMergeBudgetTest,
+  ::testing::Values(
+    VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::None, 64, 20000},
+    VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::SQ8, 64, 20000},
+    VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::PQ, 64, 20000},
+    VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::None, 64, 3000},
+    VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::SQ8, 64, 3000}),
   VectorCaseName);
 
 }  // namespace

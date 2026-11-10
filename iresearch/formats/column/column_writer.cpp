@@ -757,6 +757,12 @@ void ColumnWriter::SealRowGroup() {
   _staged_rows = 0;
 }
 
+void ColumnWriter::Finish() {
+  SealRowGroup();
+  _staged.clear();
+  _staged_caches.clear();
+}
+
 void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
   _meta.hyperloglog = std::move(hll);
   _hll_auto = false;

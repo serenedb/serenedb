@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <span>
@@ -48,14 +49,19 @@ struct AnnFlushBound {
   uint64_t terms = 0;
 };
 
+inline void Accumulate(AnnFlushBound& total,
+                       const AnnFlushBound& next) noexcept {
+  total.compute = std::max(total.compute, total.kept + next.compute);
+  total.kept += next.kept;
+  total.terms += next.terms;
+}
+
 class AnnWriter {
  public:
   virtual ~AnnWriter() = default;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
   void SetBudget(MemoryBudget& budget) noexcept { _budget = &budget; }
-
-  virtual AnnFlushBound FlushBound(uint64_t rows) const = 0;
 
   virtual AnnKind Kind() const noexcept = 0;
 

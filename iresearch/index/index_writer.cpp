@@ -1512,6 +1512,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   auto budget = EmptyBudget();
   MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options), budget};
   merger.Reset(candidates.begin(), candidates.end());
+  merger.Reserve();
 
   // We do not persist segment meta since some removals may come later
   if (!(co_await merger.Flush(compaction_segment.meta, progress, env))) {

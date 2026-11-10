@@ -46,7 +46,7 @@ class HnswWriter final : public AnnWriter {
 
   bool Empty() const noexcept final { return _graph.Empty(); }
 
-  AnnFlushBound FlushBound(uint64_t rows) const final;
+  static AnnFlushBound Bound(const AnnInfo& info, uint64_t rows);
 
   void SetMergeSources(std::span<const MergeSource> sources) noexcept final {
     _merge_sources = sources;

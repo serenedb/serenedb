@@ -240,16 +240,25 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   return out;
 }
 
+AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows) {
+  switch (info.kind) {
+#ifndef IRESEARCH_NO_VECTOR
+    case AnnKind::Ivf:
+      return IvfBuilder{info}.Bound(rows);
+    case AnnKind::Hnsw:
+      return HnswWriter::Bound(info, rows);
+#endif
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
 AnnFlushBound ColWriter::AnnBound(uint64_t rows) const {
   AnnFlushBound total;
   for (const auto& entry : _ann_writers) {
-    if (!entry->writer) {
-      continue;
+    if (entry->writer) {
+      Accumulate(total, irs::AnnBound(entry->info, rows));
     }
-    const auto bound = entry->writer->FlushBound(rows);
-    total.compute = std::max(total.compute, total.kept + bound.compute);
-    total.kept += bound.kept;
-    total.terms += bound.terms;
   }
   return total;
 }
@@ -293,7 +302,7 @@ bool ColWriter::Commit(uint64_t target_row,
     if (!progress()) {
       return false;
     }
-    cw->SealRowGroup();
+    cw->Finish();
   }
   static constexpr byte_type kMappingSlack[duckdb::Storage::SECTOR_SIZE]{};
   _out->WriteData(kMappingSlack, sizeof(kMappingSlack));

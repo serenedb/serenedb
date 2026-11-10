@@ -99,6 +99,10 @@ class MergeWriter : public util::Noncopyable {
     }
   }
 
+  size_t Bound() const;
+
+  void Reserve();
+
   // Flush all added readers into a single segment.
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
              const AnnBuildEnv* env = nullptr) -> yaclib::Future<bool>;

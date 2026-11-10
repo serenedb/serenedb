@@ -449,10 +449,6 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
   return _reader.get();
 }
 
-AnnFlushBound IvfWriter::FlushBound(uint64_t rows) const {
-  return IvfBuilder{_info}.Bound(rows);
-}
-
 IvfWriter::IvfWriter(AnnInfo info) : _info{std::move(info)} {}
 
 IvfWriter::~IvfWriter() = default;

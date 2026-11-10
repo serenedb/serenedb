@@ -49,6 +49,8 @@ namespace irs {
 class IdxWriter;
 struct AnnBuildEnv;
 
+AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows);
+
 class ColWriter final {
  public:
   ColWriter(Directory& dir, std::string_view segment_name,

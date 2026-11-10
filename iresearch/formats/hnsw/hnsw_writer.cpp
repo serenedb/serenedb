@@ -1259,11 +1259,11 @@ void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
 HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
   : _info{std::move(info)}, _bases{bases} {}
 
-AnnFlushBound HnswWriter::FlushBound(uint64_t rows) const {
-  const auto m = std::max(_info.m, 1U);
-  const auto d = static_cast<uint32_t>(_info.d);
-  const auto metric = EffectiveQuantMetric(_info.metric);
-  const bool quant = _info.quant.kind != VectorQuantization::None;
+AnnFlushBound HnswWriter::Bound(const AnnInfo& info, uint64_t rows) {
+  const auto m = std::max(info.m, 1U);
+  const auto d = static_cast<uint32_t>(info.d);
+  const auto metric = EffectiveQuantMetric(info.metric);
+  const bool quant = info.quant.kind != VectorQuantization::None;
   const uint64_t floats = sizeof(float) * rows * d;
   const auto upper = HnswUpperLevelsBound(rows, m);
   const uint64_t graph =
@@ -1271,11 +1271,11 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) const {
     sizeof(uint64_t) + m * sizeof(uint32_t) * upper +
     (rows + 1) * sizeof(uint32_t) + (rows + upper) * sizeof(uint8_t);
   const uint64_t codes = quant
-                           ? rows * QuantizerRecordSize(_info.quant, d, metric,
+                           ? rows * QuantizerRecordSize(info.quant, d, metric,
                                                         /*row_major=*/true)
                            : 0;
   const bool rotated =
-    quant ? RotatesCodes(_info, d) : RotationApplies(_info.metric, d);
+    quant ? RotatesCodes(info, d) : RotationApplies(info.metric, d);
   const uint64_t tails =
     quant && rotated ? sizeof(float) * rows * HnswCodeTails(d) : 0;
   const uint64_t norms = !quant && rotated ? sizeof(float) * rows : 0;
@@ -1284,7 +1284,7 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) const {
   uint64_t streamed = 0;
   if (quant) {
     const auto train =
-      QuantizerTrainSamples(_info.quant, d, metric, rows, /*row_major=*/true);
+      QuantizerTrainSamples(info.quant, d, metric, rows, /*row_major=*/true);
     streamed =
       2 * sizeof(float) * rows +
       sizeof(float) * std::min<uint64_t>(kHnswOriginalsWindow, rows) * d +
@@ -1297,7 +1297,7 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) const {
   const uint64_t workers =
     std::clamp<uint64_t>(rows / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers);
   const uint64_t scratch =
-    (workers + 2) * HnswScratchBound(rows, _info.ef_construction, 2 * m);
+    (workers + 2) * HnswScratchBound(rows, info.ef_construction, 2 * m);
   return {
     .compute = rows + floats + codes + tails + norms + basis + streamed +
                graph + seed + scratch,

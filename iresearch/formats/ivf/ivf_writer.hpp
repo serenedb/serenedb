@@ -140,8 +140,6 @@ class IvfWriter final : public AnnWriter {
 
   bool Empty() const noexcept final { return !_built; }
 
-  AnnFlushBound FlushBound(uint64_t rows) const final;
-
   yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
                          const AnnBuildEnv* env) final;
 

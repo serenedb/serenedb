@@ -44,8 +44,8 @@ def test_pdf_tables_in_shell(pdf):
     )
     assert result.returncode == 0, result.stderr
     assert list(csv.reader(io.StringIO(result.stdout))) == [
-        ["1", "Item", "Amount"], ["2", "Document review", "100.00"],
-        ["3", "Archive storage", "37.50"], ["4", "Total EUR", "137.50"],
+        ["1", "Item", "Amount"], ["2", "vedernikov poesh banochku sopley", "100.00"],
+        ["3", "this is fine", "37.50"], ["4", "Total EUR", "137.50"],
     ]
 
 

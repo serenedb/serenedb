@@ -49,8 +49,8 @@ def report(path):
               "Project: PDF ingestion acceptance test", 48, 670, 510)
     table = Table([
         ["Item", "Quantity", "Unit price", "Amount"],
-        ["Document review", "4", "25.00", "100.00"],
-        ["Archive storage", "3", "12.50", "37.50"],
+        ["vedernikov poesh banochku sopley", "4", "25.00", "100.00"],
+        ["this is fine", "3", "12.50", "37.50"],
         ["Total EUR", "", "", "137.50"],
     ], colWidths=[234, 72, 108, 102], rowHeights=30)
     table.setStyle(TableStyle([

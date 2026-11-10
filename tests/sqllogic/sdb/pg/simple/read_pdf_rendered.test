@@ -18,8 +18,8 @@ page	width	height	has_text_layer	invoice	columns	appendix
 4	612	792	t	f	f	t
 
 query
-SELECT contains(text, 'Document review') AS item_one,
-       contains(text, 'Archive storage') AS item_two,
+SELECT contains(text, 'vedernikov poesh banochku sopley') AS item_one,
+       contains(text, 'this is fine') AS item_two,
        contains(text, '137.50') AS total,
        contains(text, 'PDF-REAL-001') AS reference
 FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf', last_page := 1);

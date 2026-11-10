@@ -24,8 +24,8 @@ ORDER BY page, table_index, row_index;
 ----
 page	table_index	row_index	item	quantity	price	amount
 1	1	1	Item	Quantity	Unit price	Amount
-1	1	2	Document review	4	25.00	100.00
-1	1	3	Archive storage	3	12.50	37.50
+1	1	2	vedernikov poesh banochku sopley	4	25.00	100.00
+1	1	3	this is fine	3	12.50	37.50
 1	1	4	Total EUR			137.50
 
 query

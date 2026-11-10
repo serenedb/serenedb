@@ -23,8 +23,8 @@ WHERE row_index IN (2, 3)
 ORDER BY row_index;
 ----
 item	amount
-Document review	100.00
-Archive storage	37.50
+vedernikov poesh banochku sopley	100.00
+this is fine	37.50
 
 # DOCS_TEST: read_blocks
 # DOCS_TEST_BODY

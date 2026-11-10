@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/merge.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
@@ -35,6 +36,7 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/hot_column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -72,11 +74,9 @@ class DistinctMerger {
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
 
-}  // namespace
-
-bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress) {
+std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
+  std::span<const MergeSource> sources,
+  const IndexFieldOptions* field_options) {
   std::vector<std::pair<field_id, const ColumnReader*>> ordered_cols;
   absl::flat_hash_set<field_id> seen_ids;
   for (const auto& s : sources) {
@@ -93,6 +93,38 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       }
     }
   }
+  return ordered_cols;
+}
+
+}  // namespace
+
+std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
+  duckdb::DatabaseInstance& db, std::span<const MergeSource> sources,
+  const IndexFieldOptions* field_options) {
+  SDB_ASSERT(absl::c_none_of(sources, [](const MergeSource& s) {
+    return HasRemovals(s.reader->Meta());
+  }));
+  std::vector<std::unique_ptr<ColumnReader>> columns;
+  std::vector<HotColumnPart> parts(sources.size());
+  for (const auto& [id, first_col] : OrderedColumns(sources, field_options)) {
+    for (size_t i = 0; i < sources.size(); ++i) {
+      const auto& s = sources[i];
+      parts[i] = {.column = s.col_reader ? s.col_reader->Column(id) : nullptr,
+                  .rows = s.alive_count};
+    }
+    const auto distinct = field_options
+                            ? field_options->GetColumnOptions(id).distinct
+                            : DistinctStats::None;
+    columns.push_back(
+      HotColumnReader::Concat(db, id, first_col->Type(), distinct, parts));
+  }
+  return columns;
+}
+
+bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
+               const IndexFieldOptions* field_options,
+               const std::function<bool()>& progress) {
+  const auto ordered_cols = OrderedColumns(sources, field_options);
   if (ordered_cols.empty()) {
     return true;
   }

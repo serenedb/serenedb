@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <array>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -319,6 +320,62 @@ TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
   ASSERT_NE(nullptr, written.reader);
   EXPECT_EQ(kDocs / kPieceDocs, written.maps.size());
   ExpectSameSegment(flushed[0], *written.reader);
+}
+
+TEST(PieceTest, MergedPiecesReadLikeFlushedSegment) {
+  constexpr std::array<uint32_t, 5> kPieceDocs{1, 1, 37, 100, 161};
+  constexpr uint32_t kDocs = 300;
+
+  MemoryDirectory flushed_dir;
+  auto flushed_writer = IndexWriter::Make(flushed_dir, kOmCreate,
+                                          irs::tests::DefaultWriterOptions());
+  {
+    auto trx = flushed_writer->GetBatch();
+    InsertDocs(trx, kDocs);
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(flushed_writer->RefreshCommit());
+  const auto flushed = flushed_writer->GetSnapshot();
+  ASSERT_EQ(1, flushed.size());
+
+  MemoryDirectory piece_dir;
+  auto piece_writer =
+    IndexWriter::Make(piece_dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  DirectoryMeta meta;
+  std::vector<SegmentReader> pieces;
+  uint32_t first = 0;
+  for (const auto docs : kPieceDocs) {
+    auto trx = piece_writer->GetBatch(/*exclusive_segment=*/true);
+    trx.SetHot(0);
+    InsertDocs(trx, docs, first);
+    auto piece = trx.SealPiece(first + 1);
+    trx.Abort();
+    ASSERT_NE(nullptr, piece);
+    IndexSegment segment;
+    static_cast<SegmentInfo&>(segment.meta) = piece->Meta();
+    meta.index_meta.segments.push_back(std::move(segment));
+    pieces.emplace_back(std::move(piece));
+    first += docs;
+  }
+  ASSERT_EQ(kDocs, first);
+
+  const DirectoryReader source{std::make_shared<const DirectoryReaderImpl>(
+    piece_dir, irs::tests::DefaultReaderOptions(), std::move(meta),
+    std::move(pieces))};
+  MemoryDirectory merged_dir;
+  auto writer = IndexWriter::Make(merged_dir, kOmCreate,
+                                  irs::tests::DefaultWriterOptions());
+  const auto merged =
+    writer->MergePieces(source, writer->NextSegmentId(), nullptr);
+  ASSERT_NE(nullptr, merged.reader);
+  EXPECT_EQ(kPieceDocs.size(), merged.maps.size());
+  ExpectSameSegment(flushed[0], *merged.reader);
+  size_t files = 0;
+  merged_dir.visit([&](std::string_view) {
+    ++files;
+    return true;
+  });
+  EXPECT_EQ(0, files);
 }
 
 TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {

@@ -26,6 +26,7 @@
 #include <duckdb/common/operator/comparison_operators.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/config.hpp>
@@ -37,6 +38,8 @@
 #include <utility>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -195,6 +198,12 @@ duckdb::BaseStatistics HotChunkStats::Get(const duckdb::LogicalType& type,
   return it->second.Copy();
 }
 
+void HotChunkStats::Seed(const WriteChunk& chunk,
+                         const duckdb::BaseStatistics& stats) {
+  SDB_ASSERT(chunk.count == STANDARD_VECTOR_SIZE);
+  _full.try_emplace(chunk.data.GetBufferRef().get(), stats.Copy());
+}
+
 void HotChunkStats::MergeDistinct(DistinctStats mode, const WriteChunk& chunk,
                                   duckdb::DistinctStatistics& out) {
   if (chunk.count != STANDARD_VECTOR_SIZE) {
@@ -211,6 +220,114 @@ void HotChunkStats::MergeDistinct(DistinctStats mode, const WriteChunk& chunk,
 
 std::unique_ptr<ColumnReader> HotColumnReader::Make(
   duckdb::DatabaseInstance& db, StagedColumn&& column, HotChunkStats* stats) {
+  duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
+  if (stats && column.distinct != DistinctStats::None) {
+    distinct = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
+    for (const auto& chunk : column.chunks) {
+      stats->MergeDistinct(column.distinct, chunk, *distinct);
+    }
+  }
+  auto reader = Build(db, std::move(column), stats);
+  reader->_distinct = std::move(distinct);
+  return reader;
+}
+
+std::unique_ptr<ColumnReader> HotColumnReader::Concat(
+  duckdb::DatabaseInstance& db, field_id id, const duckdb::LogicalType& type,
+  DistinctStats distinct, std::span<const HotColumnPart> parts) {
+  uint64_t left = 0;
+  for (const auto& part : parts) {
+    left += part.rows;
+  }
+  StagedColumn column{.id = id, .type = type};
+  HotChunkStats stats;
+  std::optional<WriteChunk> pending;
+  duckdb::idx_t capacity = 0;
+  const auto flush = [&] {
+    if (pending) {
+      duckdb::FlatVector::SetSize(pending->data, pending->count);
+      column.chunks.push_back(std::move(*pending));
+      pending.reset();
+    }
+  };
+  const auto append = [&](const duckdb::Vector* source, uint64_t rows) {
+    duckdb::idx_t from = 0;
+    while (rows != 0) {
+      if (!pending) {
+        capacity = static_cast<duckdb::idx_t>(
+          std::min<uint64_t>(left, STANDARD_VECTOR_SIZE));
+        pending.emplace(duckdb::Vector{type, capacity}, 0);
+      }
+      auto& chunk = *pending;
+      const auto take = static_cast<duckdb::idx_t>(
+        std::min<uint64_t>(rows, capacity - chunk.count));
+      if (source) {
+        duckdb::ImmutableStrings::Copy(*source, chunk.data, from + take, from,
+                                       chunk.count);
+      } else {
+        for (duckdb::idx_t i = 0; i < take; ++i) {
+          duckdb::FlatVector::SetNull(chunk.data, chunk.count + i, true);
+        }
+      }
+      chunk.count += take;
+      from += take;
+      rows -= take;
+      left -= take;
+      if (chunk.count == capacity) {
+        flush();
+      }
+    }
+  };
+  duckdb::shared_ptr<duckdb::DistinctStatistics> merged;
+  duckdb::Vector hashes{duckdb::LogicalType::HASH, nullptr};
+  if (distinct != DistinctStats::None) {
+    merged = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
+  }
+  for (const auto& part : parts) {
+    if (!part.column) {
+      append(nullptr, part.rows);
+      continue;
+    }
+    SDB_ENSURE(part.column->InMemory(), "column ", id,
+               " of a piece merge is not held in memory");
+    const auto& hot = utils::downCast<HotColumnReader>(*part.column);
+    SDB_ASSERT(hot.Type() == type && hot.RowCount() <= part.rows);
+    const auto blocks = hot.DataBlocks();
+    for (size_t i = 0; i < hot._chunks.size(); ++i) {
+      const auto& chunk = hot._chunks[i];
+      if (chunk.count != STANDARD_VECTOR_SIZE) {
+        append(&chunk.data, chunk.count);
+        continue;
+      }
+      flush();
+      const auto& shared = column.chunks.emplace_back(
+        duckdb::Vector::Ref(chunk.data), chunk.count);
+      if (!blocks.empty()) {
+        stats.Seed(shared, blocks[i].statistics);
+      }
+      left -= chunk.count;
+    }
+    append(nullptr, part.rows - hot.RowCount());
+    if (!merged) {
+      continue;
+    }
+    if (const auto* stored = hot.Distinct()) {
+      merged->Merge(*stored);
+      continue;
+    }
+    for (const auto& chunk : hot._chunks) {
+      UpdateDistinct(*merged, distinct, chunk.data, chunk.count, hashes);
+    }
+  }
+  flush();
+  SDB_ASSERT(left == 0);
+  auto reader = Build(db, std::move(column), &stats);
+  reader->_distinct = std::move(merged);
+  return reader;
+}
+
+std::unique_ptr<HotColumnReader> HotColumnReader::Build(
+  duckdb::DatabaseInstance& db, StagedColumn&& column, HotChunkStats* stats) {
   std::vector<std::unique_ptr<ColumnReader>> children;
   if (column.type.InternalType() == duckdb::PhysicalType::STRUCT &&
       column.type.id() != duckdb::LogicalTypeId::VARIANT) {
@@ -224,7 +341,7 @@ std::unique_ptr<ColumnReader> HotColumnReader::Make(
         child.chunks.push_back(
           WriteChunk{duckdb::Vector::Ref(entries[i]), chunk.count});
       }
-      children.push_back(Make(db, std::move(child), stats));
+      children.push_back(Build(db, std::move(child), stats));
     }
   } else if (column.type.id() == duckdb::LogicalTypeId::ARRAY) {
     const auto size = duckdb::ArrayType::GetSize(column.type);
@@ -236,7 +353,7 @@ std::unique_ptr<ColumnReader> HotColumnReader::Make(
         duckdb::Vector::Ref(duckdb::ArrayVector::GetChild(chunk.data)),
         chunk.count * size});
     }
-    children.push_back(Make(db, std::move(child), stats));
+    children.push_back(Build(db, std::move(child), stats));
   }
   std::vector<ColumnBlockMeta> blocks;
   if (HasOwnBlocks(column.type)) {
@@ -256,18 +373,9 @@ std::unique_ptr<ColumnReader> HotColumnReader::Make(
       });
     }
   }
-  duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
-  if (stats && column.distinct != DistinctStats::None) {
-    distinct = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
-    for (const auto& chunk : column.chunks) {
-      stats->MergeDistinct(column.distinct, chunk, *distinct);
-    }
-  }
-  auto reader = std::make_unique<HotColumnReader>(
+  return std::make_unique<HotColumnReader>(
     column.id, std::move(column.type), std::move(blocks),
     std::move(column.chunks), std::move(children));
-  reader->_distinct = std::move(distinct);
-  return reader;
 }
 
 HotColumnReader::HotColumnReader(
@@ -288,6 +396,14 @@ HotColumnReader::HotColumnReader(
   if (DataBlocks().empty()) {
     _stats = duckdb::BaseStatistics::CreateUnknown(_type).ToUnique();
   }
+}
+
+size_t HotColumnReader::Bytes() const noexcept {
+  size_t bytes = 0;
+  for (const auto& chunk : _chunks) {
+    bytes += chunk.data.GetAllocationSize();
+  }
+  return bytes;
 }
 
 size_t HotColumnReader::ChunkOf(uint64_t row) const noexcept {

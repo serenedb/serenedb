@@ -26,6 +26,7 @@
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/iterators.hpp"
 
 namespace irs {
 
@@ -36,6 +37,7 @@ struct FieldSink {
   virtual void write(DictRef dict, const BasicTermReader& reader) = 0;
   virtual void WriteSlot(field_id id, DictRef dict,
                          std::span<const doc_id_t> docs) = 0;
+  virtual void WriteSlot(field_id id, DictRef dict, TermPostings& docs) = 0;
   virtual void end() = 0;
 };
 

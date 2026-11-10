@@ -189,7 +189,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   }
   auto fields = std::make_shared<PieceFields>();
   FlushState state{.dir = &_dir, .name = _seg_name, .doc_count = docs};
-  PieceFieldWriter field_writer{*fields};
+  PieceFieldWriter field_writer{*fields, /*compaction=*/false};
   _fields.Flush(field_writer, state, {});
   SegmentMeta meta;
   meta.name = _seg_name;

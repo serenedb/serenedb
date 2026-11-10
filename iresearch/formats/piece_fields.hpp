@@ -139,20 +139,26 @@ class PieceFields final {
 
 class PieceFieldWriter final : public FieldSink {
  public:
-  explicit PieceFieldWriter(PieceFields& fields) noexcept : _fields{&fields} {}
+  PieceFieldWriter(PieceFields& fields, bool compaction) noexcept
+    : _fields{&fields}, _compaction{compaction} {}
 
   void prepare(const FlushState& state, uint64_t keyed_dicts) final;
   void write(DictRef dict, const BasicTermReader& reader) final;
   void WriteSlot(field_id id, DictRef dict,
                  std::span<const doc_id_t> docs) final;
+  void WriteSlot(field_id id, DictRef dict, TermPostings& docs) final;
   void end() final;
 
   IndexFeatures Features() const noexcept { return _features; }
 
  private:
+  PieceTermReader& BeginSlot(field_id id, DictRef dict);
+  void EndSlot(PieceTermReader& field, const PostingMeta& posting);
+
   PostingsWriter _pw;
   PieceFields* _fields;
   IndexFeatures _features = IndexFeatures::None;
+  const bool _compaction;
 };
 
 }  // namespace irs

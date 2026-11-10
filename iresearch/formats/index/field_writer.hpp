@@ -84,7 +84,7 @@ class FieldWriter final : public FieldSink {
   void write(DictRef dict, const BasicTermReader& reader) final;
   void WriteSlot(field_id id, DictRef dict,
                  std::span<const doc_id_t> docs) final;
-  void WriteSlot(field_id id, DictRef dict, TermPostings& docs);
+  void WriteSlot(field_id id, DictRef dict, TermPostings& docs) final;
   void end() final;
 
  private:

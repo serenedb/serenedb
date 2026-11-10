@@ -374,6 +374,130 @@ TEST_F(ColumnReaderTest, InMemoryColumnsAreNotCopied) {
                  .CopyableFrom(*hot));
 }
 
+struct HotLayout {
+  std::vector<duckdb::idx_t> chunks;
+  uint64_t rows;
+};
+
+void ExpectConcatReadsItsParts(
+  duckdb::DatabaseInstance& db, const duckdb::LogicalType& type,
+  const std::function<duckdb::Value(uint64_t)>& value_of) {
+  constexpr irs::field_id kId = 7;
+  const std::vector<HotLayout> layouts = {
+    {.chunks = {100, STANDARD_VECTOR_SIZE}, .rows = 100 + STANDARD_VECTOR_SIZE},
+    {.chunks = {}, .rows = 30},
+    {.chunks = {STANDARD_VECTOR_SIZE, 5}, .rows = STANDARD_VECTOR_SIZE + 9},
+    {.chunks = {1}, .rows = 1},
+    {.chunks = {7, 3}, .rows = 10},
+  };
+  std::vector<duckdb::Value> expected;
+  std::vector<std::unique_ptr<irs::ColumnReader>> sources;
+  std::vector<irs::HotColumnPart> parts;
+  irs::StagedColumn all{
+    .id = kId, .type = type, .distinct = irs::DistinctStats::Exact};
+  irs::HotChunkStats stats;
+  for (const auto& layout : layouts) {
+    const auto first = expected.size();
+    const irs::ColumnReader* column = nullptr;
+    if (!layout.chunks.empty()) {
+      irs::StagedColumn staged{
+        .id = kId, .type = type, .distinct = irs::DistinctStats::Exact};
+      for (const auto count : layout.chunks) {
+        duckdb::Vector v{type, count};
+        for (duckdb::idx_t k = 0; k < count; ++k) {
+          expected.push_back(value_of(expected.size()));
+          v.SetValue(k, expected.back());
+        }
+        duckdb::FlatVector::SetSize(v, count);
+        all.chunks.push_back(irs::WriteChunk{duckdb::Vector::Ref(v), count});
+        staged.chunks.push_back(irs::WriteChunk{std::move(v), count});
+      }
+      column = sources
+                 .emplace_back(
+                   irs::HotColumnReader::Make(db, std::move(staged), &stats))
+                 .get();
+    }
+    expected.resize(first + layout.rows, duckdb::Value{type});
+    parts.push_back({.column = column, .rows = layout.rows});
+  }
+  irs::HotChunkStats all_stats;
+  const auto reference =
+    irs::HotColumnReader::Make(db, std::move(all), &all_stats);
+
+  std::vector<std::unique_ptr<irs::ColumnReader>> columns;
+  columns.push_back(irs::HotColumnReader::Concat(
+    db, kId, type, irs::DistinctStats::Exact, parts));
+  irs::ColReader reader{db, std::move(columns)};
+  const auto* concat = reader.Column(kId);
+  ASSERT_NE(nullptr, concat);
+  ASSERT_EQ(expected.size(), concat->RowCount());
+
+  auto state = concat->InitScan(reader.Ctx());
+  for (uint64_t pos = 0; pos < expected.size();) {
+    const auto take =
+      std::min<duckdb::idx_t>(expected.size() - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
+    concat->Scan(state, batch, take);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      EXPECT_TRUE(
+        duckdb::Value::NotDistinctFrom(expected[pos + k], batch.GetValue(k)))
+        << "row " << pos + k << ": " << expected[pos + k].ToString()
+        << " != " << batch.GetValue(k).ToString();
+    }
+    pos += take;
+  }
+
+  if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
+    const auto blocks = concat->DataBlocks();
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      const auto first = concat->DataBlockFirstRow(i);
+      const auto& block = concat->RowGroupStatistics(i);
+      for (uint64_t row = first; row < first + blocks[i].tuple_count; ++row) {
+        if (expected[row].IsNull()) {
+          EXPECT_TRUE(block.CanHaveNull()) << "row " << row;
+          continue;
+        }
+        const auto text = expected[row].GetValue<std::string>();
+        EXPECT_NE(duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE,
+                  duckdb::StringStats::CheckZonemap(
+                    block, duckdb::ExpressionType::COMPARE_EQUAL,
+                    duckdb::string_t{text}))
+          << "row " << row;
+      }
+    }
+  }
+
+  ASSERT_NE(nullptr, reference->Distinct());
+  ASSERT_NE(nullptr, concat->Distinct());
+  EXPECT_EQ(reference->Distinct()->GetCount(), concat->Distinct()->GetCount());
+}
+
+TEST_F(ColumnReaderTest, ConcatenatedHotStringsReadAsTheirParts) {
+  ExpectConcatReadsItsParts(
+    Db(), duckdb::LogicalType::VARCHAR, [](uint64_t g) -> duckdb::Value {
+      if (g % 11 == 0) {
+        return duckdb::Value{duckdb::LogicalType::VARCHAR};
+      }
+      return duckdb::Value{absl::StrCat("concatenated_value_", g % 97)};
+    });
+}
+
+TEST_F(ColumnReaderTest, ConcatenatedHotStructsReadAsTheirParts) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"a", duckdb::LogicalType::BIGINT}, {"b", duckdb::LogicalType::VARCHAR}});
+  ExpectConcatReadsItsParts(Db(), type, [&](uint64_t g) -> duckdb::Value {
+    if (g % 11 == 0) {
+      return duckdb::Value{type};
+    }
+    duckdb::child_list_t<duckdb::Value> children;
+    children.emplace_back("a", duckdb::Value::BIGINT(static_cast<int64_t>(g)));
+    children.emplace_back(
+      "b", g % 7 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                      : duckdb::Value{absl::StrCat("nested_value_", g % 13)});
+    return duckdb::Value::STRUCT(std::move(children));
+  });
+}
+
 // A nullable VARCHAR column compresses with dict_fsst, which self-carries nulls
 // (dict slot 0 == NULL) and reconstructs them in-band on scan; the validity
 // stream is therefore absorbed to a single EMPTY segment (mirror DuckDB

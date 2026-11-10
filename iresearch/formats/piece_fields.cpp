@@ -370,19 +370,30 @@ void PieceFieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   const bool freq =
     IndexFeatures::None != (props.index_features & IndexFeatures::Freq);
   uint64_t total_freq = 0;
-  constexpr size_t kTermBatch = 128;
-  bytes_view term_batch[kTermBatch];
-  PostingRows posting_batch[kTermBatch];
+  const auto consume = [&](bytes_view term, const PostingMeta& posting) {
+    total_freq += freq ? posting.freq : posting.docs_count;
+    if (posting.docs_count != 0) {
+      field.Add(term, posting);
+    }
+  };
   auto terms = reader.iterator();
   SDB_ASSERT(terms);
-  while (const size_t n = terms->NextTermsWithPostings(
-           term_batch, posting_batch, props.index_features)) {
-    for (size_t i = 0; i != n; ++i) {
+  if (_compaction) {
+    while (terms->next()) {
       PostingMeta posting;
-      _pw.WritePostings(posting_batch[i], posting);
-      total_freq += freq ? posting.freq : posting.docs_count;
-      if (posting.docs_count != 0) {
-        field.Add(term_batch[i], posting);
+      _pw.Write(*terms->postings(props.index_features), posting);
+      consume(terms->value(), posting);
+    }
+  } else {
+    constexpr size_t kTermBatch = 128;
+    bytes_view term_batch[kTermBatch];
+    PostingRows posting_batch[kTermBatch];
+    while (const size_t n = terms->NextTermsWithPostings(
+             term_batch, posting_batch, props.index_features)) {
+      for (size_t i = 0; i != n; ++i) {
+        PostingMeta posting;
+        _pw.WritePostings(posting_batch[i], posting);
+        consume(term_batch[i], posting);
       }
     }
   }
@@ -392,14 +403,31 @@ void PieceFieldWriter::write(DictRef dict, const BasicTermReader& reader) {
 
 void PieceFieldWriter::WriteSlot(field_id id, DictRef dict,
                                  std::span<const doc_id_t> docs) {
+  auto& field = BeginSlot(id, dict);
+  PostingMeta posting;
+  _pw.WritePostings(
+    PostingRows{.span = {.docs = docs.data(), .count = docs.size()}}, posting);
+  EndSlot(field, posting);
+}
+
+void PieceFieldWriter::WriteSlot(field_id id, DictRef dict,
+                                 TermPostings& docs) {
+  auto& field = BeginSlot(id, dict);
+  PostingMeta posting;
+  _pw.Write(docs, posting);
+  EndSlot(field, posting);
+}
+
+PieceTermReader& PieceFieldWriter::BeginSlot(field_id id, DictRef dict) {
   _pw.SetTermPayloadWriter(nullptr);
   _pw.BeginField({});
   FieldMeta meta{id, IndexFeatures::None};
   meta.dict = dict;
-  auto& field = _fields->Add(std::move(meta), 0);
-  PostingMeta posting;
-  _pw.WritePostings(
-    PostingRows{.span = {.docs = docs.data(), .count = docs.size()}}, posting);
+  return _fields->Add(std::move(meta), 0);
+}
+
+void PieceFieldWriter::EndSlot(PieceTermReader& field,
+                               const PostingMeta& posting) {
   if (posting.docs_count != 0) {
     field.Add(kSlotTerm, posting);
   }

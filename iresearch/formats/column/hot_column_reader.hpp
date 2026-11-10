@@ -26,6 +26,7 @@
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/distinct_statistics.hpp>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
@@ -43,6 +44,7 @@ class HotChunkStats final {
  public:
   duckdb::BaseStatistics Get(const duckdb::LogicalType& type,
                              const WriteChunk& chunk);
+  void Seed(const WriteChunk& chunk, const duckdb::BaseStatistics& stats);
   void MergeDistinct(DistinctStats mode, const WriteChunk& chunk,
                      duckdb::DistinctStatistics& out);
 
@@ -53,11 +55,20 @@ class HotChunkStats final {
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
 
+struct HotColumnPart {
+  const ColumnReader* column;
+  uint64_t rows;
+};
+
 class HotColumnReader final : public ColumnReader {
  public:
   static std::unique_ptr<ColumnReader> Make(duckdb::DatabaseInstance& db,
                                             StagedColumn&& column,
                                             HotChunkStats* stats);
+
+  static std::unique_ptr<ColumnReader> Concat(
+    duckdb::DatabaseInstance& db, field_id id, const duckdb::LogicalType& type,
+    DistinctStats distinct, std::span<const HotColumnPart> parts);
 
   HotColumnReader(field_id id, duckdb::LogicalType type,
                   std::vector<ColumnBlockMeta> blocks,
@@ -65,6 +76,8 @@ class HotColumnReader final : public ColumnReader {
                   std::vector<std::unique_ptr<ColumnReader>> children);
 
   bool InMemory() const noexcept final { return true; }
+
+  size_t Bytes() const noexcept;
 
   bool FetchPoint(PointReader& reader, uint64_t row, duckdb::Vector& out,
                   duckdb::idx_t out_offset) const final;
@@ -104,6 +117,10 @@ class HotColumnReader final : public ColumnReader {
   void NewOutputVector(ScanState&) const final {}
 
  private:
+  static std::unique_ptr<HotColumnReader> Build(duckdb::DatabaseInstance& db,
+                                                StagedColumn&& column,
+                                                HotChunkStats* stats);
+
   size_t ChunkOf(uint64_t row) const noexcept;
   void CopyRows(uint64_t row, duckdb::idx_t count, duckdb::Vector& out,
                 duckdb::idx_t out_offset, bool share_strings) const;

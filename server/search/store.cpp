@@ -382,19 +382,32 @@ void Store::MaintainPieces() {
 bool Store::MergePiecesLocked(
   std::span<const std::shared_ptr<const TableUnit>> pieces) {
   const auto field_options = CompactionOptions();
-  auto merged = irs::GetBlocking(_piece_writer->WriteAsync(
-    _table->PieceView(pieces, /*keep_deleted=*/true), _writer->NextSegmentId(),
-    field_options.get(), [] { return true; }, &AnnBuildEnv()));
+  SDB_ASSERT(field_options);
+  auto source = _table->PieceView(pieces, /*keep_deleted=*/true);
+  const auto id = _writer->NextSegmentId();
+  uint64_t docs = 0;
+  for (const auto& piece : pieces) {
+    docs += piece->docs;
+  }
+  irs::IndexWriter::Merged merged;
+  if (docs < field_options->row_group_size) {
+    merged =
+      _piece_writer->MergePieces(std::move(source), id, field_options.get());
+  } else {
+    merged = irs::GetBlocking(_piece_writer->WriteAsync(
+      std::move(source), id, field_options.get(), [] { return true; },
+      &AnnBuildEnv()));
+    auto& refs = _piece_dir->attributes().refs();
+    for (const auto& file : merged.segment.meta.files) {
+      _piece_dir->remove(file);
+      refs.remove(file);
+    }
+    _piece_dir->remove(merged.segment.filename);
+    refs.remove(merged.segment.filename);
+  }
   if (!merged.reader) {
     return false;
   }
-  auto& refs = _piece_dir->attributes().refs();
-  for (const auto& file : merged.segment.meta.files) {
-    _piece_dir->remove(file);
-    refs.remove(file);
-  }
-  _piece_dir->remove(merged.segment.filename);
-  refs.remove(merged.segment.filename);
   std::vector<uint64_t> ids;
   ids.reserve(pieces.size());
   auto first_lsn = kNoLsn;

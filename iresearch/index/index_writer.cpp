@@ -1640,6 +1640,28 @@ auto IndexWriter::WriteAsync(DirectoryReader source, uint64_t id,
                                 env);
 }
 
+IndexWriter::Merged IndexWriter::MergePieces(
+  DirectoryReader source, uint64_t id, const IndexFieldOptions* field_options) {
+  Merged merged;
+  merged.source = std::move(source);
+  auto& candidates = merged.claim.candidates;
+  for (const auto& segment : *merged.source.GetImpl()) {
+    candidates.emplace_back(&segment);
+  }
+  if (candidates.empty()) {
+    return merged;
+  }
+  SegmentMeta meta;
+  meta.name = FileName(id);
+  MergeWriter merger{_dir, GetSegmentWriterOptions(true, field_options)};
+  merger.Reset(candidates.begin(), candidates.end());
+  merged.reader = merger.FlushPiece(meta, id);
+  if (merged.reader) {
+    merged.maps = MergeMaps(candidates, merger, *merged.reader);
+  }
+  return merged;
+}
+
 auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
                              const IndexFieldOptions* field_options,
                              const MergeWriter::FlushProgress& progress,

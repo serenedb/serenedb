@@ -489,6 +489,9 @@ class IndexWriter : private util::Noncopyable {
                   const MergeWriter::FlushProgress& progress,
                   const AnnBuildEnv* env) -> yaclib::Future<Merged>;
 
+  Merged MergePieces(DirectoryReader source, uint64_t id,
+                     const IndexFieldOptions* field_options);
+
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:
     CompactionFloorGuard() = default;

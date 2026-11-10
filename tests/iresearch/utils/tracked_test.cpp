@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/base/call_once.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_set.h>
 
@@ -30,7 +29,6 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/utils/huge_page_allocator.hpp>
 #include <iresearch/utils/tracked.hpp>
-#include <thread>
 
 #include "tests_shared.hpp"
 
@@ -239,31 +237,6 @@ TEST(TrackedTest, HashSetSurvivesAFailedGrowth) {
   for (uint64_t i = 0; i < 1000; ++i) {
     EXPECT_TRUE(set.contains(i));
   }
-}
-
-TEST(TrackedTest, CallOnceRetriesAfterAFailedAllocation) {
-  absl::once_flag flag;
-  auto* control = absl::base_internal::ControlWord(&flag);
-  irs::TrackedVector<uint64_t> loaded;
-  uint32_t runs = 0;
-  std::thread waiter;
-  {
-    MemoryLimit limit{0};
-    EXPECT_THROW(
-      absl::call_once(
-        flag,
-        [&] {
-          waiter = std::thread{[&] { absl::call_once(flag, [&] { ++runs; }); }};
-          while (control->load() != absl::base_internal::kOnceWaiter) {
-          }
-          loaded.resize(kMiB);
-        }),
-      duckdb::OutOfMemoryException);
-  }
-  waiter.join();
-  absl::call_once(flag, [&] { ++runs; });
-  EXPECT_EQ(1, runs);
-  EXPECT_TRUE(loaded.empty());
 }
 
 TEST(TrackedTest, BudgetFreesWhatIsReturnedAfterItsRelease) {

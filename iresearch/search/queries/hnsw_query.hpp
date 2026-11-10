@@ -20,8 +20,9 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
+
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <utility>

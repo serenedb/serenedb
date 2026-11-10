@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/base/call_once.h>
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -31,6 +30,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
+#include <mutex>
 #include <string_view>
 #include <vector>
 
@@ -41,7 +41,7 @@ class Derived final {
  public:
   template<typename Build>
   const T& Get(Build&& build) const {
-    absl::call_once(_once, [&] {
+    std::call_once(_once, [&] {
       T value;
       build(value);
       _value = std::move(value);
@@ -50,7 +50,7 @@ class Derived final {
   }
 
  private:
-  mutable absl::once_flag _once;
+  mutable std::once_flag _once;
   mutable T _value;
 };
 

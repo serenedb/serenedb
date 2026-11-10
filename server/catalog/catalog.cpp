@@ -430,7 +430,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     SearchTable(op.table), op.columns, std::move(op.expressions),
     std::move(op.bound_constraints), op.types, op.estimated_cardinality,
-    op.return_chunk, op.row_id_handling, !op.update_is_del_and_insert);
+    op.return_chunk, op.row_id_handling, !op.update_is_del_and_insert,
+    op.update_column_count);
   update.children.emplace_back(plan);
   return update;
 }

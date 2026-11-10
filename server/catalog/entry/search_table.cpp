@@ -593,10 +593,10 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
                                              duckdb::ClientContext& context) {
   update.update_column_count = update.columns.size();
   update.update_is_del_and_insert =
-    update.return_chunk || update.capture_old_rows ||
+    update.capture_old_rows ||
     duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(context) ||
     !PatchesColumns(update.columns);
-  if (update.update_is_del_and_insert) {
+  if (update.update_is_del_and_insert || update.return_chunk) {
     duckdb::LogicalUpdate::BindAllColumns(*this, get, proj, update);
   }
 }

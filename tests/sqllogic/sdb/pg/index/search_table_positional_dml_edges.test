@@ -389,7 +389,7 @@ query
 SELECT count(*) AS n FROM pr WHERE rowid = getvariable('pr_pos');
 ----
 n
-0
+1
 
 query
 SELECT id, v FROM pr WHERE v = 'changed';

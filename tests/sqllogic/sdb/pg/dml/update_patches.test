@@ -96,6 +96,7 @@ QUERY PLAN
 ╭─ UPDATE ───┴───────────╮
 │ Table: up              │
 │ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: a     │
 ╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
 │ Projections: 1, #0,    │
@@ -625,3 +626,28 @@ id	a	c	t
 4999	4999	49991	NULL
 5000	5000	NULL	NULL
 5001	5001	50010	patched added column 5001
+
+
+query ???? rowsort
+UPDATE up_added SET c = c + 1 WHERE id IN (3, 5001) RETURNING id, a, c, t;
+----
+id	a	c	t
+3	3	31	patched added column 3
+5001	5001	50011	patched added column 5001
+
+
+query ???? rowsort
+UPDATE up_added SET t = 'returned row number ' || id WHERE id = 0 RETURNING *;
+----
+id	a	c	t
+0	0	NULL	returned row number 0
+
+
+query
+SELECT id, a, c, t FROM up_added WHERE c IS NOT NULL OR t IS NOT NULL ORDER BY id;
+----
+id	a	c	t
+0	0	NULL	returned row number 0
+3	3	31	patched added column 3
+4999	4999	49991	NULL
+5001	5001	50011	patched added column 5001

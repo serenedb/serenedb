@@ -97,7 +97,8 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk,
-  duckdb::RowIdHandling row_id_handling, bool patch)
+  duckdb::RowIdHandling row_id_handling, bool patch,
+  duckdb::idx_t update_column_count)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(table),
@@ -106,6 +107,7 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
     _constraints(std::move(constraints)),
     _return_chunk(return_chunk),
     _patch(patch),
+    _update_column_count(update_column_count),
     _row_id_handling(row_id_handling) {}
 
 std::string SereneDBSearchUpdate::GetName() const { return "UPDATE"; }
@@ -117,10 +119,10 @@ SereneDBSearchUpdate::ParamsToString() const {
   result["Row Ids"] = duckdb::EnumUtil::ToString(_row_id_handling);
   if (_patch) {
     std::vector<std::string_view> names;
-    names.reserve(_columns.size());
-    for (const auto& index : _columns) {
+    names.reserve(_update_column_count);
+    for (duckdb::idx_t i = 0; i < _update_column_count; ++i) {
       names.push_back(
-        _table.GetColumns().GetColumn(index).Name().GetIdentifierName());
+        _table.GetColumns().GetColumn(_columns[i]).Name().GetIdentifierName());
     }
     result["Patched Columns"] = absl::StrJoin(names, ", ");
   }
@@ -150,9 +152,10 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 
   const auto p = target.column_ids.size();
-  SDB_ASSERT(_patch || _columns.size() == p,
+  const bool whole_row = !_patch || _return_chunk;
+  SDB_ASSERT(!whole_row || _columns.size() == p,
              "search UPDATE must project every table column");
-  if (!_patch) {
+  if (whole_row) {
     state->new_row_src.assign(p, duckdb::DConstants::INVALID_INDEX);
   }
   for (size_t i = 0; i < _columns.size(); ++i) {
@@ -164,12 +167,13 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
       "search UPDATE expects every SET value to be projected");
     const auto input =
       _expressions[i]->Cast<duckdb::BoundReferenceExpression>().Index();
-    if (_patch) {
+    if (_patch && i < _update_column_count) {
       state->patched.push_back({.field = target.column_ids[index],
                                 .type = target.types[index],
                                 .input = input,
                                 .index = _columns[i]});
-    } else {
+    }
+    if (whole_row) {
       state->new_row_src[index] = input;
     }
   }
@@ -266,6 +270,12 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
         search::AddUnitPatch(lstate.patches, unit, column.field, column.type,
                              rows, values);
       }
+    }
+    if (lstate.returned) {
+      duckdb::DataChunk new_row;
+      new_row.InitializeEmpty(gstate.table.types);
+      new_row.ReferenceColumns(chunk, gstate.new_row_src);
+      lstate.returned->Append(new_row);
     }
     lstate.update_count += num_rows;
     return duckdb::SinkResultType::NEED_MORE_INPUT;

@@ -244,6 +244,10 @@ WildcardTokenizer::WildcardTokenizer(Tokenizer::ptr base_analyzer,
   _base_stable = _analyzer->Traits().stable;
 }
 
+bool WildcardTokenizer::KeepsWholeValues() const noexcept {
+  return _analyzer->type() == irs::Type<KeywordTokenizer>::id();
+}
+
 template class TypedTokenizer<WildcardTokenizer>;
 
 }  // namespace irs::analysis

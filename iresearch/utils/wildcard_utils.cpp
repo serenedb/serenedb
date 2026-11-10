@@ -86,4 +86,32 @@ bytes_view ExtractWildcardPrefix(bytes_view pattern) noexcept {
   return pattern;
 }
 
+std::string LikeRegexp(std::string_view pattern, bool ignore_case) {
+  static constexpr std::string_view kMeta = "\\[](){}.*+?|^$";
+  std::string regex;
+  regex.reserve(pattern.size() * 2 + 9);
+  regex += ignore_case ? "(?si)\\A" : "(?s)\\A";
+  bool escaped = false;
+  for (const auto c : pattern) {
+    if (escaped) {
+      escaped = false;
+    } else if (c == WildcardMatch::kEscape) {
+      escaped = true;
+      continue;
+    } else if (c == WildcardMatch::kAnyStr) {
+      regex += ".*";
+      continue;
+    } else if (c == WildcardMatch::kAnyChr) {
+      regex += '.';
+      continue;
+    }
+    if (kMeta.find(c) != std::string_view::npos) {
+      regex += '\\';
+    }
+    regex += c;
+  }
+  regex += "\\z";
+  return regex;
+}
+
 }  // namespace irs

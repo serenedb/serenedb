@@ -14,6 +14,7 @@ def test_pdf_notices_in_binary_install(tmp_path):
         "podofo": ["COPYING.MPL", "NOTICE", "3rdparty/chromium/pdfium/LICENSE",
                    "3rdparty/chromium/numerics/LICENSE"],
         "freetype": ["LICENSE.TXT", "docs/FTL.TXT"],
+        "duckdb": ["third_party/utf8proc/LICENSE"],
     }
     for dependency, paths in licenses.items():
         directory = source / "third_party" / dependency
@@ -63,6 +64,7 @@ def test_pdf_notices_in_binary_install(tmp_path):
         ("podofo/numerics/LICENSE", "podofo/3rdparty/chromium/numerics/LICENSE"),
         ("freetype/FTL.TXT", "freetype/docs/FTL.TXT"),
         ("freetype/LICENSE.TXT", "freetype/LICENSE.TXT"),
+        ("utf8proc/LICENSE", "duckdb/third_party/utf8proc/LICENSE"),
     ):
         assert (notices / installed).read_bytes() == (source / "third_party" / original).read_bytes()
     assert "Permission is hereby granted" in (notices / "podofo/THIRD_PARTY.txt").read_text()

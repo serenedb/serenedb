@@ -144,6 +144,9 @@ def generate(directory, previews):
         writer = PdfWriter(clone_from=source)
         writer.encrypt("reader-secret", "owner-secret", algorithm=algorithm)
         writer.write(directory / f"protected_{algorithm.lower()}.pdf")
+    writer = PdfWriter(clone_from=source)
+    writer.encrypt("aIX", "owner-secret", algorithm="AES-256")
+    writer.write(directory / "protected_unicode.pdf")
     writer = PdfWriter()
     reader = PdfReader(source)
     writer.add_page(reader.pages[0])
@@ -159,7 +162,8 @@ def generate(directory, previews):
 
 def validate(directory):
     for path in sorted(directory.glob("*.pdf")):
-        with pdfium.PdfDocument(path, password="reader-secret") as document:
+        password = "aIX" if path.stem == "protected_unicode" else "reader-secret"
+        with pdfium.PdfDocument(path, password=password) as document:
             text = []
             rotations = []
             images = []

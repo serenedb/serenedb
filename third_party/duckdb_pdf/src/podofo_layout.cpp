@@ -26,13 +26,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <numeric>
 #include <vector>
 
 namespace duckdb::pdf {
 namespace {
 
-int Direction(std::string_view text) {
+int32_t Direction(std::string_view text) {
 	while (!text.empty()) {
 		utf8proc_int32_t code;
 		const auto length =
@@ -53,7 +52,7 @@ int Direction(std::string_view text) {
 }
 
 bool RightToLeft(std::span<const TextWord> words, std::span<const size_t> order) {
-	int direction = 0;
+	int32_t direction = 0;
 	for (size_t i : order) {
 		direction += Direction(words[i].text);
 	}
@@ -81,7 +80,7 @@ void AppendRows(std::span<const TextWord> words, std::span<size_t> order, std::s
 		auto row = order.subspan(begin, end - begin);
 		absl::c_stable_sort(row, [&](size_t a, size_t b) { return words[a].left < words[b].left; });
 		if (RightToLeft(words, row)) {
-			std::reverse(row.begin(), row.end());
+			absl::c_reverse(row);
 			for (size_t i = 0; i < row.size();) {
 				if (Direction(words[row[i]].text) < 0) {
 					++i;
@@ -91,7 +90,8 @@ void AppendRows(std::span<const TextWord> words, std::span<size_t> order, std::s
 				while (end < row.size() && Direction(words[row[end]].text) >= 0) {
 					++end;
 				}
-				std::reverse(row.begin() + i, row.begin() + end);
+				auto run = row.subspan(i, end - i);
+				absl::c_reverse(run);
 				i = end;
 			}
 		}
@@ -184,7 +184,7 @@ std::string GetReadingOrderText(std::span<const TextWord> words, double page_wid
 	}
 	absl::c_sort(heights);
 	std::vector<size_t> order(words.size());
-	std::iota(order.begin(), order.end(), 0);
+	absl::c_iota(order, 0);
 	AppendRegion(words, order, heights[heights.size() / 2], page_width, 0, text);
 	return text;
 }

@@ -1,6 +1,13 @@
 control substitution on
 
 query
+SELECT count(*) AS rows
+FROM read_pdf_tables('${RESOURCES}/tests/pdf/rendered/protected_unicode.pdf', password := 'ªⅨ');
+----
+rows
+4
+
+query
 SELECT row_index, cells[1] AS first, cells[2] AS second, cells[3] AS third
 FROM read_pdf_tables('${RESOURCES}/tests/pdf/basic/spaced_table.pdf')
 ORDER BY row_index;
@@ -65,3 +72,6 @@ SELECT * FROM read_pdf_tables('${RESOURCES}/tests/pdf/basic/text.pdf', first_pag
 
 statement error could not extract PDF text
 SELECT * FROM read_pdf_tables('${RESOURCES}/tests/pdf/basic/invalid.pdf');
+
+statement error could not extract PDF text
+SELECT * FROM read_pdf_tables('${RESOURCES}/tests/pdf/basic/invalid_path.pdf');

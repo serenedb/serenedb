@@ -1,14 +1,21 @@
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
 /// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
 /// You may obtain a copy of the License at
-/// http://www.apache.org/licenses/LICENSE-2.0
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
 /// Unless required by applicable law or agreed to in writing, software
 /// distributed under the License is distributed on an "AS IS" BASIS,
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "podofo_tables.hpp"
@@ -18,10 +25,10 @@
 #include <podofo/main/PdfPage.h>
 #include <podofo/main/PdfMath.h>
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <cmath>
-#include <map>
-#include <numeric>
 #include <stdexcept>
 
 namespace duckdb::pdf {
@@ -33,24 +40,24 @@ constexpr size_t kMaxWork = 4000000;
 
 class Components {
 public:
-	explicit Components(size_t count) : parents(count) {
-		std::iota(parents.begin(), parents.end(), 0);
+	explicit Components(size_t count) : _parents(count) {
+		absl::c_iota(_parents, 0);
 	}
 	size_t Find(size_t i) {
-		while (parents[i] != i) {
-			parents[i] = parents[parents[i]];
-			i = parents[i];
+		while (_parents[i] != i) {
+			_parents[i] = _parents[_parents[i]];
+			i = _parents[i];
 		}
 		return i;
 	}
 	void Join(size_t a, size_t b) {
 		a = Find(a);
 		b = Find(b);
-		parents[std::max(a, b)] = std::min(a, b);
+		_parents[std::max(a, b)] = std::min(a, b);
 	}
 
 private:
-	std::vector<size_t> parents;
+	std::vector<size_t> _parents;
 };
 
 struct Edge {
@@ -64,7 +71,7 @@ std::vector<double> Coordinates(const std::vector<Edge> &edges) {
 	for (const auto &edge : edges) {
 		result.push_back(edge.position);
 	}
-	std::sort(result.begin(), result.end());
+	absl::c_sort(result);
 	std::vector<double> distinct;
 	for (double value : result) {
 		if (distinct.empty() || value - distinct.back() > kTolerance) {
@@ -85,30 +92,29 @@ bool Covers(const std::vector<Edge> &edges, double position, double start, doubl
 
 } // namespace
 
-std::vector<Rule> GetPageRules(const PoDoFo::PdfPage &page, const std::function<void()> &interrupt) {
-	using namespace PoDoFo;
-	PdfContentReaderArgs args;
-	args.Flags = PdfContentReaderFlags::SkipFetchInlineImages;
-	PdfContentStreamReader reader(page, args);
-	PdfContent content;
-	std::vector<Matrix> states(1);
+std::vector<Rule> GetPageRules(const PoDoFo::PdfPage &page, absl::FunctionRef<void()> interrupt) {
+	PoDoFo::PdfContentReaderArgs args;
+	args.Flags = PoDoFo::PdfContentReaderFlags::SkipFetchInlineImages;
+	PoDoFo::PdfContentStreamReader reader(page, args);
+	PoDoFo::PdfContent content;
+	std::vector<PoDoFo::Matrix> states(1);
 	struct FormState {
 		size_t depth;
 		std::vector<Rule> path;
-		Vector2 current;
-		Vector2 origin;
+		PoDoFo::Vector2 current;
+		PoDoFo::Vector2 origin;
 		bool has_current;
 	};
 	std::vector<FormState> forms;
 	std::vector<Rule> path;
 	std::vector<Rule> result;
-	Vector2 current, origin;
+	PoDoFo::Vector2 current, origin;
 	bool has_current = false;
 	const auto rect = page.GetRectRaw().GetNormalized();
 	auto point = [&](double x, double y) {
-		return Vector2(x, y) * states.back();
+		return PoDoFo::Vector2(x, y) * states.back();
 	};
-	auto line = [&](const Vector2 &to) {
+	auto line = [&](const PoDoFo::Vector2 &to) {
 		if (has_current) {
 			path.push_back({current.X - rect.X, rect.GetTop() - current.Y, to.X - rect.X, rect.GetTop() - to.Y});
 			if (path.size() > kMaxRules) {
@@ -119,10 +125,11 @@ std::vector<Rule> GetPageRules(const PoDoFo::PdfPage &page, const std::function<
 	};
 	while (reader.TryReadNext(content)) {
 		interrupt();
-		if (content.HasErrors()) {
-			continue;
+		if (content.HasErrors() || (content.GetWarnings() & PoDoFo::PdfContentWarnings::RecursiveXObject) !=
+		                               PoDoFo::PdfContentWarnings::None) {
+			throw PoDoFo::PdfError {PoDoFo::PdfErrorCode::InvalidContentStream, __FILE__, __LINE__};
 		}
-		if (content.GetType() == PdfContentType::BeginFormXObject) {
+		if (content.GetType() == PoDoFo::PdfContentType::BeginFormXObject) {
 			if (forms.size() >= 128) {
 				throw std::length_error("read_pdf_tables: form nesting is too deep");
 			}
@@ -132,7 +139,7 @@ std::vector<Rule> GetPageRules(const PoDoFo::PdfPage &page, const std::function<
 			states.push_back(content->XObject->GetMatrix() * states.back());
 			continue;
 		}
-		if (content.GetType() == PdfContentType::EndFormXObject) {
+		if (content.GetType() == PoDoFo::PdfContentType::EndFormXObject) {
 			states.resize(forms.back().depth);
 			path = std::move(forms.back().path);
 			current = forms.back().current;
@@ -141,43 +148,43 @@ std::vector<Rule> GetPageRules(const PoDoFo::PdfPage &page, const std::function<
 			forms.pop_back();
 			continue;
 		}
-		if (content.GetType() != PdfContentType::Operator) {
+		if (content.GetType() != PoDoFo::PdfContentType::Operator) {
 			continue;
 		}
 		const auto &s = content->Stack;
 		switch (content->Operator) {
-		case PdfOperator::q:
+		case PoDoFo::PdfOperator::q:
 			if (states.size() >= kMaxRules) {
 				throw std::length_error("read_pdf_tables: graphics state nesting is too deep");
 			}
 			states.push_back(states.back());
 			break;
-		case PdfOperator::Q:
+		case PoDoFo::PdfOperator::Q:
 			if (states.size() > (forms.empty() ? 1 : forms.back().depth + 1)) {
 				states.pop_back();
 			}
 			break;
-		case PdfOperator::cm:
-			states.back() =
-			    Matrix(s[5].GetReal(), s[4].GetReal(), s[3].GetReal(), s[2].GetReal(), s[1].GetReal(), s[0].GetReal()) *
-			    states.back();
+		case PoDoFo::PdfOperator::cm:
+			states.back() = PoDoFo::Matrix(s[5].GetReal(), s[4].GetReal(), s[3].GetReal(), s[2].GetReal(),
+			                               s[1].GetReal(), s[0].GetReal()) *
+			                states.back();
 			break;
-		case PdfOperator::m:
+		case PoDoFo::PdfOperator::m:
 			current = origin = point(s[1].GetReal(), s[0].GetReal());
 			has_current = true;
 			break;
-		case PdfOperator::l:
+		case PoDoFo::PdfOperator::l:
 			line(point(s[1].GetReal(), s[0].GetReal()));
 			break;
-		case PdfOperator::c:
-		case PdfOperator::v:
-		case PdfOperator::y:
+		case PoDoFo::PdfOperator::c:
+		case PoDoFo::PdfOperator::v:
+		case PoDoFo::PdfOperator::y:
 			current = point(s[1].GetReal(), s[0].GetReal());
 			break;
-		case PdfOperator::h:
+		case PoDoFo::PdfOperator::h:
 			line(origin);
 			break;
-		case PdfOperator::re: {
+		case PoDoFo::PdfOperator::re: {
 			const double x = s[3].GetReal(), y = s[2].GetReal(), w = s[1].GetReal(), h = s[0].GetReal();
 			current = origin = point(x, y);
 			has_current = true;
@@ -187,23 +194,23 @@ std::vector<Rule> GetPageRules(const PoDoFo::PdfPage &page, const std::function<
 			line(origin);
 			break;
 		}
-		case PdfOperator::s:
-		case PdfOperator::b:
-		case PdfOperator::b_Star:
+		case PoDoFo::PdfOperator::s:
+		case PoDoFo::PdfOperator::b:
+		case PoDoFo::PdfOperator::b_Star:
 			line(origin);
 			[[fallthrough]];
-		case PdfOperator::S:
-		case PdfOperator::B:
-		case PdfOperator::B_Star:
-		case PdfOperator::f:
-		case PdfOperator::F:
-		case PdfOperator::f_Star:
+		case PoDoFo::PdfOperator::S:
+		case PoDoFo::PdfOperator::B:
+		case PoDoFo::PdfOperator::B_Star:
+		case PoDoFo::PdfOperator::f:
+		case PoDoFo::PdfOperator::F:
+		case PoDoFo::PdfOperator::f_Star:
 			result.insert(result.end(), path.begin(), path.end());
 			if (result.size() > kMaxRules) {
 				throw std::length_error("read_pdf_tables: page has too many ruling lines");
 			}
 			[[fallthrough]];
-		case PdfOperator::n:
+		case PoDoFo::PdfOperator::n:
 			path.clear();
 			has_current = false;
 			break;
@@ -211,18 +218,18 @@ std::vector<Rule> GetPageRules(const PoDoFo::PdfPage &page, const std::function<
 			break;
 		}
 	}
-	const auto rotation = GetFrameRotationTransform(rect, page.GetRotationRadians());
+	const auto rotation = PoDoFo::GetFrameRotationTransform(rect, page.GetRotationRadians());
 	const auto displayed = rect * rotation;
 	for (auto &rule : result) {
-		auto a = Vector2(rule.x1 + rect.X, rect.GetTop() - rule.y1) * rotation;
-		auto b = Vector2(rule.x2 + rect.X, rect.GetTop() - rule.y2) * rotation;
+		auto a = PoDoFo::Vector2(rule.x1 + rect.X, rect.GetTop() - rule.y1) * rotation;
+		auto b = PoDoFo::Vector2(rule.x2 + rect.X, rect.GetTop() - rule.y2) * rotation;
 		rule = {a.X - displayed.X, displayed.GetTop() - a.Y, b.X - displayed.X, displayed.GetTop() - b.Y};
 	}
 	return result;
 }
 
 std::vector<Table> GetRuledTables(std::span<const Rule> rules, std::span<const TextWord> words,
-                                  const std::function<void()> &interrupt) {
+                                  absl::FunctionRef<void()> interrupt) {
 	std::vector<Edge> horizontal, vertical;
 	for (const auto &r : rules) {
 		if (!std::isfinite(r.x1) || !std::isfinite(r.x2) || !std::isfinite(r.y1) || !std::isfinite(r.y2)) {
@@ -250,15 +257,19 @@ std::vector<Table> GetRuledTables(std::span<const Rule> rules, std::span<const T
 			}
 		}
 	}
-	std::map<size_t, std::pair<std::vector<Edge>, std::vector<Edge>>> groups;
+	struct RulingGroup {
+		std::vector<Edge> horizontal;
+		std::vector<Edge> vertical;
+	};
+	std::vector<RulingGroup> groups(horizontal.size() + vertical.size());
 	for (size_t i = 0; i < horizontal.size(); ++i) {
-		groups[connected.Find(i)].first.push_back(horizontal[i]);
+		groups[connected.Find(i)].horizontal.push_back(horizontal[i]);
 	}
 	for (size_t i = 0; i < vertical.size(); ++i) {
-		groups[connected.Find(horizontal.size() + i)].second.push_back(vertical[i]);
+		groups[connected.Find(horizontal.size() + i)].vertical.push_back(vertical[i]);
 	}
 	std::vector<Table> tables;
-	for (auto &[id, edges] : groups) {
+	for (auto &edges : groups) {
 		interrupt();
 		auto &[hs, vs] = edges;
 		if (hs.size() < 2 || vs.size() < 2) {
@@ -286,9 +297,9 @@ std::vector<Table> GetRuledTables(std::span<const Rule> rules, std::span<const T
 		auto by_start = [](const Edge &a, const Edge &b) {
 			return a.start < b.start;
 		};
-		std::sort(hs.begin(), hs.end(), by_start);
-		std::sort(vs.begin(), vs.end(), by_start);
-		if (std::count_if(ys.begin(), ys.end(), [&](double y) { return Covers(hs, y, xs.front(), xs.back()); }) < 2) {
+		absl::c_sort(hs, by_start);
+		absl::c_sort(vs, by_start);
+		if (absl::c_count_if(ys, [&](double y) { return Covers(hs, y, xs.front(), xs.back()); }) < 2) {
 			continue;
 		}
 		const size_t columns = xs.size() - 1, rows = ys.size() - 1, count = rows * columns;
@@ -332,8 +343,8 @@ std::vector<Table> GetRuledTables(std::span<const Rule> rules, std::span<const T
 			if (!(x > xs.front() && x < xs.back() && y > ys.front() && y < ys.back())) {
 				continue;
 			}
-			const size_t col = std::upper_bound(xs.begin(), xs.end(), x) - xs.begin() - 1;
-			const size_t row = std::upper_bound(ys.begin(), ys.end(), y) - ys.begin() - 1;
+			const size_t col = absl::c_upper_bound(xs, x) - xs.begin() - 1;
+			const size_t row = absl::c_upper_bound(ys, y) - ys.begin() - 1;
 			content[cells.Find(row * columns + col)].push_back(word);
 			found_text = true;
 		}
@@ -350,8 +361,8 @@ std::vector<Table> GetRuledTables(std::span<const Rule> rules, std::span<const T
 		}
 		tables.push_back(std::move(table));
 	}
-	std::sort(tables.begin(), tables.end(),
-	          [](const Table &a, const Table &b) { return a.top == b.top ? a.left < b.left : a.top < b.top; });
+	absl::c_sort(tables,
+	             [](const Table &a, const Table &b) { return a.top == b.top ? a.left < b.left : a.top < b.top; });
 	return tables;
 }
 

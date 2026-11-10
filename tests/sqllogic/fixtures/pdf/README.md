@@ -2,7 +2,7 @@
 
 PDFs are generated under the ignored `resources/tests/pdf/` directory. Do not commit them. The SQL test runner prepares them on demand; container runners prepare them on the host before starting containers, like the Iceberg fixtures.
 
-`basic/` covers structural boundaries and errors. `rendered/` contains nine realistic documents (26 pages) for `read_pdf_rendered.test`:
+`basic/` covers structural boundaries and errors. `rendered/` contains ten realistic documents (30 pages) for the PDF reader tests:
 
 | PDF | Pages | Expected coverage |
 | --- | ---: | --- |
@@ -13,10 +13,11 @@ PDFs are generated under the ignored `resources/tests/pdf/` directory. Do not co
 | `forms.pdf` | 1 | Two occurrences of the same reusable text stamp at distinct positions. |
 | `protected_aes-128.pdf` | 4 | AES-128 encryption; the same report text after authentication. |
 | `protected_aes-256.pdf` | 4 | AES-256 encryption; user and owner passwords. |
+| `protected_unicode.pdf` | 4 | AES-256 encryption; Unicode password normalization. |
 | `scan.pdf` | 1 | A rasterized invoice with no text layer; extraction must report that OCR is unsupported. |
 | `hybrid.pdf` | 3 | Text, a scanned invoice, and text; page scans retain the middle page, block scans skip it. |
 
-The protected documents use `reader-secret` as the user password and `owner-secret` as the owner password. These are public test credentials. All invoice names, references, and amounts are fictional.
+The protected documents use `reader-secret` as the user password and `owner-secret` as the owner password. `protected_unicode.pdf` uses `aIX` and accepts its NFKC-equivalent spelling `ªⅨ`. These are public test credentials. All invoice names, references, and amounts are fictional.
 
 The embedded Bitstream Vera font is distributed with ReportLab; its notice is in [FONT-LICENSE.txt](FONT-LICENSE.txt).
 

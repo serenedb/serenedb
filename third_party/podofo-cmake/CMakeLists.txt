@@ -29,7 +29,6 @@ add_library(
     ${PODOFO_SOURCES}
     "${PODOFO_SOURCE_DIR}/3rdparty/chromium/pdfium/core/fxcodec/fax/faxmodule.cpp"
     "${PODOFO_SOURCE_DIR}/3rdparty/chromium/pdfium/core/fxcodec/scanlinedecoder.cpp"
-    "${PODOFO_SOURCE_DIR}/3rdparty/utf8proc/utf8proc.c"
 )
 target_compile_definitions(
     podofo
@@ -47,6 +46,7 @@ target_include_directories(
         "${PODOFO_SOURCE_DIR}/3rdparty/date"
         "${PODOFO_SOURCE_DIR}/3rdparty/tcbspan"
         "${PODOFO_SOURCE_DIR}/3rdparty/utf8cpp"
-        "${PODOFO_SOURCE_DIR}/3rdparty/utf8proc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../duckdb/third_party/utf8proc/include"
 )
-target_link_libraries(podofo PRIVATE freetype _libxml2 OpenSSL::SSL ZLIB::ZLIB)
+target_link_libraries(podofo PRIVATE freetype _libxml2 OpenSSL::SSL ZLIB::ZLIB duckdb_utf8proc)

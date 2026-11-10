@@ -116,6 +116,7 @@ def generate(directory):
     first = b"BT /F1 12 Tf 72 720 Td (Hello PDF) Tj ET"
     second = b"BT /F1 12 Tf 72 720 Td (Second page) Tj ET"
     write_pdf(directory / "text.pdf", [first, second])
+    write_pdf(directory / "invalid_path.pdf", [first + b"\n10 m"])
     write_pdf(directory / "more_text.pdf", [second])
     write_pdf(directory / "encrypted.pdf", [first], password="secret")
     write_pdf(directory / "blank.pdf", [b""])

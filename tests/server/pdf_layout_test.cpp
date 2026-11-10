@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <podofo/main/PdfError.h>
 #include <podofo/main/PdfMemDocument.h>
 #include <podofo/main/PdfObjectStream.h>
 #include <podofo/main/PdfPageCollection.h>
@@ -194,6 +195,29 @@ TEST(PdfLayoutTest, TablePageRotationAndDiscardedPaths) {
   EXPECT_NEAR(rules[0].x2, 20, 1e-8);
   EXPECT_NEAR(rules[0].y1, 10, 1e-8);
   EXPECT_NEAR(rules[0].y2, 110, 1e-8);
+}
+
+TEST(PdfLayoutTest, InvalidTableOperatorsAreRejected) {
+  PoDoFo::PdfMemDocument document;
+  auto& page = document.GetPages().CreatePage(PoDoFo::Rect(0, 0, 300, 300));
+  static_cast<PoDoFo::PdfCanvas&>(page)
+    .GetOrCreateContentsStream(PoDoFo::PdfStreamAppendFlags::None)
+    .SetData(PoDoFo::bufferview("10 m"));
+  EXPECT_THROW(GetPageRules(page, [] {}), PoDoFo::PdfError);
+}
+
+TEST(PdfLayoutTest, RecursiveTableFormsAreRejected) {
+  PoDoFo::PdfMemDocument document;
+  auto& page = document.GetPages().CreatePage(PoDoFo::Rect(0, 0, 300, 300));
+  auto form = document.CreateXObjectForm(PoDoFo::Rect(0, 0, 100, 100));
+  PoDoFo::PdfPainter painter;
+  painter.SetCanvas(*form);
+  painter.DrawXObject(*form, 0, 0);
+  painter.FinishDrawing();
+  painter.SetCanvas(page);
+  painter.DrawXObject(*form, 0, 0);
+  painter.FinishDrawing();
+  EXPECT_THROW(GetPageRules(page, [] {}), PoDoFo::PdfError);
 }
 
 TEST(PdfLayoutTest, MultipleTablesAndMultilineCells) {

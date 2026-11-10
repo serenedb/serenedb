@@ -13,6 +13,9 @@ https://github.com/serenedb/podofo/archive/@PDF_PODOFO_REVISION@.tar.gz
 The bundled component license notices are in `podofo/THIRD_PARTY.txt`,
 `podofo/pdfium/LICENSE`, and `podofo/numerics/LICENSE`.
 
+The reader shares DuckDB's utf8proc library. Its license and attribution are
+in `utf8proc/LICENSE`.
+
 Portions of this software are copyright (C) 1996-2025 The FreeType Project
 (https://freetype.org). All rights reserved. This software is based in part on
 the work of the FreeType Team. FreeType is used under the FreeType License;

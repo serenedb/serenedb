@@ -35,6 +35,11 @@ foreach(component pdfium numerics)
 endforeach()
 install(
     FILES
+        "${PROJECT_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/LICENSE"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/pdf/utf8proc"
+)
+install(
+    FILES
         "${PDF_FREETYPE_SOURCE}/LICENSE.TXT"
         "${PDF_FREETYPE_SOURCE}/docs/FTL.TXT"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/pdf/freetype"

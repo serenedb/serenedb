@@ -744,12 +744,6 @@ include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/duckdb_versions/include)
 
 sdb_add_module(duckdb COVERAGE)
-sdb_dir_compile_options(
-    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src
-    $<$<CONFIG:Debug>:-Wno-conversion>
-    $<$<CONFIG:Debug>:-Wno-sign-compare>
-    $<$<CONFIG:Debug>:-Wno-missing-field-initializers>
-)
 target_compile_options(duckdb_storage PRIVATE -Wno-thread-safety-analysis)
 if(TARGET iceberg_planning_scan_plan)
     target_compile_options(

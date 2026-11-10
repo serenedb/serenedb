@@ -6,11 +6,6 @@ The following components are distributed under the MIT license below:
 SASLprep
 Copyright (c) 2025 Francesco Pretto <ceztko@gmail.com>
 
-utf8proc
-Copyright (c) 2014-2021 Steven G. Johnson, Jiahao Chen, Peter Colberg,
-Tony Kelman, Scott P. Jones, and other contributors.
-Copyright (c) 2009 Public Software Group e. V., Berlin, Germany
-
 Howard Hinnant's date library
 Copyright (c) 2015, 2016, 2017 Howard Hinnant
 Copyright (c) 2016 Adrian Colomitchi

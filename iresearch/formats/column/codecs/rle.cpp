@@ -879,8 +879,7 @@ void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
   idx_t prev_idx = 0;
   for (idx_t i = 0; i < sel_count; ++i) {
     const auto next_idx = sel.get_index(i);
-    SDB_ENSURE(next_idx >= prev_idx,
-               "RLE select: selection vector indices are not ordered");
+    SDB_ASSERT(next_idx >= prev_idx);
     SDB_ASSERT(next_idx < vector_count);
     SkipInternal(scan, next_idx - prev_idx);
     writer.WriteValue(CurrentValue(scan));
@@ -940,8 +939,7 @@ void Filter(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
     const idx_t run_begin_sel = sel_idx;
     while (sel_idx < sel_count && sel.get_index(sel_idx) < pos + take) {
       const auto row = sel.get_index(sel_idx);
-      SDB_ENSURE(row >= prev_row,
-                 "RLE filter: selection vector indices are not ordered");
+      SDB_ASSERT(row >= prev_row);
       prev_row = row;
       ++sel_idx;
     }

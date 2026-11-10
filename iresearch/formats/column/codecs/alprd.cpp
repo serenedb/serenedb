@@ -976,8 +976,7 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                     const idx_t* rows, idx_t count, duckdb::Vector& result,
                     const duckdb::SelectionVector& result_sel,
                     idx_t result_offset) {
-  SDB_ENSURE(!count || rows[count - 1] < segment.count,
-             "ALPRD segment: row out of range");
+  SDB_ASSERT(!count || rows[count - 1] < segment.count);
   auto& fetch_state = state.GetOrCreateSegmentState<AlpRdFetchState<T>>([&] {
     return std::make_unique<AlpRdFetchState<T>>(segment.Pin(), segment);
   });

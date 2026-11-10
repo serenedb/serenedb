@@ -586,7 +586,7 @@ struct Group {
   const uint8_t* AlgorithmGroup() const {
     SDB_ASSERT(!AtEnd());
     SDB_ASSERT(width > 0);
-    SDB_ENSURE(payload, "Bitpacking algorithm group has no payload");
+    SDB_ASSERT(payload);
     const auto algorithm_group_index = offset / kAlgorithmGroupSize;
     SDB_ASSERT(algorithm_group_index < algorithm_group_count);
     return payload + algorithm_group_index * algorithm_group_size;

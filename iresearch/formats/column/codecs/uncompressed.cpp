@@ -579,15 +579,16 @@ bool ValidEntry(int32_t current, int32_t previous,
                 uint32_t dictionary_size) noexcept {
   const auto current_offset = DictionaryOffset(current);
   const auto previous_offset = DictionaryOffset(previous);
-  if (current == std::numeric_limits<int32_t>::min() ||
-      current_offset > dictionary_size || current_offset < previous_offset) {
-    return false;
-  }
   const auto length = current_offset - previous_offset;
-  if (current >= 0) {
-    return true;
-  }
-  return length == 0 ? current == previous : length == kOverflowMarkerSize;
+  uint32_t invalid = current == std::numeric_limits<int32_t>::min();
+  invalid |= current_offset > dictionary_size;
+  invalid |= current_offset < previous_offset;
+  const uint32_t invalid_null = (length == 0) & (current != previous);
+  const uint32_t invalid_overflow =
+    (length != 0) & (length != kOverflowMarkerSize);
+  invalid |=
+    static_cast<uint32_t>(current < 0) & (invalid_null | invalid_overflow);
+  return invalid == 0;
 }
 
 struct StringEntry {

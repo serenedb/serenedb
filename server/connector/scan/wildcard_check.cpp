@@ -34,10 +34,28 @@ namespace {
 
 using WildcardCheckBind = SharedCheckBind<re2::RE2>;
 
+re2::RE2::Options ThreadOwned(re2::RE2::Options options) {
+  options.set_thread_safe(false);
+  return options;
+}
+
+struct WildcardCheckState final : duckdb::FunctionLocalState {
+  explicit WildcardCheckState(const re2::RE2& shared)
+    : owned{shared.FullMatchWithoutEngine()
+              ? nullptr
+              : std::make_unique<const re2::RE2>(
+                  shared.pattern(), ThreadOwned(shared.options()))},
+      matcher{owned ? *owned : shared} {}
+
+  std::unique_ptr<const re2::RE2> owned;
+  const re2::RE2& matcher;
+};
+
 void CheckWildcard(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    duckdb::Vector& result) {
-  const auto& func = state.expr.Cast<duckdb::BoundFunctionExpression>();
-  const auto& matcher = *func.BindInfo()->Cast<WildcardCheckBind>().data;
+  const auto& matcher = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                          ->Cast<WildcardCheckState>()
+                          .matcher;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, bool>(
     args.data[0], result, args.size(), [&](duckdb::string_t terms) {
       return irs::MatchStoredTerms(matcher, irs::AsBytesView(terms));
@@ -51,7 +69,7 @@ DeferredCheck MakeWildcardCheck(const irs::Filter& source, irs::field_id column,
   auto bind = duckdb::make_uniq<WildcardCheckBind>(
     irs::utils::downCast<irs::ByWildcardNGram>(source).options().matcher);
   return Split(source, column, type, "sdb_wildcard_check", CheckWildcard,
-               std::move(bind));
+               std::move(bind), InitCheck<WildcardCheckState, re2::RE2>);
 }
 
 }  // namespace sdb::connector

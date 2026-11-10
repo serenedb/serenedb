@@ -1,0 +1,52 @@
+statement ok
+SET threads = 8;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ssr_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE ssr (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'lm_jm(0.7)');
+
+
+statement ok
+INSERT INTO ssr SELECT i, CASE i % 7
+    WHEN 0 THEN 'fox'
+    WHEN 1 THEN repeat('fox ', 30)
+    WHEN 2 THEN 'fox ' || repeat('pad ', 200)
+    WHEN 3 THEN repeat('fox ', 12) || repeat('pad ', 3)
+    WHEN 4 THEN 'fox fox'
+    WHEN 5 THEN repeat('pad ', 100) || repeat('fox ', 25)
+    ELSE 'fox ' || repeat('z ', 2)
+  END
+  FROM generate_series(1, 20000) AS s(i);
+
+
+statement ok
+CREATE INDEX ssr_first ON ssr USING inverted(id, body ssr_words);
+
+
+statement ok
+CREATE INDEX ssr_idx ON ssr USING inverted(id, body ssr_words);
+
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids
+FROM (SELECT id FROM ssr_idx
+      WHERE body @@ ts_phrase('fox')
+      ORDER BY LM_JM(ssr_idx.tableoid, 0.7) DESC, id
+      LIMIT 50);
+----
+n	ids
+50	50
+
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(score) > 0 AS positive
+FROM (SELECT id, LM_JM(ssr_idx.tableoid, 0.7) AS score FROM ssr_idx WHERE body @@ ts_phrase('fox'));
+----
+n	ids	positive
+20000	20000	t

@@ -121,8 +121,10 @@ struct VariantScanState;
 class ColumnReader {
  public:
   struct VectorScratch {
-    explicit VectorScratch(const duckdb::LogicalType& type)
-      : cache{duckdb::Allocator::DefaultAllocator(), type}, vector{cache} {}
+    explicit VectorScratch(const duckdb::LogicalType& type,
+                           duckdb::idx_t capacity = STANDARD_VECTOR_SIZE)
+      : cache{duckdb::Allocator::DefaultAllocator(), type, capacity},
+        vector{cache} {}
     VectorScratch(const VectorScratch&) = delete;
     VectorScratch(VectorScratch&&) = delete;
 

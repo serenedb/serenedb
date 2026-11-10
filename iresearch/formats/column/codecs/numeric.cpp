@@ -158,6 +158,11 @@ struct LeafSamples {
   std::vector<std::string> bytes;
 };
 
+struct SampleFrames {
+  uint32_t ready = 0;
+  ScratchVector<uint8_t> bytes[kSampleFrames];
+};
+
 class Leaves {
  public:
   size_t Compress(NumericLeaf leaf, const uint8_t* src, size_t size) {
@@ -632,6 +637,10 @@ class TypedSealer final : public NumericSealer {
         }
       }
     }
+    _sample_frames.resize(_candidates.size());
+    for (auto& frames : _sample_frames) {
+      frames.ready = 0;
+    }
   }
 
   void BuildRuns(uint32_t runs) {
@@ -739,26 +748,45 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
-  std::span<const uint8_t> FrameRaw(const Candidate& c, uint32_t f,
-                                    uint32_t per) {
+  static bool FrameCopied(const Candidate& c) noexcept {
+    return c.transform == NumericTransform::Rle || c.shuffled;
+  }
+
+  static std::span<const uint8_t> FrameRaw(const Candidate& c, uint32_t f,
+                                           uint32_t per,
+                                           ScratchVector<uint8_t>& scratch) {
     SDB_ASSERT(!BitPacked(c.transform));
     const auto begin = f * per;
     const auto k = std::min(c.items - begin, per);
     const auto* values = c.values.data() + size_t{begin} * c.stored;
     if (c.transform == NumericTransform::Rle) {
-      _frame.resize(size_t{k} * c.ItemBytes());
-      std::memcpy(_frame.data(), values, size_t{k} * c.stored);
-      std::memcpy(_frame.data() + size_t{k} * c.stored,
+      scratch.resize(size_t{k} * c.ItemBytes());
+      std::memcpy(scratch.data(), values, size_t{k} * c.stored);
+      std::memcpy(scratch.data() + size_t{k} * c.stored,
                   c.lengths.data() + size_t{begin} * c.run_width,
                   size_t{k} * c.run_width);
-      return _frame;
+      return scratch;
     }
     if (c.shuffled) {
-      _frame.resize(size_t{k} * c.stored);
-      numeric::Shuffle(values, k, c.stored, _frame.data());
-      return _frame;
+      scratch.resize(size_t{k} * c.stored);
+      numeric::Shuffle(values, k, c.stored, scratch.data());
+      return scratch;
     }
     return {values, size_t{k} * c.stored};
+  }
+
+  std::span<const uint8_t> SampleRaw(const Candidate& c, uint32_t k, uint32_t f,
+                                     uint32_t per) {
+    if (!FrameCopied(c)) {
+      return FrameRaw(c, f, per, _frame);
+    }
+    auto& cached = _sample_frames[static_cast<size_t>(&c - _candidates.data())];
+    if (k < cached.ready) {
+      return cached.bytes[k];
+    }
+    SDB_ASSERT(k == cached.ready);
+    cached.ready = k + 1;
+    return FrameRaw(c, f, per, cached.bytes[k]);
   }
 
   uint64_t Estimate(const Candidate& c, const LeafOption& option,
@@ -787,7 +815,7 @@ class TypedSealer final : public NumericSealer {
     _samples.bytes.resize(samples);
     uint64_t comp = 0;
     for (uint32_t k = 0; k < samples; ++k) {
-      const auto bytes = FrameRaw(c, frame(k), g.per);
+      const auto bytes = SampleRaw(c, k, frame(k), g.per);
       SDB_ASSERT(bytes.size() ==
                  uint64_t{std::min(c.items - frame(k) * g.per, g.per)} *
                    c.ItemBytes());
@@ -872,7 +900,7 @@ class TypedSealer final : public NumericSealer {
         }
         compressible = false;
       }
-      const auto bytes = FrameRaw(c, f, per);
+      const auto bytes = FrameRaw(c, f, per, _frame);
       m.frame.raw_len = static_cast<uint32_t>(bytes.size());
       if (compressible) {
         const auto n =
@@ -937,6 +965,7 @@ class TypedSealer final : public NumericSealer {
   Leaves _leaves;
   LeafSamples _samples;
   LeafSamples _best_samples;
+  std::vector<SampleFrames> _sample_frames;
   Blocks<U> _ffor;
   Blocks<U> _run_blocks;
   Blocks<uint32_t> _length_blocks;

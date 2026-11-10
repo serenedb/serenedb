@@ -219,6 +219,54 @@ id
 
 
 statement ok
+CREATE TABLE stiv_rc (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO stiv_rc VALUES (1, 'quick brown fox'), (2, 'lazy dog');
+
+
+connection other
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+connection other
+statement ok
+CREATE INDEX stiv_rc_idx ON stiv_rc USING inverted (body stiv_text);
+
+
+connection writer
+statement ok
+INSERT INTO stiv_rc VALUES (3, 'red fox');
+
+
+connection other
+query
+SELECT id FROM stiv_rc WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+
+connection other
+query
+SELECT id FROM stiv_rc_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+
+connection other
+statement ok
+COMMIT;
+
+
+statement ok
+DROP TABLE stiv_rc;
+
+
+statement ok
 DROP TABLE stiv_u;
 
 

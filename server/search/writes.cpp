@@ -643,7 +643,7 @@ const StoreWrites::Pin& Writes::EnsurePin(duckdb::ClientContext& context,
   if (w.rebuilt && w.rebuilt->tick > snapshot) {
     state = w.rebuilt.get();
   } else {
-    SDB_ASSERT(!w.adopting);
+    SDB_ASSERT(!w.adopting || w.rebuilt);
     state = table.VersionAt(snapshot, _walks).state.get();
   }
   if (w.store->HasIndexes() && w.changes.HasBufferedRows()) {

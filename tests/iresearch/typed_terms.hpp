@@ -20,7 +20,11 @@
 
 #pragma once
 
+#include <iresearch/types.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
+#include <iresearch/utils/string.hpp>
 #include <string_view>
+#include <type_traits>
 
 namespace tests {
 
@@ -32,5 +36,26 @@ constexpr std::string_view BooleanTerm(bool value) noexcept {
 }
 
 constexpr std::string_view kNullTerm{"\x00", 0};
+
+template<typename T>
+irs::bstring NumericTerm(T value) {
+  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+  return irs::bstring{irs::numeric_utils::EncodeNumericTerm(buf, value)};
+}
+
+template<typename T>
+constexpr irs::field_id TypedFieldId(irs::field_id id) noexcept {
+  constexpr irs::field_id kStride = 1024;
+  if constexpr (std::is_same_v<T, int32_t>) {
+    return id + kStride;
+  } else if constexpr (std::is_same_v<T, int64_t>) {
+    return id + 2 * kStride;
+  } else if constexpr (std::is_same_v<T, float_t>) {
+    return id + 3 * kStride;
+  } else {
+    static_assert(std::is_same_v<T, double_t>);
+    return id;
+  }
+}
 
 }  // namespace tests

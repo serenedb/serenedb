@@ -153,6 +153,11 @@ struct Candidate {
   uint32_t ItemBytes() const noexcept { return stored + run_width; }
 };
 
+struct LeafSamples {
+  std::vector<uint32_t> frames;
+  std::vector<std::string> bytes;
+};
+
 class Leaves {
  public:
   size_t Compress(NumericLeaf leaf, const uint8_t* src, size_t size) {
@@ -319,7 +324,7 @@ class TypedSealer final : public NumericSealer {
       const auto option = absl::c_find_if(
         plan, [&](const auto& o) { return o.leaf == reuse.pick->leaf; });
       if (c && option != plan.end()) {
-        auto out = Emit(*c, *option);
+        auto out = Emit(*c, *option, nullptr);
         const auto bytes = out.bytes.size();
         const bool drift = reuse.Grew(static_cast<double>(bytes), rows);
         const bool keep =
@@ -349,11 +354,16 @@ class TypedSealer final : public NumericSealer {
                                              : BitPacked(c.transform)) {
           continue;
         }
-        if (const auto price = option.Price(Estimate(c, option));
+        if (const auto price = option.Price(Estimate(c, option, best_price));
             price < best_price) {
           best_price = price;
           best = &c;
           best_leaf = option;
+          if (option.leaf == NumericLeaf::None || BitPacked(c.transform)) {
+            _best_samples.frames.clear();
+          } else {
+            std::swap(_samples, _best_samples);
+          }
         }
       }
     }
@@ -363,7 +373,7 @@ class TypedSealer final : public NumericSealer {
                    static_cast<double>(bytes), rows);
     };
     if (best) {
-      auto out = Emit(*best, best_leaf);
+      auto out = Emit(*best, best_leaf, &_best_samples);
       if (const auto bytes = out.bytes.size();
           best_leaf.Price(bytes) < static_cast<double>(rival_bytes)) {
         calibrate(
@@ -414,10 +424,11 @@ class TypedSealer final : public NumericSealer {
     return it == _candidates.end() ? nullptr : &*it;
   }
 
-  NumericSegment Emit(const Candidate& c, const LeafOption& leaf) {
+  NumericSegment Emit(const Candidate& c, const LeafOption& leaf,
+                      const LeafSamples* samples) {
     auto out = NoSegment();
     _stats.Merge(out.stats);
-    Write(c, leaf, out.bytes);
+    Write(c, leaf, samples, out.bytes);
     return out;
   }
 
@@ -750,7 +761,8 @@ class TypedSealer final : public NumericSealer {
     return {values, size_t{k} * c.stored};
   }
 
-  uint64_t Estimate(const Candidate& c, const LeafOption& option) {
+  uint64_t Estimate(const Candidate& c, const LeafOption& option,
+                    double bound) {
     const auto g = GeometryOf(c, option);
     if (BitPacked(c.transform)) {
       return g.off_data + PackedBlocks(c);
@@ -759,20 +771,44 @@ class TypedSealer final : public NumericSealer {
     if (option.leaf == NumericLeaf::None) {
       return g.off_data + total;
     }
-    uint64_t raw = 0;
-    uint64_t comp = 0;
     const auto samples = std::min<uint32_t>(g.frames, kSampleFrames);
+    const auto frame = [&](uint32_t k) {
+      return static_cast<uint32_t>(uint64_t{k} * g.frames / samples);
+    };
+    uint64_t raw = 0;
     for (uint32_t k = 0; k < samples; ++k) {
-      const auto f = static_cast<uint32_t>(uint64_t{k} * g.frames / samples);
-      const auto bytes = FrameRaw(c, f, g.per);
-      const auto n = _leaves.Compress(option.leaf, bytes.data(), bytes.size());
-      raw += bytes.size();
-      comp += std::min<uint64_t>(n, bytes.size());
+      raw +=
+        uint64_t{std::min(c.items - frame(k) * g.per, g.per)} * c.ItemBytes();
     }
-    return g.off_data + (raw == 0 ? 0 : total * comp / raw);
+    if (raw == 0) {
+      return g.off_data;
+    }
+    _samples.frames.clear();
+    _samples.bytes.resize(samples);
+    uint64_t comp = 0;
+    for (uint32_t k = 0; k < samples; ++k) {
+      const auto bytes = FrameRaw(c, frame(k), g.per);
+      SDB_ASSERT(bytes.size() ==
+                 uint64_t{std::min(c.items - frame(k) * g.per, g.per)} *
+                   c.ItemBytes());
+      const auto n = _leaves.Compress(option.leaf, bytes.data(), bytes.size());
+      comp += std::min<uint64_t>(n, bytes.size());
+      _samples.frames.push_back(frame(k));
+      if (n < bytes.size()) {
+        _samples.bytes[k].assign(_leaves.Out(), n);
+      } else {
+        _samples.bytes[k].clear();
+      }
+      if (const auto least = g.off_data + total * comp / raw;
+          option.Price(least) >= bound) {
+        return least;
+      }
+    }
+    return g.off_data + total * comp / raw;
   }
 
-  void Write(const Candidate& c, const LeafOption& option, std::string& out) {
+  void Write(const Candidate& c, const LeafOption& option,
+             const LeafSamples* samples, std::string& out) {
     const auto [log2, per, frames, off_data] = GeometryOf(c, option);
     NumericHeader h;
     h.width = kWidth;
@@ -803,6 +839,7 @@ class TypedSealer final : public NumericSealer {
       std::memcpy(out.data() + h.off_dict, c.dict.data(), c.dict.size());
     }
     std::vector<NumericFrameMeta> metas(frames);
+    size_t sample = 0;
     for (uint32_t f = 0; f < frames; ++f) {
       const auto begin = f * per;
       auto& m = metas[f];
@@ -822,9 +859,22 @@ class TypedSealer final : public NumericSealer {
         m.frame.comp_len = m.frame.raw_len;
         continue;
       }
+      bool compressible = option.leaf != NumericLeaf::None;
+      if (samples && sample < samples->frames.size() &&
+          samples->frames[sample] == f) {
+        const auto& stored = samples->bytes[sample++];
+        if (!stored.empty()) {
+          m.frame.raw_len = static_cast<uint32_t>(
+            uint64_t{std::min(c.items - begin, per)} * c.ItemBytes());
+          out.append(stored);
+          m.frame.comp_len = static_cast<uint32_t>(stored.size());
+          continue;
+        }
+        compressible = false;
+      }
       const auto bytes = FrameRaw(c, f, per);
       m.frame.raw_len = static_cast<uint32_t>(bytes.size());
-      if (option.leaf != NumericLeaf::None) {
+      if (compressible) {
         const auto n =
           _leaves.Compress(option.leaf, bytes.data(), bytes.size());
         if (n < bytes.size()) {
@@ -885,6 +935,8 @@ class TypedSealer final : public NumericSealer {
   containers::FlatHashMap<U, uint32_t> _dict_map;
   ScratchVector<uint8_t> _frame;
   Leaves _leaves;
+  LeafSamples _samples;
+  LeafSamples _best_samples;
   Blocks<U> _ffor;
   Blocks<U> _run_blocks;
   Blocks<uint32_t> _length_blocks;

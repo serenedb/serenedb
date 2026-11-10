@@ -159,6 +159,11 @@ class RawVectorReader {
     }
   }
 
+  const float* Row(doc_id_t doc) {
+    size_t got = 0;
+    return reinterpret_cast<const float*>(ReadSome(doc, 1, got));
+  }
+
   score_t ComputeDistance(doc_id_t doc, const byte_type* row) {
     SDB_ASSERT(_dist);
     if (!row) {
@@ -312,6 +317,112 @@ struct RadiusGate {
   }
 };
 
+struct ClusterLayout {
+  PayloadBlockSetting setting;
+  uint32_t lane = 0;
+  uint32_t end = 0;
+  uint32_t records = 0;
+
+  ClusterLayout(const PayloadBlockSetting& block, uint32_t first,
+                uint32_t docs) noexcept
+    : setting{block},
+      lane{first},
+      end{first + docs},
+      records{static_cast<uint32_t>(block.RecordCount(first + docs))} {
+    SDB_ASSERT(setting.group_size != 0);
+    SDB_ASSERT(lane < setting.group_size);
+  }
+
+  uint32_t GroupRecords(uint32_t first) const noexcept {
+    return std::min(first + setting.group_size, records) - first;
+  }
+};
+
+class ClusterScorer {
+ public:
+  explicit ClusterScorer(QuantizerReader& reader) noexcept : _reader{&reader} {}
+
+  void Start(const ClusterLayout& layout) {
+    _layout = &layout;
+    _cache.resize(2 * size_t{layout.setting.group_size});
+    _cached_first = 0;
+    _cached_end = 0;
+  }
+
+  void SetLimit(score_t threshold) noexcept { _threshold = threshold; }
+
+  void TrackErrors() noexcept { _errors = true; }
+
+  void Score(VectorBlockReader& pay, uint32_t base, uint32_t len, score_t* out,
+             score_t* err) {
+    SDB_ASSERT(_layout);
+    const auto& layout = *_layout;
+    SDB_ASSERT(layout.lane + base + len <= layout.end);
+    uint32_t lane = layout.lane + base;
+    const uint32_t gs = layout.setting.group_size;
+    if (lane % gs != 0) {
+      const uint32_t take = ServeGroup(pay, lane, len, out, err);
+      lane += take;
+      out += take;
+      err += take;
+      len -= take;
+    }
+    if (const uint32_t full = len / gs * gs; full != 0) {
+      ScoreBlock(pay.Read(lane, full), full, out, err);
+      lane += full;
+      out += full;
+      err += full;
+      len -= full;
+    }
+    if (len == 0) {
+      return;
+    }
+    if (const uint32_t records = layout.GroupRecords(lane); records == len) {
+      ScoreBlock(pay.Read(lane, records), records, out, err);
+      return;
+    }
+    ServeGroup(pay, lane, len, out, err);
+  }
+
+ private:
+  void ScoreBlock(std::span<const byte_type> block, uint32_t records,
+                  score_t* out, score_t* err) {
+    _reader->ComputeBlock(block, _threshold, out);
+    if (_errors) {
+      _reader->BlockErrors(block, {out, records}, err);
+    }
+  }
+
+  uint32_t ServeGroup(VectorBlockReader& pay, uint32_t lane, uint32_t len,
+                      score_t* out, score_t* err) {
+    const auto& layout = *_layout;
+    const uint32_t gs = layout.setting.group_size;
+    if (lane < _cached_first || lane >= _cached_end) {
+      const uint32_t first = lane / gs * gs;
+      const uint32_t records = layout.GroupRecords(first);
+      ScoreBlock(pay.Read(first, records), records, _cache.data(),
+                 _cache.data() + gs);
+      _cached_first = first;
+      _cached_end = first + std::min<uint32_t>(records, layout.end - first);
+    }
+    const uint32_t take = std::min(len, _cached_end - lane);
+    const uint32_t from = lane - _cached_first;
+    std::copy_n(_cache.begin() + from, take, out);
+    if (_errors) {
+      std::copy_n(_cache.begin() + gs + from, take, err);
+    }
+    return take;
+  }
+
+  QuantizerReader* _reader;
+  const ClusterLayout* _layout = nullptr;
+  std::vector<score_t> _cache;
+  score_t _threshold = std::numeric_limits<score_t>::lowest();
+  uint32_t _cached_first = 0;
+  uint32_t _cached_end = 0;
+  bool _errors = false;
+};
+
 template<typename InputType, typename Gate>
 class VectorCluster {
  public:
@@ -321,25 +432,26 @@ class VectorCluster {
                 std::unique_ptr<QuantizerReader>&& quantizer,
                 VectorBlockReader&& payload, uint32_t lane)
     : _quantizer{std::move(quantizer)},
+      _scorer{*_quantizer},
       _pay{std::move(payload)},
-      _total{meta.docs_count},
-      _lane{lane} {
-    SDB_ASSERT(_quantizer);
-    _setting = _quantizer->BlockSetting();
-    SDB_ASSERT(_setting.group_size != 0);
-    _cache.resize(2 * size_t{_setting.group_size});
-    SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
-    _end = _lane + _total;
-    _records = static_cast<uint32_t>(_setting.RecordCount(_end));
+      _layout{_quantizer->BlockSetting(), lane, meta.docs_count},
+      _total{meta.docs_count} {
+    _scorer.Start(_layout);
     _list.Prepare(meta, doc_in, IndexFeatures::None, false);
   }
 
   VectorCluster(VectorCluster&&) = delete;
   VectorCluster& operator=(VectorCluster&&) = delete;
 
-  void SetThreshold(score_t threshold) noexcept { _threshold = threshold; }
+  void SetThreshold(score_t threshold) noexcept {
+    _threshold = threshold;
+    _scorer.SetLimit(threshold);
+  }
 
-  void EnableErrors() noexcept { _errors = true; }
+  void EnableErrors() noexcept {
+    _errors = true;
+    _scorer.TrackErrors();
+  }
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT window, score_t* IRS_RESTRICT errors) {
@@ -399,7 +511,7 @@ class VectorCluster {
       const auto leaf = _list.Leaf();
       const auto len = static_cast<uint32_t>(leaf.size());
       absl::c_copy(leaf, _docs.begin());
-      ComputeRange(_base, len, _dist.data(), _err.data());
+      _scorer.Score(_pay, _base, len, _dist.data(), _err.data());
       _base += len;
       if constexpr (Gate::kAll) {
         _len = len;
@@ -426,81 +538,17 @@ class VectorCluster {
     return kept;
   }
 
-  uint32_t GroupRecords(uint32_t first) const noexcept {
-    return std::min(first + _setting.group_size, _records) - first;
-  }
-
-  void ScoreBlock(std::span<const byte_type> block, uint32_t records,
-                  score_t* out, score_t* err) {
-    _quantizer->ComputeBlock(block, _threshold, out);
-    if (_errors) {
-      _quantizer->BlockErrors(block, {out, records}, err);
-    }
-  }
-
-  uint32_t ServeGroup(uint32_t lane, uint32_t len, score_t* out, score_t* err) {
-    if (lane < _cached_first || lane >= _cached_end) {
-      const uint32_t gs = _setting.group_size;
-      const uint32_t first = lane / gs * gs;
-      const uint32_t records = GroupRecords(first);
-      ScoreBlock(_pay.Read(first, records), records, _cache.data(),
-                 _cache.data() + gs);
-      _cached_first = first;
-      _cached_end = first + std::min<uint32_t>(records, _end - first);
-    }
-    const uint32_t take = std::min(len, _cached_end - lane);
-    const uint32_t from = lane - _cached_first;
-    std::copy_n(_cache.begin() + from, take, out);
-    if (_errors) {
-      std::copy_n(_cache.begin() + _setting.group_size + from, take, err);
-    }
-    return take;
-  }
-
-  void ComputeRange(uint32_t base, uint32_t len, score_t* out, score_t* err) {
-    SDB_ASSERT(base + len <= _total);
-    uint32_t lane = _lane + base;
-    const uint32_t gs = _setting.group_size;
-    if (lane % gs != 0) {
-      const uint32_t take = ServeGroup(lane, len, out, err);
-      lane += take;
-      out += take;
-      err += take;
-      len -= take;
-    }
-    if (const uint32_t full = len / gs * gs; full != 0) {
-      ScoreBlock(_pay.Read(lane, full), full, out, err);
-      lane += full;
-      out += full;
-      err += full;
-      len -= full;
-    }
-    if (len == 0) {
-      return;
-    }
-    if (const uint32_t records = GroupRecords(lane); records == len) {
-      ScoreBlock(_pay.Read(lane, records), records, out, err);
-      return;
-    }
-    ServeGroup(lane, len, out, err);
-  }
-
   std::unique_ptr<QuantizerReader> _quantizer;
+  ClusterScorer _scorer;
   VectorBlockReader _pay;
+  ClusterLayout _layout;
   detail::PostingLead<InputType> _list;
   std::array<doc_id_t, kRun> _docs;
   std::array<score_t, kRun> _dist;
   std::array<score_t, kRun> _err;
-  std::vector<score_t> _cache;
-  PayloadBlockSetting _setting;
   score_t _threshold = std::numeric_limits<score_t>::lowest();
   bool _errors = false;
   uint32_t _total;
-  uint32_t _lane;
-  uint32_t _end = 0;
-  uint32_t _records = 0;
-  uint32_t _cached_first = 0;
-  uint32_t _cached_end = 0;
   uint32_t _base = 0;
   uint32_t _len = 0;
   uint32_t _pos = 0;

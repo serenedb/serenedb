@@ -638,8 +638,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     bind.scan_order.has_value() &&
     (g.shape == ScanShape::Stream || g.shape == ScanShape::ColScan);
 
-  g.rg_size = bind.relation.row_group_size != 0 ? bind.relation.row_group_size
-                                                : DEFAULT_ROW_GROUP_SIZE;
+  g.rg_size = bind.RowGroupSize();
 
   g.order = ReadOrder(context, scan_ordered);
   const bool ordered = g.order == OrderMode::Order;

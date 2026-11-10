@@ -671,111 +671,134 @@ void HnswCollectAsked(const HnswGraph& graph, Dist& dist, uint32_t level,
   }
 }
 
+enum class HnswStep : uint8_t {
+  Continue,
+  Done,
+  Stopped,
+};
+
+template<HnswWalk Walk = HnswWalk::Through, typename Dist, typename Accept>
+HnswStep HnswExpandOne(const HnswGraph& graph, Dist& dist, uint32_t level,
+                       uint32_t ef, HnswSearchScratch& s, const Accept& accept,
+                       uint64_t budget = kHnswNoBudget) {
+  auto& nearest = s.nearest;
+  auto& frontier = s.frontier;
+
+  if (frontier.empty()) {
+    return HnswStep::Done;
+  }
+  std::pop_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
+  const auto cur = frontier.back();
+  frontier.pop_back();
+
+  if (nearest.size() >= ef && cur.score < nearest.front().score) {
+    return HnswStep::Done;
+  }
+  if (!frontier.empty()) {
+    const auto* next = graph.Neighbors(frontier.front().node, level).data();
+    __builtin_prefetch(next, 0, 3);
+    __builtin_prefetch(next + kHnswLinksPerLine, 0, 3);
+  }
+
+  s.batch.clear();
+  const auto neighbors = graph.Neighbors(cur.node, level);
+  const bool through = Walk == HnswWalk::Through ||
+                       (Walk == HnswWalk::Adaptive && !s.two_hop) ||
+                       (Walk == HnswWalk::Bridge && accept(cur.node));
+  if (through) {
+    HnswBatchUnvisited(neighbors, dist, s);
+  } else if constexpr (Walk != HnswWalk::Through && requires {
+                         accept.Prepare(std::span<const uint32_t>{});
+                       }) {
+    HnswCollectAsked<Walk>(graph, dist, level, neighbors, s, accept);
+  } else {
+    HnswForEachUnvisited(neighbors, s.visited, [&](uint32_t id) {
+      if (accept(id)) {
+        s.batch.push_back(id);
+        dist.Prefetch(id);
+        return;
+      }
+      if constexpr (kHnswHops<Walk>) {
+        const auto limit = s.batch.size() + neighbors.size();
+        const auto hop = graph.Neighbors(id, level);
+        for (size_t j = 0; j < hop.size() && s.batch.size() < limit; ++j) {
+          const auto w = HnswLoadLink(hop[j]);
+          if (w == kHnswInvalidNode) {
+            break;
+          }
+          if (s.visited.Test(w) || s.visited_hop2.TestAndSet(w)) {
+            continue;
+          }
+          if (accept(w)) {
+            s.visited.Set(w);
+            s.batch.push_back(w);
+            dist.Prefetch(w);
+          }
+        }
+      }
+    });
+  }
+  if (s.batch.empty()) {
+    return HnswStep::Continue;
+  }
+
+  s.scores.resize(s.batch.size());
+  dist.Batch(s.batch, s.scores.data(),
+             nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
+  s.scored += s.batch.size();
+
+  if constexpr (requires { accept.Prepare(std::span<const uint32_t>{}); }) {
+    accept.Prepare(std::span<const uint32_t>{s.batch});
+  }
+  if constexpr (Walk == HnswWalk::Adaptive) {
+    if (!s.two_hop) {
+      for (const auto id : s.batch) {
+        s.admitted += accept(id) ? 1 : 0;
+      }
+      s.two_hop = s.scored >= kHnswAdaptiveProbe &&
+                  HnswScarce(s.admitted, s.scored, s.admit_share);
+    }
+  }
+
+  for (size_t i = 0; i < s.batch.size(); ++i) {
+    const HnswCandidate cand{s.scores[i], s.batch[i]};
+    if (nearest.size() >= ef && cand.score <= nearest.front().score) {
+      continue;
+    }
+    if ((Walk != HnswWalk::Through && Walk != HnswWalk::Bridge &&
+         Walk != HnswWalk::Adaptive) ||
+        accept(cand.node)) {
+      HnswKeepNearest(nearest, cand, ef);
+    }
+    __builtin_prefetch(graph.Neighbors(cand.node, level).data(), 0, 1);
+    frontier.push_back(cand);
+    std::push_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
+  }
+  if (s.scored > budget) {
+    return HnswStep::Stopped;
+  }
+  if constexpr (requires { accept.Stalled(); }) {
+    if (accept.Stalled()) {
+      return HnswStep::Stopped;
+    }
+  }
+  return HnswStep::Continue;
+}
+
 template<HnswWalk Walk = HnswWalk::Through, typename Dist, typename Accept>
 bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
                      uint32_t ef, HnswSearchScratch& s, const Accept& accept,
                      uint64_t budget = kHnswNoBudget) {
-  auto& nearest = s.nearest;
-  auto& frontier = s.frontier;
-
-  while (!frontier.empty()) {
-    std::pop_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
-    const auto cur = frontier.back();
-    frontier.pop_back();
-
-    if (nearest.size() >= ef && cur.score < nearest.front().score) {
-      break;
-    }
-    if (!frontier.empty()) {
-      const auto* next = graph.Neighbors(frontier.front().node, level).data();
-      __builtin_prefetch(next, 0, 3);
-      __builtin_prefetch(next + kHnswLinksPerLine, 0, 3);
-    }
-
-    s.batch.clear();
-    const auto neighbors = graph.Neighbors(cur.node, level);
-    const bool through = Walk == HnswWalk::Through ||
-                         (Walk == HnswWalk::Adaptive && !s.two_hop) ||
-                         (Walk == HnswWalk::Bridge && accept(cur.node));
-    if (through) {
-      HnswBatchUnvisited(neighbors, dist, s);
-    } else if constexpr (Walk != HnswWalk::Through && requires {
-                           accept.Prepare(std::span<const uint32_t>{});
-                         }) {
-      HnswCollectAsked<Walk>(graph, dist, level, neighbors, s, accept);
-    } else {
-      HnswForEachUnvisited(neighbors, s.visited, [&](uint32_t id) {
-        if (accept(id)) {
-          s.batch.push_back(id);
-          dist.Prefetch(id);
-          return;
-        }
-        if constexpr (kHnswHops<Walk>) {
-          const auto limit = s.batch.size() + neighbors.size();
-          const auto hop = graph.Neighbors(id, level);
-          for (size_t j = 0; j < hop.size() && s.batch.size() < limit; ++j) {
-            const auto w = HnswLoadLink(hop[j]);
-            if (w == kHnswInvalidNode) {
-              break;
-            }
-            if (s.visited.Test(w) || s.visited_hop2.TestAndSet(w)) {
-              continue;
-            }
-            if (accept(w)) {
-              s.visited.Set(w);
-              s.batch.push_back(w);
-              dist.Prefetch(w);
-            }
-          }
-        }
-      });
-    }
-    if (s.batch.empty()) {
-      continue;
-    }
-
-    s.scores.resize(s.batch.size());
-    dist.Batch(s.batch, s.scores.data(),
-               nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
-    s.scored += s.batch.size();
-
-    if constexpr (requires { accept.Prepare(std::span<const uint32_t>{}); }) {
-      accept.Prepare(std::span<const uint32_t>{s.batch});
-    }
-    if constexpr (Walk == HnswWalk::Adaptive) {
-      if (!s.two_hop) {
-        for (const auto id : s.batch) {
-          s.admitted += accept(id) ? 1 : 0;
-        }
-        s.two_hop = s.scored >= kHnswAdaptiveProbe &&
-                    HnswScarce(s.admitted, s.scored, s.admit_share);
-      }
-    }
-
-    for (size_t i = 0; i < s.batch.size(); ++i) {
-      const HnswCandidate cand{s.scores[i], s.batch[i]};
-      if (nearest.size() >= ef && cand.score <= nearest.front().score) {
-        continue;
-      }
-      if ((Walk != HnswWalk::Through && Walk != HnswWalk::Bridge &&
-           Walk != HnswWalk::Adaptive) ||
-          accept(cand.node)) {
-        HnswKeepNearest(nearest, cand, ef);
-      }
-      __builtin_prefetch(graph.Neighbors(cand.node, level).data(), 0, 1);
-      frontier.push_back(cand);
-      std::push_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
-    }
-    if (s.scored > budget) {
-      return false;
-    }
-    if constexpr (requires { accept.Stalled(); }) {
-      if (accept.Stalled()) {
+  for (;;) {
+    switch (HnswExpandOne<Walk>(graph, dist, level, ef, s, accept, budget)) {
+      case HnswStep::Continue:
+        break;
+      case HnswStep::Done:
+        return true;
+      case HnswStep::Stopped:
         return false;
-      }
     }
   }
-  return true;
 }
 
 template<typename Dist>

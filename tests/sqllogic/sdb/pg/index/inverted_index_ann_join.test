@@ -1,0 +1,496 @@
+control substitution on
+
+# ============================================================================
+# Nearest-neighbour joins through the vector index: NEAREST BY and a
+# hand-written LATERAL top-k. Points lie on a line, so every outer vector has
+# a unique ranking; quant = 'none' keeps the scores exact.
+# ============================================================================
+
+statement ok
+CREATE TABLE songs (pk INTEGER PRIMARY KEY, cat INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX songs_hnsw ON songs
+  USING inverted(pk, cat, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+CREATE INDEX songs_ivf ON songs
+  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO songs SELECT i, i % 3,
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(300) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) songs;
+
+statement ok
+CREATE TABLE users (id INTEGER, emb FLOAT[8]);
+
+statement ok
+INSERT INTO users VALUES
+  (1, [10.4, 0, 0, 0, 0, 0, 0, 0]),
+  (2, [150.6, 0, 0, 0, 0, 0, 0, 0]),
+  (3, NULL),
+  (4, [299.2, 0, 0, 0, 0, 0, 0, 0]),
+  (5, [10.4, 0, 0, 0, 0, 0, 0, 0]);
+
+# songs_hnsw: no keyword, APPROX, EXACT
+
+query
+SELECT u.id, s.pk FROM users u
+  JOIN songs_hnsw s NEAREST 3 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id, s.pk;
+----
+id	pk
+1	9
+1	10
+1	11
+2	150
+2	151
+2	152
+4	297
+4	298
+4	299
+5	9
+5	10
+5	11
+
+query
+SELECT u.id, s.pk FROM users u
+  JOIN songs_hnsw s APPROX NEAREST 3 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id, s.pk;
+----
+id	pk
+1	9
+1	10
+1	11
+2	150
+2	151
+2	152
+4	297
+4	298
+4	299
+5	9
+5	10
+5	11
+
+query
+SELECT u.id, s.pk FROM users u
+  JOIN songs_hnsw s EXACT NEAREST 3 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id, s.pk;
+----
+id	pk
+1	9
+1	10
+1	11
+2	150
+2	151
+2	152
+4	297
+4	298
+4	299
+5	9
+5	10
+5	11
+
+query
+SELECT u.id, s.pk FROM users u
+  LEFT JOIN songs_hnsw s NEAREST 2 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id, s.pk;
+----
+id	pk
+1	10
+1	11
+2	150
+2	151
+3	NULL
+4	298
+4	299
+5	10
+5	11
+
+query
+SELECT u.id, n.pk, round(n.d, 3) AS d FROM users u,
+  LATERAL (SELECT pk, emb <-> u.emb AS d FROM songs_hnsw ORDER BY d LIMIT 2) n
+  ORDER BY u.id, n.d;
+----
+id	pk	d
+1	10	0.4
+1	11	0.6
+2	151	0.4
+2	150	0.6
+4	299	0.2
+4	298	1.2
+5	10	0.4
+5	11	0.6
+
+query
+SELECT u.id, n.pk FROM users u,
+  LATERAL (SELECT pk FROM songs_hnsw WHERE cat = 1 ORDER BY emb <-> u.emb LIMIT 2) n
+  ORDER BY u.id, n.pk;
+----
+id	pk
+1	10
+1	13
+2	148
+2	151
+4	295
+4	298
+5	10
+5	13
+
+# songs_ivf: no keyword, APPROX, EXACT
+
+query
+SELECT u.id, s.pk FROM users u
+  JOIN songs_ivf s NEAREST 3 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id, s.pk;
+----
+id	pk
+1	9
+1	10
+1	11
+2	150
+2	151
+2	152
+4	297
+4	298
+4	299
+5	9
+5	10
+5	11
+
+query
+SELECT u.id, s.pk FROM users u
+  JOIN songs_ivf s APPROX NEAREST 3 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id, s.pk;
+----
+id	pk
+1	9
+1	10
+1	11
+2	150
+2	151
+2	152
+4	297
+4	298
+4	299
+5	9
+5	10
+5	11
+
+query
+SELECT u.id, s.pk FROM users u
+  JOIN songs_ivf s EXACT NEAREST 3 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id, s.pk;
+----
+id	pk
+1	9
+1	10
+1	11
+2	150
+2	151
+2	152
+4	297
+4	298
+4	299
+5	9
+5	10
+5	11
+
+query
+SELECT u.id, s.pk FROM users u
+  LEFT JOIN songs_ivf s NEAREST 2 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id, s.pk;
+----
+id	pk
+1	10
+1	11
+2	150
+2	151
+3	NULL
+4	298
+4	299
+5	10
+5	11
+
+query
+SELECT u.id, n.pk, round(n.d, 3) AS d FROM users u,
+  LATERAL (SELECT pk, emb <-> u.emb AS d FROM songs_ivf ORDER BY d LIMIT 2) n
+  ORDER BY u.id, n.d;
+----
+id	pk	d
+1	10	0.4
+1	11	0.6
+2	151	0.4
+2	150	0.6
+4	299	0.2
+4	298	1.2
+5	10	0.4
+5	11	0.6
+
+query
+SELECT u.id, n.pk FROM users u,
+  LATERAL (SELECT pk FROM songs_ivf WHERE cat = 1 ORDER BY emb <-> u.emb LIMIT 2) n
+  ORDER BY u.id, n.pk;
+----
+id	pk
+1	10
+1	13
+2	148
+2	151
+4	295
+4	298
+5	10
+5	13
+
+statement ok
+CREATE TABLE many_users AS SELECT i AS id,
+  [(i % 300)::FLOAT + 0.25, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS emb FROM range(3000) t(i);
+
+query
+SELECT count(*), sum(s.pk) FROM many_users u
+  JOIN songs_hnsw s NEAREST 2 BY DISTANCE u.emb <-> s.emb;
+----
+count	sum
+6000	899980
+
+query
+SELECT count(*), sum(s.pk) FROM many_users u
+  JOIN songs_ivf s NEAREST 2 BY DISTANCE u.emb <-> s.emb;
+----
+count	sum
+6000	899980
+
+# The outer side is a join; its columns pass through the search
+
+statement ok
+CREATE TABLE teams (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO teams VALUES (0, 'a team of even numbers'), (1, 'a team of odd numbers');
+
+query
+SELECT u.id, t.name, s.pk FROM users u JOIN teams t ON t.id = u.id % 2
+  JOIN songs_ivf s NEAREST 1 BY DISTANCE u.emb <-> s.emb
+  ORDER BY u.id;
+----
+id	name	pk
+1	a team of odd numbers	10
+2	a team of even numbers	151
+4	a team of even numbers	299
+5	a team of odd numbers	10
+
+query
+SELECT count(*) FROM users u
+  JOIN songs_hnsw s NEAREST 3 BY DISTANCE u.emb <-> s.emb;
+----
+count
+12
+
+# LEFT keeps every outer row when the filter leaves nothing to find
+
+query
+SELECT u.id, n.pk FROM users u
+  LEFT JOIN LATERAL (SELECT pk FROM songs_ivf WHERE cat = 7
+                     ORDER BY emb <-> u.emb LIMIT 2) n ON TRUE
+  ORDER BY u.id;
+----
+id	pk
+1	NULL
+2	NULL
+3	NULL
+4	NULL
+5	NULL
+
+# A subquery output that reads the outer row keeps today's plan
+
+query
+SELECT n.uid, n.pk FROM users u,
+  LATERAL (SELECT pk, u.id AS uid FROM songs_hnsw ORDER BY emb <-> u.emb LIMIT 1) n
+  WHERE u.emb IS NOT NULL
+  ORDER BY n.uid;
+----
+uid	pk
+1	10
+2	151
+4	299
+5	10
+
+# One search fetches more distinct rows than a vector holds
+
+statement ok
+CREATE TABLE line (pk INTEGER PRIMARY KEY, tag INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX line_ivf ON line
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO line SELECT i, 2 * i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  FROM range(10000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) line;
+
+statement ok
+CREATE TABLE spread_users AS SELECT i AS id,
+  [(i * 100)::FLOAT + 0.25, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS emb
+  FROM range(100) t(i);
+
+query
+SELECT count(*), count(DISTINCT l.pk), sum(l.tag) FROM spread_users u
+  JOIN line_ivf l EXACT NEAREST 40 BY DISTANCE u.emb <-> l.emb;
+----
+count	count	sum
+4000	4000	39605520
+
+# A join the index cannot serve keeps its plan and its answer
+
+query
+SELECT u.id, n.pk FROM users u,
+  LATERAL (SELECT pk FROM songs_hnsw ORDER BY emb <-> u.emb DESC LIMIT 1) n
+  WHERE u.emb IS NOT NULL
+  ORDER BY u.id;
+----
+id	pk
+1	299
+2	0
+4	0
+5	299
+
+query
+EXPLAIN SELECT u.id, n.pk FROM users u,
+  LATERAL (SELECT pk FROM songs_hnsw ORDER BY emb <-> u.emb DESC LIMIT 1) n;
+----
+QUERY PLAN
+╭─ CTE ──────────────────────────────╮
+│ CTE Name: __duckdb_delim_18        │
+│ Table Index: 18                    │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~120 rows                          │
+╰──────────────────┬─────────────────╯
+                   ├──────────────────────────────────────────╮
+╭─ SEQ_SCAN ───────┴─────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
+│ Table: users                       │  │ Projections: #1, #0                      │
+│ Type: Sequential Scan              │  │ ~120 rows                                │
+│ Projections: emb, id               │  ╰─────────────────────┬────────────────────╯
+│ ~5 rows                            │  ╭─ HASH_JOIN ─────────┴────────────────────╮
+╰────────────────────────────────────╯  │ Join Type: INNER                         │
+                                        │ Conditions: emb IS NOT DISTINCT FROM emb │
+                                        │ ~120 rows                                │
+                                        ╰─────────────────────┬────────────────────╯
+                                                              ├─────────────────────────────────────────╮
+                                        ╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ────┴─────────────────╮
+                                        │ Projections: #1, #0                      │  │ Projections: #0, #1,              │
+                                        │ ~600 rows                                │  │              CAST(#1 AS INTEGER)  │
+                                        ╰─────────────────────┬────────────────────╯  │ ~5 rows                           │
+                                        ╭─ HASH_GROUP_BY ─────┴────────────────────╮  ╰─────────────────┬─────────────────╯
+                                        │ Groups: #0                               │  ╭─ PROJECTION ────┴─────────────────╮
+                                        │ Aggregates: arg_max_nulls_last(#1, #2)   │  │ Projections: #0,                  │
+                                        │ ~600 rows                                │  │              CAST(#1 AS TINYINT)  │
+                                        ╰─────────────────────┬────────────────────╯  │ ~5 rows                           │
+                                        ╭─ PROJECTION ────────┴────────────────────╮  ╰─────────────────┬─────────────────╯
+                                        │ Projections: emb, #[2.0], #1             │  ╭─ CTE_SCAN ──────┴─────────────────╮
+                                        │ ~600 rows                                │  │ CTE Index: 18                     │
+                                        ╰─────────────────────┬────────────────────╯  │ ~5 rows                           │
+                                        ╭─ PROJECTION ────────┴────────────────────╮  ╰───────────────────────────────────╯
+                                        │ Projections: pk, emb <-> emb, emb        │
+                                        │ ~600 rows                                │
+                                        ╰─────────────────────┬────────────────────╯
+                                        ╭─ CROSS_PRODUCT ─────┴────────────────────╮
+                                        ╰─────────────────────┬────────────────────╯
+                                                              ├─────────────────────────────────────────╮
+                                        ╭─ IRESEARCH_SCAN ────┴────────────────────╮  ╭─ HASH_GROUP_BY ─┴─────────────────╮
+                                        │ Index: songs_hnsw                        │  │ Groups: #0                        │
+                                        │ Lookup: table                            │  │ ~2 rows                           │
+                                        │ Projections: pk (l), emb (i)             │  ╰─────────────────┬─────────────────╯
+                                        │ ~300 rows                                │  ╭─ PROJECTION ────┴─────────────────╮
+                                        ╰──────────────────────────────────────────╯  │ Projections: #[0.0]               │
+                                                                                      │ ~5 rows                           │
+                                                                                      ╰─────────────────┬─────────────────╯
+                                                                                      ╭─ PROJECTION ────┴─────────────────╮
+                                                                                      │ Projections: #0,                  │
+                                                                                      │              CAST(#1 AS TINYINT)  │
+                                                                                      │ ~5 rows                           │
+                                                                                      ╰─────────────────┬─────────────────╯
+                                                                                      ╭─ CTE_SCAN ──────┴─────────────────╮
+                                                                                      │ CTE Index: 18                     │
+                                                                                      │ ~5 rows                           │
+                                                                                      ╰───────────────────────────────────╯
+
+# The outer rows stream through the vector index: no join back, no deduplication
+
+query
+EXPLAIN SELECT u.id, s.pk FROM users u
+  JOIN songs_hnsw s NEAREST 3 BY DISTANCE u.emb <-> s.emb;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: id, pk               │
+│ ~5 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ INOUT_FUNCTION ┴─────────────────╮
+│ Index: songs_hnsw                 │
+│ Lookup: table                     │
+│ Score: l2_distance(emb, FLOAT[8]) │
+│ Top: 3                            │
+│ ~5 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──────┴─────────────────╮
+│ Table: users                      │
+│ Type: Sequential Scan             │
+│ ~5 rows                           │
+╰───────────────────────────────────╯
+
+query
+EXPLAIN SELECT u.id, s.pk FROM users u
+  JOIN songs_ivf s EXACT NEAREST 3 BY DISTANCE u.emb <-> s.emb;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────╮
+│ Projections: id, pk                 │
+│ ~5 rows                             │
+╰──────────────────┬──────────────────╯
+╭─ INOUT_FUNCTION ─┴──────────────────╮
+│ Index: songs_ivf                    │
+│ Lookup: table                       │
+│ Score: l2_distance(emb, FLOAT[8])   │
+│ Exact:                              │
+│ brute force over the stored vectors │
+│ Top: 3                              │
+│ ~5 rows                             │
+╰──────────────────┬──────────────────╯
+╭─ SEQ_SCAN ───────┴──────────────────╮
+│ Table: users                        │
+│ Type: Sequential Scan               │
+│ ~5 rows                             │
+╰─────────────────────────────────────╯
+
+query
+EXPLAIN SELECT u.id, n.pk FROM users u,
+  LATERAL (SELECT pk FROM songs_ivf WHERE cat = 1 ORDER BY emb <-> u.emb LIMIT 2) n;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: id, pk               │
+│ ~5 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ INOUT_FUNCTION ┴─────────────────╮
+│ Index: songs_ivf                  │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: cat(numeric) │           │
+│ │ Value: 1            │           │
+│ ╰─────────────────────╯           │
+│ Score: l2_distance(emb, FLOAT[8]) │
+│ Top: 2                            │
+│ ~5 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──────┴─────────────────╮
+│ Table: users                      │
+│ Type: Sequential Scan             │
+│ ~5 rows                           │
+╰───────────────────────────────────╯

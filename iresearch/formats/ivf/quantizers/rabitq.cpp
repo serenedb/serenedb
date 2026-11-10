@@ -580,6 +580,50 @@ class RaBitQuantizerReader final : public QuantizerReader {
     }
   }
 
+  void StartBlocks(std::span<QuantizerReader* const> readers) final {
+    if (_lay.row_major) {
+      return;
+    }
+    JoinLuts(
+      readers, _lay.nsq,
+      [](const QuantizerReader& reader) {
+        return static_cast<const RaBitQuantizerReader&>(reader)
+          ._cur->Lut()
+          .Packed();
+      },
+      _joint);
+  }
+
+  void ComputeBlocks(std::span<QuantizerReader* const> readers,
+                     std::span<const byte_type> block,
+                     std::span<const score_t> thresholds, score_t* out) final {
+    if (_lay.row_major) {
+      QuantizerReader::ComputeBlocks(readers, block, thresholds, out);
+      return;
+    }
+    const size_t group_bytes = _lay.GroupBytes();
+    SDB_ASSERT(block.size() % group_bytes == 0);
+    const size_t groups = block.size() / group_bytes;
+    const size_t records = groups * kFastScanBbs;
+    const size_t lut_bytes = _lay.nsq * kFastScanKsub;
+    for (size_t first = 0; first < readers.size(); first += kFastScanQueries) {
+      const size_t nq = std::min(kFastScanQueries, readers.size() - first);
+      const uint8_t* joint = _joint.data() + first * lut_bytes;
+      for (size_t g = 0; g < groups; ++g) {
+        const byte_type* codes = block.data() + g * group_bytes;
+        faiss::accumulate_to_mem(static_cast<int>(nq), kFastScanBbs,
+                                 static_cast<int>(_lay.nsq), codes, joint,
+                                 _accu_multi.data());
+        for (size_t q = 0; q < nq; ++q) {
+          auto& peer = static_cast<RaBitQuantizerReader&>(*readers[first + q]);
+          peer.FinishGroup(codes, _accu_multi.data() + q * kFastScanBbs,
+                           peer.MetricThreshold(thresholds[first + q]),
+                           out + (first + q) * records + g * kFastScanBbs);
+        }
+      }
+    }
+  }
+
  private:
   template<typename Aux>
   void Errors(Aux aux_of, size_t n, score_t* errors) const {
@@ -621,11 +665,18 @@ class RaBitQuantizerReader final : public QuantizerReader {
   }
 
   void ScoreGroup(const byte_type* codes, float mt, score_t* out) {
+    faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_lay.nsq), codes,
+                             _cur->Lut().Packed(), _accu.data());
+    FinishGroup(codes, _accu.data(), mt, out);
+  }
+
+  void FinishGroup(const byte_type* codes, const uint16_t* accu, float mt,
+                   score_t* out) {
     const byte_type* aux = codes + _lay.AuxOffset();
     const auto* cs = reinterpret_cast<const float*>(codes + _lay.CsOffset());
     const size_t storage = _lay.storage;
-    ScoreLanes(
-      codes, [aux, storage](size_t i) { return aux + i * storage; },
+    Finish(
+      accu, [aux, storage](size_t i) { return aux + i * storage; },
       [this, codes](size_t i) {
         faiss::rabitq_utils::unpack_sign_bits_from_packed(
           codes, kFastScanBbs, _lay.nsq, i, _lay.group_code_bytes,
@@ -643,20 +694,21 @@ class RaBitQuantizerReader final : public QuantizerReader {
       std::memcpy(&_rm_cs[i], row(i) + _lay.RowCsOffset(), sizeof(float));
     }
     const uint32_t aux_off = _lay.RowAuxOffset();
-    ScoreLanes(
-      _packed.data(), [row, aux_off](size_t i) { return row(i) + aux_off; },
+    faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_lay.nsq),
+                             _packed.data(), _cur->Lut().Packed(),
+                             _accu.data());
+    Finish(
+      _accu.data(), [row, aux_off](size_t i) { return row(i) + aux_off; },
       [row](size_t i) { return reinterpret_cast<const uint8_t*>(row(i)); },
       _rm_cs.data(), count, mt, out);
   }
 
   template<typename Aux, typename Signs>
-  void ScoreLanes(const byte_type* packed, Aux aux, Signs signs,
-                  const float* cs, size_t count, float mt, score_t* out) {
+  void Finish(const uint16_t* accu, Aux aux, Signs signs, const float* cs,
+              size_t count, float mt, score_t* out) {
     const FastScanLut& lut = _cur->Lut();
-    faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_lay.nsq),
-                             packed, lut.Packed(), _accu.data());
     for (size_t i = 0; i < count; ++i) {
-      const float normalized = lut.Decode(_accu[i]) - cs[i];
+      const float normalized = lut.Decode(accu[i]) - cs[i];
       const auto* fac =
         reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(aux(i));
       out[i] = faiss::rabitq_utils::compute_1bit_adjusted_distance(
@@ -714,6 +766,8 @@ class RaBitQuantizerReader final : public QuantizerReader {
   mutable std::vector<float> _fwht_scratch;
   std::array<float, kFastScanBbs> _rm_cs{};
   std::array<uint16_t, kFastScanBbs> _accu;
+  std::array<uint16_t, kFastScanQueries * kFastScanBbs> _accu_multi;
+  faiss::AlignedTable<uint8_t> _joint;
 };
 
 template<VectorMetric M>

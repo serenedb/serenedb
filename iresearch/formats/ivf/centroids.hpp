@@ -83,70 +83,26 @@ struct CentroidsNode {
   static std::vector<CentroidsNodeView> ReadLayer(
     IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
     std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total);
-
-  template<VectorMetric Metric>
-  static void Search(std::span<const float> query, IndexInput& in,
-                     uint32_t beam, size_t level,
-                     std::span<const CentroidsNodeView> nodes,
-                     size_t layer_base, size_t layer_total,
-                     std::vector<LayerBuffers>& layers,
-                     std::vector<Candidate>& leaves) {
-    SDB_ASSERT(!nodes.empty());
-    const uint16_t d = query.size();
-    const float* q = query.data();
-
-    struct Scored {
-      float dist;
-      size_t start;
-      size_t count;
-    };
-    std::vector<size_t> starts, sizes;
-    std::vector<Scored> scored;
-    for (const auto& node : nodes) {
-      for (size_t i = 0; i < node.size; ++i) {
-        const auto centroid = node.centroids.subspan(i * d, d);
-        const float dist = ComputeDistance<Metric>(q, centroid.data(), d);
-        const bool is_leaf =
-          level == 0 || node.child_offsets[i + 1] == node.child_offsets[i];
-        if (is_leaf) {
-          leaves.emplace_back(dist, layer_base + node.base + i, centroid);
-        } else {
-          scored.push_back({dist, node.child_offsets[i],
-                            node.child_offsets[i + 1] - node.child_offsets[i]});
-        }
-      }
-    }
-    const auto k = std::min<size_t>(beam, scored.size());
-    const auto mid = scored.begin() + k;
-    const auto by_dist_desc = [](const Scored& l, const Scored& r) {
-      return l.dist > r.dist;
-    };
-    absl::c_nth_element(scored, mid, by_dist_desc);
-    std::sort(scored.begin(), mid, by_dist_desc);
-    for (auto it = scored.begin(); it != mid; ++it) {
-      starts.emplace_back(it->start);
-      sizes.emplace_back(it->count);
-    }
-    if (level == 0 || starts.empty()) {
-      return;
-    }
-    size_t n_total = 0;
-    auto next = CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes,
-                                         layers.emplace_back(), n_total);
-    Search<Metric>(query, in, beam, level - 1, next, layer_base + layer_total,
-                   n_total, layers, leaves);
-  }
 };
 
 class CentroidsBuilder;
 
+struct CentroidProbe {
+  uint32_t cluster;
+  uint32_t query;
+  float score;
+  const float* centroid;
+};
+
+struct BatchRoutes {
+  std::vector<LayerBuffers> layers;
+  std::vector<CentroidProbe> probes;
+};
+
 class CentroidsTree {
  public:
   CentroidsTree(IVFHeader&& head, CentroidsNode&& root,
-                size_t next_level_offset)
-    : _head{std::move(head)},
-      _root{std::move(root)},
-      _next_level_offset{next_level_offset} {}
+                size_t next_level_offset);
 
   CentroidsTree(const CentroidsTree&) = delete;
   CentroidsTree(CentroidsTree&&) = default;
@@ -160,6 +116,9 @@ class CentroidsTree {
               std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
               uint32_t beam = 0) const;
 
+  void SearchBatch(std::span<const float> queries, IndexInput& in,
+                   uint32_t nprobe, uint32_t beam, BatchRoutes& out) const;
+
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }
   bool Empty() const noexcept { return _head.d == 0; }
@@ -172,6 +131,7 @@ class CentroidsTree {
  private:
   IVFHeader _head;
   CentroidsNode _root;
+  std::vector<float> _root_norms;
   size_t _next_level_offset;
   uint64_t _stats_offset = 0;
 };

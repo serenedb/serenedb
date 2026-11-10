@@ -636,60 +636,6 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   return fn(SearchGetters{getter, expr_getter, analyzed_fields, column_id});
 }
 
-namespace {
-
-bool TryFoldExpression(duckdb::ClientContext& context, duckdb::Expression& expr,
-                       duckdb::Value& out) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
-    out = expr.Cast<duckdb::BoundConstantExpression>().GetValue();
-    return !out.IsNull();
-  }
-  if (!expr.IsFoldable()) {
-    return false;
-  }
-  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, out)) {
-    return false;
-  }
-  return !out.IsNull();
-}
-
-bool TryFoldQueryVector(duckdb::ClientContext& context,
-                        duckdb::Expression& expr, size_t dim,
-                        std::vector<float>& out) {
-  duckdb::Value folded;
-  if (!TryFoldExpression(context, expr, folded)) {
-    return false;
-  }
-  const auto& type = folded.type();
-  const bool array = type.id() == duckdb::LogicalTypeId::ARRAY;
-  const bool floats = (array || type.id() == duckdb::LogicalTypeId::LIST) &&
-                      (array ? duckdb::ArrayType::GetChildType(type)
-                             : duckdb::ListType::GetChildType(type))
-                          .id() == duckdb::LogicalTypeId::FLOAT;
-  duckdb::optional<duckdb::Value> casted;
-  if (!floats) {
-    casted = folded.DefaultTryCastAs(
-      duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, dim));
-    if (!casted || casted->IsNull()) {
-      return false;
-    }
-  }
-  const auto& children = casted  ? duckdb::ArrayValue::GetChildren(*casted)
-                         : array ? duckdb::ArrayValue::GetChildren(folded)
-                                 : duckdb::ListValue::GetChildren(folded);
-  if (children.size() != dim) {
-    return false;
-  }
-  out.reserve(dim);
-  for (const auto& child : children) {
-    if (child.IsNull()) {
-      return false;
-    }
-    out.push_back(child.GetValue<float>());
-  }
-  return true;
-}
-
 irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
                                       const duckdb::LogicalGet& get,
                                       const connector::ScanBindData& bind_data,
@@ -713,55 +659,6 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
                                     BuildProjectedColumnIds(get, bind_data),
                                     client_context));
 }
-
-duckdb::idx_t EnsureVirtualGetColumn(connector::ScanBindData& bind_data,
-                                     duckdb::LogicalGet& get,
-                                     connector::ColumnId virtual_id,
-                                     const duckdb::LogicalType& col_type,
-                                     std::string_view col_name) {
-  const auto& col_ids = get.GetColumnIds();
-  for (duckdb::idx_t j = 0; j < col_ids.size(); ++j) {
-    if (ResolveColumnId({get.table_index, duckdb::ProjectionIndex{j}},
-                        bind_data, get) == virtual_id) {
-      return j;
-    }
-  }
-  return AppendVirtualGetColumn(bind_data, get, virtual_id, col_type, col_name);
-}
-
-duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
-  duckdb::LogicalOperator& root, const FoundScan& found,
-  duckdb::TableIndex anchor_ti) {
-  const auto idx = EnsureVirtualGetColumn(
-    *found.bind_data, *found.get, connector::kInvertedIndexScoreId,
-    duckdb::LogicalType::FLOAT, connector::kScoreName);
-  const auto binding =
-    ExposeGetColumnAt(root, anchor_ti, *found.get, idx, connector::kScoreName,
-                      duckdb::LogicalType::FLOAT);
-  return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    duckdb::Identifier{connector::kScoreName}, duckdb::LogicalType::FLOAT,
-    binding);
-}
-
-bool IsScorerFunctionName(std::string_view name) {
-  using S = catalog::ScorerOptions;
-  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
-    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
-    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
-    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
-    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
-    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
-    S::Constant::Owner::type_name(),
-  };
-  return kScorerNames.contains(name);
-}
-
-struct AnnFunctionInfo {
-  irs::VectorMetric metric;
-  duckdb::OrderType order;
-  bool is_norm;
-  connector::ScoreEmit score_emit;
-};
 
 std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
   const duckdb::BoundFunctionExpression& func) {
@@ -822,6 +719,139 @@ std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
     }
   }
   return it->second;
+}
+
+connector::VectorScorerOptions MakeVectorScorer(
+  irs::field_id field_id, const AnnFunctionInfo& info, const irs::AnnInfo& ann,
+  duckdb::ClientContext& context) {
+  connector::VectorScorerOptions vs{
+    .field_id = field_id,
+    .dims = static_cast<uint32_t>(ann.d),
+    .metric = info.metric,
+    .score_emit = info.score_emit,
+    .natural_order = info.order,
+    .ann_id = ann.index_id,
+    .quant = ann.quant.kind,
+    .nb_bits = ann.quant.nb_bits,
+    .kind = ann.kind,
+    .ef_construction = ann.ef_construction,
+    .posting_size = ann.posting_size,
+  };
+  connector::RefreshVectorKnobs(vs, context);
+  return vs;
+}
+
+const duckdb::Expression& PeelArrayToListCast(const duckdb::Expression& expr) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
+    return expr;
+  }
+  const auto& child = duckdb::BoundCastExpression::Child(
+    expr.Cast<duckdb::BoundFunctionExpression>());
+  const auto& from = child.GetReturnType();
+  const auto& to = expr.GetReturnType();
+  if (from.id() != duckdb::LogicalTypeId::ARRAY ||
+      to.id() != duckdb::LogicalTypeId::LIST ||
+      duckdb::ArrayType::GetChildType(from) !=
+        duckdb::ListType::GetChildType(to)) {
+    return expr;
+  }
+  return child;
+}
+
+namespace {
+
+bool TryFoldExpression(duckdb::ClientContext& context, duckdb::Expression& expr,
+                       duckdb::Value& out) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
+    out = expr.Cast<duckdb::BoundConstantExpression>().GetValue();
+    return !out.IsNull();
+  }
+  if (!expr.IsFoldable()) {
+    return false;
+  }
+  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, out)) {
+    return false;
+  }
+  return !out.IsNull();
+}
+
+bool TryFoldQueryVector(duckdb::ClientContext& context,
+                        duckdb::Expression& expr, size_t dim,
+                        std::vector<float>& out) {
+  duckdb::Value folded;
+  if (!TryFoldExpression(context, expr, folded)) {
+    return false;
+  }
+  const auto& type = folded.type();
+  const bool array = type.id() == duckdb::LogicalTypeId::ARRAY;
+  const bool floats = (array || type.id() == duckdb::LogicalTypeId::LIST) &&
+                      (array ? duckdb::ArrayType::GetChildType(type)
+                             : duckdb::ListType::GetChildType(type))
+                          .id() == duckdb::LogicalTypeId::FLOAT;
+  duckdb::optional<duckdb::Value> casted;
+  if (!floats) {
+    casted = folded.DefaultTryCastAs(
+      duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, dim));
+    if (!casted || casted->IsNull()) {
+      return false;
+    }
+  }
+  const auto& children = casted  ? duckdb::ArrayValue::GetChildren(*casted)
+                         : array ? duckdb::ArrayValue::GetChildren(folded)
+                                 : duckdb::ListValue::GetChildren(folded);
+  if (children.size() != dim) {
+    return false;
+  }
+  out.reserve(dim);
+  for (const auto& child : children) {
+    if (child.IsNull()) {
+      return false;
+    }
+    out.push_back(child.GetValue<float>());
+  }
+  return true;
+}
+
+duckdb::idx_t EnsureVirtualGetColumn(connector::ScanBindData& bind_data,
+                                     duckdb::LogicalGet& get,
+                                     connector::ColumnId virtual_id,
+                                     const duckdb::LogicalType& col_type,
+                                     std::string_view col_name) {
+  const auto& col_ids = get.GetColumnIds();
+  for (duckdb::idx_t j = 0; j < col_ids.size(); ++j) {
+    if (ResolveColumnId({get.table_index, duckdb::ProjectionIndex{j}},
+                        bind_data, get) == virtual_id) {
+      return j;
+    }
+  }
+  return AppendVirtualGetColumn(bind_data, get, virtual_id, col_type, col_name);
+}
+
+duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
+  duckdb::LogicalOperator& root, const FoundScan& found,
+  duckdb::TableIndex anchor_ti) {
+  const auto idx = EnsureVirtualGetColumn(
+    *found.bind_data, *found.get, connector::kInvertedIndexScoreId,
+    duckdb::LogicalType::FLOAT, connector::kScoreName);
+  const auto binding =
+    ExposeGetColumnAt(root, anchor_ti, *found.get, idx, connector::kScoreName,
+                      duckdb::LogicalType::FLOAT);
+  return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+    duckdb::Identifier{connector::kScoreName}, duckdb::LogicalType::FLOAT,
+    binding);
+}
+
+bool IsScorerFunctionName(std::string_view name) {
+  using S = catalog::ScorerOptions;
+  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
+    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
+    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
+    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
+    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
+    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
+    S::Constant::Owner::type_name(),
+  };
+  return kScorerNames.contains(name);
 }
 
 bool ScanColumnIsScore(const FoundScanColumn& sc) {
@@ -885,23 +915,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
     ref->SetAlias(func.GetAlias());
   }
   return ref;
-}
-
-const duckdb::Expression& PeelArrayToListCast(const duckdb::Expression& expr) {
-  if (!duckdb::BoundCastExpression::IsCast(expr)) {
-    return expr;
-  }
-  const auto& child = duckdb::BoundCastExpression::Child(
-    expr.Cast<duckdb::BoundFunctionExpression>());
-  const auto& from = child.GetReturnType();
-  const auto& to = expr.GetReturnType();
-  if (from.id() != duckdb::LogicalTypeId::ARRAY ||
-      to.id() != duckdb::LogicalTypeId::LIST ||
-      duckdb::ArrayType::GetChildType(from) !=
-        duckdb::ListType::GetChildType(to)) {
-    return expr;
-  }
-  return child;
 }
 
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
@@ -970,22 +983,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   }
 
   if (!ss.score.vector) {
-    ss.score.vector = connector::VectorScorerOptions{
-      .field_id = call_field_id,
-      .query_vector = std::move(call_qvec),
-      .query_expr = std::move(call_qexpr),
-      .dims = static_cast<uint32_t>(ann_info->d),
-      .metric = info.metric,
-      .score_emit = info.score_emit,
-      .natural_order = info.order,
-      .ann_id = ann_info->index_id,
-      .quant = ann_info->quant.kind,
-      .nb_bits = ann_info->quant.nb_bits,
-      .kind = ann_info->kind,
-      .ef_construction = ann_info->ef_construction,
-      .posting_size = ann_info->posting_size,
-    };
-    connector::RefreshVectorKnobs(*ss.score.vector, context);
+    ss.score.vector = MakeVectorScorer(call_field_id, info, *ann_info, context);
+    ss.score.vector->query_vector = std::move(call_qvec);
+    ss.score.vector->query_expr = std::move(call_qexpr);
     ss.score.order = info.order;
   } else {
     const auto& vs = *ss.score.vector;

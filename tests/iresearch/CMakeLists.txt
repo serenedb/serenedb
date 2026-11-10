@@ -110,6 +110,7 @@ add_executable(
     index/sorted_index_tests.cpp
     parser/lucene_parser_test.cpp
     search/all_filter_tests.cpp
+    search/ann_batch_test.cpp
     search/bitset_docs_test.cpp
     search/block_scoring_test.cpp
     search/bm25_test.cpp

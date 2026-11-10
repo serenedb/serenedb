@@ -382,23 +382,47 @@ class ProductQuantizerReader final : public QuantizerReader {
   void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,
                     score_t* out) final {
     SDB_ASSERT(block.size() % _group_bytes == 0);
-    const FastScanLut& lut = _cb->Lut();
     for (size_t off = 0; off < block.size();
          off += _group_bytes, out += kFastScanBbs) {
       const byte_type* codes = block.data() + off;
       faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_nsq), codes,
-                               lut.Packed(), _accu.data());
-      if constexpr (M == VectorMetric::L2Sqr) {
-        const float* norms =
-          reinterpret_cast<const float*>(codes + _code_bytes);
-        const float q2 = _cb->QueryNorm();
-        for (size_t i = 0; i < kFastScanBbs; ++i) {
-          const float ip = lut.Decode(_accu[i]);
-          out[i] = -(q2 - 2.f * _qc - 2.f * ip + norms[i]);
-        }
-      } else {
-        for (size_t i = 0; i < kFastScanBbs; ++i) {
-          out[i] = lut.Decode(_accu[i]) + _qc;
+                               _cb->Lut().Packed(), _accu.data());
+      DecodeGroup(_accu.data(), codes, out);
+    }
+  }
+
+  void StartBlocks(std::span<QuantizerReader* const> readers) final {
+    JoinLuts(
+      readers, _nsq,
+      [](const QuantizerReader& reader) {
+        return static_cast<const ProductQuantizerReader&>(reader)
+          ._cb->Lut()
+          .Packed();
+      },
+      _joint);
+  }
+
+  void ComputeBlocks(std::span<QuantizerReader* const> readers,
+                     std::span<const byte_type> block,
+                     std::span<const score_t> /*thresholds*/,
+                     score_t* out) final {
+    SDB_ASSERT(block.size() % _group_bytes == 0);
+    const size_t groups = block.size() / _group_bytes;
+    const size_t records = groups * kFastScanBbs;
+    const size_t lut_bytes = _nsq * kFastScanKsub;
+    for (size_t first = 0; first < readers.size(); first += kFastScanQueries) {
+      const size_t nq = std::min(kFastScanQueries, readers.size() - first);
+      const uint8_t* joint = _joint.data() + first * lut_bytes;
+      for (size_t g = 0; g < groups; ++g) {
+        const byte_type* codes = block.data() + g * _group_bytes;
+        faiss::accumulate_to_mem(static_cast<int>(nq), kFastScanBbs,
+                                 static_cast<int>(_nsq), codes, joint,
+                                 _accu_multi.data());
+        for (size_t q = 0; q < nq; ++q) {
+          const auto& peer =
+            static_cast<const ProductQuantizerReader&>(*readers[first + q]);
+          peer.DecodeGroup(_accu_multi.data() + q * kFastScanBbs, codes,
+                           out + (first + q) * records + g * kFastScanBbs);
         }
       }
     }
@@ -416,11 +440,30 @@ class ProductQuantizerReader final : public QuantizerReader {
   }
 
  private:
+  void DecodeGroup(const uint16_t* accu, const byte_type* codes,
+                   score_t* out) const noexcept {
+    const FastScanLut& lut = _cb->Lut();
+    if constexpr (M == VectorMetric::L2Sqr) {
+      const float* norms = reinterpret_cast<const float*>(codes + _code_bytes);
+      const float q2 = _cb->QueryNorm();
+      for (size_t i = 0; i < kFastScanBbs; ++i) {
+        const float ip = lut.Decode(accu[i]);
+        out[i] = -(q2 - 2.f * _qc - 2.f * ip + norms[i]);
+      }
+    } else {
+      for (size_t i = 0; i < kFastScanBbs; ++i) {
+        out[i] = lut.Decode(accu[i]) + _qc;
+      }
+    }
+  }
+
   std::shared_ptr<const ProductQuantizerCodebook<M>> _cb;
   size_t _nsq;
   size_t _code_bytes;
   size_t _group_bytes;
   std::array<uint16_t, kFastScanBbs> _accu;
+  std::array<uint16_t, kFastScanQueries * kFastScanBbs> _accu_multi;
+  faiss::AlignedTable<uint8_t> _joint;
   float _qc = 0.f;
 };
 

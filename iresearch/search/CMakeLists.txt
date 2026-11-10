@@ -224,6 +224,8 @@ endif()
 target_sources(
     iresearch
     PRIVATE
+        ann/batch.cpp
+        ann/ivf_batch.cpp
         ann/make.cpp
         ann/make_exact.cpp
         ann/make_hnsw.cpp

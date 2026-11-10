@@ -28,6 +28,8 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/search/ann/batch.hpp"
+#include "iresearch/search/ann/collector.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/queries/docs_mask_query.hpp"
@@ -90,6 +92,11 @@ struct AnnIndex {
                                          float radius, bool inclusive,
                                          uint32_t effort,
                                          AnnQueryCache* cache) const = 0;
+
+  virtual void SearchBatch(const SubReader& segment, const PrepareContext& ctx,
+                           const VectorFilterOptions& opts,
+                           const ann::QueryBatch& batch, uint32_t effort,
+                           std::span<ann::Collector> collectors) const;
 
   virtual AnnExactCodes PrepareExact(const SubReader& /*segment*/,
                                      std::span<const float> /*query*/,

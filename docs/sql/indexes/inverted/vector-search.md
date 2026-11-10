@@ -83,6 +83,24 @@ On a quantized index the codes pick the candidates and each candidate is then ch
 
 A distance selected without `ORDER BY ... LIMIT` and without a radius, such as `SELECT id, emb <-> $query_vector FROM index_name` or an aggregate over it, is computed exactly from the stored vector of every row the `WHERE` admits. The index is not walked, and `EXPLAIN` shows the scan as `Exact`.
 
+### Nearest-neighbour joins {#nearest-joins}
+
+To find the nearest rows for every row of another table -- recommendations for every user, the closest products for every query -- join to the index with `NEAREST k BY DISTANCE`. Each row of the left side gets its `k` nearest rows of the index, ranked by the distance expression; `BY SIMILARITY` ranks the largest values first instead, for `cosine_similarity` and `inner_product`:
+
+<SqlLogicTest id="sql/indexes/inverted/vector-search/nearest_join" />
+
+A left row whose vector is `NULL` has no neighbours: an inner join drops it, and a `LEFT JOIN` keeps it with `NULL`s. Like a single kNN query, the join returns only rows whose own vector is not `NULL`.
+
+`APPROX NEAREST`, and `NEAREST` with neither keyword, search the vector index under the same settings as a single kNN query: [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings), [`sdb_hnsw_ef_search`](./maintenance.md#session-settings) and [`sdb_ann_rescore_width`](./maintenance.md#session-settings). `EXACT NEAREST` ranks every row by its exact distance: slower, and it never misses a neighbour.
+
+A `LATERAL` subquery that orders the index by a distance to the outer row and takes a constant `LIMIT` is answered the same way:
+
+<SqlLogicTest id="sql/indexes/inverted/vector-search/lateral_join" />
+
+A `WHERE` inside the subquery on indexed fields filters the rows before they are ranked, as it does for a single kNN query.
+
+`EXPLAIN` shows the join as an `INOUT_FUNCTION` over the left side, with the `Score` and `Top: k` of a kNN scan. The index is used when the join selects from the index by name, the distance matches the index's metric, the limit is a constant, every predicate inside the subquery can be answered by the index, and the subquery's columns read only the index's rows; otherwise the join computes the distance for every pair of rows.
+
 ## Quantization {#quantization}
 
 An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `quant` says otherwise, `ivf` and [`hnsw`](#hnsw) alike; an `l1` index stores full-precision vectors. Quantization shrinks the index, trading some recall for size -- recoverable with [re-scoring](#rescoring), which reads candidates back at full precision before picking the final `k`:

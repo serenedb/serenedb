@@ -50,10 +50,9 @@ enum class CodebookUse : uint8_t {
   Range,
 };
 
-inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
+inline std::shared_ptr<const QuantizerStats> ReadQuantizerStats(
   const CentroidsTree& ivf, IndexInput& idx_in, VectorQuantization quant,
-  uint32_t d, VectorMetric metric, std::span<const float> query,
-  CodebookUse use) {
+  uint32_t d, VectorMetric metric) {
   idx_in.Seek(ivf.QuantStatsOffset());
   const auto stats_size = static_cast<size_t>(idx_in.ReadI64());
   std::span<const byte_type> stats;
@@ -67,7 +66,13 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
       stats = owned;
     }
   }
-  auto quant_stats = MakeQuantizerStats(quant, d, stats, metric);
+  return MakeQuantizerStats(quant, d, stats, metric);
+}
+
+inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
+  const IvfIndex& index, IndexInput& idx_in, VectorQuantization quant,
+  VectorMetric metric, std::span<const float> query, CodebookUse use) {
+  auto quant_stats = index.QuantStats(idx_in, quant, metric);
   if (!quant_stats) {
     return nullptr;
   }
@@ -75,10 +80,13 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
                                    : quant_stats->MakeCodebook(query);
 }
 
-inline bool PrepareVectorState(
-  const CentroidsTree& ivf, const SubReader& segment, const PrepareContext& ctx,
-  const VectorFilterOptions& opts, uint32_t nprobe, VectorState& state,
-  QueryBuilder::ptr& inner_query, CodebookUse use, uint32_t beam = 0) {
+inline bool PrepareVectorState(const IvfIndex& index, const SubReader& segment,
+                               const PrepareContext& ctx,
+                               const VectorFilterOptions& opts, uint32_t nprobe,
+                               VectorState& state,
+                               QueryBuilder::ptr& inner_query, CodebookUse use,
+                               uint32_t beam = 0) {
+  const auto& ivf = index.Tree();
   if (opts.query.empty() || nprobe == 0 || !field_limits::valid(opts.ann_id)) {
     return false;
   }
@@ -104,7 +112,7 @@ inline bool PrepareVectorState(
   }
 
   auto codebook =
-    ReadQuantizerCodebook(ivf, *idx_in, opts.quant, d, opts.metric, query, use);
+    ReadQuantizerCodebook(index, *idx_in, opts.quant, opts.metric, query, use);
   if (!codebook) {
     return false;
   }

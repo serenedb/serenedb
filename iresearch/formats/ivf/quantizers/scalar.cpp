@@ -24,6 +24,10 @@
 
 #include <limits>
 
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 
 namespace irs::quantizers {
@@ -221,6 +225,317 @@ void Sq8ScoreLevels(const Sq8Levels& lv, const Sq8LevelRows& rows,
 }
 #endif
 
+using Sq8Weights = faiss::scalar_quantizer::SQ8BatchWeights;
+
+constexpr size_t kSq8Codes = 4;
+constexpr size_t kSq8Queries = 4;
+constexpr size_t kSq8Ahead = 8;
+constexpr size_t kSq8PrefetchBytes = 128;
+
+#if defined(__aarch64__)
+template<size_t NQ>
+void Sq8Tile(const Sq8Weights* const* w, const uint8_t* const* codes,
+             score_t* out, size_t d) noexcept {
+  float32x4_t acc[NQ][kSq8Codes];
+  float32x4_t sq[kSq8Codes];
+  uint32x4_t isq[kSq8Codes];
+  for (size_t k = 0; k < kSq8Codes; ++k) {
+    for (size_t q = 0; q < NQ; ++q) {
+      acc[q][k] = vdupq_n_f32(0.f);
+    }
+    sq[k] = vdupq_n_f32(0.f);
+    isq[k] = vdupq_n_u32(0);
+  }
+  const bool l2 = w[0]->l2;
+  const bool uniform = w[0]->uniform_l2();
+  const bool squares = l2 && !uniform;
+  const float* b = w[0]->b.data();
+  size_t i = 0;
+  for (; i + 4 <= d; i += 4) {
+    float32x4_t va[NQ];
+    for (size_t q = 0; q < NQ; ++q) {
+      va[q] = vld1q_f32(w[q]->a.data() + i);
+    }
+    const float32x4_t vb = squares ? vld1q_f32(b + i) : vdupq_n_f32(0.f);
+    for (size_t k = 0; k < kSq8Codes; ++k) {
+      uint32_t packed = 0;
+      std::memcpy(&packed, codes[k] + i, sizeof(packed));
+      const uint16x4_t half =
+        vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(packed))));
+      const float32x4_t c = vcvtq_f32_u32(vmovl_u16(half));
+      if (uniform) {
+        isq[k] = vaddq_u32(isq[k], vmull_u16(half, half));
+      }
+      if (squares) {
+        sq[k] = vfmaq_f32(sq[k], vb, vmulq_f32(c, c));
+      }
+      for (size_t q = 0; q < NQ; ++q) {
+        acc[q][k] = vfmaq_f32(acc[q][k], va[q], c);
+      }
+    }
+  }
+  float tail[NQ][kSq8Codes] = {};
+  for (; i < d; ++i) {
+    for (size_t k = 0; k < kSq8Codes; ++k) {
+      const float c = codes[k][i];
+      for (size_t q = 0; q < NQ; ++q) {
+        const float a = w[q]->a[i];
+        if (uniform) {
+          tail[q][k] += a * c + w[q]->uniform_sq * c * c;
+        } else {
+          tail[q][k] += l2 ? a * c + b[i] * c * c : a * c;
+        }
+      }
+    }
+  }
+  for (size_t q = 0; q < NQ; ++q) {
+    for (size_t k = 0; k < kSq8Codes; ++k) {
+      float32x4_t s = acc[q][k];
+      if (uniform) {
+        s = vfmaq_n_f32(s, vcvtq_f32_u32(isq[k]), w[q]->uniform_sq);
+      } else if (l2) {
+        s = vaddq_f32(s, sq[k]);
+      }
+      const float r = w[q]->bias + vaddvq_f32(s) + tail[q][k];
+      out[q * kSq8Codes + k] = l2 ? -r : r;
+    }
+  }
+}
+#elif defined(__x86_64__) && defined(__AVX2__)
+float Sq8Sum(__m256 s) noexcept {
+  __m128 h = _mm_add_ps(_mm256_castps256_ps128(s), _mm256_extractf128_ps(s, 1));
+  h = _mm_add_ps(h, _mm_movehl_ps(h, h));
+  h = _mm_add_ss(h, _mm_movehdup_ps(h));
+  return _mm_cvtss_f32(h);
+}
+
+template<size_t NQ, size_t NC>
+void Sq8Tile256(const Sq8Weights* const* w, const uint8_t* const* codes,
+                score_t* out, size_t d) noexcept {
+  __m256 acc[NQ][NC];
+  __m256 sq[NC];
+  __m256i isq[NC];
+  for (size_t k = 0; k < NC; ++k) {
+    for (size_t q = 0; q < NQ; ++q) {
+      acc[q][k] = _mm256_setzero_ps();
+    }
+    sq[k] = _mm256_setzero_ps();
+    isq[k] = _mm256_setzero_si256();
+  }
+  const bool l2 = w[0]->l2;
+  const bool uniform = w[0]->uniform_l2();
+  const bool squares = l2 && !uniform;
+  const float* b = w[0]->b.data();
+  size_t i = 0;
+  for (; i + 8 <= d; i += 8) {
+    __m256 va[NQ];
+    for (size_t q = 0; q < NQ; ++q) {
+      va[q] = _mm256_loadu_ps(w[q]->a.data() + i);
+    }
+    const __m256 vb = squares ? _mm256_loadu_ps(b + i) : _mm256_setzero_ps();
+    for (size_t k = 0; k < NC; ++k) {
+      const __m256i ci = _mm256_cvtepu8_epi32(
+        _mm_loadl_epi64(reinterpret_cast<const __m128i*>(codes[k] + i)));
+      const __m256 c = _mm256_cvtepi32_ps(ci);
+      if (uniform) {
+        isq[k] = _mm256_add_epi32(isq[k], _mm256_mullo_epi32(ci, ci));
+      }
+      if (squares) {
+        sq[k] = _mm256_fmadd_ps(vb, _mm256_mul_ps(c, c), sq[k]);
+      }
+      for (size_t q = 0; q < NQ; ++q) {
+        acc[q][k] = _mm256_fmadd_ps(va[q], c, acc[q][k]);
+      }
+    }
+  }
+  float tail[NQ][NC] = {};
+  for (; i < d; ++i) {
+    for (size_t k = 0; k < NC; ++k) {
+      const float c = codes[k][i];
+      for (size_t q = 0; q < NQ; ++q) {
+        const float a = w[q]->a[i];
+        if (uniform) {
+          tail[q][k] += a * c + w[q]->uniform_sq * c * c;
+        } else {
+          tail[q][k] += l2 ? a * c + b[i] * c * c : a * c;
+        }
+      }
+    }
+  }
+  for (size_t q = 0; q < NQ; ++q) {
+    for (size_t k = 0; k < NC; ++k) {
+      __m256 s = acc[q][k];
+      if (uniform) {
+        s = _mm256_fmadd_ps(_mm256_set1_ps(w[q]->uniform_sq),
+                            _mm256_cvtepi32_ps(isq[k]), s);
+      } else if (l2) {
+        s = _mm256_add_ps(s, sq[k]);
+      }
+      const float r = w[q]->bias + Sq8Sum(s) + tail[q][k];
+      out[q * kSq8Codes + k] = l2 ? -r : r;
+    }
+  }
+}
+
+bool HasAvx512Sq8() noexcept {
+  static const bool kHas =
+    __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
+    __builtin_cpu_supports("avx512cd") && __builtin_cpu_supports("avx512vl") &&
+    __builtin_cpu_supports("avx512dq");
+  return kHas;
+}
+
+template<size_t NQ>
+__attribute__((target("avx512f,avx512bw,avx512vl,avx512dq"))) void Sq8Tile512(
+  const Sq8Weights* const* w, const uint8_t* const* codes, score_t* out,
+  size_t d) noexcept {
+  __m512 acc[NQ][kSq8Codes];
+  __m512 sq[kSq8Codes];
+  __m512i isq[kSq8Codes];
+  for (size_t k = 0; k < kSq8Codes; ++k) {
+    for (size_t q = 0; q < NQ; ++q) {
+      acc[q][k] = _mm512_setzero_ps();
+    }
+    sq[k] = _mm512_setzero_ps();
+    isq[k] = _mm512_setzero_si512();
+  }
+  const bool l2 = w[0]->l2;
+  const bool uniform = w[0]->uniform_l2();
+  const bool squares = l2 && !uniform;
+  const float* b = w[0]->b.data();
+  const auto step = [&](size_t i, __mmask16 m) {
+    __m512 va[NQ];
+    for (size_t q = 0; q < NQ; ++q) {
+      va[q] = _mm512_maskz_loadu_ps(m, w[q]->a.data() + i);
+    }
+    const __m512 vb =
+      squares ? _mm512_maskz_loadu_ps(m, b + i) : _mm512_setzero_ps();
+    for (size_t k = 0; k < kSq8Codes; ++k) {
+      const __m512i ci =
+        _mm512_cvtepu8_epi32(_mm_maskz_loadu_epi8(m, codes[k] + i));
+      const __m512 c = _mm512_cvtepi32_ps(ci);
+      if (uniform) {
+        isq[k] = _mm512_add_epi32(isq[k], _mm512_mullo_epi32(ci, ci));
+      }
+      if (squares) {
+        sq[k] = _mm512_fmadd_ps(vb, _mm512_mul_ps(c, c), sq[k]);
+      }
+      for (size_t q = 0; q < NQ; ++q) {
+        acc[q][k] = _mm512_fmadd_ps(va[q], c, acc[q][k]);
+      }
+    }
+  };
+  size_t i = 0;
+  for (; i + 16 <= d; i += 16) {
+    step(i, __mmask16{0xFFFF});
+  }
+  if (i < d) {
+    step(i, static_cast<__mmask16>((1U << (d - i)) - 1U));
+  }
+  for (size_t q = 0; q < NQ; ++q) {
+    for (size_t k = 0; k < kSq8Codes; ++k) {
+      __m512 s = acc[q][k];
+      if (uniform) {
+        s = _mm512_fmadd_ps(_mm512_set1_ps(w[q]->uniform_sq),
+                            _mm512_cvtepi32_ps(isq[k]), s);
+      } else if (l2) {
+        s = _mm512_add_ps(s, sq[k]);
+      }
+      const __m256 h =
+        _mm256_add_ps(_mm512_castps512_ps256(s), _mm512_extractf32x8_ps(s, 1));
+      __m128 r4 =
+        _mm_add_ps(_mm256_castps256_ps128(h), _mm256_extractf128_ps(h, 1));
+      r4 = _mm_add_ps(r4, _mm_movehl_ps(r4, r4));
+      r4 = _mm_add_ss(r4, _mm_movehdup_ps(r4));
+      const float r = w[q]->bias + _mm_cvtss_f32(r4);
+      out[q * kSq8Codes + k] = l2 ? -r : r;
+    }
+  }
+}
+#endif
+
+template<size_t NQ>
+void Sq8Tiles(const Sq8Weights* const* w, const uint8_t* const* codes,
+              score_t* out, size_t d) noexcept {
+#if defined(__aarch64__)
+  Sq8Tile<NQ>(w, codes, out, d);
+#elif defined(__x86_64__) && defined(__AVX2__)
+  if (HasAvx512Sq8()) {
+    Sq8Tile512<NQ>(w, codes, out, d);
+  } else if constexpr (NQ == 1) {
+    Sq8Tile256<1, kSq8Codes>(w, codes, out, d);
+  } else {
+    Sq8Tile256<NQ, 2>(w, codes, out, d);
+    Sq8Tile256<NQ, 2>(w, codes + 2, out + 2, d);
+  }
+#else
+  for (size_t q = 0; q < NQ; ++q) {
+    faiss::scalar_quantizer::sq8_batch_score4_dispatch(*w[q], codes,
+                                                       out + q * kSq8Codes, d);
+  }
+#endif
+}
+
+void Sq8Group(const Sq8Weights* const* w, size_t nq,
+              const uint8_t* const* codes, score_t* out, size_t d) noexcept {
+  switch (nq) {
+    case 1:
+      return Sq8Tiles<1>(w, codes, out, d);
+    case 2:
+      return Sq8Tiles<2>(w, codes, out, d);
+    case 3:
+      return Sq8Tiles<3>(w, codes, out, d);
+    default:
+      SDB_ASSERT(nq == kSq8Queries);
+      return Sq8Tiles<kSq8Queries>(w, codes, out, d);
+  }
+}
+
+template<typename Row>
+void Sq8Score(std::span<const Sq8Weights* const> w, Row&& row, size_t n,
+              score_t* out) {
+  SDB_ASSERT(!w.empty());
+  const size_t d = w[0]->d;
+#if defined(__x86_64__) && defined(__AVX2__)
+  if (w[0]->int_ip() && HasAvx512Vnni()) {
+    for (size_t q = 0; q < w.size(); ++q) {
+      faiss::scalar_quantizer::sq8_batch_score_n(*w[q], row, n, out + q * n, 0);
+    }
+    return;
+  }
+#endif
+  const size_t head = std::min(d, kSq8PrefetchBytes);
+  const auto prefetch = [&](size_t j) {
+    if (j < n) {
+      const auto* p = reinterpret_cast<const uint8_t*>(row(j));
+      for (size_t off = 0; off < head; off += 64) {
+        __builtin_prefetch(p + off, 0, 1);
+      }
+    }
+  };
+  for (size_t j = 0; j < std::min(n, kSq8Ahead); ++j) {
+    prefetch(j);
+  }
+  score_t tile[kSq8Queries * kSq8Codes];
+  for (size_t i = 0; i < n; i += kSq8Codes) {
+    for (size_t j = i + kSq8Ahead; j < i + kSq8Ahead + kSq8Codes; ++j) {
+      prefetch(j);
+    }
+    const size_t m = std::min(kSq8Codes, n - i);
+    const uint8_t* codes[kSq8Codes];
+    for (size_t k = 0; k < kSq8Codes; ++k) {
+      codes[k] = reinterpret_cast<const uint8_t*>(row(k < m ? i + k : i));
+    }
+    for (size_t q = 0; q < w.size(); q += kSq8Queries) {
+      const size_t nq = std::min(kSq8Queries, w.size() - q);
+      Sq8Group(w.data() + q, nq, codes, tile, d);
+      for (size_t g = 0; g < nq; ++g) {
+        std::copy_n(tile + g * kSq8Codes, m, out + (q + g) * n + i);
+      }
+    }
+  }
+}
+
 class ScalarQuantizerWriter final : public QuantizerWriter {
  public:
   ScalarQuantizerWriter(uint32_t d, VectorQuantization quant)
@@ -354,12 +669,13 @@ class ScalarQuantizerCodeBound final : public QuantizerCodeBound {
 
   void Score(const byte_type* base, uint32_t record_size,
              std::span<const uint32_t> ids, score_t* out) const final {
-    faiss::scalar_quantizer::sq8_batch_score_n(
-      _weights,
+    const Sq8Weights* one = &_weights;
+    Sq8Score(
+      {&one, 1},
       [&](size_t j) {
         return base + static_cast<size_t>(ids[j]) * record_size;
       },
-      ids.size(), out, 0);
+      ids.size(), out);
   }
 
   void Bounds(std::span<const score_t> scores, score_t* lower,
@@ -402,7 +718,7 @@ class ScalarQuantizerCodeBound final : public QuantizerCodeBound {
                           std::numeric_limits<score_t>::infinity());
   }
 
-  faiss::scalar_quantizer::SQ8BatchWeights _weights;
+  Sq8Weights _weights;
   double _margin = 0;
   double _round = 0;
   double _radius = 0;
@@ -489,6 +805,27 @@ class ScalarQuantizerReader final : public QuantizerReader {
 
   void StartCluster(const float* /*centroid*/) final {}
 
+  void ComputeBlocks(std::span<QuantizerReader* const> readers,
+                     std::span<const byte_type> block,
+                     std::span<const score_t> thresholds, score_t* out) final {
+    if (!_fast) {
+      QuantizerReader::ComputeBlocks(readers, block, thresholds, out);
+      return;
+    }
+    const size_t cs = _cb->Sq().code_size;
+    SDB_ASSERT(block.size() % cs == 0);
+    _peers.clear();
+    for (auto* reader : readers) {
+      auto& peer = static_cast<ScalarQuantizerReader&>(*reader);
+      SDB_ASSERT(peer._fast);
+      SDB_ASSERT(&peer._cb->Sq() == &_cb->Sq());
+      _peers.push_back(&peer._weights);
+    }
+    const byte_type* c = block.data();
+    Sq8Score(
+      _peers, [&](size_t j) { return c + j * cs; }, block.size() / cs, out);
+  }
+
   void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,
                     score_t* out) final {
     SDB_ASSERT(_dc);
@@ -497,8 +834,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
     const size_t n = block.size() / cs;
     const byte_type* c = block.data();
     if (_fast) {
-      faiss::scalar_quantizer::sq8_batch_score_n(
-        _weights, [&](size_t j) { return c + j * cs; }, n, out, 0);
+      const Sq8Weights* one = &_weights;
+      Sq8Score({&one, 1}, [&](size_t j) { return c + j * cs; }, n, out);
       return;
     }
     size_t i = 0;
@@ -526,7 +863,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
     };
     const size_t n = ids.size();
     if (_fast) {
-      faiss::scalar_quantizer::sq8_batch_score_n(_weights, row, n, out, 0);
+      const Sq8Weights* one = &_weights;
+      Sq8Score({&one, 1}, row, n, out);
       return;
     }
     for (size_t j = 0; j < n; ++j) {
@@ -728,7 +1066,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
 
   std::shared_ptr<const ScalarQuantizerCodebook<M>> _cb;
   std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
-  faiss::scalar_quantizer::SQ8BatchWeights _weights;
+  Sq8Weights _weights;
+  std::vector<const Sq8Weights*> _peers;
   std::vector<float> _own_query;
   std::span<const float> _query;
   std::vector<float> _level_bias;

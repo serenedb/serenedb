@@ -92,3 +92,48 @@ SELECT id FROM hnsw_index ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
 id
 3
 2
+
+# DOCS_TEST: nearest_join
+
+statement ok
+CREATE TABLE probes (name TEXT, emb FLOAT[3]);
+
+statement ok
+INSERT INTO probes VALUES
+    ('origin', [0, 0, 0]::FLOAT[3]),
+    ('far', [100, 0, 10]::FLOAT[3]),
+    ('unknown', NULL);
+
+# DOCS_TEST_BODY
+
+query
+SELECT p.name, v.id
+FROM probes p
+JOIN l2_index v NEAREST 2 BY DISTANCE p.emb <-> v.emb
+ORDER BY p.name, v.id;
+----
+name	id
+far	1
+far	3
+origin	2
+origin	3
+
+# DOCS_TEST: lateral_join
+
+# DOCS_TEST_BODY
+
+query
+SELECT p.name, n.id, round(n.dist, 1) AS dist
+FROM probes p
+LEFT JOIN LATERAL (
+    SELECT id, emb <-> p.emb AS dist
+    FROM l2_index
+    ORDER BY dist
+    LIMIT 1
+) n ON TRUE
+ORDER BY p.name;
+----
+name	id	dist
+far	1	10
+origin	3	75
+unknown	NULL	NULL

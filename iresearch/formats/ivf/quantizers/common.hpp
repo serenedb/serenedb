@@ -51,6 +51,7 @@ inline std::span<const byte_type> FloatSpan(
 }
 
 inline constexpr size_t kFastScanBbs = 32;
+inline constexpr size_t kFastScanQueries = 4;
 
 inline constexpr size_t kFastScanBits = 4;
 
@@ -169,6 +170,25 @@ inline std::vector<FastScanChunk> MakeFastScanChunks(uint32_t m) {
     out.push_back(c);
   }
   return out;
+}
+
+template<typename PackedOf>
+void JoinLuts(std::span<QuantizerReader* const> readers, size_t nsq,
+              PackedOf packed_of, faiss::AlignedTable<uint8_t>& out) {
+  const size_t pairs = nsq / 2;
+  const size_t pair_bytes = 2 * kFastScanKsub;
+  out.resize(readers.size() * nsq * kFastScanKsub);
+  for (size_t first = 0; first < readers.size(); first += kFastScanQueries) {
+    const size_t nq = std::min(kFastScanQueries, readers.size() - first);
+    uint8_t* joint = out.data() + first * nsq * kFastScanKsub;
+    for (size_t q = 0; q < nq; ++q) {
+      const uint8_t* packed = packed_of(*readers[first + q]);
+      for (size_t p = 0; p < pairs; ++p) {
+        std::memcpy(joint + (p * nq + q) * pair_bytes, packed + p * pair_bytes,
+                    pair_bytes);
+      }
+    }
+  }
 }
 
 class FastScanLut {

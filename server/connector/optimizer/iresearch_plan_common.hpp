@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -48,6 +49,28 @@ connector::ColumnId ResolveColumnId(duckdb::ColumnBinding binding,
 
 std::vector<connector::ColumnId> BuildProjectedColumnIds(
   const duckdb::LogicalGet& get, const connector::ScanBindData& bind_data);
+
+struct AnnFunctionInfo {
+  irs::VectorMetric metric;
+  duckdb::OrderType order;
+  bool is_norm;
+  connector::ScoreEmit score_emit;
+};
+
+std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
+  const duckdb::BoundFunctionExpression& func);
+
+const duckdb::Expression& PeelArrayToListCast(const duckdb::Expression& expr);
+
+connector::VectorScorerOptions MakeVectorScorer(irs::field_id field_id,
+                                                const AnnFunctionInfo& info,
+                                                const irs::AnnInfo& ann,
+                                                duckdb::ClientContext& context);
+
+irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
+                                      const duckdb::LogicalGet& get,
+                                      const connector::ScanBindData& bind_data,
+                                      duckdb::ClientContext& client_context);
 
 struct FoundScan {
   duckdb::LogicalGet* get;

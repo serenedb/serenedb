@@ -575,6 +575,30 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   }
 }
 
+void EnsureLookupable(const ScanGlobalState& state, const ScanBindData& ss) {
+  if (!state.needs_lookup || !ss.relation.IsInvertedIndex()) {
+    return;
+  }
+  const auto pk_kind = ss.relation.ScannedIndex().pk;
+  if (pk_kind == catalog::PkColumnKind::None) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("inverted index \"",
+              ss.relation.inverted_index->name.GetIdentifierName(),
+              "\" was created WITH (store_pk = 'none'), so it does not store "
+              "row PKs and hits cannot be mapped back to source rows; select "
+              "only INCLUDE'd columns, counts or scores through this index"));
+  }
+  if (pk_kind == catalog::PkColumnKind::Unable) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("materialising real columns from this view-backed inverted "
+              "index is not yet supported -- view body must be a simple "
+              "`SELECT * FROM <reader>(literal_args)` over a recognised "
+              "fast-path source (read_parquet/csv/json/...)"));
+  }
+}
+
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
                                     const ScanBindData& bind_data) {
   if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {

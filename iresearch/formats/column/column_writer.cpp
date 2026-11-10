@@ -192,6 +192,11 @@ const codecs::CompressionFunction* ColumnWriter::PickCodec(
   const auto all = codecs::GetCompressionFunctions(codec_type.InternalType());
   std::vector<const codecs::CompressionFunction*> candidates{all.begin(),
                                                              all.end()};
+  const auto disabled =
+    duckdb::DBConfig::GetConfig(db).GetDisabledCompressionMethods();
+  std::erase_if(candidates, [&](const codecs::CompressionFunction* f) {
+    return absl::c_linear_search(disabled, f->type);
+  });
 
   auto forced_method = ForcedMethod(db, forced);
   if (forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {

@@ -80,6 +80,8 @@ An index on a search table has no columnstore of its own: its `INCLUDE`d columns
 
 The global `force_compression` setting applies to search tables as it does to transactional ones: it wins over `auto` and loses to a codec named on the column. A forced codec applies only to the columns it can store and leaves the others to `auto`: text never takes a transactional compression, so `rle` or `dictionary` leave text columns to `auto` while `uncompressed` stores them as-is, and a codec for text only, such as `zstd`, leaves numeric columns to `auto`, whose candidates include the [numeric codec](#numeric-columns). A codec that cannot encode the column's type, or a columnstore-only codec or a `compression_level` on a transactional or temporary table, is rejected at `CREATE TABLE` / `ALTER TABLE`.
 
+The global `disabled_compression_methods` setting removes the transactional compressions it lists from what `auto` considers for search tables too, and a forced compression it disables falls back to `auto`.
+
 ## Inspecting storage
 
 [`pragma_storage_info`](../../../configuration/pragmas.md#storage-information) lists every segment of a search table or index with its codec (`compression`), its row range (`start`, `count`), its offset in the `.col` file (`block_offset`) and its size (`segment_info` reads `byte_size=N`); validity streams appear as rows with `segment_type = 'VALIDITY'`.

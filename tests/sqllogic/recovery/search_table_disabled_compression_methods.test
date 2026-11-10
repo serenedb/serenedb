@@ -1,0 +1,65 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET force_compression = 'rle';
+
+
+statement ok
+CREATE TABLE stdcm_forced (a INTEGER PRIMARY KEY, runs BIGINT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stdcm_forced SELECT a, a // 1000 FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stdcm_forced;
+
+
+query
+SELECT DISTINCT compression FROM pragma_storage_info('stdcm_forced')
+WHERE column_name = 'runs' AND segment_type <> 'VALIDITY';
+----
+compression
+RLE
+
+
+statement ok
+SET disabled_compression_methods = 'rle';
+
+
+statement ok
+CREATE TABLE stdcm_disabled (a INTEGER PRIMARY KEY, runs BIGINT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stdcm_disabled SELECT a, a // 1000 FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stdcm_disabled;
+
+
+query
+SELECT count(*) AS rle_segments FROM pragma_storage_info('stdcm_disabled')
+WHERE compression = 'RLE';
+----
+rle_segments
+0
+
+
+query
+SELECT count(*) AS mismatches FROM stdcm_disabled WHERE runs IS DISTINCT FROM a // 1000;
+----
+mismatches
+0
+
+
+statement ok
+RESET force_compression;
+
+
+statement ok
+RESET disabled_compression_methods;

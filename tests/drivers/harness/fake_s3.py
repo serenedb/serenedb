@@ -155,10 +155,27 @@ class FakeS3(FakeStore):
         self.release = threading.Event()
         self.log: list[dict] | None = None
         self.trace: list[dict] | None = None
+        self.keep_alive = True
+        self.closing: tuple[str, int] | None = None
 
     @property
     def endpoint(self) -> str:
         return f"127.0.0.1:{self.server.server_address[1]}"
+
+    def close_after(self, kind: str, requests: int) -> None:
+        with self.lock:
+            self.closing = (kind, requests)
+
+    def count(self, kind: str) -> None:
+        super().count(kind)
+        with self.lock:
+            if self.closing is None or self.closing[0] != kind:
+                return
+            left = self.closing[1] - 1
+            self.closing = (kind, left) if left else None
+        if not left:
+            self.server.shutdown()
+            self.server.server_close()
 
     def keys(self, bucket: str, prefix: str = "") -> list[str]:
         with self.lock:
@@ -198,6 +215,9 @@ class _Handler(Handler):
         self.send_response(status)
         for name, value in (headers or {}).items():
             self.send_header(name, value)
+        if not self.fake.keep_alive:
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.send_header("Content-Length",
                          str(len(body) if content_length is None else content_length))
         self.end_headers()

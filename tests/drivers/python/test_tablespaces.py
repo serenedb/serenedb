@@ -344,6 +344,35 @@ def test_a_store_that_never_accepts_fails_within_the_connect_timeout(
     assert elapsed < 20, elapsed
 
 
+def test_a_request_that_never_connects_is_retried_whatever_its_method(
+        tmp_path: Path) -> None:
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE PERSISTENT SECRET closing_store (TYPE s3, KEY_ID 'key', "
+                    f"SECRET 'secret', ENDPOINT '{fake.endpoint}', URL_STYLE 'path', "
+                    "USE_SSL false, SCOPE 's3://bucket')")
+                conn.execute("SET GLOBAL logging_storage = 'memory'")
+                conn.execute("CALL enable_logging('HTTP')")
+                fake.keep_alive = False
+                fake.close_after("HEAD", 2)
+                with pytest.raises(psycopg.Error):
+                    conn.execute(
+                        "COPY (SELECT i, repeat('x', 100) AS s FROM range(400000) t(i)) "
+                        "TO 's3://bucket/closing/big.csv' (FORMAT csv)")
+                attempts = conn.execute(
+                    "SELECT count(*) FROM sdb_logs_parsed('HTTP') "
+                    "WHERE request.type = 'POST' AND request.url LIKE %s",
+                    ("%uploads%",)).fetchone()[0]
+        finally:
+            server.stop()
+    assert fake.requests["HEAD"] == 2 and fake.requests["CREATE_UPLOAD"] == 0, fake.requests
+    assert attempts == 4, attempts
+
+
 def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
     prefix = f"tablespace-{tmp_path.name}"
     location = f"s3://{s3_store.bucket}/{prefix}"

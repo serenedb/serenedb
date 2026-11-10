@@ -27,7 +27,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -38,7 +37,7 @@ namespace irs::file_utils {
 
 inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
-inline constexpr size_t kPrefetchChunk = duckdb::ExternalFileCache::BLOCK_SIZE;
+inline constexpr size_t kPrefetchChunk = 128 * 1024;
 
 void Prefetch(const void* addr, size_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;

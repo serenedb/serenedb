@@ -277,7 +277,8 @@ TEST(ObjectStoreIndexTest, replace_adopts_segments) {
   EXPECT_EQ(4, snapshot.live_docs_count());
 }
 
-constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
+constexpr uint64_t kBlock = duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE;
+constexpr uint64_t kPieceSize = 4 * 1024 * 1024;
 constexpr uint64_t kBlocks = 16;
 
 std::unique_ptr<irs::InputFile> WriteUncached(const tests::IndexDir& dir) {
@@ -673,8 +674,7 @@ TEST(ObjectStoreIndexTest, a_long_one_time_read_fetches_every_block_in_runs) {
   std::vector<irs::byte_type> read(kSize);
   irs::ReadOnce(in, read.data(), kSize);
   EXPECT_EQ(kSize, static_cast<uint64_t>(absl::c_count(read, 0x5A)));
-  EXPECT_LE(tests::ObjectStore().Requests().get,
-            2 * kSize / duckdb::ExternalFileCache::PIECE_SIZE);
+  EXPECT_LE(tests::ObjectStore().Requests().get, 2 * kSize / kPieceSize);
 }
 
 constexpr uint64_t kValues = 100000;

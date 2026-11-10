@@ -96,10 +96,11 @@ bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
     block.pinned = std::make_unique<CursorPin>();
   }
   auto& pinned = *block.pinned;
-  const auto number = position / duckdb::ExternalFileCache::BLOCK_SIZE;
+  const auto& blocks = _blocks->Blocks();
+  const auto number = blocks.BlockOf(position);
   pinned.pin =
     _blocks->GetCache().PinInOrder(_blocks, number, pinned.ahead, ahead);
-  block.start = number * duckdb::ExternalFileCache::BLOCK_SIZE;
+  block.start = blocks.BlockStart(number);
   return {pinned.pin.Ptr(),
           std::min<uint64_t>(pinned.pin.Size(), _length - block.start)};
 }

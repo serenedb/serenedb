@@ -72,6 +72,10 @@ class InputFile {
     return _blocks ? _blocks->GetPath() : _mapping->GetPath();
   }
   bool Contiguous() const noexcept { return !_blocks; }
+  uint64_t BlockSize() const noexcept {
+    return _blocks ? _blocks->BlockSize()
+                   : duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE;
+  }
   bytes_view Span() const noexcept { return _span; }
   duckdb::MemoryMappedFile* Mapping() const noexcept {
     return _span.empty() ? nullptr : _mapping.get();
@@ -331,8 +335,8 @@ class BasicInput {
         const auto at = Position();
         const auto from = at + Remain();
         const auto to = at + count;
-        if (from / duckdb::ExternalFileCache::BLOCK_SIZE !=
-            (to - 1) / duckdb::ExternalFileCache::BLOCK_SIZE) {
+        const auto block_size = _file->BlockSize();
+        if (from / block_size != (to - 1) / block_size) {
           _file->Prefetch(from, to - from);
         }
         do {

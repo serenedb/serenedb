@@ -37,7 +37,7 @@
 
 namespace {
 
-constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
+constexpr uint64_t kBlock = duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE;
 constexpr uint64_t kBlocks = 16;
 constexpr uint64_t kRead = 64;
 

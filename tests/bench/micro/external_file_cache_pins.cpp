@@ -41,7 +41,7 @@ duckdb::ExternalFileCache& Cache() {
 void Fill() {
   gFile = Cache().CreateUnbackedFile("memory://bench/external_file_cache_pins");
   duckdb::ExternalFileCacheAppender appender{gFile};
-  std::vector<uint8_t> bytes(duckdb::ExternalFileCache::BLOCK_SIZE);
+  std::vector<uint8_t> bytes(duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE);
   for (duckdb::idx_t block = 0; block != kBlocks; ++block) {
     std::memset(bytes.data(), static_cast<int>(block), bytes.size());
     appender.Append(bytes.data(), bytes.size());
@@ -73,9 +73,9 @@ void BmPinRange(benchmark::State& state) {
   const auto first = static_cast<duckdb::idx_t>(state.thread_index()) *
                      kRangeBlocks % (kBlocks - kRangeBlocks + 1);
   for (auto _ : state) {
-    auto pins =
-      cache.PinRange(*gFile, first * duckdb::ExternalFileCache::BLOCK_SIZE,
-                     kRangeBlocks * duckdb::ExternalFileCache::BLOCK_SIZE);
+    auto pins = cache.PinRange(
+      *gFile, first * duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE,
+      kRangeBlocks * duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE);
     benchmark::DoNotOptimize(pins.data());
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));

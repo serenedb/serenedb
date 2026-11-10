@@ -327,9 +327,9 @@ const byte_type* TermReaderImpl::Block(size_t block,
   const uint64_t end = std::min(BlockOffset(block + 1), in.Length());
   if (offset < pinned.start ||
       end - pinned.start > pinned.pinned.bytes.size()) {
-    constexpr uint64_t kCached = duckdb::ExternalFileCache::BLOCK_SIZE;
-    const uint64_t first = offset - offset % kCached;
-    const uint64_t last = std::min(first + kCached, in.Length());
+    const uint64_t cached = in.BlockSize();
+    const uint64_t first = offset - offset % cached;
+    const uint64_t last = std::min(first + cached, in.Length());
     pinned.start = end <= last ? first : offset;
     pinned.pinned = in.Pin(pinned.start, std::max(end, last) - pinned.start);
   }

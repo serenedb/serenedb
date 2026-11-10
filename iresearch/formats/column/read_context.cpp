@@ -140,9 +140,11 @@ bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
 }
 
 bool ReadContext::Wraps(uint64_t offset, uint64_t size) const noexcept {
-  constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
-  return !_mapping && _in.File() && offset % 8 == 0 &&
-         offset % kBlock + SectorAligned(size) <= kBlock;
+  if (_mapping || !_in.File() || offset % 8 != 0) {
+    return false;
+  }
+  const auto block = _in.File()->BlockSize();
+  return offset % block + SectorAligned(size) <= block;
 }
 
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {

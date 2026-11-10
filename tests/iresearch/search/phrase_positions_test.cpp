@@ -617,7 +617,8 @@ TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
   const auto handles = reader[0].field(kField)->Handles();
   ASSERT_TRUE(handles.doc->Contiguous());
   ASSERT_FALSE(handles.pos->Contiguous());
-  ASSERT_LT(4 * duckdb::ExternalFileCache::BLOCK_SIZE, handles.pos->Length());
+  ASSERT_LT(4 * duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE,
+            handles.pos->Length());
 
   irs::ByPhrase filter;
   *filter.mutable_field_id() = kField;

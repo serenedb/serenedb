@@ -31,9 +31,7 @@
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_root.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string_utils.hpp"
@@ -246,10 +244,14 @@ void Serialize(const BlockBuilder& block, DataOutput& out) {
 
 }  // namespace
 
-void RecordOutput::WriteDirect(const byte_type*, size_t) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                  ERR_MSG("term dictionary: posting record exceeds ",
-                          kMaxRecordBytes, " bytes"));
+void RecordOutput::Overflow(const byte_type* data, size_t size) {
+  if (size > Remain()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("term dictionary: posting record exceeds ",
+                            kMaxRecordBytes, " bytes"));
+  }
+  std::memcpy(_pos, data, size);
+  _pos += size;
 }
 
 void FsstEncoderDelete::operator()(
@@ -636,13 +638,16 @@ void FieldWriter::Cut() {
     const auto separator =
       first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
     const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
-    StringOutput out{_separators};
-    out.WriteV32(static_cast<uint32_t>(shared));
-    WriteStr(out, separator.substr(shared));
+    const auto suffix = separator.substr(shared);
+    auto out = std::back_inserter(_separators);
+    WriteVarint(static_cast<uint32_t>(shared), out);
+    WriteVarint(static_cast<uint32_t>(suffix.size()), out);
+    _separators.append(ViewCast<char>(suffix));
     _separator.assign(separator);
   }
   WriteBlock();
-  StringOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
+  auto starts = std::back_inserter(_inline_starts);
+  WriteVarint(_inline_start - _inline_last, starts);
   _inline_last = _inline_start;
   _inline_start = _inline.size();
   _last.assign(KeyAt(_block, _block.ends.size() - 1));

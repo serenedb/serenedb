@@ -72,9 +72,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                   std::shared_ptr<DatabaseDirectory> directory)
     : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
 
-  const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
-    return _directory;
-  }
+  std::unique_ptr<StorageDirectory> Storage(
+    duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace,
+    duckdb::idx_t oid);
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
   std::string GetCatalogType() final;
@@ -83,12 +83,13 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return duckdb::SqlCompatibility::POSTGRES;
   }
 
-  bool UsesCatalogLog() const final { return true; }
+  bool UsesCatalogLog() const final { return !GetAttached().IsTemporary(); }
   bool IsDropped() const final {
     return _detached.load(std::memory_order_acquire);
   }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
   void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
+  void OpenStorages();
   bool AppendLocalIndexes(
     duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
     duckdb::RowGroupCollection& source,
@@ -104,6 +105,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
              duckdb::AlterInfo& info) final;
 
   duckdb::optional<duckdb::Identifier> GetDefaultSchema() const final {
+    if (GetAttached().IsTemporary()) {
+      return duckdb::DuckCatalog::GetDefaultSchema();
+    }
     return duckdb::Identifier{irs::StaticStrings::kPublic};
   }
 
@@ -112,8 +116,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::CreateSchemaInfo& info) final;
 
   duckdb::unique_ptr<duckdb::IndexCatalogEntry> MakeIndexEntry(
-    duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
-    duckdb::CatalogEntry& relation) final;
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateIndexInfo& info, duckdb::CatalogEntry& relation) final;
 
   duckdb::unique_ptr<duckdb::TableCatalogEntry> MakeTableEntry(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
@@ -201,6 +205,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                         duckdb::DropInfo& info);
 
  private:
+  void Place(duckdb::CatalogTransaction transaction, duckdb::CreateInfo& info,
+             std::string_view refusal);
+
   std::shared_ptr<DatabaseDirectory> _directory;
   CatalogSnapshots _snapshots{*this};
   duckdb::unique_ptr<duckdb::FileHandle> _catalog_log_lock;
@@ -223,6 +230,9 @@ duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
   duckdb::ClientContext& context);
 
 bool IsSereneDB(duckdb::Catalog& catalog);
+
+duckdb::unique_ptr<duckdb::Catalog> MakeTemporaryCatalog(
+  duckdb::AttachedDatabase& db);
 
 void ThrowIfReadOnly(const duckdb::Catalog& catalog, const auto&... command) {
   if (catalog.GetAttached().IsReadOnly()) {

@@ -40,6 +40,7 @@ namespace duckdb {
 class ClientContext;
 
 }
+
 namespace irs {
 
 enum class Case : uint8_t {
@@ -49,6 +50,7 @@ enum class Case : uint8_t {
 };
 
 }
+
 namespace irs::analysis {
 
 template<typename OnRow,

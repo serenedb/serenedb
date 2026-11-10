@@ -24,6 +24,7 @@
 #include <roaring/containers/containers.h>
 
 #include <algorithm>
+#include <cstring>
 #include <new>
 #include <roaring/roaring.hh>
 #include <utility>
@@ -182,11 +183,17 @@ bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
                                        &lhs._set.roaring, &rhs._set.roaring);
 }
 
-DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
-  std::shared_ptr<byte_type> frozen{
-    static_cast<byte_type*>(::operator new(size, kFrozenAlignment)),
-    FrozenFree{}};
-  in.ReadData(0, frozen.get(), size);
+std::shared_ptr<byte_type> DocumentMask::AllocateFrozen(uint64_t size) {
+  return {static_cast<byte_type*>(::operator new(size, kFrozenAlignment)),
+          FrozenFree{}};
+}
+
+DocumentMask DocumentMask::ReadFrozen(bytes_view bytes) {
+  const auto size = bytes.size();
+  auto frozen = AllocateFrozen(size);
+  if (size != 0) {
+    std::memcpy(frozen.get(), bytes.data(), size);
+  }
   return DocumentMask{std::move(frozen), size};
 }
 

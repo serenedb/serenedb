@@ -149,7 +149,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     return _lay.BlockSetting();
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(DataOutput& out, const float* vecs, size_t n) final {
     SDB_ASSERT(_centroid.size() == _lay.rd);
     for (size_t i = 0; i < n; ++i) {
       const float* vec = vecs + i * size_t{_lay.d};
@@ -187,7 +187,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     return clone;
   }
 
-  void Finish(IndexOutput& out) final {
+  void Finish(DataOutput& out) final {
     if (!_lay.row_major && _lane != 0) {
       WriteGroup(out, _lane);
     }
@@ -280,7 +280,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     std::memcpy(dst + _lay.RowNormOffset(), &norm, sizeof(float));
   }
 
-  void WriteGroup(IndexOutput& out, size_t count) {
+  void WriteGroup(DataOutput& out, size_t count) {
     const size_t storage = _lay.storage;
     std::memset(_aux.data() + count * storage, 0,
                 (kFastScanBbs - count) * storage);

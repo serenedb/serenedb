@@ -181,7 +181,7 @@ class HttpSession final
         _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
       duckdb::idx_t database_id = 0;
       duckdb::Permissions permissions;
-      if (!catalog::ReadDatabase(
+      if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
             dbname, [&](const catalog::DatabaseCatalogEntry& database) {
               database_id = database.oid;
               permissions = database.permissions;

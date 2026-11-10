@@ -27,12 +27,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <random>
@@ -222,19 +222,18 @@ std::filesystem::path BenchDir(Codec codec) {
 }
 
 struct Seg {
-  explicit Seg(Codec codec) : dir{BenchDir(codec)} {}
-
-  irs::MMapDirectory dir;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
 };
 
 std::unique_ptr<Seg> BuildSeg(Codec codec) {
-  auto seg = std::make_unique<Seg>(codec);
+  auto seg = std::make_unique<Seg>();
+  auto& fs = duckdb::FileSystem::GetFileSystem(CsDb());
+  const auto root = BenchDir(codec).string();
   const auto rows = Rows();
   const auto type = TypeOf(codec);
   {
-    irs::ColWriter w{seg->dir, kSeg, CsDb()};
+    irs::ColWriter w{CsDb(), fs, root, irs::FileObservers{}, kSeg};
     auto& cw = w.OpenColumn(kField, type, false, DEFAULT_ROW_GROUP_SIZE,
                             CompressionOf(codec));
     Generator gen{codec};
@@ -250,7 +249,7 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
     w.Commit(rows);
   }
   seg->reader = std::make_unique<irs::ColReader>(
-    seg->dir, std::string{kSeg}, CsDb(), irs::IOAdvice::SEQUENTIAL);
+    CsDb(), fs, root, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (!seg->col) {
     std::fprintf(stderr, "BuildSeg: column missing\n");

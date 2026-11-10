@@ -34,14 +34,15 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/directory.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
+
+#include "index_dir.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace irs::tests {
 
@@ -55,39 +56,26 @@ inline NormColumnIdProvider MakeNormColumnIdProvider() {
   };
 }
 
-// Default IndexWriterOptions / IndexReaderOptions wired to the process-wide
-// DuckDB DatabaseInstance held by irs::DuckDBEngine. tests_main brings
-// the engine up before RUN_ALL_TESTS and tears it down afterwards. Legacy
-// tests that just called `IndexWriter::Make(dir, mode)` would skip
-// opening a cs writer because `opts.db == nullptr`. Tests ported off legacy
-// STORE -> column(name) need a cs writer to keep the same write / read-back
-// behaviour; using these defaults plumbs the engine instance in without
-// every call site re-typing it.
 inline IndexWriterOptions DefaultWriterOptions() {
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
   IndexWriterOptions opts;
-  opts.db = db;
-  opts.reader_options.db = db;
   opts.norm_column_id = MakeNormColumnIdProvider();
   return opts;
 }
-inline IndexReaderOptions DefaultReaderOptions() {
-  IndexReaderOptions opts;
-  opts.db = &::irs::DuckDBEngine::Instance().instance();
-  return opts;
-}
+inline IndexReaderOptions DefaultReaderOptions() { return {}; }
 
 // Convenience: construct a new-cs Writer over `dir`/`segment_name`, wired
-// to the process-wide DuckDBEngine instance. Matches the production
-// constructor.
-std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
+// to the process-wide DuckDBEngine instance.
+std::unique_ptr<ColWriter> MakeCsWriter(const ::tests::IndexDir& dir,
                                         std::string_view segment_name);
 
 // Convenience: construct a new-cs Reader. Returns nullptr if the `.col`
 // file does not exist (test still needs to react -- the production
 // SegmentReader does the same check via `Has*` on the result).
-std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
+std::unique_ptr<ColReader> MakeCsReader(const ::tests::IndexDir& dir,
                                         std::string_view segment_name);
+
+ColReader OpenColReader(const ::tests::IndexDir& dir,
+                        std::string_view segment_name);
 
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per
@@ -105,17 +93,17 @@ void AppendNullBlob(ColumnWriter& cw, doc_id_t doc);
 
 // DataOutput that appends bytes to an `irs::bstring`. Used by tests to
 // capture a field's serialised STORE bytes for forwarding to a cs blob
-// column. Replaces the legacy IndexOutput-into-stored-column shape.
+// column.
 class BstringDataOutput final : public DataOutput {
  public:
   explicit BstringDataOutput(bstring& buf) noexcept : _buf{&buf} {}
 
-  void WriteByte(byte_type b) final { _buf->push_back(b); }
-  void WriteData(const byte_type* b, uint64_t len) final {
-    _buf->append(b, len);
+ private:
+  void Overflow(const byte_type* data, size_t size) final {
+    _buf->append(data, size);
+    _offset += size;
   }
 
- private:
   bstring* _buf;
 };
 
@@ -169,7 +157,7 @@ class BlobPointReader {
   ColumnReader::BlobPointReader _impl;
 };
 
-// Convenience: read a length-prefixed string (irs::WriteStr layout) from
+// Convenience: read a length-prefixed string (WriteStr layout) from
 // `column` at `doc` via a BlobPointReader. Accepts both the wrapper above
 // and the underlying `ColumnReader::BlobPointReader`.
 template<typename StringType>

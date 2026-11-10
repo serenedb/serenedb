@@ -33,6 +33,7 @@
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/store/file_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -81,9 +82,12 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 
 }  // namespace
 
-ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db)
-  : _dir{&dir},
+ColWriter::ColWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                     std::string_view root, const FileObservers& observers,
+                     std::string_view segment_name)
+  : _fs{fs},
+    _root{root},
+    _observers{observers},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
     _db{&db} {}
@@ -98,7 +102,7 @@ void ColWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = _dir->create(_filename);
+  _out = FileOutput::Open(_fs, _root, _filename, _observers, true);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
@@ -167,7 +171,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
-    id, row_group_size, [this]() -> IndexOutput& {
+    id, row_group_size, [this]() -> DataOutput& {
       EnsureOut();
       return *_out;
     }));
@@ -301,6 +305,7 @@ bool ColWriter::Commit(uint64_t target_row,
         });
     }
   });
+  _out->Close();
   _out.reset();
   _committed = true;
   return true;
@@ -311,18 +316,25 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   if (!_committed || _ann_writers.empty()) {
     co_return true;
   }
-  ColReader reader{*_dir, _segment_name, *_db, IOAdvice::SEQUENTIAL};
+  const auto reader = OpenReader();
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;
     }
-    const auto* col = reader.Column(entry->column_id);
+    const auto* col = reader->Column(entry->column_id);
     if (!col) {
       continue;
     }
-    co_await entry->writer->Compute(*col, reader.Ctx(), env);
+    co_await entry->writer->Compute(*col, reader->Ctx(), env);
   }
   co_return true;
+}
+
+std::unique_ptr<ColReader> ColWriter::OpenReader() const {
+  SDB_ASSERT(_committed);
+  return std::make_unique<ColReader>(*_db, _fs, _root, _segment_name,
+                                     static_cast<bool>(_write_ctx),
+                                     duckdb::MappedFileAccess::SEQUENTIAL);
 }
 
 }  // namespace irs

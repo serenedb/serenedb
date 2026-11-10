@@ -32,7 +32,6 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/geo/shape_container.hpp>
 #include <memory>
@@ -168,8 +167,6 @@ constexpr std::string_view kCorpus = R"([
 
 irs::IndexWriterOptions MakeWriterOptions() {
   irs::IndexWriterOptions options;
-  options.db = &Db();
-  options.reader_options.db = &Db();
   options.norm_column_id = [next = std::make_shared<std::atomic<irs::field_id>>(
                               0)](irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
@@ -178,11 +175,11 @@ irs::IndexWriterOptions MakeWriterOptions() {
 }
 
 // Build a tiny index from the corpus above. Returns the writer's snapshot.
-irs::DirectoryReader BuildIndex(irs::Directory& dir,
+irs::DirectoryReader BuildIndex(duckdb::FileSystem& fs, std::string_view root,
                                 const std::vector<GeoEntry>& docs,
                                 std::vector<std::string>& names_out) {
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(Db(), fs, root, irs::kOmCreate, MakeWriterOptions());
 
   GeoField geo;
 
@@ -270,14 +267,14 @@ int GeoMain() {
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
 
-  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
-  // down the duckdb::DuckDB they were dispatching through.
+  // Nested scope so the reader destructs before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB it was dispatching through.
   {
     auto docs = ParseCorpus(kCorpus);
     std::vector<std::string> names;
 
-    irs::MemoryDirectory dir;
-    auto reader = BuildIndex(dir, docs, names);
+    auto reader = BuildIndex(duckdb::FileSystem::GetFileSystem(Db()),
+                             "memory://geo", docs, names);
     std::cout << "Indexed " << reader.docs_count() << " points across "
               << reader.size() << " segment(s).\n\n";
 

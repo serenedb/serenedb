@@ -90,7 +90,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     };
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(DataOutput& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
@@ -116,7 +116,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void Finish(IndexOutput& out) final {
+  void Finish(DataOutput& out) final {
     if (_pending == 0) {
       return;
     }
@@ -146,7 +146,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
   }
 
  private:
-  void WriteBatch(IndexOutput& out, const float* src, size_t count) {
+  void WriteBatch(DataOutput& out, const float* src, size_t count) {
     auto pano = MakePanorama(_d, count);
     _cums.assign(count * (pano.n_levels + 1), 0.f);
     _codes.resize(count * size_t{_d});

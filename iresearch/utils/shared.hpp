@@ -77,13 +77,6 @@ static_assert(sizeof(float_t) != sizeof(double_t));
 #undef FLOAT_T_IS_DOUBLE_T
 #endif
 
-// Windows uses wchar_t for unicode handling
-#ifdef _WIN32
-#define IR_NATIVE_STRING(s) L##s
-#else
-#define IR_NATIVE_STRING(s) s
-#endif
-
 #ifndef IRS_FUNC_NAME
 #if defined(__clang__) || defined(__GNUC__)
 #define IRS_FUNC_NAME __PRETTY_FUNCTION__

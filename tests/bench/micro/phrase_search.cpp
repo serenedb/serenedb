@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
@@ -38,7 +39,6 @@
 #include <iresearch/search/filters/shingle_phrase.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -193,7 +193,6 @@ constexpr Strategy kStrategies[] = {
 
 struct Index {
   const Strategy* strategy;
-  std::unique_ptr<irs::MMapDirectory> dir;
   std::unique_ptr<irs::analysis::Tokenizer> tokenizer;
   irs::DirectoryReader reader;
 };
@@ -212,16 +211,14 @@ Index BuildIndex(const std::vector<std::string>& docs,
     std::filesystem::temp_directory_path() / "sdb-bench-phrase" / strategy.name;
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
-  Index index{.strategy = &strategy,
-              .dir = std::make_unique<irs::MMapDirectory>(path),
-              .tokenizer = MakeTokenizer(strategy)};
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = path.string();
+  Index index{.strategy = &strategy, .tokenizer = MakeTokenizer(strategy)};
+
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
-  auto writer =
-    irs::IndexWriter::Make(*index.dir, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
 
   BenchField field{
     .tokenizer = index.tokenizer.get(),
@@ -241,8 +238,7 @@ Index BuildIndex(const std::vector<std::string>& docs,
                DirSize(path));
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  index.reader = irs::DirectoryReader{*index.dir, reader_opts};
+  index.reader = irs::DirectoryReader{*db, fs, root, reader_opts};
   return index;
 }
 

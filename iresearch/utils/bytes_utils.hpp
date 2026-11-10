@@ -38,77 +38,17 @@ struct bytes_io;
 template<typename T>
 struct bytes_io<T, sizeof(uint8_t)> {
   static constexpr T kMaxVSize = 1;
-
-  template<typename InputIterator>
-  static T ReadBE(InputIterator& in, std::input_iterator_tag) {
-    T out = static_cast<T>(*in);
-    ++in;
-
-    return out;
-  }
-
-  template<typename InputIterator>
-  static T ReadLE(InputIterator& in, std::input_iterator_tag) {
-    return ReadBE(in, std::input_iterator_tag{});
-  }
 };
 
 template<typename T>
 struct bytes_io<T, sizeof(uint16_t)> {
   static constexpr T kMaxVSize = 2;
-
-  template<typename InputIterator>
-  static T ReadBE(InputIterator& in, std::input_iterator_tag) {
-    T out = static_cast<T>(*in) << 8;
-    ++in;
-    out |= static_cast<T>(*in);
-    ++in;
-
-    return out;
-  }
-
-  static T ReadBE(const byte_type*& in) {
-    const T out = absl::big_endian::Load16(in);
-    in += sizeof(T);
-
-    return out;
-  }
-
-  template<typename InputIterator>
-  static T ReadLE(InputIterator& in, std::input_iterator_tag) {
-    T out = static_cast<T>(*in);
-    ++in;
-    out |= static_cast<T>(*in) << 8;
-    ++in;
-
-    return out;
-  }
-
-  static T ReadLE(const byte_type*& in) {
-    const T out = absl::little_endian::Load16(in);
-    in += sizeof(T);
-
-    return out;
-  }
 };
 
 template<typename T>
 struct bytes_io<T, sizeof(uint32_t)> {
   static constexpr T kMaxVSize = 5;
   static constexpr T kMask = 0x80;
-
-  template<typename InputIterator>
-  static void vskip(InputIterator& in) {
-    static_assert(
-      std::is_same_v<typename std::iterator_traits<InputIterator>::value_type,
-                     byte_type>);
-    T v = *in;
-    ++in;
-    for (T i = 1; i != kMaxVSize && (v & kMask) != 0; ++i) {
-      v = *in;
-      ++in;
-    }
-  }
 
   template<typename InputIterator>
   static T vread(InputIterator& in) {
@@ -156,44 +96,6 @@ struct bytes_io<T, sizeof(uint32_t)> {
     return out;
   }
 
-  template<typename InputIterator>
-  static T ReadBE(InputIterator& in, std::input_iterator_tag) {
-    T out = static_cast<T>(*in) << 24;
-    ++in;
-    out |= static_cast<T>(*in) << 16;
-    ++in;
-    out |= static_cast<T>(*in) << 8;
-    ++in;
-    out |= static_cast<T>(*in);
-    ++in;
-    return out;
-  }
-
-  static T ReadBE(const byte_type*& in) {
-    auto value = absl::big_endian::Load32(in);
-    in += sizeof(uint32_t);
-    return value;
-  }
-
-  template<typename InputIterator>
-  static T ReadLE(InputIterator& in, std::input_iterator_tag) {
-    T out = static_cast<T>(*in);
-    ++in;
-    out |= static_cast<T>(*in) << 8;
-    ++in;
-    out |= static_cast<T>(*in) << 16;
-    ++in;
-    out |= static_cast<T>(*in) << 24;
-    ++in;
-    return out;
-  }
-
-  static T ReadLE(const byte_type*& in) {
-    auto value = absl::little_endian::Load32(in);
-    in += sizeof(uint32_t);
-    return value;
-  }
-
   /// @returns number of bytes required to store value in variable length format
   static uint32_t vsize(uint32_t value) {
     // compute 0 == value ? 1 : 1 + floor(log2(value)) / 7
@@ -210,19 +112,6 @@ template<typename T>
 struct bytes_io<T, sizeof(uint64_t)> {
   static constexpr T kMaxVSize = 10;
   static constexpr T kMask = 0x80;
-
-  template<typename InputIterator>
-  static void vskip(InputIterator& in) {
-    static_assert(
-      std::is_same_v<typename std::iterator_traits<InputIterator>::value_type,
-                     byte_type>);
-    T v = *in;
-    ++in;
-    for (T i = 1; i != kMaxVSize && (v & kMask) != 0; ++i) {
-      v = *in;
-      ++in;
-    }
-  }
 
   template<typename InputIterator>
   static T vread(InputIterator& in) {
@@ -310,38 +199,6 @@ struct bytes_io<T, sizeof(uint64_t)> {
     return out;
   }
 
-  template<typename InputIterator>
-  static T ReadBE(InputIterator& in, std::input_iterator_tag) {
-    typedef bytes_io<uint32_t, sizeof(uint32_t)> bytes_io_t;
-
-    T out = static_cast<T>(bytes_io_t::ReadBE(in, std::input_iterator_tag{}))
-            << 32;
-    return out |
-           static_cast<T>(bytes_io_t::ReadBE(in, std::input_iterator_tag{}));
-  }
-
-  static T ReadBE(const byte_type*& in) {
-    auto value = absl::big_endian::Load64(in);
-    in += sizeof(uint64_t);
-    return value;
-  }
-
-  template<typename InputIterator>
-  static T ReadLE(InputIterator& in, std::input_iterator_tag) {
-    typedef bytes_io<uint32_t, sizeof(uint32_t)> bytes_io_t;
-
-    T out = static_cast<T>(bytes_io_t::ReadLE(in, std::input_iterator_tag{}));
-    return out |
-           (static_cast<T>(bytes_io_t::ReadLE(in, std::input_iterator_tag{}))
-            << 32);
-  }
-
-  static T ReadLE(const byte_type*& in) {
-    auto value = absl::little_endian::Load64(in);
-    in += sizeof(uint64_t);
-    return value;
-  }
-
   /// @returns number of bytes required to store value in variable length format
   static uint64_t vsize(uint64_t value) {
     // compute 0 == value ? 1 : 1 + floor(log2(value)) / 7
@@ -353,26 +210,6 @@ struct bytes_io<T, sizeof(uint64_t)> {
     return (73 + 9 * log2) >> 6;
   }
 };
-
-/// @brief will increment 'in' to position after the end of the next value
-template<typename T, typename Iterator>
-inline void vskip(Iterator& in) {
-  bytes_io<T, sizeof(T)>::vskip(in);
-}
-
-/// @brief read a raw value of type T from 'in'
-///        will increment 'in' to position after the end of the read value
-template<typename T, typename Iterator>
-inline T read(Iterator& in) {
-  return bytes_io<T, sizeof(T)>::ReadLE(
-    in, typename std::iterator_traits<Iterator>::iterator_category());
-}
-
-template<typename T, typename Iterator>
-inline T ReadBE(Iterator& in) {
-  return bytes_io<T, sizeof(T)>::ReadBE(
-    in, typename std::iterator_traits<Iterator>::iterator_category());
-}
 
 /// @brief read a variable-size encoded value of type T from 'in'
 ///        will increment 'in' to position after the end of the read value

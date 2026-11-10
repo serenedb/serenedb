@@ -70,7 +70,9 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
@@ -277,18 +279,22 @@ SearchTableEntry::SearchTableEntry(
   : duckdb::TableCatalogEntry{catalog, schema, info.Base(),
                               std::move(inherited_triggers)},
     _columns{std::move(info.Base().columns)},
-    _storage{std::move(inherited_storage)} {
+    _storage{std::move(inherited_storage)},
+    _tablespace{info.Base().tablespace_oid} {
   AssignColumnOids(catalog, _columns);
   auto& base = info.Base();
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
+  if (_tablespace != 0) {
+    dependencies.AddDependency(
+      ClusterOf(*transaction.db).Tablespace(transaction, _tablespace));
+  }
   if (!_storage) {
     _storage = std::make_shared<search::Store>(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
-      catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, GetColumns());
+      catalog.Cast<SereneDBCatalog>().Storage(transaction, _tablespace, oid),
+      catalog.GetAttached(), oid, base.oid == 0, _options, GetColumns());
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -513,6 +519,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       options.insert_or_assign(name, OptionConstant(value));
     }
   }
+  info->tablespace_oid = _tablespace;
   return info;
 }
 
@@ -889,7 +896,10 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
   info.ResolveNewDependencies(bound->Base().dependencies);
-  return Successor(context, *bound);
+  auto successor = Successor(context, *bound);
+  info.new_dependencies =
+    duckdb::make_uniq<duckdb::LogicalDependencyList>(successor->dependencies);
+  return successor;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::ChangeColumns(

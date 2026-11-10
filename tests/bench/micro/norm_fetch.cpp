@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/file_system.hpp>
 #include <map>
 #include <memory>
 #include <random>
@@ -39,11 +40,9 @@
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/directory_reader.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "memory_output.hpp"
 
 namespace {
 
@@ -78,10 +77,9 @@ const std::vector<uint32_t>& IndexNorms() {
       return out;
     }
     const char* field = std::getenv("NORM_FIELD");
-    irs::MMapDirectory dir{path};
-    irs::DirectoryReader reader{
-      dir,
-      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()}};
+    auto& db = irs::DuckDBEngine::Instance().instance();
+    irs::DirectoryReader reader{db, duckdb::FileSystem::GetFileSystem(db), path,
+                                irs::IndexReaderOptions{}};
     for (const auto& segment : reader) {
       for (const auto id : segment.field_ids()) {
         if (field != nullptr && id != std::strtoul(field, nullptr, 10)) {
@@ -252,15 +250,17 @@ struct MainColumn {
 };
 
 struct PackedColumn {
-  irs::MemoryFile file{irs::IResourceManager::gNoop};
-  std::unique_ptr<irs::MemoryIndexInput> in;
+  irs::MemoryFile file;
+  irs::bstring data;
+  std::unique_ptr<irs::InputFile> in;
   std::unique_ptr<irs::NormColumnReader> column;
   irs::NormReader::ptr reader;
   size_t bytes = 0;
 
   void Build(const std::vector<uint32_t>& values) {
-    irs::MemoryIndexOutput out{file};
-    irs::NormColumnWriter writer{1, kRgRows, out};
+    irs::MemoryFileOutput out{file};
+    irs::NormColumnWriter writer{1, kRgRows,
+                                 [&]() -> irs::DataOutput& { return out; }};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }
@@ -270,7 +270,8 @@ struct PackedColumn {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
-    in = std::make_unique<irs::MemoryIndexInput>(file);
+    data = tests::Bytes(file);
+    in = tests::OpenBytes(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);
   }

@@ -28,7 +28,6 @@
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -125,7 +124,6 @@ class Executor {
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::analysis::Tokenizer::ptr _tokenizer;
-  irs::MMapDirectory _dir;
   irs::DirectoryReader _reader;
 };
 

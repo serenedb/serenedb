@@ -85,7 +85,8 @@ struct CompactionTier {
 CompactionPolicy MakePolicy(const CompactionTier& options);
 
 // Writes segment_meta to the supplied directory
-void FlushIndexSegment(Directory& dir, IndexSegment& segment,
-                       bool increment_version = true);
+void FlushIndexSegment(duckdb::FileSystem& fs, std::string_view root,
+                       const FileObservers& observers, IndexSegment& segment,
+                       bool increment_version);
 
 }  // namespace irs::index_utils

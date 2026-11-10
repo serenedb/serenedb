@@ -35,6 +35,7 @@
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/math_utils.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
@@ -81,7 +82,7 @@ struct TermCollector;
 struct ScoreBoundSource : AttributeProvider {
   using ptr = std::unique_ptr<ScoreBoundSource>;
 
-  virtual void Read(DataInput& in, size_t size) = 0;
+  virtual void Read(bytes_view bytes) = 0;
 
   virtual void Set(uint32_t freq, uint32_t norm) = 0;
 };

@@ -236,6 +236,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `custom_user_agent` | Metadata from SereneDB callers | `VARCHAR` | `GLOBAL` |  |
 | `data_directory` | Shows the data directory. Read-only. | `VARCHAR` | `SESSION` | The directory the server was started with |
 | `DateStyle` | Sets the display format for date and time values. | `VARCHAR` | `SESSION` | `ISO, MDY` |
+| `default_tablespace` | The [tablespace](../sql/statements/create_tablespace/index.md) search tables and inverted indexes are created in when `CREATE` names none; empty for the tablespace of their database. Setting it to a tablespace that does not exist is an error. | `VARCHAR` | `SESSION` |  |
 | `default_transaction_invalidation_policy` | When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION). | `VARCHAR` | `GLOBAL` | `ALL_ERRORS_INVALIDATE_TRANSACTION` |
 | `default_transaction_isolation` | Sets the transaction isolation level of each new transaction. | `VARCHAR` | `SESSION` | `repeatable read` |
 | `default_transaction_read_only` | Sets the default read-only status of new transactions. | `BOOLEAN` | `SESSION` | `off` |
@@ -295,7 +296,7 @@ Authentication, authorization and what the server is allowed to reach.
 | `allow_persistent_secrets` | Allow the creation of persistent secrets, that are stored and loaded on restarts | `BOOLEAN` | `GLOBAL` | `true` |
 | `allow_unredacted_secrets` | Allow printing unredacted secrets | `BOOLEAN` | `GLOBAL` | `false` |
 | `allow_unsigned_extensions` | Allow to load extensions with invalid or missing signatures | `BOOLEAN` | `GLOBAL` | `false` |
-| `enable_external_access` | Allow the database to access external state (through e.g., loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc) | `BOOLEAN` | `GLOBAL` | `true` |
+| `enable_external_access` | Allow the database to access external state (through e.g., loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc). Turning it off does not restrict the server's own files: databases, indexes, search tables and existing tablespaces keep working. `CREATE TABLESPACE` is refused for a location outside `allowed_directories`. | `BOOLEAN` | `GLOBAL` | `true` |
 | `enable_macro_dependencies` | Enable created MACROs to create dependencies on the referenced objects (such as tables) | `BOOLEAN` | `GLOBAL` | `true` |
 | `hba` | Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. A rule that lets the `postgres` superuser in without a password over local and loopback (127.0.0.1, ::1) connections always comes first, so a bad ruleset cannot lock the superuser out; other roles follow the ruleset. An empty value restores the default (SCRAM for every role). Server-global. | `VARCHAR` | `GLOBAL` |  |
 | `scram_iterations` | Sets the iteration count for SCRAM secret generation. | `INTEGER` | `SESSION` | `4096` |
@@ -341,16 +342,19 @@ Local paths, remote object stores and the external file cache.
 | `azure_read_buffer_size` | Size of the read buffer for Azure reads, in bytes. | `UBIGINT` | `SESSION` | `8388608` |
 | `azure_storage_connection_string` | Azure connection string, used to authenticate and configure Azure requests. | `VARCHAR` | `SESSION` | NULL |
 | `azure_write_block_size` | Size in bytes of each block of a Blob or DFS write; 0 restores the default (8 MiB), at most 4000 MiB. A blob holds at most 50,000 blocks, so raise it to write files larger than 50,000 x this size. | `UBIGINT` | `SESSION` | `8388608` |
+| `azure_write_blocks_in_flight` | Blocks of one blob write staged at the same time, on the async threads; `1` stages each block from the write that fills it. | `UBIGINT` | `SESSION` | `20` |
 | `azure_write_staged_blocks_per_commit` | How many blocks a write stages before it commits the blocks written so far; 0 commits only when the file is closed. Non-zero values make partial writes visible sooner at the cost of extra requests. | `UBIGINT` | `SESSION` | `0` |
 | `ca_cert_file` | Path to a custom certificate file for self-signed certificates. | `VARCHAR` | `SESSION` |  |
 | `cache_local_files` | Whether the external file cache also caches local files (remote files are always cached). | `BOOLEAN` | `GLOBAL` | `off` |
 | `enable_fsst_vectors` | Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression | `BOOLEAN` | `GLOBAL` | `false` |
 | `enable_server_cert_verification` | Enable server side certificate verification. | `BOOLEAN` | `SESSION` | `false` |
 | `extension_directory` | Deprecated: use `extension_directories` instead. The directory to store extensions in. | `VARCHAR` | `GLOBAL` | `<datadir>/extensions` |
-| `external_file_cache_local_max_block_size` | Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `16384` |
-| `external_file_cache_remote_max_block_size` | Maximum size in bytes of an external file cache block for remote files (e.g. HTTP/S3). Larger reads are split into blocks of this size, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `2097152` |
-| `external_file_cache_remote_min_block_size` | Reads of remote files are rounded out to aligned blocks of this size, so tiny reads do not each cost a request. | `UBIGINT` | `GLOBAL` | `4096` |
-| `external_file_cache_spill` | Whether evicted external file cache blocks of remote files spill to the temporary directory instead of being dropped, so they are re-read from there rather than re-fetched. | `BOOLEAN` | `GLOBAL` | `false` |
+| `external_file_cache_local_max_block_size` | Size in bytes of the pieces a long read of a local file the external file cache caches (cache_local_files) is split into, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `4194304` |
+| `external_file_cache_min_memory` | The memory that external file cache blocks of remote files keep when queries need memory (e.g. 1GB), by default 5% of memory_limit; below it, queries spill to the temporary directory first. | `VARCHAR` | `GLOBAL` | 5% of `memory_limit` |
+| `external_file_cache_remote_max_block_size` | Size in bytes of the pieces a long read of a remote file (e.g. HTTP/S3) is split into, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `4194304` |
+| `external_file_cache_remote_min_block_size` | Size in bytes of the blocks the external file cache keeps of the files it starts caching (32KB to 256KB): reads are rounded out to aligned blocks of this size, so tiny reads do not each cost a request. | `UBIGINT` | `GLOBAL` | `131072` |
+| `external_file_cache_spill` | Whether evicted external file cache blocks of remote files keep a copy in the temporary directory, up to external_file_cache_spill_size, so that they are re-read from there rather than re-fetched from the source. | `BOOLEAN` | `GLOBAL` | `true` |
+| `external_file_cache_spill_size` | The disk space in the temporary directory that copies of evicted external file cache blocks of remote files may take (e.g. 50GB), by default half of max_temp_directory_size; 0 drops evicted blocks instead. | `VARCHAR` | `GLOBAL` | half of `max_temp_directory_size` |
 | `extra_http_headers` | Extra HTTP headers added to every request. | `MAP(VARCHAR, VARCHAR)` | `GLOBAL` | `{}` |
 | `file_search_path` | A comma separated list of directories to search for input files | `VARCHAR` | `SESSION` |  |
 | `force_download` | Forces upfront download of file | `BOOLEAN` | `SESSION` | `false` |
@@ -358,6 +362,7 @@ Local paths, remote object stores and the external file cache.
 | `hf_max_per_page` | Debug option to limit number of items returned in list requests. | `UBIGINT` | `SESSION` | `0` |
 | `home_directory` | Sets the home directory used by the system | `VARCHAR` | `SESSION` |  |
 | `http_client_pool_capacity` | Capacity of the HTTP client pool. Unless set, the larger of twice the number of CPU cores (at least 16) and the number of async I/O threads (`async_threads`), at most an eighth of the server's open-file limit. | `BIGINT` | `GLOBAL` | automatic |
+| `http_connect_timeout_ms` | How long connecting to an HTTP server, TLS included, may take before the request is retried (in milliseconds); never longer than http_timeout | `UBIGINT` | `SESSION` | `2000` |
 | `http_keep_alive` | Keep alive connections. Setting this to false can help when running into connection failures | `BOOLEAN` | `SESSION` | `true` |
 | `http_proxy` | HTTP proxy host | `VARCHAR` | `GLOBAL` |  |
 | `http_proxy_password` | Password for HTTP proxy | `VARCHAR` | `GLOBAL` |  |
@@ -365,7 +370,7 @@ Local paths, remote object stores and the external file cache.
 | `http_retries` | HTTP retries on I/O error | `UBIGINT` | `SESSION` | `3` |
 | `http_retry_backoff` | Backoff factor for exponentially increasing retry wait time | `FLOAT` | `SESSION` | `4` |
 | `http_retry_wait_ms` | Time between retries | `UBIGINT` | `SESSION` | `100` |
-| `http_timeout` | HTTP timeout read/write/connection/retry (in seconds) | `UBIGINT` | `SESSION` | `30` |
+| `http_timeout` | HTTP timeout read/write/connection/retry (in seconds); a ranged read fails after this many seconds plus one per MiB it asks for | `UBIGINT` | `SESSION` | `30` |
 | `httpfs_enable_credential_refresh` | When S3 refuses a request for its credentials, reload them, refreshing the secret where it supports refresh, and retry the request once. | `BOOLEAN` | `SESSION` | `true` |
 | `s3_access_key_id` | S3 Access Key ID | `VARCHAR` | `SESSION` | NULL |
 | `s3_allow_recursive_globbing` | Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing) | `BOOLEAN` | `SESSION` | `true` |
@@ -376,8 +381,10 @@ Local paths, remote object stores and the external file cache.
 | `s3_requester_pays` | S3 use requester pays mode | `BOOLEAN` | `SESSION` | `false` |
 | `s3_secret_access_key` | S3 Access Key | `VARCHAR` | `SESSION` | NULL |
 | `s3_session_token` | S3 Session Token | `VARCHAR` | `SESSION` | NULL |
+| `s3_upload_checksum` | Send the CRC32C of every S3 upload, which the store checks against the bytes it receives and keeps with the object; for stores that refuse checksums, turn it off. | `BOOLEAN` | `SESSION` | `true` |
 | `s3_uploader_max_filesize` | Maximum size of a file written to S3. It must be above zero, fit in `s3_uploader_max_parts_per_file` parts and stay within the provider's largest object size. | `VARCHAR` | `SESSION` | `80GB` |
 | `s3_uploader_max_parts_per_file` | S3 Uploader max parts per file (between 1 and 10000) | `UBIGINT` | `SESSION` | `10000` |
+| `s3_uploader_parts_in_flight` | Parts of one S3 multipart upload sent at the same time, on the async threads; `1` sends each part from the write that fills it. | `UBIGINT` | `SESSION` | `20` |
 | `s3_url_compatibility_mode` | Disable Globs and Query Parameters on S3 URLs | `BOOLEAN` | `SESSION` | `false` |
 | `s3_url_scheme_aliases` | Additional URL schemes routed to the S3-compatible filesystem (e.g. `['oss', 'cos']`). Can only be set globally; secrets for aliased schemes need an explicit `SCOPE`. | `VARCHAR[]` | `GLOBAL` | `[]` |
 | `s3_url_style` | S3 URL style | `VARCHAR` | `SESSION` | `vhost` |

@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/base/call_once.h>
-
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -31,6 +29,7 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
+#include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
 
 namespace irs {
@@ -56,8 +55,9 @@ struct HnswSearchLimits {
 
 class HnswIndex final : public AnnIndex {
  public:
-  HnswIndex(HnswMeta meta, field_id field, HnswBases* bases) noexcept
-    : _meta{meta}, _field{field}, _bases{bases} {}
+  HnswIndex(HnswMeta meta, field_id field, HnswBases* bases,
+            const InputFile& file) noexcept
+    : _meta{meta}, _field{field}, _bases{bases}, _file{file} {}
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
@@ -80,11 +80,10 @@ class HnswIndex final : public AnnIndex {
                                  bool inclusive, uint32_t effort,
                                  AnnQueryCache* cache) const final;
 
-  AnnExactCodes PrepareExact(const SubReader& segment,
-                             std::span<const float> query,
+  AnnExactCodes PrepareExact(std::span<const float> query,
                              VectorMetric metric) const final;
 
-  std::shared_ptr<const HnswData> Load(const SubReader& segment) const;
+  std::shared_ptr<const HnswData> Load() const;
 
   const HnswHeader& Header() const noexcept { return _meta.header; }
 
@@ -98,7 +97,8 @@ class HnswIndex final : public AnnIndex {
   HnswMeta _meta;
   field_id _field;
   HnswBases* _bases;
-  mutable absl::once_flag _once;
+  const InputFile& _file;
+  mutable BlockingOnce _load;
   mutable std::shared_ptr<const HnswData> _data;
 };
 

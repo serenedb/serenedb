@@ -33,7 +33,6 @@
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <limits>
@@ -44,6 +43,7 @@
 #include <utility>
 #include <vector>
 
+#include "memory_output.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;
@@ -63,10 +63,9 @@ score_t ScoreTol(score_t want) { return kScoreTol * (1.f + std::fabs(want)); }
 // The writer emits a u64 length prefix ahead of the blob, exactly as
 // IvfWriter::Flush stores it; strip it to get what MakeQuantizerStats sees.
 bstring SerializeStats(const QuantizerWriter& writer) {
-  bstring framed;
-  BytesOutput out{framed};
+  BytesOutput out;
   writer.Serialize(out);
-  return framed.substr(sizeof(uint64_t));
+  return bstring{out.Bytes().substr(sizeof(uint64_t))};
 }
 
 constexpr size_t kFastScanBbs = 32;
@@ -94,19 +93,19 @@ class PayloadStream {
 
   explicit PayloadStream(QuantizerWriter& writer) : _writer{writer} {}
 
-  Cluster Add(IndexOutput& out, const float* vecs, size_t n) {
+  Cluster Add(DataOutput& out, const float* vecs, size_t n) {
     const Cluster c{out.Position(), _writer.PendingLanes(), n};
     _writer.Encode(out, vecs, n);
     return c;
   }
 
-  void Finish(IndexOutput& out) { _writer.Finish(out); }
+  void Finish(DataOutput& out) { _writer.Finish(out); }
 
  private:
   QuantizerWriter& _writer;
 };
 
-uint64_t EncodeCluster(QuantizerWriter& writer, IndexOutput& out,
+uint64_t EncodeCluster(QuantizerWriter& writer, DataOutput& out,
                        const float* vecs, size_t n) {
   PayloadStream stream{writer};
   const auto c = stream.Add(out, vecs, n);
@@ -116,19 +115,19 @@ uint64_t EncodeCluster(QuantizerWriter& writer, IndexOutput& out,
 
 bstring ReadPayload(MemoryFile& file, uint64_t start, uint64_t end) {
   bstring payload(end - start, 0);
-  MemoryIndexInput in{file};
+  const auto file_bytes = tests::Bytes(file);
+  IndexInput in{file_bytes};
   in.ReadData(start, payload.data(), payload.size());
   return payload;
 }
 
 bstring EncodeChunks(QuantizerWriter& writer, const std::vector<float>& points,
                      uint32_t d, std::span<const size_t> chunks) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t start = 0;
   uint64_t end = 0;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     start = out.Position();
     PayloadStream stream{writer};
     size_t off = 0;
@@ -160,7 +159,8 @@ class ClusterScorer {
                 const float* centroid, uint32_t lane0 = 0)
     : _qr{MakeQuantizerReader(codebook)},
       _setting{_qr->BlockSetting()},
-      _in{std::make_unique<MemoryIndexInput>(file)},
+      _bytes{tests::Bytes(file)},
+      _in{_bytes},
       _base{pay_start},
       _lane0{lane0},
       _total{total},
@@ -207,18 +207,21 @@ class ClusterScorer {
   std::span<const byte_type> Read(size_t index, size_t count) {
     const uint64_t offset = _base + index * _setting.record_size;
     const size_t bytes = count * size_t{_setting.record_size};
-    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
-      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _setting.alignment == 0);
-      return {p, bytes};
+    _in.Seek(offset);
+    if (const auto view = _in.Peek(bytes); !view.empty()) {
+      SDB_ASSERT(
+        reinterpret_cast<uintptr_t>(view.data()) % _setting.alignment == 0);
+      return {view.data(), bytes};
     }
     _buf.resize(bytes);
-    _in->ReadData(offset, _buf.data(), bytes);
+    _in.ReadData(_buf.data(), bytes);
     return _buf;
   }
 
   std::unique_ptr<QuantizerReader> _qr;
   PayloadBlockSetting _setting;
-  IndexInput::ptr _in;
+  bstring _bytes;
+  IndexInput _in;
   std::vector<byte_type> _buf;
   uint64_t _base;
   size_t _lane0;
@@ -253,11 +256,10 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
   }
   writer->Train(residual_train.data(), residual_train.size() / d);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     pay_start = out.Position();
     EncodeCluster(*writer, out, points.data(), 3);
     out.Flush();
@@ -303,11 +305,10 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   EXPECT_EQ(writer->BlockSetting().group_size, 1);
   EXPECT_TRUE(SerializeStats(*writer).empty());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     pay_start = out.Position();
     {
       PayloadStream stream{*writer};
@@ -332,7 +333,8 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
 
   bstring stored(n * d * sizeof(float), 0);
   {
-    MemoryIndexInput in{file};
+    const auto file_bytes = tests::Bytes(file);
+    IndexInput in{file_bytes};
     in.ReadData(pay_start, stored.data(), stored.size());
   }
   EXPECT_EQ(std::memcmp(stored.data(), points.data(), stored.size()), 0);
@@ -389,14 +391,11 @@ std::vector<float> MakePanoramaData(uint32_t d, size_t n, uint32_t seed) {
 }
 
 struct PanoramaIndex {
-  SimpleMemoryAccounter memory;
   MemoryFile file;
   std::unique_ptr<QuantizerWriter> writer;
   bstring blob;
   uint64_t pay_start = 0;
   size_t n = 0;
-
-  PanoramaIndex() : file{memory} {}
 };
 
 // Trains and encodes `points` as one cluster, in several EncodeCluster batches
@@ -420,7 +419,7 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
   EXPECT_EQ(index.blob.size(),
             2 * sizeof(uint32_t) + size_t{d} * d * sizeof(float));
 
-  MemoryIndexOutput out{index.file};
+  MemoryFileOutput out{index.file};
   index.pay_start = out.Position();
   constexpr size_t kBatch = kPostingBlock;
   {
@@ -650,11 +649,10 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
             size_t{d} * d * sizeof(float));  // never a dense matrix
   writer->SetClusterCentroid(centroid.data());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     pay_start = out.Position();
     EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
@@ -697,11 +695,10 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     pay_start = out.Position();
     EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
@@ -762,11 +759,10 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     pay_start = out.Position();
     EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
@@ -803,11 +799,10 @@ std::vector<score_t> RaBitQRoundtrip(uint32_t d, uint32_t nb_bits,
   EXPECT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     pay_start = out.Position();
     EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
@@ -882,12 +877,11 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
     {.kind = VectorQuantization::RaBitQ, .nb_bits = 1}, d, metric);
   ASSERT_NE(writer, nullptr);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   PayloadStream::Cluster cl1;
   PayloadStream::Cluster cl2;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     PayloadStream stream{*writer};
     writer->SetClusterCentroid(c1.data());
     cl1 = stream.Add(out, points1.data(), 2);
@@ -1067,12 +1061,11 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
   }
   writer->Train(train.data(), train.size() / d);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   PayloadStream::Cluster cl1;
   PayloadStream::Cluster cl2;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     PayloadStream stream{*writer};
     writer->SetClusterCentroid(c1.data());
     cl1 = stream.Add(out, points1.data(), 2);
@@ -1133,11 +1126,10 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   writer->SetClusterCentroid(centroid.data());
   writer->Train(points.data(), n);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     pay_start = out.Position();
     EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
@@ -1235,13 +1227,12 @@ void ExpectSharedGroupsMatchSoloClusters(
   ASSERT_EQ(centroids.size(), sizes.size() * d);
   ASSERT_EQ(SerializeStats(*make()), SerializeStats(*make()));
 
-  SimpleMemoryAccounter memory;
-  MemoryFile shared_file{memory};
+  MemoryFile shared_file;
   std::vector<PayloadStream::Cluster> spans;
   auto shared_w = make();
   uint64_t shared_bytes = 0;
   {
-    MemoryIndexOutput out{shared_file};
+    MemoryFileOutput out{shared_file};
     PayloadStream stream{*shared_w};
     size_t off = 0;
     for (size_t c = 0; c < sizes.size(); ++c) {
@@ -1278,11 +1269,11 @@ void ExpectSharedGroupsMatchSoloClusters(
     const float* cen = centroids.data() + c * d;
     shares = shares || spans[c].lane0 != 0;
 
-    MemoryFile solo_file{memory};
+    MemoryFile solo_file;
     auto solo_w = make();
     uint64_t solo_start = 0;
     {
-      MemoryIndexOutput out{solo_file};
+      MemoryFileOutput out{solo_file};
       solo_w->SetClusterCentroid(cen);
       solo_start =
         EncodeCluster(*solo_w, out, points.data() + off * d, sizes[c]);
@@ -1716,12 +1707,11 @@ TEST_P(code_rekey_test, encode_into_matches_encode) {
   if (QuantizerNeedsCentroid(quant)) {
     writer->SetClusterCentroid(centroid.data());
   }
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t start = 0;
   uint64_t end = 0;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     start = out.Position();
     writer->Encode(out, points.data(), n);
     writer->Finish(out);
@@ -2760,12 +2750,11 @@ TEST(hnsw_pq_quantizer_test, encode_into_matches_encode) {
                         VectorMetric::InnerProduct, 0, /*row_major=*/true);
   ASSERT_NE(writer, nullptr);
   writer->Train(points.data(), std::min(n, writer->TrainSamples(n)));
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t start = 0;
   uint64_t end = 0;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     start = out.Position();
     writer->Encode(out, points.data(), n);
     writer->Finish(out);

@@ -35,7 +35,6 @@
 #include <iresearch/search/fill/walk.hpp>
 #include <iresearch/search/lead/bitset_docs.hpp>
 #include <iresearch/search/probe/bitset_docs.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/memory.hpp>
 #include <iresearch/utils/string.hpp>
@@ -1173,9 +1172,8 @@ TEST(docs_mask_test, mask_round_trips_and_mutates) {
   const auto round_trip = [](const irs::DocumentMask& source) {
     std::string blob(source.FrozenSize(), '\0');
     source.WriteFrozen(blob.data());
-    irs::BytesViewInput in{
-      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
-    return irs::DocumentMask::ReadFrozen(in, blob.size());
+    return irs::DocumentMask::ReadFrozen(
+      irs::ViewCast<irs::byte_type>(std::string_view{blob}));
   };
 
   const auto restored = round_trip(mask);

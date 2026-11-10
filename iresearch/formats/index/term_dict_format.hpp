@@ -60,21 +60,22 @@ constexpr uint32_t ColumnWidth(uint32_t max) noexcept {
 
 inline constexpr size_t kMaxRecordBytes = 128;
 
-struct RecordBytes {
-  std::array<byte_type, kMaxRecordBytes> bytes;
-};
-
-class RecordOutput final : private RecordBytes, public BufferedOutput {
+class RecordOutput final : public DataOutput {
  public:
-  RecordOutput() noexcept
-    : RecordBytes{},
-      BufferedOutput{bytes.data(), bytes.data() + bytes.size()} {}
+  RecordOutput() noexcept {
+    _begin = _pos = _bytes.data();
+    _end = _bytes.data() + _bytes.size();
+  }
 
-  bytes_view View() const noexcept { return {_buf, Length()}; }
-  void Clear() noexcept { _pos = _buf; }
+  bytes_view View() const noexcept {
+    return {_begin, static_cast<size_t>(_pos - _begin)};
+  }
+  void Clear() noexcept { _pos = _begin; }
 
  private:
-  void WriteDirect(const byte_type* b, size_t len) final;
+  void Overflow(const byte_type* data, size_t size) final;
+
+  std::array<byte_type, kMaxRecordBytes> _bytes;
 };
 
 constexpr uint64_t RecordGroups(uint64_t count) noexcept {

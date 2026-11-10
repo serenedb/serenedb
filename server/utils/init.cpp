@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/local_file_system.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/log.hpp>
@@ -39,9 +40,10 @@
 #include <string_view>
 #include <yaclib/log.hpp>
 
-#include "server/utils/files.h"
 #define ZLIB_COMPAT
 #include <functable.h>
+
+#include "file_utils.h"
 
 namespace sdb::app {
 namespace {
@@ -70,10 +72,12 @@ void RaiseFdLimit() {
 
 void CheckMaxMapCount() {
   constexpr uint64_t kExpected = 262144;
-  std::string s;
-  if (!SlurpFile("/proc/sys/vm/max_map_count", s)) {
+  constexpr const char* kPath = "/proc/sys/vm/max_map_count";
+  duckdb::LocalFileSystem fs;
+  if (!fs.FileExists(kPath)) {
     return;
   }
+  const auto s = utils::file_utils::ReadFile(fs, kPath);
   const auto trimmed = absl::StripAsciiWhitespace(s);
   uint64_t actual = 0;
   if (auto [p, ec] = fast_float::from_chars(

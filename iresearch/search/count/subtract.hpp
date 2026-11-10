@@ -35,24 +35,19 @@ namespace irs::count {
 
 class Subtract : public Root {
  public:
-  Subtract(Root::ptr total, Root::ptr excluded, bool partial) noexcept
-    : _total{std::move(total)},
-      _excluded{std::move(excluded)},
-      _partial{partial} {}
+  Subtract(Root::ptr total, Root::ptr excluded) noexcept
+    : _total{std::move(total)}, _excluded{std::move(excluded)} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
     const auto total = _total->Run(min, max);
     const auto excluded = _excluded->Run(min, max);
-    SDB_ASSERT(_partial || excluded <= total);
+    SDB_ASSERT(excluded <= total);
     return total - excluded;
   }
-
-  uint64_t Finish() final { return _total->Finish() - _excluded->Finish(); }
 
  private:
   Root::ptr _total;
   Root::ptr _excluded;
-  bool _partial;
 };
 
 Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,

@@ -22,12 +22,15 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "iresearch/index/composite_reader_impl.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/segment_reader.hpp"
-#include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
@@ -38,14 +41,18 @@ class DirectoryReaderImpl final
   // open a new directory reader
   // if cached != nullptr then try to reuse its segments
   static std::shared_ptr<const DirectoryReaderImpl> Open(
-    const Directory& dir, const IndexReaderOptions& opts,
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+    const IndexReaderOptions& opts,
     const std::shared_ptr<const DirectoryReaderImpl>& cached,
     MetaPayloadReader payload = {});
 
-  DirectoryReaderImpl(const Directory& dir, const IndexReaderOptions& opts,
+  DirectoryReaderImpl(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                      std::string_view root, const IndexReaderOptions& opts,
                       DirectoryMeta&& meta, ReadersType&& readers);
 
-  const Directory& Dir() const noexcept { return _dir; }
+  duckdb::DatabaseInstance& Db() const noexcept { return _db; }
+  duckdb::FileSystem& Fs() const noexcept { return _fs; }
+  const std::string& Root() const noexcept { return _root; }
 
   const DirectoryMeta& Meta() const noexcept { return _meta; }
 
@@ -65,11 +72,14 @@ class DirectoryReaderImpl final
  private:
   struct Init;
 
-  DirectoryReaderImpl(Init&& init, const Directory& dir,
+  DirectoryReaderImpl(Init&& init, duckdb::DatabaseInstance& db,
+                      duckdb::FileSystem& fs, std::string_view root,
                       const IndexReaderOptions& opts, DirectoryMeta&& meta,
                       ReadersType&& readers);
 
-  const Directory& _dir;
+  duckdb::DatabaseInstance& _db;
+  duckdb::FileSystem& _fs;
+  std::string _root;
   FileRefs _file_refs;
   DirectoryMeta _meta;
   IndexReaderOptions _opts;

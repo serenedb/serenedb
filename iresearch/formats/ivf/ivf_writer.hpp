@@ -96,8 +96,8 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     return const_cast<IvfTermReader*>(this);
   }
 
-  void WriteTermPayload(IndexOutput& out, std::span<const doc_id_t> docs) final;
-  void Finish(IndexOutput& out) final;
+  void WriteTermPayload(DataOutput& out, std::span<const doc_id_t> docs) final;
+  void Finish(DataOutput& out) final;
 
   uint32_t PendingLanes() const noexcept final {
     SDB_ASSERT(_qw);

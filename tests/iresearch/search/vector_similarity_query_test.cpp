@@ -24,8 +24,10 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/ann/family.hpp>
@@ -38,11 +40,12 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search_fields.hpp"
 #include "tests_shared.hpp"
@@ -113,9 +116,9 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 
 // Docs 1..n with emb = [doc, 0, 0, 0].
 irs::DirectoryReader BuildIndex(
-  irs::Directory& dir, irs::doc_id_t n,
+  const ::tests::IndexDir& dir, irs::doc_id_t n,
   irs::IndexWriterOptions opts = MakeWriterOptions()) {
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  auto writer = ::tests::MakeWriter(dir, irs::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
   {
@@ -153,17 +156,21 @@ irs::ByVectorSimilarity MakeKnnFilter() {
 // The bug only exists on the quantized path; assert the segment provides
 // everything PrepareSegment needs to stay on it, so the test cannot silently
 // degrade to the raw-rerank path and pass vacuously.
-void AssertQuantizedPath(const irs::SubReader& segment) {
+void AssertQuantizedPath(const ::tests::IndexDir& dir,
+                         const irs::SubReader& segment) {
   const auto* ann = segment.Ann(kVec);
   ASSERT_NE(nullptr, ann);
   ASSERT_FALSE(ann->Empty());
   ASSERT_EQ(irs::AnnKind::Ivf, ann->Kind());
-  auto idx_in = segment.ReopenAnn();
-  ASSERT_NE(nullptr, idx_in);
+  const auto idx_file =
+    dir.Open(irs::FileName(segment.Meta().name, irs::kIdxFormatExt),
+             duckdb::MappedFileAccess::RANDOM);
+  ASSERT_NE(nullptr, idx_file);
+  irs::IndexInput idx_in{*idx_file};
   const std::vector<float> query(kDim, 0.f);
   ASSERT_NE(nullptr,
             irs::ReadQuantizerCodebook(
-              static_cast<const irs::IvfIndex*>(ann)->Tree(), *idx_in,
+              static_cast<const irs::IvfIndex*>(ann)->Tree(), idx_in,
               irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
               query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
@@ -181,7 +188,7 @@ class VectorSimilarityQueryTest : public ::testing::Test {
     ASSERT_NE(nullptr, _reader);
     ASSERT_EQ(1U, _reader->size());
     ASSERT_EQ(n, _reader->docs_count());
-    AssertQuantizedPath((*_reader)[0]);
+    AssertQuantizedPath(_dir, (*_reader)[0]);
     _filter = MakeKnnFilter();
     _prepared.emplace(_filter, *_reader, nullptr, irs::IResourceManager::gNoop,
                       nullptr, ::tests::PreparedFilter::CollectMode::Single);
@@ -197,7 +204,8 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   }
 
   irs::doc_id_t _docs = 0;
-  irs::MemoryDirectory _dir;
+  ::tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
   irs::DirectoryReader _reader;
   irs::ByVectorSimilarity _filter;
   irs::ColumnArgsFetcher _fetcher;
@@ -475,7 +483,8 @@ class RerankExactDistancesTest
     }
   }
 
-  irs::MemoryDirectory _dir;
+  ::tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
   irs::DirectoryReader _reader;
 };
 

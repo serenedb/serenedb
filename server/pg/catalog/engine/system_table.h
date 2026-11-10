@@ -78,6 +78,7 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/subscription.h"
+#include "catalog/entry/tablespace.h"
 #include "catalog/entry/tokenizer.h"
 #include "catalog/snapshot.h"
 #include "pg/catalog/utils/session.h"
@@ -1106,6 +1107,8 @@ void Dispatch(T& table, duckdb::CatalogEntry& entry) {
       return Visit<catalog::TokenizerCatalogEntry>(table, entry);
     case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
       return Visit<catalog::SubscriptionCatalogEntry>(table, entry);
+    case duckdb::CatalogType::TABLESPACE_ENTRY:
+      return Visit<catalog::TablespaceCatalogEntry>(table, entry);
     case duckdb::CatalogType::INVALID:
     case duckdb::CatalogType::PREPARED_STATEMENT:
     case duckdb::CatalogType::COLLATION_ENTRY:

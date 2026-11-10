@@ -52,8 +52,8 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
@@ -840,7 +840,8 @@ bool ComputeDocMappingsAndFieldMeta(
   return true;
 }
 
-void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
+void OpenColWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                   std::string_view root, const FileObservers& observers,
                    std::string_view segment_name,
                    ManagedVector<MergeWriter::ReaderCtx>& readers,
                    std::vector<MergeSource>& sources,
@@ -855,7 +856,8 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
-  col_writer = std::make_unique<ColWriter>(dir, segment_name, db);
+  col_writer =
+    std::make_unique<ColWriter>(db, fs, root, observers, segment_name);
   col_writer->SetFieldOptions(field_options);
   col_writer->SetHnswBases(hnsw_bases);
 }
@@ -881,7 +883,9 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   };
 
   const auto& progress_callback = progress ? progress : kProgressNoop;
-  TrackingDirectory track_dir{_dir};
+  FileTracker tracker;
+  auto observers = _observers;
+  observers.push_back(&tracker);
 
   FieldMetaMapT field_meta_map;
   CompoundFieldIterator fields_itr{_readers.size(), progress_callback,
@@ -899,8 +903,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
-  OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
-                _field_options, _hnsw_bases);
+  OpenColWriter(_db, _fs, _root, observers, segment.name, _readers, sources,
+                col_writer, _field_options, _hnsw_bases);
   SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =
@@ -921,7 +925,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
-  IdxWriter idx{track_dir, segment.name};
+  IdxWriter idx{_fs, _root, observers, segment.name};
 
   col_writer->SetIdxWriter(idx);
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {
@@ -932,8 +936,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
   auto ann_writers = col_writer->TakeAnnWriters();
   if (segment.docs_count != 0) {
-    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db,
-                                             IOAdvice::SEQUENTIAL);
+    col_reader = col_writer->OpenReader();
     norm_provider.reader = col_reader.get();
   }
   std::optional<ReadContext> ivf_ctx;
@@ -948,7 +951,9 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
 
   const FlushState state{
-    .dir = &track_dir,
+    .fs = _fs,
+    .root = _root,
+    .observers = observers,
     .norms = norm_provider.reader != nullptr ? &norm_provider : nullptr,
     .name = segment.name,
     .scorer = _scorer,
@@ -974,7 +979,9 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return false;
   }
 
-  segment.files = track_dir.FlushTracked(segment.byte_size);
+  auto flushed = tracker.Flush();
+  segment.files = std::move(flushed.files);
+  segment.byte_size = flushed.bytes;
   if (segment.live_docs_count == 0) {
     co_return false;
   }

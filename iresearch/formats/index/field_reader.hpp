@@ -25,6 +25,8 @@
 
 #include <cstdint>
 #include <deque>
+#include <duckdb/common/allocator.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -40,20 +42,17 @@
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/containers/node_hash_map.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs::term_dict {
 
 class FieldReader final {
  public:
-  explicit FieldReader(IResourceManager& rm) noexcept : _rm{&rm} {}
+  FieldReader() = default;
   ~FieldReader();
 
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
 
-  uint64_t CountMappedMemory() const;
   void prepare(const ReaderState& state);
 
   std::span<const TermReader* const> fields(field_id id) const;
@@ -61,14 +60,8 @@ class FieldReader final {
   size_t size() const noexcept { return _dicts.size(); }
 
   const PostingsReader& Postings() const noexcept { return _pr; }
-  const IndexInput& Input() const noexcept { return *_in; }
+  const InputFile& Input() const noexcept { return *_in; }
   const byte_type* Base() const noexcept { return _base; }
-  void Account(uint64_t bytes) {
-    if (bytes != 0) {
-      _rm->Increase(bytes);
-      _bytes += bytes;
-    }
-  }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   uint32_t BlockCount() const noexcept { return _block_count; }
   uint64_t PageOffset(size_t block) const noexcept {
@@ -92,7 +85,7 @@ class FieldReader final {
   }
   uint64_t RangesBegin() const noexcept { return InlineEnd(); }
   uint64_t RangesSize() const noexcept { return _ranges_size; }
-  bytes_view Load(IndexInput& in, uint64_t offset, uint64_t size);
+  bytes_view Load(uint64_t offset, uint64_t size);
   bytes_view Copy(uint64_t offset, uint64_t size);
   const byte_type* CopyBlock(uint32_t block, uint64_t length);
   const byte_type* KeepInline(bytes_view bytes);
@@ -111,6 +104,7 @@ class FieldReader final {
 
   void Bind(const TermsMeta& terms);
   void FillCopies();
+  uint64_t DecodedBytes() const noexcept;
 
   std::deque<TermReaderImpl> _keyed;
   std::deque<SingleTermReader> _singles;
@@ -118,13 +112,13 @@ class FieldReader final {
   containers::FlatHashMap<field_id, FieldDicts> _by_id;
   std::vector<field_id> _ids;
   PostingsReader _pr;
-  IndexInput::ptr _in;
+  const InputFile* _in = nullptr;
   const byte_type* _base = nullptr;
-  IResourceManager* _rm;
   std::vector<SpanningBlock> _spans;
   Separators _separators;
   InlinePages _inline_pages;
-  containers::NodeHashMap<uint64_t, bstring> _copies;
+  duckdb::BufferManager* _buffers = nullptr;
+  containers::FlatHashMap<uint64_t, duckdb::AllocatedData> _copies;
   std::vector<byte_type> _single_inline;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   const byte_type* _inline_region = nullptr;
@@ -132,9 +126,9 @@ class FieldReader final {
   uint64_t _inline_offset = 0;
   uint64_t _inline_size = 0;
   uint64_t _ranges_size = 0;
+  uint64_t _reserved = 0;
   uint32_t _block_count = 0;
   std::vector<PendingCopy> _pending;
-  uint64_t _bytes = 0;
 };
 
 inline const duckdb_fsst_decoder_t* TermReaderImpl::Fsst() const noexcept {

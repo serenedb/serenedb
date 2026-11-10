@@ -28,17 +28,20 @@
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;
 
-TEST(index_meta_tests, memory_directory_read_write_15) {
-  irs::MemoryDirectory dir;
+TEST(index_meta_tests, read_write) {
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   irs::IndexMetaWriter writer{
+    dir.Fs(), dir.Root(),
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       EXPECT_EQ(42, position.offset);
       out.WriteProperty<std::string>(0, "payload", "payload");
@@ -48,9 +51,8 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   std::vector<std::string> files;
   auto list_files = [&files](std::string_view name) {
     files.emplace_back(name);
-    return true;
   };
-  ASSERT_TRUE(dir.visit(list_files));
+  dir.Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // create index metadata and write it into the specified directory
@@ -58,8 +60,8 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   std::string filename;
   std::string tmp_filename;
 
-  ASSERT_TRUE(
-    writer.prepare(dir, meta_orig, tmp_filename, filename, {.offset = 42}));
+  ASSERT_TRUE(writer.prepare(dir.Observers(), meta_orig, tmp_filename, filename,
+                             {.offset = 42}));
   ASSERT_EQ("segments_1", filename);
   ASSERT_EQ("pending_segments_1", tmp_filename);
 
@@ -69,7 +71,7 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   // check that files were successfully
   // written to directory
   files.clear();
-  ASSERT_TRUE(dir.visit(list_files));
+  dir.Visit(list_files);
   EXPECT_EQ(1, files.size());
   EXPECT_EQ(files[0], std::string_view("pending_segments_1"));
 
@@ -79,15 +81,13 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   irs::IndexMeta meta_read;
   std::string payload;
   {
-    std::string segments_file;
-
-    const bool index_exists = irs::index_meta::LastFile(dir, segments_file);
-
-    ASSERT_TRUE(index_exists);
-    irs::index_meta::Read(
-      dir, meta_read, segments_file, [&](duckdb::BinaryDeserializer& in) {
-        payload = in.ReadProperty<std::string>(0, "payload");
-      });
+    const auto segments_file = irs::index_meta::LastFile(dir.Fs(), dir.Root());
+    ASSERT_TRUE(segments_file);
+    irs::index_meta::Read(dir.Db(), dir.Fs(), dir.Root(), meta_read,
+                          *segments_file, [&](duckdb::BinaryDeserializer& in) {
+                            payload =
+                              in.ReadProperty<std::string>(0, "payload");
+                          });
   }
 
   EXPECT_EQ(meta_orig, meta_read);
@@ -131,26 +131,25 @@ TEST(index_meta_tests, last_generation) {
   }
 
   // populate directory
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   for (auto& name : names) {
-    auto out = dir.create(name);
+    auto out = dir.Create(name);
     ASSERT_FALSE(!out);
+    out->Close();
   }
 
-  std::string last_seg_file;
-
-  const bool index_exists = irs::index_meta::LastFile(dir, last_seg_file);
-  const std::string expected_seg_file = "segments_" + std::to_string(max);
-
-  ASSERT_TRUE(index_exists);
-  EXPECT_EQ(expected_seg_file, last_seg_file);
+  const auto last_seg_file = irs::index_meta::LastFile(dir.Fs(), dir.Root());
+  ASSERT_TRUE(last_seg_file);
+  EXPECT_EQ("segments_" + std::to_string(max), *last_seg_file);
 }
 
 TEST(index_meta_tests, rejects_unknown_fields) {
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   const auto name = irs::index_meta::FileName(1);
   {
-    auto out = dir.create(name);
+    auto out = dir.Create(name);
     ASSERT_NE(nullptr, out);
     irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint64_t>(
@@ -163,12 +162,13 @@ TEST(index_meta_tests, rejects_unknown_fields) {
       meta.WriteProperty<uint64_t>(irs::index_meta::kFieldPayload + 1,
                                    "from_the_future", 1);
     });
+    out->Close();
   }
 
   std::string message;
   try {
     irs::IndexMeta meta;
-    irs::index_meta::Read(dir, meta, name);
+    irs::index_meta::Read(dir.Db(), dir.Fs(), dir.Root(), meta, name);
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
     message = e.what();
@@ -178,8 +178,10 @@ TEST(index_meta_tests, rejects_unknown_fields) {
 }
 
 TEST(index_meta_tests, payload_is_read_whole) {
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   irs::IndexMetaWriter writer{
+    dir.Fs(), dir.Root(),
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       out.WriteProperty<uint64_t>(0, "tick", position.offset);
       out.WriteProperty<std::string>(1, "name", "payload");
@@ -187,14 +189,14 @@ TEST(index_meta_tests, payload_is_read_whole) {
   irs::IndexMeta meta;
   std::string pending_filename;
   std::string filename;
-  ASSERT_TRUE(
-    writer.prepare(dir, meta, pending_filename, filename, {.offset = 7}));
+  ASSERT_TRUE(writer.prepare(dir.Observers(), meta, pending_filename, filename,
+                             {.offset = 7}));
   ASSERT_TRUE(writer.commit());
 
   std::string message;
   try {
     irs::IndexMeta read;
-    irs::index_meta::Read(dir, read, filename);
+    irs::index_meta::Read(dir.Db(), dir.Fs(), dir.Root(), read, filename);
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.error().errcode, ERRCODE_INTERNAL_ERROR);
     message = e.what();
@@ -205,18 +207,18 @@ TEST(index_meta_tests, payload_is_read_whole) {
 
   {
     irs::IndexMeta read;
-    ASSERT_SQL_ERROR(irs::index_meta::Read(dir, read, filename,
-                                           [](duckdb::BinaryDeserializer& in) {
-                                             in.ReadProperty<uint64_t>(0,
-                                                                       "tick");
-                                           }),
-                     ERRCODE_FEATURE_NOT_SUPPORTED);
+    ASSERT_SQL_ERROR(
+      irs::index_meta::Read(dir.Db(), dir.Fs(), dir.Root(), read, filename,
+                            [](duckdb::BinaryDeserializer& in) {
+                              in.ReadProperty<uint64_t>(0, "tick");
+                            }),
+      ERRCODE_FEATURE_NOT_SUPPORTED);
   }
 
   irs::IndexMeta read;
   uint64_t tick = 0;
   std::string name;
-  irs::index_meta::Read(dir, read, filename,
+  irs::index_meta::Read(dir.Db(), dir.Fs(), dir.Root(), read, filename,
                         [&](duckdb::BinaryDeserializer& in) {
                           tick = in.ReadProperty<uint64_t>(0, "tick");
                           name = in.ReadProperty<std::string>(1, "name");

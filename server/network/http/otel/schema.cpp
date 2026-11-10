@@ -158,10 +158,11 @@ absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
     name = entry.name.GetIdentifierName();
     oid = entry.oid;
   };
-  if (!catalog::ReadDatabase(database, read)) {
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(database, read)) {
     // CREATE DATABASE has to run somewhere: the default database always
     // exists and every role may connect to it.
-    if (!catalog::ReadDatabase(irs::StaticStrings::kDefaultDatabase, read)) {
+    if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
+          irs::StaticStrings::kDefaultDatabase, read)) {
       return absl::NotFoundError("default database not found");
     }
     Creator bootstrap{name, oid};
@@ -171,7 +172,7 @@ absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
       return absl::InternalError(absl::StrCat(
         "cannot create database '", database, "': ", status.message()));
     }
-    if (!catalog::ReadDatabase(database, read)) {
+    if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(database, read)) {
       return absl::InternalError(absl::StrCat(
         "database '", database, "' not visible after CREATE DATABASE"));
     }
@@ -200,11 +201,11 @@ absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
 absl::Status CheckSchema(std::string_view database, std::string_view schema) {
   std::string name;
   duckdb::idx_t oid = 0;
-  if (!catalog::ReadDatabase(database,
-                             [&](const catalog::DatabaseCatalogEntry& entry) {
-                               name = entry.name.GetIdentifierName();
-                               oid = entry.oid;
-                             })) {
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
+        database, [&](const catalog::DatabaseCatalogEntry& entry) {
+          name = entry.name.GetIdentifierName();
+          oid = entry.oid;
+        })) {
     return absl::NotFoundError(
       absl::StrCat("database '", database, "' does not exist"));
   }

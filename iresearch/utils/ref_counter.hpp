@@ -23,13 +23,18 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/synchronization/mutex.h>
 
 #include <functional>
 #include <memory>
+#include <span>
+#include <vector>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -79,7 +84,10 @@ class RefCounter : public util::Noncopyable {
 
   template<typename T>
   ref_t add(T&& key) {
-    absl::MutexLock lock{&_lock};
+    const auto settled = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+      return !_removing.contains(key);
+    };
+    absl::MutexLock lock{&_lock, absl::Condition(&settled)};
 
     auto it = _refs.lazy_emplace(key, [&](const auto& ctor) {
       ctor(std::make_shared<const Key>(std::forward<T>(key)));
@@ -94,56 +102,37 @@ class RefCounter : public util::Noncopyable {
     return _refs.erase(std::forward<T>(key)) > 0;
   }
 
-  template<typename T>
-  bool contains(T&& key) const noexcept {
-    absl::MutexLock lock{&_lock};
-    return _refs.contains(std::forward<T>(key));
-  }
-
-  template<typename T>
-  size_t find(T&& key) const noexcept {
-    absl::MutexLock lock{&_lock};
-    auto itr = _refs.find(std::forward<T>(key));
-
-    return itr == _refs.end()
-             ? 0
-             : (itr->use_count() - 1);  // -1 for usage by refs_ itself
-  }
-
-  bool empty() const noexcept {
-    absl::MutexLock lock{&_lock};
-    return _refs.empty();
-  }
-
-  template<typename Visitor>
-  bool visit(const Visitor& visitor, bool remove_unused = false) {
-    absl::MutexLock lock{&_lock};
-
-    for (auto itr = _refs.begin(), end = _refs.end(); itr != end;) {
-      auto& ref = *itr;
-      SDB_ASSERT(*itr);
-
-      // -1 for usage by refs_ itself
-      auto visit_next = visitor(ref, ref.use_count() - 1);
-
-      if (remove_unused && ref.use_count() == 1) {
-        const auto erase_me = itr++;
-        _refs.erase(erase_me);
-      } else {
-        ++itr;
+  template<typename Remove>
+  void RemoveUnused(const Remove& remove) {
+    std::vector<Key> claimed;
+    {
+      absl::MutexLock lock{&_lock};
+      for (const auto& ref : _refs) {
+        SDB_ASSERT(ref);
+        if (ref.use_count() == 1 && !_removing.contains(*ref)) {
+          claimed.push_back(*ref);
+        }
       }
-
-      if (!visit_next) {
-        return false;
-      }
+      _removing.insert(claimed.begin(), claimed.end());
     }
-
-    return true;
+    bool removed = false;
+    absl::Cleanup release = [&] noexcept {
+      absl::MutexLock lock{&_lock};
+      for (const auto& key : claimed) {
+        if (removed) {
+          _refs.erase(key);
+        }
+        _removing.erase(key);
+      }
+    };
+    remove(std::span<const Key>{claimed});
+    removed = true;
   }
 
  private:
-  mutable absl::Mutex _lock;
-  absl::flat_hash_set<ref_t, Hash, EqualTo> _refs ABSL_GUARDED_BY(_lock);
+  absl::Mutex _lock;
+  containers::FlatHashSet<ref_t, Hash, EqualTo> _refs ABSL_GUARDED_BY(_lock);
+  containers::FlatHashSet<Key, Hasher, Equal> _removing ABSL_GUARDED_BY(_lock);
 };
 
 }  // namespace irs

@@ -188,20 +188,27 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       duckdb::ExceptionType::CATALOG,
       absl::StrCat("role with OID ", job.owner, " does not exist")};
   }
+  auto temporary = state.session.temporary.lock();
+  const auto database =
+    duckdb::AttachedDatabase::TryGetReference(state.session.database);
+  if (!database || database->GetCatalog().IsDropped() || Dropped(state)) {
+    return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT, "Interrupted!"};
+  }
+  const auto& database_name = database->GetName().GetIdentifierName();
   connector::SystemConnection connection{
     {.user = user,
      .role = job.owner,
-     .database = job.catalog.GetIdentifierName(),
-     .database_id = job.database_oid},
-    {.what = "job", .name = job.name.GetIdentifierName()}};
-  connector::SetDefaultSearchPath(*connection.conn->context,
-                                  job.catalog.GetIdentifierName());
+     .database = database_name,
+     .database_id = database->oid},
+    {.what = "job", .name = job.name.GetIdentifierName()},
+    temporary};
+  connector::SetDefaultSearchPath(*connection.conn->context, database_name);
   context = connection.conn->context;
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));
-  if (!job.schema->parent) {
+  if (!temporary && !job.schema->parent) {
     context->client_data->catalog_search_path->Set(
-      {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},
+      {duckdb::CatalogSearchEntry{database->GetName(), job.schema->Name()}},
       duckdb::CatalogSetPathType::SET_DIRECTLY);
   }
   {

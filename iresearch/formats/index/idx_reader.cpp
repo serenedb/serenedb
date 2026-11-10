@@ -20,21 +20,17 @@
 
 #include "iresearch/formats/index/idx_reader.hpp"
 
-#include <absl/strings/str_cat.h>
-
 #include <cstring>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/types.hpp>
-#include <utility>
-#include <vector>
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 #ifndef IRESEARCH_NO_VECTOR
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
@@ -43,32 +39,18 @@
 
 namespace irs {
 
-struct IdxReader::Impl {
-  IndexInput::ptr in;
-  std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
-  irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
-  std::vector<uint64_t> ann_ends;
-  term_dict::TermsMeta terms;
-};
-
-IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
-                     HnswBases* hnsw_bases, bool keep_terms)
-  : _impl{std::make_unique<Impl>()} {
-  const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
-  bool exists = false;
-  if (!dir.exists(exists, filename)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_IO_ERROR),
-      ERR_MSG("Failed to check existence of file, path: ", filename));
-  }
-  if (!exists) {
+IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
+                     std::string_view segment_name, bool present,
+                     HnswBases* hnsw_bases) {
+  if (!present) {
     return;
   }
-
-  _impl->in = dir.open(filename, IOAdvice::RANDOM);
+  const auto filename = FileName(segment_name, kIdxFormatExt);
+  _file =
+    OpenInput(fs, PathOf(root, filename), duckdb::MappedFileAccess::RANDOM);
 
   format_utils::ReadFooter(
-    *_impl->in, filename,
+    *_file, filename,
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
 #ifndef IRESEARCH_NO_VECTOR
       footer.ReadOptionalList(
@@ -78,26 +60,18 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             const auto id = obj.ReadProperty<uint64_t>(0, "id");
             const auto tree_offset =
               obj.ReadProperty<uint64_t>(1, "tree_offset");
-            const auto tree_byte_size =
-              obj.ReadProperty<uint64_t>(2, "tree_byte_size");
             const auto stats_offset =
               obj.ReadProperty<uint64_t>(3, "stats_offset");
-            const auto stats_byte_size =
-              obj.ReadProperty<uint64_t>(4, "stats_byte_size");
             const auto root_byte_size =
               obj.ReadProperty<uint64_t>(5, "root_byte_size");
-            _impl->ann_ends.push_back(tree_offset + tree_byte_size);
-            _impl->ann_ends.push_back(stats_offset + stats_byte_size);
 
-            auto body = _impl->in->Dup();
-            body->Seek(tree_offset);
-            auto entry = CentroidsTree::Deserialize(*body, root_byte_size);
+            IndexInput body{*_file};
+            body.Seek(tree_offset);
+            auto entry = CentroidsTree::Deserialize(body, root_byte_size);
             entry.SetQuantStatsOffset(stats_offset);
 
-            const size_t idx = _impl->ann_entries.size();
-            _impl->ann_entries.emplace_back(
-              id, std::make_unique<IvfIndex>(std::move(entry)));
-            _impl->ann_by_id.emplace(id, idx);
+            _anns.emplace(id,
+                          std::make_unique<IvfIndex>(std::move(entry), *_file));
           });
         });
       footer.ReadOptionalList(
@@ -122,48 +96,24 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
                   .rotated = obj.ReadProperty<bool>(9, "rotated"),
                 },
             };
-            _impl->ann_ends.push_back(meta.offset + meta.byte_size);
 
-            const size_t idx = _impl->ann_entries.size();
-            _impl->ann_entries.emplace_back(
-              id, std::make_unique<HnswIndex>(meta, id, hnsw_bases));
-            _impl->ann_by_id.emplace(id, idx);
+            _anns.emplace(
+              id, std::make_unique<HnswIndex>(meta, id, hnsw_bases, *_file));
           });
         });
 #endif
       footer.ReadOptionalObject(
         kIdxFieldTerms, "terms", [&](duckdb::BinaryDeserializer& terms) {
-          auto meta = term_dict::ReadTerms(terms, data_size);
-          if (keep_terms) {
-            _impl->terms = std::move(meta);
-          }
+          _terms = term_dict::ReadTerms(terms, data_size);
         });
     });
 }
 
 IdxReader::~IdxReader() = default;
 
-bool IdxReader::HasAnn(field_id id) const noexcept {
-  return _impl->ann_by_id.contains(id);
-}
-
 const AnnIndex* IdxReader::Ann(field_id id) const noexcept {
-  auto it = _impl->ann_by_id.find(id);
-  return it == _impl->ann_by_id.end()
-           ? nullptr
-           : _impl->ann_entries[it->second].second.get();
-}
-
-term_dict::TermsMeta IdxReader::TakeTerms() noexcept {
-  return std::exchange(_impl->terms, {});
-}
-
-std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
-  return _impl->ann_ends;
-}
-
-IndexInput::ptr IdxReader::ReopenIn() const {
-  return _impl->in ? _impl->in->Reopen() : IndexInput::ptr{};
+  const auto it = _anns.find(id);
+  return it == _anns.end() ? nullptr : it->second.get();
 }
 
 }  // namespace irs

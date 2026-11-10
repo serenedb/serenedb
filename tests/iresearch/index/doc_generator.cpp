@@ -33,8 +33,6 @@
 #include <iresearch/analysis/numeric_terms.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <numeric>
 #include <sstream>
@@ -241,7 +239,7 @@ bool FloatField::Write(irs::DataOutput& out) const {
 irs::analysis::Tokenizer& BinaryField::GetTokens() const { return _stream; }
 
 bool BinaryField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, _value);
+  tests::WriteStr(out, _value);
   return true;
 }
 
@@ -523,7 +521,7 @@ void StringField::value(std::string_view str) {
 }
 
 bool StringField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, _value);
+  tests::WriteStr(out, _value);
   return true;
 }
 
@@ -551,7 +549,7 @@ void StringViewField::value(std::string_view str) {
 }
 
 bool StringViewField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, _value);
+  tests::WriteStr(out, _value);
   return true;
 }
 

@@ -41,6 +41,7 @@ namespace irs {
 struct GeoFilterOptionsBase;
 
 }
+
 namespace irs::analysis {
 
 class GeoTokenizer : private util::Noncopyable {

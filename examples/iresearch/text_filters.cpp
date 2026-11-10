@@ -35,7 +35,6 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
@@ -112,8 +111,6 @@ constexpr std::pair<std::string_view, std::string_view> kCorpus[] = {
 
 irs::IndexWriterOptions MakeWriterOptions() {
   irs::IndexWriterOptions options;
-  options.db = &Db();
-  options.reader_options.db = &Db();
   options.norm_column_id = [next = std::make_shared<std::atomic<irs::field_id>>(
                               0)](irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
@@ -123,10 +120,10 @@ irs::IndexWriterOptions MakeWriterOptions() {
 
 // Build the index from kCorpus, return the snapshot. Doc ids are assigned
 // in order, so doc_id N corresponds to kCorpus[N-min_doc_id].
-irs::DirectoryReader BuildIndex(irs::Directory& dir,
+irs::DirectoryReader BuildIndex(duckdb::FileSystem& fs, std::string_view root,
                                 std::vector<std::string>& names_out) {
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(Db(), fs, root, irs::kOmCreate, MakeWriterOptions());
 
   TextField body;
 
@@ -217,12 +214,12 @@ int TextFiltersMain() {
 
   irs::InitOptimizeRules();
 
-  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
-  // down the duckdb::DuckDB they were dispatching through.
+  // Nested scope so the reader destructs before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB it was dispatching through.
   {
     std::vector<std::string> names;
-    irs::MemoryDirectory dir;
-    auto reader = BuildIndex(dir, names);
+    auto reader = BuildIndex(duckdb::FileSystem::GetFileSystem(Db()),
+                             "memory://text_filters", names);
     std::cout << "Indexed " << reader.docs_count() << " docs across "
               << reader.size() << " segment(s).\n\n";
 

@@ -23,12 +23,13 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -311,11 +312,12 @@ TEST(WildcardNGramFilterTest, query) {
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
     WildcardField field;
@@ -335,7 +337,7 @@ TEST(WildcardNGramFilterTest, query) {
     writer->RefreshCommit();
   }
 
-  irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(std::size(kValues), reader->live_docs_count());
 
@@ -433,10 +435,11 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
   static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     WildcardField field;
     field.id = kTextId;
@@ -453,7 +456,7 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
     ctx.Commit();
     writer->RefreshCommit();
   }
-  irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, reader);
 
   MaxMemoryCounter counter;
@@ -690,10 +693,11 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
 
   for (const auto n : {size_t{2}, size_t{3}}) {
     irs::analysis::WildcardTokenizer analyzer{nullptr, n};
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     {
-      auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                           irs::tests::DefaultWriterOptions());
+      auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                      irs::tests::DefaultWriterOptions());
       ASSERT_NE(nullptr, writer);
 
       WildcardField field;
@@ -717,7 +721,7 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
       insert(std::span{kValues}.subspan(8));
     }
 
-    irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+    auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_NE(nullptr, reader);
     ASSERT_EQ(2U, reader.size());
     ASSERT_EQ(std::size(kValues), reader->live_docs_count());

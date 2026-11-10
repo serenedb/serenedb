@@ -40,11 +40,10 @@ namespace irs::detail {
 
 struct ClusterFeed {
   const VectorState* state;
-  IndexInput* payload;
   bool has_centroids;
 
   using Args =
-    std::tuple<const PostingMeta&, const IndexInput&,
+    std::tuple<const PostingMeta&, const InputFile&,
                std::unique_ptr<QuantizerReader>, VectorBlockReader, uint32_t>;
 
   Args operator()(size_t c) const {
@@ -53,7 +52,7 @@ struct ClusterFeed {
     const float* centroid =
       has_centroids ? state->cluster_centroids.data() + c * state->d : nullptr;
     quantizer->StartCluster(centroid);
-    VectorBlockReader pay{payload->Dup(), quantizer->BlockSetting()};
+    VectorBlockReader pay{*state->payload, quantizer->BlockSetting()};
     pay.Reset(state->pay_starts[c]);
     return Args{state->cookies[c], *detail::DocOf(*state->reader),
                 std::move(quantizer), std::move(pay), state->pay_lanes[c]};
@@ -77,21 +76,19 @@ template<typename Gate, typename Query, typename Emit>
 auto ResolveClusters(const Query& query, Emit&& emit) {
   const auto& state = query.State();
   SDB_ASSERT(state.reader != nullptr);
-  SDB_ASSERT(state.payload != nullptr);
+  SDB_ASSERT(state.payload);
   SDB_ASSERT(detail::DocOf(*state.reader) != nullptr);
   SDB_ASSERT(!state.cookies.empty());
 
   const ClusterFeed feed{.state = &state,
-                         .payload = state.payload.get(),
                          .has_centroids = state.cluster_centroids.size() ==
                                           state.cookies.size() * state.d};
   const auto count = state.cookies.size();
 
-  return detail::ResolveInput(
-    *detail::DocOf(*state.reader), [&]<typename InputType>() {
-      return emit.template operator()<VectorCluster<InputType, Gate>>(count,
-                                                                      feed);
-    });
+  return ResolveInput(*detail::DocOf(*state.reader), [&]<typename InputType>() {
+    return emit.template operator()<VectorCluster<InputType, Gate>>(count,
+                                                                    feed);
+  });
 }
 
 template<typename Gate, bool Rescore, typename Query, typename Emit>

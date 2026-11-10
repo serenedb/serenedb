@@ -22,11 +22,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/directory_attributes.hpp>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "formats_test_case_base.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
 
@@ -66,8 +66,8 @@ TEST_P(Format12TestCase, open_10_with_12) {
 
   // write segment with format10
   {
-    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir(), irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -77,7 +77,7 @@ TEST_P(Format12TestCase, open_10_with_12) {
   }
 
   // check index
-  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto index = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(1, index->size());
   ASSERT_EQ(1, index->docs_count());
@@ -122,8 +122,8 @@ TEST_P(Format12TestCase, formats_12) {
 
   // write segment with format10
   {
-    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir(), irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -134,8 +134,8 @@ TEST_P(Format12TestCase, formats_12) {
 
   // write segment with format11
   {
-    auto writer = irs::IndexWriter::Make(dir(), irs::kOmAppend,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir(), irs::kOmAppend,
+                                    irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
@@ -145,7 +145,7 @@ TEST_P(Format12TestCase, formats_12) {
   }
 
   // check index
-  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto index = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(2, index->size());
   ASSERT_EQ(2, index->docs_count());
@@ -210,7 +210,7 @@ TEST_P(Format12TestCase, formats_12) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));
 

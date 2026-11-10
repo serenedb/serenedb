@@ -29,14 +29,13 @@
 #include <vector>
 
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
 class ColumnReader;
 class ReadContext;
-class DataOutput;
-class IndexOutput;
 
 struct PayloadBlockSetting {
   uint32_t group_size = 1;
@@ -74,7 +73,7 @@ class QuantizerWriter {
 
   virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
 
-  virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
+  virtual void Encode(DataOutput& out, const float* vecs, size_t n) = 0;
 
   virtual bool EncodeInto(byte_type* /*dst*/, const float* /*vecs*/,
                           size_t /*n*/) {
@@ -87,7 +86,7 @@ class QuantizerWriter {
 
   virtual uint32_t EncodeWidth() const noexcept { return 1; }
 
-  virtual void Finish(IndexOutput& out) = 0;
+  virtual void Finish(DataOutput& out) = 0;
 
   virtual uint32_t PendingLanes() const noexcept { return 0; }
 

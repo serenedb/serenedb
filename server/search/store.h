@@ -30,16 +30,14 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/column_list.hpp>
-#include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/resource_manager.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -85,16 +83,6 @@ struct StoreSnapshot {
 };
 using StoreSnapshotPtr = std::shared_ptr<StoreSnapshot>;
 
-struct StorageDirectory {
-  std::unique_ptr<irs::Directory> directory;
-  bool on_disk = false;
-  bool absent = false;
-};
-
-StorageDirectory OpenStorageDirectory(
-  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
-  bool in_memory, const irs::ResourceManagementOptions& resources);
-
 enum class TableChange : uint8_t {
   Layout,
   Schema,
@@ -109,12 +97,15 @@ class Store final : public std::enable_shared_from_this<Store>,
   static constexpr duckdb::transaction_t kNoLayoutOwner =
     std::numeric_limits<duckdb::transaction_t>::max();
 
-  Store(std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-        bool read_only, duckdb::idx_t db_id, duckdb::idx_t id,
+  // `database` is passed in rather than derived from the catalog: an index
+  // created inside a transaction lives in that transaction's overlay, and so
+  // may the schema its database has to be walked through.
+  Store(std::unique_ptr<catalog::StorageDirectory> storage,
+        duckdb::AttachedDatabase& database, duckdb::idx_t id,
         const catalog::InvertedIndexSettings& options,
         const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new);
-  Store(std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-        bool read_only, duckdb::idx_t db_id, duckdb::idx_t id, bool is_new,
+  Store(std::unique_ptr<catalog::StorageDirectory> storage,
+        duckdb::AttachedDatabase& database, duckdb::idx_t id, bool is_new,
         const catalog::SearchTableOptions& options,
         const duckdb::ColumnList& columns);
   ~Store();
@@ -125,19 +116,17 @@ class Store final : public std::enable_shared_from_this<Store>,
   duckdb::idx_t GetId() const noexcept { return _id; }
   // The database whose attachment holds this store's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
-  std::filesystem::path Path() const { return _directory->StoragePath(_id); }
-  bool Absent() const noexcept { return _absent; }
+  const std::string& Path() const noexcept { return _durability.Root(); }
   bool ReadOnly() const noexcept { return !_writer; }
-
-  void Open();
-  void OpenReader();
+  bool Opened() const { return _writer || Snapshot(); }
+  [[nodiscard]] bool Open();
 
   // A drop commits while readers may still hold this store; the destructor
   // removes the directory once the last of them lets go. Never set on
   // shutdown or detach, where the directory must survive.
   void MarkDropped() noexcept {
-    if (_writer) {
-      _dropped.store(true, std::memory_order_release);
+    if (!_read_only && _storage) {
+      _storage->MarkDropped();
     }
   }
 
@@ -237,6 +226,7 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   [[nodiscard]] absl::Status Refresh(
     const irs::ProgressReportCallback& progress = nullptr);
+  [[nodiscard]] absl::Status OptimizeInMemory();
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   [[nodiscard]] absl::Status VacuumRefresh();
   [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
@@ -390,7 +380,8 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   bool IsSearchTable() const noexcept { return _table_columns.has_value(); }
   irs::IndexReaderOptions ReaderOptions() const;
-  void OpenWriter();
+  void OpenWriter(bool is_new);
+  void OpenReader();
   void PublishSnapshot();
   template<typename Remove>
   void CommitRemovalWith(const Remove& remove);
@@ -414,18 +405,13 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   duckdb::idx_t _id;
   duckdb::idx_t _db_id;
-  std::shared_ptr<catalog::DatabaseDirectory> _directory;
-  bool _in_memory;
+  std::unique_ptr<catalog::StorageDirectory> _storage;
   bool _read_only;
-  bool _is_new;
-  bool _absent = false;
-  std::atomic<bool> _dropped{false};
   uint64_t _segment_memory_max;
   uint32_t _segment_docs_max = 0;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   IndexDurability _durability;
-  std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).

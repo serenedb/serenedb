@@ -41,15 +41,6 @@ class Crc32c {
       _value, std::string_view{static_cast<const char*>(data), size}, 0);
   }
 
-  IRS_FORCE_INLINE void copy_bytes(void* dst, const void* src,
-                                   size_t size) noexcept {
-    // Unfortunately we cannot patch abseil MemcpyCrc32c
-    // so we need to apply xor before call this function and undo xor after
-    const absl::crc32c_t init{static_cast<uint32_t>(_value) ^ kCrc32Xor};
-    const auto res = absl::MemcpyCrc32c(dst, src, size, init);
-    _value = absl::crc32c_t{static_cast<uint32_t>(res) ^ kCrc32Xor};
-  }
-
   IRS_FORCE_INLINE uint32_t checksum() const noexcept {
     return static_cast<uint32_t>(_value) ^ kCrc32Xor;
   }

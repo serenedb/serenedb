@@ -26,8 +26,9 @@
 #include <atomic>
 #include <cstdio>
 #include <duckdb/main/database.hpp>
+#include <filesystem>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/store/data_output.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
@@ -37,19 +38,16 @@
 
 namespace bench {
 
-static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
-                                                 size_t segment_pool_size,
-                                                 size_t segment_mem_max,
-                                                 uint32_t row_group_size,
-                                                 uint32_t segment_docs_max) {
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
+static irs::IndexWriterOptions MakeWriterOptions(
+  irs::ScorerPtr scorer_ptr, std::shared_ptr<irs::IndexFileRefs> refs,
+  size_t segment_pool_size, size_t segment_mem_max, uint32_t row_group_size,
+  uint32_t segment_docs_max) {
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
+  writer_opts.reader_options.refs = std::move(refs);
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
   writer_opts.segment_docs_max = segment_docs_max;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.row_group_size = row_group_size;
   writer_opts.norm_column_id =
     [next = std::make_shared<std::atomic<irs::field_id>>(0)](
@@ -59,15 +57,23 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   return writer_opts;
 }
 
+static std::string MakeDirectory(std::string_view path) {
+  std::filesystem::create_directories(path);
+  return std::string{path};
+}
+
 IndexBuilder::IndexBuilder(std::string_view path,
                            const IndexBuilderOptions& opts,
                            const BenchConfig& config)
   : _opts{opts},
     _scorer{irs::BM25::Make(irs::BM25::Options{})},
-    _dir{path},
+    _fs{duckdb::FileSystem::GetFileSystem(
+      ::irs::DuckDBEngine::Instance().instance())},
+    _root{MakeDirectory(path)},
+    _refs{std::make_shared<irs::IndexFileRefs>()},
     _writer{irs::IndexWriter::Make(
-      _dir, irs::kOmCreate,
-      MakeWriterOptions(_scorer_ptr, opts.indexer_threads,
+      ::irs::DuckDBEngine::Instance().instance(), _fs, _root, irs::kOmCreate,
+      MakeWriterOptions(_scorer_ptr, _refs, opts.indexer_threads,
                         config.segment_mem_max, opts.row_group_size,
                         opts.segment_docs_max))} {}
 
@@ -215,7 +221,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
           _writer->Compact(policy);
         }
 
-        irs::directory_utils::RemoveAllUnreferenced(_dir);
+        irs::RemoveAllUnreferenced(_fs, _root, *_refs);
       }
     });
   }
@@ -247,8 +253,12 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
     absl::PrintF("Compacting all segments:\n");
     std::fflush(stdout);
     CompactAll();
+  } else if (_opts.settle) {
+    absl::PrintF("Settling segments:\n");
+    std::fflush(stdout);
+    Settle();
   } else if (_opts.compaction_threads) {
-    irs::directory_utils::RemoveAllUnreferenced(_dir);
+    irs::RemoveAllUnreferenced(_fs, _root, *_refs);
   }
 }
 
@@ -256,11 +266,28 @@ void IndexBuilder::CompactAll() {
   _writer->Compact(
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
   _writer->RefreshCommit();
-  irs::directory_utils::RemoveAllUnreferenced(_dir);
+  irs::RemoveAllUnreferenced(_fs, _root, *_refs);
+}
+
+void IndexBuilder::Settle() {
+  const auto policy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionTier{});
+  for (auto segments = GetReader().size(); segments > 1;) {
+    _writer->Compact(policy);
+    _writer->RefreshCommit();
+    const auto left = GetReader().size();
+    if (left >= segments) {
+      break;
+    }
+    segments = left;
+  }
+  irs::RemoveAllUnreferenced(_fs, _root, *_refs);
 }
 
 bool TextField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, text);
+  out.WriteV32(static_cast<uint32_t>(text.size()));
+  out.WriteData(reinterpret_cast<const irs::byte_type*>(text.data()),
+                text.size());
   return true;
 }
 

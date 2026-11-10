@@ -28,20 +28,19 @@
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class IndexOutput;
-
 struct TermPayloadWriter {
   virtual ~TermPayloadWriter() = default;
 
-  virtual void WriteTermPayload(IndexOutput& out,
+  virtual void WriteTermPayload(DataOutput& out,
                                 std::span<const doc_id_t> docs) = 0;
 
-  virtual void Finish(IndexOutput& out) = 0;
+  virtual void Finish(DataOutput& out) = 0;
 
   virtual uint32_t PendingLanes() const noexcept { return 0; }
 

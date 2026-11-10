@@ -946,8 +946,8 @@ class BlockPlan {
       return;
     }
     const uint64_t offset = _field->BlockOffset(_run_begin);
-    file_utils::Hint(_field->Owner().Input(), offset,
-                     _field->BlockOffset(_run_end) - offset);
+    _field->Owner().Input().Hint(offset,
+                                 _field->BlockOffset(_run_end) - offset);
     _run_begin = _run_end;
   }
 

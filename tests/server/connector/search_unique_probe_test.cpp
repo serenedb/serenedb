@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -26,11 +27,11 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "../engine_context.h"
@@ -110,13 +111,15 @@ class SearchUniqueProbeTest : public ::testing::Test {
  protected:
   void SetUp() final {
     irs::IndexWriterOptions options;
-    options.db = &TestDb();
-    options.reader_options.db = &TestDb();
     options.key_column = term_dict::kPKFieldId;
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer = irs::IndexWriter::Make(TestDb(), _fs, kRoot, irs::kOmCreate,
+                                     std::move(options));
   }
 
-  void TearDown() final { _writer.reset(); }
+  void TearDown() final {
+    _writer.reset();
+    _fs.RemoveDirectory(kRoot);
+  }
 
   // Writes `chunk` through the sink the server writes with, so the segment
   // holds the terms a real insert would leave and the probe is put to the same
@@ -145,10 +148,12 @@ class SearchUniqueProbeTest : public ::testing::Test {
   }
 
   irs::DirectoryReader Reader() {
-    return irs::DirectoryReader{_dir, {.db = &TestDb()}};
+    return irs::DirectoryReader{TestDb(), _fs, kRoot, {}};
   }
 
-  irs::MemoryDirectory _dir;
+  static inline const std::string kRoot = "memory://search_unique_probe";
+
+  duckdb::FileSystem& _fs = duckdb::FileSystem::GetFileSystem(TestDb());
   irs::IndexWriter::ptr _writer;
 };
 

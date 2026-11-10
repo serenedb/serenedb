@@ -40,9 +40,7 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -51,7 +49,7 @@
 #include "examples.h"
 
 // This example demonstrates the core iresearch workflow:
-//   1. Create a directory and index writer
+//   1. Create an index writer over a memory:// root
 //   2. Define fields and index documents (inverted index + cs stored values)
 //   3. Parse Lucene-syntax queries and execute them (count + top-K with BM25)
 
@@ -129,7 +127,7 @@ void IndexDocument(irs::IndexWriter::Transaction& ctx, TextField& title_field,
 
   auto* cs = doc.GetColWriter();
   if (cs == nullptr) {
-    return;  // cs disabled (no `options.db` plumbed through).
+    return;
   }
   if (title_cw == nullptr) {
     title_cw = &cs->OpenColumn(kTitleColumnId, duckdb::LogicalType::BLOB);
@@ -412,7 +410,8 @@ void RemoveDocuments(irs::IndexWriter& writer,
 
 // Compact segments after removal to reclaim space and merge segments.
 // Deleted documents are only physically removed during compaction.
-void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
+void CompactIndex(irs::IndexWriter& writer, duckdb::FileSystem& fs,
+                  std::string_view root, irs::IndexFileRefs& refs) {
   std::cout << "=== Compact Index ===\n";
 
   auto before = writer.GetSnapshot();
@@ -428,7 +427,7 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
   writer.RefreshCommit();
 
   // Remove files no longer referenced by any reader.
-  irs::directory_utils::RemoveAllUnreferenced(dir);
+  irs::RemoveAllUnreferenced(fs, root, refs);
 
   auto after = writer.GetSnapshot();
   std::cout << "After compaction:  " << after.size() << " segment(s)\n";
@@ -449,17 +448,18 @@ int BasicMain() {
     auto tokenizer = irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{});
 
-    irs::MemoryDirectory dir;
+    auto& fs = duckdb::FileSystem::GetFileSystem(Db());
+    constexpr std::string_view kRoot = "memory://basic";
+    auto refs = std::make_shared<irs::IndexFileRefs>();
     irs::IndexWriterOptions options;
-    options.db = &Db();
-    options.reader_options.db = &Db();
+    options.reader_options.refs = refs;
     options.norm_column_id =
       [next = std::make_shared<std::atomic<irs::field_id>>(0)](
         irs::field_id) -> irs::field_id {
       return next->fetch_add(1, std::memory_order_relaxed);
     };
-    auto writer =
-      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+    auto writer = irs::IndexWriter::Make(Db(), fs, kRoot, irs::kOmCreate,
+                                         std::move(options));
 
     BuildIndex(*writer);
 
@@ -475,7 +475,7 @@ int BasicMain() {
     QueryExclusion(reader, *tokenizer);
     ReadStoredFields(reader);
     RemoveDocuments(*writer, *tokenizer);
-    CompactIndex(*writer, dir);
+    CompactIndex(*writer, fs, kRoot, *refs);
   }
 
   engine.Shutdown();

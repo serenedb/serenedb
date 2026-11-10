@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
 #include <memory>
 #include <span>
@@ -33,15 +34,9 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class ColumnReader;
@@ -58,8 +53,9 @@ inline std::string FileName(std::string_view segment_name) {
 
 class ColReader final {
  public:
-  ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db, IOAdvice advice);
+  ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root, std::string_view segment_name, bool present,
+            duckdb::MappedFileAccess access);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;
@@ -74,13 +70,18 @@ class ColReader final {
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 
-  IndexInput::ptr ReopenIn() const {
-    return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
+  const InputFile* File() const noexcept { return _file.get(); }
+  void PrefetchExtents(
+    std::span<duckdb::ExternalFileCacheRange> extents) const noexcept {
+    if (_file) {
+      _file->PrefetchExtents(extents);
+    }
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
   duckdb::DatabaseInstance* _db;
+  std::unique_ptr<InputFile> _file;
   ReadContext _ctx;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;

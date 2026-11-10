@@ -13,5 +13,6 @@ target_sources(
         entry/search_table.cpp
         entry/subscription.cpp
         entry/system_table.cpp
+        entry/tablespace.cpp
         entry/tokenizer.cpp
 )

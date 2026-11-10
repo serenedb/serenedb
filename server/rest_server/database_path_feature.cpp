@@ -22,15 +22,20 @@
 #include "database_path_feature.h"
 
 #include <absl/flags/flag.h>
+#include <absl/strings/str_cat.h>
 
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <exception>
 #include <filesystem>
 #include <iresearch/utils/application_exit.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/operating_system.hpp>
 #include <iresearch/utils/string_utils.hpp>
 #include <system_error>
 
-#include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/lockfile.h"
 
@@ -48,25 +53,26 @@ namespace sdb {
 DatabasePathFeature::DatabasePathFeature()
   : _directory(
       lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory))) {
-  std::error_code ec;
   // Resolve the HBA config path against the (now absolute) data directory.
   if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
-    _hba_config_file =
-      utils::file_utils::BuildFilename(_directory, "pg_hba.conf");
+    _hba_config_file = absl::StrCat(_directory, "/pg_hba.conf");
   } else if (std::filesystem::path{hba}.is_absolute()) {
     _hba_config_file = hba;
   } else {
-    _hba_config_file = utils::file_utils::BuildFilename(_directory, hba);
+    _hba_config_file = absl::StrCat(_directory, "/", hba);
   }
 
-  if (!std::filesystem::is_directory(_directory, ec)) {
-    std::filesystem::create_directories(_directory, ec);
-    if (!ec) {
+  try {
+    if (irs::DuckDBEngine::Instance()
+          .instance()
+          .GetInternalFileSystem()
+          .CreateDirectoryExtended(
+            _directory, {.mode = duckdb::CreateDirectoryMode::RECURSIVE})) {
       SDB_INFO(STARTUP, "Created database directory: ", _directory);
-    } else {
-      SDB_FATAL(GENERAL, "Unable to create database directory '", _directory,
-                "': ", ec.message());
     }
+  } catch (const std::exception& e) {
+    SDB_FATAL(GENERAL, "Unable to create database directory '", _directory,
+              "': ", duckdb::ErrorData{e}.RawMessage());
   }
 
   // Acquire the LOCK file in the data directory. The lockfile guards against
@@ -75,11 +81,11 @@ DatabasePathFeature::DatabasePathFeature()
   // runs on normal exit and releases / unlinks every lockfile we acquired.
   // Fatal paths (_exit / abort) skip static dtors; the stale lockfile that
   // remains is handled by VerifyLockFile on the next start.
-  std::string lock_filename =
-    utils::file_utils::BuildFilename(_directory, "LOCK");
+  const auto lock_filename = absl::StrCat(_directory, "/LOCK");
   if (const auto status = VerifyLockFile(lock_filename.c_str()); !status.ok()) {
     SDB_FATAL(GENERAL, status.message());
   }
+  std::error_code ec;
   if (std::filesystem::exists(lock_filename, ec) && !ec) {
     std::filesystem::remove(lock_filename, ec);
     if (ec) {

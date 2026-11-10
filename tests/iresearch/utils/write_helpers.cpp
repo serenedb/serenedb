@@ -20,10 +20,18 @@
 
 #include "utils/write_helpers.hpp"
 
+#include <absl/base/internal/endian.h>
+
 #include <bit>
 #include <iresearch/utils/numeric_utils.hpp>
 
 namespace tests {
+
+uint16_t ReadU16(irs::IndexInput& in) {
+  irs::byte_type bytes[sizeof(uint16_t)];
+  in.ReadData(bytes, sizeof bytes);
+  return absl::little_endian::Load16(bytes);
+}
 
 void WriteZvfloat(irs::DataOutput& out, float_t v) {
   const int32_t iv = irs::numeric_utils::Ftoi32(v);
@@ -41,7 +49,7 @@ void WriteZvfloat(irs::DataOutput& out, float_t v) {
   }
 };
 
-float_t ReadZvfloat(irs::DataInput& in) {
+float_t ReadZvfloat(irs::IndexInput& in) {
   const uint32_t b = in.ReadByte();
 
   if (0xFF == b) {
@@ -53,7 +61,7 @@ float_t ReadZvfloat(irs::DataInput& in) {
   }
 
   // positive float (ensure read order)
-  const auto part = uint16_t(in.ReadI16());
+  const auto part = ReadU16(in);
 
   return irs::numeric_utils::I32tof((b << 24) | (std::byteswap(part) << 8) |
                                     uint32_t(in.ReadByte()));
@@ -82,7 +90,7 @@ void WriteZvdouble(irs::DataOutput& out, double_t v) {
   }
 }
 
-double_t ReadZvdouble(irs::DataInput& in) {
+double_t ReadZvdouble(irs::IndexInput& in) {
   const uint64_t b = in.ReadByte();
 
   if (0xFF == b) {
@@ -98,7 +106,7 @@ double_t ReadZvdouble(irs::DataInput& in) {
 
   // positive double (ensure read order)
   const auto part1 = uint64_t(std::byteswap(uint32_t(in.ReadI32())));
-  const auto part2 = uint64_t(std::byteswap(uint16_t(in.ReadI16())));
+  const auto part2 = uint64_t(std::byteswap(ReadU16(in)));
 
   return irs::numeric_utils::I64tod((b << 56) | (part1 << 24) | (part2 << 8) |
                                     uint64_t(in.ReadByte()));

@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -40,7 +41,7 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
 #include <string>
@@ -308,7 +309,6 @@ constexpr int kRepetitions = 5;
 
 struct Corpus {
   std::filesystem::path dir_path;
-  std::unique_ptr<irs::MMapDirectory> dir;
   irs::DirectoryReader reader;
 };
 
@@ -340,10 +340,12 @@ Corpus BuildIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
 
-  auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, irs::IndexWriterOptions{});
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       irs::IndexWriterOptions{});
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -374,10 +376,8 @@ Corpus BuildIndex() {
                "regexp_vs_wildcard bench: indexed %zu documents from %s\n",
                inserted, data_path.string().c_str());
 
-  auto rdr = irs::DirectoryReader{*dir};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  auto rdr = irs::DirectoryReader{*db, fs, root, irs::IndexReaderOptions{}};
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 const Corpus& GetCorpus() {
@@ -697,3 +697,17 @@ REGISTER(RegexpOnlyPerlClassPrepare);
 #undef REGISTER
 
 }  // namespace
+
+static int Main(int argc, char** argv) {
+  irs::DuckDBEngine::Instance().Initialize();
+  benchmark::Initialize(&argc, argv);
+  if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
+    return 1;
+  }
+  benchmark::RunSpecifiedBenchmarks();
+  benchmark::Shutdown();
+  return 0;
+}
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

@@ -20,11 +20,16 @@
 
 #include "connector/highlight/memory_index.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/main/database.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
 namespace sdb::connector::highlight {
 
-MemoryIndex::MemoryIndex() : _db{&irs::DuckDBEngine::Instance().instance()} {}
+MemoryIndex::MemoryIndex()
+  : _db{irs::DuckDBEngine::Instance().instance()},
+    _root{absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "highlight")},
+    _refs{std::make_shared<irs::IndexFileRefs>()} {}
 
 }  // namespace sdb::connector::highlight

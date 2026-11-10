@@ -100,7 +100,7 @@ struct Family {
   template<typename Input, typename Exclude, typename ExcludeArgs>
   static Result MakeExcludedPosting(const Context& ctx, ExcludeArgs&& negated,
                                     const irs::detail::PostingClause& posting,
-                                    const IndexInput& doc,
+                                    const InputFile& doc,
                                     const SubReader& segment,
                                     const TermReader& own,
                                     const irs::detail::ScoreRecipe& recipe) {

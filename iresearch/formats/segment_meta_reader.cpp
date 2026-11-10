@@ -32,12 +32,13 @@
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::segment_meta {
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
+void Read(duckdb::FileSystem& fs, std::string_view root, SegmentMeta& meta,
+          std::string_view filename) {
   SDB_ASSERT(!IsNull(filename));
 
   std::string_view segment_name;
@@ -51,14 +52,20 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
   std::string name{segment_name};
 
-  auto in = dir.open(filename, IOAdvice::RANDOM);
+  const auto handle = OpenWhole(fs, PathOf(root, filename));
+  const auto length = duckdb::NumericCast<size_t>(handle->GetFileSize());
+  auto frozen = DocumentMask::AllocateFrozen(length);
+  if (length != 0) {
+    handle->Read(duckdb::QueryContext{}, frozen.get(), length, 0);
+  }
+  const bytes_view bytes{frozen.get(), length};
 
   std::vector<std::string> files;
   bool has_files = false;
   uint32_t docs_count = 0;
   uint64_t size = 0;
   const auto footer = format_utils::ReadFooter(
-    *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
+    bytes, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
       has_files = meta_in.ReadOptionalList(
         kFieldFiles, "files",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -72,8 +79,8 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
   std::shared_ptr<const DocumentMask> docs_mask;
   if (docs_mask_size != 0) {
-    docs_mask = std::make_shared<const DocumentMask>(
-      DocumentMask::ReadFrozen(*in, docs_mask_size));
+    docs_mask =
+      std::make_shared<const DocumentMask>(std::move(frozen), docs_mask_size);
   }
 
   if (!has_files) [[unlikely]] {

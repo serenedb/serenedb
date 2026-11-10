@@ -100,7 +100,7 @@ TEST_P(ColFilterLeafTestCase, per_segment) {
   EXPECT_EQ(1, Members(*filter, rdr[0]).size());
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(col_filter_leaf_test, ColFilterLeafTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

@@ -22,15 +22,20 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <string_view>
+
 namespace irs {
 
-struct Directory;
 class IdxReader;
 struct SegmentMeta;
 
 struct ReaderState {
-  const Directory* dir;
-  const SegmentMeta* meta;
+  duckdb::DatabaseInstance& db;
+  duckdb::FileSystem& fs;
+  std::string_view root;
+  const SegmentMeta& meta;
   IdxReader* idx = nullptr;
 };
 

@@ -269,7 +269,7 @@ TEST_P(LMIndexTest, dirichlet_scores_nonnegative) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(lm_test, LMIndexTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

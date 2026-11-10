@@ -25,20 +25,18 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs {
 
 struct DocState {
-  const IndexInput* pos_in;
-  const IndexInput* pay_in;
+  const InputFile* pos_in;
+  const InputFile* pay_in;
   const PostingMeta* term_state;
   uint32_t* enc_buf;
 };
 
-template<typename IteratorTraits>
+template<typename IteratorTraits, typename InputType>
 class PositionImpl final : public PosAttr {
  public:
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -138,23 +136,18 @@ class PositionImpl final : public PosAttr {
   }
 
   // prepares iterator to work
-  template<typename InputType>
   void Prepare(const DocState& state) {
     if (!_pos.in) {
-      _pos.in = irs::utils::downCast<InputType>(*state.pos_in).Reopen();
-      SDB_ASSERT(_pos.in);
-      _pos.view = block_io::View(*_pos.in);
+      _pos.in = InputType{*state.pos_in};
+      if constexpr (IteratorTraits::Offset()) {
+        _pay.in = InputType{*state.pay_in};
+      }
     }
     _pos.hint.Arm(state.term_state->pos_start,
                   state.term_state->pos_start + PosExtent(*state.term_state));
     _enc_buf = state.enc_buf;
 
     if constexpr (IteratorTraits::Offset()) {
-      if (!_pay.in) {
-        _pay.in = irs::utils::downCast<InputType>(*state.pay_in).Reopen();
-        SDB_ASSERT(_pay.in);
-        _pay.view = block_io::View(*_pay.in);
-      }
       _pay.hint.Arm(state.term_state->pay_start,
                     state.term_state->pay_start + PayExtent(*state.term_state));
     }
@@ -184,14 +177,9 @@ class PositionImpl final : public PosAttr {
  private:
   struct Stream {
     void Load() {
-      hint.Advance(*in, group);
-      if (view != nullptr) {
-        header = view->ReadStable(group, PosGroup::kHeaderBytes);
-      } else {
-        in->Seek(group);
-        in->ReadData(copy, PosGroup::kHeaderBytes);
-        header = copy;
-      }
+      hint.Advance(in, group);
+      in.Seek(group);
+      ReadHeader();
     }
 
     void Hop() {
@@ -201,35 +189,29 @@ class PositionImpl final : public PosAttr {
 
     void Step() {
       group = PosGroup::Next(group, header);
-      if (view != nullptr) {
-        SDB_ASSERT(view->Position() == group);
-        header = view->ReadStable(PosGroup::kHeaderBytes);
+      SDB_ASSERT(in.Position() == group);
+      ReadHeader();
+    }
+
+    void ReadHeader() {
+      if constexpr (InputType::kContiguous) {
+        header = in.Current();
+        in.Consume(PosGroup::kHeaderBytes);
       } else {
-        SDB_ASSERT(in->Position() == group);
-        in->ReadData(copy, PosGroup::kHeaderBytes);
+        in.ReadData(copy, PosGroup::kHeaderBytes);
         header = copy;
       }
     }
 
     void SeekBlock(uint32_t block) {
-      const auto at =
-        group + PosGroup::kHeaderBytes + PosGroup::Start(header, block);
-      if (view != nullptr) {
-        view->Seek(at);
-      } else {
-        in->Seek(at);
-      }
+      in.Seek(group + PosGroup::kHeaderBytes + PosGroup::Start(header, block));
     }
 
-    void Account() {
-      hint.Advance(*in, view != nullptr ? view->Position() : in->Position());
-    }
-
-    IndexInput::ptr in;
-    BytesViewInput* view = nullptr;
+    InputType in;
     uint64_t group = 0;
     const byte_type* header = nullptr;
-    byte_type copy[PosGroup::kHeaderBytes];
+    [[no_unique_address]] utils::Need<!InputType::kContiguous,
+                                      byte_type[PosGroup::kHeaderBytes]> copy;
     GrowingHint hint;
   };
 
@@ -314,15 +296,6 @@ class PositionImpl final : public PosAttr {
     }
   }
 
-  template<typename Input>
-  IRS_FORCE_INLINE void Decode(Input& pos, Input* pay) {
-    block_io::ReadBlock(pos, _enc_buf, _pos_deltas);
-    if constexpr (IteratorTraits::Offset()) {
-      block_io::ReadBlock(*pay, _enc_buf, _offs_start_deltas);
-      block_io::ReadBlock(*pay, _enc_buf, _offs_lengths);
-    }
-  }
-
   void ReadBlock() {
     if (_pos.header == nullptr) [[unlikely]] {
       Enter(_next);
@@ -333,32 +306,19 @@ class PositionImpl final : public PosAttr {
       }
       _next = 0;
     }
-    _pos.Account();
-    if constexpr (IteratorTraits::Offset()) {
-      _pay.Account();
-    }
-    if (_pos.view != nullptr && (!IteratorTraits::Offset() || PayView()))
-      [[likely]] {
-      Decode<BytesViewInput>(*_pos.view, PayView());
-    } else {
-      Decode<IndexInput>(*_pos.in, PayIn());
-    }
+    Decode();
     ++_next;
   }
 
-  IRS_FORCE_INLINE BytesViewInput* PayView() const noexcept {
+  IRS_FORCE_INLINE void Decode() {
+    auto& pos = _pos.in;
+    _pos.hint.Advance(pos, pos.Position());
+    block_io::ReadBlock(pos, _enc_buf, _pos_deltas);
     if constexpr (IteratorTraits::Offset()) {
-      return _pay.view;
-    } else {
-      return nullptr;
-    }
-  }
-
-  IRS_FORCE_INLINE IndexInput* PayIn() const noexcept {
-    if constexpr (IteratorTraits::Offset()) {
-      return _pay.in.get();
-    } else {
-      return nullptr;
+      auto& pay = _pay.in;
+      _pay.hint.Advance(pay, pay.Position());
+      block_io::ReadBlock(pay, _enc_buf, _offs_start_deltas);
+      block_io::ReadBlock(pay, _enc_buf, _offs_lengths);
     }
   }
 
@@ -382,7 +342,7 @@ class PositionImpl final : public PosAttr {
 };
 
 // use base PosAttr type for ancestors
-template<typename IteratorTraits>
-struct Type<PositionImpl<IteratorTraits>> : Type<PosAttr> {};
+template<typename IteratorTraits, typename InputType>
+struct Type<PositionImpl<IteratorTraits, InputType>> : Type<PosAttr> {};
 
 }  // namespace irs

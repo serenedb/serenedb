@@ -44,12 +44,12 @@ class PostingCount : public PostingLeaf<InputType, kCountShape> {
  public:
   PostingCount() = default;
 
-  PostingCount(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingCount(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(has_freq);

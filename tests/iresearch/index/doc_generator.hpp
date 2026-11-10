@@ -31,7 +31,7 @@
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/store/data_output.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/iterator.hpp>
 #include <iresearch/utils/type_limits.hpp>

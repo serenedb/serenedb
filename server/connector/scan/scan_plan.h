@@ -44,7 +44,7 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
                        const duckdb::LogicalType& root_type,
                        std::vector<std::string_view>& out);
 
-void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
+void InitScanState(ScanGlobalState& state, duckdb::ClientContext& context,
                    const ScanBindData& bind_data,
                    duckdb::TableFunctionInitInput& input);
 

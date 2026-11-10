@@ -153,7 +153,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -191,7 +191,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -224,7 +224,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
 
   // Test with non-matching filter
   {
@@ -253,7 +253,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -308,7 +308,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   ASSERT_EQ(2, reader.size());
 
   size_t total_docs = 0;
@@ -345,7 +345,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
 
   // Test with term filter
   {
@@ -381,7 +381,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_skips_deleted) {
 
   size_t before = 0;
   {
-    auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
     for (auto& segment : reader) {
       before += segment.docs_count();
     }
@@ -394,7 +394,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_skips_deleted) {
   }
   writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   size_t live = 0;
   for (auto& segment : reader) {
     live += segment.live_docs_count();
@@ -435,7 +435,7 @@ TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
   }
   writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   irs::All filter;
   size_t walked = 0;
   for (auto& segment : reader) {
@@ -488,7 +488,7 @@ TEST_P(DocCollectorTestCase, test_count_negation_skips_deleted) {
   }
   writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   const std::vector<std::vector<std::string_view>> excluded{
     {"B"}, {"B", "E"}, {"A", "B"}};
   for (const auto& names : excluded) {
@@ -543,7 +543,7 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
   }
   writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   irs::All filter;
   size_t counted = 0;
   for (auto& segment : reader) {
@@ -556,7 +556,7 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
     ASSERT_EQ(segment.live_docs_count(),
               count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
 
-    auto split = query->PlanCount({.partial = true});
+    auto split = query->PlanCount({});
     ASSERT_NE(nullptr, split);
     constexpr irs::doc_id_t kBounds[]{irs::doc_limits::min(), 3, 20,
                                       irs::doc_limits::eof()};
@@ -564,7 +564,6 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
     for (size_t i = 1; i != std::size(kBounds); ++i) {
       total += split->Run(kBounds[i - 1], kBounds[i]);
     }
-    total += split->Finish();
     ASSERT_EQ(segment.live_docs_count(), total);
     counted += total;
   }
@@ -587,7 +586,7 @@ TEST_P(DocCollectorTestCase, test_count_split_single_doc_term) {
     writer->RefreshCommit();
   }
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   const auto& segment = reader[0];
 
@@ -615,18 +614,12 @@ TEST_P(DocCollectorTestCase, test_count_split_single_doc_term) {
   }
   ASSERT_NE(0, expected_back);
 
-  for (const bool partial : {false, true}) {
-    auto front = query->PlanCount({.partial = partial});
-    ASSERT_NE(nullptr, front);
-    auto back = query->PlanCount({.partial = partial});
-    ASSERT_NE(nullptr, back);
-    const auto front_count =
-      front->Run(irs::doc_limits::min(), mid) + front->Finish();
-    const auto back_count =
-      back->Run(mid, irs::doc_limits::eof()) + back->Finish();
-    EXPECT_EQ(expected_front, front_count);
-    EXPECT_EQ(expected_back, back_count);
-  }
+  auto front = query->PlanCount({});
+  ASSERT_NE(nullptr, front);
+  auto back = query->PlanCount({});
+  ASSERT_NE(nullptr, back);
+  EXPECT_EQ(expected_front, front->Run(irs::doc_limits::min(), mid));
+  EXPECT_EQ(expected_back, back->Run(mid, irs::doc_limits::eof()));
 }
 
 TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
@@ -639,7 +632,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
 
   // Test with disjunction filter (OR)
   {
@@ -679,7 +672,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -714,7 +707,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -756,7 +749,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
   // This creates many documents with identical scores
   DocIdScorer scorer{3};
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -820,7 +813,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
   // Use DocIdScorer with divisor 1, so all scores are 0
   DocIdScorer scorer{1};
 
-  auto reader = irs::DirectoryReader(dir(), tests::CsDefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -843,7 +836,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(doc_collector_test, DocCollectorTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

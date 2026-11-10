@@ -443,7 +443,7 @@ class OsqQuantizerWriter final : public QuantizerWriter {
     return {.group_size = 1, .record_size = _lay.record_size};
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(DataOutput& out, const float* vecs, size_t n) final {
     _row.resize(_lay.record_size);
     for (size_t r = 0; r < n; ++r) {
       EncodeRow(vecs + r * _lay.d, _row.data());
@@ -465,7 +465,7 @@ class OsqQuantizerWriter final : public QuantizerWriter {
     return out;
   }
 
-  void Finish(IndexOutput& /*out*/) final {}
+  void Finish(DataOutput& /*out*/) final {}
 
   void Serialize(DataOutput& out) const final {
     out.WriteU64(sizeof(OsqStatsHeader));

@@ -50,7 +50,7 @@ class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
 
   PostingPrunedClause() = default;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, const SubReader& segment,
                const TermReader& field, const detail::ScoreArgs& args) {
     _leaf.Single();
@@ -60,7 +60,7 @@ class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
     }
   }
 
-  PostingPrunedClause(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingPrunedClause(const PostingMeta& meta, const InputFile& doc_in,
                       IndexFeatures layout, const SubReader& segment,
                       const TermReader& field, const detail::ScoreArgs& args) {
     Prepare(meta, doc_in, layout, segment, field, args);
@@ -82,7 +82,7 @@ class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {
     SDB_ASSERT(slot < kScoreBlock);
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kContiguous) {
       if (_lazy != nullptr) {
         DecodeFreqs();
       }
@@ -114,14 +114,14 @@ class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
       block_io::ReadTailForFill(len, in, _enc.data, nullptr, _docs, prev);
     _left_in_list -= len;
     const auto* bitset = leaf.bitset;
-    if constexpr (!InputType::kVolatileAlways) {
+    if constexpr (!InputType::kContiguous) {
       if (leaf.IsBitset()) {
         std::memcpy(std::begin(_docs), leaf.bitset,
                     size_t{leaf.words} * sizeof(uint64_t));
         bitset = reinterpret_cast<const UnalignedWord*>(std::begin(_docs));
       }
     }
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kContiguous) {
       _lazy = in.Current();
       block_io::SkipTail(len, in);
     } else {

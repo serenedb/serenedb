@@ -22,10 +22,12 @@
 
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/store/data_output.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/geo/geo_json.hpp>
 #include <iresearch/utils/type_limits.hpp>
+
+#include "utils/write_helpers.hpp"
 
 namespace irs::tests {
 
@@ -38,7 +40,7 @@ struct StringField final {
   std::string_view Value() const noexcept { return value; }
 
   bool Write(irs::DataOutput& out) const {
-    irs::WriteStr(out, value);
+    ::tests::WriteStr(out, value);
     return true;
   }
 

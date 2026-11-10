@@ -26,12 +26,12 @@
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <random>
@@ -42,6 +42,7 @@ namespace {
 
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSegName = "bench_seg";
+constexpr std::string_view kRoot = "memory://bench";
 constexpr uint64_t kWindow = STANDARD_VECTOR_SIZE;
 constexpr uint64_t kTargetBytes = 48ULL << 20;
 
@@ -115,7 +116,7 @@ std::string Key(uint64_t i) {
 }
 
 struct Column {
-  irs::MemoryDirectory dir{};
+  duckdb::MemoryFileSystem fs;
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   const irs::ColumnReader* col = nullptr;
@@ -133,7 +134,7 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   Words words;
   std::mt19937_64 rng{11};
   {
-    irs::ColWriter writer{c->dir, kSegName, CsDb()};
+    irs::ColWriter writer{CsDb(), c->fs, kRoot, irs::FileObservers{}, kSegName};
     auto& cw = writer.OpenColumn(kField, duckdb::LogicalType::VARCHAR);
     for (uint64_t pos = 0; pos < c->windows * kWindow; pos += kWindow) {
       duckdb::Vector v{duckdb::LogicalType::VARCHAR, kWindow};
@@ -149,7 +150,7 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   }
   con.Query("SET force_compression = 'auto'");
   c->reader = std::make_unique<irs::ColReader>(
-    c->dir, std::string{kSegName}, CsDb(), irs::IOAdvice::SEQUENTIAL);
+    CsDb(), c->fs, kRoot, kSegName, true, duckdb::MappedFileAccess::SEQUENTIAL);
   c->col = c->reader->Column(kField);
   if (!c->col) {
     std::fprintf(stderr, "Build(%s): column missing\n", shape.name);
@@ -165,8 +166,9 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   return c;
 }
 
+std::unique_ptr<Column> gColumns[std::size(kShapes)];
+
 const Column& Get(size_t shape) {
-  static std::unique_ptr<Column> gColumns[std::size(kShapes)];
   if (!gColumns[shape]) {
     gColumns[shape] = Build(kShapes[shape]);
   }
@@ -256,6 +258,9 @@ static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  for (auto& column : gColumns) {
+    column.reset();
+  }
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

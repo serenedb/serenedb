@@ -431,7 +431,7 @@ TEST_P(PerNodeScorerTest, override_on_a_group_reaches_a_phrase_leaf) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(per_node_scorer_test, PerNodeScorerTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

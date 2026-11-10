@@ -53,7 +53,6 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -62,12 +61,11 @@ namespace irs::detail {
 
 class VectorBlockReader {
  public:
-  VectorBlockReader(IndexInput::ptr&& in,
+  VectorBlockReader(const InputFile& file,
                     const PayloadBlockSetting& setting) noexcept
-    : _in{std::move(in)},
+    : _in{file},
       _record_size{setting.record_size},
       _alignment{setting.alignment} {
-    SDB_ASSERT(_in);
     SDB_ASSERT(std::has_single_bit(_alignment));
     SDB_ASSERT(_alignment <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
   }
@@ -77,18 +75,20 @@ class VectorBlockReader {
   std::span<const byte_type> Read(size_t index, size_t count) {
     const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
     const size_t bytes = count * size_t{_record_size};
-    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
-      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _alignment == 0);
-      return {p, bytes};
+    _in.Seek(offset);
+    auto view = _in.Peek(bytes);
+    if (view.empty()) {
+      _scratch.resize(bytes);
+      _in.ReadData(_scratch.data(), bytes);
+      view = {_scratch.data(), bytes};
     }
-    _buf.resize(bytes);
-    _in->ReadData(offset, _buf.data(), bytes);
-    return _buf;
+    SDB_ASSERT(reinterpret_cast<uintptr_t>(view.data()) % _alignment == 0);
+    return {view.data(), bytes};
   }
 
  private:
-  IndexInput::ptr _in;
-  std::vector<byte_type> _buf;
+  IndexInput _in;
+  std::vector<byte_type> _scratch;
   uint64_t _base = 0;
   uint32_t _record_size;
   uint32_t _alignment;
@@ -185,8 +185,8 @@ class RawVectorReader {
       return nullptr;
     }
     const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
-    if (_read_ctx.HasIn()) {
-      file_utils::Hint(_read_ctx.In(), off, span);
+    if (const auto* file = _read_ctx.File()) {
+      file->Hint(off, span);
     }
     const auto* q = _read_ctx.TryReadStable(off, span);
     if (!q) {
@@ -207,7 +207,8 @@ class RawVectorReader {
 
  private:
   void HintRun(doc_id_t first, size_t count) noexcept {
-    if (!_read_ctx.HasIn()) {
+    const auto* file = _read_ctx.File();
+    if (!file) {
       return;
     }
     const auto* child = _column->Child();
@@ -225,9 +226,8 @@ class RawVectorReader {
         elem < w.begin || end <= elem) {
       return;
     }
-    file_utils::Hint(_read_ctx.In(),
-                     m.file_offset + (elem - w.begin) * sizeof(float),
-                     (end - elem) * sizeof(float));
+    file->Hint(m.file_offset + (elem - w.begin) * sizeof(float),
+               (end - elem) * sizeof(float));
   }
 
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
@@ -317,7 +317,7 @@ class VectorCluster {
  public:
   static constexpr uint32_t kRun = doc_limits::kBlockSize;
 
-  VectorCluster(const PostingMeta& meta, const IndexInput& doc_in,
+  VectorCluster(const PostingMeta& meta, const InputFile& doc_in,
                 std::unique_ptr<QuantizerReader>&& quantizer,
                 VectorBlockReader&& payload, uint32_t lane)
     : _quantizer{std::move(quantizer)},

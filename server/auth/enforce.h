@@ -45,4 +45,7 @@ void RequireSuperuser(duckdb::ClientContext& context,
 
 bool Unowned(const duckdb::CatalogEntry& entry);
 
+void RequireTablespaceCreate(duckdb::ClientContext& context,
+                             const duckdb::CatalogEntry& tablespace);
+
 }  // namespace sdb::auth

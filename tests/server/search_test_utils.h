@@ -20,22 +20,26 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <duckdb.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -93,6 +97,12 @@ inline uint32_t IndexOf(const irs::DirectoryReader& snapshot, uint64_t id) {
   return 0;
 }
 
+inline std::string MemoryRoot(std::string_view name) {
+  static constinit std::atomic<uint64_t> gNext{0};
+  return absl::StrCat("memory://", name, "/",
+                      gNext.fetch_add(1, std::memory_order_relaxed));
+}
+
 inline std::vector<std::pair<uint64_t, irs::doc_id_t>> RemovedDocs(
   const irs::DocRemoval& removal) {
   std::vector<std::pair<uint64_t, irs::doc_id_t>> docs;
@@ -108,14 +118,18 @@ inline std::vector<std::pair<uint64_t, irs::doc_id_t>> RemovedDocs(
   return docs;
 }
 
-inline const irs::DirectoryReader& OneRowSegments() {
-  static irs::MemoryDirectory dir;
-  static const irs::DirectoryReader reader = [] {
+struct OneRowIndex {
+  ~OneRowIndex() {
+    reader = irs::DirectoryReader{};
+    fs.RemoveDirectory(root);
+  }
+
+  duckdb::FileSystem& fs = duckdb::FileSystem::GetFileSystem(EngineDb());
+  std::string root = MemoryRoot("one_row_segments");
+  irs::DirectoryReader reader = [this] {
     irs::IndexWriterOptions options;
-    options.db = &EngineDb();
-    options.reader_options.db = &EngineDb();
-    auto writer =
-      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+    auto writer = irs::IndexWriter::Make(EngineDb(), fs, root, irs::kOmCreate,
+                                         std::move(options));
     for (int64_t value = 0; value != 8; ++value) {
       auto trx = writer->GetBatch(/*exclusive_segment=*/true);
       WriteValues(trx, std::array{value});
@@ -124,7 +138,20 @@ inline const irs::DirectoryReader& OneRowSegments() {
     }
     return writer->GetSnapshot();
   }();
-  return reader;
+};
+
+inline std::unique_ptr<OneRowIndex> gOneRowIndex;
+
+inline const irs::DirectoryReader& OneRowSegments() {
+  return gOneRowIndex->reader;
 }
+
+class OneRowSegmentsTest : public ::testing::Test {
+ protected:
+  static void SetUpTestSuite() {
+    gOneRowIndex = std::make_unique<OneRowIndex>();
+  }
+  static void TearDownTestSuite() { gOneRowIndex.reset(); }
+};
 
 }  // namespace sdb::test

@@ -20,11 +20,10 @@
 
 #include "iresearch/formats/column/read_context.hpp"
 
-#include <absl/base/internal/endian.h>
-
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
@@ -47,22 +46,32 @@ class ColMapping final : public duckdb::MemoryMappedFile {
   void Close() final {}
 };
 
-}  // namespace
+class PinnedColBlock final : public duckdb::Block {
+ public:
+  PinnedColBlock(duckdb::BlockAllocator& allocator, duckdb::block_id_t id,
+                 duckdb::MemoryMappedFile& bytes, uint64_t size,
+                 duckdb::ExternalFileCachePin pin)
+    : Block{allocator, id, bytes, 0, size, /*block_header_size=*/0},
+      _pin{std::move(pin)} {}
 
-ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : BlockManager{db, /*block_header_size=*/0} {}
+ private:
+  duckdb::ExternalFileCachePin _pin;
+};
 
-ReadContext::ReadContext(const ColReader& reader, bool random_access)
-  : ReadContext{reader.Database()} {
-  _random_access = random_access;
-  _in = reader.ReopenIn();
-  ResetMapping();
+uint64_t SectorAligned(uint64_t size) noexcept {
+  return duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size);
 }
 
-ReadContext::ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in)
-  : ReadContext{db} {
-  _in = std::move(in);
-  ResetMapping();
+}  // namespace
+
+ReadContext::ReadContext(const ColReader& reader, bool random_access)
+  : ReadContext{reader.Database(), reader.File()} {
+  _random_access = random_access;
+}
+
+ReadContext::ReadContext(duckdb::DatabaseInstance& db, const InputFile* file)
+  : BlockManager{db, /*block_header_size=*/0} {
+  ResetFile(file);
 }
 
 ReadContext::~ReadContext() {
@@ -74,57 +83,43 @@ void ReadContext::Reset(const ColReader& reader) {
   SDB_ASSERT(_db == &reader.Database(),
              "ReadContext::Reset: Database mismatch");
   SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
-  _in = reader.ReopenIn();
-  ResetMapping();
+  ResetFile(reader.File());
 }
 
-void ReadContext::ResetMapping() {
-  _mapping.reset();
+void ReadContext::ResetFile(const InputFile* file) {
+  _in = file ? IndexInput{*file} : IndexInput{};
+  _mapping = file ? file->Mapping() : nullptr;
   _ranges.clear();
-  if (!_in) {
-    return;
-  }
-  const auto pos = _in->Position();
-  const auto len = _in->Length();
-  if (const byte_type* data = _in->ReadStable(0, len); data != nullptr) {
-    _mapping = duckdb::make_uniq<ColMapping>(data, len);
-    _in->Seek(pos);
-  }
 }
 
 duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
                                          duckdb::block_id_t block,
                                          int32_t offset) {
   SDB_ASSERT(offset == 0);
-  const auto pos = static_cast<uint64_t>(block);
-  uint32_t len;
-  _in->ReadData(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
-  len = absl::little_endian::Load32(reinterpret_cast<byte_type*>(&len));
-  if (const auto* body = _in->ReadStable(pos + sizeof(len), len)) {
-    return duckdb::string_t{reinterpret_cast<const char*>(body), len};
+  if (_mapping) {
+    BytesViewInput in{*_in.File()};
+    in.Seek(static_cast<uint64_t>(block));
+    const auto len = static_cast<uint32_t>(in.ReadI32());
+    const auto body = in.Pin(len);
+    return duckdb::string_t{reinterpret_cast<const char*>(body.bytes.data()),
+                            len};
   }
+  _in.Seek(static_cast<uint64_t>(block));
+  const auto len = static_cast<uint32_t>(_in.ReadI32());
   auto out = duckdb::StringVector::EmptyString(result, len);
-  _in->ReadData(pos + sizeof(len),
-                reinterpret_cast<byte_type*>(out.GetDataWriteable()), len);
+  _in.ReadData(reinterpret_cast<byte_type*>(out.GetDataWriteable()), len);
   out.Finalize();
   return out;
 }
 
 duckdb::const_data_ptr_t ReadContext::TryReadStable(duckdb::idx_t position,
                                                     duckdb::idx_t size) {
-  SDB_ENSURE(size <= _in->Length() && position <= _in->Length() - size,
-             "ReadContext::TryReadStable: range [", position, ", ",
-             position + size, ") out of bounds (length ", _in->Length(), ")");
-  return reinterpret_cast<duckdb::const_data_ptr_t>(
-    _in->ReadStable(position, size));
+  return _mapping ? _mapping->GetData(position, size) : nullptr;
 }
 
 void ReadContext::Read(duckdb::idx_t position, duckdb::data_ptr_t target,
                        duckdb::idx_t size) {
-  SDB_ENSURE(size <= _in->Length() && position <= _in->Length() - size,
-             "ReadContext::Read: range [", position, ", ", position + size,
-             ") out of bounds (length ", _in->Length(), ")");
-  _in->ReadData(position, reinterpret_cast<byte_type*>(target), size);
+  _in.ReadData(position, reinterpret_cast<byte_type*>(target), size);
 }
 
 duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
@@ -133,7 +128,7 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   _ranges.emplace_back(offset, size);
   ++_live_handles;
   auto handle = RegisterBlock(id);
-  if (Maps(offset, size)) {
+  if (Maps(offset, size) || Wraps(offset, size)) {
     handle->GetMemory().SetMemoryUsage(0);
   }
   return handle;
@@ -141,10 +136,15 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
 
 bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
   return _mapping && offset % 8 == 0 &&
-         offset +
-             duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
-               size) <=
-           _mapping->Size();
+         offset + SectorAligned(size) <= _mapping->Size();
+}
+
+bool ReadContext::Wraps(uint64_t offset, uint64_t size) const noexcept {
+  if (_mapping || !_in.File() || offset % 8 != 0) {
+    return false;
+  }
+  const auto block = _in.File()->BlockSize();
+  return offset % block + SectorAligned(size) <= block;
 }
 
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
@@ -166,22 +166,27 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
                                             offset, size,
                                             /*block_header_size=*/0);
   }
+  if (Wraps(offset, size)) {
+    auto pinned = _in.File()->Pin(offset, size);
+    ColMapping bytes{pinned.bytes.data(), SectorAligned(size)};
+    return duckdb::make_uniq<PinnedColBlock>(*_allocator, block_id, bytes, size,
+                                             std::move(pinned.pin));
+  }
   return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id,
                                           static_cast<duckdb::idx_t>(size),
                                           /*block_header_size=*/0);
 }
 
-void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
+void ReadContext::Read(duckdb::QueryContext /*context*/, duckdb::Block& block) {
   const auto id = static_cast<size_t>(block.id);
-  SDB_ENSURE(id < _ranges.size() && _in,
+  SDB_ENSURE(id < _ranges.size() && _in.File(),
              "ReadContext::Read: unregistered block ", block.id);
   const auto [offset, size] = _ranges[id];
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");
-  if (Maps(offset, block.Size())) {
-    block.Read(context, *_mapping, offset);
+  if (!block.OwnsInternalBuffer()) {
     return;
   }
-  _in->ReadData(offset, block.InternalBuffer(), size);
+  _in.ReadData(offset, block.InternalBuffer(), size);
 }
 
 void ReadContext::ReadBlocks(duckdb::QueryContext /*context*/,

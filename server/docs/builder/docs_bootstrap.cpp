@@ -25,14 +25,18 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/query_context.hpp>
+#include <duckdb/main/database.hpp>
 #include <exception>
+#include <iresearch/store/storage.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "docs/builder/docs_loader.h"
-#include "utils/file_utils.h"
 
 ABSL_FLAG(std::string, build_docs_index, "",
           "Index the documentation corpus named by --docs_corpus into this "
@@ -77,9 +81,12 @@ std::optional<int> RunDocsBootstrap() {
   const auto path = absl::GetFlag(FLAGS_docs_corpus);
   std::string corpus;
   try {
-    corpus = utils::file_utils::Slurp(path);
+    corpus = irs::ReadWhole<std::string>(
+      duckdb::QueryContext{},
+      irs::DuckDBEngine::Instance().instance().GetInternalFileSystem(), path);
   } catch (const std::exception& e) {
-    SDB_ERROR(STARTUP, "cannot read the docs corpus '", path, "': ", e.what());
+    SDB_ERROR(STARTUP, "cannot read the docs corpus '", path,
+              "': ", duckdb::ErrorData{e}.RawMessage());
     return EXIT_FAILURE;
   }
   std::vector<Doc> docs;

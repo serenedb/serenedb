@@ -44,7 +44,7 @@ class TermBlock : public irs::detail::PostingBatch<InputType, true> {
  public:
   static constexpr uint32_t kFill = doc_limits::kBlockSize;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {

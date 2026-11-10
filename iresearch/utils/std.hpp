@@ -53,11 +53,6 @@ constexpr typename ReverseIterator::iterator_type ToForward(
   return --(it.base());
 }
 
-template<typename Iterator>
-constexpr std::reverse_iterator<Iterator> MakeReverseIterator(Iterator it) {
-  return std::reverse_iterator<Iterator>(it);
-}
-
 template<typename Container, typename Iterator>
 void SwapRemove(Container& cont, Iterator it) {
   SDB_ASSERT(!cont.empty());

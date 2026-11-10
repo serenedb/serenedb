@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <filesystem>
@@ -48,7 +49,6 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -181,7 +181,6 @@ struct Field {
 };
 
 struct Index {
-  std::unique_ptr<irs::MMapDirectory> dir;
   irs::DirectoryReader reader;
 };
 
@@ -198,15 +197,14 @@ const Index& IndexOf(size_t dictionary) {
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   index = std::make_unique<Index>();
-  index->dir = std::make_unique<irs::MMapDirectory>(path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = path.string();
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.reader_options.scorer = &Bm25();
   writer_opts.norm_column_id = [](irs::field_id id) { return id + kNormBase; };
-  auto writer =
-    irs::IndexWriter::Make(*index->dir, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
   auto plain_tokens = spec.make();
   auto positional_tokens = spec.make();
   Field plain{.tokenizer = plain_tokens.get(),
@@ -237,8 +235,7 @@ const Index& IndexOf(size_t dictionary) {
     writer->RefreshCommit();
   }
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  index->reader = irs::DirectoryReader{*index->dir, reader_opts};
+  index->reader = irs::DirectoryReader{*db, fs, root, reader_opts};
   std::fprintf(stderr, "[index] %-8s %zu segments\n", spec.name,
                index->reader.size());
   return *index;

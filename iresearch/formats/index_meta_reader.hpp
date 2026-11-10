@@ -25,12 +25,14 @@
 #include <absl/functional/any_invocable.h>
 
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 
 namespace irs {
 
-struct Directory;
 struct IndexMeta;
 
 using MetaPayloadReader = absl::AnyInvocable<void(duckdb::BinaryDeserializer&)>;
@@ -41,15 +43,18 @@ uint64_t ParseGeneration(std::string_view file) noexcept;
 
 uint64_t ParsePendingGeneration(std::string_view file) noexcept;
 
-bool LastFile(const Directory& dir, std::string& name);
+std::optional<std::string> LastFile(duckdb::FileSystem& fs,
+                                    std::string_view root);
 
-bool LastPendingFile(const Directory& dir, std::string& name);
+std::optional<std::string> LastPendingFile(duckdb::FileSystem& fs,
+                                           std::string_view root);
 
-void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
+void Read(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+          std::string_view root, IndexMeta& meta, std::string_view filename,
           MetaPayloadReader payload = {});
 
-void ReadPayload(const Directory& dir, std::string_view filename,
-                 MetaPayloadReader payload);
+void ReadPayload(duckdb::FileSystem& fs, std::string_view root,
+                 std::string_view filename, MetaPayloadReader payload);
 
 }  // namespace index_meta
 }  // namespace irs

@@ -66,6 +66,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
 #include "typed_terms.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -415,7 +416,7 @@ class TokenizedField final : public tests::Ifield {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
   bool Write(irs::DataOutput& out) const final {
-    irs::WriteStr(out, _value);
+    tests::WriteStr(out, _value);
     return true;
   }
 
@@ -1348,7 +1349,7 @@ TEST_P(ScorePruneScoringTestCase, TableFilteredTopMatchesFilteredRanking) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(ScorePruneScoringTest, ScorePruneScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

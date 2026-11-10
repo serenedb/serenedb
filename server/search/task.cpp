@@ -31,9 +31,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <exception>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>

@@ -52,7 +52,7 @@ class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
 
   PostingPrunedDisj() = default;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, const SubReader& segment,
                const TermReader& field, const detail::ScoreArgs& args) {
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
@@ -61,7 +61,7 @@ class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
     }
   }
 
-  PostingPrunedDisj(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingPrunedDisj(const PostingMeta& meta, const InputFile& doc_in,
                     IndexFeatures layout, const SubReader& segment,
                     const TermReader& field, const detail::ScoreArgs& args) {
     Prepare(meta, doc_in, layout, segment, field, args);

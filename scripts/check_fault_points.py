@@ -30,8 +30,10 @@ RECOVERY_DIR = "tests/sqllogic/recovery"
 SOURCE_DIRS = ("server", "iresearch")
 DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
-DUCKDB_FAULTS = frozenset({"alter_log_without_dependencies", "slow_expression_bind"})
-DUCKDB_PARK_FAULTS = frozenset({"pause_checkpoint", "pause_wal_sync"})
+DUCKDB_FAULTS = frozenset({"alter_log_without_dependencies", "remote_write_cache_block", "slow_expression_bind"})
+DUCKDB_PARK_FAULTS = frozenset(
+    {"block_load_before_loaded", "block_unload_before_temporary_write", "pause_checkpoint", "pause_wal_sync"}
+)
 TEST_DIR = "tests"
 
 TEST_EXTS = (".test", ".test_slow")
@@ -128,6 +130,10 @@ def lineno(text, pos):
     return text.count("\n", 0, pos) + 1
 
 
+def may_name_faults(text):
+    return "FAIL" in text or "Fail" in text or "FaultPoints" in text
+
+
 def scan_sources(dirs):
     # Substring pre-filters gate the regex: the bulk of the tree (notably the
     # ~630MB of sqlite-derived .test_slow files) contains no fault points, and a
@@ -136,7 +142,7 @@ def scan_sources(dirs):
     parks = set()
     for path in (p for d in dirs for p in walk_files(d, SOURCE_EXTS)):
         text = read(path)
-        if "FAIL" not in text and "Fail" not in text:
+        if not may_name_faults(text):
             continue
         for m in SOURCE_DEF.finditer(text):
             faults.setdefault(m.group(1), f"{rel(path)}:{lineno(text, m.start())}")
@@ -182,7 +188,7 @@ def main():
     for path in walk_files(TEST_DIR, TESTNET_EXTS):
         text = read(path)
         has_set = "sdb_faults" in text
-        has_lit = "FAIL" in text or "Fail" in text
+        has_lit = may_name_faults(text)
         if not has_set and not has_lit:
             continue
         normalized = rel(path)

@@ -37,7 +37,7 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
 
   DatabaseCatalogEntry(duckdb::Catalog& catalog,
                        duckdb::CreateDatabaseInfo& info,
-                       std::shared_ptr<DatabaseDirectory> directory = nullptr);
+                       std::shared_ptr<DatabaseDirectory> directory);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
@@ -52,9 +52,11 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   const std::shared_ptr<DatabaseDirectory>& Directory() const {
     return _directory;
   }
+  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
 
  private:
   duckdb::case_insensitive_map_t<duckdb::Value> _options;
+  duckdb::idx_t _tablespace;
   std::shared_ptr<DatabaseDirectory> _directory;
 };
 

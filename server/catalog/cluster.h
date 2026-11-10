@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <atomic>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -30,14 +28,19 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
-#include <filesystem>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "auth/role_closure.h"
+#include "catalog/database_directory.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "catalog/entry/tablespace.h"
 #include "catalog/snapshot.h"
 
 namespace sdb::catalog {
@@ -52,6 +55,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   std::string GetCatalogType() final { return kStorageType; }
   duckdb::idx_t DefaultSchemaOid() const final;
+  void Initialize(bool load_builtin) final;
 
   bool UsesCatalogLog() const final { return true; }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final {
@@ -72,9 +76,10 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CreateRoleInfo& info) final;
   bool IsPinnedEntry(const duckdb::CatalogEntry& entry) const final;
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeDatabaseEntry(
-    duckdb::CreateDatabaseInfo& info) final {
-    return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
-  }
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateDatabaseInfo& info) final;
+  duckdb::unique_ptr<duckdb::InCatalogEntry> MakeTablespaceEntry(
+    duckdb::CreateTablespaceInfo& info) final;
 
   void Bootstrap(duckdb::ClientContext& context);
   void Alter(duckdb::CatalogTransaction transaction,
@@ -95,6 +100,22 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info);
   void DropDatabase(duckdb::CatalogTransaction transaction,
                     duckdb::DropInfo& info) final;
+  duckdb::optional_ptr<duckdb::CatalogEntry> CreateTablespace(
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateTablespaceInfo& info) final;
+  void DropTablespace(duckdb::CatalogTransaction transaction,
+                      duckdb::DropInfo& info) final;
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> EntryById(
+    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+    duckdb::idx_t oid);
+  TablespaceCatalogEntry& Tablespace(duckdb::CatalogTransaction transaction,
+                                     duckdb::idx_t oid);
+  const std::string& TablespaceDirectoryOf(
+    duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
+  std::vector<std::string> TablespaceDirs(
+    duckdb::CatalogTransaction transaction);
+  void LeaveUnattached(duckdb::idx_t database) { _unattached.insert(database); }
 
   auth::RoleCache& Roles() noexcept { return _roles; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
@@ -102,7 +123,11 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
  private:
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
+  std::optional<duckdb::Identifier> UnattachedDatabase(
+    duckdb::CatalogTransaction transaction);
 
+  std::string _default_directory;
+  irs::containers::FlatHashSet<duckdb::idx_t> _unattached;
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   bool _compactable = false;
@@ -115,25 +140,12 @@ ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();
 
-inline bool ReadDatabase(
-  std::string_view name,
-  absl::FunctionRef<void(const DatabaseCatalogEntry&)> read) {
+template<typename Entry>
+bool ReadEntry(std::string_view name, const auto& read) {
   auto& cluster = ClusterOf();
-  return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+  return cluster.GetCatalogSet(Entry::Type)
     .ReadEntry(cluster.LoginTransaction(), duckdb::Identifier{name},
-               [&](duckdb::CatalogEntry& entry) {
-                 read(entry.Cast<DatabaseCatalogEntry>());
-               });
-}
-
-inline bool ReadRole(std::string_view name,
-                     absl::FunctionRef<void(const RoleCatalogEntry&)> read) {
-  auto& cluster = ClusterOf();
-  return cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-    .ReadEntry(cluster.LoginTransaction(), duckdb::Identifier{name},
-               [&](duckdb::CatalogEntry& entry) {
-                 read(entry.Cast<RoleCatalogEntry>());
-               });
+               [&](duckdb::CatalogEntry& entry) { read(entry.Cast<Entry>()); });
 }
 
 }  // namespace sdb::catalog

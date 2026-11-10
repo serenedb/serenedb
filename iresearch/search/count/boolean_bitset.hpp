@@ -37,7 +37,7 @@ namespace irs::count {
 template<typename Table>
 class BooleanBitset : public Root {
  public:
-  BooleanBitset(detail::BitsetBuckets&& buckets, const IndexInput& doc,
+  BooleanBitset(detail::BitsetBuckets&& buckets, const InputFile& doc,
                 doc_id_t docs_count, Table table) noexcept
     : _buckets{std::move(buckets)},
       _doc{&doc},
@@ -88,7 +88,7 @@ class BooleanBitset : public Root {
   detail::BitsetBuckets _buckets;
   detail::BitsetStorage _set;
   bool _built = false;
-  const IndexInput* _doc;
+  const InputFile* _doc;
   doc_id_t _docs_count;
   [[no_unique_address]] detail::Narrowing<Table> _table;
 };
@@ -103,7 +103,7 @@ inline constexpr FoldEmit kFoldEmit<count::Root::ptr>{0.3, 1.0, false};
 
 template<>
 inline count::Root::ptr MakeBitsetNode<count::Root::ptr>(
-  BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
+  BitsetBuckets&& buckets, const InputFile& doc, doc_id_t docs_count,
   TableFilter* table) {
   if (table != nullptr) {
     return memory::make_managed<count::BooleanBitset<TableFilter*>>(

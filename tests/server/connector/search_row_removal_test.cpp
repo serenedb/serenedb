@@ -27,6 +27,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/wal_type.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <future>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -37,7 +38,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/file_output.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iterator>
@@ -72,8 +73,6 @@ using test::OneRowSegments;
 
 irs::IndexWriterOptions WriterOptions() {
   irs::IndexWriterOptions options;
-  options.db = &EngineDb();
-  options.reader_options.db = &EngineDb();
   options.key_column = term_dict::kPKFieldId;
   return options;
 }
@@ -150,10 +149,14 @@ class SearchRowRemovalTest : public ::testing::Test {
  protected:
   void SetUp() override { Open(irs::kOmCreate); }
 
-  void TearDown() override { _writer.reset(); }
+  void TearDown() override {
+    _writer.reset();
+    _fs.RemoveDirectory(_root);
+  }
 
   void Open(irs::OpenMode mode) {
-    _writer = irs::IndexWriter::Make(_dir, mode, WriterOptions());
+    _writer =
+      irs::IndexWriter::Make(EngineDb(), _fs, _root, mode, WriterOptions());
   }
 
   void Reopen() {
@@ -338,7 +341,8 @@ class SearchRowRemovalTest : public ::testing::Test {
     EXPECT_TRUE(std::ranges::equal(_model, live));
   }
 
-  irs::MemoryDirectory _dir;
+  duckdb::FileSystem& _fs = duckdb::FileSystem::GetFileSystem(EngineDb());
+  std::string _root = test::MemoryRoot("search_row_removal");
   irs::IndexWriter::ptr _writer;
   std::set<int64_t> _model;
 };
@@ -483,7 +487,9 @@ TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
 constexpr uint64_t kGone = 1000000;
 constexpr uint64_t kAlsoGone = 1000001;
 
-TEST(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
+class ReplayRemovalTest : public test::OneRowSegmentsTest {};
+
+TEST_F(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
   const auto live = IdOf(OneRowSegments()[2]);
   const auto removal =
     search::ReplayRemoval(Rows({{live, 1}}), OneRowSegments(), {});
@@ -496,7 +502,7 @@ TEST(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
             removal->groups[0].maps);
 }
 
-TEST(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
+TEST_F(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
   const auto live = IdOf(OneRowSegments()[3]);
   MapsBySource maps;
   maps.emplace(
@@ -515,12 +521,12 @@ TEST(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
   EXPECT_TRUE(removal->groups[0].docs.Contains(6));
 }
 
-TEST(ReplayRemovalTest, AGoneSegmentWithoutMapsIsDropped) {
+TEST_F(ReplayRemovalTest, AGoneSegmentWithoutMapsIsDropped) {
   EXPECT_TRUE(search::ReplayRemoval(Rows({{kGone, 1}}), OneRowSegments(), {})
                 ->groups.empty());
 }
 
-TEST(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
+TEST_F(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
   const auto live = IdOf(OneRowSegments()[2]);
   MapsBySource maps;
   maps.emplace(
@@ -533,7 +539,7 @@ TEST(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
   EXPECT_EQ(live, removal->groups[0].segment);
 }
 
-TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
+TEST_F(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
   const auto first = IdOf(OneRowSegments()[1]);
   const auto second = IdOf(OneRowSegments()[4]);
   MapsBySource maps;
@@ -556,7 +562,7 @@ TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
   EXPECT_TRUE(removal->groups[1].docs.Contains(5));
 }
 
-TEST(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
+TEST_F(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
   const auto first = IdOf(OneRowSegments()[1]);
   const auto second = IdOf(OneRowSegments()[4]);
   MapsBySource maps;
@@ -737,12 +743,14 @@ TEST_F(SearchRowRemovalTest, LongRunsOfPositionsRemoveTheirRows) {
 TEST_F(SearchRowRemovalTest, SegmentIdsPast32BitsAreRemovedByPosition) {
   _writer.reset();
   {
-    auto out = _dir.create("_4294967294");
+    auto out = irs::FileOutput::Open(_fs, _root, "_4294967294", {}, false);
     ASSERT_TRUE(out);
+    out->Close();
   }
   auto options = WriterOptions();
   options.cleanup_on_open = false;
-  _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+  _writer = irs::IndexWriter::Make(EngineDb(), _fs, _root, irs::kOmCreate,
+                                   std::move(options));
   InsertRange(0, 100);
   InsertRange(100, 100);
   const auto snapshot = _writer->GetSnapshot();
@@ -863,7 +871,7 @@ TEST_F(SearchRowRemovalTest, RowIdKeysPassACopyTheirCommitCarriesOut) {
     resume.set_value();
     merge.join();
     EXPECT_EQ(irs::CompactionError::Pending, merged.error);
-    _writer->RefreshFinish();
+    _writer->RefreshFinishRetryable();
     _model.insert(base + 6);
     Commit(irs::KeyRemoval{keys}, keys);
     ExpectModel();

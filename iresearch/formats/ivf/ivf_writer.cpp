@@ -320,7 +320,7 @@ TermOnlyIterator::ptr IvfTermReader::iterator() const {
   return memory::to_managed<TermOnlyIterator>(*_it);
 }
 
-void IvfTermReader::WriteTermPayload(IndexOutput& out,
+void IvfTermReader::WriteTermPayload(DataOutput& out,
                                      std::span<const doc_id_t> docs) {
   SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
   const size_t cluster = _term_idx++;
@@ -353,7 +353,7 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   }
 }
 
-void IvfTermReader::Finish(IndexOutput& out) {
+void IvfTermReader::Finish(DataOutput& out) {
   SDB_ASSERT(_qw);
   _qw->Finish(out);
 }
@@ -384,12 +384,9 @@ void IvfWriter::Flush() {
   const auto tree_span = _result.data.centroids.Serialize(out);
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
-  const uint64_t stats_byte_size = out.Position() - stats_offset;
   _idx->AddIvf(_info.index_id, IvfCentroidMeta{
                                  .tree_offset = tree_span.offset,
-                                 .tree_byte_size = tree_span.byte_size,
                                  .stats_offset = stats_offset,
-                                 .stats_byte_size = stats_byte_size,
                                  .root_byte_size = tree_span.root_byte_size,
                                });
 }

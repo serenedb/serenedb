@@ -25,7 +25,6 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <limits>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -35,7 +34,8 @@ namespace sdb::connector {
 namespace {
 
 bool Resumes(const ScanGlobalState& g, const StreamLocalState& l) noexcept {
-  return l.root_seg == l.unit.seg && g.RowsOf(l.unit).begin >= l.stop_row;
+  return l.hit_batcher->Bound(l.unit.seg) &&
+         g.RowsOf(l.unit).begin >= l.stop_row;
 }
 
 void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
@@ -47,18 +47,17 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   l.stop_row = rows.end;
   l.unit_done = false;
   l.started = true;
-  if (resume) {
-    return;
+  if (!resume) {
+    if (g.needs_lookup && !SegmentPkColumn(*g.reader, seg_idx).second) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("inverted-index segment has no stored PK column but the "
+                "query needs to map hits back to source rows"));
+    }
+    SDB_ASSERT(l.hit_batcher->Empty());
+    l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
+                                &l.filter_states, l.seg_cls.active);
   }
-  if (g.needs_lookup && !SegmentPkColumn(*g.reader, seg_idx).second) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("inverted-index segment has no stored PK column but the query "
-              "needs to map hits back to source rows"));
-  }
-  SDB_ASSERT(l.hit_batcher->Empty());
-  l.hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
-                              &l.filter_states, l.seg_cls.active);
   const auto& seg_query = EnsureSegmentQuery(g, l, seg_idx);
   const auto span = g.UnitSpan(l.unit);
   l.scored = g.ScanScore();
@@ -76,7 +75,6 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
     EnsurePlanned(root != nullptr);
     l.root = std::move(root);
   }
-  l.root_seg = seg_idx;
 }
 
 void PushHits(StreamLocalState& l) {

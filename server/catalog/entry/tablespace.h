@@ -1,0 +1,51 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/parser/parsed_data/create_tablespace_info.hpp>
+#include <string>
+#include <string_view>
+
+namespace sdb::catalog {
+
+void RequireUnreservedTablespaceName(std::string_view name);
+
+class TablespaceCatalogEntry final : public duckdb::InCatalogEntry {
+ public:
+  TablespaceCatalogEntry(duckdb::Catalog& catalog,
+                         duckdb::CreateTablespaceInfo& info,
+                         std::string directory);
+
+  duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
+    duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  std::string ToSQL() const final { return GetInfo()->ToString(); }
+
+  const std::string& Location() const noexcept { return _location; }
+  const std::string& Directory() const noexcept { return _directory; }
+
+ private:
+  std::string _location;
+  std::string _directory;
+};
+
+}  // namespace sdb::catalog

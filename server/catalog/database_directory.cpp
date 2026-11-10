@@ -22,22 +22,27 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/functional/any_invocable.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
-#include <cerrno>
-#include <cstring>
+#include <atomic>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
-#include <system_error>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 #include <vector>
 
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
-#include "utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -91,84 +96,155 @@ void ResumeRemovals() {
 }
 
 void CreateDirectory(const std::filesystem::path& path) {
-  std::error_code ec;
-  if (!std::filesystem::create_directory(path, ec)) {
-    utils::file_utils::ThrowFileError("create directory", path.string(),
-                                      ec ? ec.value() : EEXIST);
-  }
-  utils::file_utils::SyncDirectory(path.parent_path());
-}
-
-void RemoveDirectory(const std::filesystem::path& path) {
-  std::error_code ec;
-  SDB_IF_FAILURE("pause_removal_midway") {
-    std::vector<std::filesystem::path> files;
-    for (const auto& entry :
-         std::filesystem::recursive_directory_iterator{path, ec}) {
-      if (entry.is_regular_file()) {
-        files.push_back(entry.path());
-      }
-    }
-    if (!files.empty()) {
-      std::filesystem::remove(*absl::c_min_element(files));
-    }
-    SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
-  }
-  std::filesystem::remove_all(path, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
+  if (!StorageFileSystem().CreateDirectoryExtended(
+        path.native(),
+        {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true})) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("could not create directory \"", path.string(),
+                            "\": it already exists"));
   }
 }
 
-void RemoveTree(const std::filesystem::path& path) noexcept {
+bool RemoveTree(const std::string& path) noexcept {
   duckdb::TaskScheduler::BlockingScope blocking;
-  RemoveDirectory(path);
+  try {
+    auto& fs = StorageFileSystem();
+    SDB_IF_FAILURE("pause_removal_midway") {
+      std::vector<std::string> files;
+      fs.ListFiles(path,
+                   [&](duckdb::OpenFileInfo& info) {
+                     files.push_back(std::move(info.path));
+                   },
+                   nullptr, {.recursive = true});
+      if (!files.empty()) {
+        fs.RemoveFile(fs.JoinPath(path, *absl::c_min_element(files)));
+      }
+      SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
+    }
+    fs.RemoveDirectory(path);
+    if (!fs.DirectoryExists(path)) {
+      return true;
+    }
+    SDB_WARN(GENERAL, "could not remove '", path, "'");
+  } catch (const std::exception& e) {
+    SDB_WARN(GENERAL, "could not remove '", path,
+             "': ", duckdb::ErrorData{e}.RawMessage());
+  }
+  return false;
 }
 
-DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
-  : _path{std::move(path)} {}
+duckdb::FileSystem& StorageFileSystem() {
+  return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
+}
 
-DatabaseDirectory::~DatabaseDirectory() {
-  if (_dropped.load(std::memory_order_acquire)) {
-    RunRemoval([path = std::move(_path)] { RemoveTree(path); });
+std::optional<duckdb::idx_t> OidFromName(std::string_view name) {
+  duckdb::idx_t oid = 0;
+  if (!absl::c_all_of(name, absl::ascii_isdigit) ||
+      !absl::SimpleAtoi(name, &oid)) {
+    return std::nullopt;
   }
+  return oid;
+}
+
+StorageDirectory::~StorageDirectory() {
+  if (!_dropped.load(std::memory_order_acquire)) {
+    return;
+  }
+  RunRemoval([path = std::move(_path), beside = std::move(_beside),
+              parent = std::move(_parent)] {
+    RemoveTree(path);
+    for (const auto& directory : beside) {
+      RemoveTree(directory);
+    }
+  });
+}
+
+void StorageDirectory::MarkDropped(std::vector<std::string> beside) noexcept {
+  _beside = std::move(beside);
+  _dropped.store(true, std::memory_order_release);
+}
+
+std::vector<StorageEntry> ListStorages(const std::string& root) {
+  std::vector<StorageEntry> found;
+  StorageFileSystem().ListFiles(
+    root, [&](const std::string& name, bool is_directory) {
+      if (!is_directory) {
+        return;
+      }
+      if (const auto oid = OidFromName(name)) {
+        found.push_back({.oid = *oid, .path = absl::StrCat(root, "/", name)});
+      }
+    });
+  return found;
+}
+
+bool HoldsFiles(const StorageEntry& entry) {
+  bool holds = false;
+  StorageFileSystem().ListFiles(
+    entry.path, [&](const std::string&, bool) { holds = true; });
+  return holds;
+}
+
+StorageSize StorageBytes(const std::string& directory) {
+  StorageSize size;
+  StorageFileSystem().ListFiles(
+    directory,
+    [&](duckdb::OpenFileInfo& info) {
+      duckdb::idx_t bytes = 0;
+      if (info.extended_info &&
+          info.extended_info->TryGetOption("file_size", bytes)) {
+        (absl::StrContains(info.path, '/') ? size.nested : size.files) += bytes;
+      }
+    },
+    nullptr, {.recursive = true});
+  return size;
+}
+
+void RemoveUnowned(std::span<const StorageEntry> entries,
+                   const irs::containers::FlatHashSet<duckdb::idx_t>& owned) {
+  for (const auto& entry : entries) {
+    if (owned.contains(entry.oid)) {
+      continue;
+    }
+    RemoveTree(entry.path);
+  }
+}
+
+DatabaseDirectory::DatabaseDirectory(duckdb::idx_t oid,
+                                     std::filesystem::path path,
+                                     std::string_view tablespace)
+  : _oid{oid},
+    _path{std::move(path)},
+    _tablespace{tablespace},
+    _storage{std::make_shared<StorageDirectory>(_path.string())} {}
+
+void DatabaseDirectory::MarkDropped() noexcept {
+  std::vector<std::string> beside;
+  const auto add = [&](std::string_view tablespace) {
+    auto directory = absl::StrCat(tablespace, "/", _oid);
+    if (directory != _path.native() && !absl::c_contains(beside, directory)) {
+      beside.push_back(std::move(directory));
+    }
+  };
+  if (!_tablespace.empty()) {
+    add(_tablespace);
+  }
+  for (const auto& tablespace : _tablespaces) {
+    add(tablespace);
+  }
+  _storage->MarkDropped(std::move(beside));
 }
 
 std::string DatabaseDirectory::DataFile() const {
   return (_path / kDataFile).string();
 }
 
-std::filesystem::path DatabaseDirectory::StoragePath(duckdb::idx_t oid) const {
-  return _path / absl::StrCat(oid);
-}
-
-void DatabaseDirectory::Create() const { CreateDirectory(_path); }
-
-std::filesystem::path DatabaseDirectory::CreateStorage(
-  duckdb::idx_t oid) const {
-  auto path = StoragePath(oid);
-  CreateDirectory(path);
-  return path;
-}
-
-std::optional<std::filesystem::path> DatabaseDirectory::OpenStorage(
-  duckdb::idx_t oid) const {
-  auto path = StoragePath(oid);
-  std::error_code ec;
-  if (std::filesystem::is_directory(path, ec)) {
-    return path;
-  }
-  if (ec && ec != std::errc::no_such_file_or_directory) {
-    utils::file_utils::ThrowFileError("open directory", path.string(), ec);
-  }
-  return std::nullopt;
-}
-
-void DatabaseDirectory::RemoveStorage(
-  std::shared_ptr<DatabaseDirectory> directory, duckdb::idx_t oid) {
-  RunRemoval([directory = std::move(directory), oid] {
-    RemoveTree(directory->StoragePath(oid));
-  });
+std::unique_ptr<StorageDirectory> DatabaseDirectory::StorageOf(
+  std::string_view tablespace, duckdb::idx_t oid) const {
+  return std::make_unique<StorageDirectory>(
+    tablespace.empty() ? absl::StrCat(_path.native(), "/", oid)
+                       : absl::StrCat(tablespace, "/", _oid, "/", oid),
+    _storage);
 }
 
 }  // namespace sdb::catalog

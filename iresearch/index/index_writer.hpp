@@ -31,6 +31,8 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -48,16 +50,6 @@
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/index/segment_writer_options.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/containers/flat_hash_set.hpp"
-#include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/object_pool.hpp"
-
-namespace duckdb {
-
-class DatabaseInstance;
-}
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -67,11 +59,15 @@ class DatabaseInstance;
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
+#include "iresearch/index/segment_writer_options.hpp"
+#include "iresearch/store/index_files.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/object_pool.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
-
-struct Directory;
 
 enum OpenMode {
   kOmCreate = 1,
@@ -128,11 +124,7 @@ struct IndexWriterOptions : public SegmentOptions {
 
   size_t segment_pool_size = 128;
 
-  bool lock_repository = true;
-
   bool cleanup_on_open = true;
-
-  duckdb::DatabaseInstance* db = nullptr;
 
   ColumnOptionsProvider column_options;
   NormColumnIdProvider norm_column_id;
@@ -368,8 +360,6 @@ class IndexWriter : private util::Noncopyable {
 
   using ptr = std::shared_ptr<IndexWriter>;
 
-  static constexpr std::string_view kWriteLockName = "write.lock";
-
   ~IndexWriter() noexcept;
 
   auto GetSnapshot() const noexcept {
@@ -458,8 +448,9 @@ class IndexWriter : private util::Noncopyable {
   void ReplaceSegments(std::span<const SubReader* const> replaced,
                        std::vector<Replacement> replacements);
 
-  static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
-                               IndexWriterOptions opts = {});
+  static IndexWriter::ptr Make(duckdb::DatabaseInstance& db,
+                               duckdb::FileSystem& fs, std::string_view root,
+                               OpenMode mode, IndexWriterOptions opts = {});
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
 
@@ -473,9 +464,9 @@ class IndexWriter : private util::Noncopyable {
     Abort();
   }
 
-  void RefreshFinish() {
+  void RefreshFinishRetryable() {
     std::lock_guard lock{_commit_lock};
-    Finish();
+    Finish(false);
   }
 
   bool RefreshCommit(const CommitInfo& info = {}) {
@@ -487,8 +478,8 @@ class IndexWriter : private util::Noncopyable {
 
   bool FlushRequired(const SegmentWriter& writer) const noexcept;
 
-  IndexWriter(ConstructToken, IndexLock::ptr&& lock,
-              IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
+  IndexWriter(ConstructToken, duckdb::DatabaseInstance& db,
+              duckdb::FileSystem& fs, std::string_view root,
               size_t segment_pool_size, const SegmentOptions& segment_limits,
               MetaPayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
@@ -573,7 +564,9 @@ class IndexWriter : private util::Noncopyable {
     using ptr = std::unique_ptr<SegmentContext>;
 
     std::atomic_size_t buffered_docs{0};
-    RefTrackingDirectory dir;
+    RefTracker refs;
+    duckdb::FileSystem& fs;
+    std::string root;
 
     ManagedVector<Queued> queries;
     ManagedVector<FlushedSegment> flushed;
@@ -590,10 +583,14 @@ class IndexWriter : private util::Noncopyable {
     IndexSegment writer_meta;
 
     static std::unique_ptr<SegmentContext> make(
-      Directory& dir, segment_meta_generator_t&& meta_generator,
+      duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+      std::string_view root, IndexFileRefs& file_refs,
+      segment_meta_generator_t&& meta_generator,
       const SegmentWriterOptions& options);
 
-    SegmentContext(Directory& dir, segment_meta_generator_t&& meta_generator,
+    SegmentContext(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                   std::string_view root, IndexFileRefs& file_refs,
+                   segment_meta_generator_t&& meta_generator,
                    const SegmentWriterOptions& options);
 
     void Rollback() noexcept;
@@ -661,7 +658,7 @@ class IndexWriter : private util::Noncopyable {
   };
 
   struct FlushContext {
-    RefTrackingDirectory::ptr dir;
+    RefTracker refs;
     absl::Mutex context_mutex;
     FlushContext* next{nullptr};
 
@@ -688,7 +685,7 @@ class IndexWriter : private util::Noncopyable {
     // views already handed to segment_mask.
     std::deque<std::string> masked_names;
 
-    FlushContext() = default;
+    explicit FlushContext(IndexFileRefs& file_refs) : refs{file_refs} {}
 
     ~FlushContext() noexcept { Reset(); }
 
@@ -764,6 +761,9 @@ class IndexWriter : private util::Noncopyable {
   SegmentWriterOptions GetSegmentWriterOptions(
     bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
+  Queued::Adopted OpenAdopted(std::string_view meta_file,
+                              const IndexReaderOptions& options) const;
+
   uint64_t NextSegmentId() noexcept;
   void InitMeta(IndexMeta& meta) const;
 
@@ -772,12 +772,12 @@ class IndexWriter : private util::Noncopyable {
   }
 
   bool Start(const CommitInfo& info);
-  void Finish();
+  void Finish(bool abort_on_failure = true);
   void Abort() noexcept;
 
   IndexFeatures _score_bound_features{};
   ScorerPtr _topk_scorer;
-  duckdb::DatabaseInstance* _db = nullptr;
+  duckdb::DatabaseInstance& _db;
   const AnnBuildEnv* _ann_env = nullptr;
   field_id _key_column = field_limits::invalid();
   std::unique_ptr<HnswBases> _hnsw_bases;
@@ -788,7 +788,9 @@ class IndexWriter : private util::Noncopyable {
     CompactingSegments segments;
     uint64_t floor = 0;
   } _compacting;
-  Directory& _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  std::shared_ptr<IndexFileRefs> _refs;
   std::atomic<FlushContext*> _flush_context;
   std::shared_ptr<const DirectoryReaderImpl> _committed_reader;
   PendingState _pending_state;
@@ -799,8 +801,6 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
   uint64_t _last_gen;
   IndexMetaWriter _writer;
-  IndexLock::ptr _write_lock;
-  IndexFileRefs::ref_t _write_lock_file_ref;
   std::array<FlushContext, 2> _flush_contexts;
 };
 

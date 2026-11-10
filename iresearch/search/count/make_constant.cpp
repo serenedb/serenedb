@@ -51,7 +51,6 @@ template<typename InputType>
 class TermRange : public detail::PostingBatch<InputType, false> {
   using Base = detail::PostingBatch<InputType, false>;
 
-  using Base::_in;
   using Base::_last;
   using Base::_left_in_list;
   using Base::_walk;
@@ -61,7 +60,7 @@ class TermRange : public detail::PostingBatch<InputType, false> {
   using Base::SkipFreqs;
 
  public:
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                IndexFeatures layout, bool bounds, bool freq) {
     _docs_count = meta.docs_count;
     this->SetFreqLen(freq);
@@ -79,7 +78,7 @@ class TermRange : public detail::PostingBatch<InputType, false> {
       }
       return _docs_count - Below(_cached, doc);
     }
-    const auto left = _walk.Seek(doc, *_in);
+    const auto left = _walk.Seek(doc, In());
     if (left == 0) {
       return 0;
     }
@@ -109,40 +108,10 @@ class TermRange : public detail::PostingBatch<InputType, false> {
 
 class TermCount : public Root {
  public:
-  TermCount(const detail::PostingClause& posting, const Context& ctx) noexcept
-    : _posting{posting}, _ctx{ctx} {}
+  explicit TermCount(const detail::PostingClause& posting) noexcept
+    : _posting{posting} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
-    if (_ctx.table != nullptr) {
-      if (!_exact) {
-        _exact = MakeTermWalk(_posting, _ctx);
-      }
-      return _exact->Run(min, max);
-    }
-    if (!_ctx.partial) {
-      return Count(min, max);
-    }
-    if (_pending_end == min) {
-      _pending_end = max;
-      return 0;
-    }
-    const auto flushed = Finish();
-    _pending_begin = min;
-    _pending_end = max;
-    return flushed;
-  }
-
-  uint64_t Finish() final {
-    if (_pending_begin == _pending_end) {
-      return 0;
-    }
-    const auto count = Count(_pending_begin, _pending_end);
-    _pending_begin = _pending_end = doc_limits::invalid();
-    return count;
-  }
-
- private:
-  uint64_t Count(doc_id_t min, doc_id_t max) {
     const auto count = _posting.state.cookie.docs_count;
     const bool from_start = min == doc_limits::min();
     const bool to_end = doc_limits::eof(max);
@@ -153,20 +122,13 @@ class TermCount : public Root {
       const auto doc = doc_limits::min() + _posting.state.cookie.doc_delta;
       return min <= doc && doc < max;
     }
-    const auto above = from_start ? count : Rank(min);
-    const auto below = to_end ? 0 : Rank(max);
+    const auto above = from_start ? count : Source().AtLeast(min);
+    const auto below = to_end ? 0 : Source().AtLeast(max);
     SDB_ASSERT(above >= below);
     return above - below;
   }
 
-  uint64_t Rank(doc_id_t doc) {
-    if (doc != _rank_doc) {
-      _rank_doc = doc;
-      _rank = Source().AtLeast(doc);
-    }
-    return _rank;
-  }
-
+ private:
   struct RankSource {
     virtual ~RankSource() = default;
     virtual uint64_t AtLeast(doc_id_t doc) = 0;
@@ -182,8 +144,8 @@ class TermCount : public Root {
     if (!_ranks) {
       const auto& own = *_posting.state.reader;
       const auto& doc = *detail::DocOf(own);
-      _ranks = detail::ResolveInput(
-        doc, [&]<typename Input> -> std::unique_ptr<RankSource> {
+      _ranks =
+        ResolveInput(doc, [&]<typename Input> -> std::unique_ptr<RankSource> {
           auto out = std::make_unique<RankSourceOf<Input>>();
           out->impl.Prepare(_posting.state.cookie, doc, detail::LayoutOf(own),
                             detail::BoundsOf(own), detail::FreqOf(own));
@@ -194,13 +156,7 @@ class TermCount : public Root {
   }
 
   detail::PostingClause _posting;
-  Context _ctx;
-  Root::ptr _exact;
   std::unique_ptr<RankSource> _ranks;
-  doc_id_t _rank_doc = doc_limits::invalid();
-  uint64_t _rank = 0;
-  doc_id_t _pending_begin = doc_limits::invalid();
-  doc_id_t _pending_end = doc_limits::invalid();
 };
 
 class AllCount : public Root {
@@ -226,8 +182,6 @@ class Sum : public Root {
     return _lhs->Run(min, max) + _rhs->Run(min, max);
   }
 
-  uint64_t Finish() final { return _lhs->Finish() + _rhs->Finish(); }
-
  private:
   Root::ptr _lhs;
   Root::ptr _rhs;
@@ -239,9 +193,8 @@ Root::ptr MakeAllCount(doc_id_t count) {
   return memory::make_managed<AllCount>(count);
 }
 
-Root::ptr MakeTermCount(const detail::PostingClause& posting,
-                        const Context& ctx) {
-  return memory::make_managed<TermCount>(posting, ctx);
+Root::ptr MakeTermCount(const detail::PostingClause& posting) {
+  return memory::make_managed<TermCount>(posting);
 }
 
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
@@ -252,7 +205,7 @@ Root::ptr Family::MakePosting(const detail::PostingClause& posting,
                               const SubReader&, const Context& ctx,
                               ScoreMergeType) {
   if (ctx.table == nullptr) {
-    return memory::make_managed<TermCount>(posting, ctx);
+    return MakeTermCount(posting);
   }
   return MakeTermWalk(posting, ctx);
 }

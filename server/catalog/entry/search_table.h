@@ -186,6 +186,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   void ReplayAdoptSegments(duckdb::vector<std::string> segments) final;
 
   const auto& Storage() const noexcept { return _storage; }
+  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
   void RequireCurrentSchema() const;
 
  private:
@@ -245,6 +246,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   duckdb::ColumnList _columns;
   std::shared_ptr<search::Store> _storage;
   SearchTableOptions _options;
+  duckdb::idx_t _tablespace;
   uint64_t _schema_epoch = 0;
 };
 

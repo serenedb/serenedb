@@ -899,8 +899,7 @@ class Index : public tests::FamilyIndex {
     auto options = irs::tests::DefaultWriterOptions();
     options.reader_options.scorer = layout.bounds;
     options.norm_column_id = [](irs::field_id id) { return id + kNormBase; };
-    auto writer =
-      irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    auto writer = tests::MakeWriter(_dir, irs::kOmCreate, std::move(options));
     EXPECT_NE(nullptr, writer);
     Words plain;
     Words positional;

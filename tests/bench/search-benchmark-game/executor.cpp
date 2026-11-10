@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
@@ -43,7 +44,6 @@
 #include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <stdexcept>
 #include <tuple>
@@ -131,10 +131,10 @@ Executor::Executor(std::string_view path)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _dir{path},
-    _reader{irs::DirectoryReader(
-      _dir, {.scorer = _scorer_ptr,
-             .db = &::irs::DuckDBEngine::Instance().instance()})} {}
+    _reader{irs::DirectoryReader(::irs::DuckDBEngine::Instance().instance(),
+                                 duckdb::FileSystem::GetFileSystem(
+                                   ::irs::DuckDBEngine::Instance().instance()),
+                                 path, {.scorer = _scorer_ptr})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);

@@ -21,9 +21,13 @@
 #pragma once
 
 #include <array>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <memory>
 #include <span>
+#include <string>
 
 #include "executor.h"
 #include "line_source.h"
@@ -72,6 +76,7 @@ struct IndexBuilderOptions {
   bool compact_all = true;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   uint32_t segment_docs_max = 0;
+  bool settle = false;
 };
 
 class IndexBuilder {
@@ -81,17 +86,19 @@ class IndexBuilder {
 
   void IndexFrom(LineSource& source, BatchHandlerFactory factory);
 
-  irs::MMapDirectory& GetDirectory() { return _dir; }
   irs::IndexWriter& GetWriter() { return *_writer; }
   auto GetReader() { return _writer->GetSnapshot(); }
 
  private:
   void CompactAll();
+  void Settle();
 
   IndexBuilderOptions _opts;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::MMapDirectory _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  std::shared_ptr<irs::IndexFileRefs> _refs;
   irs::IndexWriter::ptr _writer;
 };
 

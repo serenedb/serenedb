@@ -16,6 +16,7 @@ add_executable(
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp
     duckdb_wal_block_reuse_test.cpp
+    index_durability_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
     meta_transaction_snapshot_test.cpp
@@ -77,7 +78,7 @@ add_executable(
 
 target_link_libraries(
     serenedb-tests
-    PRIVATE sereneserver gtest serene_docs_corpus
+    PRIVATE sereneserver gtest serene_docs_corpus iresearch-test-object-store
 )
 sdb_link_duckdb_extensions(serenedb-tests)
 

@@ -438,10 +438,11 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
   };
 }
 
-void FlushIndexSegment(Directory& dir, IndexSegment& segment,
+void FlushIndexSegment(duckdb::FileSystem& fs, std::string_view root,
+                       const FileObservers& observers, IndexSegment& segment,
                        bool increment_version) {
   PrepareFlush(segment, increment_version);
-  segment_meta::Write(dir, segment.filename, segment.meta);
+  segment_meta::Write(fs, root, observers, segment.filename, segment.meta);
 }
 
 }  // namespace irs::index_utils

@@ -22,16 +22,17 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
 #include <string_view>
 
 namespace irs {
 
-struct Directory;
 struct SegmentMeta;
 
 namespace segment_meta {
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename);
+void Read(duckdb::FileSystem& fs, std::string_view root, SegmentMeta& meta,
+          std::string_view filename);
 
 }  // namespace segment_meta
 }  // namespace irs

@@ -68,7 +68,7 @@ class RestoreTest : public ::testing::Test {
     WriteFile(Wal(".retained.1"), 10, '1');
     WriteFile(Wal(".retained.2"), 10, '2');
     for (const auto* name : {"segments_1", "segments_2", "segments_3",
-                             "pending_segments_4", "write.lock", "_1.data"}) {
+                             "pending_segments_4", "_1.data"}) {
       WriteFile(StoreDir() / name, 4, 'S');
     }
     WriteFile(_root / "recovery.signal", 0, ' ');
@@ -185,7 +185,6 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
   EXPECT_TRUE(Exists(StoreDir() / "_1.data"));
   EXPECT_FALSE(Exists(StoreDir() / "segments_3"));
   EXPECT_FALSE(Exists(StoreDir() / "pending_segments_4"));
-  EXPECT_FALSE(Exists(StoreDir() / "write.lock"));
 
   EXPECT_FALSE(Exists(_root / "recovery.signal"));
   EXPECT_FALSE(Exists(_root / "standby.signal"));
@@ -216,7 +215,6 @@ TEST_F(RestoreTest, AFailedCheckpointKeepsTheMainWalAndCutsTheCheckpointWal) {
   EXPECT_FALSE(Exists(Wal(".recovery")));
   EXPECT_TRUE(Exists(StoreDir() / "pending_segments_4"));
   EXPECT_FALSE(Exists(StoreDir() / "segments_3"));
-  EXPECT_FALSE(Exists(StoreDir() / "write.lock"));
 }
 
 TEST_F(RestoreTest, ARestartedRestoreFinishes) {

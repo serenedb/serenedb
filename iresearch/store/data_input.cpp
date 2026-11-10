@@ -23,139 +23,231 @@
 #include "data_input.hpp"
 
 #include <algorithm>
-#include <memory>
 
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
-#include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/std.hpp"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/math_utils.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
+namespace {
 
-void ReadOnce(IndexInput& in, byte_type* b, size_t count) {
+template<typename... Args>
+void TryPrefetch(const duckdb::shared_ptr<duckdb::ExternalFileCacheFile>& file,
+                 Args&&... args) noexcept {
+  try {
+    file->GetCache().Prefetch(file, std::forward<Args>(args)...);
+  } catch (...) {
+  }
+}
+
+}  // namespace
+
+void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
+  const auto* file = in.File();
+  if (!file) {
+    in.ReadData(b, count);
+    return;
+  }
   constexpr uint64_t kChunk = uint64_t{64} << 20;
   constexpr uint64_t kAhead = 2 * kChunk;
   const auto start = in.Position();
-  in.Prefetch(start, std::min<uint64_t>(count, kAhead));
+  const bool mapped = file->Contiguous();
+  if (mapped) {
+    file->Prefetch(start, std::min(count, kAhead));
+  }
   for (uint64_t done = 0; done < count;) {
-    const auto n = std::min<uint64_t>(count - done, kChunk);
-    if (done + kAhead < count) {
-      in.Prefetch(start + done + kAhead,
-                  std::min<uint64_t>(count - done - kAhead, kChunk));
+    const auto n = std::min(count - done, kChunk);
+    if (mapped && done + kAhead < count) {
+      file->Prefetch(start + done + kAhead,
+                     std::min(count - done - kAhead, kChunk));
     }
-    in.ReadData(start + done, b + done, n);
-    in.Evict(start + done, n);
+    in.ReadData(b + done, n);
+    file->Evict(start + done, n);
     done += n;
   }
-  in.Seek(start + count);
 }
 
-InputBuf::InputBuf(IndexInput* in) : _in(in) { SDB_ASSERT(_in); }
-
-std::streamsize InputBuf::xsgetn(InputBuf::char_type* c, std::streamsize size) {
-  _in->ReadData(reinterpret_cast<byte_type*>(c), size);
-  return size;
-}
-
-InputBuf::int_type InputBuf::underflow() {
-  // FIXME add 'peek()' function to 'index_input'
-  const auto ch = uflow();
-  if (EOF != ch) {
-    _in->Seek(_in->Position() - 1);
-  }
-  return ch;
-}
-
-InputBuf::int_type InputBuf::uflow() {
-  if (_in->IsEOF()) {
-    return EOF;
-  }
-  return traits_type::to_int_type(_in->ReadByte());
-}
-
-std::streamsize InputBuf::showmanyc() {
-  return _in->Length() - _in->Position();
-}
-
-byte_type BufferedIndexInput::ReadByte() {
-  if (_begin >= _end) {
-    Refill();
-  }
-
-  return *_begin++;
-}
-
-const byte_type* BufferedIndexInput::ReadVolatile(uint64_t count) {
-  if (count <= Remain()) {
-    auto begin = _begin;
-    _begin += count;
-    return begin;
-  }
-
-  if (count <= std::min(_buf_size, Length() - Position())) {
-    SeekInternal(Position());
-    Refill();
-
-    auto begin = _begin;
-    _begin += count;
-    return begin;
-  }
-
-  return nullptr;
-}
-
-void BufferedIndexInput::ReadData(byte_type* b, uint64_t count) {
-  SDB_ASSERT(_begin <= _end);
-
-  // read remaining data from buffer
-  const auto read = std::min(count, Remain());
-  if (read) {
-    std::memcpy(b, _begin, sizeof(byte_type) * read);
-    _begin += read;
-  }
-
-  if (read == count) {
-    return;  // it's enough for us
-  }
-
-  auto size = count - read;
-  b += read;
-  if (size < _buf_size) {  // refill buffer & copy
-    size = std::min(size, Refill());
-    std::memcpy(b, _begin, sizeof(byte_type) * size);
-    _begin += size;
-  } else {  // read directly to output buffer if possible
-    size = ReadInternal(b, size);
-    _start += (Offset() + size);
-    _begin = _end = _buf;  // will trigger refill on the next read
+InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
+  : _length{mapping->Size()},
+    _mapping{std::move(mapping)},
+    _paged{_mapping->OnDiskFile()} {
+  if (_length != 0) {
+    _span = {_mapping->GetData(0, _length), _length};
+    if (_paged) {
+      _residency.Reset(math::DivCeil64(_length, file_utils::kPage));
+    }
   }
 }
 
-uint64_t BufferedIndexInput::Refill() {
-  const auto data_start = this->Position();
-  const auto data_end = std::min(data_start + _buf_size, Length());
+InputFile::InputFile(
+  duckdb::shared_ptr<duckdb::ExternalFileCacheFile> blocks) noexcept
+  : _length{blocks->GetSize()}, _blocks{std::move(blocks)} {}
 
-  const ptrdiff_t data_size = data_end - data_start;
-  if (data_size <= 0) {
-    return 0;  // read past eof
+bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
+                             bool ahead) const {
+  SDB_ASSERT(position < _length);
+  if (!_blocks) {
+    block.start = 0;
+    return _span;
   }
-
-  SDB_ASSERT(_buf);
-  _begin = _buf;
-  _end = _begin + ReadInternal(_buf, data_size);
-  _start = data_start;
-
-  return data_size;
+  if (!block.pinned) {
+    block.pinned = std::make_unique<CursorPin>();
+  }
+  auto& pinned = *block.pinned;
+  const auto& blocks = _blocks->Blocks();
+  const auto number = blocks.BlockOf(position);
+  pinned.pin =
+    _blocks->GetCache().PinInOrder(_blocks, number, pinned.ahead, ahead);
+  block.start = blocks.BlockStart(number);
+  return {pinned.pin.Ptr(),
+          std::min<uint64_t>(pinned.pin.Size(), _length - block.start)};
 }
 
-void BufferedIndexInput::Seek(uint64_t pos) {
-  if (pos >= _start && pos < (_start + Size())) {
-    _begin = _buf + pos - _start;
-  } else {
-    SeekInternal(pos);
-    _begin = _end = _buf;
-    _start = pos;
+PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
+  if (offset > _length || size > _length - offset) [[unlikely]] {
+    ThrowPastEnd(this, offset, _length);
   }
+  if (!_blocks) {
+    return {.bytes = {_span.data() + offset, size}};
+  }
+  if (size == 0) {
+    return {};
+  }
+  auto pin = _blocks->GetCache().PinBytes(*_blocks, offset, size);
+  return {.bytes = {pin.Ptr(), size}, .pin = std::move(pin)};
+}
+
+void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
+  if (_blocks) {
+    TryPrefetch(_blocks, offset, size, duckdb::ExternalFileCachePrefetch::HINT);
+  } else if (_paged) {
+    _mapping->Prefetch(offset, size);
+  }
+}
+
+uint64_t InputFile::Need(uint64_t position, uint64_t needed,
+                         uint64_t end) const noexcept {
+  constexpr uint64_t kWindow = duckdb::ExternalFileCache::MAX_FILE_IN_FLIGHT;
+  if (!_blocks || needed >= end || position + kWindow / 2 < needed) {
+    return needed;
+  }
+  const auto until = std::min(end, position + kWindow);
+  const auto& blocks = _blocks->Blocks();
+  if (blocks.BlockOf(needed) != blocks.BlockOf(until - 1)) {
+    TryPrefetch(_blocks, needed, until - needed,
+                duckdb::ExternalFileCachePrefetch::NEED);
+  }
+  return until;
+}
+
+void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
+  if (_blocks) {
+    _blocks->GetCache().MarkUnused(*_blocks, offset, size);
+  } else if (_paged) {
+    _mapping->Evict(offset, size);
+  }
+}
+
+void InputFile::PrefetchExtents(
+  std::span<duckdb::ExternalFileCacheRange> extents) const noexcept {
+  if (_blocks) {
+    TryPrefetch(_blocks, extents, duckdb::ExternalFileCachePrefetch::NEED);
+    return;
+  }
+  for (const auto& extent : extents) {
+    Prefetch(extent.offset, extent.size);
+  }
+}
+
+void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
+  if (!_paged || size == 0 || offset >= _length) {
+    return;
+  }
+  const auto last =
+    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
+  const auto epoch = file_utils::ResidencyEpoch();
+  if (_residency.Valid(epoch) || _residency.Adopt(epoch)) {
+    _residency.Set(offset / file_utils::kPage, last);
+  }
+}
+
+uint64_t InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
+  if (_blocks) {
+    return _blocks->GetCache().IsCached(*_blocks, offset, size) ? size : 0;
+  }
+  if (!_paged) {
+    return size;
+  }
+  return size == 0 ? 0 : WarmPaged(offset, size);
+}
+
+bool InputFile::Evicted(uint64_t offset, uint64_t size,
+                        uint32_t& epoch) const noexcept {
+  if (!_paged) {
+    return false;
+  }
+  if (Warm(offset, size) == size && !file_utils::PollResidency(size)) {
+    return false;
+  }
+  const auto current = file_utils::ResidencyEpoch();
+  if (current == epoch) {
+    return false;
+  }
+  epoch = current;
+  return true;
+}
+
+bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
+  if (_blocks) {
+    return _blocks->GetCache().IsCached(*_blocks, offset, size);
+  }
+  if (offset >= _span.size()) {
+    return false;
+  }
+  size = std::min<uint64_t>(size, _span.size() - offset);
+  return size != 0 &&
+         (!_paged || file_utils::IsResident(_span.data() + offset, size));
+}
+
+bool InputFile::HintSlow(uint64_t offset, uint64_t size) const noexcept {
+  if (_blocks) {
+    if (_blocks->GetCache().IsCached(*_blocks, offset, size)) {
+      return false;
+    }
+    TryPrefetch(_blocks, offset, size, duckdb::ExternalFileCachePrefetch::HINT);
+    return true;
+  }
+  if (!_paged) {
+    return false;
+  }
+  uint64_t warm = Warm(offset, size);
+  SDB_ASSERT(warm <= size);
+  if (warm != 0 && file_utils::PollResidency(warm)) {
+    warm = 0;
+  }
+  if (warm == size) {
+    return false;
+  }
+  offset += warm;
+  size -= warm;
+  const bool fetch =
+    size <= file_utils::kPrefetchChunk || !Resident(offset, size);
+  if (fetch) {
+    _mapping->Prefetch(offset, size);
+  }
+  MarkWarm(offset, size);
+  return fetch;
+}
+
+void ThrowPastEnd(const InputFile* file, uint64_t position, uint64_t length) {
+  if (file != nullptr) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG("read past the end of '", file->Path(),
+                            "' at offset ", position, " of ", length));
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                  ERR_MSG("read past the end of an in-memory buffer at offset ",
+                          position, " of ", length));
 }
 
 }  // namespace irs

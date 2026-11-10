@@ -51,12 +51,14 @@
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -71,7 +73,10 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/database_directory.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "network/cancel_registry.h"
@@ -883,14 +888,31 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
                              duckdb::DataChunk& input,
                              std::vector<int64_t>& rows) {
   const auto oids = input.data[0].Values<int64_t>();
+  auto& cluster = catalog::ClusterOf(context);
+  const auto transaction = cluster.GetCatalogTransaction(context);
   for (duckdb::idx_t row = 0; row < input.size(); ++row) {
     const auto oid = oids[row];
     if (!oid.IsValid()) {
       continue;
     }
-    if (oid.GetValue() == static_cast<int64_t>(kPgDefaultTablespace)) {
+    const auto tablespace =
+      oid.GetValue() == static_cast<int64_t>(kPgGlobalTablespace)
+        ? nullptr
+        : cluster.EntryById(transaction, duckdb::CatalogType::TABLESPACE_ENTRY,
+                            static_cast<duckdb::idx_t>(oid.GetValue()));
+    if (tablespace) {
+      duckdb::TaskScheduler::BlockingScope blocking;
+      irs::containers::FlatHashSet<duckdb::idx_t> stored;
+      for (const auto& storage : catalog::ListStorages(
+             tablespace->Cast<catalog::TablespaceCatalogEntry>().Directory())) {
+        if (catalog::HoldsFiles(storage)) {
+          stored.emplace(storage.oid);
+        }
+      }
       for (const auto& database : Databases(context)) {
-        rows.emplace_back(static_cast<int64_t>(database.get().oid));
+        if (stored.contains(database.get().oid)) {
+          rows.emplace_back(static_cast<int64_t>(database.get().oid));
+        }
       }
       continue;
     }

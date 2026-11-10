@@ -43,11 +43,12 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
     bool can_login = false;
     bool superuser = false;
   } role;
-  if (!catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& entry) {
-        role.oid = entry.oid;
-        role.can_login = entry.CanLogin();
-        role.superuser = entry.IsSuperuser();
-      })) {
+  if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
+        user, [&](const catalog::RoleCatalogEntry& entry) {
+          role.oid = entry.oid;
+          role.can_login = entry.CanLogin();
+          role.superuser = entry.IsSuperuser();
+        })) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" does not exist"))};

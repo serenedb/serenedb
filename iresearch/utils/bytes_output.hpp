@@ -20,30 +20,27 @@
 
 #pragma once
 
+#include <memory>
+
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-template<typename String>
-class BasicBytesOutput : public DataOutput {
+class BytesOutput final : public DataOutput {
  public:
-  using Char = typename String::value_type;
-  static_assert(sizeof(Char) == sizeof(byte_type));
+  BytesOutput() noexcept = default;
 
-  explicit BasicBytesOutput(String& buf) noexcept : _buf{&buf} {}
-
-  void WriteByte(byte_type b) final { _buf->push_back(static_cast<Char>(b)); }
-
-  void WriteData(const byte_type* b, uint64_t size) final {
-    _buf->append(reinterpret_cast<const Char*>(b), size);
+  bytes_view Bytes() const noexcept {
+    return {_begin, static_cast<size_t>(_pos - _begin)};
   }
 
- private:
-  String* _buf;
-};
+  void Clear() noexcept { _pos = _begin; }
 
-using BytesOutput = BasicBytesOutput<bstring>;
-using StringOutput = BasicBytesOutput<std::string>;
+ private:
+  void Overflow(const byte_type* data, size_t size) final;
+
+  std::unique_ptr<byte_type[]> _buf;
+};
 
 }  // namespace irs

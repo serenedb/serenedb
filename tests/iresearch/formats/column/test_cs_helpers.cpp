@@ -32,29 +32,31 @@
 
 namespace irs::tests {
 
-std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
+std::unique_ptr<ColWriter> MakeCsWriter(const ::tests::IndexDir& dir,
                                         std::string_view segment_name) {
-  return std::make_unique<ColWriter>(
-    dir, segment_name, ::irs::DuckDBEngine::Instance().instance());
+  return std::make_unique<ColWriter>(::irs::DuckDBEngine::Instance().instance(),
+                                     dir.Fs(), dir.Root(), dir.Observers(),
+                                     segment_name);
 }
 
-std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
+std::unique_ptr<ColReader> MakeCsReader(const ::tests::IndexDir& dir,
                                         std::string_view segment_name) {
-  // Reader ctor throws on a missing file; tests that pattern an
-  // "absent column = empty index" probe afterwards via Has*(). Return
-  // nullptr on a missing .col file so callers see "no exception, empty
-  // result".
-  bool exists = false;
-  std::string filename;
-  filename.reserve(segment_name.size() + 4);
-  filename.append(segment_name);
-  filename.append(".col");
-  if (!dir.exists(exists, filename) || !exists) {
+  if (!dir.Has(FileName(segment_name))) {
     return nullptr;
   }
-  return std::make_unique<ColReader>(dir, segment_name,
-                                     ::irs::DuckDBEngine::Instance().instance(),
-                                     IOAdvice::SEQUENTIAL);
+  return std::make_unique<ColReader>(dir.Db(), dir.Fs(), dir.Root(),
+                                     segment_name, true,
+                                     duckdb::MappedFileAccess::SEQUENTIAL);
+}
+
+ColReader OpenColReader(const ::tests::IndexDir& dir,
+                        std::string_view segment_name) {
+  return ColReader{dir.Db(),
+                   dir.Fs(),
+                   dir.Root(),
+                   segment_name,
+                   dir.Has(FileName(segment_name)),
+                   duckdb::MappedFileAccess::SEQUENTIAL};
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

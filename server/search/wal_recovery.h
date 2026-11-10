@@ -20,11 +20,25 @@
 
 #pragma once
 
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <optional>
 #include <span>
+#include <string>
+
+#include "catalog/catalog.h"
 
 namespace sdb::search {
+
+struct MissingStorage {
+  duckdb::reference<const duckdb::CatalogEntry> entry;
+  std::string path;
+};
+
+std::optional<MissingStorage> OpenSearchStorages(
+  std::span<const duckdb::reference<catalog::SereneDBCatalog>> catalogs);
 
 void RecoverSearchStorages(
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);

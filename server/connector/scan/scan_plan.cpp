@@ -41,7 +41,9 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -457,7 +459,7 @@ void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
   AddDeferredChecks(state, state.deferred_checks);
 }
 
-void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
+void InitScanState(ScanGlobalState& state, duckdb::ClientContext& context,
                    const ScanBindData& bind_data,
                    duckdb::TableFunctionInitInput& input) {
   const auto in_output = [&](duckdb::idx_t proj) {
@@ -553,7 +555,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     return p != duckdb::DConstants::INVALID_INDEX;
   });
 
-  state.client_context = context;
+  state.client_context = &context;
   state.projected_column_indexes = input.column_indexes;
   SDB_ASSERT(state.projected_column_indexes.size() ==
              state.projected_columns.size());
@@ -573,6 +575,17 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     AddDeferredChecks(state, bind_data.search.deferred);
     BuildDualFilters(state, bind_data.search.duals);
   }
+
+  state.scan = &bind_data;
+  state.snapshot = bind_data.Snapshot(context);
+  state.reader = &state.snapshot->reader;
+  state.total_segments = state.reader->size();
+  state.rg_size = bind_data.relation.row_group_size != 0
+                    ? bind_data.relation.row_group_size
+                    : DEFAULT_ROW_GROUP_SIZE;
+  const auto& impl = state.snapshot->reader.GetImpl();
+  state.remote =
+    impl && irs::StorageKindOf(impl->Root()) == irs::StorageKind::Remote;
 }
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
@@ -752,7 +765,7 @@ void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
       g.cs_projections,
       g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
-      g.ScanScore());
+      g.ScanScore(), g.remote);
   }
 }
 

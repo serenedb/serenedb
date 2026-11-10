@@ -211,8 +211,8 @@ void SereneDBClientState::TransactionPreCommit(
   }
   std::vector<std::reference_wrapper<duckdb::AttachedDatabase>> written;
   for (auto& db : transaction.OpenedTransactions()) {
-    if (db.get().GetCatalog().GetCatalogType() !=
-        catalog::SereneDBCatalog::kStorageType) {
+    if (db.get().IsTemporary() || db.get().GetCatalog().GetCatalogType() !=
+                                    catalog::SereneDBCatalog::kStorageType) {
       continue;
     }
     auto opened = transaction.TryGetTransaction(db);
@@ -280,6 +280,9 @@ void SereneDBClientState::TransactionPreCheckpoint(
   if (db.GetCatalog().GetCatalogType() !=
       catalog::SereneDBCatalog::kStorageType) {
     return;
+  }
+  if (db.IsTemporary()) {
+    _connection_ctx->RefreshCreatedIndexes(db.oid);
   }
   _connection_ctx->StageSearch({wal_generation, wal_end_offset}, db.oid);
 }
@@ -411,9 +414,11 @@ void HandNotices(ConnectionContext& ctx, const NoticeTarget& target) {
   });
 }
 
-SystemConnection::SystemConnection(const SystemSession& session,
-                                   const NoticeTarget& notices)
-  : conn{irs::DuckDBEngine::Instance().CreateConnection()},
+SystemConnection::SystemConnection(
+  const SystemSession& session, const NoticeTarget& notices,
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary)
+  : conn{duckdb::make_uniq<duckdb::Connection>(
+      irs::DuckDBEngine::Instance().instance(), std::move(temporary))},
     ctx{std::make_shared<ConnectionContext>(
       *conn->context, session.user, session.system_user, session.role,
       session.database, session.database_id, nullptr, session.backend_pid,

@@ -657,7 +657,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     return _lay.BlockSetting();
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(DataOutput& out, const float* vecs, size_t n) final {
     SDB_ASSERT(_centroid.size() == _lay.rd);
     for (size_t i = 0; i < n; ++i) {
       if (_lay.row_major) {
@@ -693,7 +693,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     return out;
   }
 
-  void Finish(IndexOutput& out) final {
+  void Finish(DataOutput& out) final {
     if (!_lay.row_major && _lane != 0) {
       WriteGroup(out, _lane);
     }
@@ -824,20 +824,20 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     std::memcpy(dst + _lay.RowBiasOffset(), &_bias[0], sizeof(float));
   }
 
-  void WriteRecord(IndexOutput& out, const float* vec) {
+  void WriteRecord(DataOutput& out, const float* vec) {
     _record.resize(_lay.record_size);
     PackRecord(_record.data(), vec);
     out.WriteData(_record.data(), _lay.record_size);
   }
 
-  void WriteFloats(IndexOutput& out, std::array<float, kFastScanBbs>& v,
+  void WriteFloats(DataOutput& out, std::array<float, kFastScanBbs>& v,
                    size_t count) {
     std::fill_n(v.data() + count, kFastScanBbs - count, 0.f);
     out.WriteData(reinterpret_cast<const byte_type*>(v.data()),
                   kFastScanBbs * sizeof(float));
   }
 
-  void WriteGroup(IndexOutput& out, size_t count) {
+  void WriteGroup(DataOutput& out, size_t count) {
     faiss::pq4_pack_codes(_code1.data(), count, _lay.m1, kFastScanBbs,
                           kFastScanBbs, _lay.nsq1, _packed1.data(),
                           _lay.code1_bytes);

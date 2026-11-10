@@ -40,11 +40,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> LookupInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   const auto& bind = input.bind_data->Cast<ScanBindData>();
   auto state = duckdb::make_uniq<ScanGlobalState>();
-  InitScanState(*state, &context, bind, input);
-  state->scan = &bind;
-  state->snapshot = bind.Snapshot(context);
-  state->reader = &state->snapshot->reader;
-  state->total_segments = state->reader->size();
+  InitScanState(*state, context, bind, input);
   state->workers =
     duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
   ClassifyColumnstoreProjections(*state, bind);
@@ -88,6 +84,9 @@ duckdb::OperatorResultType LookupFunction(duckdb::ExecutionContext& context,
     const auto address = addresses[l.order[r]].GetValue();
     l.hits[r] = {.doc = static_cast<irs::doc_id_t>(address),
                  .segment_idx = static_cast<uint32_t>(address >> 32)};
+  }
+  if (g.remote) {
+    PrefetchColumns(g, l, l.hits, FetchUnitsOf(l.hits, g.rg_size));
   }
   l.fetched.Reset();
   duckdb::idx_t appended = 0;

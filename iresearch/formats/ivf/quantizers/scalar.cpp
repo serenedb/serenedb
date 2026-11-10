@@ -272,7 +272,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
             .record_size = static_cast<uint32_t>(_sq.code_size)};
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(DataOutput& out, const float* vecs, size_t n) final {
     if (_codes.empty()) {
       _codes.resize(kEncodeTile * _sq.code_size);
     }
@@ -288,7 +288,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
     return true;
   }
 
-  void Finish(IndexOutput& /*out*/) final {}
+  void Finish(DataOutput& /*out*/) final {}
 
   void Serialize(DataOutput& out) const final {
     const auto bytes = FloatSpan(_sq.trained);

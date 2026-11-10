@@ -169,8 +169,9 @@ struct SystemSession {
 };
 
 struct SystemConnection {
-  explicit SystemConnection(const SystemSession& session,
-                            const NoticeTarget& notices);
+  explicit SystemConnection(
+    const SystemSession& session, const NoticeTarget& notices,
+    duckdb::shared_ptr<duckdb::AttachedDatabase> temporary = nullptr);
   SystemConnection(const SystemConnection&) = delete;
   SystemConnection& operator=(const SystemConnection&) = delete;
   ~SystemConnection();

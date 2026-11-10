@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -29,7 +30,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/exclude_block.hpp>
 #include <iresearch/search/detail/exclusion_of.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
@@ -85,28 +85,26 @@ struct BodyField {
 
 struct Index {
   std::filesystem::path path;
-  std::unique_ptr<irs::MMapDirectory> dir;
   irs::DirectoryReader reader;
 };
 
 const Index& IndexOf() {
   static Index index;
-  if (index.dir) {
+  if (index.reader) {
     return index;
   }
   index.path =
     std::filesystem::temp_directory_path() / "serenedb-bench-exclude-costs";
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
-  index.dir = std::make_unique<irs::MMapDirectory>(index.path);
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = index.path.string();
+
   irs::IndexWriterOptions opts;
-  opts.db = db;
-  opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
   auto writer =
-    irs::IndexWriter::Make(*index.dir, irs::kOmCreate, std::move(opts));
+    irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate, std::move(opts));
   {
     auto trx = writer->GetBatch();
     BodyField field;
@@ -125,8 +123,7 @@ const Index& IndexOf() {
     trx.Commit();
   }
   writer->RefreshCommit();
-  index.reader =
-    irs::DirectoryReader{*index.dir, irs::IndexReaderOptions{.db = db}};
+  index.reader = irs::DirectoryReader{*db, fs, root, irs::IndexReaderOptions{}};
   SDB_ASSERT(index.reader.size() == 1);
   return index;
 }

@@ -32,7 +32,8 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/formats/segment_meta_reader.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/serialization.hpp"
 
@@ -48,30 +49,29 @@ uint64_t ParseGeneration(std::string_view file,
   return index_gen_limits::invalid();
 }
 
-bool LastFile(const Directory& dir, std::string_view prefix, std::string& out) {
+std::optional<std::string> LastFile(duckdb::FileSystem& fs,
+                                    std::string_view root,
+                                    std::string_view prefix) {
   uint64_t max_gen = index_gen_limits::invalid();
-  Directory::visitor_f visitor = [&](std::string_view name) {
-    const uint64_t gen = ParseGeneration(name, prefix);
-
-    if (gen > max_gen) {
-      out = name;
+  std::optional<std::string> last;
+  ListIndexFiles(fs, root, [&](std::string_view name) {
+    if (const uint64_t gen = ParseGeneration(name, prefix); gen > max_gen) {
+      last = name;
       max_gen = gen;
     }
-    return true;  // continue iteration
-  };
-
-  dir.visit(visitor);
-  return index_gen_limits::valid(max_gen);
+  });
+  return last;
 }
 
-uint64_t ReadFile(const Directory& dir, std::string_view filename,
-                  MetaPayloadReader& payload,
+uint64_t ReadFile(duckdb::FileSystem& fs, std::string_view root,
+                  std::string_view filename, MetaPayloadReader& payload,
                   std::vector<IndexSegment>* segments) {
-  auto in = dir.open(filename, IOAdvice::RANDOM);
+  const auto bytes =
+    ReadWhole<bstring>(duckdb::QueryContext{}, fs, PathOf(root, filename));
 
   uint64_t cnt = 0;
   format_utils::ReadFooter(
-    *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
+    bytes, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
       const auto version =
         meta_in.ReadProperty<uint64_t>(kFieldStorageVersion, "storage_version");
       if (const auto error = duckdb::StorageVersionError(version);
@@ -116,15 +116,18 @@ uint64_t ParsePendingGeneration(std::string_view file) noexcept {
   return ParseGeneration(file, kPendingPrefix);
 }
 
-bool LastFile(const Directory& dir, std::string& out) {
-  return LastFile(dir, kPrefix, out);
+std::optional<std::string> LastFile(duckdb::FileSystem& fs,
+                                    std::string_view root) {
+  return LastFile(fs, root, kPrefix);
 }
 
-bool LastPendingFile(const Directory& dir, std::string& out) {
-  return LastFile(dir, kPendingPrefix, out);
+std::optional<std::string> LastPendingFile(duckdb::FileSystem& fs,
+                                           std::string_view root) {
+  return LastFile(fs, root, kPendingPrefix);
 }
 
-void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
+void Read(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+          std::string_view root, IndexMeta& meta, std::string_view filename,
           MetaPayloadReader payload) {
   SDB_ASSERT(!IsNull(filename));
 
@@ -133,20 +136,20 @@ void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
   SDB_ASSERT(index_gen_limits::valid(gen));
 
   std::vector<IndexSegment> segments;
-  const auto cnt = ReadFile(dir, filename, payload, &segments);
+  const auto cnt = ReadFile(fs, root, filename, payload, &segments);
 
-  for (auto& segment : segments) {
-    segment_meta::Read(dir, segment.meta, segment.filename);
-  }
+  ForEach(db, root, segments.size(), [&](size_t i) {
+    segment_meta::Read(fs, root, segments[i].meta, segments[i].filename);
+  });
 
   meta.gen = gen;
   meta.seg_counter = cnt;
   meta.segments = std::move(segments);
 }
 
-void ReadPayload(const Directory& dir, std::string_view filename,
-                 MetaPayloadReader payload) {
-  std::ignore = ReadFile(dir, filename, payload, nullptr);
+void ReadPayload(duckdb::FileSystem& fs, std::string_view root,
+                 std::string_view filename, MetaPayloadReader payload) {
+  std::ignore = ReadFile(fs, root, filename, payload, nullptr);
 }
 
 }  // namespace irs::index_meta

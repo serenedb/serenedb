@@ -69,6 +69,7 @@ enum class Action : uint8_t {
   Refresh,
   Compact,
   RecomputeStats,
+  OptimizeInMemory,
 };
 
 struct Verb {
@@ -93,6 +94,7 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"recompute_stats_database", {Action::RecomputeStats, Scope::Database}},
     {"recompute_stats_all", {Action::RecomputeStats, Scope::All}},
     {"recompute_stats_column", {Action::RecomputeStats, Scope::Column}},
+    {"optimize_in_memory_table", {Action::OptimizeInMemory, Scope::Table}},
   };
   for (const auto& [name, verb] : kVerbs) {
     if (option == name) {
@@ -180,7 +182,10 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
           ERR_MSG("VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects "
                   "[<database>.]<schema>"));
       }
-      out.database = bind.schema;
+      out.database = bind.schema.empty()
+                       ? duckdb::DatabaseManager::GetDefaultDatabase(context)
+                           .GetIdentifierName()
+                       : bind.schema;
       out.schema = bind.name;
     } break;
     case Scope::Table:
@@ -206,11 +211,6 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
     } break;
     case Scope::All:
       break;
-  }
-
-  if (out.database.empty()) {
-    out.database =
-      duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName();
   }
   return out;
 }
@@ -350,8 +350,9 @@ void DispatchInverted(duckdb::ClientContext& context,
                       pg::ProgressMetrics* progress) {
   std::vector<InvertedStep> steps;
 
-  const std::string_view verb =
-    action == Action::Refresh ? "refresh" : "compact";
+  const std::string_view verb = action == Action::Refresh   ? "refresh"
+                                : action == Action::Compact ? "compact"
+                                                            : "optimize";
   auto walk = [&](duckdb::Catalog& database, std::string_view schema) {
     for (const duckdb::TableCatalogEntry& table :
          CollectMaintainTargets(context, database, schema)) {
@@ -418,6 +419,14 @@ void DispatchInverted(duckdb::ClientContext& context,
           ERR_MSG("relation \"", target.object, "\" does not exist"));
       }
       const auto& table = entry->Cast<duckdb::TableCatalogEntry>();
+      if (action == Action::OptimizeInMemory && !table.catalog.InMemory()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+          ERR_MSG("\"", table.name.GetIdentifierName(),
+                  "\" is not an in-memory table"),
+          ERR_DETAIL(
+            "VACUUM (OPTIMIZE_IN_MEMORY_TABLE) applies to temporary tables."));
+      }
       if (!MayMaintain(conn_ctx, table.permissions,
                        table.name.GetIdentifierName(), verb)) {
         return;
@@ -480,27 +489,31 @@ void DispatchInverted(duckdb::ClientContext& context,
           pg::ProgressMetrics::Set(progress->stage, 0);
         }
         search::ThrowIfRefreshFailed(step.storage->Refresh(report), step.name);
-      } else {
+      } else if (action == Action::Compact) {
         CompactInvertedStorage(*step.storage, *step.field_options, step.name,
                                context, progress);
+      } else {
+        search::ThrowIfRefreshFailed(step.storage->OptimizeInMemory(),
+                                     step.name);
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      const auto status =
-        action == Action::Refresh
-          ? search->VacuumRefresh()
-          : search->VacuumCompact(
-              context, GetIntSetting(context, "sdb_compact_target_segments"));
+      absl::Status status;
+      if (action == Action::Refresh) {
+        status = search->VacuumRefresh();
+      } else {
+        SDB_ASSERT(action == Action::Compact);
+        status = search->VacuumCompact(
+          context, GetIntSetting(context, "sdb_compact_target_segments"));
+      }
       if (!status.ok()) {
         context.InterruptCheck();
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INTERNAL_ERROR),
-          ERR_MSG("failed to ",
-                  action == Action::Refresh ? "refresh" : "compact",
-                  " search table '", step.name, "': ", status.message()));
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("failed to ", verb, " search table '",
+                                step.name, "': ", status.message()));
       }
     }
   }
@@ -672,6 +685,7 @@ void VacuumExecute(duckdb::ClientContext& context,
   switch (verb->action) {
     case Action::Refresh:
     case Action::Compact:
+    case Action::OptimizeInMemory:
       DispatchInverted(context, conn_ctx, verb->action, verb->scope, target,
                        progress);
       break;

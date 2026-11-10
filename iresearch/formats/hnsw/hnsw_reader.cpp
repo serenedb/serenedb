@@ -51,20 +51,16 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
 
 }  // namespace
 
-std::shared_ptr<const HnswData> HnswIndex::Load(
-  const SubReader& segment) const {
-  absl::call_once(_once, [&] {
-    auto in = segment.ReopenAnn();
-    if (!in) {
-      return;
-    }
-    in->Seek(_meta.offset);
+std::shared_ptr<const HnswData> HnswIndex::Load() const {
+  _load.Call([&] {
+    IndexInput in{_file};
+    in.Seek(_meta.offset);
     auto data = std::make_shared<HnswData>();
-    data->graph = HnswGraph::Deserialize(*in);
+    data->graph = HnswGraph::Deserialize(in);
     const auto read_floats = [&](auto& out, size_t count) {
       out.resize(count);
       if (count != 0) {
-        ReadOnce(*in, reinterpret_cast<byte_type*>(out.data()),
+        ReadOnce(in, reinterpret_cast<byte_type*>(out.data()),
                  count * sizeof(float));
       }
     };
@@ -84,11 +80,11 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
         read_floats(data->norms, static_cast<size_t>(_meta.header.rows));
       }
     } else {
-      const auto stats_size = static_cast<size_t>(in->ReadI64());
+      const auto stats_size = static_cast<size_t>(in.ReadI64());
       bstring stats;
       stats.resize(stats_size);
       if (stats_size != 0) {
-        in->ReadData(stats.data(), stats_size);
+        in.ReadData(stats.data(), stats_size);
       }
       data->stats =
         MakeQuantizerStats(_meta.header.quant, _meta.header.d, stats,
@@ -103,7 +99,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
       data->codes.resize(static_cast<size_t>(_meta.header.rows) *
                          _meta.header.record_size);
       if (!data->codes.empty()) {
-        ReadOnce(*in, data->codes.data(), data->codes.size());
+        ReadOnce(in, data->codes.data(), data->codes.size());
       }
       if (_meta.header.rotated) {
         read_rotation();
@@ -150,7 +146,7 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
   if (Empty()) {
     return QueryBuilder::Empty();
   }
-  auto data = Load(segment);
+  auto data = Load();
   if (!data || data->graph.Empty()) {
     return QueryBuilder::Empty();
   }
@@ -172,15 +168,14 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
   return built;
 }
 
-AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,
-                                      std::span<const float> query,
+AnnExactCodes HnswIndex::PrepareExact(std::span<const float> query,
                                       VectorMetric metric) const {
   if (Empty() || query.size() != _meta.header.d ||
       (metric == VectorMetric::Cosine) !=
         (_meta.header.metric == VectorMetric::Cosine)) {
     return {};
   }
-  auto data = Load(segment);
+  auto data = Load();
   if (!data || !data->stats || data->codes.empty()) {
     return {};
   }

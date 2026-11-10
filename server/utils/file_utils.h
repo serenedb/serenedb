@@ -21,52 +21,16 @@
 
 #pragma once
 
-#include <stddef.h>
-
-#include <filesystem>
-#include <functional>
-#include <iresearch/utils/common.hpp>
-#include <iresearch/utils/operating_system.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <string>
 #include <string_view>
-#include <system_error>
-#include <vector>
 
 namespace sdb::utils::file_utils {
 
-// creates a filename
-std::string BuildFilename(std::string_view path, std::string_view name);
-
-template<typename... Args>
-inline std::string BuildFilename(std::string_view path, std::string_view name,
-                                 Args... args) {
-  return BuildFilename(BuildFilename(path, name), args...);
-}
-
-[[noreturn]] void ThrowFileError(std::string_view action, std::string_view path,
-                                 int error);
-[[noreturn]] void ThrowFileError(std::string_view action, std::string_view path,
-                                 const std::error_code& ec);
-
-void SyncDirectory(const std::filesystem::path& directory);
-void ReplaceFile(const std::filesystem::path& path, std::string_view content);
-
-// reads file into string or buffer
-void Slurp(const char* filename, std::string& result);
-std::string Slurp(const char* filename);
-inline std::string Slurp(const std::string& filename) {
-  return Slurp(filename.c_str());
-}
-
-// creates file and writes string to it
-void Spit(const char* filename, std::string_view content, bool sync = false);
-inline void Spit(const std::string& filename, std::string_view content,
-                 bool sync = false) {
-  return Spit(filename.c_str(), content, sync);
-}
-
-// creates a new directory
-
-// checks if path is a directory
+std::string ReadFile(duckdb::FileSystem& fs, const std::string& path);
+void WriteFile(duckdb::FileSystem& fs, const std::string& path,
+               std::string_view content, bool sync);
+void ReplaceFile(duckdb::FileSystem& fs, const std::string& path,
+                 std::string_view content);
 
 }  // namespace sdb::utils::file_utils

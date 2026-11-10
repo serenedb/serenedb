@@ -27,7 +27,7 @@
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 
@@ -37,8 +37,8 @@ inline constexpr size_t kPrefetchedExtents = 64;
 
 using FileRanges = containers::SmallVector<FileRange, kPrefetchedExtents>;
 
-template<typename Metas>
-void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
+template<typename Input, typename Metas>
+void PrefetchDocExtents(const Input& in, Metas&& metas) {
   FileRanges extents;
   for (const PostingMeta& meta : metas) {
     if (const auto extent = DocExtent(meta); extent != 0) {
@@ -53,14 +53,13 @@ void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
   HintRanges(in, ranges);
 }
 
-inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,
-                                    const IndexInput& doc_in) {
+template<typename InputType>
+InputType OpenDocInput(const PostingMeta& meta, const InputFile& doc_in) {
   if (meta.inline_size != 0) {
-    return std::make_unique<BytesViewInput>(meta.Inline());
+    return InputType{meta.Inline()};
   }
-  auto in = doc_in.Reopen();
-  SDB_ASSERT(in);
-  in->Seek(meta.doc_start);
+  InputType in{doc_in};
+  in.Seek(meta.doc_start);
   return in;
 }
 

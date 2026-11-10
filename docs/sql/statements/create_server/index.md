@@ -153,6 +153,8 @@ SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 
 `path` is required and names the database's directory inside the other server's data directory, `engine_v1/<database oid>`; on that server, `SELECT oid FROM pg_database WHERE datname = 'shop'` gives the oid. The database's definitions are read from that server's catalog log, `engine_v1/catalog.wal`, so a copy must keep it beside the database directory, both copied at the same moment. `ATTACH '<path>' AS archive (TYPE serenedb, READ_ONLY)` attaches the same directory until `DETACH` or a restart of the server.
 
+Search tables and inverted indexes are read from the database directory only. A database is refused when one of its search tables or inverted indexes is placed in a [tablespace](../create_tablespace/index.md) other than the database's own, or when it was created in a tablespace on an object store and has a search table or an inverted index, whose files stay there. A database created in a tablespace on a local disk has its directory at `engine_v1/<database oid>` under the tablespace's location, with no catalog log beside it: attach a copy of that directory with the server's `engine_v1/catalog.wal` copied beside it.
+
 ### What a read-only database does
 
 - **Nothing on disk changes.** The database file and the catalog log are opened read-only, and inverted indexes and search tables without a writer. No refresh, compaction or cleanup runs on them, and nothing is written when the server stops.
@@ -177,6 +179,7 @@ The lock is the file system's: on a file system without POSIX locks nothing dete
 - inside the data directory of a running server,
 - without the catalog log, `catalog.wal`, beside it,
 - missing the directory of one of its search tables or inverted indexes,
+- of a database with a search table or an inverted index placed in a tablespace,
 - whose name is not a database oid, or
 - that belongs to the attaching server itself.
 

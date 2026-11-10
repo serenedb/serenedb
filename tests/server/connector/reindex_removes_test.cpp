@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <initializer_list>
@@ -30,13 +31,13 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <roaring/roaring.hh>
 #include <set>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -89,14 +90,16 @@ class ReindexRemovesTest : public ::testing::Test {
  protected:
   void SetUp() override {
     irs::IndexWriterOptions options;
-    options.db = &EngineDb();
-    options.reader_options.db = &EngineDb();
     options.column_options = [](irs::field_id) { return irs::ColumnOptions{}; };
     options.row_group_size = kRowGroupSize;
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer = irs::IndexWriter::Make(EngineDb(), _fs, _root, irs::kOmCreate,
+                                     std::move(options));
   }
 
-  void TearDown() override { _writer.reset(); }
+  void TearDown() override {
+    _writer.reset();
+    _fs.RemoveDirectory(_root);
+  }
 
   uint64_t AddSegment(std::span<const Row> rows) {
     const auto before = Segments();
@@ -192,7 +195,8 @@ class ReindexRemovesTest : public ::testing::Test {
     return static_cast<irs::doc_id_t>(irs::doc_limits::min() + index);
   }
 
-  irs::MemoryDirectory _dir;
+  duckdb::FileSystem& _fs = duckdb::FileSystem::GetFileSystem(EngineDb());
+  std::string _root = test::MemoryRoot("reindex_removes");
   irs::IndexWriter::ptr _writer;
 };
 

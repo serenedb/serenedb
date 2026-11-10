@@ -24,13 +24,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/index_reader_options.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class IndexFieldOptions;
@@ -38,11 +32,6 @@ struct AnnBuildEnv;
 
 struct SegmentWriterOptions {
   ScorerPtr scorer = nullptr;
-  // TODO(mbkkt) Remove it from here? We could use directory
-  IResourceManager& resource_manager{IResourceManager::gNoop};
-  // Enables the typed .col on the segment. Lifetime of `*db` must
-  // extend at least until SegmentWriter::flush() returns.
-  duckdb::DatabaseInstance* db = nullptr;
   // Non-owning. For a segment writer just the fallback (the owning override
   // comes via SetFieldOptions); for a merge writer the whole config.
   const IndexFieldOptions* field_options = nullptr;

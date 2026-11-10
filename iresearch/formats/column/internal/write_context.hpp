@@ -36,15 +36,13 @@ class WriteContext final : public BlockManager,
                            public duckdb::OverflowStringWriter,
                            public duckdb::ColumnStreamWriter {
  public:
-  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out);
+  WriteContext(duckdb::DatabaseInstance& db, DataOutput& out);
   ~WriteContext() final;
 
   WriteContext(const WriteContext&) = delete;
   WriteContext& operator=(const WriteContext&) = delete;
   WriteContext(WriteContext&&) = delete;
   WriteContext& operator=(WriteContext&&) = delete;
-
-  IndexOutput& Out() noexcept { return *_out; }
 
   void WriteString(duckdb::UncompressedStringSegmentState& state,
                    duckdb::string_t string, duckdb::block_id_t& result_block,
@@ -72,7 +70,7 @@ class WriteContext final : public BlockManager,
   duckdb::idx_t TotalBlocks() final;
 
  private:
-  IndexOutput* _out;
+  DataOutput* _out;
 };
 
 }  // namespace irs

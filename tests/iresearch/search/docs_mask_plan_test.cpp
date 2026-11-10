@@ -436,9 +436,8 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
       auto count = query->PlanCount({});
       ASSERT_NE(nullptr, count);
       ASSERT_EQ(expected.size(),
-                count->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
-                  count->Finish());
-      auto split = query->PlanCount({.partial = true});
+                count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
+      auto split = query->PlanCount({});
       ASSERT_NE(nullptr, split);
       constexpr doc_id_t kBounds[]{
         irs::doc_limits::min(), 777, 30001, 65536, 70001,
@@ -447,10 +446,9 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
       for (size_t i = 1; i != std::size(kBounds); ++i) {
         parts += split->Run(kBounds[i - 1], kBounds[i]);
       }
-      parts += split->Finish();
       ASSERT_EQ(expected.size(), parts);
 
-      auto fine = query->PlanCount({.partial = true});
+      auto fine = query->PlanCount({});
       ASSERT_NE(nullptr, fine);
       uint64_t pieces = 0;
       doc_id_t from = irs::doc_limits::min();
@@ -459,7 +457,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
         pieces += fine->Run(from, to);
         from = to;
       }
-      pieces += fine->Run(end, irs::doc_limits::eof()) + fine->Finish();
+      pieces += fine->Run(end, irs::doc_limits::eof());
       ASSERT_EQ(expected.size(), pieces);
     }
 
@@ -562,9 +560,9 @@ TEST_P(DocsMaskPlanTest, small_segments_clustered) {
   Check(std::nullopt);
 }
 
-INSTANTIATE_TEST_SUITE_P(docs_mask_plan_test, DocsMaskPlanTest,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         DocsMaskPlanTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  docs_mask_plan_test, DocsMaskPlanTest,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  DocsMaskPlanTest::to_string);
 
 }  // namespace

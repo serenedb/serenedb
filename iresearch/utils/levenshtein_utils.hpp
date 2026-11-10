@@ -32,9 +32,6 @@
 
 namespace irs {
 
-class DataOutput;
-class DataInput;
-
 template<typename T, size_t SubstCost = 1>
 inline size_t EditDistance(const T* lhs, size_t lhs_size, const T* rhs,
                            size_t rhs_size) {
@@ -154,16 +151,6 @@ class ParametricDescription {
     return _transitions == rhs._transitions && _distance == rhs._distance &&
            _max_distance == rhs._max_distance;
   }
-
-  /// @brief writes parametric description to a specified output stream
-  /// @param description parametric description to write
-  /// @param out output stream
-  void Write(DataOutput& out) const;
-
-  /// @brief read parametric description from a specified input stream
-  /// @param in input stream
-  /// @returns the read parametric description
-  static ParametricDescription Read(DataInput& in);
 
  private:
   std::vector<transition_t> _transitions;  // transition table

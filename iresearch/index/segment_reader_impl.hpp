@@ -24,20 +24,22 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <memory>
+#include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
 
-class ColReader;
 class NormColumnReader;
 struct DocMapsSlot;
 
@@ -55,16 +57,15 @@ class SegmentReaderImpl final : public SubReader {
   }
 
   static std::shared_ptr<const SegmentReaderImpl> Open(
-    const Directory& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options);
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+    const SegmentMeta& meta, const IndexReaderOptions& options);
 
-  std::shared_ptr<const SegmentReaderImpl> ReopenReader(
-    const Directory& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options) const;
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
-    const Directory& dir, const SegmentMeta& meta) const;
+    IndexFileRefs& refs, const SegmentMeta& meta) const;
 
-  uint64_t CountMappedMemory() const final;
+  std::shared_ptr<const SegmentReaderImpl> Reopen(
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+    const SegmentMeta& meta, const IndexReaderOptions& options) const;
 
   const SegmentInfo& Meta() const final { return _info; }
 
@@ -83,29 +84,32 @@ class SegmentReaderImpl final : public SubReader {
   lead::Node::ptr docs_iterator() const final;
 
   std::span<const TermReader* const> fields(field_id id) const final {
-    return _field_reader->fields(id);
+    return _readers->field_reader.fields(id);
   }
 
   std::span<const field_id> field_ids() const final {
-    return _field_reader->field_ids();
+    return _readers->field_reader.field_ids();
   }
 
   NormReader::ptr norms(field_id field) const final;
 
-  const ColumnReader* Column(field_id field) const final;
-  const AnnIndex* Ann(field_id field) const final;
-  IndexInput::ptr ReopenAnn() const final;
-  const ColReader* GetColReader() const final {
-    return _data ? _data->col_reader.get() : nullptr;
+  const ColumnReader* Column(field_id field) const final {
+    return _readers->col_reader.Column(field);
   }
+  const AnnIndex* Ann(field_id field) const final {
+    return _readers->idx_reader.Ann(field);
+  }
+  const ColReader* GetColReader() const final { return &_readers->col_reader; }
 
  private:
-  struct ColumnData {
-    std::unique_ptr<ColReader> col_reader;
-    std::unique_ptr<IdxReader> idx_reader;
+  struct Readers {
+    Readers(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root, const SegmentMeta& meta,
+            HnswBases* hnsw_bases);
 
-    void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options, bool keep_terms);
+    ColReader col_reader;
+    IdxReader idx_reader;
+    term_dict::FieldReader field_reader;
   };
 
   FileRefs _refs;
@@ -113,8 +117,7 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<const DocumentMask> _docs_mask;
   uint64_t _id = 0;
   std::shared_ptr<DocMapsSlot> _doc_maps;
-  std::shared_ptr<ColumnData> _data;
-  std::shared_ptr<term_dict::FieldReader> _field_reader;
+  std::shared_ptr<const Readers> _readers;
 };
 
 }  // namespace irs

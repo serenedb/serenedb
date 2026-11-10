@@ -40,7 +40,6 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -224,7 +223,7 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
 
   [[maybe_unused]] const byte_type* at = nullptr;
   [[maybe_unused]] const byte_type* fetched = nullptr;
-  if constexpr (Input::kVolatileAlways) {
+  if constexpr (Input::kContiguous) {
     at = in.Current();
     fetched = at;
   }
@@ -232,7 +231,7 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
   const auto read_leaf = [&]<size_t N>(uint32_t len,
                                        doc_id_t prev) IRS_FORCE_INLINE {
     const auto leaf = [&] IRS_FORCE_INLINE {
-      if constexpr (Input::kVolatileAlways) {
+      if constexpr (Input::kContiguous) {
         const auto* const from = std::max(fetched, at);
         for (uint64_t offset = 0; offset != kFillPrefetch;
              offset += ABSL_CACHELINE_SIZE) {
@@ -281,16 +280,9 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
 template<typename Input>
 class PostingReader {
  public:
-  explicit PostingReader(const IndexInput& doc) noexcept : _doc{&doc} {}
+  explicit PostingReader(const InputFile& doc) noexcept : _in{doc} {}
 
-  Input& In() {
-    if (_in == nullptr) [[unlikely]] {
-      _owned = _doc->Reopen();
-      SDB_ASSERT(_owned);
-      _in = &irs::utils::downCast<Input>(*_owned);
-    }
-    return *_in;
-  }
+  Input& In() noexcept { return _in; }
 
   template<typename Sink>
   void Read(const PostingMeta& meta, bool has_score_bounds, bool has_freq,
@@ -315,9 +307,7 @@ class PostingReader {
 
   doc_id_t* Docs() noexcept { return _buf; }
 
-  const IndexInput* _doc;
-  IndexInput::ptr _owned;
-  Input* _in = nullptr;
+  Input _in;
   DocsBuf _buf;
   HoleBuf _holes;
   [[no_unique_address]] NeedEnc<Input> _enc;
@@ -402,7 +392,7 @@ struct BitsetBuckets {
   }
 };
 
-inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
+inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const InputFile& doc,
                                  doc_id_t docs_count) {
   SDB_ASSERT(!buckets.must.empty() || !buckets.fills.empty());
   SDB_ASSERT(buckets.fills.empty() || buckets.must.size() <= 1);

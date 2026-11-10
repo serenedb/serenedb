@@ -30,7 +30,7 @@
 namespace irs::detail {
 
 template<typename Result, typename Make>
-Result ResolveFillScored(const IndexInput& doc, bool per_doc,
+Result ResolveFillScored(const InputFile& doc, bool per_doc,
                          ScoreMergeType merge, Make&& make) {
   return ResolveInput(doc, [&]<typename Input> -> Result {
     using Plain = PlainFillScored<Input>;
@@ -49,7 +49,7 @@ Result ResolveFillScored(const IndexInput& doc, bool per_doc,
 }
 
 template<typename Result, typename Make>
-Result ResolveCountScored(const IndexInput& doc, bool per_doc,
+Result ResolveCountScored(const InputFile& doc, bool per_doc,
                           ScoreMergeType merge, Make&& make) {
   return ResolveInput(doc, [&]<typename Input> -> Result {
     using Plain = PlainCountScored<Input>;

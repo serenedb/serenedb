@@ -400,9 +400,12 @@ std::vector<std::shared_ptr<Store>> LiveStores() {
 
 }  // namespace
 
-void PruneVersions(std::span<const Tick> running, Tick published) {
+void PruneVersions(std::span<const Tick> running, Tick published,
+                   std::span<const StoreSnapshots> stores) {
   for (const auto& store : LiveStores()) {
-    store->PruneVersions(running, published);
+    const auto* own = FindSnapshots(stores, store->GetId());
+    store->PruneVersions(own ? std::span<const Tick>{own->running} : running,
+                         published);
   }
 }
 
@@ -414,20 +417,30 @@ bool FreeVersions() {
   return remaining;
 }
 
-void CleanupReleased(Tick oldest) {
+void CleanupReleased(Tick oldest, std::span<const StoreSnapshots> stores) {
+  auto latest = oldest;
+  for (const auto& own : stores) {
+    latest = std::max(latest, own.oldest);
+  }
   auto& queue = GetReleased();
-  if (oldest < queue.next.load(std::memory_order_acquire)) {
+  if (latest < queue.next.load(std::memory_order_acquire)) {
     return;
   }
   std::vector<std::shared_ptr<Store>> due;
   {
     absl::MutexLock lock{&queue.mutex};
-    while (!queue.pending.empty() && queue.pending.front().tick <= oldest) {
-      if (auto store = queue.pending.front().store.lock();
-          store && !absl::c_linear_search(due, store)) {
+    for (auto it = queue.pending.begin();
+         it != queue.pending.end() && it->tick <= latest;) {
+      auto store = it->store.lock();
+      const auto* own = store ? FindSnapshots(stores, store->GetId()) : nullptr;
+      if (it->tick > (own ? std::max(oldest, own->oldest) : oldest)) {
+        ++it;
+        continue;
+      }
+      if (store && !absl::c_linear_search(due, store)) {
         due.push_back(std::move(store));
       }
-      queue.pending.pop_front();
+      it = queue.pending.erase(it);
     }
     queue.next.store(
       queue.pending.empty() ? kAllApplied : queue.pending.front().tick,

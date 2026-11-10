@@ -33,10 +33,11 @@ void AddMaintenanceTarget(const std::shared_ptr<Store>& store);
 yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs);
 
 void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released);
-void CleanupReleased(Tick oldest);
+void CleanupReleased(Tick oldest, std::span<const StoreSnapshots> stores);
 bool ReleasedPending() noexcept;
 
-void PruneVersions(std::span<const Tick> running, Tick published);
+void PruneVersions(std::span<const Tick> running, Tick published,
+                   std::span<const StoreSnapshots> stores);
 bool FreeVersions();
 
 }  // namespace sdb::search

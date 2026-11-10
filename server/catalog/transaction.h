@@ -160,6 +160,7 @@ class SessionTransaction final {
   }
   std::shared_ptr<const InvertedIndexConfig> ScanConfig(
     duckdb::ClientContext& context, search::Store& store);
+  void ReleaseVersions(const std::shared_ptr<search::Store>& store);
 
   SessionState State() const noexcept { return _state; }
 
@@ -194,6 +195,7 @@ class SessionTransaction final {
   search::Writes _search;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
   std::vector<std::shared_ptr<search::Store>> _layout_claims;
+  bool _released_versions = false;
   SessionState _state = SessionState::Active;
 };
 
@@ -258,8 +260,13 @@ class Transactions final {
   struct Running {
     duckdb::transaction_t published = 0;
     std::vector<duckdb::transaction_t> snapshots;
+    std::vector<search::StoreSnapshots> stores;
   };
   Running RunningSnapshots() ABSL_LOCKS_EXCLUDED(_walk_mutex);
+  void ReleaseVersions(duckdb::idx_t store, const SessionSlot& slot,
+                       std::span<const duckdb::transaction_t> snapshots)
+    ABSL_LOCKS_EXCLUDED(_walk_mutex);
+  void KeepVersions(const SessionSlot& slot) ABSL_LOCKS_EXCLUDED(_walk_mutex);
 
   uint64_t Epoch() const noexcept {
     return _epoch.load(std::memory_order_seq_cst);
@@ -282,6 +289,11 @@ class Transactions final {
     Idle,
     Running,
     Again,
+  };
+  struct Released {
+    duckdb::idx_t store = 0;
+    const SessionSlot* slot = nullptr;
+    duckdb::transaction_t snapshot = 0;
   };
   static constexpr uint64_t kPublishRing = uint64_t{1} << 16;
 
@@ -306,6 +318,7 @@ class Transactions final {
   std::atomic<int64_t> _live_slots{0};
   std::atomic<int64_t> _dead_slots{0};
   absl::Mutex _walk_mutex;
+  std::vector<Released> _released ABSL_GUARDED_BY(_walk_mutex);
   std::atomic<duckdb::transaction_t> _oldest{
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
   std::atomic<uint64_t> _garbage_queued{0};

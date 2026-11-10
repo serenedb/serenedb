@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/container/btree_map.h>
 #include <absl/functional/function_ref.h>
@@ -94,6 +95,19 @@ struct ReadView {
   const TableState* state = nullptr;
   const FileManifest* manifest = nullptr;
 };
+
+struct StoreSnapshots {
+  duckdb::idx_t store = 0;
+  std::vector<Tick> running;
+  Tick oldest = 0;
+};
+
+inline const StoreSnapshots* FindSnapshots(
+  std::span<const StoreSnapshots> stores, duckdb::idx_t store) noexcept {
+  const auto it = absl::c_find_if(
+    stores, [&](const StoreSnapshots& own) { return own.store == store; });
+  return it == stores.end() ? nullptr : &*it;
+}
 
 struct StorageDirectory {
   std::unique_ptr<irs::Directory> directory;

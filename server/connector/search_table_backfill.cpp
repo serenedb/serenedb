@@ -548,6 +548,13 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // limit" -- one group, one swap, the whole table's worth of peak disk.
   const bool unlimited = target.group_bytes == 0;
   bool counted = false;
+  auto& connection = ConnectionContext::Get(context);
+  auto& transaction = connection.Transaction();
+  const auto newer = [&] {
+    return connection.IsStableSnapshot() &&
+           shard.GetTable().LastWrite() > transaction.Snapshot();
+  };
+  const bool adopt = !target.added.empty() || !newer();
   std::shared_ptr<const search::TableState> rebuilt;
   // One group per pass, and the reader that named it dies with the pass: it
   // references every segment it can see, so holding it across groups would
@@ -579,18 +586,17 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                                static_cast<int64_t>(live));
       counted = true;
     }
+    if (adopt && !rebuilt) {
+      transaction.ReleaseVersions(target.shard);
+    }
     rebuilt = RebuildGroup(context, target, group, progress);
     SDB_IF_FAILURE("crash_after_search_backfill_group") {
       SDB_IMMEDIATE_ABORT();
     }
   }
   RewriteOwnRows(context, target);
-  auto& connection = ConnectionContext::Get(context);
-  auto& transaction = connection.Transaction();
-  const bool newer = connection.IsStableSnapshot() &&
-                     shard.GetTable().LastWrite() > transaction.Snapshot();
-  if (rebuilt && (!target.added.empty() || !newer)) {
-    transaction.SearchTxn().Rebuilt(target.shard, std::move(rebuilt), newer);
+  if (adopt && rebuilt) {
+    transaction.SearchTxn().Rebuilt(target.shard, std::move(rebuilt), newer());
   }
 }
 

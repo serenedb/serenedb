@@ -61,6 +61,7 @@ struct StoreWrites {
   uint64_t rows_generation = 0;
   std::shared_ptr<const TableState> rebuilt;
   bool rebuilt_newer = false;
+  bool adopting = false;
   uint64_t revision = 0;
   struct Pin {
     const TableState* state = nullptr;
@@ -134,6 +135,7 @@ class Writes {
                                          connector::SearchSinkInsertBaseImpl&)>
                     feed);
 
+  void Adopting(const std::shared_ptr<Store>& store);
   void Rebuilt(const std::shared_ptr<Store>& store,
                std::shared_ptr<const TableState> state, bool newer);
 

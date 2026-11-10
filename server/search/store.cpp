@@ -636,7 +636,9 @@ ResultWithTime Store::CleanupUnsafe() {
       }
     }
     const auto running = transactions.RunningSnapshots();
-    PruneVersions(running.snapshots, running.published);
+    const auto* own = FindSnapshots(running.stores, _id);
+    PruneVersions(own ? std::span<const Tick>{own->running} : running.snapshots,
+                  running.published);
     transactions.AdvanceEpoch();
     FreeVersions();
   }

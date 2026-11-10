@@ -327,18 +327,58 @@ Transactions::Running Transactions::RunningSnapshots() {
   absl::MutexLock lock{&_walk_mutex};
   Running running;
   running.published = _last_commit.load(std::memory_order_seq_cst);
+  std::vector<Released> holders;
+  const bool per_store = !_released.empty();
   WalkSlots([&](const SessionSlot& slot) {
     for (const auto* field : {&slot.snapshot, &slot.held}) {
       if (const auto snapshot = field->load(std::memory_order_seq_cst);
           snapshot != kNoSnapshot) {
         running.snapshots.push_back(snapshot);
+        if (per_store) {
+          holders.push_back({.slot = &slot, .snapshot = snapshot});
+        }
       }
     }
   });
-  absl::c_sort(running.snapshots);
-  running.snapshots.erase(std::ranges::unique(running.snapshots).begin(),
-                          running.snapshots.end());
+  const auto sorted = [](std::vector<duckdb::transaction_t>& snapshots) {
+    absl::c_sort(snapshots);
+    snapshots.erase(std::ranges::unique(snapshots).begin(), snapshots.end());
+  };
+  sorted(running.snapshots);
+  for (const auto& released : _released) {
+    if (search::FindSnapshots(running.stores, released.store)) {
+      continue;
+    }
+    auto& own = running.stores.emplace_back(search::StoreSnapshots{
+      .store = released.store, .oldest = running.published});
+    for (const auto& holder : holders) {
+      if (absl::c_none_of(_released, [&](const Released& mine) {
+            return mine.store == released.store && mine.slot == holder.slot &&
+                   mine.snapshot == holder.snapshot;
+          })) {
+        own.running.push_back(holder.snapshot);
+        own.oldest = std::min(own.oldest, holder.snapshot);
+      }
+    }
+    sorted(own.running);
+  }
   return running;
+}
+
+void Transactions::ReleaseVersions(
+  duckdb::idx_t store, const SessionSlot& slot,
+  std::span<const duckdb::transaction_t> snapshots) {
+  absl::MutexLock lock{&_walk_mutex};
+  for (const auto snapshot : snapshots) {
+    _released.push_back({.store = store, .slot = &slot, .snapshot = snapshot});
+  }
+}
+
+void Transactions::KeepVersions(const SessionSlot& slot) {
+  absl::MutexLock lock{&_walk_mutex};
+  std::erase_if(_released, [&](const Released& released) {
+    return released.slot == &slot;
+  });
 }
 
 duckdb::transaction_t Transactions::RefreshOldest() {
@@ -412,9 +452,9 @@ void Transactions::CollectGarbage() {
                       std::memory_order_relaxed);
   for (auto oldest = RefreshOldest();;) {
     Collect(oldest);
-    search::CleanupReleased(oldest);
     const auto running = RunningSnapshots();
-    search::PruneVersions(running.snapshots, running.published);
+    search::CleanupReleased(oldest, running.stores);
+    search::PruneVersions(running.snapshots, running.published, running.stores);
     AdvanceEpoch();
     search::FreeVersions();
     bool pending = search::ReleasedPending();
@@ -829,11 +869,25 @@ std::shared_ptr<const InvertedIndexConfig> SessionTransaction::ScanConfig(
   return view.state->config;
 }
 
+void SessionTransaction::ReleaseVersions(
+  const std::shared_ptr<search::Store>& store) {
+  _search.Adopting(store);
+  std::vector<duckdb::transaction_t> snapshots{Snapshot()};
+  if (_held) {
+    snapshots.push_back(*_held);
+  }
+  Transactions::Get().ReleaseVersions(store->GetId(), *_slot, snapshots);
+  _released_versions = true;
+}
+
 void SessionTransaction::PrepareCommit(duckdb::ClientContext& context) {
   _search.PrepareCommit(context);
 }
 
 void SessionTransaction::Release() noexcept {
+  if (std::exchange(_released_versions, false)) {
+    Transactions::Get().KeepVersions(*_slot);
+  }
   for (const auto& table : _layout_claims) {
     table->ReleaseLayout(_id, _state == SessionState::Committed);
   }

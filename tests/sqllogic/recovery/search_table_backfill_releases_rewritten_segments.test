@@ -1,0 +1,146 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE brs_t (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO brs_t SELECT i, 'row ' || i FROM range(0, 1000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO brs_t SELECT i, 'row ' || i FROM range(1000, 2000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO brs_t SELECT i, 'row ' || i FROM range(2000, 3000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO brs_t SELECT i, 'row ' || i FROM range(3000, 4000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO brs_t SELECT i, 'row ' || i FROM range(4000, 5000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO brs_t SELECT i, 'row ' || i FROM range(5000, 6000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET VARIABLE brs_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'brs_t') || '/*.sm';
+
+
+statement ok
+CREATE TEMP TABLE brs_old AS SELECT file FROM glob(getvariable('brs_dir'));
+
+
+query
+SELECT count(*) AS segments FROM brs_old;
+----
+segments
+6
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_backfill_group_bytes = 1;
+
+
+statement ok
+CREATE INDEX brs_idx ON brs_t USING inverted (body);
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) <= 1 AS released FROM glob(getvariable('brs_dir')) g WHERE g.file IN (SELECT file FROM brs_old);
+----
+released
+t
+
+
+query
+SELECT count(*) AS n FROM brs_t;
+----
+n
+6000
+
+
+query
+SELECT count(*) AS n FROM brs_idx WHERE body = 'row 4321';
+----
+n
+1
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+DELETE FROM brs_old;
+
+
+statement ok
+INSERT INTO brs_old SELECT file FROM glob(getvariable('brs_dir'));
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE brs_t ADD COLUMN tag INT DEFAULT 7;
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) <= 1 AS released FROM glob(getvariable('brs_dir')) g WHERE g.file IN (SELECT file FROM brs_old);
+----
+released
+t
+
+
+query
+SELECT count(*) AS n, min(tag) AS lo, max(tag) AS hi FROM brs_t;
+----
+n	lo	hi
+6000	7	7
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n FROM brs_idx WHERE body = 'row 4321';
+----
+n
+1

@@ -604,6 +604,14 @@ void Writes::RewriteOwn(
   }
 }
 
+void Writes::Adopting(const std::shared_ptr<Store>& store) {
+  auto& w = EnsureStoreWrites(store);
+  absl::MutexLock lock{&w.mutex};
+  w.adopting = true;
+  w.pinned.store(nullptr, std::memory_order_relaxed);
+  w.pin.reset();
+}
+
 void Writes::Rebuilt(const std::shared_ptr<Store>& store,
                      std::shared_ptr<const TableState> state, bool newer) {
   auto& w = EnsureStoreWrites(store);
@@ -630,9 +638,13 @@ const StoreWrites::Pin& Writes::EnsurePin(duckdb::ClientContext& context,
     ThrowConcurrentUpdate();
   }
   const auto& table = w.store->GetTable();
-  const auto* state = table.VersionAt(Snapshot(), _walks).state.get();
-  if (w.rebuilt && w.rebuilt->tick > state->tick) {
+  const auto snapshot = Snapshot();
+  const TableState* state = nullptr;
+  if (w.rebuilt && w.rebuilt->tick > snapshot) {
     state = w.rebuilt.get();
+  } else {
+    SDB_ASSERT(!w.adopting);
+    state = table.VersionAt(snapshot, _walks).state.get();
   }
   if (w.store->HasIndexes() && w.changes.HasBufferedRows()) {
     FlushRows(context, w);

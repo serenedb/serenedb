@@ -8,7 +8,7 @@ CREATE INDEX hnsw_fp16_idx ON hnsw_fp16
 statement ok
 INSERT INTO hnsw_fp16 SELECT i,
   list_transform(range(8),
-                 x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
+                 lambda x: CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
 

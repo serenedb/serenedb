@@ -57,7 +57,7 @@ The publisher may require `trust`, `password`, `md5` or `scram-sha-256` authenti
 | `origin` | `any` | `none` asks the publisher to send only changes that did not themselves arrive through replication. |
 | `disable_on_error` | `false` | Disable the subscription when applying a change fails, instead of reconnecting and retrying. |
 | `password_required` | `true` | `false` lets a subscription connect without a password; only a superuser may set it. |
-| `streaming` | `parallel` | `on` or `parallel` lets the publisher stream large transactions before they commit. SereneDB applies a streamed transaction as it arrives, in one local transaction that commits when the publisher's does; when another transaction commits first or a subtransaction of it rolls back, it undoes that work and applies the transaction from a spool when it commits instead. `parallel` behaves like `on`. `off` makes the publisher hold a transaction until it commits. Needs a PostgreSQL 14 or later publisher. |
+| `streaming` | `parallel` | `on` or `parallel` lets the publisher stream large transactions before they commit. SereneDB applies a streamed transaction as it arrives, in one local transaction that commits when the publisher's does, unless another streamed transaction with changes for the subscription is already in progress; when another transaction with such changes commits first or a subtransaction of it rolls back, it undoes that work and applies the transaction from a spool when it commits instead. Transactions on the publisher that change no subscribed table never delay it. `parallel` behaves like `on`. `off` makes the publisher hold a transaction until it commits. Needs a PostgreSQL 14 or later publisher. |
 | `run_as_owner` | `false` | `false` applies the changes to each table as the table's owner, which the subscription owner must be able to `SET ROLE` to. `true` applies them as the subscription owner. |
 | `failover` | `false` | Create the slot as a failover slot (PostgreSQL 17 or later publisher). |
 | `synchronous_commit` | `off` | Stored for compatibility; every applied transaction is durable before its position is reported to the publisher. |
@@ -140,6 +140,10 @@ Local tables are not created for you. Create every published table locally befor
 ```sql
 SELECT subname, received_lsn, latest_end_lsn, last_msg_receipt_time FROM pg_stat_subscription;
 ```
+
+## Restoring from a backup
+
+A server restored from a [backup](../../../operations/backup.md) starts with every subscription disabled and logs a warning for each one, because the publisher's replication slot has moved past the restored position and the original server may still be using it. Check that the slot can still provide what the restored server needs, or create a new slot and resynchronize, then run `ALTER SUBSCRIPTION ... ENABLE`. The subscription stays disabled across restarts until then.
 
 ## Limitations
 

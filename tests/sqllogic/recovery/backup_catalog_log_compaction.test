@@ -1,0 +1,218 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bclc_seed (x BIGINT);
+
+
+statement ok
+CREATE TEMP TABLE bclc_before AS
+SELECT size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+
+
+connection holder
+query
+SELECT pg_backup_start('bclc') IS NOT NULL AS started;
+----
+started
+t
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE bclc_1 (x BIGINT);
+
+
+connection default
+statement ok
+CREATE TABLE bclc_2 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_1;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_1 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_1;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_2 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_2;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_3 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_3;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_4 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_4;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_5 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_5;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_6 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_6;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_7 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_7;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_8 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_8;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_9 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_9;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_10 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_10;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_11 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_11;
+
+
+connection default
+statement ok
+CREATE TABLE bclc_churn_12 (x BIGINT);
+
+
+connection default
+statement ok
+DROP TABLE bclc_churn_12;
+
+
+connection default
+query
+SELECT
+  live.size > (SELECT size FROM bclc_before) AS grew,
+  link.size = live.size AS same_file
+FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal') AS live,
+  read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/catalog.wal') AS link;
+----
+grew	same_file
+t	t
+
+
+connection default
+statement ok
+CREATE TEMP TABLE bclc_during AS
+SELECT size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+
+
+connection holder
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
+----
+label
+t
+
+
+connection default
+statement ok
+CREATE TABLE bclc_3 (x BIGINT);
+
+
+connection default
+query
+SELECT size < (SELECT size FROM bclc_during) AS compacted
+FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+----
+compacted
+t
+
+
+connection default
+statement ok
+RESET sdb_faults;
+
+
+connection default
+query
+SELECT table_name FROM information_schema.tables
+WHERE table_catalog = current_database() AND starts_with(table_name, 'bclc_')
+ORDER BY table_name;
+----
+table_name
+bclc_2
+bclc_3
+bclc_seed

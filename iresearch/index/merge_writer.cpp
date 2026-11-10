@@ -27,6 +27,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
+#include <bit>
 #include <optional>
 #include <span>
 #include <vector>
@@ -43,7 +44,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
@@ -62,7 +63,27 @@ namespace irs {
 namespace {
 
 using DocIdMapT = ManagedVector<doc_id_t>;
-using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
+
+struct MergedMember {
+  IndexFeatures features = IndexFeatures::None;
+  bytes_view single;
+  bool present = false;
+  bool keyed = false;
+};
+
+struct MergedField {
+  std::optional<DictLayout> layout;
+  std::array<MergedMember, kDictMembers> members;
+};
+
+using FieldMetaMapT = absl::flat_hash_map<field_id, MergedField>;
+
+struct DictKey {
+  field_id id;
+  DictMember member;
+
+  auto operator<=>(const DictKey&) const = default;
+};
 
 class ProgressTracker {
  public:
@@ -219,9 +240,6 @@ class CompoundTermIterator : public TermOnlyIterator {
     _doc_itr.Clear();
     _term_iterator_mask.clear();
     _term_iterators.clear();
-    _min_term.clear();
-    _max_term.clear();
-    _has_min_term = false;
   }
 
   const FieldMeta& Meta() const noexcept { return *_meta; }
@@ -237,18 +255,7 @@ class CompoundTermIterator : public TermOnlyIterator {
 
   TermPostings::ptr postings(IndexFeatures features) const final;
 
-  bytes_view value() const noexcept final {
-    if (!_has_min_term) [[unlikely]] {
-      _has_min_term = true;
-      _min_term = _current_term;
-    }
-    SDB_ASSERT(_max_term <= _current_term);
-    _max_term = _current_term;
-    return _current_term;
-  }
-
-  bytes_view MinTerm() const noexcept { return _min_term; }
-  bytes_view MaxTerm() const noexcept { return _max_term; }
+  bytes_view value() const noexcept final { return _current_term; }
 
  private:
   struct TermIteratorImpl {
@@ -261,10 +268,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   const FieldMeta* _meta{};
   std::vector<size_t> _term_iterator_mask;
   std::vector<TermIteratorImpl> _term_iterators;
-  mutable bstring _min_term;
-  mutable bstring _max_term;
   mutable CompoundPostings _doc_itr;
-  mutable bool _has_min_term{false};
   ProgressTracker _progress;
 };
 
@@ -371,10 +375,15 @@ class CompoundFieldIterator final : public BasicTermReader {
     return *_current_meta;
   }
 
+  DictRef Dict() const noexcept {
+    return {.layout = _layout, .member = _current.member};
+  }
+
   field_id id() const noexcept final { return Meta().id; }
   FieldProperties properties() const noexcept final { return _props; }
-  bytes_view min() const noexcept final { return _term_itr.MinTerm(); }
-  bytes_view max() const noexcept final { return _term_itr.MaxTerm(); }
+  void SampleTerms(
+    uint64_t bytes,
+    absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
   TermOnlyIterator::ptr iterator() const final;
 
   bool Aborted() const {
@@ -387,6 +396,7 @@ class CompoundFieldIterator final : public BasicTermReader {
   struct FieldIteratorImpl {
     std::span<const field_id> ids;
     size_t pos;
+    size_t at;
     const SubReader* reader;
     const DocRemap* remap;
   };
@@ -396,8 +406,11 @@ class CompoundFieldIterator final : public BasicTermReader {
     const TermReader* reader;
   };
 
+  const TermReader* Current(FieldIteratorImpl& it) const;
+
   FieldProperties _props;
-  field_id _current_id{field_limits::invalid()};
+  DictKey _current{.id = field_limits::invalid(), .member = {}};
+  DictLayout _layout = DictLayout::String;
   FieldMeta _synthesized_meta;
   const FieldMeta* _current_meta{&FieldMeta::kEmpty};
   std::vector<TermIteratorImpl> _field_iterator_mask;
@@ -409,64 +422,92 @@ class CompoundFieldIterator final : public BasicTermReader {
 
 void CompoundFieldIterator::Add(const SubReader& reader,
                                 const DocRemap& remap) {
-  _field_iterators.emplace_back(reader.field_ids(), size_t{0}, &reader, &remap);
+  _field_iterators.emplace_back(reader.field_ids(), size_t{0}, size_t{0},
+                                &reader, &remap);
+}
+
+const TermReader* CompoundFieldIterator::Current(FieldIteratorImpl& it) const {
+  for (; it.pos < it.ids.size(); ++it.pos, it.at = 0) {
+    const auto id = it.ids[it.pos];
+    if (_field_options &&
+        _field_options->GetFieldKind(id) != FieldKind::Index) {
+      continue;
+    }
+    if (const auto fields = it.reader->fields(id); it.at < fields.size()) {
+      return fields[it.at];
+    }
+  }
+  return nullptr;
 }
 
 bool CompoundFieldIterator::Next() {
   _progress();
 
+  const DictKey none{.id = field_limits::invalid(), .member = {}};
   if (Aborted()) {
     _field_iterator_mask.clear();
     _field_iterators.clear();
-    _current_id = field_limits::invalid();
+    _current = none;
     return false;
   }
 
   for (auto& entry : _field_iterator_mask) {
-    ++_field_iterators[entry.itr_id].pos;
+    ++_field_iterators[entry.itr_id].at;
   }
 
   _field_iterator_mask.clear();
-  _current_id = field_limits::invalid();
+  _current = none;
 
   for (size_t i = 0, count = _field_iterators.size(); i != count; ++i) {
     auto& field_itr = _field_iterators[i];
-    while (_field_options && field_itr.pos < field_itr.ids.size() &&
-           _field_options->GetFieldKind(field_itr.ids[field_itr.pos]) !=
-             FieldKind::Index) {
-      ++field_itr.pos;
-    }
-    if (field_itr.pos >= field_itr.ids.size()) {
-      continue;
-    }
-    const auto id = field_itr.ids[field_itr.pos];
-    if (field_limits::valid(_current_id) && id > _current_id) {
-      continue;
-    }
-    const auto* field_terms = field_itr.reader->field(id);
+    const auto* field_terms = Current(field_itr);
     if (!field_terms) {
-      ++field_itr.pos;
       continue;
     }
-    if (field_limits::valid(_current_id) && id < _current_id) {
-      _field_iterator_mask.clear();
+    const auto dict = field_terms->meta().dict;
+    const DictKey key{.id = field_itr.ids[field_itr.pos],
+                      .member = dict.member};
+    const bool first = !field_limits::valid(_current.id) || key < _current;
+    if (!first && key != _current) {
+      continue;
     }
+    if (first) {
+      _field_iterator_mask.clear();
+      _layout = dict.layout;
+    }
+    SDB_ASSERT(dict.layout == _layout);
     const auto features = field_terms->meta().index_features;
     _synthesized_meta.index_features =
       _field_iterator_mask.empty()
         ? features
         : _synthesized_meta.index_features & features;
-    _current_id = id;
+    key_width =
+      _field_iterator_mask.empty() || key_width == field_terms->key_width
+        ? field_terms->key_width
+        : 0;
+    _current = key;
     _field_iterator_mask.emplace_back(TermIteratorImpl{i, field_terms});
   }
 
-  if (!field_limits::valid(_current_id)) {
+  if (!field_limits::valid(_current.id)) {
     _current_meta = &FieldMeta::kEmpty;
     return false;
   }
-  _synthesized_meta.id = _current_id;
+  _synthesized_meta.id = _current.id;
   _current_meta = &_synthesized_meta;
   return true;
+}
+
+void CompoundFieldIterator::SampleTerms(
+  uint64_t bytes,
+  absl::FunctionRef<void(std::span<const bytes_view>)> visit) const {
+  if (_field_iterator_mask.empty()) {
+    return;
+  }
+  const uint64_t share = bytes / _field_iterator_mask.size();
+  for (const auto& segment : _field_iterator_mask) {
+    segment.reader->SampleTerms(share, visit);
+  }
 }
 
 TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
@@ -481,20 +522,47 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader,
                       const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
-    const auto* term_reader = reader.field(id);
-    if (!term_reader || (field_options &&
-                         field_options->GetFieldKind(id) != FieldKind::Index)) {
+    if (field_options && field_options->GetFieldKind(id) != FieldKind::Index) {
       continue;
     }
-    const auto& field_meta = term_reader->meta();
-    const auto [field_meta_it, is_new] =
-      field_meta_map.emplace(id, field_meta.index_features);
-    if (!is_new) {
-      field_meta_it->second &= field_meta.index_features;
+    const auto fields = reader.fields(id);
+    if (fields.empty()) {
+      continue;
     }
-    index_features |= field_meta.index_features;
+    auto& field = field_meta_map[id];
+    const auto layout = fields.front()->meta().dict.layout;
+    if (!field.layout) {
+      field.layout = layout;
+    } else if (*field.layout != layout) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                      ERR_MSG("merge: field ", id,
+                              " has different dictionary layouts in its "
+                              "segments"));
+    }
+    for (const auto* term_reader : fields) {
+      auto& merged =
+        field.members[static_cast<size_t>(term_reader->meta().dict.member)];
+      const auto features = term_reader->meta().index_features;
+      index_features |= features;
+      merged.features = merged.present ? merged.features & features : features;
+      merged.keyed = merged.keyed || term_reader->size() != 1 ||
+                     (merged.present && merged.single != term_reader->min());
+      if (!merged.present) {
+        merged.single = term_reader->min();
+        merged.present = true;
+      }
+    }
   }
   return true;
+}
+
+uint64_t KeyedDicts(const FieldMetaMapT& field_meta_map) noexcept {
+  uint64_t count = 0;
+  for (const auto& [id, field] : field_meta_map) {
+    count += static_cast<uint64_t>(absl::c_count_if(
+      field.members, [](const MergedMember& member) { return member.keyed; }));
+  }
+  return count;
 }
 
 doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
@@ -568,6 +636,7 @@ void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
 }
 
 field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
+                                    DictRef dict,
                                     std::span<const MergeSource> sources,
                                     const IndexFieldOptions* field_options) {
   std::vector<NormPiece> pieces;
@@ -575,7 +644,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
   for (const auto& src : sources) {
     const NormColumnReader* reader = nullptr;
     if (src.col_reader) {
-      if (const auto* source_terms = src.reader->field(id);
+      if (const auto* source_terms = src.reader->field(id, dict);
           source_terms && field_limits::valid(source_terms->meta().norm)) {
         reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }
@@ -631,12 +700,16 @@ MergedNormIdMap MergeNorms(ColWriter& col_writer,
                            const FieldMetaMapT& field_meta_map,
                            const IndexFieldOptions* field_options) {
   MergedNormIdMap out;
-  for (const auto& [id, features] : field_meta_map) {
-    if (!IsSubsetOf(IndexFeatures::Norm, features)) {
+  for (const auto& [id, field] : field_meta_map) {
+    const auto& strings =
+      field.members[static_cast<size_t>(DictMember::Strings)];
+    if (!strings.present ||
+        !IsSubsetOf(IndexFeatures::Norm, strings.features)) {
       continue;
     }
+    const DictRef dict{.layout = *field.layout, .member = DictMember::Strings};
     const auto new_norm_id =
-      MergeNormColumnFromSources(col_writer, id, sources, field_options);
+      MergeNormColumnFromSources(col_writer, id, dict, sources, field_options);
     if (field_limits::valid(new_norm_id)) {
       out.emplace(id, new_norm_id);
     }
@@ -662,32 +735,52 @@ struct MergedNormProvider final : public NormProvider {
 bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  CompoundFieldIterator& field_itr,
                  const MergedNormIdMap& merged_norm_ids,
-                 const MergeWriter::FlushProgress& progress,
-                 IResourceManager& rm, IdxWriter& idx,
-                 std::span<const BasicTermReader* const> extra) {
+                 const MergeWriter::FlushProgress& progress, IdxWriter& idx,
+                 std::span<const BasicTermReader* const> extra,
+                 uint64_t keyed_dicts) {
   auto field_writer =
-    std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
+    std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
   field_writer->SetIdxWriter(idx);
-  field_writer->prepare(flush_state);
+  field_writer->prepare(flush_state, keyed_dicts + extra.size());
 
   std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
                [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
                  return lhs->id() < rhs->id();
                });
+  const auto extra_key = [](const BasicTermReader* reader) {
+    return DictKey{
+      .id = reader->id(),
+      .member = StringLayout::kStrings.member,
+    };
+  };
+  const auto write_extra = [&](const BasicTermReader& reader) {
+    field_writer->write(StringLayout::kStrings, reader);
+  };
   size_t ei = 0;
   const size_t en = sorted_extra.size();
 
   while (field_itr.Next()) {
-    const auto fid = field_itr.Meta().id;
-    while (ei < en && sorted_extra[ei]->id() < fid) {
-      field_writer->write(*sorted_extra[ei]);
+    const auto dict = field_itr.Dict();
+    const DictKey key{.id = field_itr.Meta().id, .member = dict.member};
+    while (ei < en && extra_key(sorted_extra[ei]) < key) {
+      write_extra(*sorted_extra[ei]);
       ++ei;
     }
 
-    if (ei < en && sorted_extra[ei]->id() == fid) {
-      field_writer->write(*sorted_extra[ei]);
+    if (ei < en && extra_key(sorted_extra[ei]) == key) {
+      SDB_ASSERT(dict.layout == DictLayout::String);
+      write_extra(*sorted_extra[ei]);
       ++ei;
+      continue;
+    }
+
+    if (!IsTermMember(dict.member)) {
+      if (auto terms = field_itr.iterator(); terms->next()) {
+        SDB_ASSERT(terms->value() == kSlotTerm);
+        field_writer->WriteSlot(key.id, dict,
+                                *terms->postings(IndexFeatures::None));
+      }
       continue;
     }
 
@@ -695,18 +788,18 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     props.index_features = field_itr.Meta().index_features;
 
     if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
-      const auto it = merged_norm_ids.find(field_itr.Meta().id);
+      const auto it = merged_norm_ids.find(key.id);
       if (it != merged_norm_ids.end()) {
         props.norm = it->second;
       }
     }
 
     field_itr.SetProperties(props);
-    field_writer->write(field_itr);
+    field_writer->write(dict, field_itr);
   }
 
   while (ei < en) {
-    field_writer->write(*sorted_extra[ei]);
+    write_extra(*sorted_extra[ei]);
     ++ei;
   }
 
@@ -864,8 +957,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   };
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
-                   progress_callback, _readers.get_allocator().Manager(), idx,
-                   cluster_readers)) {
+                   progress_callback, idx, cluster_readers,
+                   KeyedDicts(field_meta_map))) {
     co_return false;
   }
 

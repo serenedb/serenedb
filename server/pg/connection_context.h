@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/cleanup/cleanup.h>
+
 #include <atomic>
 #include <duckdb/catalog/permissions.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
@@ -51,9 +53,6 @@ struct ReplBatch;
 
 }  // namespace sdb::replication
 namespace sdb::pg {
-
-inline constexpr std::string_view kPgServerVersion = "18.6";
-inline constexpr int32_t kPgServerVersionNum = 180006;
 
 class CopyInBatches;
 
@@ -166,9 +165,14 @@ class ConnectionContext final : public query::Transaction {
       auto* next = std::exchange(node->next, fifo);
       fifo = std::exchange(node, next);
     }
+    absl::Cleanup free_rest = [&fifo] {
+      while (fifo) {
+        delete std::exchange(fifo, fifo->next);
+      }
+    };
     while (fifo) {
-      fn(fifo->data);
-      delete std::exchange(fifo, fifo->next);
+      std::unique_ptr<NoticeNode> current{std::exchange(fifo, fifo->next)};
+      fn(current->data);
     }
   }
 

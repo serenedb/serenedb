@@ -135,7 +135,7 @@ Match indexed tokens against a SQL `LIKE` pattern.
 | :--- | :--- | :--- | :--- |
 | `pattern` | `VARCHAR`/`BLOB` | — | A `LIKE` pattern. `%` matches any run of characters (including none), `_` matches exactly one character, and `\` makes the next character literal (`\%`, `\_`, `\\`). A pattern that ends in an unpaired `\` is an error. The pattern is matched against terms as they are stored in the index. |
 
-**How it works.** `ts_like` is applied to the *indexed* term form, not the raw text, so it is not tokenized further — match it against a column whose dictionary stores whole values (such as a `keyword`-style category column). It is the inverted-index analogue of SQL `LIKE`: a row matches when any of its indexed tokens satisfies the pattern.
+**How it works.** `ts_like` is applied to the *indexed* term form, not the raw text, so it is not tokenized further — match it against a column whose dictionary stores whole values (such as a `keyword`-style category column). It is the inverted-index analogue of SQL `LIKE`: a row matches when any of its indexed tokens satisfies the pattern. On a `BYTEA` column it compares bytes, as `LIKE` does there: `_` matches exactly one byte and `%` any run of bytes.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -173,7 +173,7 @@ Match indexed tokens against a regular expression.
 | `pattern` | `VARCHAR`/`BLOB` | — | The regular expression. It must match a whole indexed term (anchored implicitly, not a substring search). |
 | `syntax` | `VARCHAR` | `'perl'` | Dialect: `'perl'` (RE2 / Perl-compatible) or `'posix'` (POSIX ERE). Case-insensitive. |
 
-**How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`.
+**How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`. On a `BYTEA` column the pattern is matched byte by byte: `.` and a character class match exactly one byte, and a pattern character that takes two bytes in UTF-8 stands for those two bytes.
 
 A pattern that is not valid in its dialect, such as `ts_regexp('(abc')` or `ts_regexp('\d+', 'posix')`, fails the query with `invalid regular expression: …`, and so does one too large to compile. On a [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md#searching) column, an invalid pattern matches no row instead, and one too large fails with `pattern cannot be verified: …`.
 
@@ -865,7 +865,7 @@ There is no dedicated TSQUERY constructor for nullness — the plain SQL operato
 
 Match rows by the nullness of an indexed column.
 
-**How it works.** Every indexed column carries a null-marker term in the index; `IS NULL` compiles to a lookup of that term and `IS NOT NULL` to its negation, so both run as posting-list reads — no `INCLUDE` storage or table probe needed. On columns the index does not cover, the same predicates simply run row-level; the syntax is identical either way. In the [setup](#setup), `dual` has one `NULL` row.
+The index answers `IS NULL` and `IS NOT NULL` on an indexed column by itself, with no `INCLUDE` storage or table probe. On columns the index does not cover, the same predicates run row by row; the syntax is identical either way. In the [setup](#setup), `dual` has one `NULL` row.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

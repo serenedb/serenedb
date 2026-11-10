@@ -215,11 +215,12 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictListAggregate(
 
 duckdb::unique_ptr<duckdb::Expression> MakeTsDictAggregate(
   duckdb::LogicalOperator& root, duckdb::ClientContext& context,
-  FoundScan& found, irs::field_id field_id, irs::field_id display_id,
-  TsDictColKind kind, std::string_view agg_name, duckdb::TableIndex table_index,
-  const duckdb::Identifier& alias) {
+  FoundScan& found, irs::field_id field_id, irs::DictLayout layout,
+  irs::field_id display_id, TsDictColKind kind, std::string_view agg_name,
+  duckdb::TableIndex table_index, const duckdb::Identifier& alias) {
   auto& req = found.bind_data->ts_dict.For(field_id);
   req.display_id = display_id;
+  req.layout = layout;
   const duckdb::LogicalType col_type{TsDictColFor(kind).type};
   const auto col_idx = EnsureTsDictCol(*found.bind_data, *found.get, req, kind);
   using enum connector::TsDictTermUses;
@@ -314,9 +315,23 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
-  return MakeTsDictAggregate(root, context, found, index->TermField(col_id),
-                             col_id, kind, agg_name,
-                             col_ref->Binding().table_index, agg.GetAlias());
+  if (kind == TsDictColKind::Term) {
+    const auto tokenizer =
+      found.bind_data->relation.ResolveTokenizers(context).Acquire(
+        index->TermField(col_id));
+    const auto output = tokenizer.analyzer->Traits().output;
+    if (output != duckdb::LogicalTypeId::VARCHAR) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(fn, "(): column has no text term dictionary"),
+                      ERR_HINT("its dictionary produces ",
+                               duckdb::LogicalTypeIdToString(output),
+                               " tokens, which ts_dict_raw_agg returns"));
+    }
+  }
+  return MakeTsDictAggregate(
+    root, context, found, index->TermField(col_id),
+    connector::term_dict::LayoutOf(col_type, info->HasJsonLeafFields()), col_id,
+    kind, agg_name, col_ref->Binding().table_index, agg.GetAlias());
 }
 
 struct TsDictColRef {
@@ -861,11 +876,9 @@ bool ResidualComputesOverColumn(const duckdb::Expression& expr) {
 struct TsDictFacetKey {
   irs::field_id field_id = irs::field_limits::invalid();
   connector::ColumnId col_id = connector::kInvalidColumnId;
-  irs::field_id null_field_id = irs::field_limits::invalid();
   const catalog::InvertedIndexConfig* index = nullptr;
   duckdb::TableIndex anchor;
-
-  bool nullable() const { return irs::field_limits::valid(null_field_id); }
+  bool nullable = false;
 };
 
 // GROUP BY facet -> term-dictionary scan conversion. Convert() rewrites
@@ -916,7 +929,7 @@ class TsDictFacetPushdown {
       duckdb::Identifier{_cols[g].count_name}, duckdb::LogicalType::INTEGER,
       _cols[g].count_binding);
   }
-  bool NotNull() const { return !_keys.front().nullable(); }
+  bool NotNull() const { return !_keys.front().nullable; }
 
   duckdb::unique_ptr<duckdb::LogicalOperator>& _plan;
   duckdb::LogicalOperator& _root;
@@ -1076,7 +1089,8 @@ duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
   duckdb::ClientContext& context, const duckdb::Identifier& alias,
   FoundScan& target) {
   return MakeTsDictAggregate(root, context, target, match.field_id,
-                             match.col_id, TsDictColKind::Term, match.agg,
+                             irs::DictLayout::String, match.col_id,
+                             TsDictColKind::Term, match.agg,
                              match.binding.table_index, alias);
 }
 
@@ -1138,13 +1152,9 @@ bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
   if (!term) {
     return false;
   }
-  const auto* info = index.FindEntry(term->field_id);
-  SDB_ASSERT(info);
-  if (!irs::field_limits::valid(info->null_field_id)) {
-    return false;
-  }
+  SDB_ASSERT(index.FindEntry(term->field_id));
   key.field_id = term->field_id;
-  key.null_field_id = info->null_field_id;
+  key.nullable = true;
   key.index = &index;
   key.anchor = _found.get->table_index;
   return true;
@@ -1181,11 +1191,10 @@ bool TsDictFacetPushdown::ResolveKeys() {
         key.field_id = key.index->TermField(col_id);
         key.col_id = col_id;
         if (!_found.bind_data->IsColumnNotNull(col_id)) {
-          const auto* col_info = key.index->FindColumnInfo(col_id);
-          if (!col_info || !irs::field_limits::valid(col_info->null_field_id)) {
+          if (!key.index->FindColumnInfo(col_id)) {
             return false;
           }
-          key.null_field_id = col_info->null_field_id;
+          key.nullable = true;
         }
       } else if (!walked.stop_expr ||
                  !ResolveExpressionKey(*walked.stop_expr, key)) {
@@ -1248,7 +1257,7 @@ void TsDictFacetPushdown::EmitScanColumns() {
     EnsureTsDictCol(*_found.bind_data, *_found.get, req, TsDictColKind::Term);
     EnsureTsDictCol(*_found.bind_data, *_found.get, req, TsDictColKind::Count);
     req.term_uses |= connector::TsDictTermUses::Full;
-    req.null_field_id = key.null_field_id;
+    req.nulls = key.nullable;
 
     auto term_name =
       TsDictColName(*_found.bind_data, req.display_id, TsDictColKind::Term);
@@ -1685,7 +1694,9 @@ template<typename... Fs>
 bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
   const auto type = filter.type();
   return ((type == irs::Type<Fs>::id() &&
-           irs::utils::downCast<Fs>(filter).field_id() == field) ||
+           irs::utils::downCast<Fs>(filter).field_id() == field &&
+           irs::utils::downCast<Fs>(filter).dict().member ==
+             irs::DictMember::Strings) ||
           ...);
 }
 
@@ -1711,7 +1722,8 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
     bool ok = node.MinShouldMatch() <= 1;
     for (const auto occur : irs::kAllOccur) {
       for (const auto& clause : node.Terms(occur)) {
-        ok = ok && clause.field == field;
+        ok = ok && clause.field == field &&
+             clause.dict.member == irs::DictMember::Strings;
         ++clauses;
       }
     }
@@ -1750,7 +1762,6 @@ irs::Filter::ptr ClaimOptimizedConjunct(
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
   irs::containers::FlatHashSet<irs::field_id>& analyzed_fields,
-  irs::containers::FlatHashMap<irs::field_id, irs::field_id>& null_markers,
   duckdb::ClientContext& context) {
   auto root = std::make_unique<irs::BooleanFilter>();
   if (!TryClaimIResearchConjunct(*root, conjunct, getter, expr_getter,
@@ -1761,8 +1772,7 @@ irs::Filter::ptr ClaimOptimizedConjunct(
   connector::EnsureIncludeSides(*one);
   irs::Optimize(one, {.scored = false,
                       .fuse_seekable_acceptors = true,
-                      .analyzed_fields = analyzed_fields,
-                      .null_markers = &null_markers});
+                      .analyzed_fields = analyzed_fields});
   return one;
 }
 
@@ -1788,8 +1798,7 @@ bool TsDictFacetPushdown::WhereOk() {
   const bool claimable = WithSearchGetters(
     *_found.get, *_found.bind_data, _context,
     [&](const SearchGetters& getters) {
-      auto& [getter, expr_getter, analyzed_fields, null_markers, column_id] =
-        getters;
+      auto& [getter, expr_getter, analyzed_fields, column_id] = getters;
       size_t computed_residuals = 0;
       for (auto& expr : _where->expressions) {
         if (expr->HasParameter()) {
@@ -1816,7 +1825,7 @@ bool TsDictFacetPushdown::WhereOk() {
           }
           if (refs.matched_key) {
             need_acceptor = !refs.non_enum;
-            if (need_acceptor && _keys[*refs.matched_key].nullable()) {
+            if (need_acceptor && _keys[*refs.matched_key].nullable) {
               return false;
             }
             acceptor_field = _keys[*refs.matched_key].field_id;
@@ -1829,8 +1838,8 @@ bool TsDictFacetPushdown::WhereOk() {
           }
           need_acceptor = true;
         }
-        auto one = ClaimOptimizedConjunct(
-          expr, getter, expr_getter, analyzed_fields, null_markers, _context);
+        auto one = ClaimOptimizedConjunct(expr, getter, expr_getter,
+                                          analyzed_fields, _context);
         if (!one) {
           return false;
         }
@@ -1947,8 +1956,7 @@ class TsDictFilterClaim {
     irs::Optimize(f, {.scored = false,
                       .fuse_seekable_acceptors = true,
                       .fuse_acceptor_intersections = fuse_intersections,
-                      .analyzed_fields = _getters.analyzed_fields,
-                      .null_markers = &_getters.null_markers});
+                      .analyzed_fields = _getters.analyzed_fields});
   }
 
   // Comparisons over the enumerated column are the explicit ts_dict term
@@ -2002,7 +2010,7 @@ class TsDictFilterClaim {
       return info;
     }
     if (acceptor) {
-      info->null_field_id = irs::field_limits::invalid();
+      info->nullable = false;
     }
     if (info->tokenizer.analyzer && info->tokenizer.analyzer->type() !=
                                       irs::Type<irs::KeywordTokenizer>::id()) {
@@ -2038,7 +2046,7 @@ class TsDictFilterClaim {
       duckdb::LogicalType::VARCHAR,
       {.analyzer = catalog::Tokenizer::TokenizerWrapper{
          new irs::KeywordTokenizer(), {}}});
-    info.null_field_id = irs::field_limits::invalid();
+    info.nullable = false;
     return info;
   }
 
@@ -2048,7 +2056,7 @@ class TsDictFilterClaim {
     const connector::ExpressionGetter& e_getter) const {
     return ClaimOptimizedConjunct(conjunct, Uncapping(col_getter),
                                   Uncapping(e_getter), _getters.analyzed_fields,
-                                  _getters.null_markers, _context);
+                                  _context);
   }
 
   void RouteConjuncts() {

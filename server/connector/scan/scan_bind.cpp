@@ -58,8 +58,8 @@
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "search/scorer_options.h"
-#include "search/search_table.h"
-#include "search/search_table_transaction.h"
+#include "search/store.h"
+#include "search/writes.h"
 
 namespace sdb::connector {
 namespace {
@@ -93,7 +93,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
       }
       uint64_t terms = 0;
       for (const auto& segment : snapshot->reader) {
-        if (const auto* field = segment.field(req.field_id)) {
+        if (const auto* field = segment.field(
+              req.field_id,
+              {.layout = req.layout, .member = irs::DictMember::Strings})) {
           terms += field->size();
         }
       }
@@ -116,38 +118,37 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
-search::SearchTableTransaction::PinnedSearchTable PinnedSearchTable(
-  duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
-  const std::shared_ptr<search::SearchTable>& store) {
-  const auto make = [&] {
-    auto config = store->ScanConfig();
-    return search::SearchTableTransaction::PinnedSearchTable{
-      .reader =
-        std::make_shared<irs::DirectoryReader>(store->GetDirectoryReader()),
-      .config = std::move(config),
-    };
-  };
+search::Writes::PinnedSearchTable PinnedSearchTable(
+  duckdb::ClientContext& context, const search::Store& store) {
   auto* conn_ctx = GetSereneDBContextPtr(context);
   if (!conn_ctx) {
-    return make();
+    auto config = store.ScanConfig();
+    return {
+      .reader =
+        std::make_shared<irs::DirectoryReader>(store.GetDirectoryReader()),
+      .config = std::move(config),
+    };
   }
-  return conn_ctx->SearchTxn().EnsureSearchTable(database_oid, oid, make);
+  return conn_ctx->SearchTxn().EnsureSearchTable(store);
 }
 
-irs::DirectoryReader PinnedSearchReader(
-  duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
-  const std::shared_ptr<search::SearchTable>& store) {
-  return irs::DirectoryReader{
-    *PinnedSearchTable(context, database_oid, oid, store).reader};
+search::StoreSnapshotPtr IndexSnapshot(
+  duckdb::ClientContext& context, duckdb::idx_t oid,
+  const std::shared_ptr<search::Store>& storage) {
+  auto* conn_ctx = GetSereneDBContextPtr(context);
+  if (!conn_ctx) {
+    return storage->Snapshot();
+  }
+  return conn_ctx->EnsureSearchSnapshot(oid, storage);
 }
 
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   const catalog::SearchTableEntry& table) {
-  return [database_oid = table.catalog.GetOid(), oid = table.oid,
-          store = table.Storage()](
-           duckdb::ClientContext& context) -> search::InvertedIndexSnapshotPtr {
-    return std::make_shared<search::InvertedIndexSnapshot>(
-      PinnedSearchReader(context, database_oid, oid, store), nullptr);
+  return [store = table.Storage()](
+           duckdb::ClientContext& context) -> search::StoreSnapshotPtr {
+    return std::make_shared<search::StoreSnapshot>(
+      irs::DirectoryReader{*PinnedSearchTable(context, *store).reader},
+      nullptr);
   };
 }
 
@@ -492,12 +493,11 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   if (search_table) {
     AcquireSnapshot(*data, context, SearchTableSnapshot(*search_table));
   } else {
-    AcquireSnapshot(
-      *data, context,
-      [oid = entry.oid, storage = entry.Storage()](
-        duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {
-        return GetSereneDBContext(ctx).EnsureSearchSnapshot(oid, storage);
-      });
+    AcquireSnapshot(*data, context,
+                    [oid = entry.oid, storage = entry.Storage()](
+                      duckdb::ClientContext& ctx) -> search::StoreSnapshotPtr {
+                      return IndexSnapshot(ctx, oid, storage);
+                    });
   }
   data->relation.inverted_config = entry.Config();
   data->relation.row_group_size =
@@ -523,8 +523,7 @@ duckdb::TableFunction BindSearchTableScan(
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
   AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
   data->score.prune = store->TopKScorer();
-  data->relation.inverted_config =
-    PinnedSearchTable(context, entry.catalog.GetOid(), entry.oid, store).config;
+  data->relation.inverted_config = PinnedSearchTable(context, *store).config;
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   bind_data = std::move(data);
@@ -533,7 +532,7 @@ duckdb::TableFunction BindSearchTableScan(
 
 bool LooksUpByPk(const ScanBindData& bind) {
   return bind.relation.kind == ScanEntryKind::InvertedIndex &&
-         bind.relation.ScannedIndex().pk.column == PkColumnKind::Has &&
+         bind.relation.ScannedIndex().pk == PkColumnKind::Has &&
          (!bind.view || bind.view->fast_path);
 }
 
@@ -548,8 +547,7 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
 }
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
-  if (bind.view &&
-      bind.relation.inverted_config->pk.column == PkColumnKind::Has) {
+  if (bind.view && bind.relation.inverted_config->pk == PkColumnKind::Has) {
     if (const auto& fp = bind.view->fast_path) {
       return fp->pk_spec;
     }
@@ -557,9 +555,9 @@ std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
   return std::nullopt;
 }
 
-DeferredBuild BuildDeferredFilter(
-  duckdb::ClientContext& context, const ScanBindData& scan,
-  const search::InvertedIndexSnapshot& snapshot) {
+DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
+                                  const ScanBindData& scan,
+                                  const search::StoreSnapshot& snapshot) {
   SDB_ASSERT(scan.plan_cache.deferred);
   const auto& claim = *scan.plan_cache.deferred;
   const auto bound = [&](const std::shared_ptr<const duckdb::Expression>& e) {
@@ -720,11 +718,6 @@ DeferredBuild BuildDeferredFilter(
                            .scorer = scorer.get()};
   ctx.analyzed_fields.insert(claim.analyzed_fields.begin(),
                              claim.analyzed_fields.end());
-  irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
-  for (const auto& [marker, field] : claim.null_markers) {
-    null_markers[marker] = field;
-  }
-  ctx.null_markers = &null_markers;
   irs::Deferral deferral{.reader = snapshot.reader};
   if (scan.DefersChecks()) {
     ctx.deferral = &deferral;
@@ -741,9 +734,8 @@ DeferredBuild BuildDeferredFilter(
     SDB_ENSURE(rest_status.ok(), rest_status.message());
     irs::Filter::ptr rest_filter = std::move(rest);
     EnsureIncludeSides(*rest_filter);
-    irs::Optimize(rest_filter, {.scored = false,
-                                .analyzed_fields = ctx.analyzed_fields,
-                                .null_markers = &null_markers});
+    irs::Optimize(rest_filter,
+                  {.scored = false, .analyzed_fields = ctx.analyzed_fields});
     out.index_only = std::move(rest_filter);
   }
   return out;

@@ -45,11 +45,10 @@ class TransportBase {
 // Cross-thread cancellation handle for one connection (pg and http alike). A
 // CancelRequest arrives on a DIFFERENT connection (any io thread) and calls
 // Cancel() while the target session's query runs on a DuckDB worker thread;
-// ClientContext::Interrupt() is a lock-free atomic, so the only synchronization
-// needed is to stop a foreign thread from touching the ClientContext once the
-// owning session begins tearing down -- Detach() nulls it under the same mutex
-// Cancel() takes. The token is shared (shared_ptr) by the registry and the
-// session, so it outlives either.
+// the only synchronization needed is to stop a foreign thread from touching the
+// ClientContext once the owning session begins tearing down -- Detach() nulls
+// it under the same mutex Cancel() takes. The token is shared (shared_ptr) by
+// the registry and the session, so it outlives either.
 struct CancelToken {
   void Cancel() {
     absl::MutexLock lock{&mu};

@@ -1,0 +1,544 @@
+# Each indexed column keeps its NULL rows, its boolean values, its numbers and
+# its strings apart within the index. Every query runs against the index and
+# against the table, across two segments and again after they merge.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY slots_keyword AS
+    keyword() WITH (frequency);
+
+
+statement ok
+CREATE TABLE slots (id INTEGER PRIMARY KEY, b BOOLEAN, n BIGINT, s VARCHAR);
+
+
+statement ok
+CREATE INDEX slots_idx ON slots USING inverted(id, b, n, s slots_keyword)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO slots VALUES
+  (1, true, 10, 'apple'),
+  (2, false, 20, 'pear'),
+  (3, NULL, NULL, NULL),
+  (4, true, 40, 'plum');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slots;
+
+
+statement ok
+INSERT INTO slots VALUES
+  (5, false, 50, 'apple'),
+  (6, NULL, 60, NULL),
+  (7, true, NULL, 'fig');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slots;
+
+
+query
+SELECT id FROM slots_idx WHERE b IS NULL ORDER BY id;
+----
+id
+3
+6
+
+query
+SELECT id FROM slots WHERE b IS NULL ORDER BY id;
+----
+id
+3
+6
+
+query
+EXPLAIN SELECT id FROM slots_idx WHERE b IS NULL;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───╮
+│ Index: slots_idx   │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Term ─────────╮ │
+│ │ Field: b(null) │ │
+│ │ Value:         │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT id FROM slots_idx WHERE b = true ORDER BY id;
+----
+id
+1
+4
+7
+
+query
+EXPLAIN SELECT id FROM slots_idx WHERE b = true;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───╮
+│ Index: slots_idx   │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Term ─────────╮ │
+│ │ Field: b(bool) │ │
+│ │ Value: true    │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT id FROM slots_idx WHERE b <> true ORDER BY id;
+----
+id
+2
+5
+
+query
+SELECT id FROM slots WHERE b <> true ORDER BY id;
+----
+id
+2
+5
+
+query
+EXPLAIN SELECT id FROM slots_idx WHERE b <> true;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: slots_idx                       │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Not ──────────╮                     │
+│ ╰────────┬───────╯                     │
+│          ├───────────────────╮         │
+│ ╭─ Terms ┴───────╮  ╭─ Terms ┴───────╮ │
+│ │ Field: b(bool) │  │ Field: b(null) │ │
+│ │ Values: true   │  ╰────────────────╯ │
+│ ╰────────────────╯                     │
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM slots_idx WHERE b > false ORDER BY id;
+----
+id
+1
+4
+7
+
+query
+EXPLAIN SELECT id FROM slots_idx WHERE b > false;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───╮
+│ Index: slots_idx   │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Term ─────────╮ │
+│ │ Field: b(bool) │ │
+│ │ Value: true    │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT id FROM slots_idx WHERE b IN (false, true) ORDER BY id;
+----
+id
+1
+2
+4
+5
+7
+
+query
+EXPLAIN SELECT id FROM slots_idx WHERE b IN (false, true);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: slots_idx                       │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Or ───────────╮                     │
+│ ╰────────┬───────╯                     │
+│          ├───────────────────╮         │
+│ ╭─ Terms ┴───────╮  ╭─ Terms ┴───────╮ │
+│ │ Field: b(bool) │  │ Field: b(bool) │ │
+│ │ Values: false  │  │ Values: true   │ │
+│ ╰────────────────╯  ╰────────────────╯ │
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM slots_idx WHERE n IS NULL ORDER BY id;
+----
+id
+3
+7
+
+query
+SELECT id FROM slots_idx WHERE n BETWEEN 15 AND 55 ORDER BY id;
+----
+id
+2
+4
+5
+
+query
+EXPLAIN SELECT id FROM slots_idx WHERE n BETWEEN 15 AND 55;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: slots_idx      │
+│ Lookup: table         │
+│ Index Filter:         │
+│ ╭─ Granular Range ──╮ │
+│ │ Field: n(numeric) │ │
+│ │ Range: >=15, <=55 │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
+
+query
+SELECT id FROM slots_idx WHERE n IN (10, 60) ORDER BY id;
+----
+id
+1
+6
+
+query
+SELECT id FROM slots_idx WHERE s = 'apple' ORDER BY id;
+----
+id
+1
+5
+
+query
+SELECT id FROM slots_idx WHERE NOT (s = 'apple') ORDER BY id;
+----
+id
+2
+4
+7
+
+query
+SELECT id FROM slots WHERE NOT (s = 'apple') ORDER BY id;
+----
+id
+2
+4
+7
+
+query
+EXPLAIN SELECT id FROM slots_idx WHERE NOT (s = 'apple');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: slots_idx                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Not ────────────╮                     │
+│ ╰─────────┬────────╯                     │
+│           ├────────────────────╮         │
+│ ╭─ Terms ─┴────────╮  ╭─ Terms ┴───────╮ │
+│ │ Field: s(string) │  │ Field: s(null) │ │
+│ │ Values: 'apple'  │  ╰────────────────╯ │
+│ ╰──────────────────╯                     │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id FROM slots_idx WHERE s IS NOT NULL AND b IS NULL ORDER BY id;
+----
+id
+
+
+statement ok
+DELETE FROM slots WHERE id = 4;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) slots;
+
+
+query
+SELECT id FROM slots_idx WHERE b IS NULL ORDER BY id;
+----
+id
+3
+6
+
+query
+SELECT id FROM slots_idx WHERE b = true ORDER BY id;
+----
+id
+1
+7
+
+query
+SELECT id FROM slots_idx WHERE b <> true ORDER BY id;
+----
+id
+2
+5
+
+query
+SELECT id FROM slots_idx WHERE n IS NULL ORDER BY id;
+----
+id
+3
+7
+
+query
+SELECT id FROM slots_idx WHERE n BETWEEN 15 AND 55 ORDER BY id;
+----
+id
+2
+5
+
+query
+SELECT id FROM slots_idx WHERE s = 'apple' ORDER BY id;
+----
+id
+1
+5
+
+query
+SELECT id FROM slots_idx WHERE NOT (s = 'apple') ORDER BY id;
+----
+id
+2
+7
+
+
+# A NULL element leaves the list itself non-NULL, but makes a comparison with
+# the list UNKNOWN, so a negation excludes the row.
+
+statement ok
+CREATE TABLE slot_lists (id INTEGER PRIMARY KEY, tags VARCHAR[]);
+
+
+statement ok
+CREATE INDEX slot_lists_idx ON slot_lists USING inverted(id, tags slots_keyword)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO slot_lists VALUES (1, ['a', NULL]), (2, NULL), (3, ['b']), (4, ['b', NULL]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slot_lists;
+
+
+query
+SELECT id FROM slot_lists_idx WHERE tags IS NULL ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM slot_lists WHERE tags IS NULL ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM slot_lists_idx WHERE tags IS NOT NULL ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM slot_lists WHERE tags IS NOT NULL ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM slot_lists_idx WHERE NOT ('a' = ANY(tags)) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM slot_lists WHERE NOT ('a' = ANY(tags)) ORDER BY id;
+----
+id
+2
+3
+
+statement ok
+INSERT INTO slot_lists VALUES (5, [NULL]), (6, NULL), (7, ['a']);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slot_lists;
+
+
+query
+SELECT id FROM slot_lists_idx WHERE tags IS NULL ORDER BY id;
+----
+id
+2
+6
+
+query
+SELECT id FROM slot_lists WHERE tags IS NULL ORDER BY id;
+----
+id
+2
+6
+
+query
+SELECT id FROM slot_lists_idx WHERE tags IS NOT NULL ORDER BY id;
+----
+id
+1
+3
+4
+5
+7
+
+statement ok
+VACUUM (COMPACT_TABLE) slot_lists;
+
+
+query
+SELECT id FROM slot_lists_idx WHERE tags IS NULL ORDER BY id;
+----
+id
+2
+6
+
+query
+SELECT id FROM slot_lists_idx WHERE tags IS NOT NULL ORDER BY id;
+----
+id
+1
+3
+4
+5
+7
+
+
+# A JSON null makes every cast comparison of the leaf UNKNOWN as well.
+
+statement ok
+CREATE TABLE slot_json (id INTEGER PRIMARY KEY, content JSON);
+
+
+statement ok
+CREATE INDEX slot_json_idx ON slot_json
+  USING inverted(id, (content->'val') slots_keyword)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO slot_json VALUES
+  (1, '{"val":42}'), (2, '{"val":null}'), (3, '{"other":1}'), (4, '{"val":7}');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slot_json;
+
+
+query
+SELECT id FROM slot_json_idx WHERE NOT ((content->'val')::double = 42) ORDER BY id;
+----
+id
+4
+
+query
+SELECT id FROM slot_json WHERE NOT ((content->'val')::double = 42) ORDER BY id;
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM slot_json_idx WHERE NOT ((content->'val')::double = 42);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: slot_json_idx                                                                                                        │
+│ Lookup: table                                                                                                               │
+│ Index Filter:                                                                                                               │
+│ ╭─ Not ────────────────────────────────╮                                                                                    │
+│ ╰───────────────────┬──────────────────╯                                                                                    │
+│                     ├───────────────────────────────────────┬─────────────────────────────────────────╮                     │
+│ ╭─ Terms ───────────┴──────────────────╮  ╭─ Terms ─────────┴─────────────────╮  ╭─ Terms ────────────┴───────────────────╮ │
+│ │ Field: ("content" -> 'val')(numeric) │  │ Field: ("content" -> 'val')(null) │  │ Field: ("content" -> 'val')(json null) │ │
+│ │ Values: 42                           │  ╰───────────────────────────────────╯  ╰────────────────────────────────────────╯ │
+│ ╰──────────────────────────────────────╯                                                                                    │
+│ Projections: id                                                                                                             │
+│ ~1 row                                                                                                                      │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM slot_json_idx WHERE (content->'val')::double IS NULL ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM slot_json WHERE (content->'val')::double IS NULL ORDER BY id;
+----
+id
+2
+3
+
+query
+EXPLAIN SELECT id FROM slot_json_idx WHERE (content->'val')::double IS NULL;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
+│ Index: slot_json_idx                                                              │
+│ Lookup: table                                                                     │
+│ Index Filter:                                                                     │
+│ ╭─ Or ──────────────────────────────╮                                             │
+│ ╰─────────────────┬─────────────────╯                                             │
+│                   ├─────────────────────────────────────────╮                     │
+│ ╭─ Terms ─────────┴─────────────────╮  ╭─ Terms ────────────┴───────────────────╮ │
+│ │ Field: ("content" -> 'val')(null) │  │ Field: ("content" -> 'val')(json null) │ │
+│ ╰───────────────────────────────────╯  ╰────────────────────────────────────────╯ │
+│ Projections: id                                                                   │
+│ ~1 row                                                                            │
+╰───────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM slot_json_idx WHERE (content->'val')::double IS NOT NULL ORDER BY id;
+----
+id
+1
+4
+
+query
+SELECT id FROM slot_json WHERE (content->'val')::double IS NOT NULL ORDER BY id;
+----
+id
+1
+4
+
+query
+SELECT id FROM slot_json_idx WHERE (content->'val') IS NULL ORDER BY id;
+----
+id
+3

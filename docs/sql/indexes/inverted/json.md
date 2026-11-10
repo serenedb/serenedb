@@ -85,6 +85,12 @@ When the column must stay `JSON`, index a [JSON extraction expression](../../../
 
 <SqlLogicTest id="sql/indexes/inverted/json/example_004" />
 
+A JSON `null` value is not SQL `NULL`. `(doc -> 'k') IS NULL` matches only rows where `k` is missing, because `->` returns the JSON value `null` when `k` holds one; `doc ->> 'k' IS NULL` matches both, because `->>` returns SQL `NULL` for a JSON `null`. A cast of a JSON `null` to a number or a `BOOLEAN` is SQL `NULL` as well: `(doc -> 'k')::INTEGER IS NULL` matches rows where `k` is missing or holds `null`, and `NOT ((doc -> 'k')::INTEGER = 42)` matches neither. An index on the expression answers all of these the same way as the table does.
+
+With a dictionary, an index on a `->` extraction keeps each value as the JSON kind it has: a number, a string, a boolean or `null`. It answers a cast of the extraction to `DOUBLE` or `BOOLEAN` directly: `(doc -> 'k')::DOUBLE` compares number values and `(doc -> 'k')::BOOLEAN` compares `true` and `false`, while a value of another kind matches neither, even where the cast on the table converts it, as it does the string `"42"`. A comparison of any other cast, such as `::INTEGER`, `::REAL`, `::DATE` or `::VARCHAR`, and of the extraction itself, is checked on each row with the cast's own rules, so it gives the table's answer but does not narrow the search; `@@` still searches the string values through the index. To search such a cast through the index, index the cast expression itself, `((doc -> 'k')::INTEGER)`:
+
+<SqlLogicTest id="sql/indexes/inverted/json/example_008" />
+
 ## Indexing a `JSON` column as `VARIANT`
 
 You do not have to migrate the column to `VARIANT` to get shredded, typed sub-field indexing — **cast to `VARIANT` inside the index expression**. The column stays `JSON` (a JSON-typed column casts straight with `::VARIANT`; a `VARCHAR` holding JSON needs `::JSON::VARIANT` first), while the index extracts typed sub-fields just as a real `VARIANT` column would:

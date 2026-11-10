@@ -1,0 +1,177 @@
+statement ok
+CREATE TABLE mps_t (x int, y int);
+
+
+statement ok
+INSERT INTO mps_t VALUES (10, 1), (20, 2);
+
+
+statement ok
+CREATE MACRO mps_col(x) AS (SELECT max(x) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_qualified(x) AS (SELECT max(mps_qualified.x) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_in(x) AS (SELECT x IN (SELECT x FROM mps_t));
+
+
+statement ok
+CREATE MACRO mps_field(s) AS (SELECT max(s.a + y) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_dot(s) AS (SELECT max(s.lower() || y) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_lambda(z) AS (SELECT list_transform([1, 2], lambda e: e + z + x) FROM mps_t WHERE x = 10);
+
+
+query
+SELECT mps_col(5) AS col, mps_qualified(5) AS qualified, mps_in(20) AS in_twenty, mps_in(5) AS in_five, mps_field({'a': 100}) AS field, mps_dot('AB') AS dot, mps_lambda(10) AS lambda;
+----
+col	qualified	in_twenty	in_five	field	dot	lambda
+20	5	t	f	102	ab2	{21,22}
+
+
+query
+SELECT x, mps_col(1) AS col FROM mps_t ORDER BY x;
+----
+x	col
+10	20
+20	20
+
+
+statement ok
+CREATE MACRO mps_table(x) AS TABLE SELECT x FROM mps_t ORDER BY 1;
+
+
+statement ok
+CREATE MACRO mps_table_qualified(x) AS TABLE SELECT mps_table_qualified.x + y AS v FROM mps_t ORDER BY 1;
+
+
+statement ok
+CREATE MACRO mps_table_dot(s) AS TABLE SELECT s.upper() AS u;
+
+
+query
+SELECT (SELECT array_agg(x ORDER BY x) FROM mps_table(5)) AS table_col, (SELECT array_agg(v ORDER BY v) FROM mps_table_qualified(5)) AS table_qualified, (SELECT u FROM mps_table_dot('ab')) AS table_dot;
+----
+table_col	table_qualified	table_dot
+{10,20}	{6,7}	AB
+
+
+statement ok
+CREATE VIEW mps_rows AS SELECT rowid AS r, x FROM mps_t;
+
+
+query
+SELECT count(*) AS rows FROM mps_rows;
+----
+rows
+2
+
+
+statement ok
+CREATE MACRO mps_schema(main) AS (SELECT main.upper('x'));
+
+
+statement ok
+CREATE MACRO mps_field_return(s) AS mps_field_return.s.a + 1;
+
+
+statement ok
+CREATE MACRO mps_qualified_dot(s) AS (SELECT max(mps_qualified_dot.s.lower() || y) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_cte(v) AS (WITH c AS (SELECT y + v AS s FROM mps_t) SELECT max(s) - v + v FROM c);
+
+
+query
+SELECT mps_schema('unused') AS schema_call, mps_field_return({'a': 5}) AS field_return, mps_qualified_dot('AB') AS qualified_dot, mps_cte(random() * 0 + 1) AS cte;
+----
+schema_call	field_return	qualified_dot	cte
+X	6	ab2	3
+
+
+statement ok
+CREATE TABLE mps_outer_t (x int);
+
+
+statement ok
+INSERT INTO mps_outer_t VALUES (100);
+
+
+statement ok
+CREATE TABLE mps_inner_t (c int);
+
+
+statement ok
+INSERT INTO mps_inner_t VALUES (5);
+
+
+statement ok
+CREATE MACRO mps_inner(v) AS (SELECT max(v) FROM mps_inner_t);
+
+
+statement ok
+CREATE MACRO mps_outer(x) AS (SELECT mps_inner(x + c) FROM mps_outer_t);
+
+
+query
+SELECT mps_outer(1) AS written_where_passed;
+----
+written_where_passed
+105
+
+
+statement error
+CREATE MACRO mps_dummy(a) AS (SELECT "0_macro_parameters".b FROM range(1));
+----
+db error: ERROR: Referenced table "0_macro_parameters" not found!<slt:ignore>
+
+
+statement error
+CREATE MACRO mps_no_function(s) AS (SELECT s.no_such_function());
+----
+db error: ERROR: Scalar Function with name no_such_function does not exist!<slt:ignore>
+
+
+statement error
+CREATE MACRO mps_other(s) AS (SELECT other.s.lower());
+----
+db error: ERROR: Referenced table "other" not found!<slt:ignore>
+
+
+statement ok
+CREATE MACRO mps_twice(x) AS x + x;
+
+
+statement ok
+CREATE MACRO mps_select(x) AS (SELECT x + x);
+
+
+statement ok
+CREATE FUNCTION mps_typed(x int) RETURNS int LANGUAGE sql RETURN x + x;
+
+
+statement error
+SELECT mps_twice(coalesce(no_such_function(1), 2));
+----
+db error: ERROR: Scalar Function with name no_such_function does not exist!<slt:ignore>
+
+
+statement error
+SELECT mps_select(no_such_function(1));
+----
+db error: ERROR: Scalar Function with name no_such_function does not exist!<slt:ignore>
+
+
+statement error
+SELECT mps_typed(no_such_function(1));
+----
+db error: ERROR: Scalar Function with name no_such_function does not exist!<slt:ignore>

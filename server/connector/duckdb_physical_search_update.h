@@ -23,8 +23,10 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enums/row_id_handling.hpp>
 #include <duckdb/execution/physical_operator.hpp>
+#include <duckdb/planner/bound_constraint.hpp>
 #include <duckdb/planner/column_binding.hpp>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "catalog/entry/search_table.h"
@@ -41,14 +43,24 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk,
-    duckdb::RowIdHandling row_id_handling);
+    duckdb::RowIdHandling row_id_handling,
+    duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints);
+
+  std::string GetName() const final;
+  duckdb::InsertionOrderPreservingMap<std::string> ParamsToString() const final;
 
   bool IsSink() const final { return true; }
+  bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
+    duckdb::ExecutionContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
+  duckdb::SinkCombineResultType Combine(
+    duckdb::ExecutionContext& context,
+    duckdb::OperatorSinkCombineInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
     duckdb::OperatorSinkFinalizeInput& input) const final;
@@ -64,6 +76,7 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
   const catalog::SearchTableEntry& _table;
   duckdb::vector<duckdb::PhysicalIndex> _columns;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> _expressions;
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> _constraints;
   bool _return_chunk = false;
   duckdb::RowIdHandling _row_id_handling;
 };

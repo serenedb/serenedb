@@ -1,0 +1,64 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE commit_fail_docs (id BIGINT, msg TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO commit_fail_docs SELECT i, 'm' || (i % 7) FROM range(500) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) commit_fail_docs;
+
+
+statement ok
+SET sdb_faults = 'IndexWriter::Transaction::Commit';
+
+
+statement ok
+INSERT INTO commit_fail_docs SELECT i, 'late' FROM range(500, 600) t(i);
+
+
+statement ok
+SET sdb_faults = '-IndexWriter::Transaction::Commit';
+
+
+statement ok
+INSERT INTO commit_fail_docs VALUES (600, 'after');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) commit_fail_docs;
+
+
+query
+SELECT count(*) AS n FROM commit_fail_docs;
+----
+n
+500
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE msg = 'late') AS late, count(*) FILTER (WHERE msg = 'after') AS after FROM commit_fail_docs;
+----
+n	late	after
+601	100	1

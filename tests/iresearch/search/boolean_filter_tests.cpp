@@ -172,7 +172,9 @@ struct SegmentReaderMock final : irs::SubReader {
   const irs::SegmentInfo& Meta() const final { return _meta; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   irs::lead::Node::ptr docs_iterator() const final { return {}; }
-  const irs::TermReader* field(irs::field_id) const final { return nullptr; }
+  std::span<const irs::TermReader* const> fields(irs::field_id) const final {
+    return {};
+  }
   std::span<const irs::field_id> field_ids() const final { return {}; }
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
   irs::SegmentInfo _meta;
@@ -2620,9 +2622,9 @@ TEST(RangeDegenerate_test, inverted_bounds_become_empty) {
 TEST(GranularRangeDegenerate_test, inverted_bounds_become_empty) {
   auto range = std::make_unique<irs::ByGranularRange>();
   *range->mutable_field_id() = kFieldTestField;
-  range->mutable_options()->range.min.emplace_back(irs::bstring{B("z")});
+  range->mutable_options()->range.min = irs::bstring{B("z")};
   range->mutable_options()->range.min_type = irs::BoundType::Inclusive;
-  range->mutable_options()->range.max.emplace_back(irs::bstring{B("a")});
+  range->mutable_options()->range.max = irs::bstring{B("a")};
   range->mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
   irs::Filter::ptr filter = std::move(range);
@@ -3210,12 +3212,12 @@ TEST(AndRangeMerge_test, granular_merges_complementary_bounds) {
   auto root = std::make_unique<irs::BooleanFilter>();
   {
     auto& lo = AddGranularRange(*root, irs::Occur::Must, kFieldTestField);
-    lo.mutable_options()->range.min.emplace_back(irs::bstring{B("b")});
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
     lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
   }
   {
     auto& hi = AddGranularRange(*root, irs::Occur::Must, kFieldTestField);
-    hi.mutable_options()->range.max.emplace_back(irs::bstring{B("m")});
+    hi.mutable_options()->range.max = irs::bstring{B("m")};
     hi.mutable_options()->range.max_type = irs::BoundType::Exclusive;
   }
 
@@ -3224,11 +3226,9 @@ TEST(AndRangeMerge_test, granular_merges_complementary_bounds) {
 
   ASSERT_EQ(irs::Type<irs::ByGranularRange>::id(), filter->type());
   const auto& merged = irs::utils::downCast<irs::ByGranularRange>(*filter);
-  ASSERT_EQ(1, merged.options().range.min.size());
-  ASSERT_EQ(1, merged.options().range.max.size());
-  EXPECT_EQ(irs::bstring{B("b")}, merged.options().range.min.front());
+  EXPECT_EQ(irs::bstring{B("b")}, merged.options().range.min);
   EXPECT_EQ(irs::BoundType::Inclusive, merged.options().range.min_type);
-  EXPECT_EQ(irs::bstring{B("m")}, merged.options().range.max.front());
+  EXPECT_EQ(irs::bstring{B("m")}, merged.options().range.max);
   EXPECT_EQ(irs::BoundType::Exclusive, merged.options().range.max_type);
 }
 
@@ -3236,12 +3236,12 @@ TEST(AndRangeMerge_test, granular_inverted_bounds_merge_to_empty) {
   auto root = std::make_unique<irs::BooleanFilter>();
   {
     auto& lo = AddGranularRange(*root, irs::Occur::Must, kFieldTestField);
-    lo.mutable_options()->range.min.emplace_back(irs::bstring{B("m")});
+    lo.mutable_options()->range.min = irs::bstring{B("m")};
     lo.mutable_options()->range.min_type = irs::BoundType::Exclusive;
   }
   {
     auto& hi = AddGranularRange(*root, irs::Occur::Must, kFieldTestField);
-    hi.mutable_options()->range.max.emplace_back(irs::bstring{B("d")});
+    hi.mutable_options()->range.max = irs::bstring{B("d")};
     hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
   }
 
@@ -3273,9 +3273,9 @@ TEST(RangeDegenerate_test, equal_inclusive_bounds_become_term) {
 TEST(GranularRangeDegenerate_test, equal_inclusive_bounds_become_term) {
   auto range = std::make_unique<irs::ByGranularRange>();
   *range->mutable_field_id() = kFieldTestField;
-  range->mutable_options()->range.min.emplace_back(irs::bstring{B("b")});
+  range->mutable_options()->range.min = irs::bstring{B("b")};
   range->mutable_options()->range.min_type = irs::BoundType::Inclusive;
-  range->mutable_options()->range.max.emplace_back(irs::bstring{B("b")});
+  range->mutable_options()->range.max = irs::bstring{B("b")};
   range->mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
   irs::Filter::ptr filter = std::move(range);
@@ -3473,6 +3473,34 @@ TEST(OrAcceptorFusion_test, fuses_nested_fused_or) {
   EXPECT_TRUE(FusedAccepts(*fused, "banana"));
   EXPECT_TRUE(FusedAccepts(*fused, "apple"));
   EXPECT_FALSE(FusedAccepts(*fused, "kiwi"));
+}
+
+TEST(OrAcceptorFusion_test, fuses_byte_automatons) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  const auto add = [&](std::string_view pattern, irs::PatternKind kind) {
+    auto& automaton = AddChild<irs::AutomatonFilter>(*root, irs::Occur::Should);
+    *automaton.mutable_field_id() = kFieldTestField;
+    *automaton.mutable_options() = irs::AutomatonOptions{B(pattern), kind};
+  };
+  add("mr.beast", irs::PatternKind::RegexpPerlBytes);
+  add("b.ea.st", irs::PatternKind::RegexpPosixEreBytes);
+  add("%feast", irs::PatternKind::WildcardBytes);
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_TRUE(FusedAccepts(*fused,
+                           "mr\xFF"
+                           "beast"));
+  EXPECT_TRUE(FusedAccepts(*fused,
+                           "b\xFF"
+                           "ea\xFF"
+                           "st"));
+  EXPECT_TRUE(FusedAccepts(*fused, "chocolate feast"));
+  EXPECT_FALSE(FusedAccepts(*fused, "beast"));
 }
 
 TEST(OrAcceptorFusion_test, keeps_unfusable_nested_or) {

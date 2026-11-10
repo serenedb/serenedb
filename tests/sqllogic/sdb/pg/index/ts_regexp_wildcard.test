@@ -3038,7 +3038,7 @@ QUERY PLAN
 │ │ Syntax: perl                             │ │
 │ │ Has Pos: false                           │ │
 │ │ Query:                                   │ │
-│ │ And("\\x1ffoo", Or("bar\\x1f", "baz\\x1f")) │ │
+│ │ And("\\xfffoo", Or("bar\\xff", "baz\\xff")) │ │
 │ │ Verify: false                            │ │
 │ ╰──────────────────────────────────────────╯ │
 │ Table Filter:                                │
@@ -3048,7 +3048,7 @@ QUERY PLAN
 │ │ Syntax: perl                             │ │
 │ │ Has Pos: false                           │ │
 │ │ Query:                                   │ │
-│ │ And("\\x1ffoo", Or("bar\\x1f", "baz\\x1f")) │ │
+│ │ And("\\xfffoo", Or("bar\\xff", "baz\\xff")) │ │
 │ │ Verify: table filter                     │ │
 │ ╰──────────────────────────────────────────╯ │
 │ Projections: id                              │

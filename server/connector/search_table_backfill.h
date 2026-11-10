@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector.hpp>
+#include <duckdb/planner/expression.hpp>
 #include <memory>
 #include <vector>
 
@@ -40,20 +41,23 @@ struct ProgressMetrics;
 }  // namespace sdb::pg
 namespace sdb::search {
 
-class SearchTable;
+class Store;
 
 }  // namespace sdb::search
 namespace sdb::connector {
 
-// What a search-table CREATE INDEX needs in order to rewrite the rows that were
-// published before the index's config was.
+// What a search-table rewrite needs: CREATE INDEX rewrites the rows that were
+// published before the index's config was, ALTER TABLE rewrites every row with
+// the `added` columns computed from it.
 struct SearchBackfillTarget {
-  std::shared_ptr<search::SearchTable> shard;
+  std::shared_ptr<search::Store> shard;
   duckdb::Catalog* catalog = nullptr;
   duckdb::idx_t table_id = 0;
   // The table's stored columns in entry order: catalog id and chunk type.
   std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> column_types;
+  std::vector<ColumnId> added_ids;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> added;
   // Bytes of existing segments rewritten per swap (§6.3 of the design doc).
   // 0 = no limit: every stale segment goes into one group and one swap.
   uint64_t group_bytes = 0;
@@ -69,5 +73,7 @@ struct SearchBackfillTarget {
 void RunSearchTableBackfill(duckdb::ClientContext& context,
                             const SearchBackfillTarget& target,
                             pg::ProgressMetrics* progress);
+
+uint64_t SearchBackfillGroupBytes(duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

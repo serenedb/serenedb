@@ -49,7 +49,8 @@ struct DirectoryReaderImpl::Init {
   irs::containers::FlatHashMap<field_id,
                                duckdb::unique_ptr<duckdb::BaseStatistics>>
     column_stats;
-  irs::containers::FlatHashMap<field_id, FieldTermRange> term_ranges;
+  irs::containers::FlatHashMap<std::pair<field_id, DictRef>, FieldTermRange>
+    term_ranges;
 };
 
 DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
@@ -63,6 +64,7 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
   struct Accumulator {
     duckdb::unique_ptr<duckdb::BaseStatistics> stats;
     duckdb::unique_ptr<duckdb::HyperLogLog> hyperloglog;
+    uint64_t live_docs = 0;
   };
   irs::containers::FlatHashMap<field_id, Accumulator> col2stats;
 
@@ -75,15 +77,17 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
     live_docs_count += segment.live_docs_count;
 
     for (const auto id : reader.field_ids()) {
-      const auto* field = reader.field(id);
-      if (!field || field->size() == 0) {
-        continue;
-      }
-      const auto [it, emplaced] =
-        term_ranges.try_emplace(id, FieldTermRange{field->min(), field->max()});
-      if (!emplaced) {
-        it->second.min = std::min(it->second.min, field->min());
-        it->second.max = std::max(it->second.max, field->max());
+      for (const auto* field : reader.fields(id)) {
+        if (field->size() == 0) {
+          continue;
+        }
+        const auto [it, emplaced] =
+          term_ranges.try_emplace(std::pair{id, field->meta().dict},
+                                  FieldTermRange{field->min(), field->max()});
+        if (!emplaced) {
+          it->second.min = std::min(it->second.min, field->min());
+          it->second.max = std::max(it->second.max, field->max());
+        }
       }
     }
 
@@ -92,7 +96,8 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
       continue;
     }
     for (const auto& column : col_reader->Columns()) {
-      auto& [stats, hyperloglog] = col2stats[column->Id()];
+      auto& [stats, hyperloglog, live_docs] = col2stats[column->Id()];
+      live_docs += segment.live_docs_count;
       if (!stats) {
         stats = column->MergedStatistics().ToUnique();
       } else {
@@ -113,7 +118,10 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
   }
 
   for (auto& [field, merged] : col2stats) {
-    auto& [stats, hyperloglog] = merged;
+    auto& [stats, hyperloglog, live_docs] = merged;
+    if (live_docs < live_docs_count) {
+      stats->SetHasNull();
+    }
     if (hyperloglog) {
       const auto cnt =
         std::min<uint64_t>(hyperloglog->Count(), live_docs_count);

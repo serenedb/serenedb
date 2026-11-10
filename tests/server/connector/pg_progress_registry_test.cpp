@@ -208,6 +208,11 @@ TEST(ProgressNamesTest, CommandIoTypePhase) {
               ProgressCommand::Vacuum,
               std::to_underlying(progress_phase::Vacuum::VacuumingIndexes)),
             "vacuuming indexes");
+  EXPECT_EQ(ProgressCommandName(ProgressCommand::BaseBackup), "BASEBACKUP");
+  EXPECT_EQ(ProgressPhaseName(ProgressCommand::BaseBackup,
+                              std::to_underlying(
+                                progress_phase::BaseBackup::WaitingForCommits)),
+            "waiting for in-flight commits");
   EXPECT_EQ(ProgressPhaseName(ProgressCommand::CopyFrom, 1), "");
 }
 

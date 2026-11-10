@@ -50,6 +50,7 @@ constexpr SystemTable* kSystemTableFunctions[] = {
 };
 const SystemViewSql kSystemViewSql[] = {
   {"information_schema", "triggers", kInfoTriggers},
+  {"pg_catalog", "pg_stat_progress_basebackup", kPgStatProgressBasebackup},
   {"pg_catalog", "pg_stat_progress_create_index", kPgStatProgressCreateIndex},
 };
 constexpr const SystemView* kSdbViews[] = {

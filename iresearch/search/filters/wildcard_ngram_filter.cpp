@@ -80,9 +80,11 @@ std::string LikeRegexp(std::string_view pattern) {
   return regex;
 }
 
-ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
+ByPhrase MakePhraseFilter(irs::field_id field, DictRef dict,
+                          const ByPhraseOptions& part) {
   ByPhrase phrase;
   *phrase.mutable_field_id() = field;
+  *phrase.mutable_dict() = dict;
   *phrase.mutable_options() = part;
   return phrase;
 }
@@ -126,11 +128,16 @@ ByPhraseOptions SplitGrams(analysis::Tokenizer& ngram,
   return part;
 }
 
+size_t SymbolCount(bytes_view literal, bool bytes) {
+  return bytes ? literal.size() : utf8_utils::Length(literal);
+}
+
 ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
                              ValueAnalyzer& value_analyzer,
-                             ValueTokens<>& tokens, bytes_view literal) {
+                             ValueTokens<>& tokens, bytes_view literal,
+                             bool bytes) {
   SDB_ASSERT(!literal.empty());
-  if (utf8_utils::Length(literal) >= ngram.min_gram()) {
+  if (SymbolCount(literal, bytes) >= ngram.min_gram()) {
     return SplitGrams(ngram, value_analyzer, tokens, ViewCast<char>(literal));
   }
   ByPhraseOptions part;
@@ -147,17 +154,17 @@ ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
 
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    ValueAnalyzer& value_analyzer, ValueTokens<>& tokens,
-                   bool has_pos, std::vector<ByPhraseOptions>& grams) {
+                   bool has_pos, bool bytes,
+                   std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
-    const auto& leaf = grams.emplace_back(
-      LiteralGrams(ngram, value_analyzer, tokens, query.literal));
-    return utf8_utils::Length(query.literal) < ngram.min_gram() ||
-           (has_pos && !leaf.empty());
+    grams.emplace_back(
+      LiteralGrams(ngram, value_analyzer, tokens, query.literal, bytes));
+    return SymbolCount(query.literal, bytes) < ngram.min_gram() || has_pos;
   }
   bool exact = true;
   for (const auto& child : query.children) {
-    exact &=
-      SplitLiterals(child, ngram, value_analyzer, tokens, has_pos, grams);
+    exact &= SplitLiterals(child, ngram, value_analyzer, tokens, has_pos, bytes,
+                           grams);
   }
   return exact;
 }
@@ -166,7 +173,11 @@ class GramQueryPreparer {
  public:
   GramQueryPreparer(const ByWildcardNGram& filter, const SubReader& segment,
                     const PrepareContext& ctx, const PrepareContext& sub_ctx)
-    : _filter{filter}, _segment{segment}, _ctx{ctx}, _sub_ctx{sub_ctx} {}
+    : _filter{filter},
+      _segment{segment},
+      _reader{segment.field(filter.field_id(), filter.dict())},
+      _ctx{ctx},
+      _sub_ctx{sub_ctx} {}
 
   QueryBuilder::ptr Prepare(const GramQuery& query) {
     switch (query.kind) {
@@ -212,14 +223,14 @@ class GramQueryPreparer {
     if (grams.size() == 1) {
       const auto& part = grams.begin()->part;
       if (const auto* prefix = std::get_if<ByPrefixOptions>(&part)) {
-        return ByPrefix::PrepareSegment(_segment, _sub_ctx, _filter.field_id(),
+        return ByPrefix::PrepareSegment(_segment, _sub_ctx, _reader,
                                         prefix->term);
       }
-      return ByTerm::PrepareSegment(_segment, _sub_ctx, _filter.field_id(),
+      return ByTerm::PrepareSegment(_segment, _sub_ctx, _reader,
                                     std::get<ByTermOptions>(part).term);
     }
     if (_filter.options().has_pos) {
-      return MakePhraseFilter(_filter.field_id(), grams)
+      return MakePhraseFilter(_filter.field_id(), _filter.dict(), grams)
         .PrepareSegment(_segment, _sub_ctx);
     }
     auto builder = MakeBuilder(0);
@@ -230,7 +241,7 @@ class GramQueryPreparer {
   void AddGrams(BooleanBuilder& builder, const ByPhraseOptions& grams) {
     for (const auto& gram : grams) {
       builder.Add(
-        ByTerm::PrepareSegment(_segment, _sub_ctx, _filter.field_id(),
+        ByTerm::PrepareSegment(_segment, _sub_ctx, _reader,
                                std::get<ByTermOptions>(gram.part).term),
         Occur::Must);
     }
@@ -246,6 +257,7 @@ class GramQueryPreparer {
 
   const ByWildcardNGram& _filter;
   const SubReader& _segment;
+  const TermReader* _reader;
   const PrepareContext& _ctx;
   const PrepareContext& _sub_ctx;
   size_t _next{0};
@@ -288,29 +300,47 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
   std::string_view like, analysis::WildcardTokenizer& analyzer,
-  bool has_positions)
+  bool has_positions, bool bytes)
   : ByWildcardNGramOptions{
       ViewCast<byte_type>(std::string_view{LikeRegexp(like)}),
-      RegexpSyntax::Perl, analyzer, has_positions} {}
+      RegexpSyntax::Perl, analyzer, has_positions, bytes} {}
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
   bytes_view regexp, RegexpSyntax regexp_syntax,
-  analysis::WildcardTokenizer& analyzer, bool has_positions)
-  : pattern{regexp}, syntax{regexp_syntax}, has_pos{has_positions} {
+  analysis::WildcardTokenizer& analyzer, bool has_positions, bool bytes)
+  : pattern{regexp},
+    syntax{regexp_syntax},
+    has_pos{has_positions},
+    bytes{bytes} {
   auto& ngram = analyzer.ngram();
-  auto plan = ExtractGramQuery(regexp, syntax, ngram.min_gram(), kBoundary);
+  auto plan =
+    ExtractGramQuery(regexp, syntax, ngram.min_gram(), kBoundary, {}, bytes);
   query = std::move(plan.query);
   if (query.kind == GramQuery::Kind::None) {
     return;
   }
+  std::optional<analysis::NGramTokenizer> byte_ngram;
+  if (bytes) {
+    byte_ngram.emplace(analysis::NGramTokenizer::Options{
+      ngram.min_gram(),
+      ngram.max_gram(),
+      false,
+      analysis::NGramTokenizer::InputType::Binary,
+      {},
+      {},
+    });
+  }
   ValueAnalyzer value_analyzer;
   ValueTokens tokens;
-  if (SplitLiterals(query, ngram, value_analyzer, tokens, has_pos, grams) &&
-      plan.exact) {
+  const bool decided =
+    SplitLiterals(query, byte_ngram ? *byte_ngram : ngram, value_analyzer,
+                  tokens, has_pos, bytes, grams) &&
+    plan.exact;
+  if (decided && !bytes && !analyzer.BinaryTerms()) {
     return;
   }
   auto re = std::make_shared<const re2::RE2>(ViewCast<char>(regexp),
-                                             RegexpOptions(syntax));
+                                             RegexpOptions(syntax, bytes));
   if (!re->ok()) {
     if (re->error_code() == re2::RE2::ErrorPatternTooLarge) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),

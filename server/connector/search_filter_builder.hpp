@@ -58,14 +58,13 @@ using FieldSetGetter =
 // matters; the writer/printer paths don't need to.
 struct SearchColumnInfo {
   irs::field_id field_id = irs::field_limits::invalid();
-  // Valid iff NULL rows can exist here: producers invalidate it when a table
+  // Set iff NULL rows can exist here: producers clear it when a table
   // constraint proves the column NOT NULL (or the surface has no NULLs, e.g.
-  // term columns). Negation claims exclude it so SQL three-valued logic
-  // holds; IS NULL claims match it; invalid keeps negations plain acceptor
-  // shapes and declines IS NULL claims.
-  irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
-  irs::field_id numeric_field_id = irs::field_limits::invalid();
+  // term columns). Negation claims exclude the NULL rows so SQL three-valued
+  // logic holds; IS NULL claims match them; cleared keeps negations plain
+  // acceptor shapes and declines IS NULL claims.
+  bool nullable = false;
+  irs::DictLayout layout = irs::DictLayout::String;
   irs::field_id text = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
@@ -179,12 +178,41 @@ Filter& AddFilter(BoolTarget parent, Args&&... args) {
   return ref;
 }
 
+inline irs::DictRef RefOf(const SearchColumnInfo& info,
+                          irs::DictMember member) {
+  return {.layout = info.layout, .member = member};
+}
+
+inline irs::DictRef TextOf(const SearchColumnInfo& info) {
+  return RefOf(info, irs::DictMember::Strings);
+}
+
+inline irs::DictRef ValuesOf(const SearchColumnInfo& info,
+                             duckdb::LogicalTypeId type_id) {
+  return RefOf(info, term_dict::IsNumeric(type_id) ? irs::DictMember::Numbers
+                                                   : irs::DictMember::Strings);
+}
+
+template<typename Filter>
+Filter& SetField(Filter& filter, const SearchColumnInfo& info,
+                 irs::DictRef dict) {
+  *filter.mutable_field_id() = info.field_id;
+  *filter.mutable_dict() = dict;
+  return filter;
+}
+
+template<typename Filter>
+Filter& SetField(Filter& filter, const SearchColumnInfo& info) {
+  return SetField(filter, info, TextOf(info));
+}
+
 // A term clause, which the node stores rather than the `ByTerm` it came as.
-inline void AddTerm(BoolTarget parent, irs::field_id field,
+inline void AddTerm(BoolTarget parent, irs::field_id field, irs::DictRef dict,
                     irs::bytes_view term, irs::score_t boost = irs::kNoBoost,
                     const irs::Scorer* scorer = nullptr) {
   parent.Add(irs::TermClause{
     .field = field,
+    .dict = dict,
     .scorer = scorer,
     .term = irs::bstring{term},
     .boost = boost,
@@ -210,13 +238,24 @@ inline BoolTarget AddGroup(BoolTarget parent, irs::Occur occur) {
   return {&AddFilter<irs::BooleanFilter>(parent), occur};
 }
 
-void AddNullMarkerTerm(BoolTarget parent, irs::field_id null_field_id);
+struct NullMarker {
+  irs::field_id field = irs::field_limits::invalid();
+  irs::DictLayout layout = irs::DictLayout::String;
+  bool json_null = false;
+
+  auto operator<=>(const NullMarker&) const = default;
+};
+
+NullMarker NullMarkerOf(const SearchColumnInfo& info);
+
+void AddNullMarkers(BoolTarget parent, const NullMarker& marker);
 
 // `ByTerms{field, terms, mm=k}`: one node holding the terms of a single
 // field. Every term required is the `Must` bucket and no threshold at all;
 // anything less is `Should` counted to `k`.
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
-                               std::span<irs::bstring> terms, size_t min_match);
+                               irs::DictRef dict, std::span<irs::bstring> terms,
+                               size_t min_match);
 
 // What a negated clause is added to. Under a conjunction the node's own
 // `MustNot` bucket is the negation, and nothing has to be allocated for it;
@@ -230,10 +269,11 @@ inline BoolTarget Negate(BoolTarget parent) {
 
 // SQL three-valued logic: a NULL row satisfies no comparison, but a bare
 // negation runs against ALL live docs and would readmit rows without a token
-// in the negated column. Scoped negation excludes the column's null-marker
-// docs alongside the negated set -- `must_not` is a union, so they share one
-// bucket; the and_null_exclusion optimizer rule prunes the branch wherever a
-// positive same-column conjunct already rejects those rows.
+// in the negated column. Scoped negation excludes the docs where the column
+// compares UNKNOWN (its SQL NULL rows, an array's NULL elements, a cast JSON
+// leaf's JSON nulls) alongside the negated set -- `must_not` is a union, so
+// they share one bucket; the and_null_exclusion optimizer rule prunes the
+// branch wherever a positive same-column conjunct already rejects those rows.
 // A node is what it includes, less what it excludes, so nothing included is
 // nothing to exclude from. SQL negation excludes from every row, which is an
 // include side of `All` -- said explicitly here rather than left implicit in a
@@ -261,8 +301,8 @@ inline void EnsureIncludeSides(irs::Filter& filter) {
 inline BoolTarget NegateScoped(BoolTarget parent,
                                const SearchColumnInfo& info) {
   const auto target = Negate(parent);
-  if (irs::field_limits::valid(info.null_field_id)) {
-    AddNullMarkerTerm(target, info.null_field_id);
+  if (info.nullable) {
+    AddNullMarkers(target, NullMarkerOf(info));
   }
   return target;
 }
@@ -283,21 +323,6 @@ std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const ExpressionGetter& expr_getter, FilterScorers* scorers,
   WideRanges wide_ranges);
 
-inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
-                                        duckdb::LogicalTypeId type_id) {
-  const auto pick = [&](irs::field_id per_kind) {
-    return irs::field_limits::valid(per_kind) ? per_kind : column_info.field_id;
-  };
-  const auto kind = term_dict::Classify(type_id);
-  if (kind == term_dict::Kind::Bool) {
-    return pick(column_info.bool_field_id);
-  }
-  if (term_dict::IsNumeric(kind)) {
-    return pick(column_info.numeric_field_id);
-  }
-  return column_info.field_id;
-}
-
 // True when the expression tree contains an optimizer-claimed index-only
 // predicate (`@@` or the match sugar) that cannot run as a scalar.
 bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);
@@ -305,5 +330,11 @@ bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);
 // Term-surface comparison shapes: comparisons plus the scalar pattern
 // functions, excluding the index-only match sugar.
 bool IsStrictComparisonShape(const duckdb::Expression& expr);
+
+// The term a query for `value` on this column would look up. Declines a type
+// the term dictionary does not carry.
+absl::Status SetupTermClause(irs::TermClause& clause,
+                             const SearchColumnInfo& column_info,
+                             const duckdb::Value& value);
 
 }  // namespace sdb::connector

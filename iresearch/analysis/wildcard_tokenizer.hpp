@@ -53,7 +53,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
     return "generate_wildcard_ngrams";
   }
 
-  static constexpr byte_type kBoundary{0x1F};
+  static constexpr byte_type kBoundary{0xFF};
 
   explicit WildcardTokenizer(Tokenizer::ptr base_analyzer, size_t ngram_size);
   ~WildcardTokenizer() override;
@@ -68,7 +68,9 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
                uint32_t count, doc_id_t doc, TokenSink& sink,
                FillCtx ctx) final;
 
-  TokenTraits Traits() const noexcept final { return {.store = true}; }
+  TokenTraits Traits() const noexcept final {
+    return {.output = duckdb::LogicalTypeId::BLOB, .store = true};
+  }
 
   BlockTraits WantedBlockTraits() const noexcept final {
     return {.ascii = true};
@@ -78,7 +80,16 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
 
   void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
 
-  void Unbind() noexcept final { _analyzer->Unbind(); }
+  void Unbind() noexcept final {
+    _analyzer->Unbind();
+    SetByteInput(false);
+  }
+
+  void SetByteInput(bool bytes) noexcept { _bytes = bytes; }
+
+  bool BinaryTerms() const noexcept {
+    return _analyzer->Traits().output != duckdb::LogicalTypeId::VARCHAR;
+  }
 
   size_t MemoryUsage() const noexcept final {
     return _analyzer->MemoryUsage() + _terms.capacity() +
@@ -108,6 +119,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   std::vector<uint32_t> _fill_bounds;
   std::unique_ptr<SubSink> _sub_sink;
   bool _base_stable = false;
+  bool _bytes = false;
 };
 
 extern template class TypedTokenizer<WildcardTokenizer>;

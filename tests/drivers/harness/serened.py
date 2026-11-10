@@ -214,6 +214,7 @@ class Serened:
         return self.start(timeout=timeout)
 
     def stop(self, keep_datadir=False):
+        self.graceful_stop(timeout=30)
         self.kill()
         for sock in self.reserved:
             sock.close()

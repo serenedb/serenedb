@@ -43,6 +43,7 @@
 #include <mutex>
 
 #include "catalog/database_directory.h"
+#include "utils/file_utils.h"
 
 namespace sdb::search {
 namespace {
@@ -206,6 +207,11 @@ void IndexDurability::MarkStaged(const irs::SourcePosition& position) {
   _staged = std::max(_staged, position);
 }
 
+irs::SourcePosition IndexDurability::PublishedPosition() const {
+  absl::MutexLock lock{&_positions_mutex};
+  return _published;
+}
+
 std::optional<uint64_t> IndexDurability::NeededWAL() const {
   absl::MutexLock lock{&_positions_mutex};
   if (_staged <= _durable) {
@@ -222,7 +228,8 @@ void IndexDurability::MarkPublished() {
 absl::Status IndexDurability::Refresh(
   irs::IndexWriter& writer, bool wait,
   const irs::ProgressReportCallback& progress, RefreshResult& code,
-  absl::FunctionRef<void()> unchanged, absl::FunctionRef<void()> published) {
+  absl::FunctionRef<void()> unchanged, absl::FunctionRef<void()> published,
+  const RefreshGate* gate) {
   code = RefreshResult::NoChanges;
 
   try {
@@ -250,11 +257,19 @@ absl::Status IndexDurability::Refresh(
     SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh");
     bool were_changes = false;
     try {
+      std::optional<absl::MutexLock> gate_lock;
+      if (gate) {
+        gate_lock.emplace(&gate->mutex);
+        if (!gate->open()) {
+          return absl::OkStatus();
+        }
+      }
       were_changes = writer.RefreshBegin({
         .progress = progress,
         .reopen_reader = /* TODO(codeworse) */ false,
         .payload_changed = PayloadChanged(),
       });
+      gate_lock.reset();
       if (were_changes) {
         _directory_dirty.store(true, std::memory_order_relaxed);
       }
@@ -358,11 +373,9 @@ bool IndexDurability::FinishCheckpoint(irs::IndexWriter& writer) {
   return FinishPendingSave(writer);
 }
 
-void IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
+bool IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
   std::unique_lock lock{_refresh_mutex, std::try_to_lock};
-  if (lock.owns_lock()) {
-    FinishPendingSave(writer);
-  }
+  return lock.owns_lock() && FinishPendingSave(writer);
 }
 
 bool IndexDurability::FinishPendingSave(irs::IndexWriter& writer) {
@@ -410,7 +423,7 @@ void IndexDurability::SyncDirectory() {
     published = _published;
   }
   try {
-    catalog::SyncDirectory(_path);
+    utils::file_utils::SyncDirectory(_path);
   } catch (...) {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;
@@ -432,6 +445,14 @@ absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
       absl::StrCat("caught exception while cleaning up ", _name));
   }
   return absl::OkStatus();
+}
+
+bool IndexDurability::SyncPublished() {
+  if (!CanPersist()) {
+    return false;
+  }
+  SyncDirectory();
+  return true;
 }
 
 bool IndexDurability::PayloadChanged() const {

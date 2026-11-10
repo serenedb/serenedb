@@ -44,7 +44,6 @@
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
 
-#include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/term_dict.h"
@@ -56,6 +55,20 @@ class ShingleTokenizer;
 }  // namespace irs::analysis
 namespace sdb::connector {
 
+struct ExprCacheKey {
+  irs::field_id field;
+  duckdb::LogicalTypeId type;
+
+  bool operator==(const ExprCacheKey&) const = default;
+};
+
+template<typename H>
+H AbslHashValue(H h, const ExprCacheKey& key) {
+  return H::combine(std::move(h), key.field, key.type);
+}
+
+using ExprCache = irs::containers::NodeHashMap<ExprCacheKey, SearchColumnInfo>;
+
 struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
@@ -63,7 +76,7 @@ struct FilterContext {
   const ColumnGetter& column_getter;
   const ExpressionGetter* expr_getter = nullptr;
   duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
-  irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
+  ExprCache& expr_cache;
   irs::analysis::Tokenizer& identity;
   irs::analysis::Tokenizer& tokenizer;
   duckdb::ClientContext& client_context;
@@ -159,6 +172,11 @@ Filter& AddMaybeNegated(BoolTarget parent, const FilterContext& ctx,
                            std::forward<Args>(args)...);
 }
 
+// A boolean comparison is the union of the values it accepts: `b = v` is
+// one value, `b <> v` the other, an ordering one, both or none.
+void AddBools(BoolTarget parent, const SearchColumnInfo& info,
+              bool accept_false, bool accept_true, irs::score_t boost);
+
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 
 inline const duckdb::vector<duckdb::Value>& ListOrArrayChildren(
@@ -170,14 +188,10 @@ inline const duckdb::vector<duckdb::Value>& ListOrArrayChildren(
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
-// True when `type_id` is a filterable column type; speculative claim sites
-// decline on false.
-bool IsFilterableType(duckdb::LogicalTypeId type_id);
-// Same check for ts_* callers, where an unfilterable column type is a user
-// error: throws THROW_SQL_ERROR("Unsupported type id ... for filter").
+// For ts_* callers, where an unfilterable column type is a user error:
+// throws THROW_SQL_ERROR("Unsupported type id ... for filter").
 void ValidateFilterType(duckdb::LogicalTypeId type_id);
 
-bool IsNumericTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
 duckdb::Value CastConstant(const duckdb::Value& value,
                            duckdb::LogicalTypeId type_id);
@@ -203,23 +217,39 @@ void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
     WithNumericValue(type_id, CastConstant(value, type_id), std::forward<F>(f));
     return;
   }
-  switch (term_dict::Classify(type_id)) {
-    case term_dict::Kind::NumericI32:
+  using enum duckdb::LogicalTypeId;
+  switch (type_id) {
+    case TINYINT:
+    case SMALLINT:
+    case INTEGER:
+    case UTINYINT:
+    case USMALLINT:
+    case DATE:
       f(value.GetValue<int32_t>());
       break;
-    case term_dict::Kind::NumericI64:
-      if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
-        f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
-      } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
+    case TIME_TZ:
+      f(term_dict::TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
+      break;
+    case BIGINT:
+    case UINTEGER:
+    case TIME:
+    case TIME_NS:
+    case TIMESTAMP:
+    case TIMESTAMP_TZ:
+    case TIMESTAMP_SEC:
+    case TIMESTAMP_MS:
+    case TIMESTAMP_NS:
+    case TIMESTAMP_TZ_NS:
+      if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
         f(value.GetValueUnsafe<int64_t>());
       } else {
         f(value.GetValue<int64_t>());
       }
       break;
-    case term_dict::Kind::NumericF32:
+    case FLOAT:
       f(value.GetValue<float>());
       break;
-    case term_dict::Kind::NumericF64:
+    case DOUBLE:
       f(value.GetValue<double>());
       break;
     default:
@@ -253,8 +283,8 @@ using TokenGroups = std::vector<std::vector<irs::bstring>>;
 
 void AppendTokenGroups(std::span<const duckdb::string_t> terms,
                        std::span<const uint32_t> pos, TokenGroups& groups);
-void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
-                    size_t min_match, irs::score_t boost,
+void AddTokenGroups(BoolTarget parent, irs::field_id field, irs::DictRef dict,
+                    TokenGroups& groups, size_t min_match, irs::score_t boost,
                     const irs::Scorer* scorer = nullptr);
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,

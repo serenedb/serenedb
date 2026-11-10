@@ -57,7 +57,7 @@ SELECT
         [INTERVAL (datepart(part, period) || part) FOR part IN
              ['year', 'month', 'day', 'hour', 'minute', 'microsecond']
         ],
-        (i1, i2) -> i1 + i2
+        lambda i1, i2: i1 + i2
     ) -- always true
 FROM (
     VALUES (

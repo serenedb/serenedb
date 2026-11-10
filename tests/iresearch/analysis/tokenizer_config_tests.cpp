@@ -269,8 +269,8 @@ TEST(TokenizerConfig, InvalidSqlExpressionsAreRefused) {
     SCOPED_TRACE(expression);
     bool threw = false;
     try {
-      auto tokenizer =
-        SqlTokenizer::Make({.expression = std::string{expression}});
+      auto tokenizer = SqlTokenizer::Make(
+        {.expression = std::string{expression}}, tests::Cache());
       if (tokenizer) {
         tokenizer->Bind(tests::EngineContext());
       } else {

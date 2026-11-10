@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <span>
 
 #include "iresearch/index/field_meta.hpp"
@@ -53,10 +55,12 @@ struct BasicTermReader : public memory::Managed {
 
   virtual FieldProperties properties() const = 0;
 
-  virtual bytes_view min() const = 0;
-  virtual bytes_view max() const = 0;
+  virtual void SampleTerms(
+    uint64_t, absl::FunctionRef<void(std::span<const bytes_view>)>) const {}
 
   virtual TermPayloadWriter* PayloadWriter() const { return nullptr; }
+
+  uint32_t key_width = 0;
 };
 
 }  // namespace irs

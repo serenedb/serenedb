@@ -20,7 +20,7 @@ flowchart LR
 
 A newly written row is not searchable until a refresh publishes it to readers. There are two ways a refresh happens:
 
-- **Automatically** -- a background thread refreshes each index on an interval (`refresh_interval`, default 1000 ms).
+- **Automatically** -- a background thread refreshes each index on an interval (`refresh_interval`, default 1000 ms). Once a change of `refresh_interval` to `0` commits, rows committed after it are not refreshed in the background.
 - **Explicitly** -- run `VACUUM (REFRESH_TABLE)` to publish pending writes immediately. This is what you want right after a bulk load, before querying:
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_001" />
@@ -110,7 +110,7 @@ Memory held while writing to a search table depends on `segment_memory_max`, set
 | Write | Peak memory |
 | :--- | :--- |
 | Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
-| Parallel `INSERT` | ≈ `segment_memory_max` x threads |
+| Parallel `INSERT` / `UPDATE` | ≈ `segment_memory_max` x threads |
 
 Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server, and also decides how often the database checkpoints.
 

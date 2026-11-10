@@ -63,22 +63,6 @@ static unique_ptr<MergeIntoOperator> ClickHousePlanMergeIntoAction(ClickHouseCat
 		for (auto &def : op.bound_defaults) {
 			insert_op.bound_defaults.push_back(def->Copy());
 		}
-		// transform expressions if required
-		if (!action.column_index_map.empty()) {
-			vector<unique_ptr<Expression>> new_expressions;
-			for (auto &col : op.table.GetColumns().Physical()) {
-				auto storage_idx = col.StorageOid();
-				auto mapped_index = action.column_index_map[col.Physical()];
-				if (mapped_index == DConstants::INVALID_INDEX) {
-					// push default value
-					new_expressions.push_back(op.bound_defaults[storage_idx]->Copy());
-				} else {
-					// push reference
-					new_expressions.push_back(std::move(action.expressions[mapped_index]));
-				}
-			}
-			action.expressions = std::move(new_expressions);
-		}
 		result->expressions = std::move(action.expressions);
 		result->op = catalog.PlanInsert(context, planner, insert_op, child_plan);
 		break;

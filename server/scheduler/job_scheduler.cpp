@@ -154,11 +154,10 @@ size_t HistorySize() {
 void ForAllJobs(
   const std::function<void(catalog::JobCatalogEntry&)>& callback) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  for (auto& database : duckdb::DatabaseManager::Get(db).GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
-      catalog::ForEachJob(catalog.Cast<duckdb::DuckCatalog>(), callback);
-    }
+  for (const auto& database :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(db))) {
+    catalog::ForEachJob(database->GetCatalog().Cast<duckdb::DuckCatalog>(),
+                        callback);
   }
 }
 
@@ -189,14 +188,14 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       duckdb::ExceptionType::CATALOG,
       absl::StrCat("role with OID ", job.owner, " does not exist")};
   }
-  auto connection = connector::MakeSystemConnection(
-    user, job.owner, job.catalog.GetIdentifierName(), job.database_oid);
-  absl::Cleanup log_notices = [&] {
-    connection.ctx->ConsumeNotices([&](auto& notice) {
-      SDB_WARN(GENERAL, "job \"", job.name.GetIdentifierName(),
-               "\": ", notice.errmsg);
-    });
-  };
+  connector::SystemConnection connection{
+    {.user = user,
+     .role = job.owner,
+     .database = job.catalog.GetIdentifierName(),
+     .database_id = job.database_oid},
+    {.what = "job", .name = job.name.GetIdentifierName()}};
+  connector::SetDefaultSearchPath(*connection.conn->context,
+                                  job.catalog.GetIdentifierName());
   context = connection.conn->context;
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));

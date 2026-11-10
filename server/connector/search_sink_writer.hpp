@@ -50,9 +50,8 @@
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "pg/types/logical.h"
-#include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/primary_key.h"
 
 namespace duckdb {
@@ -72,6 +71,15 @@ inline EntryInfoProvider MakeEntryInfoProvider(
   const catalog::InvertedIndexConfig& config) {
   return
     [&config](irs::field_id field_id) { return config.FindEntry(field_id); };
+}
+
+inline TokenizerProvider BoundTokenizers(
+  catalog::IndexTokenizers::Bound tokenizers) {
+  return [tokenizers = std::move(tokenizers)](irs::field_id id) mutable {
+    const auto it = tokenizers.find(id);
+    return it == tokenizers.end() ? catalog::ColumnTokenizer{}
+                                  : std::move(it->second);
+  };
 }
 
 inline std::vector<ColumnId> IndexedColumnIds(
@@ -103,12 +111,12 @@ class SearchSinkInsertBaseImpl {
  public:
   SearchSinkInsertBaseImpl(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy = {},
+    EntryInfoProvider&& entry_info_provider,
+    PkColumnKind pk = PkColumnKind::Has,
     std::vector<IndexedExpression>&& indexed_exprs = {},
     const catalog::InvertedIndexConfig* config = nullptr);
 
-  void InitImpl(size_t batch_size, const PkChunk& pk = {},
-                irs::CommitOnFlush* commit_on_flush = nullptr);
+  void InitImpl(size_t batch_size, const duckdb::Vector* pk = nullptr);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
@@ -143,8 +151,6 @@ class SearchSinkInsertBaseImpl {
 
  protected:
   struct Field {
-    irs::field_id Id() const noexcept { return id; }
-
     irs::IndexFeatures GetIndexFeatures() const noexcept {
       return index_features;
     }
@@ -154,25 +160,33 @@ class SearchSinkInsertBaseImpl {
       return *string_analyzer;
     }
 
-    void PrepareForKeywordStringValue(irs::field_id field_id);
+    void PrepareForKeywordStringValue();
     // Binds (does not consume) the analyzer: the sink's tokenizer cache owns
     // the pool lease for its own lifetime.
-    void PrepareForStringValue(irs::field_id field_id,
-                               catalog::ColumnTokenizer& column_analyzer);
+    void PrepareForStringValue(catalog::ColumnTokenizer& column_analyzer,
+                               irs::DictRef dict);
 
-    void PrepareForBlockValue(irs::field_id field_id);
+    void PrepareForBlockValue(irs::DictRef dict);
+    void PrepareForNumericValue(irs::DictRef dict);
+    void PrepareForJsonValue(catalog::ColumnTokenizer& column_analyzer,
+                             irs::DictLayout layout);
 
     irs::analysis::Tokenizer* string_analyzer = nullptr;
-    irs::field_id id{irs::field_limits::invalid()};
     // Blob column receiving per-value stored bytes; invalid when the field
     // stores nothing.
     irs::field_id store_column{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
+    irs::DictRef dict;
     bool keyword = false;
   };
 
+  [[noreturn]] void FieldFailed(irs::field_id id) const;
+
   template<typename Func>
   void InvertField(const Field& field, Func&& func);
+
+  template<typename Func>
+  void InvertDocs(Func&& func);
 
   template<typename Func>
   void InvertTokens(const Field& field, irs::StoreSink* store, Func&& func);
@@ -193,33 +207,35 @@ class SearchSinkInsertBaseImpl {
                         const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
                         irs::doc_id_t first_doc);
 
-  void WriteKeywordColumn(const Field& field, const Field& null_field,
-                          const duckdb::Vector& vec, duckdb::idx_t count);
-
-  void WriteAnalyzedColumn(const Field& field, const Field& null_field,
-                           const duckdb::Vector& vec, duckdb::idx_t count);
-
-  template<duckdb::LogicalTypeId Kind>
-  void WriteNumericColumn(const Field& field, const Field& null_field,
+  void WriteKeywordColumn(const Field& field, const duckdb::Vector& vec,
                           duckdb::idx_t count);
 
-  void WriteBoolColumn(const Field& field, const Field& null_field,
+  void WriteAnalyzedColumn(const Field& field, const duckdb::Vector& vec,
+                           duckdb::idx_t count);
+
+  template<duckdb::LogicalTypeId Kind>
+  void WriteNumericColumn(const Field& field, duckdb::idx_t count);
+
+  void WriteBoolColumn(duckdb::idx_t count);
+
+  void WriteInetColumn(const Field& field, const duckdb::Vector& vec,
                        duckdb::idx_t count);
 
-  void WriteInetColumn(const Field& field, const Field& null_field,
-                       const duckdb::Vector& vec, duckdb::idx_t count);
-
-  void WriteNullColumn(const Field& null_field, duckdb::idx_t count);
+  void WriteNullColumn(duckdb::idx_t count);
 
   template<duckdb::LogicalTypeId ChildKind>
-  void WriteListBatch(const Field& field, const Field& null_field,
-                      duckdb::idx_t count, duckdb::idx_t array_size);
+  void WriteListBatch(const Field& field, duckdb::idx_t count,
+                      duckdb::idx_t array_size);
 
   bool DispatchListBatch(duckdb::LogicalTypeId child_kind, const Field& field,
-                         const Field& null_field, duckdb::idx_t count,
-                         duckdb::idx_t array_size);
+                         duckdb::idx_t count, duckdb::idx_t array_size);
 
+  bool InvertJsonLeaf(irs::MemberDocs& members, irs::TokenSink& sink,
+                      irs::TokenLayout layout, irs::doc_id_t doc,
+                      std::string_view json, irs::ColumnWriter* store_writer);
+  void InvertJsonNumbers();
   void WriteJsonBatch(const duckdb::Vector& vec, duckdb::idx_t count);
+  void WriteJsonListBatch(duckdb::idx_t count, duckdb::idx_t array_size);
   void RejectJsonComposites(const duckdb::Vector& vec, duckdb::idx_t count);
 
   irs::ColumnWriter* EnsureColumnWriter(irs::field_id field_id,
@@ -228,26 +244,11 @@ class SearchSinkInsertBaseImpl {
     return EnsureColumnWriter(field_id, duckdb::LogicalType::BLOB);
   }
   void AppendPkColumn(const duckdb::Vector& pk, duckdb::idx_t count);
-  void EmitPkTerms(const Field& pk_field,
-                   std::span<const duckdb::string_t> keys);
   void AppendBlobAt(irs::ColumnWriter& writer, irs::doc_id_t doc,
                     duckdb::string_t bytes);
 
   template<typename Insert>
-  void WriteColumnBlock(const Field& null_field, duckdb::idx_t count,
-                        Insert&& insert);
-  void FinishColumnBlocks(const Field& null_field);
-
-  struct JsonExpressionFields {
-    Field string_field;
-    Field numeric_field;
-    Field bool_field;
-    Field null_field;
-
-    void InitForExpression(irs::field_id entry_field_id,
-                           const catalog::InvertedIndexField* entry,
-                           catalog::ColumnTokenizer& string_analyzer);
-  };
+  void WriteColumnBlock(duckdb::idx_t count, Insert&& insert);
 
   // Per-field tokenizer leases resolved once per sink: SwitchFieldImpl runs
   // per column per chunk, and re-resolving costs a catalog lookup plus an
@@ -258,18 +259,17 @@ class SearchSinkInsertBaseImpl {
   EntryInfoProvider _entry_info_provider;
   irs::containers::FlatHashMap<irs::field_id, catalog::ColumnTokenizer>
     _tokenizer_cache;
-  Field _pk_field;
   Field _field;
-  Field _null_field;
+  irs::field_id _id = irs::field_limits::invalid();
+  irs::DictLayout _layout = irs::DictLayout::String;
   irs::IndexWriter::Transaction* _trx;
   std::optional<irs::IndexWriter::Document> _document;
 
   irs::containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
     _column_writers;
   irs::ColumnWriter* _pk_column_writer = nullptr;
-  PkPolicy _pk_policy;
+  PkColumnKind _pk;
 
-  JsonExpressionFields _json_fields;
   duckdb::ArenaAllocator _json_strings{duckdb::Allocator::DefaultAllocator()};
   irs::JsonLeafReader _json_reader{_json_strings};
 
@@ -311,11 +311,8 @@ class SearchSinkInsertBaseImpl {
   irs::containers::FlatHashMap<ColumnId, std::vector<irs::field_id>>
     _terms_by_column;
 
-  std::vector<duckdb::string_t> _json_bool_terms;
   std::vector<double> _json_nums;
   std::vector<irs::doc_id_t> _json_num_docs;
-  std::vector<irs::doc_id_t> _json_bool_docs;
-  std::vector<irs::doc_id_t> _null_docs;
 };
 
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
@@ -325,14 +322,13 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const ColumnId> indexed_columns,
     EntryInfoProvider&& entry_info_provider = NoEntryInfoProvider(),
-    PkPolicy pk_policy = {})
+    PkColumnKind pk = PkColumnKind::Has)
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
-                               std::move(entry_info_provider), pk_policy},
+                               std::move(entry_info_provider), pk},
       _indexed{indexed_columns.begin(), indexed_columns.end()} {}
 
-  void Init(duckdb::idx_t batch_size, const PkChunk& pk,
-            irs::CommitOnFlush* commit_on_flush = nullptr) final {
-    InitImpl(batch_size, pk, commit_on_flush);
+  void Init(duckdb::idx_t batch_size, const duckdb::Vector* pk) final {
+    InitImpl(batch_size, pk);
   }
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
@@ -357,7 +353,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 };
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
-  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
+  irs::IndexWriter::Transaction& trx, const search::Store& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context);
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,

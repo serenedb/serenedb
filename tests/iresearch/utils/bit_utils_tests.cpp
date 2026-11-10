@@ -25,6 +25,8 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/number_utils.hpp>
+#include <random>
+#include <vector>
 
 #include "tests_shared.hpp"
 
@@ -173,5 +175,30 @@ TEST(bit_utils_test, test_unset_bit) {
     EXPECT_TRUE(irs::CheckBit(b, 5));
     EXPECT_FALSE(irs::CheckBit(b, 6));
     EXPECT_FALSE(irs::CheckBit(b, 7));
+  }
+}
+
+TEST(bit_utils_test, select_in_word) {
+  std::vector<uint64_t> words{
+    ~uint64_t{0},          uint64_t{1},           uint64_t{1} << 63,
+    0x8000000100000001ULL, 0xAAAAAAAAAAAAAAAAULL, 0x00000000FFFF0000ULL,
+  };
+  std::mt19937_64 rng{7};
+  for (size_t i = 0; i != 10000; ++i) {
+    const uint64_t a = rng();
+    const uint64_t b = rng();
+    words.push_back(a);
+    words.push_back(a & b);
+    words.push_back(a & b & rng());
+    words.push_back(a | b);
+  }
+  for (const uint64_t word : words) {
+    uint64_t rank = 0;
+    for (uint64_t bit = 0; bit != 64; ++bit) {
+      if (irs::CheckBit(word, bit)) {
+        ASSERT_EQ(bit, irs::SelectInWord(word, rank)) << word << ' ' << rank;
+        ++rank;
+      }
+    }
   }
 }

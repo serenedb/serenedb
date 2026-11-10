@@ -22,6 +22,7 @@
 #include <re2/byte_set_finder.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
 #include <iresearch/analysis/text/case/case.hpp>
@@ -942,6 +943,55 @@ TEST(classify_block_test, ByteSetFinderAgainstScalar) {
                 nibbles.Classify32(reinterpret_cast<const char*>(block)))
         << "variant=" << variant << " c=" << c;
     }
+  }
+}
+
+TEST(classify_block_test, ByteSet16AgainstScalar) {
+  constexpr size_t kBlock = 16;
+  uint64_t seed = 0x5e7b17e;
+  const auto next = [&] {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<size_t>(seed >> 33);
+  };
+  irs::byte_type block[kBlock];
+  const auto check = [&](const irs::analysis::classify::ByteSet& bytes,
+                         const std::array<bool, 256>& members, size_t variant) {
+    for (size_t first = 0; first < 256; first += kBlock) {
+      const size_t rotate = next();
+      for (size_t i = 0; i < kBlock; ++i) {
+        block[i] = static_cast<irs::byte_type>(first + ((i * 7 + rotate) & 15));
+      }
+      for (size_t round = 0; round < 2; ++round) {
+        uint32_t expect = 0;
+        for (size_t i = 0; i < kBlock; ++i) {
+          expect |= static_cast<uint32_t>(members[block[i]]) << i;
+        }
+        ASSERT_EQ(expect,
+                  irs::analysis::classify::ClassifyByteSet16(block, bytes))
+          << "variant=" << variant << " first=" << first;
+        for (size_t i = 0; i < kBlock; ++i) {
+          block[i] = static_cast<irs::byte_type>(next() % 256);
+        }
+      }
+    }
+  };
+  for (size_t member = 0; member < 256; ++member) {
+    irs::analysis::classify::ByteSet bytes;
+    std::array<bool, 256> members{};
+    bytes.Add(static_cast<irs::byte_type>(member));
+    members[member] = true;
+    check(bytes, members, member);
+  }
+  for (size_t variant = 0; variant < 400; ++variant) {
+    irs::analysis::classify::ByteSet bytes;
+    std::array<bool, 256> members{};
+    const size_t count = variant % 2 == 0 ? next() % 24 : next() % 512;
+    for (size_t i = 0; i < count; ++i) {
+      const auto b = static_cast<irs::byte_type>(next() % 256);
+      bytes.Add(b);
+      members[b] = true;
+    }
+    check(bytes, members, 256 + variant);
   }
 }
 

@@ -29,6 +29,7 @@
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
@@ -94,8 +95,7 @@
 #include "pg/connection_context.h"
 #include "pg/tsdictionary.h"
 #include "scheduler/job_scheduler.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::catalog {
 
@@ -171,7 +171,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   if (const auto& store = entry->SearchStore()) {
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
-    entry->AdoptStorage(search::InvertedIndexStorage::Create(
+    entry->AdoptStorage(std::make_shared<search::Store>(
       _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
@@ -186,6 +186,18 @@ std::vector<duckdb::CatalogEntry*> VisibleEntries(
   set.Scan(transaction,
            [&](duckdb::CatalogEntry& entry) { entries.emplace_back(&entry); });
   return entries;
+}
+
+duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> RowConstraints(
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>& constraints) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> result;
+  for (auto& constraint : constraints) {
+    if (constraint->type == duckdb::ConstraintType::NOT_NULL ||
+        constraint->type == duckdb::ConstraintType::CHECK) {
+      result.push_back(std::move(constraint));
+    }
+  }
+  return result;
 }
 
 }  // namespace
@@ -221,7 +233,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   }
   SDB_ASSERT(plan);
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
-    *entry, op.types, op.estimated_cardinality, op.return_chunk);
+    *entry, op.types, op.estimated_cardinality, op.return_chunk,
+    RowConstraints(op.bound_constraints));
   insert.children.emplace_back(*plan);
   return insert;
 }
@@ -278,7 +291,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   }
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     *entry, op.columns, std::move(op.expressions), op.types,
-    op.estimated_cardinality, op.return_chunk, op.row_id_handling);
+    op.estimated_cardinality, op.return_chunk, op.row_id_handling,
+    RowConstraints(op.bound_constraints));
   update.children.emplace_back(plan);
   return update;
 }
@@ -302,6 +316,14 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     for (const auto& [name, value] : info.options) {
       RequireSearchTableIndexOption(name);
     }
+  }
+  for (auto* expressions : {&info.expressions, &info.parsed_expressions}) {
+    for (auto& expression : *expressions) {
+      binder.QualifyUserFunctions(table.ParentCatalog(), *expression);
+    }
+  }
+  if (info.where_clause) {
+    binder.QualifyUserFunctions(table.ParentCatalog(), *info.where_clause);
   }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);
@@ -737,6 +759,56 @@ void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropSubscription(transaction, info);
+}
+
+duckdb::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> SereneDBDatabases(
+  duckdb::DatabaseManager& manager) {
+  auto databases = manager.GetDatabases();
+  std::erase_if(databases, [](const auto& db) {
+    return db->GetCatalog().GetCatalogType() != SereneDBCatalog::kStorageType;
+  });
+  return databases;
+}
+
+void ForEachSearchStorage(
+  SereneDBCatalog& catalog, absl::FunctionRef<void(SearchTableEntry&)> table,
+  std::optional<absl::FunctionRef<void(InvertedIndexEntry&)>> index) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  catalog.ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        if (entry.type == duckdb::CatalogType::TABLE_ENTRY &&
+            entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage()) {
+          auto& search_table = entry.Cast<SearchTableEntry>();
+          SDB_ASSERT(search_table.Storage());
+          table(search_table);
+        }
+      });
+    if (index) {
+      schema.get().Scan(duckdb::CatalogType::INDEX_ENTRY,
+                        [&](duckdb::CatalogEntry& entry) {
+                          if (connector::IsInvertedIndex(
+                                entry.Cast<duckdb::IndexCatalogEntry>())) {
+                            auto& inverted = entry.Cast<InvertedIndexEntry>();
+                            if (inverted.Storage()) {
+                              (*index)(inverted);
+                            }
+                          }
+                        });
+    }
+  }
+}
+
+std::vector<std::shared_ptr<search::Store>> SearchTableStorages(
+  SereneDBCatalog& catalog) {
+  std::vector<std::shared_ptr<search::Store>> tables;
+  ForEachSearchStorage(
+    catalog,
+    [&](SearchTableEntry& table) { tables.push_back(table.Storage()); },
+    std::nullopt);
+  return tables;
 }
 
 }  // namespace sdb::catalog

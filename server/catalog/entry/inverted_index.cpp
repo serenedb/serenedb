@@ -31,6 +31,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -65,9 +66,8 @@
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
-#include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::catalog {
 namespace {
@@ -270,6 +270,14 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
+    if (declared == duckdb::CompressionType::COMPRESSION_AUTO) {
+      for (const auto ann : AnnFields(id)) {
+        if (const auto compression = FindEntry(ann)->column_options.compression;
+            compression != duckdb::CompressionType::COMPRESSION_AUTO) {
+          declared = compression;
+        }
+      }
+    }
     return {.compression = declared};
   }
   // The pk column is written for every row of every segment, so its validity
@@ -290,11 +298,12 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
 }
 
 irs::FieldKind InvertedIndexConfig::GetFieldKind(irs::field_id id) const {
-  if (id == connector::term_dict::kPKFieldId || LookupField(id).entry) {
+  if (LookupField(id).entry) {
     return irs::FieldKind::Index;
   }
-  return table_columns.contains(id) ? irs::FieldKind::Column
-                                    : irs::FieldKind::None;
+  return id == connector::term_dict::kPKFieldId || table_columns.contains(id)
+           ? irs::FieldKind::Column
+           : irs::FieldKind::None;
 }
 
 const irs::AnnInfo* InvertedIndexConfig::FindAnn(
@@ -327,8 +336,7 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
         resolved.tokenizer_column = field.synthetic_column;
       }
     }
-    for (const auto id : {field_id, field.numeric_field_id, field.bool_field_id,
-                          field.null_field_id, field.synthetic_column}) {
+    for (const auto id : {field_id, field.synthetic_column}) {
       if (irs::field_limits::valid(id)) {
         _fields.try_emplace(id, resolved);
       }
@@ -407,11 +415,8 @@ InvertedIndexConfig::InvertedIndexConfig(
     }
   }
   for (const auto& [owner, field] : fields) {
-    for (const auto id : {field.numeric_field_id, field.bool_field_id,
-                          field.null_field_id, field.synthetic_column}) {
-      if (irs::field_limits::valid(id)) {
-        _owners.try_emplace(id, owner);
-      }
+    if (irs::field_limits::valid(field.synthetic_column)) {
+      _owners.try_emplace(field.synthetic_column, owner);
     }
   }
 }
@@ -604,7 +609,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
       break;
     }
     case duckdb::AlterIndexType::RESET_INDEX_OPTIONS: {
-      auto& options = index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options;
+      auto& reset = index_alter.Cast<duckdb::ResetIndexOptionsInfo>();
+      auto& options = reset.options;
       if (options.extract(duckdb::Identifier{kReindexIntervalSetting}) &&
           view_backed) {
         context.TryGetCurrentSetting(
@@ -617,8 +623,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
         if (_search_table) {
           RequireSearchTableIndexOption(name);
         }
-        context.TryGetCurrentSetting(identifier, new_options[name]);
+        auto& value = new_options[name];
+        if (const auto it = reset.values.find(name); it != reset.values.end()) {
+          value = it->second;
+        } else {
+          context.TryGetCurrentSetting(identifier, value);
+          reset.values.emplace(name, value);
+        }
       }
+      SDB_IF_FAILURE("reset_options_without_values") { reset.values.clear(); }
       break;
     }
     default:
@@ -657,10 +670,9 @@ void InvertedIndexEntry::CreateReindexJob(
   body->info->parameters.emplace_back(
     duckdb::ConstantExpression::FromValue(duckdb::Value::BIGINT(oid)));
   create.body.push_back(std::move(body));
-  create.permissions.owner =
-    ParentSchema(transaction)
-      .GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName())
-      ->permissions.owner;
+  const auto relation = GetRelation(transaction);
+  SDB_ASSERT(relation);
+  create.permissions.owner = relation->permissions.owner;
   catalog.CreateJob(transaction.GetContext(), create);
   SetJobOwnedBy(transaction, catalog, GetQualifiedName(name), name);
 }
@@ -718,7 +730,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
 void InvertedIndexEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
   if (_search_table && transaction.HasContext()) {
     _search_table->ClaimLayout(transaction.GetContext(),
-                               GetTableName().GetIdentifierName());
+                               GetTableName().GetIdentifierName(),
+                               search::TableChange::Layout);
   }
 }
 
@@ -764,7 +777,7 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   if (state.position++ != 0 || !_storage) {
     return false;
   }
-  const auto snapshot = _storage->GetInvertedIndexSnapshot();
+  const auto snapshot = _storage->Snapshot();
   const auto keys = connector::primary_key::KeyColumns(table);
   const auto key_column =
     keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID

@@ -166,10 +166,9 @@ void FromTokenizeListInAnyAllOf(
 
   const size_t min_match_value =
     is_any ? std::max<size_t>(min_match, 1) : groups.size();
-  AddTokenGroups(
-    MaybeNegated(parent, ctx, column_info),
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR), groups,
-    min_match_value, ctx.boost, LeafScorer(column_info));
+  AddTokenGroups(MaybeNegated(parent, ctx, column_info), column_info.field_id,
+                 TextOf(column_info), groups, min_match_value, ctx.boost,
+                 LeafScorer(column_info));
 }
 
 }  // namespace

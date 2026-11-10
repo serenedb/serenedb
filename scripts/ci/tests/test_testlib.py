@@ -1,6 +1,8 @@
+import math
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -228,6 +230,25 @@ def test_a_unit_joins_the_shard_that_starts_its_fixture_unless_that_shard_is_far
 
     assert plan(650.0) == [["iceberg:0", "iceberg:1"], []]
     assert plan(2000.0) == [[], ["iceberg:0", "iceberg:1"]]
+
+
+def test_a_unit_fails_when_a_fixture_its_fixture_requires_fails_to_start():
+    class Broken(scheduler.Fixture):
+        def start(self, ctx):
+            raise RuntimeError("squid is not installed")
+
+    class Dependent(scheduler.Fixture):
+        requires = ("broken",)
+
+    ctx = SimpleNamespace(jobs=2, mem_gb=4.0, budget_end=math.inf, fixtures={}, verbose=False)
+    sched = scheduler.Scheduler(ctx, [], {"broken": lambda ctx: Broken(), "dependent": lambda ctx: Dependent()})
+    run = threading.Thread(target=sched.run_pass, args=([unit("x:y", fixtures=("dependent",))],), daemon=True)
+    run.start()
+    run.join(30)
+    sched.interrupt()
+    assert not run.is_alive()
+    assert [(r.unit, r.status) for r in sched.results] == [("x:y", FAILED)]
+    assert "squid is not installed" in sched.results[0].detail
 
 
 def test_shards_balance_cpu_seconds():

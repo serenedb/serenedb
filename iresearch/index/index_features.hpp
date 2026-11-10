@@ -47,7 +47,9 @@ enum class IndexFeatures : uint8_t {
   // Field norms
   Norm = 1U << 4,
 
-  Max = Freq | Pos | Offs | Vec | Norm,
+  Ranges = 1U << 5,
+
+  Max = Freq | Pos | Offs | Vec | Norm | Ranges,
 };
 static_assert(IndexFeatures::Max < IndexFeatures{0x80U},
               "adjust features storage format");

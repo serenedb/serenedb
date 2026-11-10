@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/planner/table_filter.hpp>
@@ -28,6 +30,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_extract.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
 #include <memory>
 #include <span>
@@ -68,6 +71,8 @@ class FullScanner {
   }
 
  private:
+  void FillAbsent(duckdb::DataChunk& output) const;
+
   struct Binding {
     const irs::ColumnReader* reader = nullptr;
     duckdb::idx_t output_slot = 0;
@@ -78,11 +83,18 @@ class FullScanner {
 
   irs::ReadContext _ctx;
   std::vector<Binding> _bound;
+  std::vector<duckdb::idx_t> _absent;
   irs::ColFilterChain _filters;
   duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
   duckdb::SelectionVector _sel;
   const duckdb::SelectionVector* _selection = nullptr;
   uint64_t _scanned_end = 0;
 };
+
+void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
+                  std::span<const irs::ColumnstoreProjection> projections,
+                  irs::ColFilterStateCache& filter_states,
+                  duckdb::SelectionVector& live, duckdb::DataChunk& chunk,
+                  absl::FunctionRef<bool(duckdb::DataChunk&)> visit);
 
 }  // namespace sdb::connector

@@ -1,0 +1,609 @@
+hash-threshold 100
+
+# A JSON[] / JSON[N] key with a dictionary is indexed element by element, each
+# element by its JSON leaf: strings, numbers, booleans and JSON null. A NULL
+# row, a NULL element and a JSON null element stay apart.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jl_verbatim AS keyword() WITH (frequency);
+
+statement ok
+CREATE TABLE jl(pk INTEGER PRIMARY KEY, js JSON[], ja JSON[2], doc JSON);
+
+statement ok
+INSERT INTO jl VALUES
+  (1, ['"alpha"', '1', 'true']::JSON[], ['"alpha"', '1']::JSON[2],
+      '{"t": ["alpha", 1, true]}'),
+  (2, ['"beta"', '2.5', 'false', 'null']::JSON[], ['"beta"', 'null']::JSON[2],
+      '{"t": ["beta", 2.5, false, null]}'),
+  (3, NULL, NULL, '{"u": 1}'),
+  (4, ['"alpha"', NULL]::JSON[], [NULL, '"alpha"']::JSON[2],
+      '{"t": ["alpha", null]}'),
+  (5, []::JSON[], ['true', 'false']::JSON[2], '{"t": []}');
+
+statement ok
+CREATE INDEX jl_idx ON jl USING inverted(pk, js jl_verbatim, ja jl_verbatim,
+                                         ((doc->'t')::JSON[]) jl_verbatim);
+
+statement ok
+VACUUM (REFRESH_TABLE) jl;
+
+statement ok
+INSERT INTO jl VALUES
+  (6, ['"gamma"', '3', NULL]::JSON[], ['"gamma"', '3']::JSON[2],
+      '{"t": ["gamma", 3, null]}'),
+  (7, NULL, NULL, '{}');
+
+statement ok
+VACUUM (REFRESH_TABLE) jl;
+
+query
+SELECT pk FROM jl_idx WHERE js @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM jl WHERE '"alpha"'::JSON = ANY(js) ORDER BY pk;
+----
+pk
+1
+4
+
+query
+EXPLAIN SELECT pk FROM jl_idx WHERE js @@ ts_like('alpha');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: jl_idx    │
+│ Lookup: table    │
+│ Index Filter:    │
+│ ╭─ Term ───────╮ │
+│ │ Field: js    │ │
+│ │ Value: alpha │ │
+│ ╰──────────────╯ │
+│ Projections: pk  │
+│ ~1 row           │
+╰──────────────────╯
+
+query
+SELECT pk FROM jl_idx WHERE ja @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM jl_idx WHERE js IS NULL ORDER BY pk;
+----
+pk
+3
+7
+
+query
+SELECT pk FROM jl WHERE js IS NULL ORDER BY pk;
+----
+pk
+3
+7
+
+query
+SELECT pk FROM jl_idx WHERE js IS NOT NULL ORDER BY pk;
+----
+pk
+1
+2
+4
+5
+6
+
+query
+SELECT pk FROM jl WHERE js IS NOT NULL ORDER BY pk;
+----
+pk
+1
+2
+4
+5
+6
+
+query
+SELECT pk FROM jl_idx WHERE NOT (js @@ ts_like('alpha')) ORDER BY pk;
+----
+pk
+2
+5
+
+query
+SELECT pk FROM jl
+WHERE js IS NOT NULL AND NOT ('"alpha"'::JSON = ANY(js))
+ORDER BY pk;
+----
+pk
+2
+5
+
+query
+EXPLAIN SELECT pk FROM jl_idx WHERE NOT (js @@ ts_like('alpha'));
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
+│ Index: jl_idx                                                         │
+│ Lookup: table                                                         │
+│ Index Filter:                                                         │
+│ ╭─ Not ───────────╮                                                   │
+│ ╰────────┬────────╯                                                   │
+│          ├────────────────────┬────────────────────────╮              │
+│ ╭─ Terms ┴────────╮  ╭─ Terms ┴────────╮  ╭─ Terms ────┴────────────╮ │
+│ │ Field: js       │  │ Field: js(null) │  │ Field: js(null element) │ │
+│ │ Values: 'alpha' │  ╰─────────────────╯  ╰─────────────────────────╯ │
+│ ╰─────────────────╯                                                   │
+│ Projections: pk                                                       │
+│ ~1 row                                                                │
+╰───────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT pk FROM jl_idx WHERE (doc->'t')::JSON[] @@ ts_like('gamma') ORDER BY pk;
+----
+pk
+6
+
+query
+SELECT pk FROM jl_idx
+WHERE ((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true)
+ORDER BY pk;
+----
+pk
+2
+6
+
+query
+SELECT pk FROM jl
+WHERE EXISTS (
+  SELECT 1 FROM unnest((doc->'t')::JSON[]) AS e(v)
+  WHERE json_type(v) IN ('UBIGINT', 'BIGINT', 'DOUBLE')
+    AND v::DOUBLE BETWEEN 2 AND 3)
+ORDER BY pk;
+----
+pk
+2
+6
+
+query
+EXPLAIN SELECT pk FROM jl_idx
+WHERE ((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────╮
+│ Index: jl_idx                               │
+│ Lookup: table                               │
+│ Index Filter:                               │
+│ ╭─ Granular Range ────────────────────────╮ │
+│ │ Field:                                  │ │
+│ │ CAST((doc -> 't') AS "json"[])(numeric) │ │
+│ │ Range: >=2, <=3                         │ │
+│ ╰─────────────────────────────────────────╯ │
+│ Projections: pk                             │
+│ ~1 row                                      │
+╰─────────────────────────────────────────────╯
+
+query
+SELECT pk FROM jl_idx
+WHERE NOT (((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true))
+ORDER BY pk;
+----
+pk
+1
+5
+
+query
+EXPLAIN SELECT pk FROM jl_idx
+WHERE NOT (((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true));
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: jl_idx                                                                                                                                                                          │
+│ Lookup: table                                                                                                                                                                          │
+│ Index Filter:                                                                                                                                                                          │
+│ ╭─ Not ────────────────────────────────╮                                                                                                                                               │
+│ ╰───────────────────┬──────────────────╯                                                                                                                                               │
+│                     ├───────────────────────────────────────────┬────────────────────────────────────────────────┬──────────────────────────────────────────────╮                      │
+│ ╭─ Terms ───────────┴──────────────────╮  ╭─ Terms ─────────────┴─────────────────────╮  ╭─ Terms ───────────────┴──────────────────────╮  ╭─ Granular Range ───┴────────────────────╮ │
+│ │ Field:                               │  │ Field:                                    │  │ Field:                                       │  │ Field:                                  │ │
+│ │ CAST((doc -> 't') AS "json"[])(null) │  │ CAST((doc -> 't') AS "json"[])(json null) │  │ CAST((doc -> 't') AS "json"[])(null element) │  │ CAST((doc -> 't') AS "json"[])(numeric) │ │
+│ ╰──────────────────────────────────────╯  ╰───────────────────────────────────────────╯  ╰──────────────────────────────────────────────╯  │ Range: >=2, <=3                         │ │
+│                                                                                                                                            ╰─────────────────────────────────────────╯ │
+│ Projections: pk                                                                                                                                                                        │
+│ ~1 row                                                                                                                                                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT pk FROM jl_idx
+WHERE ((doc->'t')::JSON[])::BOOLEAN[] @@ ts_between(true, true, true, true)
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM jl_idx
+WHERE ((doc->'t')::JSON[])::BOOLEAN[] @@ ts_between(false, false, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+statement error
+INSERT INTO jl VALUES (8, ['{"a": 1}']::JSON[], NULL, '{}');
+----
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+statement ok
+VACUUM (COMPACT_TABLE) jl;
+
+query
+SELECT pk FROM jl_idx WHERE js @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM jl_idx WHERE js IS NULL ORDER BY pk;
+----
+pk
+3
+7
+
+query
+SELECT pk FROM jl_idx WHERE NOT (js @@ ts_like('alpha')) ORDER BY pk;
+----
+pk
+2
+5
+
+query
+SELECT pk FROM jl_idx
+WHERE ((doc->'t')::JSON[])::DOUBLE[] @@ ts_between(2, 3, true, true)
+ORDER BY pk;
+----
+pk
+2
+6
+
+query
+SELECT pk FROM jl_idx
+WHERE ((doc->'t')::JSON[])::BOOLEAN[] @@ ts_between(false, false, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+# Arrays of objects and nested arrays are indexed through an expression that
+# yields their leaves: list_transform over the objects, a JSONPath wildcard
+# over the text, or flatten over the nested arrays.
+
+statement ok
+CREATE TABLE jn(pk INTEGER PRIMARY KEY, doc JSON);
+
+statement ok
+INSERT INTO jn VALUES
+  (1, '{"items": [{"name": "apple", "price": 1.5, "gift": true,
+                   "tags": ["red", "fresh"]},
+                  {"name": "pear", "price": 3, "tags": ["green"]}],
+        "matrix": [["a", 1], [true]]}'),
+  (2, '{"items": [{"name": "plum", "price": 10, "gift": false}, {"sku": 7}],
+        "matrix": [[2.5, "b"], []]}'),
+  (3, '{"items": [], "matrix": []}'),
+  (4, '{"other": 1}'),
+  (5, NULL),
+  (6, '{"items": [{"name": null, "price": null, "tags": [null]}]}'),
+  (7, '{"items": [{"name": "a very long product name", "price": "3"},
+                  {"name": "groß", "price": 3},
+                  {"name": "say \"hi\"", "price": 3}]}');
+
+statement ok
+CREATE INDEX jn_idx ON jn USING inverted(pk,
+  (list_transform((doc->'items')::JSON[], lambda x: x->'name')) jl_verbatim,
+  (list_transform((doc->'items')::JSON[], lambda x: x->'price')) jl_verbatim,
+  (list_transform((doc->'items')::JSON[], lambda x: x->'gift')) jl_verbatim,
+  (json_extract(doc::VARCHAR, '$.items[*].tags[*]')) jl_verbatim,
+  (flatten((doc->'matrix')::JSON[][])) jl_verbatim);
+
+statement ok
+VACUUM (REFRESH_TABLE) jn;
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
+      @@ ts_like('pear')
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM jn
+WHERE '"pear"'::JSON = ANY(list_transform((doc->'items')::JSON[],
+                                          lambda x: x->'name'))
+ORDER BY pk;
+----
+pk
+1
+
+query
+EXPLAIN SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
+      @@ ts_like('pear');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
+│ Index: jn_idx                                                                     │
+│ Lookup: table                                                                     │
+│ Index Filter:                                                                     │
+│ ╭─ Term ────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field:                                                                        │ │
+│ │ list_transform(CAST((doc -> 'items') AS "json"[]), (lambda x: (x -> 'name'))) │ │
+│ │ Value: pear                                                                   │ │
+│ ╰───────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: pk                                                                   │
+│ ~1 row                                                                            │
+╰───────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
+      @@ ts_like('a very long product name')
+ORDER BY pk;
+----
+pk
+7
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
+      @@ ts_like('groß')
+ORDER BY pk;
+----
+pk
+7
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
+      @@ ts_like('say "hi"')
+ORDER BY pk;
+----
+pk
+7
+
+query
+SELECT pk FROM jn
+WHERE '"say \"hi\""'::JSON = ANY(list_transform((doc->'items')::JSON[],
+                                                lambda x: x->'name'))
+ORDER BY pk;
+----
+pk
+7
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name') IS NULL
+ORDER BY pk;
+----
+pk
+4
+5
+
+query
+SELECT pk FROM jn
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name') IS NULL
+ORDER BY pk;
+----
+pk
+4
+5
+
+query
+SELECT pk FROM jn_idx
+WHERE NOT (list_transform((doc->'items')::JSON[], lambda x: x->'name')
+           @@ ts_like('pear'))
+ORDER BY pk;
+----
+pk
+3
+6
+7
+
+query
+SELECT pk FROM jn
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name') IS NOT NULL
+  AND NOT ('"pear"'::JSON = ANY(list_transform((doc->'items')::JSON[],
+                                               lambda x: x->'name')))
+ORDER BY pk;
+----
+pk
+3
+6
+7
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'price')::DOUBLE[]
+      @@ ts_between(2, 10, true, true)
+ORDER BY pk;
+----
+pk
+1
+2
+7
+
+query
+SELECT pk FROM jn
+WHERE EXISTS (
+  SELECT 1
+  FROM unnest(list_transform((doc->'items')::JSON[], lambda x: x->'price'))
+       AS e(v)
+  WHERE json_type(v) IN ('UBIGINT', 'BIGINT', 'DOUBLE')
+    AND v::DOUBLE BETWEEN 2 AND 10)
+ORDER BY pk;
+----
+pk
+1
+2
+7
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'price')
+      @@ ts_like('3')
+ORDER BY pk;
+----
+pk
+7
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'gift')::BOOLEAN[]
+      @@ ts_between(true, true, true, true)
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'gift')::BOOLEAN[]
+      @@ ts_between(false, false, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM jn_idx
+WHERE json_extract(doc::VARCHAR, '$.items[*].tags[*]') @@ ts_like('green')
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM jn_idx
+WHERE json_extract(doc::VARCHAR, '$.items[*].tags[*]') IS NULL
+ORDER BY pk;
+----
+pk
+5
+
+query
+SELECT pk FROM jn
+WHERE json_extract(doc::VARCHAR, '$.items[*].tags[*]') IS NULL
+ORDER BY pk;
+----
+pk
+5
+
+query
+SELECT pk FROM jn_idx
+WHERE flatten((doc->'matrix')::JSON[][]) @@ ts_like('b')
+ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM jn_idx
+WHERE flatten((doc->'matrix')::JSON[][])::DOUBLE[]
+      @@ ts_between(1.0, 2.5, true, true)
+ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM jn_idx
+WHERE flatten((doc->'matrix')::JSON[][])::BOOLEAN[]
+      @@ ts_between(true, true, true, true)
+ORDER BY pk;
+----
+pk
+1
+
+statement error
+CREATE INDEX jn_objects ON jn USING inverted(pk,
+  ((doc->'items')::JSON[]) jl_verbatim);
+----
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+statement error
+CREATE INDEX jn_rows ON jn USING inverted(pk,
+  ((doc->'matrix')::JSON[]) jl_verbatim);
+----
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+statement ok
+INSERT INTO jn VALUES
+  (8, '{"items": [{"name": "pear", "price": 7, "gift": true,
+                   "tags": ["green", "ripe"]}],
+        "matrix": [["b"]]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) jn;
+
+statement ok
+VACUUM (COMPACT_TABLE) jn;
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'name')
+      @@ ts_like('pear')
+ORDER BY pk;
+----
+pk
+1
+8
+
+query
+SELECT pk FROM jn_idx
+WHERE list_transform((doc->'items')::JSON[], lambda x: x->'price')::DOUBLE[]
+      @@ ts_between(2, 10, true, true)
+ORDER BY pk;
+----
+pk
+1
+2
+7
+8
+
+query
+SELECT pk FROM jn_idx
+WHERE json_extract(doc::VARCHAR, '$.items[*].tags[*]') @@ ts_like('green')
+ORDER BY pk;
+----
+pk
+1
+8
+
+query
+SELECT pk FROM jn_idx
+WHERE flatten((doc->'matrix')::JSON[][]) @@ ts_like('b')
+ORDER BY pk;
+----
+pk
+2
+8
+
+statement ok
+DROP TABLE jn;
+
+statement ok
+DROP TABLE jl;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY jl_verbatim;

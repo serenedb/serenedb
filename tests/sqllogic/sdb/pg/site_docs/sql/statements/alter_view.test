@@ -10,3 +10,22 @@ CREATE VIEW view1 AS SELECT i FROM view_source;
 
 statement ok
 ALTER VIEW view1 RENAME TO view2;
+
+# DOCS_TEST: example_002
+
+statement ok
+INSERT INTO view_source VALUES (67);
+
+statement ok
+CREATE SCHEMA archive;
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER VIEW view2 SET SCHEMA archive;
+
+query
+SELECT i FROM archive.view2;
+----
+i
+67

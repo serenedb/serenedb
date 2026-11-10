@@ -49,7 +49,7 @@ QUERY PLAN
 │ │ Syntax: perl                           │ │
 │ │ Has Pos: false                         │ │
 │ │ Query:                                 │ │
-│ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
+│ │ And("\\xffpercent", "alpha", "one\\xff") │ │
 │ │ Verify: false                          │ │
 │ ╰────────────────────────────────────────╯ │
 │ Table Filter:                              │
@@ -59,7 +59,7 @@ QUERY PLAN
 │ │ Syntax: perl                           │ │
 │ │ Has Pos: false                         │ │
 │ │ Query:                                 │ │
-│ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
+│ │ And("\\xffpercent", "alpha", "one\\xff") │ │
 │ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
 │ Projections: pk                            │

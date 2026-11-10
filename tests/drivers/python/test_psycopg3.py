@@ -438,6 +438,29 @@ def test_binder_error_sqlstates():
         c.close()
 
 
+@pytest.mark.parametrize("storage", ["", " WITH (storage = 'search')"])
+def test_commit_time_index_error_keeps_its_sqlstate(storage):
+    table = f"rfq_commit_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+            cur.execute(f'CREATE TABLE "{table}" (id INT, content JSON){storage}')
+            cur.execute(
+                f'CREATE INDEX "{table}_idx" ON "{table}" '
+                "USING inverted (id, (content->'val'))"
+            )
+            with pytest.raises(psycopg.Error) as ei:
+                cur.execute(
+                    f'INSERT INTO "{table}" VALUES (1, \'{{"val": {{"x": 1}}}}\')'
+                )
+            assert ei.value.sqlstate == "42804", ei.value.sqlstate
+    finally:
+        with c.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.close()
+
+
 def test_job_error_sqlstates():
     job = f"rfq_job_{os.getpid()}"
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
@@ -861,6 +884,38 @@ def test_offset_without_guaranteed_order_warns():
         assert [s for s, _ in diags] == ["WARNING"], diags
         assert "row order is not guaranteed" in diags[0][1], diags
     finally:
+        c.close()
+
+
+def test_reindex_forwards_the_notices_of_its_scan(tmp_path):
+    name = f"rnf_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    notices: list[str] = []
+    c.add_notice_handler(lambda d: notices.append(d.message_primary))
+    try:
+        with c.cursor() as cur:
+            cur.execute(
+                "COPY (SELECT i AS id, 'row ' || i AS body FROM range(3) t(i)) "
+                f"TO '{tmp_path}/{name}_1.parquet'")
+            cur.execute(
+                f'CREATE VIEW "{name}" AS SELECT id, body '
+                f"FROM read_parquet('{tmp_path}/{name}_*.parquet') "
+                "WHERE pg_cancel_backend(-1) IS NOT NULL")
+            cur.execute(
+                f'CREATE INDEX "{name}_idx" ON "{name}" '
+                "USING inverted (id, body) "
+                "WITH (reindex_interval = 0, compaction_interval = 0)")
+            cur.execute(
+                "COPY (SELECT i AS id, 'row ' || i AS body "
+                f"FROM range(3, 5) t(i)) TO '{tmp_path}/{name}_2.parquet'")
+            notices.clear()
+            cur.execute(f"SELECT * FROM serenedb_reindex('{name}_idx')")
+            assert cur.fetchall() == [("delta", 1, 0, 0, 0)]
+        assert notices == ["PID -1 is not a PostgreSQL backend process"] * 2, notices
+    finally:
+        with c.cursor() as cur:
+            cur.execute(f'DROP INDEX IF EXISTS "{name}_idx"')
+            cur.execute(f'DROP VIEW IF EXISTS "{name}"')
         c.close()
 
 

@@ -2567,11 +2567,14 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         return MakeArraySerializer<TidTextCore<WrapContext::Array>, TidBinCore,
                                    kTid>(format, context, kind);
       }
-      // XID8 or BIGINT
       return MakeArraySerializer<IntTextCore<int64_t>, IntBinCore<int64_t>,
                                  kInt8>(format, context, kind);
     }
     case UBIGINT:
+      if (IsXid8(type)) {
+        return MakeArraySerializer<IntTextCore<uint64_t>, IntBinCore<uint64_t>,
+                                   kXid8>(format, context, kind);
+      }
       if (IsPgLsn(type)) {
         return MakeArraySerializer<LsnTextCore, IntBinCore<uint64_t>, kPgLsn>(
           format, context, kind);
@@ -2926,6 +2929,11 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                                                   context);
     case UBIGINT:
       if (!type.GetTypeInfo().alias.empty()) {
+        if (IsXid8(type)) {
+          return SelectFieldSerializer<
+            IntTextCore<uint64_t>, IntTextCore<uint64_t>, IntBinCore<uint64_t>>(
+            format, context);
+        }
         if (IsPgLsn(type)) {
           return SelectFieldSerializer<LsnTextCore, LsnTextCore,
                                        IntBinCore<uint64_t>>(format, context);

@@ -4,7 +4,7 @@ query
 select 123::numeric;
 ----
 numeric
-123.000
+123.0000000000
 
 
 connection ssl-tls2 sslmode=prefer port=ssl
@@ -13,7 +13,7 @@ query
 select 123::numeric;
 ----
 numeric
-123.000
+123.0000000000
 
 
 connection ssl-tls3 sslmode=require port=ssl
@@ -22,7 +22,7 @@ query
 select 123::numeric;
 ----
 numeric
-123.000
+123.0000000000
 
 
 connection ssl-tls4 sslmode=require port=plain

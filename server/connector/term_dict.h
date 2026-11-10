@@ -22,7 +22,12 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/datetime.hpp>
+#include <duckdb/common/vector/unified_vector_format.hpp>
+#include <iresearch/index/field_meta.hpp>
 #include <iresearch/types.hpp>
+#include <type_traits>
+#include <utility>
 
 #include "connector/column_id.h"
 #include "pg/types/logical.h"
@@ -33,39 +38,17 @@ namespace sdb::connector::term_dict {
 // reserved field id.
 inline constexpr irs::field_id kPKFieldId = kGeneratedPKId;
 
-// How a duckdb type reaches the term dictionary. The numeric kinds name the
-// width the sink encoded the value at, so a query rebuilds the exact same
-// terms; anything the sink cannot index at all is Unsupported.
-enum class Kind : uint8_t {
-  Unsupported = 0,
-  Null,
-  Bool,
-  String,
-  NumericI32,
-  NumericI64,
-  NumericF32,
-  NumericF64,
-  Inet,
-};
-
-constexpr Kind Classify(duckdb::LogicalTypeId id) noexcept {
+// The types the sink indexes as numbers; a query encodes its bounds at the
+// same width, so it rebuilds the exact same terms.
+constexpr bool IsNumeric(duckdb::LogicalTypeId id) noexcept {
   using enum duckdb::LogicalTypeId;
   switch (id) {
-    case SQLNULL:
-      return Kind::Null;
-    case BOOLEAN:
-      return Kind::Bool;
-    case VARCHAR:
-    case BLOB:
-    case GEOMETRY:
-      return Kind::String;
     case TINYINT:
     case SMALLINT:
     case INTEGER:
     case UTINYINT:
     case USMALLINT:
     case DATE:
-      return Kind::NumericI32;
     case BIGINT:
     case UINTEGER:
     case TIME:
@@ -77,34 +60,152 @@ constexpr Kind Classify(duckdb::LogicalTypeId id) noexcept {
     case TIMESTAMP_MS:
     case TIMESTAMP_NS:
     case TIMESTAMP_TZ_NS:
-      return Kind::NumericI64;
     case FLOAT:
-      return Kind::NumericF32;
     case DOUBLE:
-      return Kind::NumericF64;
-    default:
-      return Kind::Unsupported;
-  }
-}
-
-inline Kind Classify(const duckdb::LogicalType& type) {
-  return pg::IsInetOrCidr(type) ? Kind::Inet : Classify(type.id());
-}
-
-constexpr bool IsNumeric(Kind kind) noexcept {
-  switch (kind) {
-    case Kind::NumericI32:
-    case Kind::NumericI64:
-    case Kind::NumericF32:
-    case Kind::NumericF64:
       return true;
     default:
       return false;
   }
 }
 
-constexpr bool IsSupported(Kind kind) noexcept {
-  return kind != Kind::Unsupported;
+constexpr bool IsIndexable(duckdb::LogicalTypeId id) noexcept {
+  using enum duckdb::LogicalTypeId;
+  switch (id) {
+    case SQLNULL:
+    case BOOLEAN:
+    case VARCHAR:
+    case BLOB:
+    case GEOMETRY:
+      return true;
+    default:
+      return IsNumeric(id);
+  }
+}
+
+inline bool IsIndexable(const duckdb::LogicalType& type) {
+  return pg::IsInetOrCidr(type) || IsIndexable(type.id());
+}
+
+// The layout a value of `type` is written with: `json_leaves` when a JSON
+// value is indexed leaf by leaf.
+inline irs::DictLayout LayoutOf(const duckdb::LogicalType& type,
+                                bool json_leaves) {
+  using enum duckdb::LogicalTypeId;
+  if (type.id() == LIST || type.id() == ARRAY) {
+    const auto& child = type.id() == LIST
+                          ? duckdb::ListType::GetChildType(type)
+                          : duckdb::ArrayType::GetChildType(type);
+    if (json_leaves && child.IsJSONType()) {
+      return irs::DictLayout::JsonList;
+    }
+    if (child.id() == BOOLEAN) {
+      return irs::DictLayout::BoolList;
+    }
+    return IsNumeric(child.id()) ? irs::DictLayout::NumericList
+                                 : irs::DictLayout::StringList;
+  }
+  if (json_leaves && type.IsJSONType()) {
+    return irs::DictLayout::Json;
+  }
+  if (type.id() == BOOLEAN) {
+    return irs::DictLayout::Bool;
+  }
+  return IsNumeric(type.id()) ? irs::DictLayout::Numeric
+                              : irs::DictLayout::String;
+}
+
+inline int64_t TimeTzIndexTerm(int64_t raw_bits) noexcept {
+  return static_cast<int64_t>(
+    duckdb::dtime_tz_t{static_cast<uint64_t>(raw_bits)}.sort_key());
+}
+
+// The value of row `idx`, at the width its terms are built from. Whoever reads
+// a column must read it this way: a value written at one width and looked up at
+// another is a different term, so the two sides share this one definition.
+template<duckdb::LogicalTypeId Kind>
+auto ExtractNumericValue(const duckdb::UnifiedVectorFormat& fmt,
+                         duckdb::idx_t idx) {
+  if constexpr (Kind == duckdb::LogicalTypeId::TINYINT) {
+    return static_cast<int32_t>(
+      duckdb::UnifiedVectorFormat::GetData<int8_t>(fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::SMALLINT) {
+    return static_cast<int32_t>(
+      duckdb::UnifiedVectorFormat::GetData<int16_t>(fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::INTEGER ||
+                       Kind == duckdb::LogicalTypeId::DATE) {
+    return duckdb::UnifiedVectorFormat::GetData<int32_t>(fmt)[idx];
+  } else if constexpr (Kind == duckdb::LogicalTypeId::TIME_TZ) {
+    return TimeTzIndexTerm(
+      duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::BIGINT ||
+                       Kind == duckdb::LogicalTypeId::TIME ||
+                       Kind == duckdb::LogicalTypeId::TIME_NS ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP_SEC ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP_MS ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP_NS ||
+                       Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS) {
+    return duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx];
+  } else if constexpr (Kind == duckdb::LogicalTypeId::UTINYINT) {
+    return static_cast<int32_t>(
+      duckdb::UnifiedVectorFormat::GetData<uint8_t>(fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::USMALLINT) {
+    return static_cast<int32_t>(
+      duckdb::UnifiedVectorFormat::GetData<uint16_t>(fmt)[idx]);
+  } else if constexpr (Kind == duckdb::LogicalTypeId::UINTEGER) {
+    return duckdb::UnifiedVectorFormat::GetData<uint32_t>(fmt)[idx];
+  } else if constexpr (Kind == duckdb::LogicalTypeId::FLOAT) {
+    return duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx];
+  } else {
+    static_assert(Kind == duckdb::LogicalTypeId::DOUBLE,
+                  "ExtractNumericValue: unsupported Kind");
+    return duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx];
+  }
+}
+
+template<typename T>
+auto PromoteNumericValue(T value) {
+  if constexpr (std::is_same_v<T, float>) {
+#ifdef FLOAT_T_IS_DOUBLE_T
+    return static_cast<double>(value);
+#else
+    return value;
+#endif
+  } else if constexpr (std::is_same_v<T, uint32_t>) {
+    return static_cast<int64_t>(value);
+  } else {
+    return value;
+  }
+}
+
+template<duckdb::LogicalTypeId Kind>
+using PromotedNumeric = decltype(PromoteNumericValue(ExtractNumericValue<Kind>(
+  std::declval<const duckdb::UnifiedVectorFormat&>(), 0)));
+
+template<duckdb::LogicalTypeId... Kinds, typename F>
+bool DispatchKind(duckdb::LogicalTypeId kind, F&& f) {
+  return (((kind == Kinds) && (f.template operator()<Kinds>(), true)) || ...);
+}
+
+template<duckdb::LogicalTypeId... Extra, typename F>
+bool DispatchNumericKind(duckdb::LogicalTypeId kind, F&& f) {
+  using enum duckdb::LogicalTypeId;
+  return DispatchKind<Extra..., TINYINT, SMALLINT, INTEGER, BIGINT, UTINYINT,
+                      USMALLINT, UINTEGER, FLOAT, DOUBLE, DATE, TIME, TIME_TZ,
+                      TIME_NS, TIMESTAMP, TIMESTAMP_TZ, TIMESTAMP_SEC,
+                      TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ_NS>(
+    kind, std::forward<F>(f));
+}
+
+// The kinds a value is inverted under its own member and term: what every
+// indexable list/array child shares, and what a whole value can be looked up
+// by. GEOMETRY and inet are indexable but absent: they yield several terms per
+// value, which no single lookup rebuilds.
+template<typename F>
+bool DispatchValueKind(duckdb::LogicalTypeId kind, F&& f) {
+  using enum duckdb::LogicalTypeId;
+  return DispatchNumericKind<VARCHAR, BLOB, BOOLEAN>(kind, std::forward<F>(f));
 }
 
 }  // namespace sdb::connector::term_dict

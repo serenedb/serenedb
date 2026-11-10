@@ -80,3 +80,26 @@ statement error
 SELECT '\x123'::bytea
 ----
 db error: ERROR: invalid hexadecimal data: odd number of digits
+
+
+statement ok
+CREATE TABLE bytea_input_text (t text)
+
+
+statement ok
+INSERT INTO bytea_input_text VALUES ('abc')
+
+
+statement error (42883)
+SELECT encode(t, 'hex') FROM bytea_input_text
+
+
+query
+SELECT encode(t::bytea, 'hex') AS h FROM bytea_input_text
+----
+h
+616263
+
+
+statement ok
+DROP TABLE bytea_input_text

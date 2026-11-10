@@ -84,15 +84,31 @@ To define macros on arbitrary tables, use the [`query_table` function](../../../
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_015" />
 
+An argument that is a constant expression takes the place of its parameter as its value, so it can stand where a constant is required, such as in `LIMIT`. Any other argument that the query reads more than once, other than a column or a parameter, is evaluated once for each call.
+
 ### SQL Functions
 
-`CREATE FUNCTION` also takes PostgreSQL's form of an SQL function: typed parameters, a `RETURNS` clause, `LANGUAGE sql` and the body as a string. The function returns its `RETURNS` type, reached from the body's type the way PostgreSQL assigns a value to a column of that type. As in PostgreSQL, a type modifier of the result, such as the precision and scale of `numeric(4,2)`, is not applied:
+`CREATE FUNCTION` also takes PostgreSQL's form of an SQL function: typed parameters, a `RETURNS` clause, `LANGUAGE sql` and the body as a string. Any language other than `sql` is not supported. The function returns its `RETURNS` type, reached from the body's type the way PostgreSQL assigns a value to a column of that type. As in PostgreSQL, a type modifier of the result, such as the precision and scale of `numeric(4,2)`, is not applied:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_036" />
 
 In the body, a parameter is a value of the call: it can stand next to an aggregate, in a `HAVING` clause, in a `WITH` query or in a nested subquery, and an aggregate over a parameter aggregates the rows of the query it is written in:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_040" />
+
+Inside a query of the body, a column of that query, or of a query of the body around it, takes precedence over a parameter of the same name. The parameter is then reached by qualifying it with the name of the function, as `function_name.parameter`, which also works anywhere else in the body. A parameter of a composite type gives its fields as `parameter.field`:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_044" />
+
+`STRICT`, or `RETURNS NULL ON NULL INPUT`, makes the function return `NULL` without running its body when any argument is `NULL`, and a set-returning function return no rows. `CALLED ON NULL INPUT`, the default, runs the body:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_045" />
+
+A parameter takes a default after `DEFAULT` or `=`, as well as after `:=`. `IMMUTABLE`, `STABLE` and `VOLATILE`, volatile by default, are shown in `pg_proc.provolatile` and in the function's definition; what a call evaluates follows its body.
+
+A function that `RETURNS void` runs its body to the end, every row of a query body included, and returns `NULL`. A function whose body modifies data cannot be called for each row of a query:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_047" />
 
 Without `SETOF`, the function returns the first row of the body, also when its result calls a set-returning function such as `unnest`. `RETURNS SETOF <type>` returns every row of the body. Called in `FROM`, the function's column is named after the function:
 
@@ -105,6 +121,14 @@ Without `SETOF`, the function returns the first row of the body, also when its r
 An `OUT` parameter is a column of the result and an `INOUT` parameter is both an argument and a column. A function with one output returns that type, one with several returns a record of them, and `RETURNS SETOF` with outputs returns every row. A `RETURNS` clause next to outputs must name that type: the output's type for one output, `record` for several. Called in `FROM`, a record function returns its outputs as columns:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_039" />
+
+### Moving to Another Schema
+
+`ALTER FUNCTION`, `ALTER PROCEDURE` or `ALTER MACRO ... SET SCHEMA` moves a function, procedure or macro, scalar or table, to another schema, with all its overloads:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_048" />
+
+The move needs the `CREATE` privilege on the target schema, which must not already hold a function or macro of that name. Moving a function into the schema it is already in changes nothing. A function that another object depends on can't be moved.
 
 ## Overloading
 
@@ -174,13 +198,21 @@ An argument that the expression uses more than once is evaluated once for each r
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_041" />
 
-In a macro, a volatile argument such as `random()` is evaluated at each use; in a function declared with `RETURNS`, a volatile argument used more than once is evaluated once for each row. A macro used as a predicate in `WHERE` or in a join condition is planned like the expression it expands to, so it can filter a table scan, use an index or make a hash join.
+A volatile argument such as `random()` or `nextval('s')` is no exception: the expression sees one value of it for each row:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_043" />
+
+A macro used as a predicate in `WHERE` or in a join condition is planned like the expression it expands to, so it can filter a table scan, use an index or make a hash join.
 
 In a macro whose body contains a subquery, an aggregate over a parameter aggregates the rows of the subquery it is written in:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_042" />
 
-The argument of such a parameter, and an argument that itself contains a subquery, such as a nested call of the same macro, when the body uses it more than once, is evaluated once for each row of the calling query, as a function argument is, even when the subquery returns no rows. Any other argument is replaced as written, and so is every argument of a call where one argument contains a volatile, aggregate or window function.
+An argument is evaluated in the calling query: its names are the calling query's columns, an aggregate or window function in it is computed over the rows of the calling query, and a nested call of a macro with a subquery is evaluated once for each row of the calling query, even when the subquery returns no rows. Only an argument that names something the calling query does not have is replaced as written, so that the body can resolve it, such as a column of the table the body reads with `query_table`.
+
+A macro or function whose body is a query or contains a subquery runs that query for each call, so a volatile argument, or a volatile function in the body, gives every row its own value:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_046" />
 
 ## Limitations
 
@@ -190,12 +222,12 @@ Table macros as well as scalar macros defined using scalar subqueries cannot be 
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_035" />
 
-A scalar subquery made of a single expression, with no `FROM` or other clause, such as `(SELECT 5)`, expands to that expression, so a macro defined with it has no such limitation, unless the expression calls an aggregate, window, set-returning or volatile function or contains a subquery.
+A scalar subquery made of a single expression, with no `FROM` or other clause, such as `(SELECT 5)`, expands to that expression, so a macro defined with it has no such limitation, unless the expression calls an aggregate, window or set-returning function or contains a subquery. The same limitation keeps a macro or function whose body is a query, such as one that reads a table, out of `CHECK` constraints, `DEFAULT` values, generated columns and index expressions.
 
 
 ### Recursive Functions
 
-Defining recursive functions is not supported. A recursive macro expands until it exceeds the expression-depth limit (`max_expression_depth`, `1000` by default). For example, the following macro – supposed to compute the *n*th number of the Fibonacci sequence – fails (the example lowers `max_expression_depth` so the failure is immediate):
+Defining recursive functions is not supported. A recursive macro expands until the expansion runs out of stack, and the statement fails with `stack depth limit exceeded`. For example, the following macro – supposed to compute the *n*th number of the Fibonacci sequence – fails:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_031" />
 

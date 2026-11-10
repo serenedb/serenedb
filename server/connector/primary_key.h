@@ -20,24 +20,20 @@
 
 #pragma once
 
-#include <absl/base/internal/endian.h>
-
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <iresearch/index/field_meta.hpp>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "catalog/entry/inverted_index.h"
+#include "connector/column_id.h"
 #include "server/utils/primary_key.h"
 
-namespace duckdb {
-
-class RowIdDeduplicator;
-
-}  // namespace duckdb
 namespace sdb::connector::primary_key {
 
 std::vector<duckdb::LogicalIndex> KeyColumns(
@@ -54,19 +50,26 @@ void PreparePKFormats(duckdb::DataChunk& chunk,
                       std::span<const PKColumn> columns,
                       std::vector<duckdb::UnifiedVectorFormat>& formats);
 
-duckdb::idx_t KeepFirstRowIds(duckdb::RowIdDeduplicator& seen,
-                              duckdb::DataChunk& chunk, const PKColumn& rowid);
-
 void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
             std::span<const PKColumn> columns, duckdb::idx_t row,
             std::string& key);
 
-inline duckdb::string_t SignedKeyTerm(int64_t value) noexcept {
-  static_assert(sizeof(int64_t) <= duckdb::string_t::INLINE_LENGTH);
-  char buf[sizeof(int64_t)];
-  absl::big_endian::Store(buf, value);
-  buf[0] = static_cast<char>(static_cast<uint8_t>(buf[0]) ^ 0x80);
-  return duckdb::string_t{buf, sizeof buf};
-}
+// The chunk slot a declared-key column arrives in, with the name to report it
+// under, the type its values are keyed by, and the dictionary layout the index
+// wrote them under: a value is only found again under the layout it was
+// written with, so the layout belongs to the key column, not to a caller.
+struct KeySlot {
+  duckdb::idx_t input_col_idx;
+  std::string name;
+  duckdb::LogicalType type;
+  ColumnId column;
+  irs::DictLayout layout;
+};
+
+std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry,
+                              const catalog::InvertedIndexConfig& config);
+
+void VerifyNotNull(duckdb::DataChunk& chunk, std::span<const KeySlot> slots,
+                   duckdb::idx_t count);
 
 }  // namespace sdb::connector::primary_key

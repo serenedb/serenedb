@@ -28,6 +28,7 @@
 #include <cstring>
 #include <deque>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/logging/log_manager.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -39,6 +40,7 @@
 #include <string>
 #include <utility>
 
+#include "backup/backup_session.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "docs/docs_bootstrap.h"
@@ -46,6 +48,7 @@
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
+#include "query/config.h"
 #include "query/server_engine.h"
 #include "replication/subscription_engine.h"
 #include "rest_server/database_path_feature.h"
@@ -155,6 +158,7 @@ int RunServer(int argc, char** argv) {
         // goes down.
         stop("network", [&] { network.stop(); });
       }
+      backup::BackupSession::Instance().End();
       stop("jobs", [&] { jobs.Stop(); });
       if (up_search) {
         stop("search", [&] { search.stop(); });
@@ -213,13 +217,26 @@ int RunServer(int argc, char** argv) {
   return EXIT_FAILURE;
 }
 
+void ConfigureShellEngine(duckdb::DBConfig& config) {
+  irs::DuckDBEngine::Configure(config);
+  connector::RegisterEngineConfigVariables(config);
+}
+
+void LoadShellEngine(duckdb::DatabaseInstance& db) {
+  irs::log::SetLogger(&db.GetLogManager().GlobalLogger());
+  irs::DuckDBEngine::ConfigureExtensions(db);
+  server::query::RegisterEngineModules(db);
+}
+
 // Trim argv in place: overwrite argv[1] with argv[0] and hand the shell
 // `argv + 1`. The shell sees {<binary>, <user args>...} with no copy.
 int RunSubcommand(int argc, char* argv[],
                   duckdb_shell::ShellSubcommand subcommand) {
   argv[1] = argv[0];
   docs::RegisterShellDocsBackend();
-  return duckdb_shell::Run(argc - 1, argv + 1, subcommand);
+  return duckdb_shell::Run(
+    argc - 1, argv + 1, subcommand,
+    {.configure = &ConfigureShellEngine, .load = &LoadShellEngine});
 }
 
 }  // namespace

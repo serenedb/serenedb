@@ -23,10 +23,13 @@
 
 #include <stddef.h>
 
+#include <filesystem>
 #include <functional>
 #include <iresearch/utils/common.hpp>
 #include <iresearch/utils/operating_system.hpp>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace sdb::utils::file_utils {
@@ -39,6 +42,14 @@ inline std::string BuildFilename(std::string_view path, std::string_view name,
                                  Args... args) {
   return BuildFilename(BuildFilename(path, name), args...);
 }
+
+[[noreturn]] void ThrowFileError(std::string_view action, std::string_view path,
+                                 int error);
+[[noreturn]] void ThrowFileError(std::string_view action, std::string_view path,
+                                 const std::error_code& ec);
+
+void SyncDirectory(const std::filesystem::path& directory);
+void ReplaceFile(const std::filesystem::path& path, std::string_view content);
 
 // reads file into string or buffer
 void Slurp(const char* filename, std::string& result);

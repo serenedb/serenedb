@@ -700,7 +700,8 @@ void ColumnWriter::PadNestedNulls(uint64_t count) {
 bool ColumnWriter::LayoutMatches(const ColumnReader& column) const noexcept {
   return !_is_nested && !_deferred &&
          _type.id() != duckdb::LogicalTypeId::VARIANT && !column.InMemory() &&
-         column.Type() == _type && !(_skip_validity && column.HasValidity());
+         !column.Patched() && column.Type() == _type &&
+         !(_skip_validity && column.HasValidity());
 }
 
 duckdb::CompressionType ColumnWriter::ForcedCodec() const {

@@ -55,8 +55,13 @@ bool HasOwnBlocks(const duckdb::LogicalType& type) noexcept {
   }
 }
 
+struct ChunkView {
+  const duckdb::Vector& data;
+  duckdb::idx_t count;
+};
+
 template<typename T, typename Writer>
-void Collect(Writer& writer, const WriteChunk& chunk) {
+void Collect(Writer& writer, const ChunkView& chunk) {
   const auto values = chunk.data.Values<T>();
   for (duckdb::idx_t i = 0; i < chunk.count; ++i) {
     const auto entry = values[i];
@@ -69,13 +74,13 @@ void Collect(Writer& writer, const WriteChunk& chunk) {
 }
 
 template<typename T>
-void CollectNumeric(duckdb::BaseStatistics& stats, const WriteChunk& chunk) {
+void CollectNumeric(duckdb::BaseStatistics& stats, const ChunkView& chunk) {
   duckdb::StatsWriter<T> writer;
   Collect<T>(writer, chunk);
   writer.Merge(stats);
 }
 
-void SetExactBounds(duckdb::BaseStatistics& stats, const WriteChunk& chunk) {
+void SetExactBounds(duckdb::BaseStatistics& stats, const ChunkView& chunk) {
   const auto values = chunk.data.Values<duckdb::string_t>();
   std::optional<duckdb::string_t> min;
   std::optional<duckdb::string_t> max;
@@ -110,8 +115,12 @@ struct IntervalStatsWriter {
   void SetHasNull() { stats.SetHasNull(); }
 };
 
+}  // namespace
+
 duckdb::BaseStatistics ChunkStatistics(const duckdb::LogicalType& type,
-                                       const WriteChunk& chunk) {
+                                       const duckdb::Vector& data,
+                                       duckdb::idx_t count) {
+  const ChunkView chunk{data, count};
   auto stats = duckdb::BaseStatistics::CreateEmpty(type);
   switch (duckdb::BaseStatistics::GetStatsType(type)) {
     case duckdb::StatisticsType::NUMERIC_STATS:
@@ -182,18 +191,16 @@ duckdb::BaseStatistics ChunkStatistics(const duckdb::LogicalType& type,
   return duckdb::BaseStatistics::CreateUnknown(type);
 }
 
-}  // namespace
-
 duckdb::BaseStatistics HotChunkStats::Get(const duckdb::LogicalType& type,
                                           const WriteChunk& chunk) {
   if (chunk.count != STANDARD_VECTOR_SIZE) {
-    return ChunkStatistics(type, chunk);
+    return ChunkStatistics(type, chunk.data, chunk.count);
   }
   const auto [it, fresh] =
     _full.try_emplace(chunk.data.GetBufferRef().get(),
                       duckdb::BaseStatistics::CreateUnknown(type));
   if (fresh) {
-    it->second = ChunkStatistics(type, chunk);
+    it->second = ChunkStatistics(type, chunk.data, chunk.count);
   }
   return it->second.Copy();
 }
@@ -290,6 +297,26 @@ std::unique_ptr<ColumnReader> HotColumnReader::Concat(
     }
     SDB_ENSURE(part.column->InMemory(), "column ", id,
                " of a piece merge is not held in memory");
+    if (part.column->Patched()) {
+      const auto rows = part.column->RowCount();
+      SDB_ASSERT(part.column->Type() == type && rows <= part.rows);
+      ReadContext ctx{db};
+      auto state = part.column->InitScan(ctx);
+      VectorScratch scratch{type};
+      for (uint64_t row = 0; row < rows;) {
+        const auto take = static_cast<duckdb::idx_t>(
+          std::min<uint64_t>(rows - row, STANDARD_VECTOR_SIZE));
+        auto& values = scratch.Reset();
+        part.column->Scan(state, values, take);
+        append(&values, take);
+        if (merged) {
+          UpdateDistinct(*merged, distinct, values, take, hashes);
+        }
+        row += take;
+      }
+      append(nullptr, part.rows - rows);
+      continue;
+    }
     const auto& hot = utils::downCast<HotColumnReader>(*part.column);
     SDB_ASSERT(hot.Type() == type && hot.RowCount() <= part.rows);
     const auto blocks = hot.DataBlocks();

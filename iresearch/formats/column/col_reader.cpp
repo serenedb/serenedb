@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -173,7 +174,8 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
             const auto id = col->Id();
             const bool ok = _by_id.emplace(id, col.get()).second;
             SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
-            _columns.push_back(std::move(col));
+            _columns.push_back(col.get());
+            _owned.push_back(std::move(col));
           });
         });
       footer.ReadOptionalList(
@@ -197,10 +199,9 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
 
 ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::vector<std::unique_ptr<ColumnReader>> columns)
-  : _db{&db}, _ctx{db}, _columns{std::move(columns)} {
-  for (const auto& col : _columns) {
-    const bool ok = _by_id.emplace(col->Id(), col.get()).second;
-    SDB_ENSURE(ok, "in-memory columns: duplicate column field_id ", col->Id());
+  : _db{&db}, _ctx{db}, _owned{std::move(columns)} {
+  for (const auto& col : _owned) {
+    Index(*col);
   }
 }
 
@@ -208,11 +209,10 @@ ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::vector<std::unique_ptr<ColumnReader>> columns,
                      IndexInput::ptr norms_in,
                      std::vector<NormColumnSpec> norms)
-  : _db{&db}, _ctx{db, std::move(norms_in)}, _columns{std::move(columns)} {
+  : _db{&db}, _ctx{db, std::move(norms_in)}, _owned{std::move(columns)} {
   _ctx.SetBlockAllocSize(DEFAULT_BLOCK_ALLOC_SIZE);
-  for (const auto& col : _columns) {
-    const bool ok = _by_id.emplace(col->Id(), col.get()).second;
-    SDB_ENSURE(ok, "in-memory columns: duplicate column field_id ", col->Id());
+  for (const auto& col : _owned) {
+    Index(*col);
   }
   SDB_ASSERT(norms.empty() || _ctx.HasIn());
   for (auto& norm : norms) {
@@ -224,7 +224,34 @@ ColReader::ColReader(duckdb::DatabaseInstance& db,
   }
 }
 
+ColReader::ColReader(const ColReader& base,
+                     std::vector<std::shared_ptr<const ColumnReader>> replaced)
+  : _db{base._db},
+    _ctx{*base._db},
+    _base{&base},
+    _replaced{std::move(replaced)},
+    _norm_by_id{base._norm_by_id} {
+  _columns.reserve(base._columns.size() + _replaced.size());
+  for (const auto* column : base._columns) {
+    const auto it = absl::c_find_if(_replaced, [&](const auto& patched) {
+      return patched->Id() == column->Id();
+    });
+    Index(it == _replaced.end() ? *column : **it);
+  }
+  for (const auto& column : _replaced) {
+    if (!base.HasColumn(column->Id())) {
+      Index(*column);
+    }
+  }
+}
+
 ColReader::~ColReader() = default;
+
+void ColReader::Index(const ColumnReader& column) {
+  const bool ok = _by_id.emplace(column.Id(), &column).second;
+  SDB_ENSURE(ok, "columns: duplicate column field_id ", column.Id());
+  _columns.push_back(&column);
+}
 
 const ColumnReader* ColReader::Column(field_id id) const noexcept {
   auto it = _by_id.find(id);

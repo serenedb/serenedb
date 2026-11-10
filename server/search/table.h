@@ -71,9 +71,23 @@ struct TableUnit {
   irs::IndexFileRefs::ref_t meta_ref;
   irs::doc_id_t docs = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
+  std::vector<irs::FieldPatch> patches;
   Lsn first_lsn = kNoLsn;
   bool piece = false;
 };
+
+struct UnitPatch {
+  uint64_t unit = 0;
+  std::vector<irs::FieldPatch> fields;
+};
+
+void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
+                  irs::field_id field, const duckdb::LogicalType& type,
+                  std::span<const uint64_t> rows, const duckdb::Vector& values);
+void MergeUnitPatches(std::vector<UnitPatch>& into,
+                      std::vector<UnitPatch>&& added);
+void CarryUnitPatches(std::vector<UnitPatch>& patches, uint64_t source,
+                      std::span<const irs::DocMap> maps);
 
 struct MovedUnit {
   Tick tick = 0;
@@ -115,11 +129,13 @@ struct OwnWrites {
   std::span<const irs::field_id> row_columns;
   std::span<const OwnSegment> segments;
   std::span<const std::shared_ptr<const irs::DocRemoval>> removals;
+  std::span<const UnitPatch> patches;
   bool truncated = false;
 };
 
 inline bool HasOwn(const OwnWrites& own) noexcept {
-  return !own.removals.empty() || !own.segments.empty() || own.truncated ||
+  return !own.removals.empty() || !own.segments.empty() ||
+         !own.patches.empty() || own.truncated ||
          (own.rows != nullptr && own.rows->Count() != 0);
 }
 
@@ -127,6 +143,7 @@ struct TableCommit {
   std::shared_ptr<const irs::SegmentReaderImpl> piece;
   std::vector<OwnSegment> segments;
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
+  std::vector<UnitPatch> patches;
   bool truncate = false;
   Lsn lsn = 0;
 };
@@ -140,6 +157,7 @@ struct ReplacedSegment {
 struct StateUnit {
   ReplacedSegment segment;
   std::shared_ptr<const irs::DocumentMask> deleted;
+  std::vector<irs::FieldPatch> patches;
 };
 
 // The units of a table's latest applied state, each with the rows it holds,
@@ -216,7 +234,9 @@ class Table final {
 
   std::shared_ptr<const irs::DocRemoval> Resolve(
     const std::shared_ptr<const irs::DocRemoval>& removal) const;
-  void CheckConflicts(const irs::DocRemoval& removal) const;
+  std::vector<UnitPatch> Resolve(std::vector<UnitPatch>&& patches) const;
+  void CheckConflicts(const irs::DocRemoval& removal, Tick snapshot) const;
+  void CheckConflicts(std::span<const UnitPatch> patches, Tick snapshot) const;
   Tick LastAppend() const noexcept {
     return _last_append.load(std::memory_order_acquire);
   }
@@ -233,10 +253,12 @@ class Table final {
   [[nodiscard]] bool Apply(Tick tick, TableCommit&& commit);
   std::shared_ptr<const TableState> Replace(Tick tick, Lsn lsn,
                                             std::span<const uint64_t> replaced,
+                                            std::span<const Tick> folded,
                                             std::vector<OwnSegment>&& segments,
                                             std::vector<irs::DocMap>&& maps);
   std::shared_ptr<const TableState> MergePieces(
     Tick tick, Lsn lsn, std::span<const uint64_t> replaced,
+    std::span<const Tick> folded,
     std::shared_ptr<const irs::SegmentReaderImpl> merged, Lsn first_lsn,
     std::vector<irs::DocMap>&& maps);
 
@@ -264,6 +286,7 @@ class Table final {
     absl::FunctionRef<void(irs::IndexWriter::Transaction&)> append);
   void ReplayAddSegment(const ReplacedSegment& segment, Lsn lsn);
   void ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn);
+  void ReplayPatch(uint64_t id, const irs::FieldPatch& patch, Lsn lsn);
   void ReplayTruncate(Lsn lsn);
   void ReplayReplace(std::span<const uint64_t> replaced,
                      std::span<const ReplacedSegment> segments,
@@ -286,6 +309,7 @@ class Table final {
     std::string meta_file;
     irs::doc_id_t docs = 0;
     irs::DocumentMaskBuilder removed;
+    std::vector<irs::FieldPatch> patches;
   };
 
   const TableVersion& Head() const noexcept { return _versions.Head(); }
@@ -294,6 +318,7 @@ class Table final {
                              Scope scope) const;
   std::shared_ptr<const TableState> ReplaceUnits(
     Tick tick, Lsn lsn, std::span<const uint64_t> replaced,
+    std::span<const Tick> folded,
     std::vector<std::shared_ptr<TableUnit>>&& added,
     std::vector<irs::DocMap>&& maps);
   std::shared_ptr<TableState> SameUnits() const

@@ -32,6 +32,7 @@
 
 #include "connector/column_id.h"
 #include "connector/row_position.h"
+#include "search/table.h"
 
 namespace duckdb {
 
@@ -67,6 +68,7 @@ struct LocalTableChangesEntry {
   duckdb::Catalog* catalog = nullptr;
 
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
+  std::vector<UnitPatch> patches;
   bool truncate = false;
   bool clears_shard = false;
 
@@ -90,6 +92,7 @@ struct LocalTableChangesEntry {
   void AppendTruncate(bool clears) {
     collection.reset();
     removals.clear();
+    patches.clear();
     truncate = true;
     clears_shard = clears;
   }
@@ -116,7 +119,8 @@ struct LocalTableChangesEntry {
   }
 
   bool Empty() const noexcept {
-    return collection == nullptr && removals.empty() && !truncate;
+    return collection == nullptr && removals.empty() && patches.empty() &&
+           !truncate;
   }
 };
 

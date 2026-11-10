@@ -355,6 +355,7 @@ class Store final : public std::enable_shared_from_this<Store>,
                   duckdb::unique_ptr<duckdb::DataChunk> chunk, Lsn lsn);
   void ReplayAddSegment(const ReplacedSegment& segment, Lsn lsn);
   void ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn);
+  void ReplayPatch(uint64_t segment, const irs::FieldPatch& patch, Lsn lsn);
   void ReplayTruncate(Lsn lsn);
   void ReplayReplace(std::span<const uint64_t> replaced,
                      std::span<const ReplacedSegment> segments,

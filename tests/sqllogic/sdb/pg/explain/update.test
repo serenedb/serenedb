@@ -21,9 +21,10 @@ QUERY PLAN
 ╭─ UPDATE ───────────────────╮
 │ Table: t                   │
 │ Row Ids: ASSUME_UNIQUE     │
+│ Patched Columns: column2   │
 ╰──────────────┬─────────────╯
 ╭─ PROJECTION ─┴─────────────╮
-│ Projections: 42, #0, rowid │
+│ Projections: 42, rowid     │
 │ ~1 row                     │
 ╰──────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ───────────╮
@@ -33,8 +34,7 @@ QUERY PLAN
 │ │ Field: column1(string) │ │
 │ │ Value: foo             │ │
 │ ╰────────────────────────╯ │
-│ Projections: column1,      │
-│              rowid         │
+│ Projections: rowid         │
 │ ~1 row                     │
 ╰────────────────────────────╯
 
@@ -46,16 +46,16 @@ QUERY PLAN
 ╭─ UPDATE ──────────────────╮
 │ Table: t                  │
 │ Row Ids: ASSUME_UNIQUE    │
+│ Patched Columns: column2  │
 ╰─────────────┬─────────────╯
 ╭─ PROJECTION ┴─────────────╮
 │ Projections: column2 + 1, │
-│              #1, rowid    │
+│              rowid        │
 │ ~0 rows                   │
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Table: t                  │
 │ Projections: column2,     │
-│              column1,     │
 │              rowid        │
 │ ~0 rows                   │
 ╰───────────────────────────╯

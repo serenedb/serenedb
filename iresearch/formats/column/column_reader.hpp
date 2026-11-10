@@ -171,9 +171,10 @@ class ColumnReader {
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint64_t RowCount() const noexcept { return _row_count; }
   virtual bool InMemory() const noexcept { return false; }
+  virtual bool Patched() const noexcept { return false; }
   size_t DataRgCount() const noexcept { return _segments.size(); }
-  bool HasValidity() const noexcept { return _validity != nullptr; }
-  const ColumnReader* Validity() const noexcept { return _validity.get(); }
+  bool HasValidity() const noexcept { return _validity_view != nullptr; }
+  const ColumnReader* Validity() const noexcept { return _validity_view; }
   std::span<const ColumnBlockMeta> DataBlocks() const noexcept {
     return _segments;
   }
@@ -228,7 +229,7 @@ class ColumnReader {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
   }
 
-  ScanState InitScan(ReadContext& ctx) const;
+  virtual ScanState InitScan(ReadContext& ctx) const;
 
   virtual uint64_t GatherCursor(const ScanState& s) const noexcept {
     return s.window.begin + s.st.offset_in_column;
@@ -370,6 +371,10 @@ class ColumnReader {
   static void ResetOutput(const ColumnReader& reader, ScanState& s) {
     reader.NewOutputVector(s);
   }
+  static const duckdb::shared_ptr<duckdb::DistinctStatistics>& SharedDistinct(
+    const ColumnReader& reader) noexcept {
+    return reader._distinct;
+  }
 
   field_id _id;
   duckdb::LogicalType _type;
@@ -377,6 +382,7 @@ class ColumnReader {
   std::vector<uint64_t> _offsets;
   uint64_t _row_count = 0;
   std::unique_ptr<ColumnReader> _validity;
+  const ColumnReader* _validity_view = nullptr;
   std::vector<std::unique_ptr<ColumnReader>> _children;
   uint64_t _array_size = 0;
   duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;

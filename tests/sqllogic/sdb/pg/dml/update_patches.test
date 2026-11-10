@@ -1,0 +1,627 @@
+statement ok
+CREATE TABLE up (id INT PRIMARY KEY, a INT, s TEXT, n INT NOT NULL, d DOUBLE, tags INT[]);
+
+
+statement ok
+INSERT INTO up SELECT i, i % 10, 's' || i, i, i * 0.5, [i] FROM range(5000) t(i);
+
+
+query
+EXPLAIN UPDATE up SET a = a + 100 WHERE id % 7 = 0;
+----
+QUERY PLAN
+╭─ UPDATE ────────────────────╮
+│ Table: up                   │
+│ Row Ids: ASSUME_UNIQUE      │
+│ Patched Columns: a          │
+╰──────────────┬──────────────╯
+╭─ PROJECTION ─┴──────────────╮
+│ Projections: a + 100, rowid │
+│ ~1 row                      │
+╰──────────────┬──────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Table: up                   │
+│ Projections: a, rowid       │
+│ Column Filter: (id % 7) = 0 │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+
+query
+EXPLAIN UPDATE up SET id = id + 100000 WHERE id = 1;
+----
+QUERY PLAN
+╭─ UPDATE ──────────────────╮
+│ Table: up                 │
+│ Row Ids: ASSUME_UNIQUE    │
+╰─────────────┬─────────────╯
+╭─ PROJECTION ┴─────────────╮
+│ Projections: id + 100000, │
+│              #1, #2, #3,  │
+│              #4, #5,      │
+│              rowid        │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Table: up                 │
+│ Index Filter:             │
+│ ╭─ Term ─────────────╮    │
+│ │ Field: id(numeric) │    │
+│ │ Value: 1           │    │
+│ ╰────────────────────╯    │
+│ Projections: id, a, s, n, │
+│              d, tags,     │
+│              rowid        │
+│ ~1 row                    │
+╰───────────────────────────╯
+
+
+query
+EXPLAIN UPDATE up SET tags = [0] WHERE id = 1;
+----
+QUERY PLAN
+╭─ UPDATE ───────────────╮
+│ Table: up              │
+│ Row Ids: ASSUME_UNIQUE │
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: [0], #0,  │
+│              #1, #2,   │
+│              #3, #4,   │
+│              rowid     │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: up              │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: id(numeric) │ │
+│ │ Value: 1           │ │
+│ ╰────────────────────╯ │
+│ Projections: id, a, s, │
+│              n, d,     │
+│              rowid     │
+│ ~1 row                 │
+╰────────────────────────╯
+
+
+query
+EXPLAIN UPDATE up SET a = 1 WHERE id = 1 RETURNING a;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────╮
+│ Projections: a         │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ UPDATE ───┴───────────╮
+│ Table: up              │
+│ Row Ids: ASSUME_UNIQUE │
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: 1, #0,    │
+│              #1, #2,   │
+│              #3, #4,   │
+│              rowid     │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: up              │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: id(numeric) │ │
+│ │ Value: 1           │ │
+│ ╰────────────────────╯ │
+│ Projections: id, s, n, │
+│              d, tags,  │
+│              rowid     │
+│ ~1 row                 │
+╰────────────────────────╯
+
+
+statement count 715
+UPDATE up SET a = a + 100 WHERE id % 7 = 0;
+
+
+query
+SELECT count(*), sum(a), min(a), max(a) FROM up;
+----
+count	sum	min	max
+5000	94000	0	109
+
+
+query
+SELECT count(*) FROM up WHERE a >= 100;
+----
+count
+715
+
+
+query
+SELECT a, count(*) FROM up GROUP BY a ORDER BY a DESC LIMIT 3;
+----
+a	count
+109	71
+108	72
+107	72
+
+
+query
+SELECT a FROM up ORDER BY a DESC LIMIT 3;
+----
+a
+109
+109
+109
+
+
+query
+SELECT id, a FROM up WHERE a >= 108 ORDER BY id LIMIT 4;
+----
+id	a
+28	108
+49	109
+98	108
+119	109
+
+
+query
+SELECT id, a, s, n FROM up WHERE id IN (0, 1, 7, 4991) ORDER BY id;
+----
+id	a	s	n
+0	100	s0	0
+1	1	s1	1
+7	107	s7	7
+4991	101	s4991	4991
+
+
+statement count 1
+UPDATE up SET a = 123456 WHERE id = 3;
+
+
+query
+SELECT id FROM up WHERE a = 123456;
+----
+id
+3
+
+
+query
+SELECT id FROM up WHERE a > 123455 AND a < 123457;
+----
+id
+3
+
+
+statement count 5
+UPDATE up SET s = 'patched ' || id, d = NULL WHERE id % 1000 = 9;
+
+
+query
+SELECT id, s, d FROM up WHERE id % 1000 = 9 ORDER BY id;
+----
+id	s	d
+9	patched 9	NULL
+1009	patched 1009	NULL
+2009	patched 2009	NULL
+3009	patched 3009	NULL
+4009	patched 4009	NULL
+
+
+query
+SELECT count(*) FROM up WHERE d IS NULL;
+----
+count
+5
+
+
+query
+SELECT id FROM up WHERE s = 'patched 2009';
+----
+id
+2009
+
+
+statement count 1
+UPDATE up SET s = 'again', a = 7 WHERE id = 2009;
+
+
+query
+SELECT id, a, s FROM up WHERE id = 2009;
+----
+id	a	s
+2009	7	again
+
+
+statement error
+UPDATE up SET n = NULL WHERE id = 5;
+----
+db error: ERROR: NOT NULL constraint failed: up.n
+
+
+query
+SELECT n FROM up WHERE id = 5;
+----
+n
+5
+
+
+statement ok
+BEGIN;
+
+
+statement count 1
+UPDATE up SET a = -1 WHERE id = 1;
+
+
+query
+SELECT id, a FROM up WHERE id IN (1, 2) ORDER BY id;
+----
+id	a
+1	-1
+2	2
+
+
+query
+SELECT count(*) FROM up WHERE a = -1;
+----
+count
+1
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, a FROM up WHERE id = 1;
+----
+id	a
+1	1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO up VALUES (9000, 1, 'fresh', 1, 1.0, [9000]), (9001, 2, 'fresh', 2, 2.0, [9001]);
+
+
+statement count 2
+UPDATE up SET a = a * 1000 WHERE id >= 9000;
+
+
+statement count 1
+UPDATE up SET s = 'fresher' WHERE id = 9001;
+
+
+query
+SELECT id, a, s FROM up WHERE id >= 9000 ORDER BY id;
+----
+id	a	s
+9000	1000	fresh
+9001	2000	fresher
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT id, a, s FROM up WHERE id >= 9000 ORDER BY id;
+----
+id	a	s
+9000	1000	fresh
+9001	2000	fresher
+
+
+statement count 5002
+UPDATE up SET n = n + 1;
+
+
+query
+SELECT count(*), sum(n) FROM up;
+----
+count	sum
+5002	12502505
+
+
+statement ok
+VACUUM (COMPACT_TABLE) up;
+
+
+query
+SELECT count(*), sum(a), sum(n), count(d) FROM up;
+----
+count	sum	sum	count
+5002	220351	12502505	4997
+
+
+query
+SELECT id, a, s FROM up WHERE id IN (3, 2009, 9001) ORDER BY id;
+----
+id	a	s
+3	123456	s3
+2009	7	again
+9001	2000	fresher
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY up_dict AS split_text();
+
+
+statement ok
+CREATE INDEX up_idx ON up USING inverted (s up_dict);
+
+
+query
+EXPLAIN UPDATE up SET s = 'x' WHERE id = 1;
+----
+QUERY PLAN
+╭─ UPDATE ───────────────╮
+│ Table: up              │
+│ Row Ids: ASSUME_UNIQUE │
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: 'x', #0,  │
+│              #1, #2,   │
+│              #3, #4,   │
+│              rowid     │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: up              │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: id(numeric) │ │
+│ │ Value: 1           │ │
+│ ╰────────────────────╯ │
+│ Projections: id, a, n, │
+│              d, tags,  │
+│              rowid     │
+│ ~1 row                 │
+╰────────────────────────╯
+
+
+query
+EXPLAIN UPDATE up SET a = 1 WHERE id = 1;
+----
+QUERY PLAN
+╭─ UPDATE ───────────────╮
+│ Table: up              │
+│ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: a     │
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: 1, rowid  │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: up              │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: id(numeric) │ │
+│ │ Value: 1           │ │
+│ ╰────────────────────╯ │
+│ Projections: rowid     │
+│ ~1 row                 │
+╰────────────────────────╯
+
+
+query
+SELECT id FROM up_idx WHERE s @@ 'patched' ORDER BY id;
+----
+id
+9
+1009
+3009
+4009
+
+
+statement count 1
+UPDATE up SET a = 77 WHERE id = 4009;
+
+
+query
+SELECT id, a FROM up_idx WHERE s @@ 'patched' ORDER BY id;
+----
+id	a
+9	9
+1009	9
+3009	9
+4009	77
+
+
+connection up_first
+statement ok
+BEGIN;
+
+
+connection up_first
+statement count 1
+UPDATE up SET a = -5 WHERE id = 20;
+
+
+connection up_second
+statement count 1
+UPDATE up SET a = -6 WHERE id = 20;
+
+
+connection up_first
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection up_first
+statement ok
+BEGIN;
+
+
+connection up_first
+statement count 1
+UPDATE up SET a = 1 WHERE id = 21;
+
+
+connection up_second
+statement count 1
+DELETE FROM up WHERE id = 21;
+
+
+connection up_first
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection up_first
+statement ok
+BEGIN;
+
+
+connection up_first
+statement count 1
+DELETE FROM up WHERE id = 22;
+
+
+connection up_second
+statement count 1
+UPDATE up SET a = 1 WHERE id = 22;
+
+
+connection up_first
+statement error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection up_first
+statement ok
+BEGIN;
+
+
+connection up_first
+statement count 1
+UPDATE up SET a = 1000 WHERE id = 23;
+
+
+connection up_second
+statement count 1
+UPDATE up SET a = 2000 WHERE id = 24;
+
+
+connection up_first
+statement ok
+COMMIT;
+
+
+query
+SELECT id, a FROM up WHERE id BETWEEN 20 AND 24 ORDER BY id;
+----
+id	a
+20	-6
+22	1
+23	1000
+24	2000
+
+
+statement ok
+CREATE TABLE up_added (id INT PRIMARY KEY, a INT);
+
+
+statement ok
+INSERT INTO up_added SELECT i, i FROM range(5000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) up_added;
+
+
+statement ok
+INSERT INTO up_added VALUES (5000, 5000), (5001, 5001);
+
+
+statement ok
+ALTER TABLE up_added ADD COLUMN c INT;
+
+
+statement ok
+ALTER TABLE up_added ADD COLUMN t TEXT;
+
+
+statement count 3
+UPDATE up_added SET c = id * 10, t = 'patched added column ' || id WHERE id IN (3, 4999, 5001);
+
+
+query
+SELECT id, a, c, t FROM up_added WHERE id IN (2, 3, 4999, 5000, 5001) ORDER BY id;
+----
+id	a	c	t
+2	2	NULL	NULL
+3	3	30	patched added column 3
+4999	4999	49990	patched added column 4999
+5000	5000	NULL	NULL
+5001	5001	50010	patched added column 5001
+
+
+query
+SELECT count(*), count(c), count(t), sum(c) FROM up_added;
+----
+count	count	count	sum
+5002	3	3	100030
+
+
+query
+SELECT id, t FROM up_added WHERE c > 40000 ORDER BY id;
+----
+id	t
+4999	patched added column 4999
+5001	patched added column 5001
+
+
+query
+SELECT count(*) FROM up_added WHERE t IS NULL;
+----
+count
+4999
+
+
+query
+SELECT c, count(*) FROM up_added GROUP BY c ORDER BY c NULLS FIRST;
+----
+c	count
+NULL	4999
+30	1
+49990	1
+50010	1
+
+
+statement count 1
+UPDATE up_added SET t = NULL, c = c + 1 WHERE id = 4999;
+
+
+query
+SELECT id, c, t FROM up_added WHERE c IS NOT NULL ORDER BY id;
+----
+id	c	t
+3	30	patched added column 3
+4999	49991	NULL
+5001	50010	patched added column 5001
+
+
+statement ok
+VACUUM (COMPACT_TABLE) up_added;
+
+
+query
+SELECT id, a, c, t FROM up_added WHERE c IS NOT NULL OR id IN (0, 5000) ORDER BY id;
+----
+id	a	c	t
+0	0	NULL	NULL
+3	3	30	patched added column 3
+4999	4999	49991	NULL
+5000	5000	NULL	NULL
+5001	5001	50010	patched added column 5001

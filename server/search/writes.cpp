@@ -69,9 +69,10 @@ void ReleaseWriter(StoreWrites& w) noexcept {
 [[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
                                            const StoreWrites& w,
                                            const KeySpec& spec,
-                                           std::string_view key) {
+                                           std::string_view key,
+                                           Tick snapshot) {
   for (const auto& removal : w.changes.removals) {
-    w.store->GetTable().CheckConflicts(*removal);
+    w.store->GetTable().CheckConflicts(*removal, snapshot);
   }
   ThrowDuplicate(context, spec, key);
 }
@@ -396,6 +397,7 @@ OwnWrites OwnOf(const StoreWrites& w) {
           .row_columns = w.changes.column_ids,
           .segments = w.own_segments,
           .removals = w.changes.removals,
+          .patches = w.changes.patches,
           .truncated = w.changes.truncate};
 }
 
@@ -423,6 +425,7 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
       std::make_shared<const irs::DocumentMask>(std::move(removed).Finish());
   }
   irs::doc_id_t rank = 0;
+  const auto first_map = w.own_maps.size();
   for (auto& segment : segments) {
     const auto docs = segment.reader->Meta().docs_count;
     w.own_maps.push_back({.source = rows_id,
@@ -433,6 +436,8 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
     rank += docs;
     w.own_segments.push_back(std::move(segment));
   }
+  CarryUnitPatches(changes.patches, rows_id,
+                   std::span{w.own_maps}.subspan(first_map));
   w.transactions.push_back(std::move(trx));
   changes.ClearBufferedRows();
   ++w.rows_generation;
@@ -787,6 +792,29 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
   }
 }
 
+void Writes::AddPatches(const std::shared_ptr<Store>& store,
+                        std::vector<UnitPatch>&& patches) {
+  auto& w = EnsureStoreWrites(store);
+  absl::MutexLock lock{&w.mutex};
+  ++w.revision;
+  const auto rows_id = OwnRowsId(w.rows_generation);
+  for (auto& patch : patches) {
+    std::vector<UnitPatch> added;
+    added.push_back(std::move(patch));
+    if (added.front().unit > rows_id) {
+      CarryUnitPatches(added, added.front().unit, w.own_maps);
+    }
+    MergeUnitPatches(w.changes.patches, std::move(added));
+  }
+}
+
+void Writes::CheckPatches(const Store& store) const {
+  if (const auto* w = FindStoreWrites(store.GetId())) {
+    absl::MutexLock lock{&w->mutex};
+    store.GetTable().CheckConflicts(w->changes.patches, Snapshot());
+  }
+}
+
 void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
                                const catalog::SearchTableEntry& table,
                                Tick snapshot) {
@@ -1120,7 +1148,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     absl::c_sort(keys);
     if (auto duplicate =
           FindDuplicate(context, key_spec, segments, keys, existing)) {
-      ThrowDuplicateOrConflict(context, w, key_spec, *duplicate);
+      ThrowDuplicateOrConflict(context, w, key_spec, *duplicate, Snapshot());
     }
   }
   for (const auto& row : keyed) {
@@ -1227,7 +1255,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         continue;
       }
       if (auto duplicate = FindDuplicate(context, spec, segments, {}, fresh)) {
-        ThrowDuplicateOrConflict(context, w, spec, *duplicate);
+        ThrowDuplicateOrConflict(context, w, spec, *duplicate, Snapshot());
       }
     }
   }
@@ -1340,8 +1368,9 @@ irs::DirectoryReader Writes::LatestView(duckdb::ClientContext& context,
 void Writes::PrepareCommit(duckdb::ClientContext& context) {
   for (const auto& [store_id, w] : _writes) {
     for (const auto& removal : w.changes.removals) {
-      w.store->GetTable().CheckConflicts(*removal);
+      w.store->GetTable().CheckConflicts(*removal, Snapshot());
     }
+    w.store->GetTable().CheckConflicts(w.changes.patches, Snapshot());
   }
   for (auto& [store_id, w] : _writes) {
     auto& changes = w.changes;
@@ -1360,8 +1389,8 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       w.log.push_back(LogAddSegments(w.own_segments));
     }
     if (changes.HasBufferedRows()) {
-      auto removed =
-        TakeRowRemovals(changes.removals, OwnRowsId(w.rows_generation));
+      const auto rows_id = OwnRowsId(w.rows_generation);
+      auto removed = TakeRowRemovals(changes.removals, rows_id);
       auto piece = w.store->StartPiece();
       {
         const auto sink = connector::MakeSearchTableInsertSink(
@@ -1374,10 +1403,19 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
             w.log.push_back(LogRows(piece.id, first, chunk));
           });
       }
-      if (PieceDocs(piece.trx) != 0) {
+      const auto docs = PieceDocs(piece.trx);
+      if (docs != 0) {
         w.piece = piece.trx.SealPiece(piece.id);
       }
       piece.trx.Abort();
+      const std::array<irs::DocMap, 1> sealed{irs::DocMap{
+        .source = rows_id,
+        .target = piece.id,
+        .mask = removed.Empty() ? nullptr
+                                : std::make_shared<const irs::DocumentMask>(
+                                    std::move(removed).Finish()),
+        .rank_end = docs}};
+      CarryUnitPatches(changes.patches, rows_id, sealed);
       changes.ClearBufferedRows();
     }
     w.buffered_keys.Clear();
@@ -1407,10 +1445,19 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     }
     auto& table = w.store->GetTable();
     for (auto& removal : w.changes.removals) {
-      table.CheckConflicts(*removal);
+      table.CheckConflicts(*removal, Snapshot());
       removal = table.Resolve(removal);
       if (!removal->groups.empty()) {
         w.log.push_back(LogRemoval(*removal));
+      }
+    }
+    if (!w.changes.patches.empty()) {
+      table.CheckConflicts(w.changes.patches, Snapshot());
+      w.changes.patches = table.Resolve(std::move(w.changes.patches));
+      for (const auto& patch : w.changes.patches) {
+        for (const auto& field : patch.fields) {
+          w.log.push_back(LogPatch(patch.unit, field));
+        }
       }
     }
   }
@@ -1486,6 +1533,7 @@ void Writes::Apply(Tick tick, Lsn lsn,
                         TableCommit{.piece = std::move(w.piece),
                                     .segments = std::move(w.own_segments),
                                     .removals = std::move(w.changes.removals),
+                                    .patches = std::move(w.changes.patches),
                                     .truncate = w.changes.truncate,
                                     .lsn = lsn})) {
           QueueReleaseCleanup(w.store, tick);

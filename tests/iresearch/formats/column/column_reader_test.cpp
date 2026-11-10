@@ -36,11 +36,13 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
 #include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/column_patch.hpp>
 #include <iresearch/formats/column/hot_column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
@@ -1199,6 +1201,243 @@ TEST_F(ColumnReaderTest, GatherFilterReleasesPassedBlocks) {
     }
     ASSERT_LE(state.segments.size(), 2u) << "span at " << anchor;
     ASSERT_LE(state.st.previous_states.size(), 1u) << "span at " << anchor;
+  }
+}
+
+std::shared_ptr<const irs::ColumnPatch> MergePatch(
+  const irs::ColumnPatch* base, const duckdb::LogicalType& type,
+  const std::vector<uint64_t>& rows, const ValueOf& value_of, uint64_t tick) {
+  duckdb::Vector values{type, rows.size()};
+  for (size_t i = 0; i < rows.size(); ++i) {
+    values.SetValue(i, value_of(rows[i]));
+  }
+  duckdb::FlatVector::SetSize(values, rows.size());
+  return irs::ColumnPatch::Merge(base, type, rows, values, tick);
+}
+
+void CheckPatchedFilter(duckdb::ClientContext& context,
+                        const irs::ColumnReader& col, irs::ReadContext& ctx,
+                        const ValueOf& value_of,
+                        duckdb::unique_ptr<duckdb::Expression> predicate,
+                        irs::NullCheckKind null_check,
+                        const std::function<bool(const duckdb::Value&)>& keep) {
+  const duckdb::ExpressionFilter filter{std::move(predicate)};
+  auto filter_state = duckdb::TableFilterState::Initialize(context, filter);
+  auto state = col.InitScan(ctx);
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+  const auto rows = col.RowCount();
+  for (uint64_t anchor = 0; anchor < rows; anchor += STANDARD_VECTOR_SIZE) {
+    const auto span = std::min<uint64_t>(rows - anchor, STANDARD_VECTOR_SIZE);
+    duckdb::Vector scratch{col.Type(), STANDARD_VECTOR_SIZE};
+    duckdb::idx_t count = 0;
+    for (duckdb::idx_t i = 0; i < span; ++i) {
+      if (i % 3 != 1) {
+        sel.set_index(count++, i);
+      }
+    }
+    const auto approved =
+      col.GatherFilter(state, anchor, span, sel, count, filter, *filter_state,
+                       null_check, scratch);
+    std::vector<uint64_t> want;
+    for (duckdb::idx_t i = 0; i < span; ++i) {
+      if (i % 3 != 1 && keep(value_of(anchor + i))) {
+        want.push_back(i);
+      }
+    }
+    ASSERT_EQ(approved, want.size()) << "span at " << anchor;
+    for (duckdb::idx_t i = 0; i < approved; ++i) {
+      ASSERT_EQ(sel.get_index(i), want[i]) << "span at " << anchor;
+      ASSERT_TRUE(duckdb::Value::NotDistinctFrom(scratch.GetValue(want[i]),
+                                                 value_of(anchor + want[i])))
+        << "filtered row " << anchor + want[i];
+    }
+  }
+}
+
+TEST_F(ColumnReaderTest, PatchedColumnsReadTheirPatchedValues) {
+  struct PatchCase {
+    std::string name;
+    duckdb::LogicalType type;
+    ValueOf base;
+    ValueOf first;
+    ValueOf second;
+    duckdb::Value bound;
+    std::vector<std::string> codecs;
+  };
+  const std::vector<PatchCase> cases{
+    {"bigint",
+     duckdb::LogicalType::BIGINT,
+     [](uint64_t g) {
+       return g % 10 == 0
+                ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                : duckdb::Value::BIGINT(static_cast<int64_t>(g % 1000));
+     },
+     [](uint64_t g) {
+       return g % 5 == 0 ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                         : duckdb::Value::BIGINT(int64_t{1} << 40 | int64_t(g));
+     },
+     [](uint64_t g) { return duckdb::Value::BIGINT(-static_cast<int64_t>(g)); },
+     duckdb::Value::BIGINT(500),
+     {"bitpacking", "rle", "uncompressed", "missing"}},
+    {"varchar",
+     duckdb::LogicalType::VARCHAR,
+     [](uint64_t g) {
+       static const char* const kWords[] = {"cat", "dog", "bird", "fish",
+                                            "owl"};
+       return g % 9 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                         : duckdb::Value{kWords[g % 5]};
+     },
+     [](uint64_t g) {
+       return g % 4 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                         : duckdb::Value{"patched_" + RandomText(g, 20)};
+     },
+     [](uint64_t g) { return duckdb::Value{"again_" + std::to_string(g)}; },
+     duckdb::Value{"dog"},
+     {"dict_fsst", "zstd", "uncompressed", "missing"}},
+  };
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 30000;
+  duckdb::Connection con{Db()};
+  for (const auto& c : cases) {
+    for (const auto& codec : c.codecs) {
+      SCOPED_TRACE(c.name + " " + codec);
+      const bool missing = codec == "missing";
+      if (!missing) {
+        auto set = con.Query("SET force_compression = '" + codec + "'");
+        ASSERT_FALSE(set->HasError()) << set->GetError();
+      }
+      irs::MemoryDirectory dir{};
+      WriteColumn(Db(), dir, kId, c.type, kRows, 4096, c.base);
+      con.Query("SET force_compression = 'auto'");
+      irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+      const irs::NullColumnReader absent{Db(), kId, c.type, kRows};
+      const auto* col = missing ? &absent : r.Column(kId);
+      ASSERT_NE(col, nullptr);
+      const ValueOf base =
+        missing ? ValueOf{[&](uint64_t) { return duckdb::Value{c.type}; }}
+                : c.base;
+
+      std::vector<uint64_t> first_rows;
+      std::vector<uint64_t> second_rows;
+      for (uint64_t g = 0; g < kRows; ++g) {
+        if (g % 13 == 0 || (g >= 5000 && g < 5100) || g == kRows - 1) {
+          first_rows.push_back(g);
+        }
+        if (g % 26 == 0 || (g >= 9000 && g < 11100)) {
+          second_rows.push_back(g);
+        }
+      }
+      const auto in = [](const std::vector<uint64_t>& rows, uint64_t g) {
+        return absl::c_binary_search(rows, g);
+      };
+      const ValueOf model = [&](uint64_t g) {
+        if (in(second_rows, g)) {
+          return c.second(g);
+        }
+        return in(first_rows, g) ? c.first(g) : base(g);
+      };
+      const auto first = MergePatch(nullptr, c.type, first_rows, c.first, 1);
+      const auto patch =
+        MergePatch(first.get(), c.type, second_rows, c.second, 2);
+      std::vector<uint64_t> both;
+      absl::c_set_union(first_rows, second_rows, std::back_inserter(both));
+      ASSERT_EQ(first->Count(), first_rows.size());
+      ASSERT_EQ(patch->Count(), both.size());
+
+      const irs::PatchedColumnReader patched{*col, patch};
+      ASSERT_EQ(patched.RowCount(), kRows);
+      {
+        auto state = patched.InitScan(r.Ctx());
+        for (uint64_t pos = 0; pos < kRows;) {
+          const auto take =
+            std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+          duckdb::Vector result{c.type, STANDARD_VECTOR_SIZE};
+          patched.Scan(state, result, take);
+          for (duckdb::idx_t k = 0; k < take; ++k) {
+            ASSERT_TRUE(duckdb::Value::NotDistinctFrom(result.GetValue(k),
+                                                       model(pos + k)))
+              << "scanned row " << pos + k;
+          }
+          pos += take;
+        }
+      }
+      {
+        auto state = patched.InitScan(r.Ctx());
+        patched.Skip(state, 8990);
+        duckdb::Vector result{c.type, STANDARD_VECTOR_SIZE};
+        patched.ScanCount(state, result, 100, 7);
+        for (duckdb::idx_t k = 0; k < 100; ++k) {
+          ASSERT_TRUE(duckdb::Value::NotDistinctFrom(result.GetValue(7 + k),
+                                                     model(8990 + k)))
+            << "counted row " << 8990 + k;
+        }
+      }
+      GatherStats stats;
+      for (const auto mode : {GatherMode::Dense, GatherMode::Scatter,
+                              GatherMode::ScatterAppend, GatherMode::Mixed}) {
+        for (const uint32_t per_mille : {1u, 50u, 600u, 1000u}) {
+          SCOPED_TRACE(testing::Message() << "mode " << static_cast<int>(mode)
+                                          << " per_mille " << per_mille);
+          CheckGathers(patched, r.Ctx(), model, mode, per_mille, stats);
+          ASSERT_FALSE(HasFatalFailure());
+        }
+      }
+      {
+        std::vector<uint64_t> order(kRows);
+        std::iota(order.begin(), order.end(), uint64_t{0});
+        std::shuffle(order.begin(), order.end(), std::mt19937_64{7});
+        irs::ColumnReader::PointReader reader{r, patched};
+        duckdb::Vector out{c.type, 1};
+        for (const auto g : order) {
+          duckdb::FlatVector::ValidityMutable(out).Reset();
+          const bool valid = reader.FetchRow(g, out, 0);
+          const auto want = model(g);
+          ASSERT_EQ(valid, !want.IsNull()) << "point row " << g;
+          if (valid) {
+            ASSERT_TRUE(duckdb::Value::NotDistinctFrom(out.GetValue(0), want))
+              << "point row " << g;
+          }
+        }
+      }
+      const auto& merged = patched.MergedStatistics();
+      ASSERT_TRUE(merged.CanHaveNull());
+      for (uint64_t g = 0; g < kRows; g += 997) {
+        const auto value = model(g);
+        if (value.IsNull()) {
+          continue;
+        }
+        const auto block = patched.Locate(g).block;
+        const auto& rg = patched.RowGroupStatistics(block);
+        const duckdb::ExpressionFilter eq{
+          duckdb::BoundComparisonExpression::Create(
+            duckdb::ExpressionType::COMPARE_EQUAL,
+            duckdb::make_uniq<duckdb::BoundReferenceExpression>(c.type, 0),
+            duckdb::make_uniq<duckdb::BoundConstantExpression>(value))};
+        ASSERT_NE(eq.CheckStatistics(rg),
+                  duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE)
+          << "zonemap of row " << g;
+        ASSERT_NE(eq.CheckStatistics(merged),
+                  duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE)
+          << "merged stats of row " << g;
+      }
+      CheckPatchedFilter(
+        *con.context, patched, r.Ctx(), model,
+        duckdb::BoundComparisonExpression::Create(
+          duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO,
+          duckdb::make_uniq<duckdb::BoundReferenceExpression>(c.type, 0),
+          duckdb::make_uniq<duckdb::BoundConstantExpression>(c.bound)),
+        irs::NullCheckKind::None,
+        [&](const duckdb::Value& v) { return !v.IsNull() && v >= c.bound; });
+      ASSERT_FALSE(HasFatalFailure());
+      auto is_null = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
+        duckdb::ExpressionType::OPERATOR_IS_NULL, duckdb::LogicalType::BOOLEAN);
+      is_null->GetChildrenMutable().push_back(
+        duckdb::make_uniq<duckdb::BoundReferenceExpression>(c.type, 0));
+      CheckPatchedFilter(*con.context, patched, r.Ctx(), model,
+                         std::move(is_null), irs::NullCheckKind::IsNull,
+                         [](const duckdb::Value& v) { return v.IsNull(); });
+      ASSERT_FALSE(HasFatalFailure());
+    }
   }
 }
 

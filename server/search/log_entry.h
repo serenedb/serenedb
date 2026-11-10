@@ -43,6 +43,7 @@ std::string LogReplace(std::span<const uint64_t> replaced,
                        std::span<const irs::DocMap> maps);
 std::string LogMerge(uint64_t target, std::span<const uint64_t> sources);
 std::string LogState(std::span<const StateUnit> units);
+std::string LogPatch(uint64_t segment, const irs::FieldPatch& field);
 
 void ReplayLogEntry(duckdb::ClientContext& context,
                     catalog::SearchTableEntry& table, std::string& entry,

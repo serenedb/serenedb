@@ -67,6 +67,8 @@ class ColReader final {
   ColReader(duckdb::DatabaseInstance& db,
             std::vector<std::unique_ptr<ColumnReader>> columns,
             IndexInput::ptr norms_in, std::vector<NormColumnSpec> norms);
+  ColReader(const ColReader& base,
+            std::vector<std::shared_ptr<const ColumnReader>> replaced);
   ~ColReader();
 
   ColReader(const ColReader&) = delete;
@@ -74,7 +76,7 @@ class ColReader final {
 
   bool HasColumn(field_id id) const noexcept { return _by_id.contains(id); }
   const ColumnReader* Column(field_id id) const noexcept;
-  std::span<const std::unique_ptr<ColumnReader>> Columns() const noexcept {
+  std::span<const ColumnReader* const> Columns() const noexcept {
     return _columns;
   }
 
@@ -82,18 +84,26 @@ class ColReader final {
   ReadContext& Ctx() noexcept { return _ctx; }
 
   IndexInput::ptr ReopenIn() const {
+    if (_base) {
+      return _base->ReopenIn();
+    }
     return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
   duckdb::idx_t BlockAllocSize() const noexcept {
-    return _ctx.GetBlockAllocSize();
+    return _base ? _base->BlockAllocSize() : _ctx.GetBlockAllocSize();
   }
 
  private:
+  void Index(const ColumnReader& column);
+
   duckdb::DatabaseInstance* _db;
   ReadContext _ctx;
-  std::vector<std::unique_ptr<ColumnReader>> _columns;
-  irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;
+  const ColReader* _base = nullptr;
+  std::vector<std::unique_ptr<ColumnReader>> _owned;
+  std::vector<std::shared_ptr<const ColumnReader>> _replaced;
+  std::vector<const ColumnReader*> _columns;
+  irs::containers::FlatHashMap<field_id, const ColumnReader*> _by_id;
   std::vector<std::unique_ptr<NormColumnReader>> _norm_columns;
   irs::containers::FlatHashMap<field_id, const NormColumnReader*> _norm_by_id;
 };

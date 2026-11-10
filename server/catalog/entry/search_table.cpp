@@ -562,16 +562,43 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   }
 }
 
+bool SearchTableEntry::PatchesColumns(
+  std::span<const duckdb::PhysicalIndex> columns) const {
+  const auto& list = GetColumns();
+  if (list.LogicalColumnCount() != list.PhysicalColumnCount() ||
+      absl::c_any_of(GetConstraints(), [](const auto& constraint) {
+        return constraint->type == duckdb::ConstraintType::CHECK;
+      })) {
+    return false;
+  }
+  const auto config = _storage->Config();
+  if (config && config->HasExpressionKeys()) {
+    return false;
+  }
+  return absl::c_all_of(columns, [&](duckdb::PhysicalIndex index) {
+    const auto& column = list.GetColumn(index);
+    const auto field = connector::TableColumnId(column);
+    return irs::ColumnPatch::Patchable(column.Type()) &&
+           !(config && config->FindColumnInfo(field)) &&
+           absl::c_none_of(_keys, [&](const search::KeySpec& spec) {
+             return absl::c_contains(spec.key.columns, field);
+           });
+  });
+}
+
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
                                              duckdb::LogicalGet& get,
                                              duckdb::LogicalProjection& proj,
                                              duckdb::LogicalUpdate& update,
-                                             duckdb::ClientContext&) {
-  // iresearch cannot edit a document in place, so every update rewrites the
-  // whole row.
-  update.update_is_del_and_insert = true;
+                                             duckdb::ClientContext& context) {
   update.update_column_count = update.columns.size();
-  duckdb::LogicalUpdate::BindAllColumns(*this, get, proj, update);
+  update.update_is_del_and_insert =
+    update.return_chunk || update.capture_old_rows ||
+    duckdb::Settings::Get<duckdb::ForceUpdateToDelAndInsertSetting>(context) ||
+    !PatchesColumns(update.columns);
+  if (update.update_is_del_and_insert) {
+    duckdb::LogicalUpdate::BindAllColumns(*this, get, proj, update);
+  }
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {

@@ -46,6 +46,7 @@ enum class LogEntryType : uint8_t {
   Replace,
   State,
   Merge,
+  Patch,
 };
 
 constexpr std::align_val_t kFrozenAlignment{32};
@@ -144,6 +145,48 @@ irs::DocRemoval ReadRemoval(duckdb::Deserializer& deserializer) {
       });
     });
   return removal;
+}
+
+void WritePatch(duckdb::Serializer& object, const irs::FieldPatch& field) {
+  std::vector<uint64_t> rows;
+  std::vector<uint64_t> ticks;
+  duckdb::Vector values{field.patch->Type(), field.patch->Count()};
+  field.patch->Entries(rows, values, ticks);
+  object.WriteProperty<uint64_t>(100, "field", field.field);
+  object.WriteProperty(101, "type", field.patch->Type());
+  object.WriteList(102, "rows", rows.size(),
+                   [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                     list.WriteElement<uint64_t>(rows[i]);
+                   });
+  object.WriteObject(103, "values", [&](duckdb::Serializer& vector) {
+    values.Serialize(vector);
+  });
+}
+
+irs::FieldPatch ReadPatch(duckdb::Deserializer& object) {
+  const auto field =
+    static_cast<irs::field_id>(object.ReadProperty<uint64_t>(100, "field"));
+  const auto type = object.ReadProperty<duckdb::LogicalType>(101, "type");
+  std::vector<uint64_t> rows;
+  object.ReadList(102, "rows",
+                  [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+                    rows.push_back(list.ReadElement<uint64_t>());
+                  });
+  duckdb::Vector values{type, rows.size()};
+  object.ReadObject(103, "values", [&](duckdb::Deserializer& vector) {
+    values.Deserialize(vector, rows.size());
+  });
+  if (values.GetVectorType() == duckdb::VectorType::FLAT_VECTOR ||
+      values.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+    duckdb::FlatVector::SetSize(values, rows.size());
+  }
+  if (rows.empty() || !absl::c_is_sorted(rows, std::less_equal<>{}) ||
+      values.size() != rows.size()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("search log: a malformed column patch"));
+  }
+  return {.field = field,
+          .patch = irs::ColumnPatch::Merge(nullptr, type, rows, values, 0)};
 }
 
 std::vector<irs::DocMap> ReadMaps(duckdb::Deserializer& deserializer) {
@@ -245,15 +288,33 @@ std::string LogMerge(uint64_t target, std::span<const uint64_t> sources) {
 
 std::string LogState(std::span<const StateUnit> units) {
   return Encode(LogEntryType::State, [&](duckdb::Serializer& serializer) {
-    serializer.WriteList(101, "units", units.size(),
-                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                           const auto& unit = units[i];
-                           list.WriteObject([&](duckdb::Serializer& object) {
-                             WriteSegment(object, unit.segment);
-                             object.WriteProperty(103, "deleted",
-                                                  Frozen(unit.deleted.get()));
-                           });
-                         });
+    serializer.WriteList(
+      101, "units", units.size(),
+      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+        const auto& unit = units[i];
+        list.WriteObject([&](duckdb::Serializer& object) {
+          WriteSegment(object, unit.segment);
+          object.WriteProperty(103, "deleted", Frozen(unit.deleted.get()));
+          if (!unit.patches.empty()) {
+            object.WriteList(
+              104, "patches", unit.patches.size(),
+              [&](duckdb::Serializer::List& patches, duckdb::idx_t p) {
+                patches.WriteObject([&](duckdb::Serializer& patch) {
+                  WritePatch(patch, unit.patches[p]);
+                });
+              });
+          }
+        });
+      });
+  });
+}
+
+std::string LogPatch(uint64_t segment, const irs::FieldPatch& field) {
+  return Encode(LogEntryType::Patch, [&](duckdb::Serializer& serializer) {
+    serializer.WriteProperty<uint64_t>(101, "segment", segment);
+    serializer.WriteObject(102, "patch", [&](duckdb::Serializer& object) {
+      WritePatch(object, field);
+    });
   });
 }
 
@@ -314,9 +375,25 @@ void ReplayLogEntry(duckdb::ClientContext& context,
             unit.segment = ReadSegment(object);
             unit.deleted =
               Thawed(object.ReadProperty<std::string>(103, "deleted"));
+            object.ReadOptionalList(
+              104, "patches",
+              [&](duckdb::Deserializer::List& patches, duckdb::idx_t) {
+                patches.ReadObject([&](duckdb::Deserializer& patch) {
+                  unit.patches.push_back(ReadPatch(patch));
+                });
+              });
           });
         });
       store.ReplayState(units, lsn);
+      break;
+    }
+    case LogEntryType::Patch: {
+      const auto segment = deserializer.ReadProperty<uint64_t>(101, "segment");
+      irs::FieldPatch patch;
+      deserializer.ReadObject(102, "patch", [&](duckdb::Deserializer& object) {
+        patch = ReadPatch(object);
+      });
+      store.ReplayPatch(segment, patch, lsn);
       break;
     }
     case LogEntryType::Merge: {

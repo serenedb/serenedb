@@ -275,6 +275,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _type{std::move(type)},
     _segments{std::move(segments)},
     _validity{std::move(validity)},
+    _validity_view{_validity.get()},
     _children{std::move(children)},
     _array_size{_type.id() == duckdb::LogicalTypeId::ARRAY
                   ? duckdb::ArrayType::GetSize(_type)
@@ -970,7 +971,7 @@ bool ColumnReader::PointReader::FetchStored(uint64_t row, duckdb::Vector& out,
     return false;
   }
   duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
-  const auto* validity = _reader->_validity.get();
+  const auto* validity = _reader->_validity_view;
   if (validity && !FetchValidity(*validity, row, out, out_offset)) {
     return false;
   }
@@ -986,7 +987,7 @@ bool ColumnReader::PointReader::ValidStored(uint64_t row,
   if (row >= _reader->RowCount()) {
     return false;
   }
-  const auto* validity = _reader->_validity.get();
+  const auto* validity = _reader->_validity_view;
   if (!validity) {
     return true;
   }

@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "iresearch/index/document_mask.hpp"
@@ -83,6 +84,14 @@ class DocRemovalBuilder {
 
 bool MapDocs(const DocMap& map, const DocumentMask& docs,
              DocumentMaskBuilder& out);
+
+struct MappedRow {
+  size_t index = 0;
+  uint64_t row = 0;
+};
+
+void MapRows(const DocMap& map, std::span<const uint64_t> rows,
+             std::vector<MappedRow>& out);
 
 struct RemovalTarget {
   const SegmentReaderImpl* reader;

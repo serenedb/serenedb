@@ -125,4 +125,31 @@ bool MapDocs(const DocMap& map, const DocumentMask& docs,
   return out.Count() != before;
 }
 
+void MapRows(const DocMap& map, std::span<const uint64_t> rows,
+             std::vector<MappedRow>& out) {
+  const auto* mask = map.mask.get();
+  doc_id_t counted = doc_limits::min();
+  uint64_t masked = 0;
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const auto doc = static_cast<doc_id_t>(rows[i] + doc_limits::min());
+    if (mask) {
+      if (mask->Contains(doc)) {
+        continue;
+      }
+      masked += mask->CountInRange(counted, doc);
+      counted = doc;
+    }
+    const uint64_t rank = rows[i] - masked;
+    if (rank < map.rank_begin) {
+      continue;
+    }
+    if (rank >= map.rank_end) {
+      return;
+    }
+    out.push_back(
+      {.index = i,
+       .row = map.base - doc_limits::min() + (rank - map.rank_begin)});
+  }
+}
+
 }  // namespace irs

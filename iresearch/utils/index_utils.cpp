@@ -113,13 +113,15 @@ double CompactionScore(const CompactionCandidate& compaction,
       return 0;
     case 1: {
       auto& meta = *compaction.segments.first->meta;
+      const auto dirty = meta.docs_count - meta.live_docs_count +
+                         compaction.segments.first->reader->PatchedDocs();
 
-      if (meta.docs_count == meta.live_docs_count) {
+      if (dirty == 0) {
         // singletone without removals makes no sense
         return 0;
       }
 
-      if (static_cast<double>(meta.docs_count - meta.live_docs_count) <
+      if (static_cast<double>(dirty) <
           min_singleton_removals * static_cast<double>(meta.docs_count)) {
         return 0;
       }

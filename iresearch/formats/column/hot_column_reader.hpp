@@ -40,6 +40,10 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace irs {
 
+duckdb::BaseStatistics ChunkStatistics(const duckdb::LogicalType& type,
+                                       const duckdb::Vector& data,
+                                       duckdb::idx_t count);
+
 class HotChunkStats final {
  public:
   duckdb::BaseStatistics Get(const duckdb::LogicalType& type,

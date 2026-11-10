@@ -155,6 +155,10 @@ class Writes {
                   const std::shared_ptr<Store>& store,
                   irs::DocRemovalBuilder&& positions);
 
+  void AddPatches(const std::shared_ptr<Store>& store,
+                  std::vector<UnitPatch>&& patches);
+  void CheckPatches(const Store& store) const;
+
   void AddSearchTruncate(const std::shared_ptr<Store>& store,
                          const catalog::SearchTableEntry& table, Tick snapshot);
 

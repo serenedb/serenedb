@@ -434,16 +434,19 @@ bool Store::MergePiecesLocked(
     return false;
   }
   std::vector<uint64_t> ids;
+  std::vector<Tick> folded;
   ids.reserve(pieces.size());
+  folded.reserve(pieces.size());
   auto first_lsn = kNoLsn;
   for (const auto& piece : pieces) {
     ids.push_back(piece->id);
+    folded.push_back(piece->reader->PatchTick());
     first_lsn = std::min(first_lsn, piece->first_lsn);
   }
   const auto target = merged.reader->Id();
   CommitStorage(LogMerge(target, ids), [&](Tick tick, Lsn lsn) {
-    _table->MergePieces(tick, lsn, ids, std::move(merged.reader), first_lsn,
-                        std::move(merged.maps));
+    _table->MergePieces(tick, lsn, ids, folded, std::move(merged.reader),
+                        first_lsn, std::move(merged.maps));
     QueueReleaseCleanup(shared_from_this(), tick);
   });
   SDB_PARK_ONCE_ON_FAILURE("pause_search_pieces_merged");
@@ -502,9 +505,12 @@ void Store::WriteOutLocked(Lsn before) {
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_write_out");
   std::vector<uint64_t> ids;
+  std::vector<Tick> folded;
   ids.reserve(pieces.size());
+  folded.reserve(pieces.size());
   for (const auto& piece : pieces) {
     ids.push_back(piece->id);
+    folded.push_back(piece->reader->PatchTick());
   }
   std::vector<ReplacedSegment> named;
   std::vector<OwnSegment> segments;
@@ -517,7 +523,7 @@ void Store::WriteOutLocked(Lsn before) {
   }
   SyncSegments();
   CommitStorage(LogReplace(ids, named, merged.maps), [&](Tick tick, Lsn lsn) {
-    _table->Replace(tick, lsn, ids, std::move(segments),
+    _table->Replace(tick, lsn, ids, folded, std::move(segments),
                     std::move(merged.maps));
     QueueReleaseCleanup(shared_from_this(), tick);
   });
@@ -753,10 +759,14 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
       }
       SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
       std::vector<uint64_t> ids;
+      std::vector<Tick> folded;
       ids.reserve(merged.claim.candidates.size());
+      folded.reserve(merged.claim.candidates.size());
       for (const auto* candidate : merged.claim.candidates) {
-        ids.push_back(
-          irs::utils::downCast<irs::SegmentReader>(*candidate).GetImpl()->Id());
+        const auto& impl =
+          *irs::utils::downCast<irs::SegmentReader>(*candidate).GetImpl();
+        ids.push_back(impl.Id());
+        folded.push_back(impl.PatchTick());
       }
       const std::array<ReplacedSegment, 1> named{
         ReplacedSegment{.id = merged.reader->Id(),
@@ -766,12 +776,12 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
       std::vector<OwnSegment> segments;
       segments.push_back(OwnSegment{.segment = std::move(merged.segment),
                                     .reader = std::move(merged.reader)});
-      CommitStorage(LogReplace(ids, named, merged.maps),
-                    [&](Tick tick, Lsn lsn) {
-                      _table->Replace(tick, lsn, ids, std::move(segments),
-                                      std::move(merged.maps));
-                      QueueReleaseCleanup(shared_from_this(), tick);
-                    });
+      CommitStorage(
+        LogReplace(ids, named, merged.maps), [&](Tick tick, Lsn lsn) {
+          _table->Replace(tick, lsn, ids, folded, std::move(segments),
+                          std::move(merged.maps));
+          QueueReleaseCleanup(shared_from_this(), tick);
+        });
     } catch (const std::exception& e) {
       co_return absl::InternalError(
         absl::StrCat("compaction of table ", _id,
@@ -948,10 +958,14 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   std::vector<irs::IndexWriter::Replacement> replacements) {
   SDB_ASSERT(_table);
   std::vector<uint64_t> ids;
+  std::vector<Tick> folded;
   ids.reserve(replaced.size());
+  folded.reserve(replaced.size());
   for (const auto* sub : replaced) {
-    ids.push_back(
-      irs::utils::downCast<irs::SegmentReader>(*sub).GetImpl()->Id());
+    const auto& impl =
+      *irs::utils::downCast<irs::SegmentReader>(*sub).GetImpl();
+    ids.push_back(impl.Id());
+    folded.push_back(impl.PatchTick());
   }
   std::vector<OwnSegment> segments;
   std::vector<ReplacedSegment> named;
@@ -971,8 +985,8 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   SyncSegments();
   std::shared_ptr<const TableState> published;
   CommitStorage(LogReplace(ids, named, maps), [&](Tick tick, Lsn lsn) {
-    published =
-      _table->Replace(tick, lsn, ids, std::move(segments), std::move(maps));
+    published = _table->Replace(tick, lsn, ids, folded, std::move(segments),
+                                std::move(maps));
     _table->Rewritten(tick);
     QueueReleaseCleanup(shared_from_this(), tick);
   });
@@ -1373,6 +1387,14 @@ void Store::ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn) {
   EnsureOpen();
   if (_table) {
     _table->ReplayRemoval(removal, lsn);
+  }
+}
+
+void Store::ReplayPatch(uint64_t segment, const irs::FieldPatch& patch,
+                        Lsn lsn) {
+  EnsureOpen();
+  if (_table) {
+    _table->ReplayPatch(segment, patch, lsn);
   }
 }
 

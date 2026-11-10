@@ -89,7 +89,7 @@ std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
         continue;
       }
       if (seen_ids.insert(col->Id()).second) {
-        ordered_cols.emplace_back(col->Id(), col.get());
+        ordered_cols.emplace_back(col->Id(), col);
       }
     }
   }
@@ -203,8 +203,8 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                  "schema evolution between merge sources not supported");
       const bool has_mask = HasRemovals(s.reader->Meta());
 
-      const bool stored_distinct =
-        distinct && !has_mask && distinct_merger.MergeStored(*col);
+      const bool stored_distinct = distinct && !has_mask && !col->Patched() &&
+                                   distinct_merger.MergeStored(*col);
 
       if (!has_mask && !annotated && (!distinct || stored_distinct) &&
           cw.CopyableFrom(*col)) {

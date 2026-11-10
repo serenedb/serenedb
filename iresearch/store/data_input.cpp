@@ -32,7 +32,7 @@ namespace irs {
 namespace {
 
 template<typename... Args>
-void TryPrefetch(const duckdb::shared_ptr<duckdb::BlockCacheFile>& file,
+void TryPrefetch(const duckdb::shared_ptr<duckdb::ExternalFileCacheFile>& file,
                  Args&&... args) noexcept {
   try {
     file->GetCache().Prefetch(file, std::forward<Args>(args)...);
@@ -81,7 +81,8 @@ InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
   }
 }
 
-InputFile::InputFile(duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept
+InputFile::InputFile(
+  duckdb::shared_ptr<duckdb::ExternalFileCacheFile> blocks) noexcept
   : _length{blocks->GetSize()}, _blocks{std::move(blocks)} {}
 
 bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
@@ -95,10 +96,10 @@ bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
     block.pinned = std::make_unique<CursorPin>();
   }
   auto& pinned = *block.pinned;
-  const auto number = position / duckdb::BlockCache::BLOCK_SIZE;
+  const auto number = position / duckdb::ExternalFileCache::BLOCK_SIZE;
   pinned.pin =
     _blocks->GetCache().PinInOrder(_blocks, number, pinned.ahead, ahead);
-  block.start = number * duckdb::BlockCache::BLOCK_SIZE;
+  block.start = number * duckdb::ExternalFileCache::BLOCK_SIZE;
   return {pinned.pin.Ptr(),
           std::min<uint64_t>(pinned.pin.Size(), _length - block.start)};
 }
@@ -119,7 +120,7 @@ PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
 
 void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
   if (_blocks) {
-    TryPrefetch(_blocks, offset, size, duckdb::BlockCachePrefetch::HINT);
+    TryPrefetch(_blocks, offset, size, duckdb::ExternalFileCachePrefetch::HINT);
   } else if (_paged) {
     _mapping->Prefetch(offset, size);
   }
@@ -134,9 +135,9 @@ void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
 }
 
 void InputFile::PrefetchExtents(
-  std::span<duckdb::BlockCacheRange> extents) const noexcept {
+  std::span<duckdb::ExternalFileCacheRange> extents) const noexcept {
   if (_blocks) {
-    TryPrefetch(_blocks, extents, duckdb::BlockCachePrefetch::NEED);
+    TryPrefetch(_blocks, extents, duckdb::ExternalFileCachePrefetch::NEED);
     return;
   }
   for (const auto& extent : extents) {
@@ -211,7 +212,7 @@ bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
     if (_blocks->GetCache().IsCached(*_blocks, offset, size)) {
       return false;
     }
-    TryPrefetch(_blocks, offset, size, duckdb::BlockCachePrefetch::HINT);
+    TryPrefetch(_blocks, offset, size, duckdb::ExternalFileCachePrefetch::HINT);
     return true;
   }
   if (!_paged) {

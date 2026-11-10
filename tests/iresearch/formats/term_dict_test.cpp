@@ -23,8 +23,8 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index/field_reader.hpp>
@@ -106,7 +106,8 @@ class OracleTerms final : public irs::TermIterator {
 };
 
 uint64_t CacheMisses() {
-  return duckdb::BlockCache::Get(irs::DuckDBEngine::Instance().instance())
+  return duckdb::ExternalFileCache::Get(
+           irs::DuckDBEngine::Instance().instance())
     .GetStatistics()
     .misses;
 }
@@ -1393,7 +1394,7 @@ TEST_P(TermDictTest, a_cold_open_loads_the_whole_dictionary) {
   if (_reader->Base()) {
     GTEST_SKIP() << "a mapped input reads its dictionary in place";
   }
-  auto& cache = duckdb::BlockCache::Get(dir().Db());
+  auto& cache = duckdb::ExternalFileCache::Get(dir().Db());
   cache.SetEnabled(false);
   cache.SetEnabled(true);
   Open(dir());

@@ -23,8 +23,8 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <iresearch/store/file_output.hpp>
@@ -114,24 +114,24 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
     rows.emplace_back(metric, static_cast<int64_t>(value), description);
   };
   auto& db = *scan.Context().db;
-  const auto stats = db.GetBlockCache().GetStatistics();
-  add("block_cache_capacity_bytes",
+  const auto stats = db.GetExternalFileCache().GetStatistics();
+  add("external_file_cache_capacity_bytes",
       duckdb::BufferManager::GetBufferManager(db).GetMaxMemory(),
       "memory the cache of remote and in-memory index files may use, in "
       "bytes");
-  add("block_cache_used_bytes", stats.used,
+  add("external_file_cache_used_bytes", stats.used,
       "memory the cache of remote and in-memory index files uses, in bytes");
-  add("block_cache_misses", stats.misses,
+  add("external_file_cache_misses", stats.misses,
       "block reads that went to storage since start");
-  add("block_cache_fetches", stats.fetches,
+  add("external_file_cache_fetches", stats.fetches,
       "storage reads that filled the cache since start");
-  add("block_cache_fetched_bytes", stats.fetched_bytes,
+  add("external_file_cache_fetched_bytes", stats.fetched_bytes,
       "bytes read from storage into the cache since start");
-  add("block_cache_evictions", stats.evictions,
+  add("external_file_cache_evictions", stats.evictions,
       "blocks evicted from memory since start");
-  add("block_cache_spilled_blocks", stats.spilled,
+  add("external_file_cache_spilled_blocks", stats.spilled,
       "evicted blocks written to the temporary directory since start");
-  add("block_cache_spill_reads", stats.spill_reads,
+  add("external_file_cache_spill_reads", stats.spill_reads,
       "blocks read back from the temporary directory since start");
   const auto uploads = irs::CurrentUploads();
   add("index_uploads_pending", uploads.files,

@@ -28,7 +28,7 @@
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -61,7 +61,7 @@ duckdb::DatabaseInstance& Db() {
   return irs::DuckDBEngine::Instance().instance();
 }
 
-void DropCachedBlocks(duckdb::BlockCache& cache) {
+void DropCachedBlocks(duckdb::ExternalFileCache& cache) {
   cache.SetEnabled(false);
   cache.SetEnabled(true);
 }
@@ -88,7 +88,7 @@ void WriteSegments(const tests::IndexDir& dir, size_t segments) {
 irs::ObjectStoreRequests Open(const std::string& root, uint64_t live_docs) {
   auto& store = tests::ObjectStore();
   const tests::IndexDir restarted{Db(), root};
-  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
+  DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   store.ResetRequests();
   const auto reader =
     tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
@@ -116,7 +116,7 @@ TEST(ObjectStoreIndexTest, a_single_block_field_prefetches_nothing) {
   const tests::IndexDir restarted{Db(), root};
   const auto reader =
     tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
-  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
+  DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   store.ResetRequests();
 
   const auto term = irs::ViewCast<irs::byte_type>(std::string_view{"A"});
@@ -156,7 +156,7 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
   const tests::IndexDir restarted{Db(), root};
   const auto reader =
     tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
-  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
+  DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   store.ResetRequests();
 
   const auto term =
@@ -203,7 +203,7 @@ TEST(ObjectStoreIndexTest, writer_opens_segments_in_parallel) {
   const auto root = Root();
   WriteSegments(tests::IndexDir{Db(), root}, kSegments);
   const tests::IndexDir restarted{Db(), root};
-  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
+  DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   store.SetLatency(kLatency);
   absl::Cleanup no_latency = [&] {
     store.SetLatency(std::chrono::microseconds{0});
@@ -277,7 +277,7 @@ TEST(ObjectStoreIndexTest, replace_adopts_segments) {
   EXPECT_EQ(4, snapshot.live_docs_count());
 }
 
-constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
 constexpr uint64_t kBlocks = 16;
 
 std::unique_ptr<irs::InputFile> WriteUncached(const tests::IndexDir& dir) {
@@ -289,7 +289,7 @@ std::unique_ptr<irs::InputFile> WriteUncached(const tests::IndexDir& dir) {
     }
     out->Close();
   }
-  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
+  DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   auto file = dir.Open("blocks", duckdb::MappedFileAccess::NORMAL);
   tests::ObjectStore().ResetRequests();
   return file;
@@ -399,9 +399,9 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
 
   const std::vector<uint64_t> rows{kRgSize + 10, kRgSize + 30000,
                                    2 * kRgSize + 5};
-  std::vector<duckdb::BlockCacheRange> extents;
+  std::vector<duckdb::ExternalFileCacheRange> extents;
   plain->CollectBlocks(rows.front(), rows.back(), extents);
-  std::vector<duckdb::BlockCacheRange> expected;
+  std::vector<duckdb::ExternalFileCacheRange> expected;
   for (const auto* column : {plain, plain->Validity()}) {
     const auto blocks = column->DataBlocks();
     for (size_t block = 0; block != blocks.size(); ++block) {
@@ -414,7 +414,7 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
     }
   }
   ASSERT_LT(4, expected.size());
-  const auto key = [](const duckdb::BlockCacheRange& e) {
+  const auto key = [](const duckdb::ExternalFileCacheRange& e) {
     return std::pair{e.offset, e.size};
   };
   ASSERT_EQ(expected.size(), extents.size());
@@ -427,7 +427,7 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
     ASSERT_NE(nullptr, column);
     column->CollectBlocks(rows.front(), rows.back(), extents);
   }
-  auto& cache = duckdb::BlockCache::Get(Db());
+  auto& cache = duckdb::ExternalFileCache::Get(Db());
   DropCachedBlocks(cache);
   for (auto& extent : extents) {
     reader.PrefetchExtents({&extent, 1});
@@ -486,10 +486,10 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
 
   const std::vector<uint64_t> rows{kRgSize + 10, kRgSize + 30000,
                                    2 * kRgSize + 5};
-  std::vector<duckdb::BlockCacheRange> extents;
+  std::vector<duckdb::ExternalFileCacheRange> extents;
   column->CollectBlocks(rows.front(), rows.back(), extents);
   ASSERT_FALSE(extents.empty());
-  auto& cache = duckdb::BlockCache::Get(Db());
+  auto& cache = duckdb::ExternalFileCache::Get(Db());
   DropCachedBlocks(cache);
   for (auto& extent : extents) {
     reader.PrefetchExtents({&extent, 1});
@@ -589,7 +589,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   either.Add(clause("short"), irs::Occur::Should);
   either.SetMinShouldMatch(1);
   const auto terms_query = either.PrepareSegment(segment, {});
-  auto& cache = duckdb::BlockCache::Get(Db());
+  auto& cache = duckdb::ExternalFileCache::Get(Db());
   DropCachedBlocks(cache);
   irs::PrefetchPostingHeads(*only_query, 2);
   EXPECT_FALSE(words.doc->Resident(long_list.doc_start, 1));
@@ -666,7 +666,7 @@ TEST(ObjectStoreIndexTest, a_long_one_time_read_fetches_every_block_in_runs) {
     }
     out->Close();
   }
-  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
+  DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   const auto file = dir.Open("long", duckdb::MappedFileAccess::NORMAL);
   tests::ObjectStore().ResetRequests();
   irs::IndexInput in{*file};
@@ -674,7 +674,7 @@ TEST(ObjectStoreIndexTest, a_long_one_time_read_fetches_every_block_in_runs) {
   irs::ReadOnce(in, read.data(), kSize);
   EXPECT_EQ(kSize, static_cast<uint64_t>(absl::c_count(read, 0x5A)));
   EXPECT_LE(tests::ObjectStore().Requests().get,
-            2 * kSize / duckdb::BlockCache::PIECE_SIZE);
+            2 * kSize / duckdb::ExternalFileCache::PIECE_SIZE);
 }
 
 constexpr uint64_t kValues = 100000;
@@ -735,7 +735,7 @@ TEST(ObjectStoreIndexTest, written_files_read_back_from_their_cache_blocks) {
   ReadValues(dir, checksum);
   EXPECT_EQ(0, tests::ObjectStore().Requests().get);
 
-  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
+  DropCachedBlocks(duckdb::ExternalFileCache::Get(Db()));
   ReadValues(dir, checksum);
   EXPECT_NE(0, tests::ObjectStore().Requests().get);
 }

@@ -72,7 +72,7 @@ class ColReader final {
 
   const InputFile* File() const noexcept { return _file.get(); }
   void PrefetchExtents(
-    std::span<duckdb::BlockCacheRange> extents) const noexcept {
+    std::span<duckdb::ExternalFileCacheRange> extents) const noexcept {
     if (_file) {
       _file->PrefetchExtents(extents);
     }

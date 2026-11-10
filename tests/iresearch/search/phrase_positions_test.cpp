@@ -24,7 +24,7 @@
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
-#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -617,7 +617,7 @@ TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
   const auto handles = reader[0].field(kField)->Handles();
   ASSERT_TRUE(handles.doc->Contiguous());
   ASSERT_FALSE(handles.pos->Contiguous());
-  ASSERT_LT(4 * duckdb::BlockCache::BLOCK_SIZE, handles.pos->Length());
+  ASSERT_LT(4 * duckdb::ExternalFileCache::BLOCK_SIZE, handles.pos->Length());
 
   irs::ByPhrase filter;
   *filter.mutable_field_id() = kField;

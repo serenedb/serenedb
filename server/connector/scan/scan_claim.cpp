@@ -28,7 +28,7 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -480,7 +480,7 @@ void PrefetchScanStart(const ScanGlobalState& g) {
   if (fields.empty()) {
     return;
   }
-  std::vector<duckdb::BlockCacheRange> extents;
+  std::vector<duckdb::ExternalFileCacheRange> extents;
   uint64_t bytes = 0;
   for (const auto seg : g.segment_order) {
     const auto& sub = (*g.reader)[seg];
@@ -491,7 +491,7 @@ void PrefetchScanStart(const ScanGlobalState& g) {
     }
     extents.clear();
     for (uint64_t begin = 0;
-         begin < docs && bytes < duckdb::BlockCache::MAX_FILE_IN_FLIGHT;
+         begin < docs && bytes < duckdb::ExternalFileCache::MAX_FILE_IN_FLIGHT;
          begin += g.rg_size) {
       const auto last = std::min(docs, begin + g.rg_size) - 1;
       const auto from = extents.size();
@@ -505,7 +505,7 @@ void PrefetchScanStart(const ScanGlobalState& g) {
       }
     }
     col_reader->PrefetchExtents(extents);
-    if (bytes >= duckdb::BlockCache::MAX_FILE_IN_FLIGHT) {
+    if (bytes >= duckdb::ExternalFileCache::MAX_FILE_IN_FLIGHT) {
       return;
     }
   }

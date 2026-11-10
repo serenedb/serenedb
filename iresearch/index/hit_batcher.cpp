@@ -167,7 +167,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
 
 void HitBatcher::CollectBlocks(
   const irs::ColReader& col_reader, uint64_t first, uint64_t last,
-  std::vector<duckdb::BlockCacheRange>& out) const {
+  std::vector<duckdb::ExternalFileCacheRange>& out) const {
   const auto collect = [&](irs::field_id id) {
     if (const auto* column = col_reader.Column(id)) {
       column->CollectBlocks(first, last, out);

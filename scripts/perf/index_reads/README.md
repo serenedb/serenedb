@@ -1,10 +1,10 @@
 # Index reads per query
 
-Measures which byte ranges of the index files each search query reads, on the Search Benchmark Game corpus (English Wikipedia, 5.03M documents, its 962 queries), and replays them through a remote block cache. It answers how many requests a query would send to object storage for a given block size, merge gap and cache size, on one segment or many.
+Measures which byte ranges of the index files each search query reads, on the Search Benchmark Game corpus (English Wikipedia, 5.03M documents, its 962 queries), and replays them through a model of the external file cache. It answers how many requests a query would send to object storage for a given block size, merge gap and cache size, on one segment or many.
 
 ## Method
 
-Each query runs in a fresh `search-benchmark-game-query` process after the index is opened. The pages it touched are the present bits of the index mappings in `/proc/<pid>/pagemap` after the query minus those after opening. The kernel maps 64 KiB around a fault, so the touched set is exact at 64 KiB and coarser. `model.py` then forms requests the way the block cache does: blocks of a given size, missing runs merged across gaps under 1 MiB, at most 16 MiB per request, cold and through an LRU cache fed every query 20 times in random order.
+Each query runs in a fresh `search-benchmark-game-query` process after the index is opened. The pages it touched are the present bits of the index mappings in `/proc/<pid>/pagemap` after the query minus those after opening. The kernel maps 64 KiB around a fault, so the touched set is exact at 64 KiB and coarser. `model.py` then forms requests the way the external file cache does: blocks of a given size, missing runs merged across gaps under 1 MiB, at most 16 MiB per request, cold and through an LRU cache fed every query 20 times in random order.
 
 ## Prerequisites
 

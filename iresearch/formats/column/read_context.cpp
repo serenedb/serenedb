@@ -23,7 +23,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
@@ -50,12 +50,12 @@ class PinnedColBlock final : public duckdb::Block {
  public:
   PinnedColBlock(duckdb::BlockAllocator& allocator, duckdb::block_id_t id,
                  duckdb::MemoryMappedFile& bytes, uint64_t size,
-                 duckdb::BlockCachePin pin)
+                 duckdb::ExternalFileCachePin pin)
     : Block{allocator, id, bytes, 0, size, /*block_header_size=*/0},
       _pin{std::move(pin)} {}
 
  private:
-  duckdb::BlockCachePin _pin;
+  duckdb::ExternalFileCachePin _pin;
 };
 
 uint64_t SectorAligned(uint64_t size) noexcept {
@@ -140,7 +140,7 @@ bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
 }
 
 bool ReadContext::Wraps(uint64_t offset, uint64_t size) const noexcept {
-  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
   return !_mapping && _in.File() && offset % 8 == 0 &&
          offset % kBlock + SectorAligned(size) <= kBlock;
 }

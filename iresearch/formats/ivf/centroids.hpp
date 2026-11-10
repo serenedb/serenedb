@@ -55,7 +55,7 @@ struct CentroidsNodeView {
 };
 
 struct LayerBuffers {
-  std::vector<duckdb::BlockCachePin> centroids;
+  std::vector<duckdb::ExternalFileCachePin> centroids;
   std::vector<std::vector<size_t>> child_offsets;
 };
 

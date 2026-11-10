@@ -28,7 +28,7 @@
 #include <cstddef>
 #include <cstring>
 #include <duckdb/common/memory_mapped_file.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -42,7 +42,7 @@ namespace irs {
 
 struct PinnedBytes {
   bytes_view bytes;
-  duckdb::BlockCachePin pin;
+  duckdb::ExternalFileCachePin pin;
 };
 
 struct SpanBytes {
@@ -50,8 +50,8 @@ struct SpanBytes {
 };
 
 struct CursorPin {
-  duckdb::BlockCachePin pin;
-  duckdb::BlockCacheReadAhead ahead;
+  duckdb::ExternalFileCachePin pin;
+  duckdb::ExternalFileCacheReadAhead ahead;
 };
 
 struct CursorBlock {
@@ -63,7 +63,7 @@ class InputFile {
  public:
   explicit InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping);
   explicit InputFile(
-    duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept;
+    duckdb::shared_ptr<duckdb::ExternalFileCacheFile> blocks) noexcept;
   InputFile(const InputFile&) = delete;
   InputFile& operator=(const InputFile&) = delete;
 
@@ -83,7 +83,7 @@ class InputFile {
   bool Hint(uint64_t offset, uint64_t size) const noexcept;
   void Prefetch(uint64_t offset, uint64_t size) const noexcept;
   void PrefetchExtents(
-    std::span<duckdb::BlockCacheRange> extents) const noexcept;
+    std::span<duckdb::ExternalFileCacheRange> extents) const noexcept;
   void Evict(uint64_t offset, uint64_t size) const noexcept;
   bool Resident(uint64_t offset, uint64_t size) const noexcept;
   uint64_t Warm(uint64_t offset, uint64_t size) const noexcept;
@@ -94,7 +94,7 @@ class InputFile {
   uint64_t _length;
   bytes_view _span;
   std::unique_ptr<duckdb::MemoryMappedFile> _mapping;
-  duckdb::shared_ptr<duckdb::BlockCacheFile> _blocks;
+  duckdb::shared_ptr<duckdb::ExternalFileCacheFile> _blocks;
   file_utils::ResidencyMap _residency;
   bool _paged = false;
 };
@@ -331,8 +331,8 @@ class BasicInput {
         const auto at = Position();
         const auto from = at + Remain();
         const auto to = at + count;
-        if (from / duckdb::BlockCache::BLOCK_SIZE !=
-            (to - 1) / duckdb::BlockCache::BLOCK_SIZE) {
+        if (from / duckdb::ExternalFileCache::BLOCK_SIZE !=
+            (to - 1) / duckdb::ExternalFileCache::BLOCK_SIZE) {
           _file->Prefetch(from, to - from);
         }
         do {

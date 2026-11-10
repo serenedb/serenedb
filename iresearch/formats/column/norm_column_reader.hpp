@@ -140,7 +140,7 @@ class NormColumnReader final {
   std::vector<NormStats> _stats;
   std::vector<std::span<const byte_type>> _windows;
   file_utils::ResidencyMap _residency;
-  std::vector<duckdb::BlockCachePin> _pins;
+  std::vector<duckdb::ExternalFileCachePin> _pins;
   uint64_t _row_count = 0;
   uint64_t _sum = 0;
   uint64_t _non_zero = 0;

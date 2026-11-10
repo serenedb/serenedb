@@ -24,8 +24,8 @@
 #include <chrono>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <future>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/data_input.hpp>
@@ -37,7 +37,7 @@
 
 namespace {
 
-constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
 constexpr uint64_t kBlocks = 16;
 constexpr uint64_t kRead = 64;
 
@@ -45,7 +45,7 @@ irs::byte_type ExpectedByte(uint64_t offset) {
   return static_cast<irs::byte_type>(offset * 31 + offset / kBlock * 7);
 }
 
-void AppendBlocks(const duckdb::shared_ptr<duckdb::BlockCacheFile>& file,
+void AppendBlocks(const duckdb::shared_ptr<duckdb::ExternalFileCacheFile>& file,
                   uint64_t blocks, bool expected = true) {
   std::vector<irs::byte_type> bytes(blocks * kBlock);
   if (expected) {
@@ -53,7 +53,7 @@ void AppendBlocks(const duckdb::shared_ptr<duckdb::BlockCacheFile>& file,
       bytes[i] = ExpectedByte(i);
     }
   }
-  duckdb::BlockCacheAppender appender{file};
+  duckdb::ExternalFileCacheAppender appender{file};
   appender.Append(bytes.data(), bytes.size());
   appender.Finish();
 }
@@ -65,7 +65,7 @@ TEST_F(IndexInputTest, pins_outlive_evictions) {
   config.options.maximum_memory = (kBlocks + 4) * kBlock;
   config.options.temporary_directory = (test_dir() / "spill").string();
   duckdb::DuckDB db{nullptr, &config};
-  duckdb::BlockCache cache{*db.instance};
+  duckdb::ExternalFileCache cache{*db.instance};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/stable");
   AppendBlocks(file, kBlocks);
   auto filler = cache.CreateUnbackedFile("memory://block_input_test/filler");
@@ -128,7 +128,7 @@ TEST_F(IndexInputTest, reads_wait_for_an_eviction_writing_a_temporary_copy) {
   config.options.maximum_memory = 4 * kBlock;
   config.options.temporary_directory = (test_dir() / "spill").string();
   duckdb::DuckDB db{nullptr, &config};
-  duckdb::BlockCache cache{*db.instance};
+  duckdb::ExternalFileCache cache{*db.instance};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/unloading");
   AppendBlocks(file, 2);
   absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
@@ -154,7 +154,7 @@ TEST_F(IndexInputTest, reads_wait_for_another_reader_loading_a_spilled_block) {
   config.options.maximum_memory = 4 * kBlock;
   config.options.temporary_directory = (test_dir() / "spill").string();
   duckdb::DuckDB db{nullptr, &config};
-  duckdb::BlockCache cache{*db.instance};
+  duckdb::ExternalFileCache cache{*db.instance};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/loading");
   AppendBlocks(file, 2);
   duckdb::BufferManager::GetBufferManager(*db.instance).SetMemoryLimit(kBlock);
@@ -179,7 +179,7 @@ TEST_F(IndexInputTest, reads_wait_for_another_reader_loading_a_spilled_block) {
 
 TEST_F(IndexInputTest, column_blocks_inside_a_cache_block_are_read_in_place) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  duckdb::BlockCache cache{db};
+  duckdb::ExternalFileCache cache{db};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/columns");
   AppendBlocks(file, 2);
   const irs::InputFile blocks{file};
@@ -205,7 +205,7 @@ TEST_F(IndexInputTest, column_blocks_inside_a_cache_block_are_read_in_place) {
 }
 
 TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
-  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance()};
+  duckdb::ExternalFileCache cache{irs::DuckDBEngine::Instance().instance()};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/aligned");
   AppendBlocks(file, 2);
 
@@ -224,7 +224,7 @@ TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
 }
 
 TEST_F(IndexInputTest, peek_refills_an_empty_window_and_reads_cross_blocks) {
-  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance()};
+  duckdb::ExternalFileCache cache{irs::DuckDBEngine::Instance().instance()};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/peek");
   AppendBlocks(file, 3);
 

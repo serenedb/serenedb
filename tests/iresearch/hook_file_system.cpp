@@ -107,7 +107,7 @@ duckdb::unique_ptr<duckdb::MemoryMappedFile> HookFileSystem::MemoryMapFile(
   return _inner.MemoryMapFile(path, flags, options, opener);
 }
 
-duckdb::shared_ptr<duckdb::BlockCacheFile> HookFileSystem::OpenBlockFile(
+duckdb::shared_ptr<duckdb::ExternalFileCacheFile> HookFileSystem::OpenBlockFile(
   const std::string& path) {
   OnOpen(Name(path));
   return _inner.OpenBlockFile(path);

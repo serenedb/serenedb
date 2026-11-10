@@ -22,7 +22,7 @@
 
 #include <cstring>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <vector>
 
@@ -31,16 +31,17 @@ namespace {
 constexpr duckdb::idx_t kBlocks = 64;
 constexpr duckdb::idx_t kRangeBlocks = 4;
 
-duckdb::shared_ptr<duckdb::BlockCacheFile> gFile;
+duckdb::shared_ptr<duckdb::ExternalFileCacheFile> gFile;
 
-duckdb::BlockCache& Cache() {
-  return duckdb::BlockCache::Get(irs::DuckDBEngine::Instance().instance());
+duckdb::ExternalFileCache& Cache() {
+  return duckdb::ExternalFileCache::Get(
+    irs::DuckDBEngine::Instance().instance());
 }
 
 void Fill() {
-  gFile = Cache().CreateUnbackedFile("memory://bench/block_cache_pins");
-  duckdb::BlockCacheAppender appender{gFile};
-  std::vector<uint8_t> bytes(duckdb::BlockCache::BLOCK_SIZE);
+  gFile = Cache().CreateUnbackedFile("memory://bench/external_file_cache_pins");
+  duckdb::ExternalFileCacheAppender appender{gFile};
+  std::vector<uint8_t> bytes(duckdb::ExternalFileCache::BLOCK_SIZE);
   for (duckdb::idx_t block = 0; block != kBlocks; ++block) {
     std::memset(bytes.data(), static_cast<int>(block), bytes.size());
     appender.Append(bytes.data(), bytes.size());
@@ -72,8 +73,9 @@ void BmPinRange(benchmark::State& state) {
   const auto first = static_cast<duckdb::idx_t>(state.thread_index()) *
                      kRangeBlocks % (kBlocks - kRangeBlocks + 1);
   for (auto _ : state) {
-    auto pins = cache.PinRange(*gFile, first * duckdb::BlockCache::BLOCK_SIZE,
-                               kRangeBlocks * duckdb::BlockCache::BLOCK_SIZE);
+    auto pins =
+      cache.PinRange(*gFile, first * duckdb::ExternalFileCache::BLOCK_SIZE,
+                     kRangeBlocks * duckdb::ExternalFileCache::BLOCK_SIZE);
     benchmark::DoNotOptimize(pins.data());
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));

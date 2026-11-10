@@ -52,8 +52,8 @@ id
 
 
 query
-SELECT count(*) FILTER (WHERE metric = 'block_cache_spilled_blocks' AND value > 0) AS spilled,
-       count(*) FILTER (WHERE metric = 'block_cache_spill_reads' AND value > 0) AS read_back
+SELECT count(*) FILTER (WHERE metric = 'external_file_cache_spilled_blocks' AND value > 0) AS spilled,
+       count(*) FILTER (WHERE metric = 'external_file_cache_spill_reads' AND value > 0) AS read_back
 FROM sdb_metrics;
 ----
 spilled	read_back

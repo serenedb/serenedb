@@ -48,7 +48,7 @@ class HookFileSystem : public duckdb::FileSystem {
     const duckdb::OpenFileInfo& path, duckdb::FileOpenFlags flags,
     const duckdb::MMapOptions& options,
     duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;
-  duckdb::shared_ptr<duckdb::BlockCacheFile> OpenBlockFile(
+  duckdb::shared_ptr<duckdb::ExternalFileCacheFile> OpenBlockFile(
     const std::string& path) override;
   duckdb::unique_ptr<duckdb::FileWriter> OpenFileWriter(
     const std::string& path, bool keep_cached) override;

@@ -61,8 +61,9 @@ class ArrayColumnReader final : public ColumnReader {
     return _children.front()->RowGroupEnd(row * _array_size) / _array_size;
   }
 
-  void CollectBlocks(uint64_t first, uint64_t last,
-                     std::vector<duckdb::BlockCacheRange>& out) const final {
+  void CollectBlocks(
+    uint64_t first, uint64_t last,
+    std::vector<duckdb::ExternalFileCacheRange>& out) const final {
     ColumnReader::CollectBlocks(first, last, out);
     if (_array_size != 0 && !_children.empty()) {
       _children.front()->CollectBlocks(first * _array_size,

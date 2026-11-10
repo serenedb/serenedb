@@ -30,7 +30,7 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -4298,7 +4298,7 @@ TEST_P(DirectoryTestCase, checked_reads_resume_after_seeking_past_the_end) {
 }
 
 TEST_P(DirectoryTestCase, reads_across_cache_blocks) {
-  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
   constexpr uint64_t kSize = 3 * kBlock + 1000;
   std::vector<irs::byte_type> data(kSize);
   for (uint64_t i = 0; i != kSize; ++i) {
@@ -4372,7 +4372,7 @@ TEST_P(DirectoryTestCase, reads_across_cache_blocks) {
 }
 
 TEST_P(DirectoryTestCase, numbers_across_cache_blocks) {
-  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
   constexpr uint32_t kV32 = std::numeric_limits<uint32_t>::max();
   constexpr uint64_t kV64 = std::numeric_limits<uint64_t>::max();
   constexpr uint64_t kU64 = 0x0123456789ABCDEF;
@@ -4412,7 +4412,7 @@ TEST_P(DirectoryTestCase, numbers_across_cache_blocks) {
 }
 
 TEST_P(DirectoryTestCase, pins_hold_their_bytes_on_any_storage) {
-  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
   std::vector<irs::byte_type> data(2 * kBlock);
   for (uint64_t i = 0; i != data.size(); ++i) {
     data[i] = static_cast<irs::byte_type>(i * 31 + i / 251);
@@ -4438,7 +4438,7 @@ TEST_P(DirectoryTestCase, pins_hold_their_bytes_on_any_storage) {
 }
 
 TEST_P(DirectoryTestCase, read_whole) {
-  constexpr uint64_t kSize = duckdb::BlockCache::BLOCK_SIZE + 100;
+  constexpr uint64_t kSize = duckdb::ExternalFileCache::BLOCK_SIZE + 100;
   std::vector<irs::byte_type> data(kSize);
   for (uint64_t i = 0; i != kSize; ++i) {
     data[i] = static_cast<irs::byte_type>(i * 7);
@@ -4913,7 +4913,7 @@ TEST(DirectoryTest, memory_reader_reads_removed_files) {
 }
 
 TEST(DirectoryTest, compacted_memory_files_map_in_place) {
-  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  constexpr uint64_t kBlock = duckdb::ExternalFileCache::BLOCK_SIZE;
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& memory = db.GetMemoryFileSystem();
   const ::tests::IndexDir files{db, TestEnv::MemoryRoot()};

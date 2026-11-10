@@ -27,7 +27,7 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/query_context.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <functional>
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -274,8 +274,8 @@ TEST(SimulatedObjectStoreTest,
   EXPECT_EQ(0, store.Requests().head);
   store.Publish(irs::PathOf(files.Root(), "written"),
                 std::string(400000, '\0'));
-  duckdb::BlockCache::Get(db).SetEnabled(false);
-  duckdb::BlockCache::Get(db).SetEnabled(true);
+  duckdb::ExternalFileCache::Get(db).SetEnabled(false);
+  duckdb::ExternalFileCache::Get(db).SetEnabled(true);
 
   irs::IndexInput in{*in_file};
   const auto error = Error([&] { in.ReadI32(); });

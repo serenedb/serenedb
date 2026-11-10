@@ -102,7 +102,7 @@ class PostingHeads final : public PreparedStateVisitor {
   }
 
   containers::FlatHashMap<const InputFile*,
-                          std::vector<duckdb::BlockCacheRange>>
+                          std::vector<duckdb::ExternalFileCacheRange>>
     _extents;
   uint32_t _lists = 0;
 };

@@ -49,14 +49,14 @@ The `sdb_metrics` system table reports how the cache and the uploads do, in rows
 
 | Metric | Meaning |
 | :--- | :--- |
-| `block_cache_capacity_bytes` | Memory the cache may use, in bytes: `memory_limit`, which it shares with queries |
-| `block_cache_used_bytes` | Memory the cache uses, in bytes |
-| `block_cache_misses` | Block reads that went to the store since startup |
-| `block_cache_fetches` | Requests that read blocks from the store since startup |
-| `block_cache_fetched_bytes` | Bytes read from the store into the cache since startup |
-| `block_cache_evictions` | Blocks evicted from memory since startup |
-| `block_cache_spilled_blocks` | Evicted blocks written to the temporary directory since startup |
-| `block_cache_spill_reads` | Blocks read back from the temporary directory since startup |
+| `external_file_cache_capacity_bytes` | Memory the cache may use, in bytes: `memory_limit`, which it shares with queries |
+| `external_file_cache_used_bytes` | Memory the cache uses, in bytes |
+| `external_file_cache_misses` | Block reads that went to the store since startup |
+| `external_file_cache_fetches` | Requests that read blocks from the store since startup |
+| `external_file_cache_fetched_bytes` | Bytes read from the store into the cache since startup |
+| `external_file_cache_evictions` | Blocks evicted from memory since startup |
+| `external_file_cache_spilled_blocks` | Evicted blocks written to the temporary directory since startup |
+| `external_file_cache_spill_reads` | Blocks read back from the temporary directory since startup |
 | `index_uploads_pending` | Index files being written to the object store whose upload has not completed |
 | `index_upload_pending_bytes` | Bytes written to those files so far |
 

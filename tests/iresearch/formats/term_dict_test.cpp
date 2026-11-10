@@ -530,11 +530,13 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       }
     }
     _docs = docs;
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = kSegment,
       .doc_count = docs,
       .index_features = irs::IndexFeatures::None,
+      .budget = budget,
     };
     irs::IdxWriter idx{dir(), kSegment};
     irs::term_dict::FieldWriter writer{compaction};
@@ -2086,11 +2088,13 @@ TEST_P(TermDictTest, ordinal_limit_refuses_more_keyed_dictionaries) {
     irs::term_dict::OrdinalLimit(irs::term_dict::kMaxOrdinalBytes);
   ASSERT_EQ(irs::term_dict::kMaxOrdinalBytes,
             irs::term_dict::OrdinalBytes(kLimit));
+  auto budget = irs::EmptyBudget();
   const irs::FlushState state{
     .dir = &dir(),
     .name = kSegment,
     .doc_count = 10,
     .index_features = irs::IndexFeatures::None,
+    .budget = budget,
   };
   irs::IdxWriter idx{dir(), kSegment};
   irs::term_dict::FieldWriter writer{false};

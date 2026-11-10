@@ -129,10 +129,8 @@ size_t SegmentWriter::FlushBound() {
 
 void SegmentWriter::ReserveFlush() {
   const auto bound = FlushBound();
-  if (!_budget) {
-    _budget.emplace(ReserveMemory(kMemoryTag, bound));
-  } else if (bound > _budget->size) {
-    _budget->Merge(ReserveMemory(kMemoryTag, bound - _budget->size));
+  if (bound > _budget.size) {
+    _budget.Merge(ReserveMemory(kMemoryTag, bound - _budget.size));
   }
 }
 
@@ -148,7 +146,6 @@ bool SegmentWriter::TryReserveFlush() noexcept {
 void SegmentWriter::flush(IndexSegment& segment,
                           DocumentMaskBuilder& docs_mask) {
   auto& meta = segment.meta;
-  auto* budget = _budget ? &*_budget : nullptr;
 
   FlushState state{
     .dir = &_dir,
@@ -156,7 +153,7 @@ void SegmentWriter::flush(IndexSegment& segment,
     .name = _seg_name,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
-    .budget = budget,
+    .budget = _budget,
   };
 
   IdxWriter idx{_dir, _seg_name};
@@ -165,7 +162,6 @@ void SegmentWriter::flush(IndexSegment& segment,
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
     cluster_terms = _col_writer->AnnBound(state.doc_count).terms;
-    _col_writer->SetBudget(budget);
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
     _col_writer->Commit(buffered_docs());
@@ -224,7 +220,6 @@ void SegmentWriter::SetFieldOptions(
 }
 
 void SegmentWriter::ResetState() noexcept {
-  _budget.reset();
   _initialized = false;
   _dir.ClearTracked();
   _docs_context.Clear();
@@ -236,6 +231,7 @@ void SegmentWriter::ResetState() noexcept {
     _col_writer->Rollback();
     _col_writer.reset();
   }
+  _budget.Resize(0);
 }
 
 void SegmentWriter::reset() noexcept {
@@ -260,6 +256,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
 
   const auto* active = ActiveFieldOptions();
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
+  _col_writer->SetBudget(_budget);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());

@@ -42,6 +42,7 @@ using MemoryBudget = duckdb::BufferPoolReservation;
 
 [[nodiscard]] duckdb::TempBufferPoolReservation ReserveMemory(
   duckdb::MemoryTag tag, size_t size);
+[[nodiscard]] duckdb::TempBufferPoolReservation EmptyBudget() noexcept;
 void FreeReservedMemory(duckdb::MemoryTag tag, size_t size) noexcept;
 duckdb::Allocator& TrackedDuckAllocator();
 duckdb::Allocator BudgetAllocator(MemoryBudget* budget);

@@ -169,17 +169,15 @@ uint64_t RangeWriter::Bound(uint64_t docs) noexcept {
 }
 
 void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs,
-                        MemoryBudget* budget) {
+                        MemoryBudget& budget) {
   _heavy = HeavyDocs(docs);
   for (auto& range : _levels) {
     for (auto* piece : {&range.group, &range.held}) {
-      if (piece->docs.get_allocator().budget != budget) {
+      if (piece->docs.get_allocator().budget != &budget) {
         piece->docs =
-          TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{budget}};
+          TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{&budget}};
       }
-      if (budget) {
-        piece->docs.reserve(2 * _heavy);
-      }
+      piece->docs.reserve(2 * _heavy);
     }
   }
   _pw = &pw;

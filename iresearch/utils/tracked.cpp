@@ -95,6 +95,8 @@ void ChargeMemory(MemoryBudget* budget, duckdb::MemoryTag tag, size_t size) {
     return;
   }
   SDB_ASSERT(budget->tag == tag);
+  SDB_ASSERT(&budget->pool ==
+             &DuckDBEngine::TrackingBufferManager()->GetBufferPool());
   if (budget->size < size) {
     budget->Merge(ReserveMemory(tag, size - budget->size));
   }
@@ -135,6 +137,12 @@ duckdb::TempBufferPoolReservation ReserveMemory(duckdb::MemoryTag tag,
   auto* manager = DuckDBEngine::TrackingBufferManager();
   SDB_ASSERT(manager);
   return manager->ReserveMemory(tag, size);
+}
+
+duckdb::TempBufferPoolReservation EmptyBudget() noexcept {
+  auto* manager = DuckDBEngine::TrackingBufferManager();
+  SDB_ASSERT(manager);
+  return {kMemoryTag, manager->GetBufferPool(), 0};
 }
 
 void FreeReservedMemory(duckdb::MemoryTag tag, size_t size) noexcept {

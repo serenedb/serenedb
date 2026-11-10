@@ -336,7 +336,7 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
     if (!col) {
       continue;
     }
-    entry->writer->SetBudget(_budget);
+    entry->writer->SetBudget(*_budget);
     co_await entry->writer->Compute(*col, reader.Ctx(), env);
   }
   co_return true;

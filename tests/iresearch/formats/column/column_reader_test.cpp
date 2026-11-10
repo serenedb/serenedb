@@ -60,8 +60,9 @@ namespace {
 
 class ColumnReaderTest : public ::testing::Test {
  protected:
-  duckdb::DatabaseInstance& Db() { return *_db.instance; }
-  duckdb::DuckDB _db;
+  duckdb::DatabaseInstance& Db() {
+    return irs::DuckDBEngine::Instance().instance();
+  }
 };
 
 // Verify a BIGINT column read back through a ColumnReader matches `value_of`

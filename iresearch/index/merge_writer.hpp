@@ -76,9 +76,11 @@ class MergeWriter : public util::Noncopyable {
     DocRemap remap;
   };
 
-  explicit MergeWriter(Directory& dir,
-                       const SegmentWriterOptions& options) noexcept
+  MergeWriter(Directory& dir, const SegmentWriterOptions& options,
+              MemoryBudget& budget) noexcept
     : _dir{dir},
+      _budget{budget},
+      _readers{TrackedAllocator<ReaderCtx>{&budget}},
       _scorer{options.scorer},
       _db{[db = options.db] -> duckdb::DatabaseInstance& {
         SDB_ASSERT(db);
@@ -108,6 +110,7 @@ class MergeWriter : public util::Noncopyable {
 
  private:
   Directory& _dir;
+  MemoryBudget& _budget;
   TrackedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;

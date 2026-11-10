@@ -266,7 +266,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // keeps.
   void ResetState() noexcept;
 
-  std::optional<duckdb::TempBufferPoolReservation> _budget;
+  duckdb::TempBufferPoolReservation _budget{EmptyBudget()};
   TrackingDirectory _dir;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;

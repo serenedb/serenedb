@@ -261,7 +261,8 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
   auto& db = ctx.Database();
   auto& out = Out();
   auto& bm = db.GetBufferManager();
-  auto* budget = _owner->Budget();
+  auto& budget = _owner->Budget();
+  SDB_ASSERT(&budget.pool == &bm.GetBufferPool());
 
   duckdb::optional_ptr<duckdb::OverflowStringWriter> overflow_writer;
   duckdb::optional_ptr<duckdb::ColumnStreamWriter> stream_writer;
@@ -270,29 +271,26 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     stream_writer = &ctx;
   }
 
-  duckdb::ColumnDataCheckpointData::CreateSegmentFn create_segment;
-  if (budget) {
-    create_segment = [&](const duckdb::CompressionFunction& function,
-                         duckdb::idx_t size,
-                         duckdb::BlockManager& block_manager) {
+  duckdb::ColumnDataCheckpointData::CreateSegmentFn create_segment =
+    [&](const duckdb::CompressionFunction& function, duckdb::idx_t size,
+        duckdb::BlockManager& block_manager) {
       return duckdb::ColumnSegment::CreateTransientSegment(
         db, function, codec_type, size,
-        bm.RegisterTransientMemoryFrom(size, block_manager, *budget));
+        bm.RegisterTransientMemoryFrom(size, block_manager, budget));
     };
-  }
 
   auto capture = [&](duckdb::ColumnSegment& seg, duckdb::idx_t size,
                      const uint8_t* bytes) {
     CaptureSegment(seg, size, bytes, out, sink);
   };
   auto free_segment = [&](duckdb::unique_ptr<duckdb::ColumnSegment> seg) {
-    if (!budget || !seg->GetBlockHandle()) {
+    if (!seg->GetBlockHandle()) {
       return;
     }
     auto charge = TakeMemoryCharge(*seg->GetBlockHandle());
-    SDB_ASSERT(charge.tag == budget->tag);
+    SDB_ASSERT(charge.tag == budget.tag);
     seg.reset();
-    budget->Merge(std::move(charge));
+    budget.Merge(std::move(charge));
   };
   auto capture_from_block = [&](duckdb::ColumnSegment& seg,
                                 duckdb::idx_t size) {

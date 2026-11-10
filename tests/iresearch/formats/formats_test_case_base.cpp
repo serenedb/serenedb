@@ -705,11 +705,13 @@ TEST_P(FormatTestCase, fields_read_write) {
 
   // write fields
   {
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "segment_name",
       .doc_count = 100,
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     // should use sorted terms on write

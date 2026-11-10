@@ -341,6 +341,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   irs::PostingMeta posting_meta;
 
   {
+    auto budget = irs::EmptyBudget();
     const irs::FlushState state{
       .dir = &dir,
       .norms = &irs::SubReader::empty(),
@@ -348,6 +349,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       .scorer = scorer,
       .doc_count = docs.back().first + 1,
       .index_features = features,
+      .budget = budget,
     };
 
     auto out = dir.create("attributes");

@@ -62,8 +62,8 @@ class ColWriter final {
 
   void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
 
-  void SetBudget(MemoryBudget* budget) noexcept { _budget = budget; }
-  MemoryBudget* Budget() const noexcept { return _budget; }
+  void SetBudget(MemoryBudget& budget) noexcept { _budget = &budget; }
+  MemoryBudget& Budget() const noexcept { return *_budget; }
 
   static constexpr size_t kSealBound = 2 * DEFAULT_BLOCK_ALLOC_SIZE;
 
@@ -120,7 +120,8 @@ class ColWriter final {
   duckdb::DatabaseInstance* _db;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  MemoryBudget* _budget = nullptr;
+  duckdb::TempBufferPoolReservation _own_budget{EmptyBudget()};
+  MemoryBudget* _budget = &_own_budget;
   IndexOutput::ptr _out;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;

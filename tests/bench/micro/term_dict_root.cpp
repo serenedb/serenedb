@@ -190,10 +190,12 @@ void Write(Data& data) {
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   data.dir = std::make_unique<irs::MMapDirectory>(path);
+  auto budget = irs::EmptyBudget();
   const irs::FlushState state{
     .dir = data.dir.get(),
     .name = "segment",
     .doc_count = data.keys.size(),
+    .budget = budget,
   };
   irs::IdxWriter idx{*data.dir, "segment"};
   irs::term_dict::FieldWriter writer{false};

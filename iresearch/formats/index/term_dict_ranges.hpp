@@ -37,7 +37,7 @@ class RangeWriter final {
 
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
-  void Begin(PostingsWriter& pw, uint64_t docs, MemoryBudget* budget);
+  void Begin(PostingsWriter& pw, uint64_t docs, MemoryBudget& budget);
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
   void Write(bstring& region, size_t prefix,

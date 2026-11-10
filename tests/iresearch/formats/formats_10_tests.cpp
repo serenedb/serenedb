@@ -63,11 +63,13 @@ class Format10TestCase : public tests::FormatTestCase {
 
     // write postings for field
     {
+      auto budget = irs::EmptyBudget();
       irs::FlushState state{
         .dir = dir.get(),
         .name = "segment_name",
         .doc_count = docs.back().first + 1,
         .index_features = field.index_features,
+        .budget = budget,
       };
 
       auto out = dir->create("attributes");
@@ -255,11 +257,13 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // write postings
   {
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "segment_name",
       .doc_count = 100,
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create("attributes");
@@ -407,11 +411,13 @@ TEST_P(Format10TestCase, postings_read_write) {
 
   // write postings
   {
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "segment_name",
       .doc_count = 150,
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create("attributes");
@@ -548,12 +554,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "0",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -578,12 +586,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "1",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -607,12 +617,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "2",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -636,12 +648,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "3",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -664,12 +678,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "4",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -692,10 +708,12 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "5",
       .doc_count = 10000,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -732,10 +750,12 @@ TEST_P(Format10TestCase, ires336) {
   tests::FormatTestCase::Terms<decltype(terms.begin())> trms(
     terms.begin(), terms.end(), docs.begin(), docs.end());
 
+  auto budget = irs::EmptyBudget();
   irs::FlushState flush_state{
     .dir = dir.get(),
     .name = segment_name,
     .doc_count = 10000,
+    .budget = budget,
   };
 
   irs::FieldMeta field_meta;
@@ -928,11 +948,13 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
       // write postings
       {
+        auto budget = irs::EmptyBudget();
         irs::FlushState state{
           .dir = dir.get(),
           .name = "segment_name",
           .doc_count = docs.back().first + 1,
           .index_features = field.index_features,
+          .budget = budget,
         };
 
         auto out = dir->create("attributes");

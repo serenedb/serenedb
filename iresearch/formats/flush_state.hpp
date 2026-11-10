@@ -44,7 +44,7 @@ struct FlushState {
   ScorerPtr scorer = nullptr;
   const size_t doc_count;
   IndexFeatures index_features{IndexFeatures::None};
-  MemoryBudget* budget = nullptr;
+  MemoryBudget& budget;
 };
 
 }  // namespace irs

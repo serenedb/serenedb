@@ -676,13 +676,12 @@ struct HnswInsertJob {
       _nodes{nodes},
       _sync{workers * graph.M()},
       _slots(workers) {
-    if (auto* budget = graph.Budget()) {
-      const auto share = HnswScratchBound(rows, ef, graph.M0());
-      _shares.reserve(workers);
-      for (size_t i = 0; i < workers; ++i) {
-        _shares.push_back(
-          budget->Split(std::min<uint64_t>(share, budget->size)));
-      }
+    SDB_ASSERT(graph.Budget());
+    auto& budget = *graph.Budget();
+    const auto share = HnswScratchBound(rows, ef, graph.M0());
+    _shares.reserve(workers);
+    for (size_t i = 0; i < workers; ++i) {
+      _shares.push_back(budget.Split(std::min<uint64_t>(share, budget.size)));
     }
   }
 
@@ -749,8 +748,7 @@ struct HnswInsertJob {
   WorkerSlot& Slot(size_t worker) {
     auto& slot = _slots[worker];
     if (!slot) {
-      slot = std::make_unique<WorkerSlot>(
-        _factory.Make(), _shares.empty() ? nullptr : &_shares[worker]);
+      slot = std::make_unique<WorkerSlot>(_factory.Make(), &_shares[worker]);
       slot->scratch.search.visited.Reset(
         _rows, HnswWalkVisits(_ef, _graph.M0()), HnswWalks::Many);
       if (_window.base) {
@@ -1405,7 +1403,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     co_return {};
   }
 
-  _graph.SetBudget(_budget);
+  _graph.SetBudget(*_budget);
   _vectors = TrackedVector<float>{TrackedAllocator<float>{_budget}};
   _norms = TrackedVector<float>{TrackedAllocator<float>{_budget}};
   _tails = TrackedVector<float>{TrackedAllocator<float>{_budget}};

@@ -1509,7 +1509,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
   RefTrackingDirectory dir{_dir};  // Track references for new segment
 
-  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
+  auto budget = EmptyBudget();
+  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options), budget};
   merger.Reset(candidates.begin(), candidates.end());
 
   // We do not persist segment meta since some removals may come later

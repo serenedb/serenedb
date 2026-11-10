@@ -339,7 +339,7 @@ class HnswGraphWriter {
  public:
   HnswGraphWriter() = default;
 
-  void SetBudget(MemoryBudget* budget) noexcept { _budget = budget; }
+  void SetBudget(MemoryBudget& budget) noexcept { _budget = &budget; }
   MemoryBudget* Budget() const noexcept { return _budget; }
 
   void Reset(size_t nodes, uint32_t m);

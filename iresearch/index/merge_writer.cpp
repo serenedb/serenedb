@@ -814,7 +814,8 @@ bool ComputeDocMappingsAndFieldMeta(std::span<MergeWriter::ReaderCtx> readers,
                                     FieldMetaMapT& field_meta_map,
                                     CompoundFieldIterator& fields_itr,
                                     IndexFeatures& index_features,
-                                    const IndexFieldOptions* field_options) {
+                                    const IndexFieldOptions* field_options,
+                                    MemoryBudget& budget) {
   doc_id_t base_id = doc_limits::min();
   for (auto& reader_ctx : readers) {
     SDB_ASSERT(reader_ctx.reader);
@@ -826,6 +827,8 @@ bool ComputeDocMappingsAndFieldMeta(std::span<MergeWriter::ReaderCtx> readers,
                  std::numeric_limits<doc_id_t>::max());
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
+      reader_ctx.remap.id_map =
+        TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{&budget}};
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {
@@ -848,7 +851,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
                    std::vector<MergeSource>& sources,
                    std::unique_ptr<ColWriter>& col_writer,
                    const IndexFieldOptions* field_options,
-                   HnswBases* hnsw_bases) {
+                   HnswBases* hnsw_bases, MemoryBudget& budget) {
   sources.reserve(readers.size());
   for (auto& ctx : readers) {
     sources.push_back(MergeSource{
@@ -858,6 +861,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
     });
   }
   col_writer = std::make_unique<ColWriter>(dir, segment_name, db);
+  col_writer->SetBudget(budget);
   col_writer->SetFieldOptions(field_options);
   col_writer->SetHnswBases(hnsw_bases);
 }
@@ -890,7 +894,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   IndexFeatures index_features{IndexFeatures::None};
   if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
                                       fields_itr, index_features,
-                                      _field_options)) {
+                                      _field_options, _budget)) {
     co_return false;
   }
 
@@ -901,7 +905,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
-                _field_options, _hnsw_bases);
+                _field_options, _hnsw_bases, _budget);
   SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =
@@ -955,6 +959,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     .scorer = _scorer,
     .doc_count = segment.docs_count,
     .index_features = index_features,
+    .budget = _budget,
   };
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,

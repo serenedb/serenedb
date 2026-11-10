@@ -260,10 +260,12 @@ class TermsReader final : public irs::BasicTermReader {
 
 void Write(irs::Directory& dir, const Terms& terms, Ladder ladder,
            uint64_t rows) {
+  auto budget = irs::EmptyBudget();
   const irs::FlushState state{
     .dir = &dir,
     .name = "segment",
     .doc_count = rows,
+    .budget = budget,
   };
   irs::IdxWriter idx{dir, "segment"};
   irs::term_dict::FieldWriter writer{false};

@@ -35,6 +35,7 @@
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <numeric>
@@ -481,11 +482,11 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   constexpr field_id kVec = 1;
   const auto data = MakeRowMajor(d, n);
 
-  duckdb::DuckDB db;
+  auto& db = DuckDBEngine::Instance().instance();
   MemoryDirectory dir;
-  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+  WriteVectorColumn(dir, db, kVec, d, data);
 
-  ColReader r{dir, "seg", *db.instance, irs::IOAdvice::SEQUENTIAL};
+  ColReader r{dir, "seg", db, irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 
@@ -503,11 +504,11 @@ TEST(centroids_builder_test,
   constexpr field_id kVec = 1;
   const auto data = MakeRowMajor(d, n);
 
-  duckdb::DuckDB db;
+  auto& db = DuckDBEngine::Instance().instance();
   MemoryDirectory dir;
-  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+  WriteVectorColumn(dir, db, kVec, d, data);
 
-  ColReader r{dir, "seg", *db.instance, irs::IOAdvice::SEQUENTIAL};
+  ColReader r{dir, "seg", db, irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 

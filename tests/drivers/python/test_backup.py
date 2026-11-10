@@ -454,6 +454,28 @@ def test_backup_under_load_restores_exactly_the_cut(tmp_path: Path) -> None:
             restored.stop()
 
 
+def test_backup_start_does_not_wait_for_a_session_idle_after_its_commit(tmp_path: Path) -> None:
+    source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                     log_path=str(tmp_path / "source.log"))
+    try:
+        source.start()
+        with _connect(source) as idle, _connect(source) as backup:
+            idle.execute("CREATE TABLE idle_writes (x BIGINT)")
+            idle.execute("INSERT INTO idle_writes VALUES (%s)", (1,))
+            start = threading.Thread(
+                target=backup.execute, args=("SELECT pg_backup_start('idle')",))
+            start.start()
+            start.join(timeout=10)
+            waited = start.is_alive()
+            if waited:
+                idle.execute("SELECT 1")
+                start.join()
+            assert not waited, "pg_backup_start waited for a session idle after its commit"
+            backup.execute("SELECT * FROM pg_backup_stop()")
+    finally:
+        source.stop()
+
+
 def _retained_backup(tmp_path: Path) -> Path:
     source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
                      log_path=str(tmp_path / "source.log"))

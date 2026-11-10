@@ -166,6 +166,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
 }
 
 ConnectionContext::~ConnectionContext() {
+  _commit_pass.reset();
   if (!duckdb::Exception::UncaughtException()) {
     try {
       Destroy();
@@ -484,7 +485,6 @@ void ConnectionContext::OnQueryEnd() {
   if (_transaction) {
     _transaction->ResetSearchPins(!IsStableSnapshot());
   }
-  _commit_pass.reset();
 }
 
 void ConnectionContext::OnTransactionPreCommit(duckdb::MetaTransaction& meta) {
@@ -541,6 +541,7 @@ void ConnectionContext::OnTransactionCommit(duckdb::MetaTransaction& meta) {
       SDB_IMMEDIATE_ABORT();
     }
   }
+  _commit_pass.reset();
   if (std::exchange(_query_in_transaction, false)) {
     _progress->xact_commit.fetch_add(1, std::memory_order_relaxed);
   }
@@ -549,6 +550,7 @@ void ConnectionContext::OnTransactionCommit(duckdb::MetaTransaction& meta) {
 }
 
 void ConnectionContext::OnTransactionRollback(duckdb::MetaTransaction&) {
+  _commit_pass.reset();
   if (std::exchange(_query_in_transaction, false)) {
     _progress->xact_rollback.fetch_add(1, std::memory_order_relaxed);
   }

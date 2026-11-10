@@ -306,6 +306,8 @@ class Table final {
   void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Replayed(Lsn lsn);
   void Saw(uint64_t id) noexcept { _replay_top = std::max(_replay_top, id); }
+  ReplayUnit& ReplayEntry(uint64_t id);
+  size_t ReplayPosition(uint64_t id) const noexcept;
   void CountPieces(const TableState& state) noexcept;
 
   irs::Directory& _dir;
@@ -325,6 +327,7 @@ class Table final {
   std::atomic<uint64_t> _piece_bytes{0};
   std::atomic<bool> _full_tier{false};
   absl::flat_hash_map<uint64_t, ReplayUnit> _replay;
+  std::vector<uint64_t> _replay_order;
   Lsn _replay_needed = kNoLsn;
   uint64_t _replay_top = 0;
 };

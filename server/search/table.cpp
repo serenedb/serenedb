@@ -656,17 +656,6 @@ bool Table::Apply(Tick tick, TableCommit&& commit) {
       commit.truncate) {
     _last_write.store(tick, std::memory_order_release);
   }
-  if (commit.piece) {
-    auto unit = std::make_shared<TableUnit>();
-    unit->id = commit.piece->Id();
-    unit->docs = commit.piece->Meta().docs_count;
-    unit->segment.meta.name = commit.piece->Meta().name;
-    unit->deleted = commit.piece->SharedDocsMask();
-    unit->reader = std::move(commit.piece);
-    unit->first_lsn = commit.lsn != 0 ? commit.lsn : kNoLsn;
-    unit->piece = true;
-    units.push_back(std::move(unit));
-  }
   for (auto& segment : commit.segments) {
     auto unit = std::make_shared<TableUnit>();
     unit->id = segment.reader->Id();
@@ -676,6 +665,17 @@ bool Table::Apply(Tick tick, TableCommit&& commit) {
     unit->deleted = segment.reader->SharedDocsMask();
     unit->segment = std::move(segment.segment);
     unit->reader = std::move(segment.reader);
+    units.push_back(std::move(unit));
+  }
+  if (commit.piece) {
+    auto unit = std::make_shared<TableUnit>();
+    unit->id = commit.piece->Id();
+    unit->docs = commit.piece->Meta().docs_count;
+    unit->segment.meta.name = commit.piece->Meta().name;
+    unit->deleted = commit.piece->SharedDocsMask();
+    unit->reader = std::move(commit.piece);
+    unit->first_lsn = commit.lsn != 0 ? commit.lsn : kNoLsn;
+    unit->piece = true;
     units.push_back(std::move(unit));
   }
   for (const auto& removal : commit.removals) {
@@ -747,6 +747,7 @@ std::shared_ptr<const TableState> Table::ReplaceUnits(
   }
   auto moved = next->moved ? std::make_shared<MovedUnits>(*next->moved)
                            : std::make_shared<MovedUnits>();
+  auto at = units.size();
   for (const auto id : replaced) {
     const auto i = IndexOf(units, id);
     if (i == units.size()) {
@@ -761,6 +762,7 @@ std::shared_ptr<const TableState> Table::ReplaceUnits(
     moved->insert_or_assign(
       id, std::make_shared<const MovedUnit>(std::move(source)));
     units.erase(units.begin() + i);
+    at = std::min(at, i);
   }
   next->moved = std::move(moved);
   for (auto& unit : added) {
@@ -773,7 +775,7 @@ std::shared_ptr<const TableState> Table::ReplaceUnits(
       mask.Merge(it->second);
       SetDeletes(*unit, std::move(mask).Finish());
     }
-    units.push_back(std::move(unit));
+    units.insert(units.begin() + at++, std::move(unit));
   }
   LeaveDead(*next, tick);
   Republish(next);
@@ -835,11 +837,24 @@ Lsn Table::NeededFrom() const {
   return needed;
 }
 
+Table::ReplayUnit& Table::ReplayEntry(uint64_t id) {
+  const auto [it, fresh] = _replay.try_emplace(id);
+  if (fresh) {
+    _replay_order.push_back(id);
+  }
+  return it->second;
+}
+
+size_t Table::ReplayPosition(uint64_t id) const noexcept {
+  return static_cast<size_t>(absl::c_find(_replay_order, id) -
+                             _replay_order.begin());
+}
+
 void Table::ReplayRows(uint64_t id, irs::doc_id_t first, irs::doc_id_t count,
                        Lsn lsn) {
   Replayed(lsn);
   Saw(id);
-  auto& unit = _replay[id];
+  auto& unit = ReplayEntry(id);
   SDB_ENSURE(unit.meta_file.empty(), "search log: rows for written segment ",
              id);
   unit.pending = true;
@@ -855,7 +870,7 @@ bool Table::ReplayPending(uint64_t id) const {
 void Table::ReplayPieceRows(
   irs::IndexWriter& writer, uint64_t id, irs::doc_id_t first,
   absl::FunctionRef<void(irs::IndexWriter::Transaction&)> append) {
-  auto& unit = _replay[id];
+  auto& unit = ReplayEntry(id);
   SDB_ASSERT(unit.pending);
   if (!unit.trx) {
     unit.trx.emplace(writer.GetBatch(/*exclusive_segment=*/true));
@@ -870,7 +885,7 @@ void Table::ReplayPieceRows(
 void Table::ReplayAddSegment(const ReplacedSegment& segment, Lsn lsn) {
   Replayed(lsn);
   Saw(segment.id);
-  auto& unit = _replay[segment.id];
+  auto& unit = ReplayEntry(segment.id);
   unit.meta_file = segment.meta_file;
   unit.docs = segment.docs;
 }
@@ -879,7 +894,7 @@ void Table::ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn) {
   Replayed(lsn);
   for (const auto& group : removal.groups) {
     Saw(group.segment);
-    _replay[group.segment].removed.Merge(group.docs);
+    ReplayEntry(group.segment).removed.Merge(group.docs);
   }
 }
 
@@ -887,6 +902,8 @@ void Table::ReplayTruncate(Lsn lsn) {
   Replayed(lsn);
   absl::erase_if(_replay,
                  [](const auto& entry) { return !entry.second.pending; });
+  std::erase_if(_replay_order,
+                [&](uint64_t id) { return !_replay.contains(id); });
   for (auto& [id, unit] : _replay) {
     if (unit.docs != 0) {
       unit.removed.AddRange(
@@ -913,13 +930,22 @@ void Table::ReplayReplace(std::span<const uint64_t> replaced,
       irs::MapDocs(map, docs, carried[map.target]);
     }
   }
+  auto at = _replay_order.size();
   for (const auto id : replaced) {
     Saw(id);
+    if (const auto i = ReplayPosition(id); i != _replay_order.size()) {
+      _replay_order.erase(_replay_order.begin() + i);
+      at = std::min(at, i);
+    }
     _replay.erase(id);
   }
   for (const auto& segment : segments) {
     Saw(segment.id);
-    auto& unit = _replay[segment.id];
+    const auto [entry, fresh] = _replay.try_emplace(segment.id);
+    if (fresh) {
+      _replay_order.insert(_replay_order.begin() + at++, segment.id);
+    }
+    auto& unit = entry->second;
     unit.meta_file = segment.meta_file;
     unit.docs = segment.docs;
     if (const auto it = carried.find(segment.id); it != carried.end()) {
@@ -935,8 +961,13 @@ void Table::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
   ReplayUnit merged;
   merged.pending = true;
   irs::doc_id_t offset = 0;
+  auto at = _replay_order.size();
   for (const auto id : sources) {
     Saw(id);
+    if (const auto i = ReplayPosition(id); i != _replay_order.size()) {
+      _replay_order.erase(_replay_order.begin() + i);
+      at = std::min(at, i);
+    }
     const auto it = _replay.find(id);
     SDB_ENSURE(it != _replay.end() && it->second.pending,
                "search log: merged piece ", id, " has no rows");
@@ -954,13 +985,17 @@ void Table::ReplayMerge(uint64_t target, std::span<const uint64_t> sources,
     _replay.erase(it);
   }
   merged.docs = offset;
-  _replay.insert_or_assign(target, std::move(merged));
+  if (_replay.insert_or_assign(target, std::move(merged)).second) {
+    _replay_order.insert(_replay_order.begin() + at, target);
+  }
 }
 
 void Table::ReplayState(std::span<const StateUnit> units, Lsn lsn) {
   _replay_needed = lsn;
   absl::erase_if(_replay,
                  [](const auto& entry) { return !entry.second.pending; });
+  std::vector<uint64_t> order;
+  order.reserve(units.size() + _replay.size());
   for (const auto& state : units) {
     Saw(state.segment.id);
     auto& unit = _replay[state.segment.id];
@@ -970,7 +1005,15 @@ void Table::ReplayState(std::span<const StateUnit> units, Lsn lsn) {
     if (state.deleted) {
       unit.removed.Merge(*state.deleted);
     }
+    order.push_back(state.segment.id);
   }
+  for (const auto id : _replay_order) {
+    if (const auto it = _replay.find(id);
+        it != _replay.end() && it->second.pending) {
+      order.push_back(id);
+    }
+  }
+  _replay_order = std::move(order);
 }
 
 bool Table::FinishReplay() {
@@ -978,7 +1021,9 @@ bool Table::FinishReplay() {
   _needed = std::exchange(_replay_needed, kNoLsn);
   const bool replayed_records = _needed != kNoLsn;
   auto next = std::make_shared<TableState>(*Head().state);
-  for (auto& [id, replayed] : _replay) {
+  SDB_ASSERT(_replay_order.size() == _replay.size());
+  for (const auto id : _replay_order) {
+    auto& replayed = _replay.find(id)->second;
     auto unit = std::make_shared<TableUnit>();
     unit->id = id;
     SDB_ENSURE(!replayed.pending || replayed.trx,
@@ -1019,6 +1064,7 @@ bool Table::FinishReplay() {
     }
   }
   _replay.clear();
+  _replay_order.clear();
   Republish(std::move(next));
   return replayed_records;
 }

@@ -47,11 +47,15 @@ n
 0
 
 connection writer
-statement error
+statement async error connection closed
 INSERT INTO tai VALUES (4, 'd');
-----
-db error: ERROR: Attempting to write to table tai but another transaction is truncating it
 
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM tai;
+----
+n
+1
 
 connection default
 statement ok
@@ -72,11 +76,11 @@ query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT count(*) AS n FROM tai;
 ----
 n
-0
+1
 
 connection after_crash
 statement ok
-INSERT INTO tai VALUES (4, 'd');
+INSERT INTO tai VALUES (5, 'e');
 
 connection after_crash
 statement ok
@@ -87,4 +91,4 @@ query
 SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tai;
 ----
 ids
-4
+4,5

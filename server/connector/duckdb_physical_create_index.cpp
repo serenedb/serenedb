@@ -355,7 +355,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto& writes = ConnectionContext::Get(context).Transaction().SearchTxn();
   writes.RegisterIndex(storage, *created);
   if (extras && extras->Pass() == ReindexPass::Rebuild) {
-    writes.TruncateIndex(storage);
+    writes.AddSearchTruncate(context, storage);
   }
   if (extras) {
     auto removed = ResolveRemoves(writes.PinnedReader(context, *storage),

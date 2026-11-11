@@ -39,19 +39,11 @@ class WriterGenerations final {
       generations->Leave(slot);
     }
   };
-  struct Releaser {
-    void operator()(WriterGenerations* generations) const noexcept {
-      SDB_ASSERT(generations);
-      generations->ReleaseTruncate();
-    }
-  };
 
  public:
   using Writer = std::unique_ptr<WriterGenerations, Leaver>;
-  using Truncate = std::unique_ptr<WriterGenerations, Releaser>;
 
   [[nodiscard]] Writer Register() noexcept;
-  [[nodiscard]] Truncate ClaimTruncate() noexcept;
   bool SoleWriter() const noexcept {
     const auto state = _state.load(std::memory_order_acquire);
     return Writers(state, 0) + Writers(state, 1) == 1;
@@ -60,8 +52,7 @@ class WriterGenerations final {
 
  private:
   static constexpr uint64_t kGeneration = 1;
-  static constexpr uint64_t kTruncating = 2;
-  static constexpr unsigned kFlagBits = std::bit_width(kTruncating);
+  static constexpr unsigned kFlagBits = std::bit_width(kGeneration);
   static constexpr unsigned kWriterBits = 30;
 
   static constexpr uint64_t One(unsigned slot) noexcept {
@@ -73,7 +64,6 @@ class WriterGenerations final {
   }
 
   void Leave(unsigned slot) noexcept;
-  void ReleaseTruncate() noexcept;
 
   std::atomic<uint64_t> _state{0};
 };

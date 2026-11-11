@@ -44,7 +44,7 @@ duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   auto& session = catalog::SessionOf(context.client, _table.catalog);
   auto& search_txn = session.SearchTxn();
   search_txn.RegisterWriter(_table.Storage(), _table);
-  search_txn.AddSearchTruncate(_table.Storage(), _table, session.Snapshot());
+  search_txn.AddSearchTruncate(context.client, _table.Storage());
   return duckdb::SourceResultType::FINISHED;
 }
 

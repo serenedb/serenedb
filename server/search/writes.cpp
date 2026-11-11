@@ -51,10 +51,7 @@
 namespace sdb::search {
 namespace {
 
-void ReleaseWriter(StoreWrites& w) noexcept {
-  w.truncate_claim.reset();
-  w.registration.reset();
-}
+void ReleaseWriter(StoreWrites& w) noexcept { w.registration.reset(); }
 
 [[noreturn]] void ThrowDuplicate(duckdb::ClientContext& context,
                                  const KeySpec& spec, std::string_view key) {
@@ -397,10 +394,6 @@ void ForEachLiveChunk(duckdb::ColumnDataCollection& rows,
   }
 }
 
-std::string_view ClaimActivity(Store::Exclusive kind) {
-  return kind == Store::Exclusive::Drop ? "is dropping" : "is truncating";
-}
-
 bool Logged(const StoreWrites& w) {
   return w.owner->ParentCatalog().Cast<catalog::BaseCatalog>().Durable();
 }
@@ -411,8 +404,7 @@ OwnWrites OwnOf(const StoreWrites& w) {
           .row_columns = w.changes.column_ids,
           .segments = w.own_segments,
           .removals = w.changes.removals,
-          .patches = w.changes.patches,
-          .truncated = w.changes.truncate};
+          .patches = w.changes.patches};
 }
 
 void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
@@ -528,13 +520,10 @@ void Writes::RegisterWriter(const std::shared_ptr<Store>& store,
     refuse("dropped");
   }
   if (!w.dropping && store->ExclusiveClaim() == Store::Exclusive::Drop) {
-    refuse(ClaimActivity(Store::Exclusive::Drop));
+    refuse("is dropping");
   }
   if (!w.registration) {
     w.registration = store->RegisterWriter();
-    if (!w.registration) {
-      refuse(ClaimActivity(store->ExclusiveClaim()));
-    }
   }
 }
 
@@ -830,41 +819,29 @@ void Writes::CheckPatches(const Store& store) const {
   }
 }
 
-void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
-                               const catalog::SearchTableEntry& table,
-                               Tick snapshot) {
-  const auto conflict = [&](bool writing) {
-    if (writing) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
-        ERR_MSG("Attempting to truncate table ",
-                duckdb::SQLQuotedIdentifier::ToString(table.name),
-                " but another transaction is writing to this table"));
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
-      ERR_MSG("Attempting to truncate table ",
-              duckdb::SQLQuotedIdentifier::ToString(table.name),
-              " but another transaction has added rows to this table"));
-  };
+void Writes::AddSearchTruncate(duckdb::ClientContext& context,
+                               const std::shared_ptr<Store>& store) {
   auto& w = EnsureStoreWrites(store);
-  absl::MutexLock lock{&w.mutex};
-  if (!w.truncate_claim) {
-    w.truncate_claim = store->ClaimTruncate();
-    if (!w.truncate_claim) {
-      conflict(true);
-    }
-    if (store->GetTable().LastAppend() > snapshot) {
-      w.truncate_claim.reset();
-      conflict(false);
+  const auto& visible = EnsurePin(context, w).state->reader;
+  irs::DocRemovalBuilder all;
+  for (uint32_t i = 0; i < visible.size(); ++i) {
+    const auto& segment = visible[i];
+    auto& docs = all.Group(i);
+    docs.AddRange(irs::doc_limits::min(),
+                  static_cast<irs::doc_id_t>(irs::doc_limits::min() +
+                                             segment.docs_count()));
+    if (const auto* deleted = segment.docs_mask()) {
+      docs.Subtract(*deleted);
     }
   }
+  auto removal = std::move(all).Finish(visible);
+  absl::MutexLock lock{&w.mutex};
   w.transactions.clear();
   w.own_segments.clear();
   w.own_maps.clear();
   w.checked_segments = 0;
   ++w.rows_generation;
-  w.changes.AppendTruncate(false);
+  w.changes.AppendTruncate(std::move(removal));
   ++w.revision;
 }
 
@@ -881,17 +858,6 @@ void Writes::RegisterIndex(const std::shared_ptr<Store>& store,
   auto& w = EnsureStoreWrites(store);
   absl::MutexLock lock{&w.mutex};
   w.owner = &index;
-}
-
-void Writes::TruncateIndex(const std::shared_ptr<Store>& store) {
-  auto& w = EnsureStoreWrites(store);
-  absl::MutexLock lock{&w.mutex};
-  w.transactions.clear();
-  w.own_segments.clear();
-  w.own_maps.clear();
-  ++w.rows_generation;
-  w.changes.AppendTruncate(false);
-  ++w.revision;
 }
 
 void Writes::SetManifest(const std::shared_ptr<Store>& store,
@@ -1000,9 +966,7 @@ class TableRows {
 
   KeyProbe Probe(irs::field_id field) const {
     KeyProbe probe{field};
-    if (!_own || !_own->changes.truncate) {
-      probe.AddLive(_live);
-    }
+    probe.AddLive(_live);
     if (_own) {
       AddOwnRows(probe, *_own, _live);
     }
@@ -1173,9 +1137,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
       continue;
     }
     KeyProbe existing{key_spec.key.field};
-    if (!w.changes.truncate) {
-      existing.AddLive(live);
-    }
+    existing.AddLive(live);
     for (size_t i = 0; i < w.checked_segments; ++i) {
       existing.Add(OwnSegmentSource(w.own_segments[i], live));
     }
@@ -1276,8 +1238,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
     return;
   }
   LiveUnits now{w.store->GetTable().State(), w.changes.removals};
-  if (HasUniqueKeys(w) && !w.changes.truncate &&
-      (!w.own_segments.empty() || w.piece)) {
+  if (HasUniqueKeys(w) && (!w.own_segments.empty() || w.piece)) {
     std::vector<KeyProbe::Segment> segments;
     segments.reserve(w.own_segments.size() + 1);
     for (const auto& segment : w.own_segments) {
@@ -1520,8 +1481,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
                            .segments = std::move(w.own_segments),
                            .removals = std::move(w.changes.removals),
                            .patches = std::move(w.changes.patches),
-                           .manifest = std::move(w.manifest),
-                           .truncate = w.changes.truncate};
+                           .manifest = std::move(w.manifest)};
     if (Logged(w)) {
       sections.push_back({.owner = w.owner,
                           .delta = w.store->GetTable().CommitDelta(

@@ -206,12 +206,11 @@ struct OwnWrites {
   std::span<const OwnSegment> segments;
   std::span<const std::shared_ptr<const irs::DocRemoval>> removals;
   std::span<const UnitPatch> patches;
-  bool truncated = false;
 };
 
 inline bool HasOwn(const OwnWrites& own) noexcept {
   return !own.removals.empty() || !own.segments.empty() ||
-         !own.patches.empty() || own.truncated ||
+         !own.patches.empty() ||
          (own.rows != nullptr && own.rows->Count() != 0);
 }
 
@@ -221,7 +220,6 @@ struct TableCommit {
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
   std::vector<UnitPatch> patches;
   std::shared_ptr<const FileManifest> manifest;
-  bool truncate = false;
 };
 
 // The units of a table's latest applied state, each with the rows it holds,
@@ -308,9 +306,6 @@ class Table final {
   std::vector<UnitPatch> Resolve(std::vector<UnitPatch>&& patches) const;
   void CheckConflicts(const irs::DocRemoval& removal, Tick snapshot) const;
   void CheckConflicts(std::span<const UnitPatch> patches, Tick snapshot) const;
-  Tick LastAppend() const noexcept {
-    return _last_append.load(std::memory_order_acquire);
-  }
   Tick LastWrite() const noexcept {
     return _last_write.load(std::memory_order_acquire);
   }
@@ -382,7 +377,6 @@ class Table final {
   std::shared_ptr<const catalog::InvertedIndexConfig> _config
     ABSL_GUARDED_BY(_state_mutex);
   VersionChain<TableState> _versions;
-  std::atomic<Tick> _last_append{0};
   std::atomic<Tick> _last_write{0};
   std::atomic<Tick> _last_rewrite{0};
   mutable absl::Mutex _commit_mutex;

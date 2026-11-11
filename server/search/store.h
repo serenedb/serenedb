@@ -305,9 +305,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   [[nodiscard]] WriterGenerations::Writer RegisterWriter() noexcept {
     return _writers.Register();
   }
-  [[nodiscard]] WriterGenerations::Truncate ClaimTruncate() noexcept {
-    return _writers.ClaimTruncate();
-  }
   bool SoleWriter() const noexcept { return _writers.SoleWriter(); }
   void DrainPriorWriters(duckdb::ClientContext& context);
 

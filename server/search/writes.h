@@ -56,7 +56,6 @@ struct StoreWrites {
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   LocalTableChangesEntry changes;
   WriterGenerations::Writer registration;
-  WriterGenerations::Truncate truncate_claim;
   std::vector<OwnSegment> own_segments;
   std::vector<irs::DocMap> own_maps;
   uint64_t rows_generation = 0;
@@ -167,12 +166,11 @@ class Writes {
                   std::vector<UnitPatch>&& patches);
   void CheckPatches(const Store& store) const;
 
-  void AddSearchTruncate(const std::shared_ptr<Store>& store,
-                         const catalog::SearchTableEntry& table, Tick snapshot);
+  void AddSearchTruncate(duckdb::ClientContext& context,
+                         const std::shared_ptr<Store>& store);
 
   void RegisterIndex(const std::shared_ptr<Store>& store,
                      const duckdb::CatalogEntry& index);
-  void TruncateIndex(const std::shared_ptr<Store>& store);
   void SetManifest(const std::shared_ptr<Store>& store,
                    std::shared_ptr<const FileManifest> manifest);
 

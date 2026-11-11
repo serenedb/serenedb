@@ -30,25 +30,9 @@ auto WriterGenerations::Register() noexcept -> Writer {
   auto state = _state.load(std::memory_order_relaxed);
   unsigned slot = 0;
   do {
-    if (state & kTruncating) {
-      return {};
-    }
     slot = static_cast<unsigned>(state & kGeneration);
   } while (!_state.compare_exchange_weak(state, state + One(slot)));
   return Writer{this, Leaver{slot}};
-}
-
-auto WriterGenerations::ClaimTruncate() noexcept -> Truncate {
-  auto state = _state.load(std::memory_order_relaxed);
-  do {
-    const auto writers = Writers(state, 0) + Writers(state, 1);
-    SDB_ASSERT(writers > 0);
-    if (writers != 1) {
-      return {};
-    }
-    SDB_ASSERT(!(state & kTruncating));
-  } while (!_state.compare_exchange_weak(state, state | kTruncating));
-  return Truncate{this};
 }
 
 void WriterGenerations::Drain(duckdb::ClientContext& context,
@@ -71,11 +55,6 @@ void WriterGenerations::Leave(unsigned slot) noexcept {
   if (slot != (previous & kGeneration) && Writers(previous, slot) <= 2) {
     duckdb::ClientContext::Notify();
   }
-}
-
-void WriterGenerations::ReleaseTruncate() noexcept {
-  [[maybe_unused]] const auto previous = _state.fetch_and(~kTruncating);
-  SDB_ASSERT(previous & kTruncating);
 }
 
 }  // namespace sdb::search

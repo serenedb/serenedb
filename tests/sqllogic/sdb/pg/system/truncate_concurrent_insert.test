@@ -21,15 +21,21 @@ INSERT INTO tci (v) VALUES (3)
 
 
 connection s2
-statement error
+statement ok
 TRUNCATE tci
-----
-db error: ERROR: Attempting to truncate table "tci" but another transaction is writing to this table
 
 
 connection s1
 statement ok
 COMMIT
+
+
+connection s2
+query
+SELECT v FROM tci ORDER BY v
+----
+v
+3
 
 
 connection s2
@@ -56,20 +62,13 @@ TRUNCATE tcp
 
 
 connection s2
-statement error
+statement ok
 INSERT INTO tcp VALUES (1, 5)
-----
-db error: ERROR: Attempting to write to table tcp but another transaction is truncating it
 
 
 connection s1
 statement ok
 COMMIT
-
-
-connection s2
-statement ok
-INSERT INTO tcp VALUES (1, 5)
 
 
 connection s2
@@ -99,15 +98,21 @@ INSERT INTO tcp VALUES (2, 6)
 
 
 connection s1
-statement error
+statement ok
 TRUNCATE tcp
-----
-db error: ERROR: Attempting to truncate table "tcp" but another transaction has added rows to this table
 
 
 connection s1
 statement ok
-ROLLBACK
+COMMIT
+
+
+connection s2
+query
+SELECT id, v FROM tcp
+----
+id	v
+2	6
 
 
 connection s2
@@ -126,10 +131,8 @@ INSERT INTO tci (v) VALUES (6)
 
 
 connection s2
-statement error
+statement ok
 TRUNCATE tci RESTART IDENTITY
-----
-db error: ERROR: Attempting to truncate table "tci" but another transaction is writing to this table
 
 
 connection s1
@@ -139,20 +142,16 @@ COMMIT
 
 connection s2
 statement ok
-TRUNCATE tci RESTART IDENTITY
-
-
-connection s2
-statement ok
 INSERT INTO tci (v) VALUES (7)
 
 
 connection s2
 query
-SELECT id, v FROM tci
+SELECT id, v FROM tci ORDER BY id
 ----
 id	v
 1	7
+6	6
 
 
 statement ok
@@ -186,10 +185,8 @@ INSERT INTO tcs VALUES (3, 'c')
 
 
 connection s2
-statement error
+statement ok
 TRUNCATE tcs
-----
-db error: ERROR: Attempting to truncate table "tcs" but another transaction is writing to this table
 
 
 connection s1
@@ -197,15 +194,11 @@ statement ok
 COMMIT
 
 
-connection s2
-statement ok
-TRUNCATE tcs
-
-
 query
 SELECT id, v FROM tcs ORDER BY id
 ----
 id	v
+3	c
 
 
 connection s1
@@ -219,10 +212,8 @@ TRUNCATE tcs
 
 
 connection s2
-statement error
+statement ok
 INSERT INTO tcs VALUES (4, 'd')
-----
-db error: ERROR: Attempting to write to table tcs but another transaction is truncating it
 
 
 connection s1
@@ -233,11 +224,6 @@ INSERT INTO tcs VALUES (5, 'e')
 connection s1
 statement ok
 COMMIT
-
-
-connection s2
-statement ok
-INSERT INTO tcs VALUES (4, 'd')
 
 
 query
@@ -259,10 +245,8 @@ DELETE FROM tcn
 
 
 connection s2
-statement error
+statement ok
 TRUNCATE tcn
-----
-db error: ERROR: Attempting to truncate table "tcn" but another transaction is writing to this table
 
 
 connection s1

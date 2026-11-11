@@ -70,7 +70,6 @@ struct LocalTableChangesEntry {
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
   std::vector<UnitPatch> patches;
   bool truncate = false;
-  bool clears_shard = false;
 
   void AppendInsertRows(std::unique_ptr<duckdb::ColumnDataCollection> rows,
                         std::span<const connector::ColumnId> cols,
@@ -84,17 +83,14 @@ struct LocalTableChangesEntry {
     }
   }
 
-  // A truncate removes every row, including the ones this transaction has just
-  // written, so everything buffered before it is dead and is dropped here. The
-  // record writes the truncate before anything else -- which is what stops a
-  // segment ever preceding one, since replay adopts a segment whole and could
-  // not mask the part the truncate should have taken.
-  void AppendTruncate(bool clears) {
+  void AppendTruncate(std::shared_ptr<const irs::DocRemoval> visible) {
     collection.reset();
     removals.clear();
     patches.clear();
+    if (!visible->groups.empty()) {
+      removals.push_back(std::move(visible));
+    }
     truncate = true;
-    clears_shard = clears;
   }
 
   bool HasBufferedRows() const noexcept {
@@ -111,12 +107,6 @@ struct LocalTableChangesEntry {
   // Drops the buffered rows once a flush has taken ownership of them. The
   // removals stay: the record has to carry them to commit.
   void ClearBufferedRows() { collection.reset(); }
-
-  bool ClearsShard() const noexcept {
-    SDB_ASSERT(!clears_shard || removals.empty(),
-               "a clearing TRUNCATE must be the only op in its transaction");
-    return clears_shard;
-  }
 
   bool Empty() const noexcept {
     return collection == nullptr && removals.empty() && patches.empty() &&

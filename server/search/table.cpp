@@ -119,16 +119,6 @@ void AddDeletes(TableUnit& unit, const irs::DocumentMask& docs) {
                                 : irs::DocumentMaskBuilder{docs}.Finish());
 }
 
-void DeleteAll(TableUnit& unit) {
-  if (unit.docs == 0) {
-    return;
-  }
-  irs::DocumentMaskBuilder mask;
-  mask.AddRange(irs::doc_limits::min(),
-                static_cast<irs::doc_id_t>(irs::doc_limits::min() + unit.docs));
-  SetDeletes(unit, std::move(mask).Finish());
-}
-
 bool Dead(const TableUnit& unit) noexcept {
   return unit.deleted && unit.deleted->Count() >= unit.docs;
 }
@@ -769,7 +759,7 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       return patched_reader;
     };
   for (const auto& unit : state.units) {
-    if (own.truncated || (scope == Scope::Cold && unit->piece)) {
+    if (scope == Scope::Cold && unit->piece) {
       continue;
     }
     add(with_patches(unit->id, unit->patches,
@@ -793,7 +783,7 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
   if (scope == Scope::Cold) {
     return {_dir, _options, std::move(readers), /*stats=*/false};
   }
-  if (own.truncated || state.units.empty()) {
+  if (state.units.empty()) {
     return {_dir, _options, std::move(readers), /*stats=*/true};
   }
   return {state.reader, std::move(readers), added, patched};
@@ -965,14 +955,6 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
   absl::MutexLock lock{&_state_mutex};
   const auto& state = *Head().state;
   TableDelta delta;
-  if (commit.truncate) {
-    for (const auto& unit : state.units) {
-      if (!unit->piece) {
-        delta.drop.push_back(unit->id);
-      }
-    }
-    delta.drop_memory = state.memory_end;
-  }
   Mapped removed;
   for (const auto& removal : commit.removals) {
     for (const auto& group : removal->groups) {
@@ -1066,19 +1048,11 @@ bool Table::Apply(Tick tick, TableCommit&& commit) {
     change(*unit);
     units[i] = std::move(unit);
   };
-  if (commit.truncate) {
-    for (size_t i = 0; i < units.size(); ++i) {
-      rewrite(i, [](TableUnit& unit) { DeleteAll(unit); });
-    }
-  }
   if (commit.manifest) {
     next->manifest = std::move(commit.manifest);
   }
-  if (commit.piece || !commit.segments.empty()) {
-    _last_append.store(tick, std::memory_order_release);
-  }
   if (commit.piece || !commit.segments.empty() || !commit.removals.empty() ||
-      !commit.patches.empty() || commit.truncate) {
+      !commit.patches.empty()) {
     _last_write.store(tick, std::memory_order_release);
   }
   if (commit.piece) {

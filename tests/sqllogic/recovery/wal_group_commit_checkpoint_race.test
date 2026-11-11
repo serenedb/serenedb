@@ -28,6 +28,9 @@ statement ok
 SET GLOBAL checkpoint_threshold = '256KB';
 
 statement ok
+SET GLOBAL max_wal_size = '256KB';
+
+statement ok
 CREATE TABLE wgc_t(id BIGINT, body TEXT);
 
 # Each writer/round owns a disjoint id range so the final count is exact: a lost
@@ -379,6 +382,9 @@ count
 
 statement ok
 SET GLOBAL checkpoint_threshold = '16MB';
+
+statement ok
+RESET GLOBAL max_wal_size;
 
 statement ok
 DROP TABLE wgc_t;

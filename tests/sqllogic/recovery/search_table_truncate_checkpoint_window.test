@@ -56,6 +56,10 @@ connection default
 statement ok
 SET GLOBAL checkpoint_threshold = '1KB';
 
+connection default
+statement ok
+SET GLOBAL max_wal_size = '1KB';
+
 connection writer
 statement ok
 INSERT INTO tcw_rows SELECT i, repeat('x', 100) FROM range(100) t(i);
@@ -96,6 +100,10 @@ search_rows	duck_rows
 connection after_crash
 statement ok
 SET GLOBAL checkpoint_threshold = '16MB';
+
+connection after_crash
+statement ok
+RESET GLOBAL max_wal_size;
 
 connection after_crash
 statement ok

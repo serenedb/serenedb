@@ -301,7 +301,7 @@ void InitCatalog(bool default_database) {
       [&](const Log::Range& range, std::span<uint8_t> payload) {
         transactions.SetReplaying(range.end);
         context.RunFunctionInTransaction(
-          [&] { ReplayRecord(context, target, range, payload); });
+          [&] { ReplayRecord(context, target, payload); });
       });
     transactions.SetReplaying(0);
     transactions.Open(std::move(log));

@@ -1,10 +1,7 @@
 control substitution on
 
-statement ok
-RESET sdb_faults;
-
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SET GLOBAL checkpoint_threshold = '1GB';
+RESET sdb_faults;
 
 statement ok
 CREATE TABLE wos (id BIGINT, v TEXT) WITH (compaction_interval = 0);
@@ -66,14 +63,10 @@ wait
 
 connection default
 query
-SELECT count(*) >= 2 AS switched FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT count(*) AS files FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
 ----
-switched
-t
-
-connection default
-statement ok
-CREATE TEMP TABLE wos_chunks AS SELECT min(file) AS oldest FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+files
+1
 
 connection default
 statement ok
@@ -81,7 +74,7 @@ VACUUM (FLUSH_TABLE) wos;
 
 connection default
 statement ok
-SET GLOBAL checkpoint_threshold = '1B';
+CHECKPOINT;
 
 connection default
 statement ok
@@ -90,17 +83,6 @@ CREATE TABLE wos_tail (id INT);
 connection default
 statement ok
 INSERT INTO wos_tail VALUES (1);
-
-connection default
-query ok retry 40 backoff 250ms
-SELECT count(*) AS oldest_left FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log') WHERE file = (SELECT oldest FROM wos_chunks);
-----
-oldest_left
-0
-
-connection default
-statement ok
-RESET GLOBAL checkpoint_threshold;
 
 connection default
 statement ok

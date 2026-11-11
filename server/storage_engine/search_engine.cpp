@@ -36,6 +36,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/transaction.h"
 #include "scheduler/background_scheduler.h"
 #include "search/store.h"
 #include "search/task.h"
@@ -91,6 +92,7 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
 void SearchEngine::start() {
   _loops.Consume(MaintenanceLoop(_loops));
   StartSearchStorageTasks();
+  catalog::Transactions::Get().SettleLog();
 }
 
 void SearchEngine::stop() {

@@ -1370,7 +1370,9 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
     for (const auto& removal : w.changes.removals) {
       w.store->GetTable().CheckConflicts(*removal, Snapshot());
     }
-    w.store->GetTable().CheckConflicts(w.changes.patches, Snapshot());
+    if (!w.changes.patches.empty()) {
+      w.store->GetTable().CheckConflicts(w.changes.patches, Snapshot());
+    }
   }
   for (auto& [store_id, w] : _writes) {
     auto& changes = w.changes;
@@ -1513,7 +1515,7 @@ std::vector<absl::Mutex*> Writes::CommitMutexes(
   return mutexes;
 }
 
-void Writes::Apply(Tick tick, Lsn lsn,
+void Writes::Apply(Tick tick,
                    std::span<const std::shared_ptr<Store>> layouts) noexcept {
   for (const auto& store : layouts) {
     store->CommitLayout(_session);
@@ -1534,8 +1536,7 @@ void Writes::Apply(Tick tick, Lsn lsn,
                                     .segments = std::move(w.own_segments),
                                     .removals = std::move(w.changes.removals),
                                     .patches = std::move(w.changes.patches),
-                                    .truncate = w.changes.truncate,
-                                    .lsn = lsn})) {
+                                    .truncate = w.changes.truncate})) {
           QueueReleaseCleanup(w.store, tick);
         }
       } catch (const std::exception& e) {

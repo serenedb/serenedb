@@ -24,14 +24,27 @@
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <memory>
 #include <span>
+#include <vector>
+
+#include "search/store.h"
+#include "search/table.h"
 
 namespace sdb::search {
+
+struct TableSnapshot {
+  std::shared_ptr<Store> store;
+  std::shared_ptr<const TableState> state;
+};
 
 void RecoverSearchStorages(
   duckdb::ClientContext& context,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);
 void StartSearchStorageTasks();
-void CoverLog(uint64_t target);
+void PrepareSnapshot(uint64_t budget);
+std::vector<TableSnapshot> CaptureSnapshot();
+std::vector<std::vector<uint8_t>> SnapshotRecords(
+  std::span<const TableSnapshot> tables);
 
 }  // namespace sdb::search

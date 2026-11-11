@@ -60,7 +60,7 @@ using ReplayTarget = absl::FunctionRef<BaseCatalog*(duckdb::idx_t)>;
 BaseCatalog* InstanceCatalog(duckdb::ClientContext& context, duckdb::idx_t id);
 
 void ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
-                  const Log::Range& range, std::span<uint8_t> payload);
+                  std::span<uint8_t> payload);
 
 void ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
                        std::span<uint8_t> catalog);

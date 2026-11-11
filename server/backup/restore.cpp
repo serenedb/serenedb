@@ -177,7 +177,7 @@ void Restore(const catalog::DataDirectory& layout,
     }
     ForEachFile(link,
                 [&](const std::filesystem::path& path, std::string_view name) {
-                  if (name != catalog::Log::kHistoryFile &&
+                  if (name != catalog::Log::kSnapshotFile &&
                       !catalog::Log::ChunkBegin(name)) {
                     return;
                   }
@@ -197,7 +197,7 @@ void Restore(const catalog::DataDirectory& layout,
                   chunks.emplace(*begin, path);
                 }
               });
-  if (const auto from = catalog::Log::HistoryCut(log);
+  if (const auto from = catalog::Log::SnapshotCut(log);
       from && *from < cut.log_size &&
       (chunks.empty() || chunks.begin()->first > *from)) {
     Fail("the copy is incomplete:", log,

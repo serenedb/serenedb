@@ -229,15 +229,23 @@ class Transactions final {
   void Commit(SessionTransaction& transaction, duckdb::ClientContext& context);
   void CommitStorage(absl::Mutex& table,
                      absl::FunctionRef<std::vector<uint8_t>()> build,
-                     absl::FunctionRef<void(duckdb::transaction_t, Lsn)> apply);
-  void CommitState(absl::Mutex& table,
-                   absl::FunctionRef<std::vector<uint8_t>()> build,
-                   absl::FunctionRef<void(Lsn)> logged);
+                     absl::FunctionRef<void(duckdb::transaction_t)> apply);
   void AwaitPublished(duckdb::transaction_t commit) const;
 
-  absl::Status TruncateLog(
-    bool switch_chunk,
-    duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT);
+  enum class LogCycle : uint8_t {
+    Budget,
+    Settle,
+    Checkpoint,
+  };
+
+  static constexpr uint64_t kDefaultMaxLogBytes = 1'000'000'000;
+
+  void SetMaxLogBytes(uint64_t bytes) noexcept {
+    _max_log_bytes.store(bytes, std::memory_order_relaxed);
+  }
+
+  absl::Status TruncateLog(LogCycle cycle, duckdb::CheckpointAbort abort =
+                                             duckdb::CheckpointAbort::NO_ABORT);
   void SettleLog();
   [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
     duckdb::ClientContext& context) {
@@ -299,8 +307,8 @@ class Transactions final {
 
   Lsn ReservedEnd() const;
   void Publish(duckdb::transaction_t commit, bool catalog, bool wait);
-  void MaintainLog(duckdb::ClientContext& context, Lsn end);
-  void TruncateInBackground(bool switch_chunk);
+  void MaintainLog(Lsn end);
+  void TruncateInBackground(LogCycle cycle);
 
   static constexpr int64_t kMinDeadSlots = 64;
 
@@ -339,6 +347,7 @@ class Transactions final {
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
   std::unique_ptr<Log> _log;
   Lsn _replaying = 0;
+  std::atomic<uint64_t> _max_log_bytes{kDefaultMaxLogBytes};
   std::atomic<bool> _truncating{false};
   std::atomic<bool> _preparing_spare{false};
   absl::Mutex _truncate_mutex;

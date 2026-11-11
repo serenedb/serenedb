@@ -72,7 +72,6 @@ struct TableUnit {
   irs::doc_id_t docs = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
   std::vector<irs::FieldPatch> patches;
-  Lsn first_lsn = kNoLsn;
   bool piece = false;
 };
 
@@ -145,7 +144,6 @@ struct TableCommit {
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
   std::vector<UnitPatch> patches;
   bool truncate = false;
-  Lsn lsn = 0;
 };
 
 struct ReplacedSegment {
@@ -223,7 +221,7 @@ class Table final {
   uint64_t ByteSize() const;
   OwnSegment OpenSegment(std::string meta_file) const;
 
-  std::vector<std::shared_ptr<const TableUnit>> Pieces(Lsn before) const;
+  std::vector<std::shared_ptr<const TableUnit>> Pieces() const;
   std::vector<std::shared_ptr<const TableUnit>> FullTier() const;
   uint64_t PieceBytes() const noexcept {
     return _piece_bytes.load(std::memory_order_relaxed);
@@ -251,15 +249,14 @@ class Table final {
   }
 
   [[nodiscard]] bool Apply(Tick tick, TableCommit&& commit);
-  std::shared_ptr<const TableState> Replace(Tick tick, Lsn lsn,
+  std::shared_ptr<const TableState> Replace(Tick tick,
                                             std::span<const uint64_t> replaced,
                                             std::span<const Tick> folded,
                                             std::vector<OwnSegment>&& segments,
                                             std::vector<irs::DocMap>&& maps);
   std::shared_ptr<const TableState> MergePieces(
-    Tick tick, Lsn lsn, std::span<const uint64_t> replaced,
-    std::span<const Tick> folded,
-    std::shared_ptr<const irs::SegmentReaderImpl> merged, Lsn first_lsn,
+    Tick tick, std::span<const uint64_t> replaced, std::span<const Tick> folded,
+    std::shared_ptr<const irs::SegmentReaderImpl> merged,
     std::vector<irs::DocMap>&& maps);
 
   bool Collectable(Tick oldest) const;
@@ -274,25 +271,23 @@ class Table final {
 
   bool Unsettled() const;
 
-  std::vector<StateUnit> StateUnits() const;
-  void StateLogged(Lsn lsn);
-  Lsn NeededFrom() const;
+  std::shared_ptr<const TableState> HeadState() const
+    ABSL_LOCKS_EXCLUDED(_state_mutex);
 
-  void ReplayRows(uint64_t id, irs::doc_id_t first, irs::doc_id_t count,
-                  Lsn lsn);
+  void ReplayRows(uint64_t id, irs::doc_id_t first, irs::doc_id_t count);
   bool ReplayPending(uint64_t id) const;
   void ReplayPieceRows(
     irs::IndexWriter& writer, uint64_t id, irs::doc_id_t first,
     absl::FunctionRef<void(irs::IndexWriter::Transaction&)> append);
-  void ReplayAddSegment(const ReplacedSegment& segment, Lsn lsn);
-  void ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn);
-  void ReplayPatch(uint64_t id, const irs::FieldPatch& patch, Lsn lsn);
-  void ReplayTruncate(Lsn lsn);
+  void ReplayAddSegment(const ReplacedSegment& segment);
+  void ReplayRemoval(const irs::DocRemoval& removal);
+  void ReplayPatch(uint64_t id, const irs::FieldPatch& patch);
+  void ReplayTruncate();
   void ReplayReplace(std::span<const uint64_t> replaced,
                      std::span<const ReplacedSegment> segments,
-                     std::span<const irs::DocMap> maps, Lsn lsn);
-  bool ReplayMerge(uint64_t target, std::span<const uint64_t> sources, Lsn lsn);
-  void ReplayState(std::span<const StateUnit> units, Lsn lsn);
+                     std::span<const irs::DocMap> maps);
+  bool ReplayMerge(uint64_t target, std::span<const uint64_t> sources);
+  void ReplayState(std::span<const StateUnit> units);
   uint64_t ReplayTop() const noexcept { return _replay_top; }
   bool FinishReplay();
 
@@ -305,7 +300,6 @@ class Table final {
   struct ReplayUnit {
     std::optional<irs::IndexWriter::Transaction> trx;
     bool pending = false;
-    Lsn first_lsn = kNoLsn;
     std::string meta_file;
     irs::doc_id_t docs = 0;
     irs::DocumentMaskBuilder removed;
@@ -317,16 +311,13 @@ class Table final {
   irs::DirectoryReader Build(const TableState& state, const OwnWrites& own,
                              Scope scope) const;
   std::shared_ptr<const TableState> ReplaceUnits(
-    Tick tick, Lsn lsn, std::span<const uint64_t> replaced,
-    std::span<const Tick> folded,
+    Tick tick, std::span<const uint64_t> replaced, std::span<const Tick> folded,
     std::vector<std::shared_ptr<TableUnit>>&& added,
     std::vector<irs::DocMap>&& maps);
   std::shared_ptr<TableState> SameUnits() const
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Publish(std::shared_ptr<TableState> state, Tick tick)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void Logged(Lsn lsn) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void Replayed(Lsn lsn);
   void Saw(uint64_t id) noexcept { _replay_top = std::max(_replay_top, id); }
   void CountPieces(const TableState& state) noexcept;
 
@@ -336,7 +327,6 @@ class Table final {
   std::shared_ptr<const catalog::InvertedIndexConfig> _config
     ABSL_GUARDED_BY(_state_mutex);
   VersionChain<TableState> _versions;
-  Lsn _needed ABSL_GUARDED_BY(_state_mutex) = kNoLsn;
   std::atomic<Tick> _last_append{0};
   std::atomic<Tick> _last_write{0};
   std::atomic<Tick> _last_rewrite{0};
@@ -344,7 +334,7 @@ class Table final {
   std::atomic<uint64_t> _piece_bytes{0};
   std::atomic<bool> _full_tier{false};
   absl::flat_hash_map<uint64_t, ReplayUnit> _replay;
-  Lsn _replay_needed = kNoLsn;
+  bool _replayed = false;
   uint64_t _replay_top = 0;
 };
 

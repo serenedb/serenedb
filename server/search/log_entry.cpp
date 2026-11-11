@@ -47,6 +47,7 @@ enum class LogEntryType : uint8_t {
   State,
   Merge,
   Patch,
+  PieceRows,
 };
 
 constexpr std::align_val_t kFrozenAlignment{32};
@@ -318,9 +319,23 @@ std::string LogPatch(uint64_t segment, const irs::FieldPatch& field) {
   });
 }
 
+std::string LogPieceRows(uint64_t segment, irs::doc_id_t first,
+                         std::span<const connector::ColumnId> columns,
+                         duckdb::DataChunk& chunk) {
+  SDB_ASSERT(chunk.size() > 0 && columns.size() == chunk.ColumnCount());
+  return Encode(LogEntryType::PieceRows, [&](duckdb::Serializer& serializer) {
+    serializer.WriteProperty<uint64_t>(101, "segment", segment);
+    serializer.WriteProperty<uint32_t>(102, "first", first);
+    serializer.WriteList(103, "columns", columns.size(),
+                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                           list.WriteElement<uint64_t>(columns[i]);
+                         });
+    serializer.WriteProperty(104, "chunk", chunk);
+  });
+}
+
 void ReplayLogEntry(duckdb::ClientContext& context,
-                    catalog::SearchTableEntry& table, std::string& entry,
-                    Lsn lsn) {
+                    catalog::SearchTableEntry& table, std::string& entry) {
   duckdb::MemoryStream stream{
     reinterpret_cast<duckdb::data_ptr_t>(entry.data()), entry.size()};
   duckdb::BinaryDeserializer deserializer{stream};
@@ -330,11 +345,11 @@ void ReplayLogEntry(duckdb::ClientContext& context,
   switch (static_cast<LogEntryType>(
     deserializer.ReadProperty<uint8_t>(100, "type"))) {
     case LogEntryType::Truncate:
-      store.ReplayTruncate(lsn);
+      store.ReplayTruncate();
       break;
     case LogEntryType::AddSegments:
       for (const auto& segment : ReadSegments(deserializer, 101, "segments")) {
-        store.ReplayAddSegment(segment, lsn);
+        store.ReplayAddSegment(segment);
       }
       break;
     case LogEntryType::Rows: {
@@ -349,11 +364,28 @@ void ReplayLogEntry(duckdb::ClientContext& context,
         column_ids.emplace_back(connector::TableColumnId(column));
       }
       store.ReplayRows(table.ParentCatalog(), std::move(column_ids), segment,
-                       first, std::move(chunk), lsn);
+                       first, std::move(chunk));
+      break;
+    }
+    case LogEntryType::PieceRows: {
+      const auto segment = deserializer.ReadProperty<uint64_t>(101, "segment");
+      const auto first = deserializer.ReadProperty<uint32_t>(102, "first");
+      std::vector<connector::ColumnId> column_ids;
+      deserializer.ReadList(
+        103, "columns", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+          column_ids.push_back(
+            static_cast<connector::ColumnId>(list.ReadElement<uint64_t>()));
+        });
+      auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
+      deserializer.ReadObject(104, "chunk", [&](duckdb::Deserializer& object) {
+        chunk->Deserialize(object);
+      });
+      store.ReplayRows(table.ParentCatalog(), std::move(column_ids), segment,
+                       first, std::move(chunk));
       break;
     }
     case LogEntryType::Removal:
-      store.ReplayRemoval(ReadRemoval(deserializer), lsn);
+      store.ReplayRemoval(ReadRemoval(deserializer));
       break;
     case LogEntryType::Replace: {
       std::vector<uint64_t> replaced;
@@ -363,7 +395,7 @@ void ReplayLogEntry(duckdb::ClientContext& context,
         });
       const auto segments = ReadSegments(deserializer, 102, "segments");
       const auto maps = ReadMaps(deserializer);
-      store.ReplayReplace(replaced, segments, maps, lsn);
+      store.ReplayReplace(replaced, segments, maps);
       break;
     }
     case LogEntryType::State: {
@@ -384,7 +416,7 @@ void ReplayLogEntry(duckdb::ClientContext& context,
               });
           });
         });
-      store.ReplayState(units, lsn);
+      store.ReplayState(units);
       break;
     }
     case LogEntryType::Patch: {
@@ -393,7 +425,7 @@ void ReplayLogEntry(duckdb::ClientContext& context,
       deserializer.ReadObject(102, "patch", [&](duckdb::Deserializer& object) {
         patch = ReadPatch(object);
       });
-      store.ReplayPatch(segment, patch, lsn);
+      store.ReplayPatch(segment, patch);
       break;
     }
     case LogEntryType::Merge: {
@@ -403,7 +435,7 @@ void ReplayLogEntry(duckdb::ClientContext& context,
         102, "sources", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
           sources.push_back(list.ReadElement<uint64_t>());
         });
-      store.ReplayMerge(target, sources, lsn);
+      store.ReplayMerge(target, sources);
       break;
     }
     default:

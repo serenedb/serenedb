@@ -198,8 +198,11 @@ class Store final : public std::enable_shared_from_this<Store>,
     uint64_t id = 0;
   };
   Piece StartPiece();
-  void WriteOut(Lsn before);
+  void WriteOut();
   void PiecesAdded();
+  uint64_t PieceBytes() const noexcept {
+    return _table ? _table->PieceBytes() : 0;
+  }
 
   std::shared_ptr<const FileManifest> GetFileManifest() const
     ABSL_LOCKS_EXCLUDED(_index_mutex) {
@@ -352,20 +355,21 @@ class Store final : public std::enable_shared_from_this<Store>,
   void ReplayRows(duckdb::Catalog& catalog,
                   std::vector<connector::ColumnId> column_ids, uint64_t segment,
                   irs::doc_id_t first,
-                  duckdb::unique_ptr<duckdb::DataChunk> chunk, Lsn lsn);
-  void ReplayAddSegment(const ReplacedSegment& segment, Lsn lsn);
-  void ReplayRemoval(const irs::DocRemoval& removal, Lsn lsn);
-  void ReplayPatch(uint64_t segment, const irs::FieldPatch& patch, Lsn lsn);
-  void ReplayTruncate(Lsn lsn);
+                  duckdb::unique_ptr<duckdb::DataChunk> chunk);
+  void ReplayAddSegment(const ReplacedSegment& segment);
+  void ReplayRemoval(const irs::DocRemoval& removal);
+  void ReplayPatch(uint64_t segment, const irs::FieldPatch& patch);
+  void ReplayTruncate();
   void ReplayReplace(std::span<const uint64_t> replaced,
                      std::span<const ReplacedSegment> segments,
-                     std::span<const irs::DocMap> maps, Lsn lsn);
-  void ReplayMerge(uint64_t target, std::span<const uint64_t> sources, Lsn lsn);
-  void ReplayState(std::span<const StateUnit> units, Lsn lsn);
+                     std::span<const irs::DocMap> maps);
+  void ReplayMerge(uint64_t target, std::span<const uint64_t> sources);
+  void ReplayState(std::span<const StateUnit> units);
   void InvertReplayed(duckdb::ClientContext& context);
   bool FinishReplay();
 
-  void Cover(Lsn target);
+  std::shared_ptr<const TableState> SnapshotState();
+  std::vector<uint8_t> SnapshotRecord(const TableState& state) const;
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).
@@ -414,15 +418,13 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool OwnerDropped() const noexcept {
     return Dropped() || _directory->Dropped();
   }
-  void CommitStorage(std::string entry,
-                     absl::FunctionRef<void(Tick, Lsn)> apply);
+  void CommitStorage(std::string entry, absl::FunctionRef<void(Tick)> apply);
   void CommitUnlogged(absl::FunctionRef<void(Tick)> apply);
   void CommitIndex(
     const irs::ProgressReportCallback& progress,
     absl::FunctionRef<void(Tick, std::shared_ptr<const IndexState>)> published);
   void MaintainPieces();
-  void WriteOutLocked(Lsn before)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
+  void WriteOutLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
   bool MergePiecesLocked(
     std::span<const std::shared_ptr<const TableUnit>> pieces)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);

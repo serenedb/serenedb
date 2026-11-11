@@ -194,6 +194,7 @@ max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query
 max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
+max_wal_size	1GB	Size of the write-ahead log written since the last log snapshot at which the server writes a new snapshot and removes the log files it covers, such as '1GB' or '64MB'. Bounds the log on disk and the part of it a restart replays. Default '1GB'. Server-global.
 memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 merge_http_secret_into_s3_request	on	Merges HTTP secret parameters into S3 requests
 merge_join_threshold	1000	The maximum number of rows on either table to choose a merge join.
@@ -542,6 +543,7 @@ max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query
 max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
+max_wal_size	1GB	Size of the write-ahead log written since the last log snapshot at which the server writes a new snapshot and removes the log files it covers, such as '1GB' or '64MB'. Bounds the log on disk and the part of it a restart replays. Default '1GB'. Server-global.
 memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 merge_http_secret_into_s3_request	on	Merges HTTP secret parameters into S3 requests
 merge_join_threshold	1000	The maximum number of rows on either table to choose a merge join.

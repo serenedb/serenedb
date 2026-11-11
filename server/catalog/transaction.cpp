@@ -50,6 +50,8 @@
 namespace sdb::catalog {
 namespace {
 
+constexpr uint64_t kSnapshotDataShare = 8;
+
 class [[nodiscard]] CommitGate final {
  public:
   CommitGate(absl::Mutex& gate, bool exclusive) ABSL_NO_THREAD_SAFETY_ANALYSIS
@@ -572,7 +574,7 @@ void Transactions::Commit(SessionTransaction& transaction,
         change.version->Child().OnDrop();
       }
     }
-    writes.Apply(commit, range.begin, layouts);
+    writes.Apply(commit, layouts);
     for (const auto& update : transaction.LsnUpdates()) {
       ApplyLsnUpdate(update);
     }
@@ -583,7 +585,7 @@ void Transactions::Commit(SessionTransaction& transaction,
     SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
     SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
     SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
-    MaintainLog(context, range.end);
+    MaintainLog(range.end);
   } else if (end != 0) {
     _log->Sync(end);
   }
@@ -608,7 +610,7 @@ void Transactions::Commit(SessionTransaction& transaction,
 
 void Transactions::CommitStorage(
   absl::Mutex& table, absl::FunctionRef<std::vector<uint8_t>()> build,
-  absl::FunctionRef<void(duckdb::transaction_t, Lsn)> apply) {
+  absl::FunctionRef<void(duckdb::transaction_t)> apply) {
   std::vector<uint8_t> record;
   Log::Range range;
   Lsn end = 0;
@@ -625,7 +627,7 @@ void Transactions::CommitStorage(
       commit = ++_reserved_commit;
       end = range.end != 0 ? range.end : ReservedEnd();
     }
-    apply(commit, range.begin);
+    apply(commit);
   }
   if (range.end != 0) {
     _log->Write(range, record);
@@ -637,37 +639,12 @@ void Transactions::CommitStorage(
   AfterCommit();
 }
 
-void Transactions::CommitState(absl::Mutex& table,
-                               absl::FunctionRef<std::vector<uint8_t>()> build,
-                               absl::FunctionRef<void(Lsn)> logged) {
-  if (!_log || _replaying != 0) {
-    return;
-  }
-  std::vector<uint8_t> record;
-  Log::Range range;
-  {
-    absl::ReaderMutexLock gate{&_commit_gate};
-    absl::MutexLock lock{&table};
-    record = build();
-    if (record.empty()) {
-      return;
-    }
-    {
-      absl::MutexLock sequence{&_sequence_mutex};
-      range = _log->Reserve(record.size());
-    }
-    logged(range.begin);
-  }
-  _log->Write(range, record);
-  _log->Sync(range.end);
-}
-
-void Transactions::MaintainLog(duckdb::ClientContext& context, Lsn end) {
+void Transactions::MaintainLog(Lsn end) {
   bool rewrite = false;
   SDB_IF_FAILURE("compact_inside_ddl") { rewrite = true; }
   SDB_IF_FAILURE("compact_inside_drop") { rewrite = true; }
   if (rewrite && !search::IsBackupActive()) {
-    if (const auto status = TruncateLog(true); !status.ok()) {
+    if (const auto status = TruncateLog(LogCycle::Checkpoint); !status.ok()) {
       SDB_WARN(GENERAL, "rewriting the log failed: ", status.message());
     }
     return;
@@ -689,38 +666,44 @@ void Transactions::MaintainLog(duckdb::ClientContext& context, Lsn end) {
       })
       .Detach();
   }
-  if (end - _log->Oldest() <=
-        duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size ||
+  const auto covered = _log->Covered();
+  if (end <= covered ||
+      end - covered <= _max_log_bytes.load(std::memory_order_relaxed) ||
       _log->NewestChunk() <= _log->Oldest()) {
     return;
   }
-  TruncateInBackground(false);
+  TruncateInBackground(LogCycle::Budget);
 }
 
 void Transactions::SettleLog() {
-  if (_log) {
-    TruncateInBackground(true);
+  if (!_log) {
+    return;
+  }
+  const auto covered = _log->Covered();
+  const auto end = _log->End();
+  if (end > covered && end - covered >= _log->SnapshotBytes()) {
+    TruncateInBackground(LogCycle::Settle);
   }
 }
 
-void Transactions::TruncateInBackground(bool switch_chunk) {
+void Transactions::TruncateInBackground(LogCycle cycle) {
   if (search::IsBackupActive() || !BackgroundScheduler::gInstance ||
       _truncating.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
   BackgroundScheduler::instance()
-    .Run([this, switch_chunk] {
+    .Run([this, cycle] {
       absl::Cleanup done = [this] {
         _truncating.store(false, std::memory_order_release);
       };
-      if (const auto status = TruncateLog(switch_chunk); !status.ok()) {
+      if (const auto status = TruncateLog(cycle); !status.ok()) {
         SDB_WARN(GENERAL, "log truncation failed: ", status.message());
       }
     })
     .Detach();
 }
 
-absl::Status Transactions::TruncateLog(bool switch_chunk,
+absl::Status Transactions::TruncateLog(LogCycle cycle,
                                        duckdb::CheckpointAbort abort) {
   if (!_log || _replaying != 0) {
     return absl::OkStatus();
@@ -731,11 +714,6 @@ absl::Status Transactions::TruncateLog(bool switch_chunk,
       "cannot checkpoint while a backup is in progress");
   }
   absl::MutexLock round{&_truncate_mutex};
-  Lsn target = 0;
-  {
-    absl::MutexLock gate{&_commit_gate};
-    target = switch_chunk ? _log->Switch() : _log->NewestChunk();
-  }
   SDB_PARK_ONCE_ON_FAILURE("pause_checkpoint");
   if (abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_HEADER ||
       abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_HEADER_NON_FATAL) {
@@ -743,19 +721,33 @@ absl::Status Transactions::TruncateLog(bool switch_chunk,
       "Checkpoint aborted before header write because of "
       "debug_checkpoint_abort");
   }
-  if (target <= _log->Oldest()) {
+  SDB_PARK_ONCE_ON_FAILURE("pause_log_truncate_before_cover");
+  search::PrepareSnapshot(cycle == LogCycle::Checkpoint
+                            ? 0
+                            : _max_log_bytes.load(std::memory_order_relaxed) /
+                                kSnapshotDataShare);
+  Lsn covered = 0;
+  std::vector<search::TableSnapshot> tables;
+  {
+    absl::MutexLock gate{&_commit_gate};
+    covered = cycle == LogCycle::Budget ? _log->End() : _log->Switch();
+    tables = search::CaptureSnapshot();
+  }
+  if (covered <= _log->Covered()) {
     return absl::OkStatus();
   }
-  SDB_PARK_ONCE_ON_FAILURE("pause_log_truncate_before_cover");
-  search::CoverLog(target);
-  SDB_IF_FAILURE("crash_before_log_truncate") { SDB_IMMEDIATE_ABORT(); }
-  _log->Sync(target);
+  SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
+  const auto records = search::SnapshotRecords(tables);
+  tables.clear();
+  _log->Sync(covered);
   if (abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_TRUNCATE ||
       abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FINISH) {
     return absl::AbortedError(
       "Checkpoint aborted before truncate because of debug_checkpoint_abort");
   }
-  _log->Truncate(target, &CatalogPart, &CompactHistory);
+  _log->WriteSnapshot(covered, records, &CatalogPart, &CompactHistory);
+  SDB_IF_FAILURE("crash_before_log_truncate") { SDB_IMMEDIATE_ABORT(); }
+  _log->DropCovered();
   return absl::OkStatus();
 }
 
@@ -1013,7 +1005,7 @@ void TransactionManager::Checkpoint(duckdb::ClientContext& context, bool) {
                     ERR_HINT("Retry after pg_backup_stop()."));
   }
   if (const auto status = Transactions::Get().TruncateLog(
-        true,
+        Transactions::LogCycle::Checkpoint,
         duckdb::Settings::Get<duckdb::DebugCheckpointAbortSetting>(context));
       !status.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),

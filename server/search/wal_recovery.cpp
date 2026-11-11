@@ -62,6 +62,26 @@ struct FinishReplayTask final : duckdb::BaseExecutorTask {
   absl::AnyInvocable<void()> finish;
 };
 
+std::vector<std::shared_ptr<Store>> DurableStores() {
+  auto tables = LiveStores();
+  for (const auto& db : catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
+         irs::DuckDBEngine::Instance().instance()))) {
+    auto& catalog = db->GetCatalog().Cast<catalog::SereneDBCatalog>();
+    if (!catalog.Durable()) {
+      continue;
+    }
+    catalog::ForEachSearchStorage(
+      catalog,
+      [&](catalog::SearchTableEntry& table) {
+        tables.push_back(table.Storage());
+      },
+      [](catalog::InvertedIndexEntry&) {});
+  }
+  absl::c_sort(tables);
+  tables.erase(std::ranges::unique(tables).begin(), tables.end());
+  return tables;
+}
+
 }  // namespace
 
 void RecoverSearchStorages(
@@ -108,27 +128,49 @@ void RecoverSearchStorages(
            tables.size(), " table(s) in ", absl::FormatDuration(duration));
 }
 
-void CoverLog(uint64_t target) {
-  auto tables = LiveStores();
-  for (const auto& db : catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
-         irs::DuckDBEngine::Instance().instance()))) {
-    auto& catalog = db->GetCatalog().Cast<catalog::SereneDBCatalog>();
-    if (!catalog.Durable()) {
-      continue;
+void PrepareSnapshot(uint64_t budget) {
+  struct Held {
+    uint64_t bytes = 0;
+    std::shared_ptr<Store> store;
+  };
+  std::vector<Held> held;
+  uint64_t total = 0;
+  for (auto& store : DurableStores()) {
+    if (const auto bytes = store->PieceBytes(); bytes != 0) {
+      total += bytes;
+      held.push_back({.bytes = bytes, .store = std::move(store)});
     }
-    catalog::ForEachSearchStorage(
-      catalog,
-      [&](catalog::SearchTableEntry& table) {
-        tables.push_back(table.Storage());
-      },
-      [](catalog::InvertedIndexEntry&) {});
   }
-  absl::c_sort(tables);
-  tables.erase(std::ranges::unique(tables).begin(), tables.end());
-  SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
-  for (const auto& table : tables) {
-    table->Cover(target);
+  absl::c_sort(held, [](const Held& lhs, const Held& rhs) {
+    return lhs.bytes > rhs.bytes;
+  });
+  for (const auto& [bytes, store] : held) {
+    if (total <= budget) {
+      break;
+    }
+    store->WriteOut();
+    total -= bytes;
   }
+}
+
+std::vector<TableSnapshot> CaptureSnapshot() {
+  std::vector<TableSnapshot> tables;
+  for (auto& store : DurableStores()) {
+    if (auto state = store->SnapshotState()) {
+      tables.push_back({.store = std::move(store), .state = std::move(state)});
+    }
+  }
+  return tables;
+}
+
+std::vector<std::vector<uint8_t>> SnapshotRecords(
+  std::span<const TableSnapshot> tables) {
+  std::vector<std::vector<uint8_t>> records;
+  records.reserve(tables.size());
+  for (const auto& [store, state] : tables) {
+    records.push_back(store->SnapshotRecord(*state));
+  }
+  return records;
 }
 
 void StartSearchStorageTasks() {

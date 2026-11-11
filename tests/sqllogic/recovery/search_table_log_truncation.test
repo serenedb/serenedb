@@ -133,7 +133,7 @@ t
 
 connection after_crash
 statement ok
-SET GLOBAL checkpoint_threshold = '1B';
+SET GLOBAL max_wal_size = '1B';
 
 connection after_crash
 statement ok
@@ -180,7 +180,7 @@ t
 
 connection after_crash
 statement ok
-RESET GLOBAL checkpoint_threshold;
+RESET GLOBAL max_wal_size;
 
 connection after_crash
 statement ok

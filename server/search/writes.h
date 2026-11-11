@@ -193,7 +193,7 @@ class Writes {
   bool CrossTable() const;
   std::vector<absl::Mutex*> CommitMutexes(
     std::span<const std::shared_ptr<Store>> layouts) const;
-  void Apply(Tick tick, Lsn lsn,
+  void Apply(Tick tick,
              std::span<const std::shared_ptr<Store>> layouts) noexcept;
   void BeforePublish() noexcept;
   void Finish() noexcept;

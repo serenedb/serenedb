@@ -51,10 +51,10 @@ struct Header {
 };
 
 constexpr std::string_view kChunkSuffix = ".log";
-constexpr std::string_view kHistoryTemp = "history.tmp";
+constexpr std::string_view kSnapshotTemp = "snapshot.tmp";
 constexpr std::string_view kSpareFile = "spare";
 constexpr std::string_view kSpareTemp = "spare.tmp";
-constexpr size_t kHistoryHeader = sizeof(uint32_t) + sizeof(Lsn);
+constexpr size_t kSnapshotHeader = sizeof(uint32_t) + 3 * sizeof(uint64_t);
 
 uint32_t Checksum(std::span<const uint8_t> bytes) {
   return static_cast<uint32_t>(absl::ComputeCrc32c(std::string_view{
@@ -114,31 +114,40 @@ size_t ParseRecords(std::span<uint8_t> bytes, Apply&& apply) {
   return end;
 }
 
-struct History {
+struct SnapshotFile {
   Lsn cut = 0;
+  Lsn covered = 0;
+  size_t records = kSnapshotHeader;
   std::vector<uint8_t> bytes;
 };
 
-History ReadHistory(duckdb::FileSystem& fs, const std::filesystem::path& path) {
-  History history;
+SnapshotFile ReadSnapshot(duckdb::FileSystem& fs,
+                          const std::filesystem::path& path) {
+  SnapshotFile snapshot;
   std::error_code ec;
   if (!std::filesystem::exists(path, ec)) {
-    return history;
+    return snapshot;
   }
-  history.bytes = ReadAll(fs, path);
-  const std::span<const uint8_t> bytes{history.bytes};
-  if (bytes.size() < kHistoryHeader ||
-      Load<uint32_t>(bytes, 0) != Checksum(bytes.subspan(sizeof(uint32_t)))) {
+  snapshot.bytes = ReadAll(fs, path);
+  const std::span<const uint8_t> bytes{snapshot.bytes};
+  if (bytes.size() < kSnapshotHeader ||
+      Load<uint32_t>(bytes, 0) != Checksum(bytes.subspan(sizeof(uint32_t))) ||
+      Load<uint64_t>(bytes, sizeof(uint32_t) + 2 * sizeof(Lsn)) >
+        bytes.size() - kSnapshotHeader) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("log history '", path.string(), "' is damaged"));
+                    ERR_MSG("log snapshot '", path.string(), "' is damaged"));
   }
-  history.cut = Load<Lsn>(bytes, sizeof(uint32_t));
-  return history;
+  snapshot.cut = Load<Lsn>(bytes, sizeof(uint32_t));
+  snapshot.covered = Load<Lsn>(bytes, sizeof(uint32_t) + sizeof(Lsn));
+  snapshot.records =
+    kSnapshotHeader + Load<uint64_t>(bytes, sizeof(uint32_t) + 2 * sizeof(Lsn));
+  return snapshot;
 }
 
 template<typename Apply>
-void ForEachHistoryEntry(std::span<uint8_t> bytes, Apply&& apply) {
-  for (size_t at = kHistoryHeader; at < bytes.size();) {
+void ForEachHistoryEntry(SnapshotFile& snapshot, Apply&& apply) {
+  const std::span<uint8_t> bytes{snapshot.bytes};
+  for (size_t at = kSnapshotHeader; at < snapshot.records;) {
     const auto lsn = Load<Lsn>(bytes, at);
     const auto size = Load<uint32_t>(bytes, at + sizeof(Lsn));
     at += sizeof(Lsn) + sizeof(uint32_t);
@@ -147,10 +156,48 @@ void ForEachHistoryEntry(std::span<uint8_t> bytes, Apply&& apply) {
   }
 }
 
+template<typename Apply>
+void ForEachSnapshotRecord(SnapshotFile& snapshot, Apply&& apply) {
+  const std::span<uint8_t> bytes{snapshot.bytes};
+  for (size_t at = snapshot.records; at < bytes.size();) {
+    const auto size = Load<uint32_t>(bytes, at);
+    at += sizeof(uint32_t);
+    apply(bytes.subspan(at, size));
+    at += size;
+  }
+}
+
+std::vector<uint8_t> EncodeSnapshot(
+  Lsn cut, Lsn covered, std::span<const Log::HistoryEntry> history,
+  std::span<const std::vector<uint8_t>> records) {
+  std::vector<uint8_t> bytes(kSnapshotHeader);
+  for (const auto& entry : history) {
+    Store<Lsn>(bytes, entry.lsn);
+    Store<uint32_t>(bytes, static_cast<uint32_t>(entry.catalog.size()));
+    bytes.insert(bytes.end(), entry.catalog.begin(), entry.catalog.end());
+  }
+  const uint64_t history_bytes = bytes.size() - kSnapshotHeader;
+  for (const auto& record : records) {
+    Store<uint32_t>(bytes, static_cast<uint32_t>(record.size()));
+    bytes.insert(bytes.end(), record.begin(), record.end());
+  }
+  std::memcpy(bytes.data() + sizeof(uint32_t), &cut, sizeof(Lsn));
+  std::memcpy(bytes.data() + sizeof(uint32_t) + sizeof(Lsn), &covered,
+              sizeof(Lsn));
+  std::memcpy(bytes.data() + sizeof(uint32_t) + 2 * sizeof(Lsn), &history_bytes,
+              sizeof(uint64_t));
+  const auto crc =
+    Checksum(std::span<const uint8_t>{bytes}.subspan(sizeof(uint32_t)));
+  std::memcpy(bytes.data(), &crc, sizeof(uint32_t));
+  return bytes;
+}
+
 struct Scanned {
   std::vector<Lsn> obsolete;
   std::vector<Lsn> live;
   Lsn end = 0;
+  Lsn covered = 0;
+  uint64_t snapshot_bytes = 0;
   Lsn torn = 0;
   size_t torn_from = 0;
   size_t torn_to = 0;
@@ -161,10 +208,15 @@ Scanned ScanLog(
   absl::FunctionRef<void(Lsn, std::span<uint8_t>)> history,
   absl::FunctionRef<void(const Log::Range&, std::span<uint8_t>)> apply) {
   Scanned scanned;
-  auto past = ReadHistory(fs, dir / Log::kHistoryFile);
+  auto past = ReadSnapshot(fs, dir / Log::kSnapshotFile);
   if (!past.bytes.empty()) {
-    ForEachHistoryEntry(past.bytes, history);
+    ForEachHistoryEntry(past, history);
+    ForEachSnapshotRecord(past, [&](std::span<uint8_t> payload) {
+      apply(Log::Range{.begin = past.covered, .end = past.covered}, payload);
+    });
   }
+  scanned.covered = past.covered;
+  scanned.snapshot_bytes = past.bytes.size();
   std::vector<Lsn> begins;
   for (const auto& entry : std::filesystem::directory_iterator{dir}) {
     if (const auto begin = Log::ChunkBegin(entry.path().filename().string())) {
@@ -196,7 +248,9 @@ Scanned ScanLog(
     const auto parsed = ParseRecords(
       std::span{bytes}.first(content),
       [&](size_t from, size_t to, std::span<uint8_t> payload) {
-        apply(Log::Range{.begin = begin + from, .end = begin + to}, payload);
+        if (begin + to > past.covered) {
+          apply(Log::Range{.begin = begin + from, .end = begin + to}, payload);
+        }
       });
     scanned.end = begin + parsed;
     scanned.live.push_back(begin);
@@ -251,13 +305,13 @@ void Log::Read(
   ScanLog(fs, dir, history, apply);
 }
 
-std::optional<Lsn> Log::HistoryCut(const std::filesystem::path& dir) {
+std::optional<Lsn> Log::SnapshotCut(const std::filesystem::path& dir) {
   auto fs = duckdb::FileSystem::CreateLocal();
-  const auto history = ReadHistory(*fs, dir / kHistoryFile);
-  if (history.bytes.empty()) {
+  const auto snapshot = ReadSnapshot(*fs, dir / kSnapshotFile);
+  if (snapshot.bytes.empty()) {
     return std::nullopt;
   }
-  return history.cut;
+  return snapshot.cut;
 }
 
 Log::Log(duckdb::FileSystem& fs, std::filesystem::path dir)
@@ -312,6 +366,9 @@ void Log::Replay(
     last.Sync();
   }
   std::filesystem::remove(_dir / kSpareTemp);
+  std::filesystem::remove(_dir / kSnapshotTemp);
+  _covered.store(scanned.covered, std::memory_order_release);
+  _snapshot_bytes.store(scanned.snapshot_bytes, std::memory_order_relaxed);
   std::shared_ptr<Chunk> spare;
   if (std::filesystem::exists(_dir / kSpareFile)) {
     spare = std::make_shared<Chunk>(
@@ -515,76 +572,96 @@ Lsn Log::Append(std::span<const uint8_t> payload) {
   return range.end;
 }
 
-void Log::Truncate(Lsn below, CatalogPart part, Compact compact) {
+void Log::WriteSnapshot(Lsn covered,
+                        std::span<const std::vector<uint8_t>> records,
+                        CatalogPart part, Compact compact) {
+  struct Scan {
+    std::shared_ptr<Chunk> chunk;
+    Lsn end = 0;
+  };
   absl::MutexLock files{&_files_mutex};
-  std::vector<std::shared_ptr<Chunk>> dropped;
+  std::vector<Scan> scans;
   Lsn cut = 0;
   {
     absl::MutexLock lock{&_mutex};
-    below = std::min(below, _durable.load(std::memory_order_acquire));
-    for (auto it = _chunks.begin(); it != _chunks.end(); ++it) {
+    SDB_ASSERT(covered <= _durable.load(std::memory_order_acquire));
+    for (auto it = _chunks.begin(); it != _chunks.end() && it->first <= covered;
+         ++it) {
       const auto next = std::next(it);
-      if (next == _chunks.end() || next->first > below) {
-        break;
-      }
-      dropped.push_back(it->second);
-      cut = next->first;
+      cut = it->first;
+      scans.push_back({.chunk = it->second,
+                       .end = next == _chunks.end()
+                                ? covered
+                                : std::min(next->first, covered)});
     }
   }
-  if (dropped.empty()) {
-    return;
-  }
-  auto past = ReadHistory(_fs, _dir / kHistoryFile);
+  auto past = ReadSnapshot(_fs, _dir / kSnapshotFile);
   std::vector<HistoryEntry> entries;
   if (!past.bytes.empty()) {
-    ForEachHistoryEntry(past.bytes, [&](Lsn lsn, std::span<uint8_t> catalog) {
+    ForEachHistoryEntry(past, [&](Lsn lsn, std::span<uint8_t> catalog) {
       entries.push_back({.lsn = lsn, .catalog{catalog.begin(), catalog.end()}});
     });
   }
-  for (size_t i = 0; i < dropped.size(); ++i) {
-    const auto& chunk = *dropped[i];
-    const auto chunk_end = i + 1 < dropped.size() ? dropped[i + 1]->begin : cut;
-    std::vector<uint8_t> bytes(static_cast<size_t>(chunk_end - chunk.begin));
+  for (const auto& [chunk, end] : scans) {
+    if (end <= past.covered) {
+      continue;
+    }
+    std::vector<uint8_t> bytes(static_cast<size_t>(end - chunk->begin));
     if (!bytes.empty()) {
-      chunk.file->Read(bytes.data(), bytes.size(), 0);
+      chunk->file->Read(bytes.data(), bytes.size(), 0);
     }
     const auto parsed =
       ParseRecords(bytes, [&](size_t, size_t to, std::span<uint8_t> payload) {
+        const auto lsn = chunk->begin + to;
+        if (lsn <= past.covered) {
+          return;
+        }
         const auto catalog = part(payload);
         if (!catalog.empty()) {
-          entries.push_back({.lsn = chunk.begin + to,
-                             .catalog{catalog.begin(), catalog.end()}});
+          entries.push_back(
+            {.lsn = lsn, .catalog{catalog.begin(), catalog.end()}});
         }
       });
     SDB_ENSURE(parsed == bytes.size(), "log '", _dir.string(),
-               "': the chunk at ", chunk.begin, " ends early");
+               "': the chunk at ", chunk->begin, " ends early");
   }
-  std::vector<uint8_t> history(kHistoryHeader);
-  for (const auto& entry : compact(std::move(entries))) {
-    Store<Lsn>(history, entry.lsn);
-    Store<uint32_t>(history, static_cast<uint32_t>(entry.catalog.size()));
-    history.insert(history.end(), entry.catalog.begin(), entry.catalog.end());
-  }
-  std::memcpy(history.data() + sizeof(uint32_t), &cut, sizeof(Lsn));
-  const auto crc =
-    Checksum(std::span<const uint8_t>{history}.subspan(sizeof(uint32_t)));
-  std::memcpy(history.data(), &crc, sizeof(uint32_t));
-  const auto temp = _dir / kHistoryTemp;
+  const auto history = compact(std::move(entries));
+  auto bytes = EncodeSnapshot(cut, covered, history, records);
+  const auto temp = _dir / kSnapshotTemp;
+  std::filesystem::remove(temp);
   {
     const auto file = _fs.OpenFile(
       temp.string(), duckdb::FileFlags::FILE_FLAGS_WRITE |
                        duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-    file->Write(duckdb::QueryContext{}, history.data(), history.size(), 0);
+    file->Write(duckdb::QueryContext{}, bytes.data(), bytes.size(), 0);
     file->Sync();
   }
-  std::filesystem::rename(temp, _dir / kHistoryFile);
+  std::filesystem::rename(temp, _dir / kSnapshotFile);
   SyncDirectory();
+  _snapshot_bytes.store(bytes.size(), std::memory_order_relaxed);
+  _covered.store(covered, std::memory_order_release);
+}
+
+void Log::DropCovered() {
+  absl::MutexLock files{&_files_mutex};
+  const auto covered = _covered.load(std::memory_order_acquire);
+  std::vector<std::shared_ptr<Chunk>> dropped;
   {
     absl::MutexLock lock{&_mutex};
+    for (auto it = _chunks.begin(); it != _chunks.end(); ++it) {
+      const auto next = std::next(it);
+      if (next == _chunks.end() || next->first > covered) {
+        break;
+      }
+      dropped.push_back(it->second);
+    }
     for (const auto& chunk : dropped) {
       _chunks.erase(chunk->begin);
     }
-    _oldest.store(cut, std::memory_order_relaxed);
+    _oldest.store(_chunks.begin()->first, std::memory_order_relaxed);
+  }
+  if (dropped.empty()) {
+    return;
   }
   for (const auto& chunk : dropped) {
     std::filesystem::remove(ChunkPath(chunk->begin));
@@ -601,16 +678,12 @@ Lsn Log::Link(const std::filesystem::path& dir) {
     durable = _durable.load(std::memory_order_acquire);
     first = _chunks.begin()->first;
   }
-  const auto history = _dir / kHistoryFile;
+  const auto snapshot = _dir / kSnapshotFile;
   std::error_code ec;
-  if (!std::filesystem::exists(history, ec)) {
-    std::vector<uint8_t> empty(kHistoryHeader);
-    std::memcpy(empty.data() + sizeof(uint32_t), &first, sizeof(Lsn));
-    const auto crc =
-      Checksum(std::span<const uint8_t>{empty}.subspan(sizeof(uint32_t)));
-    std::memcpy(empty.data(), &crc, sizeof(uint32_t));
+  if (!std::filesystem::exists(snapshot, ec)) {
+    const auto empty = EncodeSnapshot(first, first, {}, {});
     utils::file_utils::Spit(
-      history.string(),
+      snapshot.string(),
       std::string_view{reinterpret_cast<const char*>(empty.data()),
                        empty.size()},
       true);
@@ -619,8 +692,7 @@ Lsn Log::Link(const std::filesystem::path& dir) {
   std::filesystem::create_directories(dir);
   for (const auto& entry : std::filesystem::directory_iterator{_dir}) {
     const auto name = entry.path().filename();
-    if (name != kHistoryTemp &&
-        (name == kHistoryFile || ChunkBegin(name.string()))) {
+    if (name == kSnapshotFile || ChunkBegin(name.string())) {
       std::filesystem::create_hard_link(entry.path(), dir / name, ec);
       if (ec) {
         utils::file_utils::ThrowFileError("link", (dir / name).string(), ec);

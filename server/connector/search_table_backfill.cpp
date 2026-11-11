@@ -508,7 +508,7 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   }
   abort_all();
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
-  shard.WriteOut(search::kNoLsn);
+  shard.WriteOut();
   return published;
 }
 
@@ -531,7 +531,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   auto& shard = *target.shard;
 
   shard.DrainPriorWriters(context);
-  shard.WriteOut(search::kNoLsn);
+  shard.WriteOut();
   const auto floor = shard.ArmCompactionFloor(context);
 
   // Groups by byte budget: peak disk is ~2x one group, and each publish is

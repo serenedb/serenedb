@@ -61,11 +61,11 @@ class Log {
     absl::FunctionRef<std::vector<HistoryEntry>(std::vector<HistoryEntry>)>;
 
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
-  static constexpr std::string_view kHistoryFile = "history";
+  static constexpr std::string_view kSnapshotFile = "snapshot";
 
   static std::optional<Lsn> ChunkBegin(std::string_view name);
   static std::string ChunkName(Lsn begin);
-  static std::optional<Lsn> HistoryCut(const std::filesystem::path& dir);
+  static std::optional<Lsn> SnapshotCut(const std::filesystem::path& dir);
   static std::vector<duckdb::unique_ptr<duckdb::FileHandle>> LockChunks(
     duckdb::FileSystem& fs, const std::filesystem::path& dir);
   static void Read(
@@ -84,9 +84,18 @@ class Log {
 
   Lsn Append(std::span<const uint8_t> payload);
 
-  void Truncate(Lsn below, CatalogPart part, Compact compact);
+  void WriteSnapshot(Lsn covered, std::span<const std::vector<uint8_t>> records,
+                     CatalogPart part, Compact compact);
+  void DropCovered();
 
   Lsn Link(const std::filesystem::path& dir);
+
+  Lsn Covered() const noexcept {
+    return _covered.load(std::memory_order_acquire);
+  }
+  uint64_t SnapshotBytes() const noexcept {
+    return _snapshot_bytes.load(std::memory_order_relaxed);
+  }
 
   Lsn Reserved() const {
     absl::MutexLock lock{&_mutex};
@@ -159,6 +168,8 @@ class Log {
   std::atomic<bool> _has_spare{false};
   std::atomic<Lsn> _oldest{0};
   std::atomic<Lsn> _newest{0};
+  std::atomic<Lsn> _covered{0};
+  std::atomic<uint64_t> _snapshot_bytes{0};
   absl::Mutex _files_mutex;
 };
 

@@ -132,8 +132,8 @@ void ReplayForeignDatabase(duckdb::ClientContext& context,
     [&](Lsn, std::span<uint8_t> part) {
       ReplayCatalogPart(context, target, part);
     },
-    [&](const Log::Range& range, std::span<uint8_t> payload) {
-      ReplayRecord(context, target, range, payload);
+    [&](const Log::Range&, std::span<uint8_t> payload) {
+      ReplayRecord(context, target, payload);
     });
   const auto transaction = catalog.GetCatalogTransaction(context);
   catalog.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {

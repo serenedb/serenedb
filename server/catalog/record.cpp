@@ -544,7 +544,7 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
 }
 
 void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
-                   Lsn begin, duckdb::Deserializer& object) {
+                   duckdb::Deserializer& object) {
   const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
   const auto oid = object.ReadProperty<duckdb::idx_t>(101, "table");
   auto entries =
@@ -560,8 +560,7 @@ void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
   }
   SDB_ENSURE(IsSearchTable(*table), "the log writes a missing table ", oid);
   for (auto& entry : entries) {
-    search::ReplayLogEntry(context, table->Cast<SearchTableEntry>(), entry,
-                           begin);
+    search::ReplayLogEntry(context, table->Cast<SearchTableEntry>(), entry);
   }
 }
 
@@ -1044,7 +1043,7 @@ void ReadDatabases(duckdb::ClientContext& context, std::span<uint8_t> catalog,
 }
 
 void ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
-                  const Log::Range& range, std::span<uint8_t> payload) {
+                  std::span<uint8_t> payload) {
   const auto size = CatalogSize(payload);
   if (size != 0) {
     ReplayCatalogPart(context, target, payload.subspan(sizeof(uint32_t), size));
@@ -1060,7 +1059,7 @@ void ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
   deserializer.ReadList(100, "search",
                         [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
                           list.ReadObject([&](duckdb::Deserializer& object) {
-                            ReplaySection(context, target, range.begin, object);
+                            ReplaySection(context, target, object);
                           });
                         });
   deserializer.End();

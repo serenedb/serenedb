@@ -145,7 +145,7 @@ CHECKPOINT;
 
 
 statement ok
-INSERT INTO chc_sizes SELECT 'base', size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/history');
+INSERT INTO chc_sizes SELECT 'base', (SELECT sum(('0x' || substr(hex(content), 41 + 2 * i, 2))::UBIGINT << (8 * i)) FROM range(8) t(i)) FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/snapshot');
 
 
 statement ok
@@ -293,7 +293,7 @@ CHECKPOINT;
 
 
 statement ok
-INSERT INTO chc_sizes SELECT 'churn', size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/history');
+INSERT INTO chc_sizes SELECT 'churn', (SELECT sum(('0x' || substr(hex(content), 41 + 2 * i, 2))::UBIGINT << (8 * i)) FROM range(8) t(i)) FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/snapshot');
 
 
 query

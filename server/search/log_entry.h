@@ -29,6 +29,7 @@
 #include <string_view>
 
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "search/table.h"
 
 namespace sdb::search {
@@ -44,9 +45,11 @@ std::string LogReplace(std::span<const uint64_t> replaced,
 std::string LogMerge(uint64_t target, std::span<const uint64_t> sources);
 std::string LogState(std::span<const StateUnit> units);
 std::string LogPatch(uint64_t segment, const irs::FieldPatch& field);
+std::string LogPieceRows(uint64_t segment, irs::doc_id_t first,
+                         std::span<const connector::ColumnId> columns,
+                         duckdb::DataChunk& chunk);
 
 void ReplayLogEntry(duckdb::ClientContext& context,
-                    catalog::SearchTableEntry& table, std::string& entry,
-                    Lsn lsn);
+                    catalog::SearchTableEntry& table, std::string& entry);
 
 }  // namespace sdb::search

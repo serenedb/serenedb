@@ -256,6 +256,20 @@ int64_t ParseStatementTimeout(std::string_view text) {
   return ParseDurationMillis("statement_timeout", text, 1);
 }
 
+uint64_t ParseMaxWalSize(const std::string& text) {
+  uint64_t bytes = 0;
+  try {
+    bytes = duckdb::DBConfig::ParseMemoryLimit(text);
+  } catch (const duckdb::Exception&) {
+  }
+  if (bytes == 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter \"",
+                            kMaxWalSizeSetting, "\": \"", text, "\""));
+  }
+  return bytes;
+}
+
 std::string FormatDuration(int64_t ms) {
   if (ms == 0) {
     return "0";
@@ -1005,6 +1019,26 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope) {
           irs::PatternCache::Instance().SetCapacity(
             irs::PatternCache::kDefaultCapacity);
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      kMaxWalSizeSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "Size of the write-ahead log written since the last log snapshot at "
+        "which the server writes a new snapshot and removes the log files it "
+        "covers, such as '1GB' or '64MB'. Bounds the log on disk and the part "
+        "of it a restart replays. Default '1GB'. Server-global.",
+        [] { return duckdb::Value{"1GB"}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          catalog::Transactions::Get().SetMaxLogBytes(
+            ParseMaxWalSize(value.ToString()));
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          catalog::Transactions::Get().SetMaxLogBytes(
+            catalog::Transactions::kDefaultMaxLogBytes);
         },
         duckdb::SetScope::GLOBAL,
       },

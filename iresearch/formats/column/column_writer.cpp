@@ -162,9 +162,10 @@ const codecs::CompressionFunction* EnabledFunction(
 Rival Cheapest(const duckdb::LogicalType& type,
                std::span<const WriteChunk> chunks, Disabled disabled) {
   Rival best;
-  for (const auto* candidate :
-       codecs::GetCompressionFunctions(type.InternalType())) {
-    if (absl::c_linear_search(disabled, candidate->type)) {
+  const auto physical = type.InternalType();
+  for (const auto& codec : codecs::AnalyzedCodecs()) {
+    const auto* candidate = EnabledFunction(codec.type, physical, disabled);
+    if (!candidate) {
       continue;
     }
     const auto bytes = candidate->analyze(chunks);

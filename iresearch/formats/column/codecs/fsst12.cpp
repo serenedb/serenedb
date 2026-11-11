@@ -28,19 +28,13 @@
 
 namespace irs::codecs {
 
-const CompressionFunction& Fsst12Function() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::Fsst12Leaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_FSST12);
-  return kFunction;
-}
+constinit const CompressionFunction kFsst12Function =
+  text::StringFunction<text::PlainScan<text::Fsst12Leaf>>(
+    duckdb::CompressionType::COMPRESSION_COL_FSST12);
 
-const CompressionFunction& DictFsst12Function() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::Fsst12Leaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12);
-  return kFunction;
-}
+constinit const CompressionFunction kDictFsst12Function =
+  text::StringFunction<text::DictionaryScan<text::Fsst12Leaf>>(
+    duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12);
 
 Fsst12Encoded Fsst12Encoder::Encode(std::span<const duckdb::string_t> strings,
                                     std::span<const uint32_t> skip, char* out,

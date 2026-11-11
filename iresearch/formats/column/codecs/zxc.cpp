@@ -58,19 +58,13 @@ std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
 
 }  // namespace
 
-const CompressionFunction& ZxcFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::BlobLeaf<Zxc>>>(
-      duckdb::CompressionType::COMPRESSION_ZXC);
-  return kFunction;
-}
+constinit const CompressionFunction kZxcFunction =
+  text::StringFunction<text::PlainScan<text::BlobLeaf<Zxc>>>(
+    duckdb::CompressionType::COMPRESSION_ZXC);
 
-const CompressionFunction& DictZxcFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::BlobLeaf<Zxc>>>(
-      duckdb::CompressionType::COMPRESSION_DICT_ZXC);
-  return kFunction;
-}
+constinit const CompressionFunction kDictZxcFunction =
+  text::StringFunction<text::DictionaryScan<text::BlobLeaf<Zxc>>>(
+    duckdb::CompressionType::COMPRESSION_DICT_ZXC);
 
 Zxc::Compressor::Compressor(uint8_t level)
   : _level{level}, _ctx{NewContext(level)} {}

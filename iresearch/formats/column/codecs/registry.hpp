@@ -29,20 +29,28 @@
 
 namespace irs::codecs {
 
-const CompressionFunction& DictLz4Function();
-const CompressionFunction& Lz4Function();
-const CompressionFunction& DictZstdFunction();
-const CompressionFunction& ZstdFunction();
-const CompressionFunction& DictZxcFunction();
-const CompressionFunction& ZxcFunction();
-const CompressionFunction& DictFsstFunction();
-const CompressionFunction& FsstFunction();
-const CompressionFunction& DictFsstPlusFunction();
-const CompressionFunction& FsstPlusFunction();
-const CompressionFunction& DictOnPairFunction();
-const CompressionFunction& OnPairFunction();
-const CompressionFunction& DictFsst12Function();
-const CompressionFunction& Fsst12Function();
+struct Codec {
+  duckdb::CompressionType type;
+  const CompressionFunction* (&function)(duckdb::PhysicalType physical);
+  StringChoice choice{};
+};
+
+std::span<const Codec> AnalyzedCodecs() noexcept;
+
+extern const CompressionFunction kDictLz4Function;
+extern const CompressionFunction kLz4Function;
+extern const CompressionFunction kDictZstdFunction;
+extern const CompressionFunction kZstdFunction;
+extern const CompressionFunction kDictZxcFunction;
+extern const CompressionFunction kZxcFunction;
+extern const CompressionFunction kDictFsstFunction;
+extern const CompressionFunction kFsstFunction;
+extern const CompressionFunction kDictFsstPlusFunction;
+extern const CompressionFunction kFsstPlusFunction;
+extern const CompressionFunction kDictOnPairFunction;
+extern const CompressionFunction kOnPairFunction;
+extern const CompressionFunction kDictFsst12Function;
+extern const CompressionFunction kFsst12Function;
 const CompressionFunction* NumericFunction(duckdb::PhysicalType physical);
 const CompressionFunction* ConstantFunction(duckdb::PhysicalType physical);
 const CompressionFunction& EmptyValidityFunction();
@@ -64,9 +72,6 @@ const CompressionFunction* GetCompressionFunction(
   duckdb::CompressionType type, duckdb::PhysicalType physical);
 
 bool Compresses(duckdb::CompressionType type, duckdb::PhysicalType physical);
-
-std::span<const CompressionFunction* const> GetCompressionFunctions(
-  duckdb::PhysicalType physical);
 
 const StringChoice* ChoiceOf(duckdb::CompressionType type);
 

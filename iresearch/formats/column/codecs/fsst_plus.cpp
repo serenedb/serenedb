@@ -61,18 +61,12 @@ stores the rest of its codes.
 
 namespace irs::codecs {
 
-const CompressionFunction& FsstPlusFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::FsstPlusLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS);
-  return kFunction;
-}
+constinit const CompressionFunction kFsstPlusFunction =
+  text::StringFunction<text::PlainScan<text::FsstPlusLeaf>>(
+    duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS);
 
-const CompressionFunction& DictFsstPlusFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::FsstPlusLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS);
-  return kFunction;
-}
+constinit const CompressionFunction kDictFsstPlusFunction =
+  text::StringFunction<text::DictionaryScan<text::FsstPlusLeaf>>(
+    duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS);
 
 }  // namespace irs::codecs

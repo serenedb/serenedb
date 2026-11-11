@@ -22,9 +22,8 @@
 
 #include <absl/algorithm/container.h>
 
-#include <array>
-#include <iterator>
-#include <vector>
+#include <cstddef>
+#include <span>
 
 #include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
@@ -36,134 +35,108 @@ namespace {
 using duckdb::CompressionType;
 using duckdb::PhysicalType;
 
-struct TextCodec {
-  CompressionType type;
-  StringChoice choice;
-  const CompressionFunction& (*function)();
-};
-
-constexpr TextCodec kTextCodecs[] = {
-  {CompressionType::COMPRESSION_DICT_LZ4,
-   {Shape::Dedup, ByteCodec::Lz4},
-   DictLz4Function},
-  {CompressionType::COMPRESSION_LZ4,
-   {Shape::Plain, ByteCodec::Lz4},
-   Lz4Function},
-  {CompressionType::COMPRESSION_DICT_ZSTD,
-   {Shape::Dedup, ByteCodec::Zstd},
-   DictZstdFunction},
-  {CompressionType::COMPRESSION_COL_ZSTD,
-   {Shape::Plain, ByteCodec::Zstd},
-   ZstdFunction},
-  {CompressionType::COMPRESSION_DICT_ZXC,
-   {Shape::Dedup, ByteCodec::Zxc},
-   DictZxcFunction},
-  {CompressionType::COMPRESSION_ZXC,
-   {Shape::Plain, ByteCodec::Zxc},
-   ZxcFunction},
-  {CompressionType::COMPRESSION_COL_DICT_FSST,
-   {Shape::Dedup, ByteCodec::Fsst},
-   DictFsstFunction},
-  {CompressionType::COMPRESSION_COL_FSST,
-   {Shape::Plain, ByteCodec::Fsst},
-   FsstFunction},
-  {CompressionType::COMPRESSION_COL_DICT_FSST_PLUS,
-   {Shape::Dedup, ByteCodec::FsstPlus},
-   DictFsstPlusFunction},
-  {CompressionType::COMPRESSION_COL_FSST_PLUS,
-   {Shape::Plain, ByteCodec::FsstPlus},
-   FsstPlusFunction},
-  {CompressionType::COMPRESSION_COL_DICT_ONPAIR,
-   {Shape::Dedup, ByteCodec::OnPair},
-   DictOnPairFunction},
-  {CompressionType::COMPRESSION_COL_ONPAIR,
-   {Shape::Plain, ByteCodec::OnPair},
-   OnPairFunction},
-  {CompressionType::COMPRESSION_COL_DICT_FSST12,
-   {Shape::Dedup, ByteCodec::Fsst12},
-   DictFsst12Function},
-  {CompressionType::COMPRESSION_COL_FSST12,
-   {Shape::Plain, ByteCodec::Fsst12},
-   Fsst12Function},
-  {CompressionType::COMPRESSION_ZSTD, {Shape::Plain, ByteCodec::Zstd}, nullptr},
-  {CompressionType::COMPRESSION_DICT_FSST,
-   {Shape::Dedup, ByteCodec::Fsst},
-   nullptr},
-  {CompressionType::COMPRESSION_FSST, {Shape::Plain, ByteCodec::Fsst}, nullptr},
-};
-
-const TextCodec* TextCodecOf(CompressionType type) noexcept {
-  const auto* it = absl::c_find_if(
-    kTextCodecs, [&](const TextCodec& codec) { return codec.type == type; });
-  return it == std::end(kTextCodecs) ? nullptr : it;
+template<const CompressionFunction& kFunction>
+const CompressionFunction* Text(PhysicalType physical) {
+  return physical == PhysicalType::VARCHAR ? &kFunction : nullptr;
 }
 
-constexpr PhysicalType kPhysicalTypes[] = {
-  PhysicalType::BOOL,    PhysicalType::UINT8,   PhysicalType::INT8,
-  PhysicalType::UINT16,  PhysicalType::INT16,   PhysicalType::UINT32,
-  PhysicalType::INT32,   PhysicalType::UINT64,  PhysicalType::INT64,
-  PhysicalType::FLOAT,   PhysicalType::DOUBLE,  PhysicalType::INTERVAL,
-  PhysicalType::LIST,    PhysicalType::STRUCT,  PhysicalType::ARRAY,
-  PhysicalType::VARCHAR, PhysicalType::UINT128, PhysicalType::INT128,
-  PhysicalType::BIT,
+const CompressionFunction* EmptyFunction(PhysicalType physical) {
+  return physical == PhysicalType::BIT ? &EmptyValidityFunction() : nullptr;
+}
+
+constexpr Codec kCodecs[] = {
+  {CompressionType::COMPRESSION_UNCOMPRESSED, UncompressedFunction},
+  {CompressionType::COMPRESSION_RLE, RleFunction},
+  {CompressionType::COMPRESSION_BITPACKING, BitpackingFunction},
+  {CompressionType::COMPRESSION_ALP, AlpFunction},
+  {CompressionType::COMPRESSION_ALPRD, AlpRdFunction},
+  {CompressionType::COMPRESSION_ROARING, RoaringFunction},
+  {CompressionType::COMPRESSION_CONSTANT, ConstantFunction},
+  {CompressionType::COMPRESSION_EMPTY, EmptyFunction},
+  {CompressionType::COMPRESSION_COL_NUMERIC, NumericFunction},
+  {CompressionType::COMPRESSION_DICT_LZ4,
+   Text<kDictLz4Function>,
+   {Shape::Dedup, ByteCodec::Lz4}},
+  {CompressionType::COMPRESSION_LZ4,
+   Text<kLz4Function>,
+   {Shape::Plain, ByteCodec::Lz4}},
+  {CompressionType::COMPRESSION_DICT_ZSTD,
+   Text<kDictZstdFunction>,
+   {Shape::Dedup, ByteCodec::Zstd}},
+  {CompressionType::COMPRESSION_COL_ZSTD,
+   Text<kZstdFunction>,
+   {Shape::Plain, ByteCodec::Zstd}},
+  {CompressionType::COMPRESSION_DICT_ZXC,
+   Text<kDictZxcFunction>,
+   {Shape::Dedup, ByteCodec::Zxc}},
+  {CompressionType::COMPRESSION_ZXC,
+   Text<kZxcFunction>,
+   {Shape::Plain, ByteCodec::Zxc}},
+  {CompressionType::COMPRESSION_COL_DICT_FSST,
+   Text<kDictFsstFunction>,
+   {Shape::Dedup, ByteCodec::Fsst}},
+  {CompressionType::COMPRESSION_COL_FSST,
+   Text<kFsstFunction>,
+   {Shape::Plain, ByteCodec::Fsst}},
+  {CompressionType::COMPRESSION_COL_DICT_FSST_PLUS,
+   Text<kDictFsstPlusFunction>,
+   {Shape::Dedup, ByteCodec::FsstPlus}},
+  {CompressionType::COMPRESSION_COL_FSST_PLUS,
+   Text<kFsstPlusFunction>,
+   {Shape::Plain, ByteCodec::FsstPlus}},
+  {CompressionType::COMPRESSION_COL_DICT_ONPAIR,
+   Text<kDictOnPairFunction>,
+   {Shape::Dedup, ByteCodec::OnPair}},
+  {CompressionType::COMPRESSION_COL_ONPAIR,
+   Text<kOnPairFunction>,
+   {Shape::Plain, ByteCodec::OnPair}},
+  {CompressionType::COMPRESSION_COL_DICT_FSST12,
+   Text<kDictFsst12Function>,
+   {Shape::Dedup, ByteCodec::Fsst12}},
+  {CompressionType::COMPRESSION_COL_FSST12,
+   Text<kFsst12Function>,
+   {Shape::Plain, ByteCodec::Fsst12}},
 };
 
-constexpr CompressionType kCandidates[] = {
-  CompressionType::COMPRESSION_UNCOMPRESSED,
-  CompressionType::COMPRESSION_RLE,
-  CompressionType::COMPRESSION_BITPACKING,
-  CompressionType::COMPRESSION_ALP,
-  CompressionType::COMPRESSION_ALPRD,
-  CompressionType::COMPRESSION_ROARING,
-};
+constexpr size_t kInternalBegin = 6;
+constexpr size_t kTextBegin = 9;
+static_assert(kCodecs[kInternalBegin].type ==
+              CompressionType::COMPRESSION_CONSTANT);
+static_assert(kCodecs[kTextBegin].type ==
+              CompressionType::COMPRESSION_DICT_LZ4);
 
-using CandidateTable = std::array<std::vector<const CompressionFunction*>,
-                                  std::size(kPhysicalTypes)>;
+constexpr std::span<const Codec> kAnalyzed =
+  std::span{kCodecs}.first(kInternalBegin);
+constexpr std::span<const Codec> kText = std::span{kCodecs}.subspan(kTextBegin);
 
-CandidateTable MakeCandidates() {
-  CandidateTable table;
-  for (size_t p = 0; p < std::size(kPhysicalTypes); ++p) {
-    for (const auto type : kCandidates) {
-      if (const auto* function =
-            GetCompressionFunction(type, kPhysicalTypes[p])) {
-        table[p].push_back(function);
-      }
-    }
+constexpr CompressionType Canonical(CompressionType type) noexcept {
+  switch (type) {
+    case CompressionType::COMPRESSION_ZSTD:
+      return CompressionType::COMPRESSION_COL_ZSTD;
+    case CompressionType::COMPRESSION_DICT_FSST:
+      return CompressionType::COMPRESSION_COL_DICT_FSST;
+    case CompressionType::COMPRESSION_FSST:
+      return CompressionType::COMPRESSION_COL_FSST;
+    default:
+      return type;
   }
-  return table;
+}
+
+const Codec* Find(std::span<const Codec> codecs,
+                  CompressionType type) noexcept {
+  const auto it = absl::c_find_if(
+    codecs, [&](const Codec& codec) { return codec.type == type; });
+  return it == codecs.end() ? nullptr : &*it;
 }
 
 }  // namespace
 
+std::span<const Codec> AnalyzedCodecs() noexcept { return kAnalyzed; }
+
 const CompressionFunction* GetCodec(CompressionType type,
                                     PhysicalType physical) {
-  switch (type) {
-    case CompressionType::COMPRESSION_COL_NUMERIC:
-      return NumericFunction(physical);
-    case CompressionType::COMPRESSION_CONSTANT:
-      return ConstantFunction(physical);
-    case CompressionType::COMPRESSION_UNCOMPRESSED:
-      return UncompressedFunction(physical);
-    case CompressionType::COMPRESSION_RLE:
-      return RleFunction(physical);
-    case CompressionType::COMPRESSION_BITPACKING:
-      return BitpackingFunction(physical);
-    case CompressionType::COMPRESSION_ALP:
-      return AlpFunction(physical);
-    case CompressionType::COMPRESSION_ALPRD:
-      return AlpRdFunction(physical);
-    case CompressionType::COMPRESSION_ROARING:
-      return RoaringFunction(physical);
-    case CompressionType::COMPRESSION_EMPTY:
-      return physical == PhysicalType::BIT ? &EmptyValidityFunction() : nullptr;
-    default:
-      break;
-  }
-  if (const auto* text = TextCodecOf(type);
-      text && text->function && physical == PhysicalType::VARCHAR) {
-    return &text->function();
-  }
-  return nullptr;
+  const auto* codec = Find(kCodecs, type);
+  return codec ? codec->function(physical) : nullptr;
 }
 
 const CompressionFunction* GetCompressionFunction(CompressionType type,
@@ -177,27 +150,15 @@ bool Compresses(CompressionType type, PhysicalType physical) {
   return function && function->compress;
 }
 
-std::span<const CompressionFunction* const> GetCompressionFunctions(
-  PhysicalType physical) {
-  static const auto kTable = MakeCandidates();
-  const auto* it = absl::c_find(kPhysicalTypes, physical);
-  if (it == std::end(kPhysicalTypes)) {
-    return {};
-  }
-  return kTable[static_cast<size_t>(it - std::begin(kPhysicalTypes))];
-}
-
 const StringChoice* ChoiceOf(CompressionType type) {
-  const auto* text = TextCodecOf(type);
-  return text ? &text->choice : nullptr;
+  const auto* codec = Find(kText, Canonical(type));
+  return codec ? &codec->choice : nullptr;
 }
 
 CompressionType TypeOf(StringChoice choice) noexcept {
-  const auto* it = absl::c_find_if(kTextCodecs, [&](const TextCodec& codec) {
-    return codec.function && codec.choice == choice;
-  });
-  return it == std::end(kTextCodecs) ? CompressionType::COMPRESSION_AUTO
-                                     : it->type;
+  const auto it = absl::c_find_if(
+    kText, [&](const Codec& codec) { return codec.choice == choice; });
+  return it == kText.end() ? CompressionType::COMPRESSION_AUTO : it->type;
 }
 
 uint8_t MaxLevel(CompressionType type) {

@@ -132,19 +132,13 @@ Sections start at 8-byte boundaries.
 
 namespace irs::codecs {
 
-const CompressionFunction& FsstFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::PlainScan<text::FsstLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_FSST);
-  return kFunction;
-}
+constinit const CompressionFunction kFsstFunction =
+  text::StringFunction<text::PlainScan<text::FsstLeaf>>(
+    duckdb::CompressionType::COMPRESSION_COL_FSST);
 
-const CompressionFunction& DictFsstFunction() {
-  static const auto kFunction =
-    text::StringFunction<text::DictionaryScan<text::FsstLeaf>>(
-      duckdb::CompressionType::COMPRESSION_COL_DICT_FSST);
-  return kFunction;
-}
+constinit const CompressionFunction kDictFsstFunction =
+  text::StringFunction<text::DictionaryScan<text::FsstLeaf>>(
+    duckdb::CompressionType::COMPRESSION_COL_DICT_FSST);
 
 FsstEncoded FsstEncoder::Encode(std::span<const duckdb::string_t> strings,
                                 std::span<const uint32_t> skip, char* out,

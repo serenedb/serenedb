@@ -217,6 +217,14 @@ class SnapshotWriter {
                   ERR_MSG("log '", dir.string(), "' is damaged: ", why));
 }
 
+[[noreturn]] void ThrowIncomplete(const std::filesystem::path& dir, Lsn reached,
+                                  Lsn end) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                  ERR_MSG("the copy is incomplete: the log in '", dir.string(),
+                          "' is shorter than the backup: it ends at LSN ",
+                          reached, ", before the cut at LSN ", end));
+}
+
 uint64_t TotalBytes(std::span<const std::vector<uint8_t>> payloads) {
   uint64_t bytes = 0;
   for (const auto& payload : payloads) {
@@ -375,8 +383,7 @@ void Log::Cut(const std::filesystem::path& dir, Lsn end) {
       return;
     }
     if (!bytes || bytes->size() < from) {
-      ThrowDamaged(dir, absl::StrCat("it ends at LSN ", reached,
-                                     ", before the cut at LSN ", end));
+      ThrowIncomplete(dir, reached, end);
     }
     const auto limit = std::min<size_t>(bytes->size(), end - begin);
     reached =
@@ -392,8 +399,7 @@ void Log::Cut(const std::filesystem::path& dir, Lsn end) {
       return;
     }
     if (reached == begin && number != snapshot.number) {
-      ThrowDamaged(dir, absl::StrCat("it ends at LSN ", reached,
-                                     ", before the cut at LSN ", end));
+      ThrowIncomplete(dir, reached, end);
     }
     begin = reached;
   }

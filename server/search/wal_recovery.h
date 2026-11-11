@@ -28,7 +28,7 @@
 #include <span>
 #include <vector>
 
-#include "catalog/walk.h"
+#include "catalog/transaction.h"
 #include "search/store.h"
 #include "search/table.h"
 
@@ -44,8 +44,7 @@ void RecoverSearchStorages(
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);
 void StartSearchStorageTasks();
 void WriteOutTables();
-std::vector<TableSnapshot> CaptureSnapshot(Tick snapshot,
-                                           catalog::WalkCounters& walks);
+std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view);
 std::vector<std::vector<uint8_t>> SnapshotRecords(
   std::span<const TableSnapshot> tables);
 

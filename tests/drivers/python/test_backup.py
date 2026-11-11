@@ -497,6 +497,11 @@ def _retained_backup(tmp_path: Path) -> Path:
                 conn.execute("CHECKPOINT st")
             conn.execute("RESET debug_checkpoint_abort")
             conn.execute("INSERT INTO docs SELECT i, 'fourth' FROM range(3000, 3010) r(i)")
+            conn.execute("CREATE TABLE pad (id BIGINT, body TEXT) WITH "
+                         "(compaction_interval = 0)")
+            for _ in range(10):
+                conn.execute("INSERT INTO pad SELECT i, repeat('x', 1000) || i "
+                             "FROM range(2000) r(i)")
 
         copy = tmp_path / "copy"
         with _connect(source) as backup:

@@ -34,6 +34,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
@@ -42,6 +43,7 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "search/store.h"
@@ -141,11 +143,27 @@ void WriteOutTables() {
   }
 }
 
-std::vector<TableSnapshot> CaptureSnapshot(Tick snapshot,
-                                           catalog::WalkCounters& walks) {
+std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view) {
+  auto& instance = irs::DuckDBEngine::Instance().instance();
+  const auto at = view.Transaction(instance);
+  auto& cluster = catalog::ClusterOf(instance);
+  irs::containers::FlatHashMap<duckdb::idx_t, catalog::SereneDBCatalog*>
+    attached;
+  for (const auto& db :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(instance))) {
+    attached.emplace(db->oid,
+                     &db->GetCatalog().Cast<catalog::SereneDBCatalog>());
+  }
   std::vector<TableSnapshot> tables;
   for (auto& store : DurableStores()) {
-    if (auto state = store->SnapshotState(snapshot, walks)) {
+    if (!cluster.Oids().Find(at, store->GetDatabaseId())) {
+      continue;
+    }
+    if (const auto it = attached.find(store->GetDatabaseId());
+        it != attached.end() && !it->second->Oids().Find(at, store->GetId())) {
+      continue;
+    }
+    if (auto state = store->SnapshotState(view.Snapshot(), view.Walks())) {
       tables.push_back({.store = std::move(store), .state = std::move(state)});
     }
   }

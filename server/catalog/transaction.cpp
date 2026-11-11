@@ -740,7 +740,8 @@ absl::Status Transactions::TruncateLog(LogCycle cycle,
       return absl::OkStatus();
     }
     covered = *end;
-    tables = search::CaptureSnapshot(view.Snapshot(), view.Walks());
+    SDB_PARK_ONCE_ON_FAILURE("pause_cover_before_collect");
+    tables = search::CaptureSnapshot(view);
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
   const auto records = search::SnapshotRecords(tables);

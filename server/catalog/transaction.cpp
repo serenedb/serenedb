@@ -164,9 +164,10 @@ void SessionTransaction::Refresh() {
   transactions.Ended(previous);
 }
 
-void ApplyLsnUpdate(const LsnUpdate& update) {
+void ApplyLsnUpdate(const LsnUpdate& update, duckdb::transaction_t commit) {
   if (update.relation != 0) {
-    update.entry->MarkRelationSynced(update.relation, update.remote_lsn);
+    update.entry->MarkRelationSynced(update.relation, update.remote_lsn,
+                                     commit);
   } else if (update.assign) {
     update.entry->AssignRemoteLsn(update.remote_lsn);
   } else {
@@ -574,9 +575,6 @@ void Transactions::Commit(SessionTransaction& transaction,
       }
     }
     writes.Apply(commit, layouts);
-    for (const auto& update : transaction.LsnUpdates()) {
-      ApplyLsnUpdate(update);
-    }
   }
   if (range.end != 0) {
     _log->Write(range, record);
@@ -588,8 +586,14 @@ void Transactions::Commit(SessionTransaction& transaction,
   } else if (end != 0) {
     _log->Sync(end);
   }
+  if (!transaction.LsnUpdates().empty()) {
+    SDB_PARK_ONCE_ON_FAILURE("pause_lsn_commit_before_publish");
+  }
   writes.BeforePublish();
   Publish(commit, !transaction.Changes().empty(), true);
+  for (const auto& update : transaction.LsnUpdates()) {
+    ApplyLsnUpdate(update, commit);
+  }
   writes.Finish();
   if (!transaction.Changes().empty()) {
     GarbageQueued();

@@ -74,7 +74,7 @@ struct LsnUpdate {
   bool assign = false;
 };
 
-void ApplyLsnUpdate(const LsnUpdate& update);
+void ApplyLsnUpdate(const LsnUpdate& update, duckdb::transaction_t commit);
 
 enum class SessionState : uint8_t {
   Active,

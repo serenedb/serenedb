@@ -23,6 +23,8 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <utility>
 
+#include "catalog/transaction.h"
+
 namespace sdb::catalog {
 
 SubscriptionCatalogEntry::SubscriptionCatalogEntry(
@@ -57,23 +59,24 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SubscriptionCatalogEntry::AlterEntry(
 }
 
 void SubscriptionCatalogEntry::FoldSynced(
-  std::span<duckdb::SubscriptionRelation> relations) const {
+  std::span<duckdb::SubscriptionRelation> relations,
+  duckdb::transaction_t snapshot) const {
   for (auto& relation : relations) {
     if (relation.state == 'r' || relation.sync_id == 0) {
       continue;
     }
-    if (const auto lsn = RelationSyncedLsn(relation.sync_id)) {
+    if (const auto lsn = RelationSyncedLsn(relation.sync_id, snapshot)) {
       relation.state = 'r';
       relation.lsn = *lsn;
     }
   }
 }
 
-std::vector<duckdb::SubscriptionRelation> SubscriptionCatalogEntry::Relations()
-  const {
+std::vector<duckdb::SubscriptionRelation> SubscriptionCatalogEntry::Relations(
+  duckdb::transaction_t snapshot) const {
   std::vector<duckdb::SubscriptionRelation> relations{_info->relations.begin(),
                                                       _info->relations.end()};
-  FoldSynced(relations);
+  FoldSynced(relations, snapshot);
   return relations;
 }
 
@@ -85,7 +88,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SubscriptionCatalogEntry::GetInfo()
   subscription.permissions = permissions;
   subscription.comment = comment;
   subscription.tags = tags;
-  FoldSynced(subscription.relations);
+  FoldSynced(subscription.relations, Transactions::Get().LastCommit());
   subscription.remote_lsn = RemoteLsn();
   return info;
 }

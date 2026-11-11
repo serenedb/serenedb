@@ -595,12 +595,14 @@ void ReplayLsn(duckdb::ClientContext& context, ReplayTarget target,
   if (!entry) {
     return;
   }
-  ApplyLsnUpdate({
-    .entry = &entry->Cast<ReplicationLsnEntry>(),
-    .relation = record.relation,
-    .remote_lsn = record.remote_lsn,
-    .assign = record.assign,
-  });
+  ApplyLsnUpdate(
+    {
+      .entry = &entry->Cast<ReplicationLsnEntry>(),
+      .relation = record.relation,
+      .remote_lsn = record.remote_lsn,
+      .assign = record.assign,
+    },
+    0);
 }
 
 void ReplaySequence(duckdb::ClientContext& context, ReplayTarget target,

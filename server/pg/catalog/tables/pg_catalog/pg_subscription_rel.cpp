@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "catalog/entry/subscription.h"
+#include "catalog/transaction.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/lookup.h"
 
@@ -48,7 +49,8 @@ class PgSubscriptionRel final : public SystemTableScan<kPgSubscriptionRelSql> {
     }));
 
   void Row(const catalog::SubscriptionCatalogEntry& subscription) {
-    for (const auto& relation : subscription.Relations()) {
+    for (const auto& relation : subscription.Relations(
+           catalog::SessionOf(Context(), Database()).Snapshot())) {
       auto schema =
         Database().GetSchema(Transaction(), duckdb::Identifier{relation.schema},
                              duckdb::OnEntryNotFound::RETURN_NULL);

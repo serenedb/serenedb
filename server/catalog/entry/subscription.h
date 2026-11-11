@@ -44,7 +44,8 @@ class SubscriptionCatalogEntry final : public ReplicationLsnEntry {
   const duckdb::CreateSubscriptionInfo& Config() const noexcept {
     return *_info;
   }
-  std::vector<duckdb::SubscriptionRelation> Relations() const;
+  std::vector<duckdb::SubscriptionRelation> Relations(
+    duckdb::transaction_t snapshot) const;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
     duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
@@ -54,7 +55,8 @@ class SubscriptionCatalogEntry final : public ReplicationLsnEntry {
   std::string ToSQL() const final { return GetInfo()->ToString(); }
 
  private:
-  void FoldSynced(std::span<duckdb::SubscriptionRelation> relations) const;
+  void FoldSynced(std::span<duckdb::SubscriptionRelation> relations,
+                  duckdb::transaction_t snapshot) const;
 
   duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> _info;
 };

@@ -33,12 +33,17 @@
 
 namespace sdb::catalog {
 
+struct SyncedRelation {
+  uint64_t lsn = 0;
+  duckdb::transaction_t commit = 0;
+};
+
 struct ReplicationLsnState {
   explicit ReplicationLsnState(uint64_t lsn) : remote_lsn{lsn} {}
 
   std::atomic<uint64_t> remote_lsn;
   absl::Mutex relation_mutex;
-  irs::containers::FlatHashMap<duckdb::idx_t, uint64_t> relation_lsns
+  irs::containers::FlatHashMap<duckdb::idx_t, SyncedRelation> relation_lsns
     ABSL_GUARDED_BY(relation_mutex);
 };
 
@@ -54,8 +59,10 @@ class ReplicationLsnEntry : public duckdb::InCatalogEntry {
   const std::shared_ptr<ReplicationLsnState>& LsnState() const {
     return _lsn_state;
   }
-  void MarkRelationSynced(duckdb::idx_t relation, uint64_t lsn);
-  std::optional<uint64_t> RelationSyncedLsn(duckdb::idx_t relation) const;
+  void MarkRelationSynced(duckdb::idx_t relation, uint64_t lsn,
+                          duckdb::transaction_t commit);
+  std::optional<uint64_t> RelationSyncedLsn(
+    duckdb::idx_t relation, duckdb::transaction_t snapshot) const;
 
  private:
   std::shared_ptr<ReplicationLsnState> _lsn_state;

@@ -41,19 +41,20 @@ void ReplicationLsnEntry::RaiseRemoteLsn(uint64_t lsn) {
 }
 
 void ReplicationLsnEntry::MarkRelationSynced(duckdb::idx_t relation,
-                                             uint64_t lsn) {
+                                             uint64_t lsn,
+                                             duckdb::transaction_t commit) {
   absl::MutexLock lock{&_lsn_state->relation_mutex};
-  _lsn_state->relation_lsns[relation] = lsn;
+  _lsn_state->relation_lsns[relation] = {.lsn = lsn, .commit = commit};
 }
 
 std::optional<uint64_t> ReplicationLsnEntry::RelationSyncedLsn(
-  duckdb::idx_t relation) const {
+  duckdb::idx_t relation, duckdb::transaction_t snapshot) const {
   absl::MutexLock lock{&_lsn_state->relation_mutex};
   const auto it = _lsn_state->relation_lsns.find(relation);
-  if (it == _lsn_state->relation_lsns.end()) {
+  if (it == _lsn_state->relation_lsns.end() || it->second.commit > snapshot) {
     return std::nullopt;
   }
-  return it->second;
+  return it->second.lsn;
 }
 
 ReplicationOriginEntry::ReplicationOriginEntry(

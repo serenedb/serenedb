@@ -18,7 +18,7 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE rrs_own_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_own') || '/*';
+SET VARIABLE rrs_own_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_own') || '/*';
 
 
 statement ok
@@ -98,14 +98,14 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE rrs_re_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_re') || '/*';
+SET VARIABLE rrs_re_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_re') || '/*';
 
 
 statement ok
 CREATE MACRO rrs_re_stale() AS (
-  (SELECT count(DISTINCT regexp_extract(file, '/(_[0-9]+)\.[^/]*$', 1))
+  (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1))
    FROM glob(getvariable('rrs_re_dir'))
-   WHERE regexp_extract(file, '/(_[0-9]+)\.[^/]*$', 1) <> '')
+   WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '')
   - (SELECT value FROM sdb_metrics
      WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'rrs_re') AND metric = 'num_segments'));
 
@@ -191,7 +191,7 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE rrs_bk_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_bk') || '/*';
+SET VARIABLE rrs_bk_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_bk') || '/*';
 
 
 statement ok

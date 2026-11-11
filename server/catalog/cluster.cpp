@@ -468,9 +468,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
       ERR_MSG("database \"", info.GetQualifiedName().Name().GetIdentifierName(),
               "\" already exists"));
   }
-  if (!_layout.InMemory()) {
-    database.Directory()->Create();
-  }
   SDB_IF_FAILURE("unable_to_create") {
     THROW_SQL_ERROR(ERR_MSG("internal error"));
   }

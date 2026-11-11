@@ -104,7 +104,7 @@ void Restore(const catalog::DataDirectory& layout,
   }
   const auto& cut = label->cut;
   for (const auto& store : cut.stores) {
-    RequireDirectory(layout.StorageDir(store.database_oid, store.oid));
+    RequireDirectory(layout.StorageDir(store.oid));
   }
 
   const auto log = layout.LogDir();
@@ -132,8 +132,7 @@ void Restore(const catalog::DataDirectory& layout,
   SDB_IF_FAILURE("crash_in_restore_after_control") { SDB_IMMEDIATE_ABORT(); }
 
   for (const auto& store : cut.stores) {
-    utils::file_utils::SyncDirectory(
-      layout.StorageDir(store.database_oid, store.oid));
+    utils::file_utils::SyncDirectory(layout.StorageDir(store.oid));
   }
   utils::file_utils::SyncDirectory(engine_dir);
   SDB_IF_FAILURE("crash_in_restore_before_retire") { SDB_IMMEDIATE_ABORT(); }

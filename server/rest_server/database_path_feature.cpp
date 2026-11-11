@@ -30,6 +30,7 @@
 #include <iresearch/utils/string_utils.hpp>
 #include <system_error>
 
+#include "backup/pg_control.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/lockfile.h"
@@ -69,27 +70,11 @@ DatabasePathFeature::DatabasePathFeature()
     }
   }
 
-  // Acquire the LOCK file in the data directory. The lockfile guards against
-  // a second serened starting on the same data dir. No explicit shutdown hook
-  // needed: server/utils/lockfile.cpp owns a LockfileRemover whose static dtor
-  // runs on normal exit and releases / unlinks every lockfile we acquired.
-  // Fatal paths (_exit / abort) skip static dtors; the stale lockfile that
-  // remains is handled by VerifyLockFile on the next start.
-  std::string lock_filename =
-    utils::file_utils::BuildFilename(_directory, "LOCK");
-  if (const auto status = VerifyLockFile(lock_filename.c_str()); !status.ok()) {
+  backup::EnsurePgVersion(_directory);
+  if (const auto status = LockFile(
+        (std::filesystem::path{_directory} / backup::kPgVersionFile).string());
+      !status.ok()) {
     SDB_FATAL(GENERAL, status.message());
-  }
-  if (std::filesystem::exists(lock_filename, ec) && !ec) {
-    std::filesystem::remove(lock_filename, ec);
-    if (ec) {
-      SDB_FATAL(GENERAL, "failed to remove an abandoned lockfile '",
-                lock_filename, "': ", ec.message());
-    }
-  }
-  if (const auto status = CreateLockFile(lock_filename.c_str()); !status.ok()) {
-    SDB_FATAL(GENERAL,
-              "failed to lock the database directory: ", status.message());
   }
 
   gInstance = this;

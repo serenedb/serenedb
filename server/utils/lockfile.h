@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,25 +14,18 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
 #include <absl/status/status.h>
 
+#include <string_view>
+
 namespace sdb {
 
-// Pid-locking primitives backed by fcntl(2) F_WRLCK / F_UNLCK on a small file
-// whose body is the holder's pid. Used by DatabasePathFeature to gate "one
-// serened per datadir". No std::filesystem equivalent -- file locks are
-// kernel-level.
-//
-// CreateLockFile: O_EXCL-create the file, write the pid, take an exclusive
-// fcntl lock.
-// VerifyLockFile: existing file? read the pid, check if that process is alive
-// (kill(pid, 0)), then try to acquire the lock. OK if free or a stale
-// leftover.
-absl::Status CreateLockFile(const char* filename);
-absl::Status VerifyLockFile(const char* filename);
+absl::Status LockFile(std::string_view path);
 
 }  // namespace sdb

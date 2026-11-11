@@ -498,7 +498,8 @@ def _retained_backup(tmp_path: Path) -> Path:
             conn.execute("RESET debug_checkpoint_abort")
             conn.execute("INSERT INTO docs SELECT i, 'fourth' FROM range(3000, 3010) r(i)")
             conn.execute("CREATE TABLE pad (id BIGINT, body TEXT) WITH "
-                         "(compaction_interval = 0)")
+                         "(compaction_interval = 0, "
+                         "compaction_floor_segment_bytes = 67108864)")
             for _ in range(10):
                 conn.execute("INSERT INTO pad SELECT i, repeat('x', 1000) || i "
                              "FROM range(2000) r(i)")
@@ -546,7 +547,7 @@ def test_backup_without_a_log_file_refuses_to_boot(tmp_path: Path, missing: str)
     copy = _retained_backup(tmp_path)
     chunks = sorted((copy / "engine_v1" / "backup").glob("*.log"))
     name = (chunks[0] if missing == "oldest" else chunks[-1]).name
-    for directory in ("backup", "log"):
+    for directory in ("backup", "wal"):
         (copy / "engine_v1" / directory / name).unlink(missing_ok=True)
     restored = Serened(SERENED_BIN, datadir=str(copy),
                        log_path=str(tmp_path / "restored.log"))

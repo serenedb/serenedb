@@ -42,11 +42,7 @@ uint8_t SegmentFileKinds(std::span<const std::string> files) noexcept;
 
 std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds);
 
-// Returns string in the following format : {prefix}{gen}
-std::string FileName(std::string_view prefix, uint64_t gen);
-
-// Returns string in the following format : _{gen}
-inline std::string FileName(uint64_t gen) { return FileName("_", gen); }
+std::string FileName(uint64_t id);
 
 // Returns string in the following format : {name}.{ext}
 void FileName(std::string& out, std::string_view name, std::string_view ext);

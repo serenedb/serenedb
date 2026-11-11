@@ -50,16 +50,12 @@
 namespace sdb::backup {
 namespace {
 
-void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
+void CollectStores(catalog::SereneDBCatalog& catalog,
                    std::vector<StoreCut>& stores) {
   catalog::ForEachSearchStorage(
     catalog,
-    [&](catalog::SearchTableEntry& table) {
-      stores.push_back({database, table.oid});
-    },
-    [&](catalog::InvertedIndexEntry& index) {
-      stores.push_back({database, index.oid});
-    });
+    [&](catalog::SearchTableEntry& table) { stores.push_back({table.oid}); },
+    [&](catalog::InvertedIndexEntry& index) { stores.push_back({index.oid}); });
 }
 
 Cut RecordCut(
@@ -74,7 +70,7 @@ Cut RecordCut(
   cut.log_link = backup_dir;
   cut.log_size = log->Link(cut.log_link);
   for (const auto& db : pins) {
-    CollectStores(db->GetCatalog().Cast<catalog::SereneDBCatalog>(), db->oid,
+    CollectStores(db->GetCatalog().Cast<catalog::SereneDBCatalog>(),
                   cut.stores);
   }
   return cut;

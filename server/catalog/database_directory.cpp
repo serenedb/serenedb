@@ -128,17 +128,9 @@ void RemoveTree(const std::filesystem::path& path) noexcept {
 DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
   : _path{std::move(path)} {}
 
-DatabaseDirectory::~DatabaseDirectory() {
-  if (_dropped.load(std::memory_order_acquire)) {
-    RunRemoval([path = std::move(_path)] { RemoveTree(path); });
-  }
-}
-
 std::filesystem::path DatabaseDirectory::StoragePath(duckdb::idx_t oid) const {
   return _path / absl::StrCat(oid);
 }
-
-void DatabaseDirectory::Create() const { CreateDirectory(_path); }
 
 std::filesystem::path DatabaseDirectory::CreateStorage(
   duckdb::idx_t oid) const {

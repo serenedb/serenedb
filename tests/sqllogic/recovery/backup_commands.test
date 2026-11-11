@@ -88,8 +88,7 @@ CHECKPOINT bcmd_db;
 statement ok
 CREATE TEMP TABLE bcmd_oids AS
 SELECT
-  (SELECT database_oid FROM duckdb_databases() WHERE database_name = current_database()) AS db,
-  (SELECT database_oid FROM duckdb_databases() WHERE database_name = 'bcmd_db') AS other,
+  (SELECT table_oid FROM duckdb_tables() WHERE database_name = 'bcmd_db' AND table_name = 't') AS other,
   'bcmd_gone'::regclass::oid AS gone,
   'bcmd_docs'::regclass::oid AS docs;
 
@@ -141,9 +140,9 @@ SELECT pg_sleep(1);
 connection default
 query
 SELECT
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || db || '/' || gone || '/%') > 0 AS table_kept,
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || other || '/%') > 0 AS database_kept
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), bcmd_oids;
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/store/' || gone || '/%') > 0 AS table_kept,
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/store/' || other || '/%') > 0 AS database_kept
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*'), bcmd_oids;
 ----
 table_kept	database_kept
 t	t
@@ -185,7 +184,7 @@ connection default
 statement ok
 CREATE TEMP TABLE bcmd_wal AS
 SELECT min(regexp_extract(file, '[^/]+$')) AS oldest
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
 
 
 connection default
@@ -231,9 +230,9 @@ t
 connection default
 query ok retry 40 backoff 250ms
 SELECT
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || db || '/' || gone || '/%') AS table_files,
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || other || '/%') AS database_files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), bcmd_oids;
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/store/' || gone || '/%') AS table_files,
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/store/' || other || '/%') AS database_files
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*'), bcmd_oids;
 ----
 table_files	database_files
 0	0

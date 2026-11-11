@@ -14,7 +14,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfl_copy && mkdir -p $__TEST_DIR__/sfl_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/log $__TEST_DIR__/sfl_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/[0-9]* $__TEST_DIR__/sfl_copy/engine_v1/
+rm -rf $__TEST_DIR__/sfl_copy && mkdir -p $__TEST_DIR__/sfl_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfl_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfl_copy/engine_v1/
 
 connection holder
 statement ok
@@ -25,7 +25,7 @@ system ok
 rm -f $__TEST_DIR__/sfl_owner.locked $__TEST_DIR__/sfl_owner.release
 
 system async ok
-python3 -c "import fcntl,glob,os,sys,time; f=open(sorted(glob.glob(sys.argv[1]))[0],'r+b'); fcntl.lockf(f,fcntl.LOCK_EX); open(sys.argv[2],'w').close(); [time.sleep(0.05) for _ in iter(lambda: os.path.exists(sys.argv[3]),True)]" "$__TEST_DIR__/sfl_copy/engine_v1/log/*.log" $__TEST_DIR__/sfl_owner.locked $__TEST_DIR__/sfl_owner.release
+python3 -c "import fcntl,glob,os,sys,time; f=open(sorted(glob.glob(sys.argv[1]))[0],'r+b'); fcntl.lockf(f,fcntl.LOCK_EX); open(sys.argv[2],'w').close(); [time.sleep(0.05) for _ in iter(lambda: os.path.exists(sys.argv[3]),True)]" "$__TEST_DIR__/sfl_copy/engine_v1/wal/*.log" $__TEST_DIR__/sfl_owner.locked $__TEST_DIR__/sfl_owner.release
 
 system ok
 for i in $(seq 1 400); do [ -f $__TEST_DIR__/sfl_owner.locked ] && exit 0; sleep 0.05; done; exit 1
@@ -54,7 +54,7 @@ CREATE SERVER sfl_copy FOREIGN DATA WRAPPER serenedb_fdw
   OPTIONS (path '${__TEST_DIR__}/sfl_copy', database '${__DATABASE__}');
 
 system ok
-python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)))[0]!=fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/log/*.log"
+python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)))[0]!=fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/wal/*.log"
 
 system ok
 timeout 60 $SERENED $__TEST_DIR__/sfl_copy --listen='postgres://127.0.0.1:0' > $__TEST_DIR__/sfl_start.log 2>&1; [ $? -ne 0 ] && grep -q "Could not set lock" $__TEST_DIR__/sfl_start.log
@@ -69,7 +69,7 @@ statement ok
 DROP SERVER sfl_copy;
 
 system ok
-python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)))[0]==fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/log/*.log"
+python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)))[0]==fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/wal/*.log"
 
 
 system ok
@@ -90,13 +90,13 @@ first	second
 2	2
 
 system ok
-python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)))[0]==fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/log/*.log"
+python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)))[0]==fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/wal/*.log"
 
 statement ok
 DROP SERVER sfl_first;
 
 system ok
-python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)))[0]!=fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/log/*.log"
+python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)))[0]!=fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/wal/*.log"
 
 query
 SELECT count(*) AS n FROM sfl_second.public.sfl_docs;
@@ -108,7 +108,7 @@ statement ok
 DROP SERVER sfl_second;
 
 system ok
-python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)))[0]==fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/log/*.log"
+python3 -c "import fcntl,glob,struct,sys; sys.exit(0 if all(struct.unpack('hhqqi',fcntl.fcntl(open(p,'rb'),fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)))[0]==fcntl.F_UNLCK for p in glob.glob(sys.argv[1])) else 1)" "$__TEST_DIR__/sfl_copy/engine_v1/wal/*.log"
 
 query
 SELECT count(*) AS n FROM duckdb_databases() WHERE database_name LIKE 'sfl_%';

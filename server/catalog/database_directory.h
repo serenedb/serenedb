@@ -37,12 +37,10 @@ void ResumeRemovals();
 class DatabaseDirectory final {
  public:
   explicit DatabaseDirectory(std::filesystem::path path);
-  ~DatabaseDirectory();
 
   const std::filesystem::path& Path() const noexcept { return _path; }
   std::filesystem::path StoragePath(duckdb::idx_t oid) const;
 
-  void Create() const;
   std::filesystem::path CreateStorage(duckdb::idx_t oid) const;
   std::optional<std::filesystem::path> OpenStorage(duckdb::idx_t oid) const;
   static void RemoveStorage(std::shared_ptr<DatabaseDirectory> directory,

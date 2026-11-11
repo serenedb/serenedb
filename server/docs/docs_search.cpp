@@ -246,10 +246,6 @@ class SpanDirectory final : public irs::Directory {
                             "\": the documentation index is read-only"));
   }
 
-  irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
-    return nullptr;
-  }
-
   bool mtime(std::time_t&, std::string_view) const noexcept final {
     return false;
   }

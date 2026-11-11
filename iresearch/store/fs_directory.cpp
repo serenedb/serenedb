@@ -63,82 +63,6 @@ inline int GetPosixFadvice(IOAdvice advice) noexcept {
 
 }  // namespace
 
-class FsLock : public IndexLock {
- public:
-  FsLock(const std::filesystem::path& dir, std::string_view file)
-    : _dir{dir}, _file{file} {}
-
-  bool lock() final {
-    if (_handle) {
-      // don't allow self obtaining
-      return false;
-    }
-
-    bool exists;
-
-    if (!file_utils::Exists(exists, _dir.c_str())) {
-      return false;
-    }
-
-    // create directory if it is not exists
-    if (!exists && !file_utils::Mkdir(_dir.c_str(), true)) {
-      return false;
-    }
-
-    const auto path = _dir / _file;
-
-    // create lock file
-    if (!file_utils::VerifyLockFile(path.c_str())) {
-      if (!file_utils::Exists(exists, path.c_str()) ||
-          (exists && !file_utils::Remove(path.c_str()))) {
-        return false;
-      }
-
-      _handle = file_utils::CreateLockFile(path.c_str());
-    }
-
-    return _handle != nullptr;
-  }
-
-  bool is_locked(bool& result) const noexcept final {
-    if (_handle != nullptr) {
-      result = true;
-      return true;
-    }
-
-    try {
-      const auto path = _dir / _file;
-
-      result = file_utils::VerifyLockFile(path.c_str());
-      return true;
-    } catch (...) {
-    }
-
-    return false;
-  }
-
-  bool unlock() noexcept final {
-    if (_handle != nullptr) {
-      _handle = nullptr;
-#ifdef _WIN32
-      // file will be automatically removed on close
-      return true;
-#else
-      const auto path = _dir / _file;
-
-      return file_utils::Remove(path.c_str());
-#endif
-    }
-
-    return false;
-  }
-
- private:
-  std::filesystem::path _dir;
-  std::string _file;
-  file_utils::lock_handle_t _handle;
-};
-
 class FSIndexOutput final : public IndexOutput {
  public:
   static ptr Open(const path_char_t* name,
@@ -563,10 +487,6 @@ bool FSDirectory::length(uint64_t& result,
   const auto path = _dir / name;
 
   return file_utils::ByteSize(result, path.c_str());
-}
-
-IndexLock::ptr FSDirectory::make_lock(std::string_view name) noexcept {
-  return IndexLock::ptr{new FsLock{_dir, name}};
 }
 
 bool FSDirectory::mtime(std::time_t& result,

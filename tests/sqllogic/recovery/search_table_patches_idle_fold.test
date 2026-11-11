@@ -32,11 +32,11 @@ segments
 
 
 statement ok
-CREATE TEMP TABLE pif_oids AS SELECT (SELECT oid FROM pg_database WHERE datname = current_database()) AS db, 'pif'::regclass::oid AS tab;
+CREATE TEMP TABLE pif_oids AS SELECT 'pif'::regclass::oid AS tab;
 
 
 statement ok
-CREATE TEMP TABLE pif_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*.col'), pif_oids WHERE file LIKE '%/engine_v1/' || db || '/' || tab || '/%';
+CREATE TEMP TABLE pif_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*.col'), pif_oids WHERE file LIKE '%/engine_v1/store/' || tab || '/%';
 
 
 statement ok
@@ -44,7 +44,7 @@ UPDATE pif SET v = 1 WHERE id = 5;
 
 
 query ok retry 60 backoff 500ms
-SELECT count(*) > 0 AS folded FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*.col'), pif_oids WHERE file LIKE '%/engine_v1/' || db || '/' || tab || '/%' EXCEPT SELECT file FROM pif_files);
+SELECT count(*) > 0 AS folded FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*.col'), pif_oids WHERE file LIKE '%/engine_v1/store/' || tab || '/%' EXCEPT SELECT file FROM pif_files);
 ----
 folded
 t

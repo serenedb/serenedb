@@ -25,23 +25,18 @@ statement ok
 CREATE TABLE dsr_oids (name TEXT, oid BIGINT);
 
 
-statement ok
-INSERT INTO dsr_oids SELECT 'db', oid FROM pg_database WHERE datname = current_database();
-
-
 # The files left in the directory of a dropped object of this database, and of
 # a dropped database.
 statement ok
 CREATE MACRO dsr_leftover(object) AS (
-  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
-  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dsr_oids WHERE name = 'db') || '/'
-                  || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
+  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+  WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
 
 
 statement ok
 CREATE MACRO dsr_database_leftover(object) AS (
-  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
-  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
+  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+  WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT IN (SELECT oid FROM dsr_oids WHERE name = object));
 
 
 # ----------------------------------------------------------------------
@@ -153,7 +148,7 @@ VACUUM (FLUSH_TABLE) dsr_db.public.s;
 
 connection after_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_db', oid FROM pg_database WHERE datname = 'dsr_db';
+INSERT INTO dsr_oids SELECT 'dsr_db', table_oid FROM duckdb_tables() WHERE database_name = 'dsr_db';
 
 
 connection after_index
@@ -701,7 +696,8 @@ VACUUM (FLUSH_TABLE) dsr_all.public.s;
 
 connection after_table_with_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_all', oid FROM pg_database WHERE datname = 'dsr_all';
+INSERT INTO dsr_oids SELECT 'dsr_all', table_oid FROM duckdb_tables() WHERE database_name = 'dsr_all'
+UNION ALL SELECT 'dsr_all', index_oid FROM duckdb_indexes() WHERE database_name = 'dsr_all';
 
 
 connection after_table_with_index

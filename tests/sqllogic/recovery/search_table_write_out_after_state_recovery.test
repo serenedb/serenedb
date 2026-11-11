@@ -63,7 +63,7 @@ wait
 
 connection default
 query
-SELECT count(*) AS files FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT count(*) AS files FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
 ----
 files
 1

@@ -33,18 +33,18 @@ SET GLOBAL max_wal_size = '1MB';
 
 
 query
-SELECT size > 1000000 AS larger FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/snapshot');
+SELECT size > 1000000 AS larger FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/snapshot');
 ----
 larger
 t
 
 
 statement ok
-CREATE TEMP TABLE lsb_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+CREATE TEMP TABLE lsb_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
 
 
 statement ok
-CREATE TEMP TABLE lsb_snapshot AS SELECT size, last_modified FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/snapshot');
+CREATE TEMP TABLE lsb_snapshot AS SELECT size, last_modified FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/snapshot');
 
 
 statement ok
@@ -88,14 +88,14 @@ INSERT INTO lsb_small VALUES (10);
 
 
 query
-SELECT count(*) AS changed FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log') EXCEPT SELECT file FROM lsb_files);
+SELECT count(*) AS changed FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log') EXCEPT SELECT file FROM lsb_files);
 ----
 changed
 0
 
 
 query
-SELECT s.size = l.size AND s.last_modified = l.last_modified AS kept FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/snapshot') s, lsb_snapshot l;
+SELECT s.size = l.size AND s.last_modified = l.last_modified AS kept FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/snapshot') s, lsb_snapshot l;
 ----
 kept
 t

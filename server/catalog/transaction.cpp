@@ -653,16 +653,16 @@ void Transactions::MaintainLog(Lsn end) {
     }
     return;
   }
-  if (!_log->HasSpare() && end - _log->NewestChunk() > Log::kChunkBytes / 2 &&
+  if (!_log->HasNext() && end - _log->NewestChunk() > Log::kChunkBytes / 2 &&
       BackgroundScheduler::gInstance &&
-      !_preparing_spare.exchange(true, std::memory_order_acq_rel)) {
+      !_preparing_next.exchange(true, std::memory_order_acq_rel)) {
     BackgroundScheduler::instance()
       .Run([this] {
         absl::Cleanup done = [this] {
-          _preparing_spare.store(false, std::memory_order_release);
+          _preparing_next.store(false, std::memory_order_release);
         };
         try {
-          _log->PrepareSpare();
+          _log->PrepareNext();
         } catch (const std::exception& e) {
           SDB_WARN(GENERAL, "preparing the next log file failed: ",
                    duckdb::ErrorData{e}.RawMessage());

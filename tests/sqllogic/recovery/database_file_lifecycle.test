@@ -108,9 +108,9 @@ count
 
 connection after_crash
 query
-SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/**')
-WHERE regexp_extract(file, '/engine_v1/([0-9]+)/', 1) <> ''
-  AND regexp_extract(file, '/engine_v1/([0-9]+)/', 1) NOT IN (SELECT oid::TEXT FROM pg_database);
+SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
+  SELECT table_oid FROM duckdb_tables() UNION ALL SELECT index_oid FROM duckdb_indexes());
 ----
 orphans
 0
@@ -136,9 +136,9 @@ dbfile_keep
 
 connection after_drop_crash
 query
-SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/**')
-WHERE regexp_extract(file, '/engine_v1/([0-9]+)/', 1) <> ''
-  AND regexp_extract(file, '/engine_v1/([0-9]+)/', 1) NOT IN (SELECT oid::TEXT FROM pg_database);
+SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
+  SELECT table_oid FROM duckdb_tables() UNION ALL SELECT index_oid FROM duckdb_indexes());
 ----
 orphans
 0

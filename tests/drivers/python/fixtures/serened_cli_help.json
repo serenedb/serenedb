@@ -308,22 +308,6 @@
       ]
     },
     {
-      "id": "server/catalog/boot.cpp",
-      "label": "server/catalog/boot.cpp",
-      "flags": [
-        {
-          "name": "missing_database",
-          "flag": "--missing_database",
-          "type": "",
-          "defaultValue": "refuse",
-          "description": "What boot does with a database whose directory is missing: 'refuse' (default) stops the server, 'skip' leaves it unattached, 'drop' removes it from the catalog.",
-          "source": "server/catalog/boot.cpp",
-          "category": "server/catalog/boot.cpp",
-          "categoryLabel": "server/catalog/boot.cpp"
-        }
-      ]
-    },
-    {
       "id": "server/docs/builder/docs_bootstrap.cpp",
       "label": "server/docs/builder/docs_bootstrap.cpp",
       "flags": [

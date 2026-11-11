@@ -43,7 +43,7 @@ statement ok
 CHECKPOINT;
 
 query
-SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
 ----
 chunks
 1
@@ -81,7 +81,7 @@ wait
 
 connection default
 query
-SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
 ----
 chunks
 1
@@ -173,7 +173,7 @@ DELETE FROM lv WHERE id % 1000 = 0;
 
 connection after_crash
 query ok retry 40 backoff 250ms
-SELECT count(*) <= 2 AS bounded FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT count(*) <= 2 AS bounded FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
 ----
 bounded
 t
@@ -236,7 +236,7 @@ CHECKPOINT;
 
 connection after_third_crash
 query
-SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT count(*) AS chunks FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
 ----
 chunks
 1

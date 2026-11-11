@@ -14,7 +14,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfc_copy && mkdir -p $__TEST_DIR__/sfc_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/log $__TEST_DIR__/sfc_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/[0-9]* $__TEST_DIR__/sfc_copy/engine_v1/
+rm -rf $__TEST_DIR__/sfc_copy && mkdir -p $__TEST_DIR__/sfc_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfc_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfc_copy/engine_v1/
 
 connection holder
 statement ok
@@ -119,7 +119,7 @@ system ok
 rm -rf $__TEST_DIR__/sfc_gone && rm -f $__TEST_DIR__/sfc_locked.locked $__TEST_DIR__/sfc_locked.release
 
 system async ok
-python3 -c "import fcntl,glob,os,sys,time; f=open(sorted(glob.glob(sys.argv[1]))[0],'r+b'); fcntl.lockf(f,fcntl.LOCK_EX); open(sys.argv[2],'w').close(); [time.sleep(0.05) for _ in iter(lambda: os.path.exists(sys.argv[3]),True)]" "$__TEST_DIR__/sfc_locked/engine_v1/log/*.log" $__TEST_DIR__/sfc_locked.locked $__TEST_DIR__/sfc_locked.release
+python3 -c "import fcntl,glob,os,sys,time; f=open(sorted(glob.glob(sys.argv[1]))[0],'r+b'); fcntl.lockf(f,fcntl.LOCK_EX); open(sys.argv[2],'w').close(); [time.sleep(0.05) for _ in iter(lambda: os.path.exists(sys.argv[3]),True)]" "$__TEST_DIR__/sfc_locked/engine_v1/wal/*.log" $__TEST_DIR__/sfc_locked.locked $__TEST_DIR__/sfc_locked.release
 
 connection restart
 statement ok

@@ -71,7 +71,7 @@ wait
 
 
 system ok
-test -z "$(find ${SDB_DATADIR}/engine_v1 -type f -name '_*')"
+test -z "$(find ${SDB_DATADIR}/engine_v1/store -type f)"
 
 
 connection victim

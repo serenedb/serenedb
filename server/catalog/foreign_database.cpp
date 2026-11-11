@@ -113,8 +113,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
   }
   foreign.database = it->first;
   return duckdb::make_uniq<SereneDBCatalog>(
-    db,
-    std::make_shared<DatabaseDirectory>(layout.DatabaseDir(foreign.database)),
+    db, std::make_shared<DatabaseDirectory>(layout.StoreDir()),
     std::move(foreign));
 }
 

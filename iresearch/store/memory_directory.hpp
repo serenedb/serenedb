@@ -249,8 +249,6 @@ class MemoryDirectory final : public Directory {
 
   bool length(uint64_t& result, std::string_view name) const noexcept final;
 
-  IndexLock::ptr make_lock(std::string_view name) noexcept final;
-
   bool mtime(std::time_t& result, std::string_view name) const noexcept final;
 
   IndexInput::ptr open(std::string_view name, IOAdvice advice) const final;
@@ -264,21 +262,16 @@ class MemoryDirectory final : public Directory {
   bool visit(const visitor_f& visitor) const final;
 
  private:
-  friend class SingleInstanceLock;
-
   using FilesAllocator = ManagedTypedAllocator<
     std::pair<const std::string, std::shared_ptr<MemoryFile>>>;
   using FileMap = absl::flat_hash_map<
     std::string, std::shared_ptr<MemoryFile>,
     absl::container_internal::hash_default_hash<std::string>,
     absl::container_internal::hash_default_eq<std::string>, FilesAllocator>;
-  using LockMap = absl::flat_hash_set<std::string>;
 
   DirectoryAttributes _attrs;
   mutable absl::Mutex _flock;
-  absl::Mutex _llock;
   FileMap _files;
-  LockMap _locks;
 };
 
 struct MemoryOutput {

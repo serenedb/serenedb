@@ -49,10 +49,6 @@ class OverlayDirectory final : public Directory {
     return Layer(name).length(result, name);
   }
 
-  IndexLock::ptr make_lock(std::string_view name) noexcept final {
-    return _top.make_lock(name);
-  }
-
   bool mtime(std::time_t& result, std::string_view name) const noexcept final {
     return Layer(name).mtime(result, name);
   }

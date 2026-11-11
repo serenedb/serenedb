@@ -27,7 +27,7 @@ SET sdb_faults = '-pause_search_write_out:parked';
 
 
 system ok
-ls /proc/$(cat ${SDB_DATADIR}/LOCK)/task 2>/dev/null | wc -l > $__TEST_DIR__/wdw_threads
+python3 -c "import os,sys; i=os.stat(sys.argv[1]).st_ino; print(next(f[4] for f in map(str.split, open('/proc/locks')) if f[1] == 'FLOCK' and f[5].endswith(':' + str(i))))" ${SDB_DATADIR}/PG_VERSION > $__TEST_DIR__/wdw_pid && ls /proc/$(cat $__TEST_DIR__/wdw_pid)/task | wc -l > $__TEST_DIR__/wdw_threads
 
 
 statement ok
@@ -63,7 +63,7 @@ INSERT INTO wdw SELECT i, repeat('i', 100) FROM range(800, 900) r(i);
 
 
 system ok
-test $(ls /proc/$(cat ${SDB_DATADIR}/LOCK)/task 2>/dev/null | wc -l) -lt $(( $(cat $__TEST_DIR__/wdw_threads) + 4 ))
+test $(ls /proc/$(cat $__TEST_DIR__/wdw_pid)/task 2>/dev/null | wc -l) -lt $(( $(cat $__TEST_DIR__/wdw_threads) + 4 ))
 
 
 statement ok

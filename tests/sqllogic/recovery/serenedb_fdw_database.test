@@ -79,9 +79,6 @@ statement ok
 CREATE TABLE sfd_again.public.t AS SELECT 2 AS v;
 
 statement ok
-COPY (SELECT oid FROM pg_database WHERE datname = 'sfd_shop') TO '${__TEST_DIR__}/sfd_shop.oid' (FORMAT csv, HEADER false);
-
-statement ok
 COPY (SELECT table_oid FROM duckdb_tables() WHERE database_name = 'sfd_shop' AND table_name = 'notes') TO '${__TEST_DIR__}/sfd_notes.oid' (FORMAT csv, HEADER false);
 
 connection holder
@@ -92,7 +89,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfd_copy && mkdir -p $__TEST_DIR__/sfd_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/log $__TEST_DIR__/sfd_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/[0-9]* $__TEST_DIR__/sfd_copy/engine_v1/
+rm -rf $__TEST_DIR__/sfd_copy && mkdir -p $__TEST_DIR__/sfd_copy/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfd_copy/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfd_copy/engine_v1/
 
 connection holder
 statement ok
@@ -173,7 +170,7 @@ statement ok
 DROP SERVER sfd_again_snap;
 
 system ok
-rm -rf $__TEST_DIR__/sfd_torn && cp -r $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_torn && rm -rf $__TEST_DIR__/sfd_torn/engine_v1/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_notes.oid)
+rm -rf $__TEST_DIR__/sfd_torn && cp -r $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_torn && rm -rf $__TEST_DIR__/sfd_torn/engine_v1/store/$(cat $__TEST_DIR__/sfd_notes.oid)
 
 statement error
 CREATE SERVER sfd_torn FOREIGN DATA WRAPPER serenedb_fdw

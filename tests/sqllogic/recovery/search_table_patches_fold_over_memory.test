@@ -36,7 +36,7 @@ segments
 
 
 statement ok
-CREATE TEMP TABLE pfm_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*.col');
+CREATE TEMP TABLE pfm_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*.col');
 
 
 statement ok
@@ -44,7 +44,7 @@ UPDATE pfm SET v = 1 WHERE id % 2 = 0;
 
 
 query ok retry 40 backoff 250ms
-SELECT count(*) > 0 AS folded FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*.col') EXCEPT SELECT file FROM pfm_files);
+SELECT count(*) > 0 AS folded FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*.col') EXCEPT SELECT file FROM pfm_files);
 ----
 folded
 t

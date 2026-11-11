@@ -50,9 +50,8 @@ struct DataDirectory {
   bool InMemory() const noexcept { return directory.empty(); }
   std::filesystem::path EngineDir() const;
   std::filesystem::path LogDir() const;
-  std::filesystem::path DatabaseDir(duckdb::idx_t oid) const;
-  std::filesystem::path StorageDir(duckdb::idx_t database,
-                                   duckdb::idx_t oid) const;
+  std::filesystem::path StoreDir() const;
+  std::filesystem::path StorageDir(duckdb::idx_t oid) const;
 
   std::string directory;
 };

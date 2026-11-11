@@ -35,10 +35,10 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
   : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
     _options{info.options},
-    _directory{
-      directory ? std::move(directory)
-                : std::make_shared<DatabaseDirectory>(
-                    catalog.Cast<ClusterCatalog>().Layout().DatabaseDir(oid))} {
+    _directory{directory
+                 ? std::move(directory)
+                 : std::make_shared<DatabaseDirectory>(
+                     catalog.Cast<ClusterCatalog>().Layout().StoreDir())} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;

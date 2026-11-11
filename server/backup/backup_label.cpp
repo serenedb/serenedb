@@ -91,7 +91,7 @@ std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
     kFormatKey, kBackupLabelFormat, "\n", kSystemKey, system_identifier, "\n",
     kLogKey, cut.log_link.string(), " ", cut.log_size, "\n");
   for (const auto& store : cut.stores) {
-    absl::StrAppend(&out, kStoreKey, store.database_oid, "/", store.oid, "\n");
+    absl::StrAppend(&out, kStoreKey, store.oid, "\n");
   }
   absl::StrAppend(&out, kChecksumKey, Checksum(out), "\n");
   return out;
@@ -152,10 +152,7 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
       has_log = true;
     } else if (absl::ConsumePrefix(&value, kStoreKey)) {
       StoreCut store;
-      const auto slash = value.find('/');
-      if (slash == std::string_view::npos ||
-          !absl::SimpleAtoi(value.substr(0, slash), &store.database_oid) ||
-          !ParseFields(value.substr(slash + 1), store.oid)) {
+      if (!ParseFields(value, store.oid)) {
         return Malformed(line);
       }
       label.cut.stores.push_back(store);

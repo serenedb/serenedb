@@ -24,6 +24,7 @@
 #include "file_names.hpp"
 
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
 
 #include <array>
@@ -79,9 +80,7 @@ std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds) {
   return files;
 }
 
-std::string FileName(std::string_view prefix, uint64_t gen) {
-  return absl::StrCat(prefix, gen);
-}
+std::string FileName(uint64_t id) { return absl::StrFormat("%016x", id); }
 
 void FileName(std::string& result, std::string_view name,
               std::string_view ext) {
@@ -90,13 +89,15 @@ void FileName(std::string& result, std::string_view name,
 }
 
 bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
-  if (name.size() < 2 || name.front() != '_') {
+  constexpr size_t kDigits = 16;
+  if (name.size() < kDigits ||
+      (name.size() != kDigits && name[kDigits] != '.')) {
     return false;
   }
-  const auto* begin = name.data() + 1;
-  const auto* end = name.data() + name.size();
-  const auto [ptr, ec] = fast_float::from_chars(begin, end, id);
-  return ec == std::errc{} && (ptr == end || *ptr == '.');
+  const auto* begin = name.data();
+  const auto* end = begin + kDigits;
+  const auto [ptr, ec] = fast_float::from_chars(begin, end, id, 16);
+  return ec == std::errc{} && ptr == end;
 }
 
 }  // namespace irs

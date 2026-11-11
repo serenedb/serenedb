@@ -63,8 +63,6 @@ struct LinkedChunk {
 constexpr std::string_view kChunkSuffix = ".log";
 constexpr std::string_view kSnapshotFile = "snapshot";
 constexpr std::string_view kSnapshotTemp = "snapshot.tmp";
-constexpr std::string_view kSpareFile = "spare";
-constexpr std::string_view kSpareTemp = "spare.tmp";
 constexpr size_t kIoBytes = size_t{1} << 20;
 constexpr uint64_t kMaxRecordBytes = std::numeric_limits<uint32_t>::max();
 
@@ -479,18 +477,12 @@ void Log::Replay(Apply apply, CatalogPart part) {
   if (scanned.torn_to > scanned.torn_from || size < kChunkBytes) {
     last.Sync();
   }
-  std::filesystem::remove(_dir / kSpareTemp);
   std::filesystem::remove(_dir / kSnapshotTemp);
   _covered.store(scanned.covered, std::memory_order_release);
   _covered_number.store(scanned.first, std::memory_order_relaxed);
   _snapshot_bytes.store(scanned.snapshot_bytes, std::memory_order_relaxed);
   _history_bytes.store(TotalBytes(history), std::memory_order_relaxed);
   _history = std::move(history);
-  auto spare = _fs.OpenFile((_dir / kSpareFile).string(),
-                            duckdb::FileFlags::FILE_FLAGS_READ |
-                              duckdb::FileFlags::FILE_FLAGS_WRITE |
-                              duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS |
-                              duckdb::FileLockType::WRITE_LOCK);
   if (removed) {
     SyncDirectory();
   }
@@ -499,8 +491,6 @@ void Log::Replay(Apply apply, CatalogPart part) {
   _oldest.store(chunks.begin()->first, std::memory_order_relaxed);
   _newest.store(chunks.rbegin()->first, std::memory_order_relaxed);
   _chunks = std::move(chunks);
-  _spare = std::move(spare);
-  _has_spare.store(_spare != nullptr, std::memory_order_relaxed);
   _replayed = end;
   _reserved = end;
   _written.store(end, std::memory_order_release);
@@ -518,8 +508,15 @@ Log::Range Log::Reserve(size_t payload_size) {
   absl::MutexLock lock{&_mutex};
   const auto bytes = sizeof(Header) + payload_size;
   SDB_ASSERT(!_chunks.empty());
-  const auto current = _chunks.rbegin()->first;
-  if (_reserved != current && _reserved - current + bytes > kChunkBytes) {
+  for (;;) {
+    const auto current = _chunks.rbegin()->first;
+    if (_reserved == current || _reserved - current + bytes <= kChunkBytes) {
+      break;
+    }
+    if (_preparing) {
+      _mutex.Await(absl::Condition{this, &Log::NotPreparing});
+      continue;
+    }
     StartChunk();
   }
   SDB_ASSERT(_reserved_seq - _written_seq.load(std::memory_order_relaxed) <
@@ -538,17 +535,11 @@ void Log::StartChunk() {
     SyncDirectory();
     _directory_synced = _directory_changes;
   }
-  duckdb::unique_ptr<duckdb::FileHandle> file;
-  if (auto spare = std::exchange(_spare, nullptr)) {
-    _has_spare.store(false, std::memory_order_relaxed);
-    std::error_code ec;
-    std::filesystem::rename(_dir / kSpareFile, ChunkPath(number), ec);
-    if (!ec) {
-      file = std::move(spare);
-    }
-  }
+  auto file = std::exchange(_next, nullptr);
+  _has_next.store(false, std::memory_order_relaxed);
   if (!file) {
     file = OpenChunk(number, true);
+    ++_directory_changes;
   }
   _chunks.emplace(_reserved, std::make_shared<Chunk>(Chunk{
                                .number = number,
@@ -557,27 +548,38 @@ void Log::StartChunk() {
                              }));
   _next_number = number + 1;
   _newest.store(_reserved, std::memory_order_relaxed);
-  ++_directory_changes;
 }
 
-void Log::PrepareSpare() {
-  if (HasSpare()) {
-    return;
+void Log::PrepareNext() {
+  uint64_t number = 0;
+  {
+    absl::MutexLock lock{&_mutex};
+    if (_next || _preparing) {
+      return;
+    }
+    _preparing = true;
+    number = _next_number;
   }
-  const auto temp = _dir / kSpareTemp;
-  std::filesystem::remove(temp);
-  auto file = _fs.OpenFile(temp.string(),
-                           duckdb::FileFlags::FILE_FLAGS_READ |
-                             duckdb::FileFlags::FILE_FLAGS_WRITE |
-                             duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW |
-                             duckdb::FileLockType::WRITE_LOCK);
+  duckdb::unique_ptr<duckdb::FileHandle> file;
+  bool ready = false;
+  absl::Cleanup done = [&] {
+    if (!ready && file) {
+      file.reset();
+      std::error_code ec;
+      std::filesystem::remove(ChunkPath(number), ec);
+    }
+    absl::MutexLock lock{&_mutex};
+    _preparing = false;
+    if (ready) {
+      _next = std::move(file);
+      _has_next.store(true, std::memory_order_relaxed);
+    }
+  };
+  file = OpenChunk(number, true);
   ZeroFill(*file, 0, kChunkBytes);
   file->Sync();
-  std::filesystem::rename(temp, _dir / kSpareFile);
   SyncDirectory();
-  absl::MutexLock lock{&_mutex};
-  _spare = std::move(file);
-  _has_spare.store(true, std::memory_order_relaxed);
+  ready = true;
 }
 
 void Log::Write(const Range& range, std::span<const uint8_t> payload) {

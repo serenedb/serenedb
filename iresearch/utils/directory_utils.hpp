@@ -61,10 +61,6 @@ struct TrackingDirectory final : public Directory {
     return _impl.length(result, name);
   }
 
-  IndexLock::ptr make_lock(std::string_view name) noexcept final {
-    return _impl.make_lock(name);
-  }
-
   bool mtime(std::time_t& result, std::string_view name) const noexcept final {
     return _impl.mtime(result, name);
   }
@@ -122,10 +118,6 @@ struct RefTrackingDirectory : public Directory {
 
   bool length(uint64_t& result, std::string_view name) const noexcept final {
     return _impl.length(result, name);
-  }
-
-  IndexLock::ptr make_lock(std::string_view name) noexcept final {
-    return _impl.make_lock(name);
   }
 
   bool mtime(std::time_t& result, std::string_view name) const noexcept final {

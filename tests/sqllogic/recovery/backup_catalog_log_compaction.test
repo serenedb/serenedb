@@ -161,7 +161,7 @@ query
 SELECT count(*) > 0 AS linked,
        count(*) FILTER (WHERE regexp_extract(b.file, '[^/]+$') NOT IN (
          SELECT regexp_extract(l.file, '[^/]+$')
-         FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log') AS l)) AS truncated
+         FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log') AS l)) AS truncated
 FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*.log') AS b;
 ----
 linked	truncated

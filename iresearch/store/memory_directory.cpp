@@ -35,34 +35,6 @@
 
 namespace irs {
 
-class SingleInstanceLock : public IndexLock {
- public:
-  SingleInstanceLock(std::string_view name, MemoryDirectory* parent)
-    : _name{name}, _parent{parent} {
-    SDB_ASSERT(parent);
-  }
-
-  bool lock() final {
-    std::lock_guard lock{_parent->_llock};
-    return _parent->_locks.insert(_name).second;
-  }
-
-  bool is_locked(bool& result) const noexcept final {
-    std::lock_guard lock{_parent->_llock};
-    result = _parent->_locks.contains(_name);
-    return true;
-  }
-
-  bool unlock() noexcept final {
-    std::lock_guard lock{_parent->_llock};
-    return _parent->_locks.erase(_name) != 0;
-  }
-
- private:
-  std::string _name;
-  MemoryDirectory* _parent;
-};
-
 const byte_type* MemoryIndexInput::ReadStable(uint64_t count) noexcept {
   const auto* begin = _begin + count;
 
@@ -302,13 +274,6 @@ bool MemoryDirectory::length(uint64_t& result,
   result = it->second->Length();
 
   return true;
-}
-
-IndexLock::ptr MemoryDirectory::make_lock(std::string_view name) noexcept try {
-  return IndexLock::ptr{new SingleInstanceLock{name, this}};
-} catch (...) {
-  SDB_ASSERT(false);
-  return nullptr;
 }
 
 bool MemoryDirectory::mtime(std::time_t& result,

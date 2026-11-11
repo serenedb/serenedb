@@ -193,7 +193,7 @@ Store::~Store() {
   _table.reset();
   _writer.reset();
   _dir.reset();
-  if (_dropped.load(std::memory_order_acquire)) {
+  if (OwnerDropped()) {
     catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _id);
   }
 }

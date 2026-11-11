@@ -58,8 +58,8 @@ n
 
 connection after_crash
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
-WHERE file LIKE '%/' || (SELECT oid FROM rmc_oids) || '/%';
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM rmc_oids) || '/%';
 ----
 leftover
 0

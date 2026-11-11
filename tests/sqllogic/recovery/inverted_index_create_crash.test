@@ -39,8 +39,8 @@ count
 
 connection cc_after
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
-WHERE file NOT LIKE '%/' || (SELECT oid FROM pg_class WHERE relname = 'cc_t') || '/%';
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+WHERE file NOT LIKE '%/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'cc_t') || '/%';
 ----
 leftover
 0
@@ -60,7 +60,7 @@ VACUUM (FLUSH_TABLE) cc_t;
 
 connection cc_after
 query
-SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
+SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*');
 ----
 indexed
 t

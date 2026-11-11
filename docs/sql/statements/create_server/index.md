@@ -153,7 +153,7 @@ SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 
 `path` is required and names the data directory, the directory the other server was started with. `database` names the database to attach and defaults to `postgres`. `ATTACH '<path>' AS archive (TYPE serenedb, READ_ONLY, DATABASE 'shop')` attaches the same database until `DETACH` or a restart of the server.
 
-A copy of the data directory is complete when it holds `engine_v1/log` and the directory of the database, `engine_v1/<oid>` (`SELECT oid FROM pg_database WHERE datname = 'shop'` on the other server). To copy the directory of a running server, run [`pg_backup_start`](../../../operations/backup.md) first, copy `engine_v1/log` before the database directory, and run `pg_backup_stop` once the copy is done.
+A copy of the data directory is complete when it holds `engine_v1/wal` and, in `engine_v1/store`, the directories of the database's tables and of the inverted indexes on its views, named by their `pg_class.oid` on the other server. To copy the directory of a running server, run [`pg_backup_start`](../../../operations/backup.md) first, copy `engine_v1/wal` before `engine_v1/store`, and run `pg_backup_stop` once the copy is done.
 
 ### What a read-only database does
 
@@ -178,7 +178,7 @@ The lock is the file system's: on a file system without POSIX locks nothing dete
 `CREATE SERVER` refuses a data directory:
 
 - of a running server, the attaching server included,
-- without `engine_v1/log`,
+- without `engine_v1/wal`,
 - without a database of the given name, or
 - missing the directory of one of the database's tables or inverted indexes.
 

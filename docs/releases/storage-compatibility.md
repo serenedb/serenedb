@@ -24,21 +24,20 @@ The log holds every committed transaction of the server: the changes to the cata
 
 ## Data directory
 
-A server keeps its log and its databases under `engine_v1` in its data directory:
+A server keeps its log and its tables under `engine_v1` in its data directory:
 
-- `engine_v1/log/`: the log, in files of 16 MiB named by their position in the log; `history`, which keeps the catalog changes of the log files the server has removed; and `spare`, the next log file, prepared ahead.
-- `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds one directory for each table and each inverted index on a view, named by the object's `pg_class.oid`, with that object's index files.
+- `engine_v1/wal/`: the log, in files of 16 MiB named by their position in the log, the next one prepared ahead; and `snapshot`, which holds the catalog and the state of every table as of the oldest log file kept.
+- `engine_v1/store/<oid>/`: one directory for each table and each inverted index on a view, of every database, named by the object's `pg_class.oid`, with that object's index files.
 
 Beside `engine_v1`, the root of the data directory holds:
 
 - `pg_hba.conf`: the [client authentication rules](../security/client_authentication.md#the-hba-ruleset) that `SET hba` writes, unless the `--hba_config` flag names another file.
-- `global/` and `PG_VERSION`: the files PostgreSQL backup tools look for; see [Backup](../operations/backup.md).
+- `global/` and `PG_VERSION`: the files PostgreSQL backup tools look for; see [Backup](../operations/backup.md). A running server holds a lock on `PG_VERSION`, so that a second server does not start on the same data directory.
 - `tmp/`: temporary files of queries that spill to disk (the `temp_directory` setting).
 - `extensions/`: the extension directory (the `extension_directory` setting).
-- `LOCK`: held while the server runs, so that a second server does not start on the same data directory.
 
-`engine_v1` holds everything a server needs when it starts again except the authentication rules, so a copy of the data directory needs `pg_hba.conf` as well. `tmp/`, `extensions/` and `LOCK` hold nothing a server needs when it starts again. Another server reads a database of the data directory with [`serenedb_fdw`](../sql/statements/create_server/index.md#read-only-serenedb-databases).
+`engine_v1` holds everything a server needs when it starts again except the authentication rules, so a copy of the data directory needs `pg_hba.conf` as well. `tmp/` and `extensions/` hold nothing a server needs when it starts again. Another server reads a database of the data directory with [`serenedb_fdw`](../sql/statements/create_server/index.md#read-only-serenedb-databases).
 
-Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that or in the middle of it, or crashes while an object is being created, it removes what is left of the directory when it starts again. A server refuses to start when `engine_v1/log` is missing but database directories hold data, instead of starting empty beside them.
+Dropping a table or an index, or the database that holds it, removes its directory once no query uses it any more. If the server stops before that or in the middle of it, or crashes while an object is being created, it removes what is left of the directory when it starts again. A server refuses to start when `engine_v1/wal` is missing but `engine_v1/store` holds table directories, instead of starting empty beside them. It also refuses to start when the directory of a table or an index is missing; its log names the directory and the object.
 
 For the meaning of version numbers and release lines, see [Versioning](./versioning.md).

@@ -115,10 +115,10 @@ class Log {
   }
   uint64_t Size() const { return Reserved() - Oldest(); }
 
-  bool HasSpare() const noexcept {
-    return _has_spare.load(std::memory_order_relaxed);
+  bool HasNext() const noexcept {
+    return _has_next.load(std::memory_order_relaxed);
   }
-  void PrepareSpare();
+  void PrepareNext();
 
  private:
   struct Chunk {
@@ -138,6 +138,9 @@ class Log {
   duckdb::unique_ptr<duckdb::FileHandle> OpenChunk(uint64_t number,
                                                    bool create) const;
   void StartChunk() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  bool NotPreparing() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) {
+    return !_preparing;
+  }
   void SyncDirectory() const;
   void AdvanceWritten() noexcept;
   void SyncTo(Lsn target);
@@ -159,8 +162,9 @@ class Log {
   std::atomic<uint64_t> _syncs{0};
   uint64_t _directory_changes ABSL_GUARDED_BY(_mutex) = 0;
   uint64_t _directory_synced ABSL_GUARDED_BY(_mutex) = 0;
-  duckdb::unique_ptr<duckdb::FileHandle> _spare ABSL_GUARDED_BY(_mutex);
-  std::atomic<bool> _has_spare{false};
+  duckdb::unique_ptr<duckdb::FileHandle> _next ABSL_GUARDED_BY(_mutex);
+  bool _preparing ABSL_GUARDED_BY(_mutex) = false;
+  std::atomic<bool> _has_next{false};
   std::atomic<Lsn> _oldest{0};
   std::atomic<Lsn> _newest{0};
   std::atomic<Lsn> _covered{0};

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -63,6 +64,12 @@ class Collector {
     }
   }
 
+  void MarkUnseen(score_t bound) noexcept {
+    _unseen = std::max(_unseen, bound);
+  }
+
+  score_t Unseen() const noexcept { return _unseen; }
+
   std::span<ScoreDoc> Flush() {
     Merge();
     return _hits;
@@ -71,6 +78,7 @@ class Collector {
   void Clear() noexcept {
     _hits.clear();
     _prune_at = kPruneAt;
+    _unseen = std::numeric_limits<score_t>::lowest();
   }
 
  private:
@@ -90,6 +98,7 @@ class Collector {
 
   SharedFloor* _floor;
   uint32_t _k;
+  score_t _unseen = std::numeric_limits<score_t>::lowest();
   size_t _prune_at = kPruneAt;
   std::vector<score_t> _lower;
   std::vector<ScoreDoc> _hits;

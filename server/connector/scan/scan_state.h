@@ -335,6 +335,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     ABSL_CACHELINE_ALIGNED absl::Mutex best_mutex;
     std::vector<irs::ScoreDoc> best ABSL_GUARDED_BY(best_mutex);
     std::vector<irs::ScoreDoc> rescored ABSL_GUARDED_BY(best_mutex);
+    irs::score_t unseen ABSL_GUARDED_BY(best_mutex) =
+      std::numeric_limits<irs::score_t>::lowest();
   };
   AnnState ann;
 
@@ -442,6 +444,7 @@ struct AnnLocalState final : public RankedLocalState {
   std::optional<irs::ann::SharedFloor> segment_floor;
   std::optional<irs::ann::Collector> collector;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
+  irs::score_t unseen = std::numeric_limits<irs::score_t>::lowest();
   std::vector<irs::ScoreDoc> pending;
   std::vector<irs::ScoreDoc> rescored;
   std::vector<std::unique_ptr<irs::detail::RawVectorReader>> rescorers;

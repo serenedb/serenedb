@@ -32,11 +32,13 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/detail/table_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <tuple>
@@ -1464,6 +1466,112 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
   EXPECT_EQ(crossed_far, kQueries);
   EXPECT_GE(found_adaptive + kQueries, found_two_hop)
     << "adaptive " << found_adaptive << " twohop " << found_two_hop;
+}
+
+namespace {
+
+class EveryNthDoc final : public irs::detail::TableFilter {
+ public:
+  explicit EveryNthDoc(uint32_t step) : _step{step} {}
+
+  irs::doc_id_t Live(irs::doc_id_t doc) final {
+    const auto offset = (doc - irs::doc_limits::min()) % _step;
+    return offset == 0 ? doc : doc + (_step - offset);
+  }
+
+  bool Foldable() const noexcept final { return false; }
+
+  uint64_t CountAndClear(irs::doc_id_t, uint64_t*, uint32_t) final {
+    ADD_FAILURE() << "a lookup filter narrows hits, not bitsets";
+    return 0;
+  }
+
+  uint32_t Narrow(irs::doc_id_t* docs, irs::score_t* scores, uint32_t n) final {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      if (Live(docs[i]) == docs[i]) {
+        docs[kept] = docs[i];
+        if (scores) {
+          scores[kept] = scores[i];
+        }
+        ++kept;
+      }
+    }
+    return kept;
+  }
+
+  uint32_t Narrow(irs::doc_id_t, const uint64_t*, uint64_t*, irs::score_t*,
+                  uint32_t) final {
+    ADD_FAILURE() << "a lookup filter narrows hits, not bitsets";
+    return 0;
+  }
+
+  double Share() const final { return 1.0 / _step; }
+
+ private:
+  uint32_t _step;
+};
+
+struct TableRun {
+  std::vector<irs::ScoreDoc> hits;
+  irs::score_t unseen = std::numeric_limits<irs::score_t>::lowest();
+};
+
+TableRun RunOnLine(size_t rows, uint32_t ef, uint32_t step, uint32_t k) {
+  std::vector<std::vector<float>> vecs(rows, std::vector<float>(kDim, 0.f));
+  for (size_t i = 0; i < rows; ++i) {
+    vecs[i][0] = static_cast<float>(i);
+  }
+  irs::MemoryDirectory dir;
+  auto reader = BuildIndex(dir, vecs, irs::VectorMetric::L2Sqr,
+                           irs::VectorQuantization::None);
+  EXPECT_EQ(1U, reader->size());
+  std::vector<float> point(kDim, 0.f);
+  point[0] = 0.4f;
+  auto filter = MakeKnnFilter(point, irs::VectorMetric::L2Sqr,
+                              irs::VectorQuantization::None, ef);
+  irs::VectorSimilarityScorer scorer;
+  irs::StatsArena stats_arena{duckdb::Allocator::DefaultAllocator()};
+  irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
+  auto query = irs::PrepareMasked(filter, (*reader)[0],
+                                  {.collector = collector_tree.Get()});
+  collector_tree.Finish();
+  EXPECT_NE(nullptr, query);
+  if (!query) {
+    return {};
+  }
+  EveryNthDoc table{step};
+  irs::ColumnArgsFetcher fetcher;
+  auto root = irs::ann::MakeRoot(
+    *query, {.scorer = scorer, .fetcher = fetcher, .table = &table, .k = k});
+  EXPECT_NE(nullptr, root);
+  if (!root) {
+    return {};
+  }
+  irs::ann::SharedFloor floor{k};
+  irs::ann::Collector collector{floor, k};
+  root->Run(collector);
+  const auto hits = collector.Flush();
+  return {.hits = {hits.begin(), hits.end()}, .unseen = collector.Unseen()};
+}
+
+}  // namespace
+
+TEST(HnswLookupFilterTest, MarksWhatAFullWindowLeftUnseen) {
+  const auto run = RunOnLine(600, 64, 41, 10);
+  ASSERT_FALSE(run.hits.empty());
+  EXPECT_LT(run.hits.size(), 10U);
+  EXPECT_GT(run.unseen, std::numeric_limits<irs::score_t>::lowest());
+  for (const auto& hit : run.hits) {
+    EXPECT_EQ(0U, (hit.doc - irs::doc_limits::min()) % 41);
+    EXPECT_GE(hit.score, run.unseen);
+  }
+}
+
+TEST(HnswLookupFilterTest, LeavesNothingUnseenWhenTheWindowHoldsTheSegment) {
+  const auto run = RunOnLine(50, 64, 41, 10);
+  ASSERT_EQ(2U, run.hits.size());
+  EXPECT_EQ(std::numeric_limits<irs::score_t>::lowest(), run.unseen);
 }
 
 TEST(HnswInsertTest, NodesInsertedTowardsTheGraphStayReachable) {

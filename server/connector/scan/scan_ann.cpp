@@ -166,6 +166,7 @@ void RescoreWhileReachable(ScanGlobalState& g, AnnLocalState& l,
 
 void FlushSegment(ScanGlobalState& g, AnnLocalState& l) {
   auto pool = l.collector->Flush();
+  l.unseen = std::max(l.unseen, l.collector->Unseen());
   if (!pool.empty()) {
     for (auto& hit : pool) {
       hit.segment_idx = l.pool_seg;
@@ -232,9 +233,10 @@ void PublishHits(ScanGlobalState& g, AnnLocalState& l) {
   }
   if (!g.has_lookup_filter) {
     RescoreWhileReachable(g, l, l.pending);
-  } else if (!l.rescored.empty()) {
+  } else {
     absl::MutexLock lock{&g.ann.best_mutex};
     absl::c_copy(l.rescored, std::back_inserter(g.ann.rescored));
+    g.ann.unseen = std::max(g.ann.unseen, l.unseen);
   }
 }
 
@@ -249,15 +251,20 @@ void Merge(ScanGlobalState& g) {
     PlanFetch(g);
     return;
   }
+  irs::score_t unseen;
   {
     absl::MutexLock lock{&a.best_mutex};
     t.hits = std::move(a.rescored);
+    unseen = a.unseen;
   }
   absl::c_sort(t.hits, BetterScore{});
-  t.ranked = t.hits;
+  const auto seen = absl::c_partition_point(
+    t.hits, [unseen](const irs::ScoreDoc& hit) { return hit.score >= unseen; });
+  t.ranked =
+    std::span{t.hits}.first(static_cast<size_t>(seen - t.hits.begin()));
   t.answer.assign(
-    t.hits.begin(),
-    t.hits.begin() + std::min<size_t>(t.hits.size(), t.verify_first));
+    t.ranked.begin(),
+    t.ranked.begin() + std::min<size_t>(t.ranked.size(), t.verify_first));
   PlanFetch(g);
 }
 

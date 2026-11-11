@@ -20,11 +20,8 @@
 
 #pragma once
 
-#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 
 namespace duckdb {
@@ -47,27 +44,16 @@ class MemoryIndex {
     opts.reader_options.db = _db;
     auto writer =
       irs::IndexWriter::Make(_dir, irs::OpenMode::kOmCreate, std::move(opts));
+    auto trx = writer->GetBatch(/*exclusive_segment=*/true);
+    const auto id = writer->NextSegmentId();
+    trx.SetHot(id);
     {
-      irs::IndexWriter::Transaction trx{*writer};
-      {
-        auto doc = trx.Insert(/*disable_flush=*/false,
-                              static_cast<irs::doc_id_t>(row_count));
-        doc.NextFieldBatch();
-        write_docs(doc);
-      }
-      if (!trx.Commit()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-          ERR_MSG("failed to index the text to highlight: out of memory"));
-      }
+      auto doc = trx.Insert(/*disable_flush=*/false,
+                            static_cast<irs::doc_id_t>(row_count));
+      doc.NextFieldBatch();
+      write_docs(doc);
     }
-    writer->RefreshCommit();
-    auto reader = writer->GetSnapshot();
-    if (reader.size() == 0) {
-      return {std::shared_ptr<const irs::SubReader>{},
-              &irs::SubReader::empty()};
-    }
-    return {reader.GetImpl(), &reader[0]};
+    return trx.SealPiece(id);
   }
 
  private:

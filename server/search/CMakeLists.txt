@@ -2,7 +2,6 @@ target_sources(
     sereneserver
     PRIVATE
         hot_keys.cpp
-        index_durability.cpp
         log_entry.cpp
         store.cpp
         store_stats.cpp

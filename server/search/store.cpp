@@ -118,6 +118,17 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
     .count();
 }
 
+absl::Status RemoveUnreferenced(irs::Directory& dir, duckdb::idx_t id) {
+  try {
+    irs::directory_utils::RemoveAllUnreferenced(dir);
+  } catch (const std::exception& e) {
+    return absl::InternalError(
+      absl::StrCat("caught exception while cleaning up ", id, ": ",
+                   duckdb::ErrorData{e}.RawMessage()));
+  }
+  return absl::OkStatus();
+}
+
 struct RecoveryTask final : duckdb::BaseExecutorTask {
   RecoveryTask(duckdb::TaskExecutor& executor, absl::AnyInvocable<void()> run)
     : BaseExecutorTask{executor}, run{std::move(run)} {}
@@ -143,8 +154,7 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _segment_docs_max{options.segment_docs_max},
-    _topk_options{top_k_scorer},
-    _durability{db_id, absl::StrCat("inverted index ", id)} {
+    _topk_options{top_k_scorer} {
   SDB_ASSERT(id != 0);
   SetTasksSettings(options);
   if (_topk_options) {
@@ -167,7 +177,6 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _read_only{read_only},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
-    _durability{db_id, absl::StrCat("table ", id)},
     _table_columns{TableColumns(columns)},
     _row_group_size{options.row_group_size},
     _block_size{options.block_size},
@@ -238,10 +247,8 @@ void Store::Open() {
     }
   }
 
-  _writer = _durability
-              .OpenWriter(*_dir, Path(), opened.on_disk, _is_new, false,
-                          std::move(writer_options))
-              .first;
+  _writer =
+    irs::IndexWriter::Make(*_dir, irs::kOmCreate, std::move(writer_options));
   {
     absl::MutexLock lock{&_layout_mutex};
     _table =
@@ -711,7 +718,7 @@ ResultWithTime Store::CleanupUnsafe() {
       transactions.GarbageQueued();
     }
   }
-  auto result = _durability.Cleanup(*_dir);
+  auto result = RemoveUnreferenced(*_dir, _id);
   SDB_PARK_ONCE_ON_FAILURE("search_cleanup_after_remove");
   const auto time_ms = MillisSince(begin);
   _maintenance.RecordCleanup(result, time_ms);

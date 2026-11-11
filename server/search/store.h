@@ -59,7 +59,6 @@
 #include "catalog/persistence/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
-#include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "search/table.h"
@@ -419,7 +418,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   uint32_t _segment_docs_max = 0;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;
-  IndexDurability _durability;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   std::unique_ptr<irs::Directory> _piece_dir;

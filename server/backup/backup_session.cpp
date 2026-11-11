@@ -25,7 +25,6 @@
 
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -51,20 +50,15 @@
 namespace sdb::backup {
 namespace {
 
-uint64_t GenerationOf(const irs::DirectoryReader& reader) {
-  return reader ? reader.Meta().index_meta.gen : 0;
-}
-
 void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
                    std::vector<StoreCut>& stores) {
   catalog::ForEachSearchStorage(
     catalog,
     [&](catalog::SearchTableEntry& table) {
-      stores.push_back({database, table.oid, 0});
+      stores.push_back({database, table.oid});
     },
     [&](catalog::InvertedIndexEntry& index) {
-      stores.push_back({database, index.oid,
-                        GenerationOf(index.Storage()->GetDirectoryReader())});
+      stores.push_back({database, index.oid});
     });
 }
 

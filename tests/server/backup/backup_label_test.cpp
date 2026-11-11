@@ -42,8 +42,8 @@ Cut MakeCut() {
   Cut cut;
   cut.log_link = "engine_v1/backup/log";
   cut.log_size = 2876;
-  cut.stores.push_back({.database_oid = 5, .oid = 69276, .generation = 1});
-  cut.stores.push_back({.database_oid = 69252, .oid = 69261, .generation = 7});
+  cut.stores.push_back({.database_oid = 5, .oid = 69276});
+  cut.stores.push_back({.database_oid = 69252, .oid = 69261});
   return cut;
 }
 
@@ -76,7 +76,6 @@ TEST(BackupLabelTest, RoundTripKeepsEveryField) {
     EXPECT_EQ(parsed->cut.stores[i].database_oid,
               expected.stores[i].database_oid);
     EXPECT_EQ(parsed->cut.stores[i].oid, expected.stores[i].oid);
-    EXPECT_EQ(parsed->cut.stores[i].generation, expected.stores[i].generation);
   }
 }
 
@@ -94,7 +93,7 @@ TEST(BackupLabelTest, StartsWithThePostgresHeader) {
     << text;
   EXPECT_TRUE(
     absl::StrContains(text, "SERENEDB LOG: engine_v1/backup/log 2876\n"));
-  EXPECT_TRUE(absl::StrContains(text, "SERENEDB STORE: 5/69276 1\n"));
+  EXPECT_TRUE(absl::StrContains(text, "SERENEDB STORE: 5/69276\n"));
 }
 
 TEST(BackupLabelTest, LabelLineBreaksBecomeSpaces) {
@@ -185,11 +184,10 @@ TEST(BackupLabelTest, RejectsMalformedLines) {
     {"SERENEDB LOG: engine_v1/backup/log 2876\n", "SERENEDB LOG:  2876\n"},
     {"SERENEDB LOG: engine_v1/backup/log 2876\n",
      "SERENEDB LOG: engine_v1/backup/log 28x6\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5 69276 1\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: x/69276 1\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/69276\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/x 1\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/69276 x\n"},
+    {"SERENEDB STORE: 5/69276\n", "SERENEDB STORE: 5 69276\n"},
+    {"SERENEDB STORE: 5/69276\n", "SERENEDB STORE: x/69276\n"},
+    {"SERENEDB STORE: 5/69276\n", "SERENEDB STORE: 5/x\n"},
+    {"SERENEDB STORE: 5/69276\n", "SERENEDB STORE: 5/69276 1\n"},
   };
   for (const auto& c : kCases) {
     const auto body = absl::StrReplaceAll(Body(Build()), {{c.from, c.to}});

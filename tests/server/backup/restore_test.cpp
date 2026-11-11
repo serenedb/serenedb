@@ -86,17 +86,13 @@ class RestoreTest : public ::testing::Test {
     std::filesystem::create_directories(_layout->LogDir());
     WriteFile(Chunk(0), 500, 'X');
     std::filesystem::create_directories(StoreDir());
-    for (const auto* name : {"segments_1", "segments_2", "segments_3",
-                             "pending_segments_4", "write.lock", "_1.data"}) {
-      WriteFile(StoreDir() / name, 4, 'S');
-    }
+    WriteFile(StoreDir() / "_1.data", 4, 'S');
     WriteFile(_root / "recovery.signal", 0, ' ');
     WriteFile(_root / "standby.signal", 0, ' ');
     _cut.log_link =
       std::filesystem::path{"engine_v1"} / kBackupDir / std::string{kLogLink};
     _cut.log_size = _ends[2];
-    _cut.stores.push_back(
-      {.database_oid = kDatabase, .oid = kStore, .generation = 2});
+    _cut.stores.push_back({.database_oid = kDatabase, .oid = kStore});
   }
 
   void TearDown() final { std::filesystem::remove_all(_root); }
@@ -228,12 +224,7 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
   EXPECT_EQ(Records(), (std::vector{Payload('A'), Half('B'), Half('C')}));
   EXPECT_FALSE(Exists(_layout->EngineDir() / kBackupDir));
 
-  EXPECT_TRUE(Exists(StoreDir() / "segments_1"));
-  EXPECT_TRUE(Exists(StoreDir() / "segments_2"));
   EXPECT_TRUE(Exists(StoreDir() / "_1.data"));
-  EXPECT_FALSE(Exists(StoreDir() / "segments_3"));
-  EXPECT_FALSE(Exists(StoreDir() / "pending_segments_4"));
-  EXPECT_FALSE(Exists(StoreDir() / "write.lock"));
 
   EXPECT_FALSE(Exists(_root / "recovery.signal"));
   EXPECT_FALSE(Exists(_root / "standby.signal"));
@@ -280,11 +271,6 @@ TEST_F(RestoreTest, ACrashAfterTheLogIsFinishedByTheNextBoot) {
     [] { return duckdb::FaultPoints::Arm("crash_in_restore_after_log"); });
 }
 
-TEST_F(RestoreTest, ACrashAfterTheStoresIsFinishedByTheNextBoot) {
-  ExpectACrashedRestoreFinishes(
-    [] { return duckdb::FaultPoints::Arm("crash_in_restore_after_stores"); });
-}
-
 TEST_F(RestoreTest, ACrashAfterTheCleanupIsFinishedByTheNextBoot) {
   ExpectACrashedRestoreFinishes(
     [] { return duckdb::FaultPoints::Arm("crash_in_restore_after_cleanup"); });
@@ -305,7 +291,7 @@ TEST_F(RestoreTest, WithoutALabelOnlyTheLeftoverBackupDirectoryGoes) {
   Prepare();
   EXPECT_FALSE(Exists(_layout->EngineDir() / kBackupDir));
   EXPECT_EQ(Content(Chunk(0)), std::string(500, 'X'));
-  EXPECT_TRUE(Exists(StoreDir() / "pending_segments_4"));
+  EXPECT_TRUE(Exists(StoreDir() / "_1.data"));
   EXPECT_TRUE(Exists(_root / "recovery.signal"));
   EXPECT_TRUE(ReadPgControl(_root));
   EXPECT_TRUE(Exists(_root / kPgVersionFile));

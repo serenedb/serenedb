@@ -43,7 +43,6 @@ inline constexpr std::string_view kBackupDir = "backup";
 struct StoreCut {
   duckdb::idx_t database_oid = 0;
   duckdb::idx_t oid = 0;
-  uint64_t generation = 0;
 };
 
 struct Cut {

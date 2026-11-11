@@ -20,15 +20,11 @@
 
 #include "backup/restore.h"
 
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <filesystem>
-#include <iresearch/formats/index_meta_reader.hpp>
-#include <iresearch/formats/index_meta_writer.hpp>
-#include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -88,35 +84,6 @@ void Remove(const std::filesystem::path& path) {
   }
 }
 
-template<typename Visit>
-void ForEachFile(const std::filesystem::path& directory, Visit&& visit) {
-  std::error_code ec;
-  for (const auto& entry : std::filesystem::directory_iterator{directory, ec}) {
-    visit(entry.path(), entry.path().filename().string());
-  }
-  if (ec) {
-    utils::file_utils::ThrowFileError("list", directory.string(), ec);
-  }
-}
-
-void PruneStore(const std::filesystem::path& directory, uint64_t generation) {
-  ForEachFile(directory,
-              [&](const std::filesystem::path& path, std::string_view name) {
-                if (absl::StartsWith(name, irs::index_meta::kPendingPrefix) ||
-                    irs::index_meta::ParseGeneration(name) > generation) {
-                  Remove(path);
-                }
-              });
-}
-
-void RemoveStaleLocks(const std::filesystem::path& engine_dir) {
-  for (const auto& [_, database] : catalog::OidDirectories(engine_dir)) {
-    for (const auto& [_, store] : catalog::OidDirectories(database)) {
-      Remove(store / irs::IndexWriter::kWriteLockName);
-    }
-  }
-}
-
 void Restore(const catalog::DataDirectory& layout,
              const std::filesystem::path& label_path) {
   const std::filesystem::path data_dir{layout.directory};
@@ -154,13 +121,6 @@ void Restore(const catalog::DataDirectory& layout,
   catalog::Log::Cut(log, cut.log_size);
   SDB_IF_FAILURE("crash_in_restore_after_log") { SDB_IMMEDIATE_ABORT(); }
 
-  for (const auto& store : cut.stores) {
-    PruneStore(layout.StorageDir(store.database_oid, store.oid),
-               store.generation);
-  }
-  SDB_IF_FAILURE("crash_in_restore_after_stores") { SDB_IMMEDIATE_ABORT(); }
-
-  RemoveStaleLocks(engine_dir);
   Remove(data_dir / "recovery.signal");
   Remove(data_dir / "standby.signal");
   Remove(engine_dir / kBackupDir);

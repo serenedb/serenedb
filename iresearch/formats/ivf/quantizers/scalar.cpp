@@ -403,7 +403,9 @@ __attribute__((target("avx512f,avx512bw,avx512vl,avx512dq"))) void Sq8Tile512(
   const bool uniform = w[0]->uniform_l2();
   const bool squares = l2 && !uniform;
   const float* b = w[0]->b.data();
-  const auto step = [&](size_t i, __mmask16 m) {
+  for (size_t i = 0; i < d; i += 16) {
+    const auto m = d - i >= 16 ? __mmask16{0xFFFF}
+                               : static_cast<__mmask16>((1U << (d - i)) - 1U);
     __m512 va[NQ];
     for (size_t q = 0; q < NQ; ++q) {
       va[q] = _mm512_maskz_loadu_ps(m, w[q]->a.data() + i);
@@ -424,13 +426,6 @@ __attribute__((target("avx512f,avx512bw,avx512vl,avx512dq"))) void Sq8Tile512(
         acc[q][k] = _mm512_fmadd_ps(va[q], c, acc[q][k]);
       }
     }
-  };
-  size_t i = 0;
-  for (; i + 16 <= d; i += 16) {
-    step(i, __mmask16{0xFFFF});
-  }
-  if (i < d) {
-    step(i, static_cast<__mmask16>((1U << (d - i)) - 1U));
   }
   for (size_t q = 0; q < NQ; ++q) {
     for (size_t k = 0; k < kSq8Codes; ++k) {

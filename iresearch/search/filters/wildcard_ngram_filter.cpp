@@ -52,34 +52,6 @@ namespace {
 
 constexpr auto kBoundary = analysis::WildcardTokenizer::kBoundary;
 
-std::string LikeRegexp(std::string_view pattern) {
-  static constexpr std::string_view kMeta = "\\[](){}.*+?|^$";
-  std::string regex;
-  regex.reserve(pattern.size() * 2 + 8);
-  regex += "(?s)\\A";
-  bool escaped = false;
-  for (const auto c : pattern) {
-    if (escaped) {
-      escaped = false;
-    } else if (c == WildcardMatch::kEscape) {
-      escaped = true;
-      continue;
-    } else if (c == WildcardMatch::kAnyStr) {
-      regex += ".*";
-      continue;
-    } else if (c == WildcardMatch::kAnyChr) {
-      regex += '.';
-      continue;
-    }
-    if (kMeta.find(c) != std::string_view::npos) {
-      regex += '\\';
-    }
-    regex += c;
-  }
-  regex += "\\z";
-  return regex;
-}
-
 ByPhrase MakePhraseFilter(irs::field_id field, DictRef dict,
                           const ByPhraseOptions& part) {
   ByPhrase phrase;
@@ -302,7 +274,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   std::string_view like, analysis::WildcardTokenizer& analyzer,
   bool has_positions, bool bytes)
   : ByWildcardNGramOptions{
-      ViewCast<byte_type>(std::string_view{LikeRegexp(like)}),
+      ViewCast<byte_type>(std::string_view{LikeRegexp(like, false)}),
       RegexpSyntax::Perl, analyzer, has_positions, bytes} {}
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
@@ -339,8 +311,9 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   if (decided && !bytes && !analyzer.BinaryTerms()) {
     return;
   }
-  auto re = std::make_shared<const re2::RE2>(ViewCast<char>(regexp),
-                                             RegexpOptions(syntax, bytes));
+  auto options = RegexpOptions(syntax, bytes);
+  options.set_valid_utf8(!bytes && !analyzer.BinaryTerms());
+  auto re = std::make_shared<const re2::RE2>(ViewCast<char>(regexp), options);
   if (!re->ok()) {
     if (re->error_code() == re2::RE2::ErrorPatternTooLarge) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),

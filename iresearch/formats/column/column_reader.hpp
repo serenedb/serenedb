@@ -463,6 +463,10 @@ class ColumnReader {
   bool SelectNative(ScanState& s, const duckdb::SelectionVector& sel,
                     duckdb::idx_t hits, duckdb::idx_t span,
                     duckdb::Vector& out) const;
+  bool SelectsAcross(const ScanState& s, duckdb::idx_t span) const noexcept;
+  void SelectAcross(ScanState& s, const duckdb::SelectionVector& sel,
+                    duckdb::idx_t hits, duckdb::idx_t span,
+                    duckdb::Vector& out) const;
   void OpenScanSegment(ScanState& s) const;
   void SkipTo(ScanState& s, uint64_t row) const;
   void SkipValidity(ScanState& s, duckdb::idx_t count) const;

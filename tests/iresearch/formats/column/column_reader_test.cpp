@@ -645,7 +645,8 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
        return g % 9 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                          : duckdb::Value{kWords[g % 5]};
      },
-     {"zstd", "uncompressed", "dict_fsst"}},
+     {"zstd", "uncompressed", "dict_fsst", "fsst", "lz4", "fsst12", "fsst_plus",
+      "onpair"}},
     {"varchar_unique",
      duckdb::LogicalType::VARCHAR,
      30000,
@@ -653,7 +654,8 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
        return duckdb::Value{"value_" + std::to_string(g) + "_" +
                             RandomText(g, 24)};
      },
-     {"zstd", "uncompressed", "dict_fsst"}},
+     {"zstd", "uncompressed", "dict_fsst", "fsst", "lz4", "fsst12", "fsst_plus",
+      "onpair"}},
     {"varchar_long",
      duckdb::LogicalType::VARCHAR,
      6000,
@@ -661,7 +663,8 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
        return g % 11 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                           : duckdb::Value{RandomText(g, 500 + g % 2000)};
      },
-     {"zstd", "uncompressed", "dict_fsst"}},
+     {"zstd", "uncompressed", "dict_fsst", "fsst", "lz4", "fsst12", "fsst_plus",
+      "onpair"}},
   };
   constexpr irs::field_id kId = 1;
   duckdb::Connection con{Db()};

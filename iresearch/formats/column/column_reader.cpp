@@ -192,25 +192,20 @@ bool FewerRuns(const duckdb::SelectionVector& sel, duckdb::idx_t hits,
   return runs < limit;
 }
 
+bool FewStringRuns(const duckdb::LogicalType& type,
+                   const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+                   duckdb::idx_t span) noexcept {
+  return type.InternalType() == duckdb::PhysicalType::VARCHAR &&
+         FewerRuns(sel, hits, (120 * (span - hits) + 999) / 1000);
+}
+
 bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
                  const duckdb::SelectionVector& sel, duckdb::idx_t hits,
                  duckdb::idx_t span) noexcept {
   if (hits * 1000 <= BandsFor(block.codec->type, type).flat * span) {
     return true;
   }
-  if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {
-    return false;
-  }
-  switch (block.codec->type) {
-    case duckdb::CompressionType::COMPRESSION_DICT_FSST:
-    case duckdb::CompressionType::COMPRESSION_FSST:
-      return FewerRuns(sel, hits, (650 * span - 1) / block.tuple_count + 1);
-    case duckdb::CompressionType::COMPRESSION_UNCOMPRESSED:
-    case duckdb::CompressionType::COMPRESSION_ZSTD:
-      return FewerRuns(sel, hits, (120 * (span - hits) + 999) / 1000);
-    default:
-      return false;
-  }
+  return !block.codec->select && FewStringRuns(type, sel, hits, span);
 }
 
 duckdb::ValidityMask& ResetAllValid(duckdb::Vector& v, duckdb::idx_t count) {
@@ -730,21 +725,68 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
   if (SelectNative(s, sel, hits, span, out)) {
     return;
   }
+  if (FewStringRuns(_type, sel, hits, span)) {
+    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
+    return;
+  }
   ColumnReader::ScanCount(s, out, span, 0);
   out.Slice(sel, hits);
 }
+
+bool ColumnReader::SelectsAcross(const ScanState& s,
+                                 duckdb::idx_t span) const noexcept {
+  const uint64_t end = s.window.begin + s.st.offset_in_column + span;
+  if (end > _offsets.back()) {
+    return false;
+  }
+  for (size_t block = s.window.block;
+       block < _segments.size() && _offsets[block] < end; ++block) {
+    if (!_segments[block].codec->select_partial) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void ColumnReader::SelectAcross(ScanState& s,
+                                const duckdb::SelectionVector& sel,
+                                duckdb::idx_t hits, duckdb::idx_t span,
+                                duckdb::Vector& out) const {
+  out.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  duckdb::idx_t row = 0;
+  for (duckdb::idx_t i = 0; i < hits;) {
+    SkipRows(s, sel.get_index(i) - row);
+    row = sel.get_index(i);
+    BeginScanVector(s);
+    const auto rows = std::min<duckdb::idx_t>(
+      span - row, (s.window.end - s.window.begin) - s.st.offset_in_column);
+    auto end = i + 1;
+    while (end < hits && sel.get_index(end) - row < rows) {
+      ++end;
+    }
+    const auto& segment = *s.segments.back();
+    segment.function.select_partial(segment, s.st, rows, out, i, sel, i,
+                                    end - i, row);
+    const auto taken = sel.get_index(end - 1) + 1 - row;
+    s.st.offset_in_column += taken;
+    s.st.internal_index = s.st.offset_in_column;
+    row += taken;
+    i = end;
+  }
+  SkipRows(s, span - row);
+}
+
 
 bool ColumnReader::SelectNative(ScanState& s,
                                 const duckdb::SelectionVector& sel,
                                 duckdb::idx_t hits, duckdb::idx_t span,
                                 duckdb::Vector& out) const {
   BeginScanVector(s);
-  if ((s.window.end - s.window.begin) - s.st.offset_in_column < span) {
-    return false;
-  }
+  const bool within =
+    (s.window.end - s.window.begin) - s.st.offset_in_column >= span;
   const auto& codec = *_segments[s.window.block].codec;
   if (hits * 1000 > BandsFor(codec.type, _type).native * span ||
-      !codec.select) {
+      !codec.select || (!within && !SelectsAcross(s, span))) {
     return false;
   }
   const bool self_valid =
@@ -757,10 +799,14 @@ bool ColumnReader::SelectNative(ScanState& s,
       return false;
     }
   }
-  const auto& segment = *s.segments.back();
-  segment.function.select(segment, s.st, span, out, sel, hits);
-  s.st.offset_in_column += span;
-  s.st.internal_index = s.st.offset_in_column;
+  if (within) {
+    const auto& segment = *s.segments.back();
+    segment.function.select(segment, s.st, span, out, sel, hits);
+    s.st.offset_in_column += span;
+    s.st.internal_index = s.st.offset_in_column;
+  } else {
+    SelectAcross(s, sel, hits, span, out);
+  }
   if (self_valid) {
     SkipValidity(s, span);
   } else if (_validity) {

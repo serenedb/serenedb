@@ -90,10 +90,17 @@ struct PlainScan final : SegmentScanState {
     ScanFlat(result, 0, start, count);
   }
 
-  void Select(duckdb::Vector& result, idx_t start, idx_t,
+  void Select(duckdb::Vector& result, idx_t start, idx_t span,
               const duckdb::SelectionVector& rows, idx_t count) {
-    WriteEntries(result, 0, count,
-                 [&](idx_t i) { return start + rows.get_index(i); });
+    SelectFlat(result, 0, start, span, rows, 0, count, 0);
+  }
+
+  void SelectFlat(duckdb::Vector& result, idx_t result_offset, idx_t start,
+                  idx_t, const duckdb::SelectionVector& rows, idx_t first,
+                  idx_t count, idx_t base) {
+    WriteEntries(result, result_offset, count, [&](idx_t i) {
+      return start + (rows.get_index(first + i) - base);
+    });
   }
 
   template<typename Entry>

@@ -147,6 +147,12 @@ struct CompressionFunction {
                  duckdb::idx_t vector_count, duckdb::Vector& result,
                  const duckdb::SelectionVector& sel,
                  duckdb::idx_t sel_count) = nullptr;
+  void (*select_partial)(const ColumnSegment& segment, ColumnScanState& state,
+                         duckdb::idx_t vector_count, duckdb::Vector& result,
+                         duckdb::idx_t result_offset,
+                         const duckdb::SelectionVector& sel,
+                         duckdb::idx_t sel_offset, duckdb::idx_t sel_count,
+                         duckdb::idx_t sel_base) = nullptr;
   void (*filter)(const ColumnSegment& segment, ColumnScanState& state,
                  duckdb::idx_t vector_count, duckdb::Vector& result,
                  duckdb::SelectionVector& sel, duckdb::idx_t& sel_count,

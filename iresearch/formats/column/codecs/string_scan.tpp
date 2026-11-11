@@ -271,6 +271,16 @@ void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
 }
 
 template<typename Scan>
+void SelectPartial(const ColumnSegment&, ColumnScanState& state,
+                   idx_t vector_count, duckdb::Vector& result,
+                   idx_t result_offset, const duckdb::SelectionVector& sel,
+                   idx_t sel_offset, idx_t sel_count, idx_t sel_base) {
+  state.scan_state->Cast<Scan>().SelectFlat(
+    result, result_offset, state.GetPositionInSegment(), vector_count, sel,
+    sel_offset, sel_count, sel_base);
+}
+
+template<typename Scan>
 void Filter(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
             duckdb::Vector& result, duckdb::SelectionVector& sel,
             idx_t& sel_count, const duckdb::TableFilter& filter,
@@ -372,6 +382,8 @@ constexpr CompressionFunction StringFunction(duckdb::CompressionType type) {
   };
   if constexpr (Scan::kShape == Shape::Dedup) {
     f.filter = Filter<Scan>;
+  } else {
+    f.select_partial = SelectPartial<Scan>;
   }
   return f;
 }

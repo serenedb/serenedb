@@ -817,48 +817,6 @@ void Transactions::AwaitPublished(duckdb::transaction_t commit) const {
   }
 }
 
-const SessionTransaction::OwnIndex* SessionTransaction::FindOwnIndex(
-  const search::Store& store) const {
-  const auto it = absl::c_find_if(
-    _own_indexes, [&](const OwnIndex& own) { return own.store == &store; });
-  return it == _own_indexes.end() ? nullptr : &*it;
-}
-
-search::ReadView SessionTransaction::ReadIndex(const search::Store& store) {
-  const auto& version = store.IndexAt(Snapshot(), _slot->walks);
-  const auto* state = version.state.get();
-  if (_published_indexes.load(std::memory_order_acquire)) {
-    absl::MutexLock lock{&_mutex};
-    if (const auto* own = FindOwnIndex(store);
-        own && own->tick > version.tick) {
-      state = own->state.get();
-    }
-  }
-  return {.reader = &state->reader, .manifest = state->manifest.get()};
-}
-
-search::Tick SessionTransaction::IndexPlanVersion(const search::Store& store) {
-  bool own = false;
-  if (_published_indexes.load(std::memory_order_acquire)) {
-    absl::MutexLock lock{&_mutex};
-    own = FindOwnIndex(store) != nullptr;
-  }
-  const auto refreshed = store.IndexRefreshed();
-  return own || refreshed > Snapshot() ? Transactions::Get().NextId()
-                                       : refreshed;
-}
-
-void SessionTransaction::PublishedIndex(
-  const search::Store& store, search::Tick tick,
-  std::shared_ptr<const search::IndexState> state) {
-  absl::MutexLock lock{&_mutex};
-  std::erase_if(_own_indexes,
-                [&](const OwnIndex& own) { return own.store == &store; });
-  _own_indexes.push_back(
-    {.store = &store, .tick = tick, .state = std::move(state)});
-  _published_indexes.store(true, std::memory_order_release);
-}
-
 void SessionTransaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
                                            std::string_view name,
                                            search::TableChange change) {
@@ -904,11 +862,6 @@ void SessionTransaction::Release() noexcept {
     table->ReleaseLayout(_id, _state == SessionState::Committed);
   }
   _layout_claims.clear();
-  {
-    absl::MutexLock lock{&_mutex};
-    _own_indexes.clear();
-  }
-  _published_indexes.store(false, std::memory_order_release);
   _search.Abort();
   _held.reset();
   _on_commit.clear();

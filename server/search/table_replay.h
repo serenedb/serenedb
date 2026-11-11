@@ -70,10 +70,17 @@ class TableReplay {
   void DeleteMemory(uint64_t base, const irs::DocumentMask& docs);
   void Update(uint64_t segment, const irs::FieldPatch& patch);
   void UpdateMemory(const irs::FieldPatch& patch);
+  void SetManifest(std::shared_ptr<const FileManifest> manifest) {
+    _replayed = true;
+    _manifest = std::move(manifest);
+  }
 
   bool Replayed() const noexcept { return _replayed; }
   uint64_t Top() const noexcept { return _top; }
   uint64_t MemoryEnd() const noexcept { return _memory_end; }
+  const std::shared_ptr<const FileManifest>& Manifest() const noexcept {
+    return _manifest;
+  }
   duckdb::Catalog& RowsCatalog() const noexcept { return *_catalog; }
   absl::btree_map<uint64_t, Segment>& Segments() noexcept { return _segments; }
   std::vector<Piece>& Cut();
@@ -89,6 +96,7 @@ class TableReplay {
   std::vector<Chunk> _chunks;
   std::vector<irs::FieldPatch> _memory_patches;
   std::vector<Piece> _pieces;
+  std::shared_ptr<const FileManifest> _manifest;
   duckdb::Catalog* _catalog = nullptr;
   uint64_t _memory_end = 0;
   uint64_t _top = 0;

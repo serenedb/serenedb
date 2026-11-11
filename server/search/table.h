@@ -49,6 +49,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/walk.h"
 #include "connector/column_id.h"
+#include "connector/file_manifest.h"
 #include "search/store_stats.h"
 #include "search/version_chain.h"
 
@@ -117,6 +118,7 @@ struct TableDelta {
   std::shared_ptr<const irs::DocumentMask> memory_deletes;
   std::vector<LoggedUpdate> updates;
   std::vector<irs::FieldPatch> memory_updates;
+  std::shared_ptr<const FileManifest> manifest;
 };
 
 bool Empty(const TableDelta& delta) noexcept;
@@ -164,6 +166,7 @@ struct TableState {
     : units{other.units},
       moved{other.moved},
       config{other.config},
+      manifest{other.manifest},
       tick{other.tick},
       memory_end{other.memory_end} {}
   TableState& operator=(const TableState&) = delete;
@@ -172,6 +175,7 @@ struct TableState {
   std::vector<std::shared_ptr<const TableUnit>> units;
   std::shared_ptr<const MovedUnits> moved;
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
+  std::shared_ptr<const FileManifest> manifest;
   Tick tick = 0;
   uint64_t memory_end = 0;
   mutable std::atomic<const irs::DirectoryReader*> reader{nullptr};
@@ -207,6 +211,7 @@ struct TableCommit {
   std::vector<OwnSegment> segments;
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
   std::vector<UnitPatch> patches;
+  std::shared_ptr<const FileManifest> manifest;
   bool truncate = false;
 };
 
@@ -341,7 +346,8 @@ class Table final {
     ABSL_LOCKS_EXCLUDED(_state_mutex);
 
   void Recover(std::vector<std::shared_ptr<TableUnit>> units,
-               uint64_t memory_end);
+               uint64_t memory_end,
+               std::shared_ptr<const FileManifest> manifest);
 
  private:
   enum class Scope : uint8_t {

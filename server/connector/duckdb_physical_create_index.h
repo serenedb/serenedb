@@ -55,6 +55,10 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
   // `WHERE file_index IN (ordinals)` and projects `file_index + base`.
   uint64_t delta_file_base = 0;
 
+  std::vector<uint64_t> removed_files;
+  std::vector<IcebergObserve::DeleteMask> removed_masks;
+  std::vector<std::pair<uint64_t, int64_t>> removed_rows;
+
   std::shared_ptr<const search::FileManifest> manifest;
 
   duckdb::LogicalType generated_pk_type;
@@ -80,6 +84,9 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     result->source_index = source_index;
     result->delta_files = delta_files;
     result->delta_file_base = delta_file_base;
+    result->removed_files = removed_files;
+    result->removed_masks = removed_masks;
+    result->removed_rows = removed_rows;
     result->manifest = manifest;
     result->generated_pk_type = generated_pk_type;
     return result;

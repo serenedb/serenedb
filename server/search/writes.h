@@ -51,6 +51,7 @@ namespace sdb::search {
 struct StoreWrites {
   mutable absl::Mutex mutex;
   std::shared_ptr<Store> store;
+  const duckdb::CatalogEntry* owner = nullptr;
   const catalog::SearchTableEntry* table = nullptr;
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   LocalTableChangesEntry changes;
@@ -66,12 +67,14 @@ struct StoreWrites {
   struct Pin {
     const TableState* state = nullptr;
     irs::DirectoryReader own;
+    const FileManifest* manifest = nullptr;
     uint64_t revision = 0;
   };
   std::optional<Pin> pin;
   std::atomic<const Pin*> pinned{nullptr};
   StoreWrites* listed = nullptr;
   std::shared_ptr<const irs::SegmentReaderImpl> piece;
+  std::shared_ptr<const FileManifest> manifest;
   LoggedRows rows;
   TableCommit commit;
   bool prepared = false;
@@ -105,7 +108,7 @@ struct StoreWrites {
 };
 
 struct LogSection {
-  const catalog::SearchTableEntry* table = nullptr;
+  const duckdb::CatalogEntry* owner = nullptr;
   TableDelta delta;
 };
 
@@ -162,6 +165,12 @@ class Writes {
 
   void AddSearchTruncate(const std::shared_ptr<Store>& store,
                          const catalog::SearchTableEntry& table, Tick snapshot);
+
+  void RegisterIndex(const std::shared_ptr<Store>& store,
+                     const duckdb::CatalogEntry& index);
+  void TruncateIndex(const std::shared_ptr<Store>& store);
+  void SetManifest(const std::shared_ptr<Store>& store,
+                   std::shared_ptr<const FileManifest> manifest);
 
   void ClaimExclusive(const std::shared_ptr<Store>& store,
                       Store::Exclusive kind);

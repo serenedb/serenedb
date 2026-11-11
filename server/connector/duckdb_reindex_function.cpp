@@ -275,6 +275,27 @@ class PassConnection {
     return _system.conn->Query(std::move(statement));
   }
 
+  void Commit(const ReindexTarget& target, std::vector<uint64_t> files,
+              std::vector<IcebergObserve::DeleteMask> masks,
+              std::vector<std::pair<uint64_t, int64_t>> rows,
+              std::shared_ptr<const search::FileManifest> manifest) {
+    auto& context = *_system.conn->context;
+    context.RunFunctionInTransaction([&] {
+      auto& writes =
+        catalog::SessionOf(context, target.index->catalog).SearchTxn();
+      const auto& store = target.index->Storage();
+      writes.RegisterIndex(store, *target.index);
+      auto removed =
+        ResolveRemoves(writes.PinnedReader(context, *store), std::move(files),
+                       std::move(masks), std::move(rows));
+      if (!removed.Empty()) {
+        SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
+        writes.AddRemoval(context, store, std::move(removed));
+      }
+      writes.SetManifest(store, std::move(manifest));
+    });
+  }
+
  private:
   SystemConnection _system;
 };
@@ -713,8 +734,7 @@ std::shared_ptr<search::FileManifest> BuildNextManifest(
 template<typename Observe>
 void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
               const ReindexTarget& target, const Source& src, FileDiff& files,
-              Observe& observe, const search::FileManifest& manifest,
-              search::Store& storage) {
+              Observe& observe, const search::FileManifest& manifest) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
   std::vector<std::pair<uint64_t, int64_t>> eq_rows;
   if constexpr (kIceberg) {
@@ -732,23 +752,12 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     masks = std::move(observe.del_masks);
   }
 
-  // The removes commit first as their own transaction, so the pass's docs land
-  // above them. A crash between the two loses the removed rows until the next
-  // tick: the manifest version only moves at the end, so the tick re-runs the
-  // delta.
-  if (auto removal = ResolveRemoves(storage.LatestIndex()->reader,
-                                    std::move(files.del_files),
-                                    std::move(masks), std::move(eq_rows));
-      !removal->groups.empty()) {
-    SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
-    storage.CommitRemoval(std::move(removal));
-  }
-
+  PassConnection pass_conn{context, conn_ctx, target};
   if (files.scan.empty()) {
     // Removes-only tick: no pass, publish directly -- REINDEX returning
     // means the deletions are visible.
-    storage.SetFileManifest(std::move(manifest_next));
-    storage.CommitOwn(context);
+    pass_conn.Commit(target, std::move(files.del_files), std::move(masks),
+                     std::move(eq_rows), std::move(manifest_next));
     return;
   }
 
@@ -756,9 +765,11 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   // REAL view (the bind hook narrows the leaf's file list, so the reader
   // still applies every delete flavor). The pass commits like an ordinary
   // CREATE INDEX; Finalize publishes manifest_next.
-  PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
   info->source_index = target.index->name;
+  info->removed_files = std::move(files.del_files);
+  info->removed_masks = std::move(masks);
+  info->removed_rows = std::move(eq_rows);
   info->delta_file_base = file_base;
   info->delta_files.reserve(files.scan.size());
   for (const auto& file : files.scan) {
@@ -787,7 +798,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
                           ConnectionContext& conn_ctx,
                           const ReindexTarget& target, const Source& src,
                           const search::FileManifest& manifest,
-                          search::Store& storage, Observe& observe) {
+                          Observe& observe) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
   auto files = DiffListing(src, manifest, observe);
 
@@ -798,8 +809,8 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
         // expiring snapshot.
         auto restamped = std::make_shared<search::FileManifest>(manifest);
         restamped->version = files.version;
-        storage.SetFileManifest(std::move(restamped));
-        storage.CommitOwn(context);
+        PassConnection{context, conn_ctx, target}.Commit(target, {}, {}, {},
+                                                         std::move(restamped));
       }
     }
     return {ReindexAction::UpToDate, files.added, files.changed, files.removed};
@@ -809,7 +820,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
   // takes the rebuild road).
   if (src.fast_path.supports_delta &&
       target.index->Config()->pk == catalog::PkColumnKind::Has) {
-    RunDelta(context, conn_ctx, target, src, files, observe, manifest, storage);
+    RunDelta(context, conn_ctx, target, src, files, observe, manifest);
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};
   }
@@ -889,7 +900,8 @@ ReindexOutcome RunClaimed(duckdb::ClientContext& context,
                           const ReindexTarget& target,
                           const std::shared_ptr<search::Store>& storage) {
   SDB_WAIT_ON_FAILURE("pause_reindex_claimed");
-  const auto manifest = storage->GetFileManifest();
+  const auto state = storage->GetTable().State();
+  const auto& manifest = state->manifest;
   std::optional<Source> src;
   if (manifest) {
     src = ResolveSource(context, target);
@@ -900,7 +912,7 @@ ReindexOutcome RunClaimed(duckdb::ClientContext& context,
     return {};
   }
   if (manifest->version && manifest->entries.empty() &&
-      storage->LatestIndex()->reader.live_docs_count() > 0) {
+      storage->GetTable().Reader(*state).live_docs_count() > 0) {
     RunFullRebuild(context, conn_ctx, target);
     return {};
   }
@@ -923,12 +935,10 @@ ReindexOutcome RunClaimed(duckdb::ClientContext& context,
     IcebergObserve observe{*src->iceberg_list,
                            src->bind->Cast<duckdb::MultiFileBindData>(),
                            manifest->version};
-    return RunRefresh(context, conn_ctx, target, *src, *manifest, *storage,
-                      observe);
+    return RunRefresh(context, conn_ctx, target, *src, *manifest, observe);
   }
   StatObserve observe{context};
-  return RunRefresh(context, conn_ctx, target, *src, *manifest, *storage,
-                    observe);
+  return RunRefresh(context, conn_ctx, target, *src, *manifest, observe);
 }
 
 class ReindexSession {

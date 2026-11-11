@@ -19,6 +19,10 @@ CREATE INDEX tt_inv ON dlc_db.public.tt USING inverted(id, v);
 
 
 statement ok
+INSERT INTO dlc_db.public.tt VALUES (1, 10), (2, 20);
+
+
+statement ok
 CREATE VIEW dlc_db.public.tv AS SELECT id, v FROM dlc_db.public.tt;
 
 
@@ -28,10 +32,6 @@ CREATE INDEX tv_inv ON dlc_db.public.tv USING inverted(id, v);
 
 statement ok
 INSERT INTO dlc_db.public.st VALUES (1, 10), (2, 20);
-
-
-statement ok
-INSERT INTO dlc_db.public.tt VALUES (1, 10), (2, 20);
 
 
 statement ok

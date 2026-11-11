@@ -17,15 +17,17 @@ CREATE VIEW build_fail_v AS SELECT id, msg FROM build_fail;
 
 
 statement ok
-SET sdb_faults = 'IndexWriter::Transaction::Commit';
+SET sdb_faults = 'Search::FailOnCommit';
 
 
-statement error failed to commit index 'build_fail_idx': out of memory
+statement error
 CREATE INDEX build_fail_idx ON build_fail_v USING inverted (id, msg);
+----
+db error: ERROR: debug failure point
 
 
 statement ok
-SET sdb_faults = '-IndexWriter::Transaction::Commit';
+SET sdb_faults = '-Search::FailOnCommit';
 
 
 statement ok

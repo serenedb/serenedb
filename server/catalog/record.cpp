@@ -50,6 +50,7 @@
 #include "catalog/base_catalog.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/inverted_index.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry_set.h"
@@ -547,17 +548,23 @@ void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
                    duckdb::Deserializer& object) {
   const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
   const auto oid = object.ReadProperty<duckdb::idx_t>(101, "table");
-  SearchTableEntry* table = nullptr;
-  if (auto* catalog = target(id)) {
-    if (auto relation =
-          catalog->FindRelation(catalog->GetCatalogTransaction(context), oid)) {
-      SDB_ENSURE(IsSearchTable(*relation), "the log writes a missing table ",
-                 oid);
-      table = &relation->Cast<SearchTableEntry>();
+  search::TableReplay* replay = nullptr;
+  auto* catalog = target(id);
+  if (catalog) {
+    if (auto entry =
+          catalog->LookupOid(catalog->GetCatalogTransaction(context), oid)) {
+      std::shared_ptr<search::Store> store;
+      if (IsSearchTable(*entry)) {
+        store = entry->Cast<SearchTableEntry>().Storage();
+      } else if (entry->type == duckdb::CatalogType::INDEX_ENTRY) {
+        store = entry->Cast<InvertedIndexEntry>().Storage();
+      }
+      SDB_ENSURE(store, "the log writes a missing table ", oid);
+      replay = store->Replay();
     }
   }
   object.ReadObject(102, "delta", [&](duckdb::Deserializer& delta) {
-    search::ReplayTableDelta(context, table, delta);
+    search::ReplayTableDelta(context, replay, catalog, delta);
   });
 }
 
@@ -970,8 +977,8 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
         const auto& section = sections[i];
         WriteSection(
-          list, section.table->ParentCatalog().Cast<BaseCatalog>().RecordId(),
-          section.table->oid, section.delta);
+          list, section.owner->ParentCatalog().Cast<BaseCatalog>().RecordId(),
+          section.owner->oid, section.delta);
       });
     serializer.End();
   }

@@ -759,7 +759,6 @@ bool IndexWriter::Transaction::CommitImpl(
   auto* segment = _active.Segment();
   SDB_ASSERT(segment != nullptr);
   SDB_ASSERT(_staged);
-  SDB_IF_FAILURE("IndexWriter::Transaction::Commit") { throw std::bad_alloc{}; }
   segment->Commit(_queries, _first_tick + _queries);
   _writer->GetFlushContext()->Emplace(std::move(_active), position);
   SDB_ASSERT(_active.Segment() == nullptr);
@@ -1454,7 +1453,6 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
       _compacting.segments.erase(candidate->Meta().name);
     }
   };
-  SDB_PARK_ONCE_ON_FAILURE("pause_irs_compaction_registered");
 
   // validate candidates: no duplicates and all should be from committed reader
 #ifdef SDB_DEV
@@ -1620,6 +1618,7 @@ auto IndexWriter::MergeAsync(const CompactionPolicy& policy,
     }
     merged.claim = MergeClaim{*this, std::move(candidates)};
   }
+  SDB_PARK_ONCE_ON_FAILURE("pause_irs_compaction_registered");
   co_return co_await FlushMerge(std::move(merged), NextSegmentId(),
                                 field_options, progress, env);
 }

@@ -453,7 +453,8 @@ void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
 bool Empty(const TableDelta& delta) noexcept {
   return delta.drop.empty() && delta.drop_memory == 0 && delta.add.empty() &&
          delta.rows.empty() && delta.deletes.empty() && !delta.memory_deletes &&
-         delta.updates.empty() && delta.memory_updates.empty();
+         delta.updates.empty() && delta.memory_updates.empty() &&
+         !delta.manifest;
 }
 
 void MemoryDeletes::Finish(TableDelta& delta) && {
@@ -1002,6 +1003,7 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
       delta.updates.push_back({.segment = patch.unit, .patch = field});
     }
   }
+  delta.manifest = commit.manifest;
   return delta;
 }
 
@@ -1018,6 +1020,9 @@ bool Table::Apply(Tick tick, TableCommit&& commit) {
     for (size_t i = 0; i < units.size(); ++i) {
       rewrite(i, [](TableUnit& unit) { DeleteAll(unit); });
     }
+  }
+  if (commit.manifest) {
+    next->manifest = std::move(commit.manifest);
   }
   if (commit.piece || !commit.segments.empty()) {
     _last_append.store(tick, std::memory_order_release);
@@ -1241,12 +1246,14 @@ std::shared_ptr<const TableState> Table::HeadState() const {
 }
 
 void Table::Recover(std::vector<std::shared_ptr<TableUnit>> units,
-                    uint64_t memory_end) {
+                    uint64_t memory_end,
+                    std::shared_ptr<const FileManifest> manifest) {
   absl::MutexLock lock{&_state_mutex};
   auto next = std::make_shared<TableState>(*Head().state);
   next->units.assign(std::make_move_iterator(units.begin()),
                      std::make_move_iterator(units.end()));
   next->memory_end = memory_end;
+  next->manifest = std::move(manifest);
   next->config = _config;
   CountPieces(*next);
   _versions.ReplaceInitial(std::move(next));

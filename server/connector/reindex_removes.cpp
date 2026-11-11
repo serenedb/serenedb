@@ -248,6 +248,11 @@ class SegmentRemoves {
       }
     }
     Flush();
+    std::move(_removed).Finish().ForEachRun(
+      segment.docs_mask(), [&](irs::doc_id_t first, irs::doc_id_t last) {
+        _removal.AddRange(_index, first, last);
+        return true;
+      });
   }
 
  private:
@@ -266,7 +271,7 @@ class SegmentRemoves {
 
   void Flush() {
     if (_range_begin != _range_end) {
-      _removal.AddRange(_index, DocAt(_range_begin), DocAt(_range_end));
+      _removed.AddRange(DocAt(_range_begin), DocAt(_range_end));
     }
     _range_begin = _range_end = 0;
   }
@@ -321,6 +326,7 @@ class SegmentRemoves {
   const Deletes& _deletes;
   uint32_t _index;
   irs::DocRemovalBuilder& _removal;
+  irs::DocumentMaskBuilder _removed;
   const irs::ColumnReader* _rows = nullptr;
   std::vector<FileRun> _file_runs;
   uint64_t _range_begin = 0;
@@ -329,7 +335,7 @@ class SegmentRemoves {
 
 }  // namespace
 
-std::shared_ptr<const irs::DocRemoval> ResolveRemoves(
+irs::DocRemovalBuilder ResolveRemoves(
   const irs::DirectoryReader& snapshot, std::vector<uint64_t> deleted_files,
   std::vector<IcebergObserve::DeleteMask> masks,
   std::vector<std::pair<uint64_t, int64_t>> eq_rows) {
@@ -343,14 +349,14 @@ std::shared_ptr<const irs::DocRemoval> ResolveRemoves(
   absl::c_sort(eq_rows);
   const Deletes deletes{
     .files = deleted_files, .masks = masks, .eq_rows = eq_rows};
-  if (deletes.Empty()) {
-    return std::make_shared<const irs::DocRemoval>();
-  }
   irs::DocRemovalBuilder removal;
+  if (deletes.Empty()) {
+    return removal;
+  }
   for (uint32_t index = 0; index != snapshot.size(); ++index) {
     SegmentRemoves{deletes, index, removal}.Resolve(snapshot[index]);
   }
-  return std::move(removal).Finish(snapshot);
+  return removal;
 }
 
 }  // namespace sdb::connector

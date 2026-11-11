@@ -393,7 +393,7 @@ std::string_view ClaimActivity(Store::Exclusive kind) {
 }
 
 bool Logged(const StoreWrites& w) {
-  return w.table->ParentCatalog().Cast<catalog::BaseCatalog>().Durable();
+  return w.owner->ParentCatalog().Cast<catalog::BaseCatalog>().Durable();
 }
 
 OwnWrites OwnOf(const StoreWrites& w) {
@@ -463,8 +463,10 @@ StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
   if (!w.store) {
     w.store = store;
     if (store->HasTable()) {
-      w.pin.emplace(StoreWrites::Pin{
-        .state = store->GetTable().VersionAt(Snapshot(), _walks).state.get()});
+      const auto* state =
+        store->GetTable().VersionAt(Snapshot(), _walks).state.get();
+      w.pin.emplace(
+        StoreWrites::Pin{.state = state, .manifest = state->manifest.get()});
       w.pinned.store(&*w.pin, std::memory_order_relaxed);
     }
     w.listed = _listed.load(std::memory_order_relaxed);
@@ -494,6 +496,7 @@ void Writes::Adopt(StoreWrites& w, const catalog::SearchTableEntry& table) {
     }
   }
   w.table = &table;
+  w.owner = &table;
 }
 
 void Writes::AdoptTable(const std::shared_ptr<Store>& store,
@@ -659,8 +662,10 @@ const StoreWrites::Pin& Writes::EnsurePin(duckdb::ClientContext& context,
   if (w.store->HasIndexes() && w.changes.HasBufferedRows()) {
     FlushRows(context, w);
   }
-  auto& pin =
-    w.pin.emplace(StoreWrites::Pin{.state = state, .revision = w.revision});
+  auto& pin = w.pin.emplace(StoreWrites::Pin{
+    .state = state,
+    .manifest = w.manifest ? w.manifest.get() : state->manifest.get(),
+    .revision = w.revision});
   if (const auto own = OwnOf(w); HasOwn(own)) {
     pin.own = table.View(*state, own);
   }
@@ -673,11 +678,13 @@ ReadView Writes::Read(duckdb::ClientContext& context, Store& store) {
   if (auto* w = FindStoreWrites(store.GetId())) {
     const auto& pin = EnsurePin(context, *w);
     return {.reader = pin.own ? &pin.own : &table.Reader(*pin.state),
-            .state = pin.state};
+            .state = pin.state,
+            .manifest = pin.manifest};
   }
   const auto& version = table.VersionAt(Snapshot(), _walks);
   return {.reader = &table.Reader(*version.state),
-          .state = version.state.get()};
+          .state = version.state.get(),
+          .manifest = version.state->manifest.get()};
 }
 
 Tick Writes::PlanVersion(const Store& store) {
@@ -864,6 +871,34 @@ void Writes::ClaimExclusive(const std::shared_ptr<Store>& store,
   auto& w = EnsureStoreWrites(store);
   absl::MutexLock lock{&w.mutex};
   w.dropping = true;
+}
+
+void Writes::RegisterIndex(const std::shared_ptr<Store>& store,
+                           const duckdb::CatalogEntry& index) {
+  auto& w = EnsureStoreWrites(store);
+  absl::MutexLock lock{&w.mutex};
+  w.owner = &index;
+}
+
+void Writes::TruncateIndex(const std::shared_ptr<Store>& store) {
+  auto& w = EnsureStoreWrites(store);
+  absl::MutexLock lock{&w.mutex};
+  w.transactions.clear();
+  w.own_segments.clear();
+  w.own_maps.clear();
+  ++w.rows_generation;
+  w.changes.AppendTruncate(false);
+  ++w.revision;
+}
+
+void Writes::SetManifest(const std::shared_ptr<Store>& store,
+                         std::shared_ptr<const FileManifest> manifest) {
+  auto& w = EnsureStoreWrites(store);
+  absl::MutexLock lock{&w.mutex};
+  w.manifest = std::move(manifest);
+  ++w.revision;
+  w.pinned.store(nullptr, std::memory_order_relaxed);
+  w.pin.reset();
 }
 
 namespace {
@@ -1236,7 +1271,7 @@ void Writes::VerifyReferences(duckdb::ClientContext& context,
 }
 
 void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
-  if (w.keys.empty() && !w.removed_rows && !w.changes.truncate) {
+  if (!w.table || (w.keys.empty() && !w.removed_rows && !w.changes.truncate)) {
     return;
   }
   LiveUnits now{w.store->GetTable().State(), w.changes.removals};
@@ -1381,12 +1416,19 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
   }
   for (auto& [store_id, w] : _writes) {
     auto& changes = w.changes;
-    if (!w.table || (changes.Empty() && w.own_segments.empty())) {
+    if (!w.owner ||
+        (changes.Empty() && w.own_segments.empty() && !w.manifest)) {
       continue;
     }
     if (changes.HasBufferedRows() || !changes.removals.empty()) {
       SDB_IF_FAILURE("search_feed_pending_fails") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+    }
+    if (!w.table) {
+      SDB_IF_FAILURE("Search::FailOnCommit") {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("debug failure point"));
       }
     }
     if (changes.HasBufferedRows()) {
@@ -1445,7 +1487,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
         ERR_MSG("Attempting to write to table ",
-                w.table->name.GetIdentifierName(), " but another transaction ",
+                w.owner->name.GetIdentifierName(), " but another transaction ",
                 w.store->Dropped() ? "dropped" : "is dropping", " it"));
     }
     auto& table = w.store->GetTable();
@@ -1482,9 +1524,10 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
                            .segments = std::move(w.own_segments),
                            .removals = std::move(w.changes.removals),
                            .patches = std::move(w.changes.patches),
+                           .manifest = std::move(w.manifest),
                            .truncate = w.changes.truncate};
     if (Logged(w)) {
-      sections.push_back({.table = w.table,
+      sections.push_back({.owner = w.owner,
                           .delta = w.store->GetTable().CommitDelta(
                             w.commit, std::move(w.rows))});
     }
@@ -1531,7 +1574,7 @@ void Writes::Apply(Tick tick,
     store->CommitLayout(_session);
   }
   for (auto& [store_id, w] : _writes) {
-    if (!w.table) {
+    if (!w.owner) {
       ReleaseWriter(w);
       continue;
     }
@@ -1572,12 +1615,15 @@ void Writes::BeforePublish() noexcept {
 
 void Writes::Finish() noexcept {
   for (auto& [store_id, w] : _writes) {
-    if (!w.table) {
+    if (!w.owner) {
       continue;
     }
     if (w.prepared) {
       SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_build_truncate");
       SDB_WAIT_ON_FAILURE("pause_search_commit_after_irs");
+      if (!w.table) {
+        SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
+      }
       w.store->PiecesAdded();
     }
     ReleaseWriter(w);

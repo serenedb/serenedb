@@ -75,7 +75,9 @@ std::vector<std::shared_ptr<Store>> DurableStores() {
       [&](catalog::SearchTableEntry& table) {
         tables.push_back(table.Storage());
       },
-      [](catalog::InvertedIndexEntry&) {});
+      [&](catalog::InvertedIndexEntry& index) {
+        tables.push_back(index.Storage());
+      });
   }
   absl::c_sort(tables);
   tables.erase(std::ranges::unique(tables).begin(), tables.end());
@@ -95,7 +97,9 @@ void RecoverSearchStorages(
       [&](catalog::SearchTableEntry& table) {
         tables.push_back(table.Storage());
       },
-      [](catalog::InvertedIndexEntry&) {});
+      [&](catalog::InvertedIndexEntry& index) {
+        tables.push_back(index.Storage());
+      });
   }
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance());

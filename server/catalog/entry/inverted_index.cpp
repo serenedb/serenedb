@@ -790,7 +790,7 @@ duckdb::optional_idx InvertedIndexEntry::GetDataVersion(
     return session.SearchTxn().PlanVersion(*_search_table);
   }
   if (_storage) {
-    return session.IndexPlanVersion(*_storage);
+    return session.SearchTxn().PlanVersion(*_storage);
   }
   return duckdb::optional_idx{};
 }
@@ -826,13 +826,12 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   if (state.position++ != 0 || !_storage) {
     return false;
   }
-  const auto index = _storage->LatestIndex();
   const auto keys = connector::primary_key::KeyColumns(table);
   const auto key_column =
     keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID
                  : table.GetColumns().LogicalToPhysical(keys.front()).index;
   result = SearchTableEntry::ColumnSegmentRows(
-    context, index->reader, table, key_column,
+    context, _storage->GetDirectoryReader(), table, key_column,
     state.options.include_segment_info);
   return true;
 }

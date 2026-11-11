@@ -107,6 +107,30 @@ irs::FieldPatch ReadPatch(duckdb::Deserializer& object) {
           .patch = irs::ColumnPatch::Merge(nullptr, type, rows, values, 0)};
 }
 
+std::string LogManifest(const FileManifest& manifest) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  serializer.Begin();
+  serializer.OnPropertyBegin(100, "manifest");
+  manifest.Write(serializer);
+  serializer.OnPropertyEnd();
+  serializer.End();
+  return std::string{reinterpret_cast<const char*>(stream.GetData()),
+                     stream.GetPosition()};
+}
+
+std::shared_ptr<const FileManifest> ReadManifest(std::string& bytes) {
+  duckdb::MemoryStream stream{
+    reinterpret_cast<duckdb::data_ptr_t>(bytes.data()), bytes.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Begin();
+  deserializer.OnPropertyBegin(100, "manifest");
+  auto manifest = FileManifest::Read(deserializer);
+  deserializer.OnPropertyEnd();
+  deserializer.End();
+  return manifest;
+}
+
 duckdb::unique_ptr<duckdb::DataChunk> ReadChunk(duckdb::ClientContext& context,
                                                 std::string& bytes) {
   duckdb::MemoryStream stream{
@@ -211,12 +235,13 @@ void WriteTableDelta(duckdb::Serializer& object, const TableDelta& delta) {
                        });
                      });
   }
+  if (delta.manifest) {
+    object.WriteProperty(109, "manifest", LogManifest(*delta.manifest));
+  }
 }
 
-void ReplayTableDelta(duckdb::ClientContext& context,
-                      catalog::SearchTableEntry* table,
-                      duckdb::Deserializer& object) {
-  auto* replay = table ? table->Storage()->Replay() : nullptr;
+void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
+                      duckdb::Catalog* catalog, duckdb::Deserializer& object) {
   std::vector<uint64_t> drop;
   object.ReadOptionalList(100, "drop",
                           [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
@@ -257,8 +282,7 @@ void ReplayTableDelta(duckdb::ClientContext& context,
                        }
                        auto chunk = ReadChunk(context, bytes);
                        const auto size = chunk->size();
-                       replay->Append(table->ParentCatalog(), row, columns,
-                                      std::move(chunk));
+                       replay->Append(*catalog, row, columns, std::move(chunk));
                        row += size;
                      });
       });
@@ -304,6 +328,11 @@ void ReplayTableDelta(duckdb::ClientContext& context,
                               }
                             });
                           });
+  auto manifest =
+    object.ReadPropertyWithExplicitDefault<std::string>(109, "manifest", {});
+  if (replay && !manifest.empty()) {
+    replay->SetManifest(ReadManifest(manifest));
+  }
 }
 
 }  // namespace sdb::search

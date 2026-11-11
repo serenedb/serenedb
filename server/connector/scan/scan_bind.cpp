@@ -440,7 +440,8 @@ bool ScanBindData::ReadsParametersAtExecution() const {
 search::ReadView ScanBindData::Read(duckdb::ClientContext& context) const {
   auto& transaction = ConnectionContext::Get(context).Transaction();
   if (relation.kind == ScanEntryKind::InvertedIndex) {
-    return transaction.ReadIndex(*relation.inverted_index->Storage());
+    return transaction.SearchTxn().Read(context,
+                                        *relation.inverted_index->Storage());
   }
   return transaction.SearchTxn().Read(
     context,

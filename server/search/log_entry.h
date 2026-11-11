@@ -26,8 +26,8 @@
 #include <duckdb/main/client_context.hpp>
 #include <string>
 
-#include "catalog/entry/search_table.h"
 #include "search/table.h"
+#include "search/table_replay.h"
 
 namespace sdb::search {
 
@@ -35,8 +35,7 @@ std::string LogChunk(duckdb::DataChunk& chunk);
 
 void WriteTableDelta(duckdb::Serializer& object, const TableDelta& delta);
 
-void ReplayTableDelta(duckdb::ClientContext& context,
-                      catalog::SearchTableEntry* table,
-                      duckdb::Deserializer& object);
+void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
+                      duckdb::Catalog* catalog, duckdb::Deserializer& object);
 
 }  // namespace sdb::search

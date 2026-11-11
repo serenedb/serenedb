@@ -129,26 +129,27 @@ void ReplayForeignDatabase(duckdb::ClientContext& context,
               ReplayRecord(context, target, payload);
             });
   const auto transaction = catalog.GetCatalogTransaction(context);
+  const auto recover = [&](search::Store& store,
+                           const duckdb::CatalogEntry& entry) {
+    OpenForeignStore(store, entry);
+    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
+    store.ScheduleRecovery(context, executor);
+    executor.WorkOnTasks();
+    store.FinishReplay();
+  };
   catalog.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
     auto& own = schema.Cast<Schema>();
     own.Scan(transaction, duckdb::CatalogType::TABLE_ENTRY,
              [&](duckdb::CatalogEntry& entry) {
-               if (!IsSearchTable(entry)) {
-                 return;
+               if (IsSearchTable(entry)) {
+                 recover(*entry.Cast<SearchTableEntry>().Storage(), entry);
                }
-               auto& store = *entry.Cast<SearchTableEntry>().Storage();
-               OpenForeignStore(store, entry);
-               duckdb::TaskExecutor executor{
-                 duckdb::TaskScheduler::GetScheduler(context)};
-               store.ScheduleRecovery(context, executor);
-               executor.WorkOnTasks();
-               store.FinishReplay();
              });
     own.Scan(transaction, duckdb::CatalogType::INDEX_ENTRY,
              [&](duckdb::CatalogEntry& entry) {
                if (auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
                    index && index->Storage()) {
-                 OpenForeignStore(*index->Storage(), entry);
+                 recover(*index->Storage(), entry);
                }
              });
   });

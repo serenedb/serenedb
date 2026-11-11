@@ -72,6 +72,7 @@
 #include "connector/index_expression.hpp"
 #include "connector/inverted_index_bind.h"
 #include "connector/primary_key.h"
+#include "connector/reindex_removes.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_backfill.h"
 #include "connector/view_index_bind.h"
@@ -315,7 +316,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
           /*is_new=*/true);
         storage->ApplyOptions(options);
         index_entry.AdoptStorage(storage);
-        storage->SetFileManifest(extras ? extras->manifest : nullptr);
         storage->StartTasks();
         index_entry.CreateReindexJob(transaction, reindex_interval);
       }
@@ -352,8 +352,19 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     return state;
   }
   state->index_storage = storage;
+  auto& writes = ConnectionContext::Get(context).Transaction().SearchTxn();
+  writes.RegisterIndex(storage, *created);
   if (extras && extras->Pass() == ReindexPass::Rebuild) {
-    storage->CommitRemoveAll();
+    writes.TruncateIndex(storage);
+  }
+  if (extras) {
+    auto removed = ResolveRemoves(writes.PinnedReader(context, *storage),
+                                  extras->removed_files, extras->removed_masks,
+                                  extras->removed_rows);
+    if (!removed.Empty()) {
+      SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
+      writes.AddRemoval(context, storage, std::move(removed));
+    }
   }
 
   state->table_id = _relation.oid;
@@ -485,7 +496,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 }
 
 duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
-  duckdb::ExecutionContext& /*context*/,
+  duckdb::ExecutionContext& context,
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
   if (!gstate.index_storage) {
@@ -493,11 +504,9 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   }
   auto& lstate = input.local_state.Cast<CreateIndexLocalState>();
   lstate.writer.reset();
-  // Flush this thread's tail segment here (in parallel Combines) rather than
-  // leaving it for the single-threaded Finalize refresh to write.
-  auto& trx = *lstate.search_trx;
+  std::span<const irs::IndexWriter::FlushedSegment> flushed;
   try {
-    trx.Flush();
+    flushed = lstate.search_trx->FlushAndFsync();
   } catch (const irs::SqlException& e) {
     lstate.search_trx.reset();
     THROW_SQL_ERROR(ERR_CODE(e.error().errcode),
@@ -509,13 +518,11 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
                     ERR_MSG("failed to flush index '", gstate.index_name,
                             "': ", duckdb::ErrorData{e}.RawMessage()));
   }
-  const bool committed = trx.Commit();
-  lstate.search_trx.reset();
-  if (!committed) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-                    ERR_MSG("failed to commit index '", gstate.index_name,
-                            "': out of memory"));
-  }
+  ConnectionContext::Get(context.client)
+    .Transaction()
+    .SearchTxn()
+    .AddOwnSegments(gstate.index_storage, std::move(lstate.search_trx),
+                    flushed);
   return duckdb::SinkCombineResultType::FINISHED;
 }
 
@@ -538,15 +545,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
   }
-  if (gstate.index_storage) {
-    auto& inverted_storage = *gstate.index_storage;
-    SDB_IF_FAILURE("commit_before_manifest_publish") {
-      inverted_storage.CommitOwn(context);
-    }
-    if (gstate.file_manifest) {
-      inverted_storage.SetFileManifest(gstate.file_manifest);
-    }
-    inverted_storage.CommitOwn(context);
+  if (gstate.index_storage && gstate.file_manifest) {
+    ConnectionContext::Get(context).Transaction().SearchTxn().SetManifest(
+      gstate.index_storage, gstate.file_manifest);
   }
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 

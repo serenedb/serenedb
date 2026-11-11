@@ -169,7 +169,7 @@ void IndexBuilder::WriteSegmentList() {
   auto out = _dir.create(kSegmentListFile);
   out->WriteData(reinterpret_cast<const irs::byte_type*>(text.data()),
                  text.size());
-  out->Close();
+  out.reset();
   const std::string_view name = kSegmentListFile;
   _dir.sync({&name, 1});
 }

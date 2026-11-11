@@ -182,6 +182,12 @@ MaskKind KindOf(const roaring_bitmap_t& set) noexcept {
   }
 }
 
+struct BitmapFree {
+  void operator()(roaring_bitmap_t* set) const noexcept {
+    roaring::api::roaring_bitmap_free(set);
+  }
+};
+
 }  // namespace
 
 DocumentMask::DocumentMask() noexcept {
@@ -441,10 +447,8 @@ void DocumentMaskBuilder::AddShifted(const roaring_bitmap_t& set,
     roaring::api::roaring_bitmap_or_inplace(&_set, &set);
     return;
   }
-  std::unique_ptr<roaring_bitmap_t,
-                  decltype(&roaring::api::roaring_bitmap_free)>
-    shifted{roaring::api::roaring_bitmap_add_offset(&set, offset),
-            &roaring::api::roaring_bitmap_free};
+  std::unique_ptr<roaring_bitmap_t, BitmapFree> shifted{
+    roaring::api::roaring_bitmap_add_offset(&set, offset)};
   if (!shifted) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                     ERR_MSG("Failed to allocate a shifted document mask"));

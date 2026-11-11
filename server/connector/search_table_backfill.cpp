@@ -411,6 +411,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       if (progress) {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
+        SDB_WAIT_ON_FAILURE("pause_create_index_mid_build");
       }
       context.InterruptCheck();
       return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;

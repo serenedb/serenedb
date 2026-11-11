@@ -341,16 +341,18 @@ TEST_F(RestoreTest, RefusesAMissingStoreDirectory) {
 
 TEST_F(RestoreTest, RefusesALogShorterThanTheCut) {
   WriteLabel();
-  const auto size = _chunk_header + (_ends[2] - _ends[1]) - 1;
-  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(1), size);
-  ExpectRefused(absl::StrCat("has ", size, " bytes, the cut needs ", size + 1));
+  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(1),
+                               _chunk_header + (_ends[2] - _ends[1]) - 1);
+  ExpectRefused(absl::StrCat("it ends at LSN ", _ends[1],
+                             ", before the cut at LSN ", _ends[2]));
 }
 
 TEST_F(RestoreTest, RefusesALogWithAShortChunkBeforeTheCut) {
   WriteLabel();
-  const auto size = _chunk_header + _ends[1] - 1;
-  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(0), size);
-  ExpectRefused(absl::StrCat("has ", size, " bytes, the log needs ", size + 1));
+  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(0),
+                               _chunk_header + _ends[1] - 1);
+  ExpectRefused(absl::StrCat("chunk 0 ends at LSN ", _ends[0],
+                             ", but chunk 1 was synced from LSN ", _ends[1]));
 }
 
 }  // namespace

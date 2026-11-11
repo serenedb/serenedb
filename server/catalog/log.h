@@ -130,7 +130,6 @@ class Log {
   struct Chunk {
     uint64_t number = 0;
     Lsn begin = 0;
-    uint64_t id = 0;
     bool sealed = false;
     duckdb::unique_ptr<duckdb::FileHandle> file;
   };
@@ -173,6 +172,7 @@ class Log {
   std::atomic<Lsn> _covered{0};
   std::atomic<uint64_t> _snapshot_bytes{0};
   absl::Mutex _files_mutex;
+  std::vector<HistoryEntry> _history ABSL_GUARDED_BY(_files_mutex);
 };
 
 }  // namespace sdb::catalog

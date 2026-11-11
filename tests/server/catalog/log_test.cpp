@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iresearch/utils/pg/sql_exception.hpp>
+#include <iterator>
 #include <memory>
 #include <span>
 #include <string>
@@ -93,6 +94,12 @@ class LogTest : public ::testing::Test {
     file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
 
+  uint64_t Find(uint64_t number, const std::string& bytes) const {
+    std::ifstream file{Chunk(number), std::ios::binary};
+    const std::string content{std::istreambuf_iterator<char>{file}, {}};
+    return content.find(bytes);
+  }
+
   std::string ReadBytes(uint64_t number, uint64_t at, uint64_t size) const {
     std::ifstream file{Chunk(number), std::ios::binary};
     file.seekg(static_cast<std::streamoff>(at));
@@ -128,7 +135,7 @@ TEST_F(LogTest, ReplayFollowsTheChunkChain) {
   EXPECT_FALSE(std::filesystem::exists(Chunk(3)));
 }
 
-TEST_F(LogTest, AChunkAfterALostTailIsRemoved) {
+TEST_F(LogTest, ChunksAfterALostTailAreRemoved) {
   Written lost;
   {
     auto log = Open();
@@ -136,6 +143,8 @@ TEST_F(LogTest, AChunkAfterALostTailIsRemoved) {
     lost = WriteUnsynced(*log, Payload('B'));
     log->Switch();
     WriteUnsynced(*log, Payload('C'));
+    log->Switch();
+    WriteUnsynced(*log, Payload('E'));
   }
   const auto header =
     ChunkHeader(1, lost.end, lost.end + (lost.end - lost.begin));
@@ -144,6 +153,24 @@ TEST_F(LogTest, AChunkAfterALostTailIsRemoved) {
     auto log = Open();
     EXPECT_EQ(_records, std::vector{Payload('A')});
     EXPECT_FALSE(std::filesystem::exists(Chunk(1)));
+    EXPECT_FALSE(std::filesystem::exists(Chunk(2)));
+    log->Append(Bytes(Payload('D')));
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('D')}));
+}
+
+TEST_F(LogTest, ARecordAfterATornOneIsNotRevived) {
+  {
+    auto log = Open();
+    log->Append(Bytes(Payload('A')));
+    WriteUnsynced(*log, Payload('B'));
+    WriteUnsynced(*log, Payload('C'));
+  }
+  Overwrite(0, Find(0, Payload('B')), std::string(1, 'X'));
+  {
+    auto log = Open();
+    EXPECT_EQ(_records, std::vector{Payload('A')});
     log->Append(Bytes(Payload('D')));
   }
   Open();
@@ -166,11 +193,10 @@ TEST_F(LogTest, ADamagedChunkBeforeASyncedOneIsRefused) {
     Open();
     FAIL() << "a log with a damaged synced chunk was replayed";
   } catch (const irs::SqlException& e) {
-    EXPECT_EQ(
-      e.message(),
-      absl::StrCat("log '", _dir.string(), "' is damaged: chunk 0 ends at LSN ",
-                   damaged.begin, ", but chunk 1 starts at the synced LSN ",
-                   damaged.end));
+    EXPECT_EQ(e.message(),
+              absl::StrCat("log '", _dir.string(),
+                           "' is damaged: chunk 0 ends at LSN ", damaged.begin,
+                           ", but chunk 1 was synced from LSN ", damaged.end));
   }
 }
 
@@ -188,6 +214,37 @@ TEST_F(LogTest, ChunksTheSnapshotCoversAreRemovedOnRestart) {
   Open();
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
   EXPECT_FALSE(std::filesystem::exists(Chunk(0)));
+}
+
+TEST_F(LogTest, ASnapshotAtTheStartOfAnUnwrittenChunkReplays) {
+  {
+    auto log = Open();
+    log->Append(Bytes(Payload('A')));
+    const auto covered = log->Switch();
+    log->WriteSnapshot(
+      covered, {}, [](std::span<uint8_t> payload) { return payload; },
+      [](std::vector<Log::HistoryEntry> entries) { return entries; });
+    log->DropCovered();
+  }
+  EXPECT_FALSE(std::filesystem::exists(Chunk(0)));
+  {
+    auto log = Open();
+    EXPECT_EQ(_records, std::vector{Payload('A')});
+    log->Append(Bytes(Payload('B')));
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+}
+
+TEST_F(LogTest, ARecordOverTheSizeLimitIsRefused) {
+  {
+    auto log = Open();
+    log->Append(Bytes(Payload('A')));
+    EXPECT_THROW(log->Reserve(size_t{1} << 32), irs::SqlException);
+    log->Append(Bytes(Payload('B')));
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
 }
 
 TEST_F(LogTest, ARecordCopiedToAnotherLsnIsNotReplayed) {

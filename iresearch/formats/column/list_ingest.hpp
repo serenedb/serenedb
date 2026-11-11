@@ -41,7 +41,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/internal/write_chunk.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
@@ -55,31 +55,36 @@ std::vector<WriteChunk> ViewChunks(std::span<uint64_t> values);
 
 struct ListRep {
   uint64_t offset;
-  uint32_t chunk;
+  uint64_t hash;
   uint32_t length;
   uint32_t code;
-  uint32_t next;
+  bool stored;
 };
 
 class ListKeys {
  public:
-  static constexpr size_t kSource = 0;
-  static constexpr size_t kStore = 1;
+  void SetSource(const duckdb::Vector& child) { _source.Assign(child); }
 
-  void SetChunk(size_t index, const duckdb::Vector& child) {
-    _chunks[index].Assign(child);
+  void SetStore(const duckdb::Vector& child) { _store.Assign(child); }
+
+  void Clear() noexcept {
+    _source = {};
+    _store = {};
   }
-
-  void Clear() noexcept { _chunks = {}; }
 
   IRS_FORCE_INLINE uint64_t Hash(uint64_t offset, uint64_t length) const {
-    return absl::HashOf(Range{_chunks[kSource], offset, length});
+    return absl::HashOf(Range{_source, offset, length});
   }
 
-  IRS_FORCE_INLINE bool Equal(size_t chunk, uint64_t offset,
-                              uint64_t source_offset, uint64_t length) const {
-    return _chunks[chunk].EqualRange(offset, _chunks[kSource], source_offset,
-                                     length);
+  IRS_FORCE_INLINE bool Equal(const ListRep& rep,
+                              uint64_t source_offset) const {
+    return Elements(rep).EqualRange(rep.offset, _source, source_offset,
+                                    rep.length);
+  }
+
+  IRS_FORCE_INLINE bool Equal(const ListRep& lhs, const ListRep& rhs) const {
+    return Elements(lhs).EqualRange(lhs.offset, Elements(rhs), rhs.offset,
+                                    lhs.length);
   }
 
  private:
@@ -291,7 +296,12 @@ class ListKeys {
     }
   };
 
-  std::array<Node, 2> _chunks;
+  const Node& Elements(const ListRep& rep) const noexcept {
+    return rep.stored ? _store : _source;
+  }
+
+  Node _source;
+  Node _store;
 };
 
 struct ListParts {
@@ -308,6 +318,8 @@ class ListIngest {
  public:
   ListIngest(const duckdb::LogicalType& type, bool borrow,
              uint64_t code_base = 0, uint64_t running = 0);
+  ListIngest(const ListIngest&) = delete;
+  ListIngest& operator=(const ListIngest&) = delete;
 
   void AddNulls(duckdb::idx_t count);
 
@@ -326,6 +338,23 @@ class ListIngest {
   struct Fresh {
     uint32_t rep;
     size_t picked;
+  };
+
+  struct RepHash {
+    size_t operator()(uint32_t rep) const noexcept { return (*reps)[rep].hash; }
+
+    const std::vector<ListRep>* reps;
+  };
+
+  struct RepEq {
+    bool operator()(uint32_t lhs, uint32_t rhs) const {
+      const auto& a = ingest->_reps[lhs];
+      const auto& b = ingest->_reps[rhs];
+      return a.hash == b.hash && a.length == b.length &&
+             (a.length == 0 || ingest->_keys.Equal(a, b));
+    }
+
+    const ListIngest* ingest;
   };
 
   void Reset(uint64_t code_base, uint64_t running);
@@ -375,20 +404,21 @@ class ListIngest {
     if (_prev != kNoRep && Matches(_prev, entry)) {
       return _code_base + _reps[_prev].code;
     }
-    const auto hash = _keys.Hash(entry.offset, entry.length);
-    auto [head, inserted] = _heads.try_emplace(hash, kNoRep);
-    for (auto r = head->second; r != kNoRep; r = _reps[r].next) {
-      if (Matches(r, entry)) {
-        _prev = r;
-        return _code_base + _reps[r].code;
-      }
-    }
-    rep = static_cast<uint32_t>(_reps.size());
+    const auto fresh = static_cast<uint32_t>(_reps.size());
     _reps.emplace_back(ListRep{
-      entry.offset, ListKeys::kSource, static_cast<uint32_t>(entry.length),
-      static_cast<uint32_t>(_next_code - _code_base), head->second});
-    head->second = rep;
-    _prev = rep;
+      .offset = entry.offset,
+      .hash = _keys.Hash(entry.offset, entry.length),
+      .length = static_cast<uint32_t>(entry.length),
+      .code = static_cast<uint32_t>(_next_code - _code_base),
+      .stored = false,
+    });
+    const auto [known, is_new] = _distinct.emplace(fresh);
+    _prev = *known;
+    if (!is_new) {
+      _reps.pop_back();
+      return _code_base + _reps[_prev].code;
+    }
+    rep = fresh;
     return kNoCode;
   }
 
@@ -400,8 +430,7 @@ class ListIngest {
                                 const duckdb::list_entry_t& entry) const {
     const auto& r = _reps[rep];
     return r.length == entry.length &&
-           (entry.length == 0 ||
-            _keys.Equal(r.chunk, r.offset, entry.offset, entry.length));
+           (entry.length == 0 || _keys.Equal(r, entry.offset));
   }
 
   void Store(const duckdb::Vector& child);
@@ -424,8 +453,9 @@ class ListIngest {
   std::vector<WriteChunk> _elems;
   std::optional<duckdb::Vector> _tail;
   ListKeys _keys;
-  containers::FlatHashMap<uint64_t, uint32_t> _heads;
   std::vector<ListRep> _reps;
+  containers::FlatHashSet<uint32_t, RepHash, RepEq> _distinct{
+    0, RepHash{&_reps}, RepEq{this}};
   std::vector<Fresh> _fresh;
   std::vector<duckdb::sel_t> _picked;
   std::string _source;

@@ -136,7 +136,7 @@ void ListIngest::Add(const duckdb::Vector& vec, duckdb::idx_t off,
     _dedup = true;
     OpenWindow();
   } else {
-    _keys.SetChunk(ListKeys::kSource, child);
+    _keys.SetSource(child);
   }
   _fresh.clear();
   _picked.clear();
@@ -246,7 +246,7 @@ bool ListIngest::Repetitive(const duckdb::UnifiedVectorFormat& parent,
                             const duckdb::list_entry_t* entries,
                             const duckdb::Vector& child, duckdb::idx_t off,
                             duckdb::idx_t count) {
-  _keys.SetChunk(ListKeys::kSource, child);
+  _keys.SetSource(child);
   std::array<uint64_t, kProbeRows> probe;
   size_t sampled = 0;
   const auto end = off + std::min(count, kProbeRows);
@@ -327,7 +327,7 @@ void ListIngest::Forget() {
   _source.clear();
   _source_codes.clear();
   _prev = kNoRep;
-  _heads.clear();
+  _distinct.clear();
   _reps.clear();
   _keys.Clear();
 }
@@ -348,9 +348,9 @@ void ListIngest::Store(const duckdb::Vector& child) {
     }
     auto& rep = _reps[fresh.rep];
     rep.offset = base + fresh.picked;
-    rep.chunk = ListKeys::kStore;
+    rep.stored = true;
   }
-  _keys.SetChunk(ListKeys::kStore, duckdb::ListVector::GetChild(tail));
+  _keys.SetStore(duckdb::ListVector::GetChild(tail));
 }
 
 }  // namespace irs

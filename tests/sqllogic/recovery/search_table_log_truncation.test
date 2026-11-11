@@ -206,6 +206,10 @@ n	s
 
 connection after_second_crash
 statement ok
+CHECKPOINT;
+
+connection after_second_crash
+statement ok
 INSERT INTO lt VALUES (100008, 'pre');
 
 connection after_second_crash

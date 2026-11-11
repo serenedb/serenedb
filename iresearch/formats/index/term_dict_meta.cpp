@@ -56,6 +56,8 @@ constexpr duckdb::field_id_t kSpanExtraPages = 1;
 constexpr duckdb::field_id_t kFieldId = 0;
 constexpr duckdb::field_id_t kFieldLayout = 1;
 constexpr duckdb::field_id_t kFieldFirstDict = 2;
+constexpr size_t kFieldDictSlots = 32;
+static_assert(kDictMembers <= kFieldDictSlots);
 
 constexpr duckdb::field_id_t DictProperty(DictMember member) noexcept {
   return static_cast<duckdb::field_id_t>(kFieldFirstDict +

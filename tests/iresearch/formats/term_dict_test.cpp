@@ -33,6 +33,7 @@
 #include <iresearch/formats/index/term_dict_cursor.hpp>
 #include <iresearch/formats/reader_state.hpp>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/store/fs_directory.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>
 #include <iresearch/utils/levenshtein_utils.hpp>
@@ -4061,6 +4062,154 @@ TEST_P(TermDictTest, mapped_range_visits_do_not_allocate) {
                        [](irs::bytes_view, const irs::PostingMeta&, bool) {});
     ASSERT_EQ(before, ThreadAllocatedBytes());
   }
+}
+
+std::vector<Field> GoldenFields() {
+  std::vector<irs::bstring> urls;
+  for (size_t i = 0; i != 3000; ++i) {
+    urls.push_back(Bytes(absl::StrCat("https://host", i % 50,
+                                      ".example.com/path", i % 20, "/", i)));
+  }
+  auto spanning = Words(300, 43);
+  spanning.emplace_back(5000, irs::byte_type{'q'});
+  std::vector<std::pair<int64_t, irs::doc_id_t>> numbers;
+  std::vector<std::pair<int64_t, irs::doc_id_t>> json_numbers;
+  for (irs::doc_id_t doc = 1; doc <= 3000; ++doc) {
+    numbers.emplace_back(int64_t{doc % 1000} * 7 - 3000, doc);
+    if (doc % 60 == 0) {
+      json_numbers.emplace_back(-int64_t{doc}, doc);
+    }
+  }
+  const irs::bstring slot{irs::kSlotTerm};
+  std::vector<Field> fields;
+  fields.push_back(
+    {.id = 1, .entries = MakeEntries(Words(3000, 41)), .sample = false});
+  fields.push_back({.id = 2, .entries = MakeEntries(std::move(urls))});
+  fields.push_back({.id = 3, .entries = MakeEntries(Words(20, 42))});
+  fields.push_back({.id = 4, .entries = MakeEntries({Bytes("single")})});
+  fields.push_back({.id = 5, .entries = MakeEntries(std::move(spanning))});
+  fields.push_back({.id = 6,
+                    .entries = NumericEntries(std::move(numbers)),
+                    .dict = irs::NumericLayout::kNumbers});
+  fields.push_back({.id = 6,
+                    .entries = MakeEntries({slot}),
+                    .dict = irs::NumericLayout::kNulls});
+  fields.push_back(
+    {.id = 7, .entries = MakeEntries({slot}), .dict = irs::BoolLayout::kFalse});
+  fields.push_back(
+    {.id = 7, .entries = MakeEntries({slot}), .dict = irs::BoolLayout::kTrue});
+  fields.push_back({.id = 8,
+                    .entries = MakeEntries(Words(200, 44)),
+                    .dict = irs::JsonLayout::kStrings});
+  fields.push_back({.id = 8,
+                    .entries = NumericEntries(std::move(json_numbers)),
+                    .dict = irs::JsonLayout::kNumbers});
+  fields.push_back({.id = 8,
+                    .entries = MakeEntries({slot}),
+                    .dict = irs::JsonLayout::kJsonNulls});
+  fields.push_back({.id = 9,
+                    .entries = MakeEntries(Words(10, 45)),
+                    .dict = irs::StringListLayout::kStrings});
+  fields.push_back({.id = 9,
+                    .entries = MakeEntries({slot}),
+                    .dict = irs::StringListLayout::kNullElements});
+  return fields;
+}
+
+std::array<std::string, 2> GoldenFiles() {
+  return {absl::StrCat(kSegment, ".", irs::kIdxFormatExt),
+          absl::StrCat(kSegment, ".", irs::PostingsWriter::kDocExt)};
+}
+
+void CopyFile(const irs::Directory& from, irs::Directory& to,
+              std::string_view name) {
+  auto in = from.open(name, irs::IOAdvice::SEQUENTIAL);
+  ASSERT_NE(nullptr, in);
+  irs::bstring data(in->Length(), irs::byte_type{0});
+  in->ReadData(0, data.data(), data.size());
+  auto out = to.create(name);
+  ASSERT_NE(nullptr, out);
+  out->WriteData(data.data(), data.size());
+}
+
+TEST_P(TermDictTest, DISABLED_write_golden_segment) {
+  Write(GoldenFields());
+  const auto path = TestEnv::resource("term_dict_golden");
+  std::filesystem::create_directories(path);
+  irs::FSDirectory golden{path};
+  for (const auto& name : GoldenFiles()) {
+    CopyFile(dir(), golden, name);
+  }
+}
+
+TEST_P(TermDictTest, golden_segment_reads_back) {
+  irs::FSDirectory golden{TestEnv::resource("term_dict_golden")};
+  for (const auto& name : GoldenFiles()) {
+    CopyFile(golden, dir(), name);
+  }
+  const auto fields = GoldenFields();
+  for (const auto& field : fields) {
+    for (const auto& entry : field.entries) {
+      for (const auto& [doc, freq] : entry.docs) {
+        _docs = std::max(_docs, doc);
+      }
+    }
+  }
+  Open(dir());
+
+  const auto terms = TakeTerms();
+  ASSERT_FALSE(terms.spans.empty());
+  ASSERT_NE(0, terms.inline_size);
+  ASSERT_TRUE(absl::c_any_of(
+    terms.fields, [](const auto& head) { return !head.fsst_table.empty(); }));
+  ASSERT_TRUE(absl::c_any_of(terms.fields, [](const auto& head) {
+    return !head.text.prefix_trie.empty();
+  }));
+  ASSERT_TRUE(absl::c_any_of(terms.fields, [](const auto& head) {
+    return !head.ranges.counts.empty();
+  }));
+  std::array<size_t, 3> kinds{};
+  const auto description = irs::MakeParametricDescription(1, true);
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ")
+                 << field.id << " member "
+                 << static_cast<int>(field.dict.member));
+    const auto* reader = Get(field);
+    ASSERT_NE(nullptr, reader);
+    AssertField(*reader, field.entries);
+    if (field.entries.size() == 1) {
+      continue;
+    }
+    for (size_t i = 0; const auto n : BlockKinds(Blocks(*reader))) {
+      kinds[i++] += n;
+    }
+    if (IsNumbers(field.dict)) {
+      AssertLevels(*reader, field.entries);
+      continue;
+    }
+    AssertWalk(*reader, field.entries,
+               irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(
+                 std::string_view{"[a-n].*(ion|s)[0-9]*"})});
+    const auto& entries = field.entries;
+    for (size_t i = 0; i < entries.size(); i += entries.size() / 8 + 1) {
+      SCOPED_TRACE(testing::Message("fuzzy target ") << i);
+      const irs::LevenshteinAcceptor acceptor{description, {}, entries[i].key};
+      std::vector<irs::bytes_view> expected;
+      for (const auto& entry : entries) {
+        if (acceptor.Matches(entry.key)) {
+          expected.emplace_back(entry.key);
+        }
+      }
+      auto it = reader->iterator(acceptor);
+      size_t found = 0;
+      for (; it->next(); ++found) {
+        ASSERT_LT(found, expected.size());
+        ASSERT_EQ(expected[found], it->value());
+      }
+      ASSERT_EQ(expected.size(), found);
+    }
+  }
+  ASSERT_TRUE(absl::c_all_of(kinds, [](size_t n) { return n != 0; }));
 }
 
 INSTANTIATE_TEST_SUITE_P(TermDictTest, TermDictTest,

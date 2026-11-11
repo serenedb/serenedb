@@ -26,6 +26,7 @@ A new storage version only for a change older releases would misread instead of 
 Test a format change the way a release meets old data: a fault point makes the writer produce the old shape, the test restarts and reads it back.
 
 - Search index files: the footer and the leading `storage_version` of `segments_N` never change; an object's fields are numbered from 0 through named constants, and every field written is read.
+- Search index files: only the footer is key-value. What it points at (term dictionary blocks, posting records, key encodings, separators, range levels, the prefix trie) changes only by replacement, as a new block kind, layout value or footer field: an edit in place is misread, not refused. `golden_segment_reads_back` in `tests/iresearch/formats/term_dict_test.cpp` reads the segment in `resources/tests/iresearch/term_dict_golden/`; only a change that breaks compatibility on purpose regenerates it (`DISABLED_write_golden_segment`).
 - Database files: checkpoint and log entries take their field ids from `third_party/duckdb/src/include/duckdb/storage/serialization/*.json`; the log header never gains a field (a framing change bumps `WAL_VERSION_NUMBER`); replay refuses an entry it can't read instead of dropping it, and drops only a torn tail.
 
 ## DuckDB database files

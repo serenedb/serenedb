@@ -274,7 +274,7 @@ ReleasedQueue& GetReleased() {
 
 void DoCleanup(Store& idx) {
   metrics::Scoped guard{metrics::Gauge::CleanupActive};
-  auto [res, time_ms] = idx.CleanupUnsafe();
+  auto [res, time_ms] = idx.CleanupUnsafe(false);
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful cleanup of Search index '", idx.GetId(),
               "', took: ", time_ms, "ms");

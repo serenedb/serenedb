@@ -42,6 +42,7 @@
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/store/directory_cleaner.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/store/overlay_directory.hpp>
@@ -118,9 +119,15 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
     .count();
 }
 
-absl::Status RemoveUnreferenced(irs::Directory& dir, duckdb::idx_t id) {
+absl::Status RemoveUnreferenced(irs::Directory& dir, duckdb::idx_t id,
+                                bool orphans) {
   try {
-    irs::directory_utils::RemoveAllUnreferenced(dir);
+    if (orphans) {
+      irs::directory_utils::RemoveAllUnreferenced(dir);
+    } else {
+      duckdb::TaskScheduler::BlockingScope blocking;
+      irs::DirectoryCleaner::clean(dir);
+    }
   } catch (const std::exception& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up ", id, ": ",
@@ -702,7 +709,7 @@ void Store::ReindexReleaser::operator()(Store* store) const noexcept {
   }
 }
 
-ResultWithTime Store::CleanupUnsafe() {
+ResultWithTime Store::CleanupUnsafe(bool orphans) {
   const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
     return {absl::OkStatus(), 0};
@@ -723,7 +730,7 @@ ResultWithTime Store::CleanupUnsafe() {
       transactions.GarbageQueued();
     }
   }
-  auto result = RemoveUnreferenced(*_dir, _id);
+  auto result = RemoveUnreferenced(*_dir, _id, orphans);
   SDB_PARK_ONCE_ON_FAILURE("search_cleanup_after_remove");
   const auto time_ms = MillisSince(begin);
   _maintenance.RecordCleanup(result, time_ms);
@@ -934,7 +941,7 @@ absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
       break;
     }
   }
-  auto cleanup = CleanupUnsafe().res;
+  auto cleanup = CleanupUnsafe(false).res;
   catalog::Transactions::Get().AwaitPublished(
     _storage_tick.load(std::memory_order_acquire));
   return cleanup;

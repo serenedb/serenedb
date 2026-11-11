@@ -213,7 +213,7 @@ class Store final : public std::enable_shared_from_this<Store>,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env)
     -> yaclib::Future<ResultWithTime>;
-  ResultWithTime CleanupUnsafe();
+  ResultWithTime CleanupUnsafe(bool orphans);
   void RequestCleanup() noexcept;
 
   // The field options a background merge encodes against, pinned for it; null

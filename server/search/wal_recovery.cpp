@@ -120,7 +120,7 @@ void RecoverSearchStorages(
         if (table->FinishReplay()) {
           replayed_tables.fetch_add(1, std::memory_order_relaxed);
         }
-        if (const auto status = table->CleanupUnsafe().res; !status.ok()) {
+        if (const auto status = table->CleanupUnsafe(true).res; !status.ok()) {
           SDB_WARN(SEARCH, "cleanup of table '", table->GetId(),
                    "' after log replay failed: ", status.message());
         }

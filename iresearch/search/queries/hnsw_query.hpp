@@ -79,6 +79,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
   std::shared_ptr<const HnswData> _data;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;
+  mutable std::shared_ptr<const QuantizerCodeBound> _bound;
   mutable std::shared_ptr<const PanoramaQuery> _panorama;
   mutable absl::once_flag _distance_prepared;
   AnnQueryCache* _cache;

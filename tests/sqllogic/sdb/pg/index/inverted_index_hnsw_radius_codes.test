@@ -1,0 +1,55 @@
+statement ok
+CREATE TABLE hrc (id INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+INSERT INTO hrc SELECT i, [i * 0.37 + 0.1, (i % 7) * 0.5]::FLOAT[2] FROM range(1000) t(i);
+
+statement ok
+CREATE INDEX hrc_idx ON hrc USING inverted(id, emb hnsw (metric = 'l2', quant = 'sq8'));
+
+statement ok
+VACUUM (REFRESH_TABLE) hrc;
+
+query
+SELECT (SELECT count(*) FROM hrc_idx WHERE emb <-> [180.2, 1]::FLOAT[2] < 0.8)
+     = (SELECT count(*) FROM hrc WHERE emb <-> [180.2, 1]::FLOAT[2] < 0.8) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT count(*) FROM hrc_idx WHERE emb <-> [180.2, 1]::FLOAT[2] < 1.72)
+     = (SELECT count(*) FROM hrc WHERE emb <-> [180.2, 1]::FLOAT[2] < 1.72) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT count(*) FROM hrc_idx WHERE emb <-> [180.2, 1]::FLOAT[2] <= 2.64)
+     = (SELECT count(*) FROM hrc WHERE emb <-> [180.2, 1]::FLOAT[2] <= 2.64) AS same;
+----
+same
+t
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM hrc_idx WHERE emb <-> [180.2, 1]::FLOAT[2] < 5.5)
+  EXCEPT (SELECT id FROM hrc WHERE emb <-> [180.2, 1]::FLOAT[2] < 5.5)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM hrc WHERE emb <-> [180.2, 1]::FLOAT[2] < 5.5)
+  EXCEPT (SELECT id FROM hrc_idx WHERE emb <-> [180.2, 1]::FLOAT[2] < 5.5)) t;
+----
+count
+0
+
+query
+SELECT (SELECT count(*) FROM hrc_idx WHERE emb <-> [20.05, 3]::FLOAT[2] < 7.3)
+     = (SELECT count(*) FROM hrc WHERE emb <-> [20.05, 3]::FLOAT[2] < 7.3) AS same;
+----
+same
+t

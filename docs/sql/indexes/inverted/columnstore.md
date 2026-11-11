@@ -70,6 +70,8 @@ Name the codec on the column with `USING COMPRESSION`, optionally with a level i
 
 <SqlLogicTest id="sql/indexes/inverted/columnstore/example_001" />
 
+Under `auto`, a text column whose values seldom repeat is stored with `lz4` or `fsst`, which are small and fast to scan but decode the rows around a row to read it. A query that reads a small share of such a column's rows, such as the rows a filter on other columns keeps, reads them several times faster from `onpair` or `fsst_plus`, which decode each row alone: name one of them on such a column. Both scan slower than `lz4`, and `fsst_plus` takes more space.
+
 A codec named on a list, map or struct column applies to the values inside it. A column whose values are all text takes the text codecs, and the codec then compresses every string inside it, the keys and the values of a map alike; a column whose values are all numbers takes the numeric codecs, such as `alp` on a `DOUBLE[]` column. Naming a codec on a nested column suits attribute maps that queries return but seldom filter on: name `dict_zstd` on them to store them smaller, and leave the text columns that queries search or filter on to `auto`, whose codecs decode faster.
 
 On an inverted index, an `INCLUDE`d column takes the same names through `included (compression = '...')`, and a level through `compression_level`, as in `included (compression = 'dict_zstd', compression_level = 9)`:

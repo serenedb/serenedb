@@ -145,6 +145,10 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
   _edges.shrink_to_fit();
   _fanouts.shrink_to_fit();
   _start_samples.shrink_to_fit();
+  _inner.shrink_to_fit();
+  _ends.shrink_to_fit();
+  _terminal.shrink_to_fit();
+  _edged.shrink_to_fit();
   _edge_starts.shrink_to_fit();
 }
 

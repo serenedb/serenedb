@@ -348,3 +348,105 @@ RESET threads
 
 statement ok
 DROP TABLE slp;
+
+
+statement ok
+CREATE TABLE slf (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO slf SELECT i, i // 2048, i % 7 FROM range(4096) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) slf;
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
+FROM sdb_metrics WHERE relation_id = 'slf'::regclass;
+----
+segments	docs
+1	4096
+
+
+statement ok
+SET threads = 2
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slf_static.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slf WHERE k = 1;
+----
+n	s
+2048	6147
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slf_join.json'
+
+
+query
+SELECT count(*) AS n, sum(t.v) AS s FROM (VALUES (1)) s(x) JOIN slf t ON t.k = s.x;
+----
+n	s
+2048	6147
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slf_key.json'
+
+
+query
+SELECT t.id, t.v FROM (VALUES (3000::BIGINT)) s(x) JOIN slf t ON t.id = s.x;
+----
+id	v
+3000	4
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slf_static.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slf_join.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slf_key.json');
+----
+row_groups_scanned
+1
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP TABLE slf;

@@ -100,6 +100,32 @@ FieldSet UniqueTermFields(const ScanBindData& bind) {
   return fields;
 }
 
+std::optional<uint64_t> KeyValueCount(const duckdb::Expression& filter) {
+  switch (filter.GetExpressionType()) {
+    case duckdb::ExpressionType::COMPARE_EQUAL: {
+      auto type = duckdb::ExpressionType::INVALID;
+      if (!duckdb::BoundComparisonExpression::IsComparison(filter) ||
+          !duckdb::ExpressionFilter::TryGetColumnConstantComparison(
+            filter.Cast<duckdb::BoundFunctionExpression>(), type)) {
+        return std::nullopt;
+      }
+      return 1;
+    }
+    case duckdb::ExpressionType::CONJUNCTION_AND: {
+      std::optional<uint64_t> bound;
+      for (const auto& child :
+           filter.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+        if (const auto rows = KeyValueCount(*child)) {
+          bound = bound ? std::min(*bound, *rows) : *rows;
+        }
+      }
+      return bound;
+    }
+    default:
+      return std::nullopt;
+  }
+}
+
 std::optional<uint64_t> UniqueMatches(const irs::Filter& filter,
                                       const FieldSet& unique) {
   if (filter.type() == irs::Type<irs::ByTerm>::id()) {
@@ -645,6 +671,24 @@ bool RowsOnlySegment(const irs::SubReader& segment) {
 std::optional<uint64_t> UniqueMatchBound(const ScanBindData& scan,
                                          const irs::Filter& filter) {
   return UniqueMatches(filter, UniqueTermFields(scan));
+}
+
+std::optional<uint64_t> UniqueColumnBound(const ScanBindData& scan,
+                                          ColumnId column,
+                                          const duckdb::Expression& filter) {
+  if (!scan.relation.IsSearchTable() ||
+      absl::c_none_of(
+        scan.relation.table_entry->Cast<catalog::SearchTableEntry>().KeySpecs(),
+        [&](const auto& spec) {
+          return spec.kind == search::KeyKind::Unique &&
+                 spec.key.columns.size() == 1 &&
+                 spec.key.columns.front() == column &&
+                 (spec.key.expressions.empty() ||
+                  spec.key.expressions.front().empty());
+        })) {
+    return std::nullopt;
+  }
+  return KeyValueCount(filter);
 }
 
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,

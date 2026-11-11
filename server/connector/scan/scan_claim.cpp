@@ -310,6 +310,30 @@ bool ConstantCount(const irs::Filter& filter) {
   return terms == 1 && others == 0;
 }
 
+std::optional<uint64_t> UniqueBound(const ScanGlobalState& g,
+                                    const irs::Filter* where) {
+  const auto& bind = g.Bind();
+  std::optional<uint64_t> bound;
+  const auto tighten = [&](std::optional<uint64_t> rows) {
+    if (rows) {
+      bound = bound ? std::min(*bound, *rows) : *rows;
+    }
+  };
+  if (where) {
+    tighten(UniqueMatchBound(bind, *where));
+  }
+  for (const auto& cf : g.col_filters) {
+    if (!cf.is_score && !cf.zonemap_only && !cf.row_gather &&
+        cf.extract_path.empty() && cf.row_fields.empty()) {
+      tighten(UniqueColumnBound(bind, cf.field,
+                                *duckdb::ExpressionFilter::GetExpressionFilter(
+                                   *cf.filter, "UniqueBound")
+                                   .expr));
+    }
+  }
+  return bound;
+}
+
 void TakeUnit(ScanLocalState& l, ScanUnit unit) {
   l.unit = unit;
   l.has_unit = true;
@@ -673,6 +697,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool constant_count = g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
+  const auto unique = UniqueBound(g, where.get());
+  const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
   irs::ColFilterStateCache states;
   irs::ColFilterClassification cls;
   std::vector<LivePass> passes;
@@ -695,8 +721,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
                      std::memory_order_relaxed);
     if (split) {
       run_end = i;
-      if (!ordered && !g.col_filters.empty() && threads > 1 &&
-          work.rg_count > threads) {
+      if (!ordered && !g.col_filters.empty() && threads > 1) {
         ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
         if (cls.segment_dead) {
           work.claims = {{.rg = work.rg_count}};
@@ -745,11 +770,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);
   }
-  if (where) {
-    if (const auto rows = UniqueMatchBound(bind, *where);
-        rows && *rows <= STANDARD_VECTOR_SIZE) {
-      parallel = 1;
-    }
+  if (single) {
+    parallel = 1;
   }
   g.workers = static_cast<uint32_t>(std::clamp<uint64_t>(
     std::min(threads, parallel), 1, std::numeric_limits<uint32_t>::max()));

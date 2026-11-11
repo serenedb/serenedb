@@ -40,15 +40,11 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
-
-struct WriteChunk {
-  duckdb::Vector data;
-  duckdb::idx_t count;
-};
 
 WriteChunk RefChunk(const duckdb::Vector& vec, duckdb::idx_t count);
 

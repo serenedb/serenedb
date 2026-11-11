@@ -47,37 +47,38 @@ struct AnalyzeInput {
   TunedParameters& tuned;
 };
 
-struct StringAnalyzeState {
-  virtual ~StringAnalyzeState() = default;
-
-  template<typename T>
-  T& Cast() noexcept {
-    return static_cast<T&>(*this);
-  }
-
+struct Analysis {
   Config config;
+  uint64_t score = 0;
 };
 
+Analysis AnalyzeLz4(const AnalyzeInput& input);
+Analysis AnalyzeFsst(const AnalyzeInput& input);
+
 struct StringCompressionFunction {
-  std::unique_ptr<StringAnalyzeState> (*init_analyze)(
-    const AnalyzeInput& input) = nullptr;
-  void (*analyze)(StringAnalyzeState& state,
-                  const AnalyzeInput& input) = nullptr;
-  uint64_t (*final_analyze)(StringAnalyzeState& state) = nullptr;
-  PooledSegment (*compress_segment)(StringCompressor& compressor,
-                                    const Config& config,
-                                    const StringAccumulator& acc,
-                                    uint64_t begin) = nullptr;
-  void (*compress)(StringCompressor& compressor, const Config& config,
-                   const StringAccumulator& acc, uint64_t begin,
-                   SegmentSink sink) = nullptr;
-  PooledSegment (*trial_compress)(StringCompressor& compressor,
-                                  const Config& config,
-                                  const StringAccumulator& acc, uint64_t begin,
-                                  uint64_t end) = nullptr;
-  void (*compress_chunks)(StringCompressor& compressor, const Config& config,
-                          std::span<const WriteChunk> chunks,
-                          SegmentSink sink) = nullptr;
+  StringCompressionFunction(const StringCompressionFunction&) = delete;
+  StringCompressionFunction& operator=(const StringCompressionFunction&) =
+    delete;
+
+  virtual PooledSegment CompressSegment(StringCompressor& compressor,
+                                        const Config& config,
+                                        const StringAccumulator& acc,
+                                        uint64_t begin) const = 0;
+  virtual void Compress(StringCompressor& compressor, const Config& config,
+                        const StringAccumulator& acc, uint64_t begin,
+                        SegmentSink sink) const = 0;
+  virtual PooledSegment TrialCompress(StringCompressor& compressor,
+                                      const Config& config,
+                                      const StringAccumulator& acc,
+                                      uint64_t begin, uint64_t end) const = 0;
+  virtual void CompressChunks(StringCompressor& compressor,
+                              const Config& config,
+                              std::span<const WriteChunk> chunks,
+                              SegmentSink sink) const = 0;
+
+ protected:
+  constexpr StringCompressionFunction() = default;
+  ~StringCompressionFunction() = default;
 };
 
 const StringCompressionFunction& GetStringCompressionFunction(

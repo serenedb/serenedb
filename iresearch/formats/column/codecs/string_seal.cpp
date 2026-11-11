@@ -88,7 +88,7 @@ SealOutcome SealSegments(const StringAccumulator& acc,
   };
   if (named) {
     const auto config = text::NamedConfig(*named, params);
-    text::GetStringCompressionFunction(config).compress(compressor, config, acc,
+    text::GetStringCompressionFunction(config).Compress(compressor, config, acc,
                                                         0, emit);
     return outcome;
   }
@@ -105,7 +105,7 @@ SealOutcome SealSegments(const StringAccumulator& acc,
   emit(config.choice, std::move(*first->stats), first->rows,
        first->bytes.View());
   first.reset();
-  text::GetStringCompressionFunction(config).compress(compressor, config, acc,
+  text::GetStringCompressionFunction(config).Compress(compressor, config, acc,
                                                       rest, emit);
   return outcome;
 }
@@ -118,7 +118,7 @@ SealOutcome SealSegments(std::span<const WriteChunk> chunks,
   text::StringCompressor compressor{params, type, tuning.estimators, buffers};
   SealOutcome outcome{.sealed = true};
   const auto config = text::NamedConfig(named, params);
-  text::GetStringCompressionFunction(config).compress_chunks(
+  text::GetStringCompressionFunction(config).CompressChunks(
     compressor, config, chunks,
     [&](StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
         std::string_view bytes) {

@@ -30,12 +30,12 @@ SET disabled_compression_methods = 'rle';
 
 
 statement ok
-CREATE TABLE stdcm_disabled (a INTEGER PRIMARY KEY, runs BIGINT)
+CREATE TABLE stdcm_disabled (a INTEGER PRIMARY KEY, runs BIGINT, tags INTEGER[])
 WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 
 statement ok
-INSERT INTO stdcm_disabled SELECT a, a // 1000 FROM range(20000) t(a);
+INSERT INTO stdcm_disabled SELECT a, a // 1000, [a // 1000, 7] FROM range(20000) t(a);
 
 
 statement ok
@@ -51,7 +51,8 @@ rle_segments
 
 
 query
-SELECT count(*) AS mismatches FROM stdcm_disabled WHERE runs IS DISTINCT FROM a // 1000;
+SELECT count(*) AS mismatches FROM stdcm_disabled
+WHERE runs IS DISTINCT FROM a // 1000 OR tags IS DISTINCT FROM [a // 1000, 7];
 ----
 mismatches
 0
@@ -59,6 +60,48 @@ mismatches
 
 statement ok
 RESET force_compression;
+
+
+statement ok
+CREATE TABLE stdcm_auto (a INTEGER PRIMARY KEY, runs BIGINT, tags INTEGER[])
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stdcm_auto SELECT a, a // 1000, [a // 1000, 7] FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stdcm_auto;
+
+
+query
+SELECT count(*) AS rle_segments FROM pragma_storage_info('stdcm_auto')
+WHERE compression = 'RLE';
+----
+rle_segments
+0
+
+
+query
+SELECT count(*) AS mismatches FROM stdcm_auto
+WHERE runs IS DISTINCT FROM a // 1000 OR tags IS DISTINCT FROM [a // 1000, 7];
+----
+mismatches
+0
+
+
+query
+SELECT count(*) AS differing_segments
+FROM (SELECT column_path, segment_type, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+      FROM pragma_storage_info('stdcm_disabled') GROUP BY ALL) AS forced
+FULL JOIN (SELECT column_path, segment_type, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+           FROM pragma_storage_info('stdcm_auto') GROUP BY ALL) AS plain
+USING (column_path, segment_type)
+WHERE forced.compression IS DISTINCT FROM plain.compression;
+----
+differing_segments
+0
 
 
 statement ok

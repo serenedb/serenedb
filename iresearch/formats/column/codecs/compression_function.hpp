@@ -34,10 +34,12 @@
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/down_cast.hpp"
@@ -98,19 +100,6 @@ struct ColumnFetchState {
   std::unique_ptr<SegmentScanState> segment_state;
 };
 
-struct AnalyzeState {
-  virtual ~AnalyzeState() = default;
-
-  template<typename T>
-  T& Cast() noexcept {
-    return utils::downCast<T>(*this);
-  }
-};
-
-struct CompressionAnalyzeContext {
-  WriteContext& ctx;
-};
-
 using FlushSegmentFn = absl::FunctionRef<void(
   duckdb::BaseStatistics stats, uint64_t rows, std::string_view bytes)>;
 
@@ -118,15 +107,6 @@ struct ColumnDataCheckpointData {
   const duckdb::LogicalType& type;
   WriteContext& ctx;
   FlushSegmentFn flush;
-};
-
-struct CompressionState {
-  virtual ~CompressionState() = default;
-
-  template<typename T>
-  T& Cast() noexcept {
-    return utils::downCast<T>(*this);
-  }
 };
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;
@@ -151,16 +131,10 @@ class CompressedSegment {
 
 struct CompressionFunction {
   duckdb::CompressionType type = duckdb::CompressionType::COMPRESSION_AUTO;
-  std::unique_ptr<AnalyzeState> (*init_analyze)(
-    CompressionAnalyzeContext& ctx, duckdb::PhysicalType type) = nullptr;
-  bool (*analyze)(AnalyzeState& state, const duckdb::Vector& input) = nullptr;
-  duckdb::idx_t (*final_analyze)(AnalyzeState& state) = nullptr;
-  std::unique_ptr<CompressionState> (*init_compression)(
-    ColumnDataCheckpointData& checkpoint_data,
-    std::unique_ptr<AnalyzeState> state) = nullptr;
-  void (*compress)(CompressionState& state,
-                   const duckdb::Vector& input) = nullptr;
-  void (*compress_finalize)(CompressionState& state) = nullptr;
+  duckdb::idx_t (*analyze)(std::span<const WriteChunk> chunks) = nullptr;
+  void (*compress)(ColumnDataCheckpointData& checkpoint_data,
+                   std::span<const WriteChunk> chunks) = nullptr;
+  bool (*accepts)(std::span<const WriteChunk> chunks) = nullptr;
   std::unique_ptr<SegmentScanState> (*init_scan)(const ColumnSegment& segment) =
     nullptr;
   void (*scan_vector)(const ColumnSegment& segment, ColumnScanState& state,
@@ -192,6 +166,10 @@ struct CompressionFunction {
 
 void EmptySkip(const ColumnSegment& segment, ColumnScanState& state,
                duckdb::idx_t skip_count);
+
+duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
+
+bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 
 [[noreturn]] void ThrowCorrupted(std::string_view codec, std::string_view what);
 

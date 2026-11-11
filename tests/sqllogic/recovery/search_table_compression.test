@@ -141,6 +141,18 @@ SELECT count(*) FROM search_forced_rle WHERE v IS DISTINCT FROM a // 100;
 count
 0
 
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_rle') WHERE column_name = 'a';
+----
+compression
+Uncompressed
+
+query
+SELECT count(*) FROM search_forced_rle t JOIN range(5000) r(a) USING (a);
+----
+count
+5000
+
 statement ok
 SET GLOBAL force_compression = 'bitpacking';
 
@@ -165,6 +177,34 @@ BitPacking
 
 query
 SELECT count(*) FROM search_forced_bitpacking WHERE v IS DISTINCT FROM a;
+----
+count
+0
+
+statement ok
+SET GLOBAL force_compression = 'bitpacking';
+
+statement ok
+CREATE TABLE search_forced_bitpacking_wide (a INTEGER PRIMARY KEY, v BIGINT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_bitpacking_wide SELECT a, CASE WHEN a % 2 = 0 THEN -9223372036854775807 - 1 ELSE 9223372036854775807 END FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_bitpacking_wide;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_bitpacking_wide') WHERE column_name = 'v';
+----
+compression
+Uncompressed
+
+query
+SELECT count(*) FROM search_forced_bitpacking_wide WHERE v IS DISTINCT FROM CASE WHEN a % 2 = 0 THEN -9223372036854775807 - 1 ELSE 9223372036854775807 END;
 ----
 count
 0
@@ -252,6 +292,44 @@ SELECT count(*) FROM search_forced_roaring WHERE v IS DISTINCT FROM a % 3 = 0;
 ----
 count
 0
+
+statement ok
+CREATE TABLE search_forced_empty_lists (a INTEGER PRIMARY KEY, v_rle BIGINT[] USING COMPRESSION rle, v_bitpacking BIGINT[] USING COMPRESSION bitpacking, v_alp DOUBLE[] USING COMPRESSION alp, v_alprd DOUBLE[] USING COMPRESSION alprd, v_roaring BOOLEAN[] USING COMPRESSION roaring)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_empty_lists SELECT a, [], [], [], [], [] FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_empty_lists;
+
+query
+SELECT count(*) FROM search_forced_empty_lists WHERE len(v_rle) = 0 AND len(v_bitpacking) = 0 AND len(v_alp) = 0 AND len(v_alprd) = 0 AND len(v_roaring) = 0;
+----
+count
+5000
+
+statement ok
+INSERT INTO search_forced_empty_lists SELECT a, [a // 100, a // 100], [a], [a / 10.0], [a * 0.1234567891], [a % 3 = 0] FROM range(5000, 10000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_empty_lists;
+
+query
+SELECT count(*) FROM search_forced_empty_lists WHERE a >= 5000 AND (v_rle IS DISTINCT FROM [a // 100, a // 100] OR v_bitpacking IS DISTINCT FROM [a] OR v_alp IS DISTINCT FROM [a / 10.0] OR v_alprd IS DISTINCT FROM [a * 0.1234567891] OR v_roaring IS DISTINCT FROM [a % 3 = 0]);
+----
+count
+0
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression FROM pragma_storage_info('search_forced_empty_lists') WHERE segment_type IN ('BIGINT', 'DOUBLE', 'BOOLEAN') GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+v_alp	ALP
+v_alprd	ALPRD
+v_bitpacking	BitPacking
+v_rle	RLE
+v_roaring	Roaring
 
 query
 SELECT DISTINCT compression FROM pragma_storage_info('search_forced_zstd') WHERE column_name = 'a';
@@ -448,6 +526,9 @@ statement ok
 DROP TABLE search_forced_bitpacking;
 
 statement ok
+DROP TABLE search_forced_bitpacking_wide;
+
+statement ok
 DROP TABLE search_forced_alp;
 
 statement ok
@@ -455,6 +536,9 @@ DROP TABLE search_forced_alprd;
 
 statement ok
 DROP TABLE search_forced_roaring;
+
+statement ok
+DROP TABLE search_forced_empty_lists;
 
 statement ok
 CREATE TABLE obj_auto (a INTEGER PRIMARY KEY, host TEXT, body TEXT, url TEXT)

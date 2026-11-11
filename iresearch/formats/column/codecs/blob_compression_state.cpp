@@ -40,19 +40,10 @@ constexpr double kLevelTolerance = 0.02;
 constexpr double kWideFramesGain = 0.03;
 constexpr size_t kMaxLevels = 4;
 
-struct BlobAnalyzeState final : StringAnalyzeState {
-  uint64_t score = std::numeric_limits<uint64_t>::max();
-};
+}  // namespace
 
-template<ByteCodec kLeaf>
-std::unique_ptr<StringAnalyzeState> BlobInitAnalyze(const AnalyzeInput& input) {
-  auto state = std::make_unique<BlobAnalyzeState>();
-  state->config = {.choice = {input.shape, kLeaf}};
-  return state;
-}
-
-void BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
-  auto& state = base.Cast<BlobAnalyzeState>();
+Analysis AnalyzeLz4(const AnalyzeInput& input) {
+  Analysis state{.config = {.choice = {input.shape, ByteCodec::Lz4}}};
   auto& window = input.window;
   const auto& method = input.method;
   const auto levels = method.levels;
@@ -67,7 +58,7 @@ void BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
     config.layout = tuned.layout[leaf];
     state.config = config;
     state.score = window.Analyze(config);
-    return;
+    return state;
   }
   uint64_t scores[kMaxLevels];
   uint64_t best_score = std::numeric_limits<uint64_t>::max();
@@ -100,25 +91,12 @@ void BlobAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
   analyze_layout(FrameLayout::Wide, kWideFramesGain);
   tuned.level[leaf] = state.config.level;
   tuned.layout[leaf] = state.config.layout;
+  return state;
 }
-
-uint64_t BlobFinalAnalyze(StringAnalyzeState& state) {
-  return state.Cast<BlobAnalyzeState>().score;
-}
-
-template<typename Codec>
-constexpr StringCompressionFunction AnalyzedBlobFunction() {
-  auto function = CompressionFunctionOf<BlobCompressionState<Codec>>();
-  function.init_analyze = &BlobInitAnalyze<Codec::kCodec>;
-  function.analyze = &BlobAnalyze;
-  function.final_analyze = &BlobFinalAnalyze;
-  return function;
-}
-
-}  // namespace
 
 const StringCompressionFunction& Lz4CompressionFunction() {
-  static constexpr auto kFunction = AnalyzedBlobFunction<Lz4>();
+  static constexpr auto kFunction =
+    CompressionFunctionOf<BlobCompressionState<Lz4>>();
   return kFunction;
 }
 

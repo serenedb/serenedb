@@ -244,10 +244,14 @@ class ColNumericCodecTest : public TestBase {
 
   void Write(irs::Directory& dir, const duckdb::LogicalType& type,
              irs::ColCodecParams params, uint64_t rows, uint32_t rg_size,
-             const Gen& gen) {
+             const Gen& gen,
+             duckdb::CompressionType compression =
+               duckdb::CompressionType::COMPRESSION_AUTO) {
     irs::ColWriter w{dir, kSeg, Db(), params.tier};
-    auto& cw = w.OpenColumn(
-      kField, type, {.row_group_size = rg_size, .codec_params = params});
+    auto& cw = w.OpenColumn(kField, type,
+                            {.row_group_size = rg_size,
+                             .compression = compression,
+                             .codec_params = params});
     uint64_t pos = 0;
     while (pos < rows) {
       const auto take = std::min<uint64_t>(rows - pos, STANDARD_VECTOR_SIZE);
@@ -862,6 +866,119 @@ TEST_F(ColNumericCodecTest,
     row += block.tuple_count;
   }
   EXPECT_GT(changed, 0u);
+}
+
+TEST_F(ColNumericCodecTest, ForcedRleLeavesRowGroupsWithoutRepeatsPlain) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 5 * kRowGroup + 700;
+  const Gen unique = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g * 3 + 1);
+  };
+  const Gen runs = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g / 64);
+  };
+  const Gen one_repeat = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(g == 9000 ? 8999 * 3 + 1 : g * 3 + 1);
+  };
+  const Gen one_null = [](uint64_t g) -> std::optional<int64_t> {
+    if (g == 9000) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(g * 3 + 1);
+  };
+  const auto codecs = [&](const Gen& gen, irs::WriteTier tier) {
+    irs::MemoryDirectory dir{};
+    Write(dir, duckdb::LogicalType::BIGINT, {.tier = tier}, kRows, kRowGroup,
+          gen, duckdb::CompressionType::COMPRESSION_RLE);
+    Verify(dir, duckdb::LogicalType::BIGINT, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::vector<duckdb::CompressionType> types;
+    for (const auto& block : col->DataBlocks()) {
+      types.push_back(block.codec->type);
+    }
+    return types;
+  };
+  using enum duckdb::CompressionType;
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    EXPECT_EQ(codecs(unique, tier), std::vector(6, COMPRESSION_UNCOMPRESSED));
+    EXPECT_EQ(codecs(runs, tier), std::vector(6, COMPRESSION_RLE));
+    const std::vector mixed{COMPRESSION_UNCOMPRESSED, COMPRESSION_UNCOMPRESSED,
+                            COMPRESSION_RLE,          COMPRESSION_UNCOMPRESSED,
+                            COMPRESSION_UNCOMPRESSED, COMPRESSION_UNCOMPRESSED};
+    EXPECT_EQ(codecs(one_repeat, tier), mixed);
+    EXPECT_EQ(codecs(one_null, tier), mixed);
+  }
+}
+
+TEST_F(ColNumericCodecTest, ForcedBitpackingLeavesAnOverflowingRangePlain) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 4 * kRowGroup;
+  const Gen wide = [](uint64_t g) -> std::optional<int64_t> {
+    return g % 3 == 0 ? std::numeric_limits<int64_t>::min()
+                      : std::numeric_limits<int64_t>::max() -
+                          static_cast<int64_t>(g % 5);
+  };
+  const Gen narrow = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) % 3000) - 1500;
+  };
+  const auto codecs = [&](const duckdb::LogicalType& type, const Gen& gen) {
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {}, kRows, kRowGroup, gen,
+          duckdb::CompressionType::COMPRESSION_BITPACKING);
+    Verify(dir, type, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::set<duckdb::CompressionType> types;
+    for (const auto& block : col->DataBlocks()) {
+      types.insert(block.codec->type);
+    }
+    return types;
+  };
+  using enum duckdb::CompressionType;
+  EXPECT_EQ(codecs(duckdb::LogicalType::BIGINT, wide),
+            std::set{COMPRESSION_UNCOMPRESSED});
+  EXPECT_EQ(codecs(duckdb::LogicalType::BIGINT, narrow),
+            std::set{COMPRESSION_BITPACKING});
+  EXPECT_EQ(codecs(duckdb::LogicalType::UBIGINT, wide),
+            std::set{COMPRESSION_BITPACKING});
+}
+
+TEST_F(ColNumericCodecTest, ValidityIsRoaringOnlyBelowHalfTheBitmap) {
+  constexpr uint32_t kRowGroup = 8192;
+  constexpr uint64_t kRows = 4 * kRowGroup;
+  const Gen sparse = [](uint64_t g) -> std::optional<int64_t> {
+    if (g % 1000 == 7) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(g);
+  };
+  const Gen scattered = [](uint64_t g) -> std::optional<int64_t> {
+    if (Mix(g) % 2 == 0) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(g);
+  };
+  const auto validity = [&](const Gen& gen) {
+    irs::MemoryDirectory dir{};
+    Write(dir, duckdb::LogicalType::BIGINT, {}, kRows, kRowGroup, gen);
+    Verify(dir, duckdb::LogicalType::BIGINT, kRows, gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    EXPECT_NE(col->Validity(), nullptr);
+    std::set<duckdb::CompressionType> types;
+    for (const auto& block : col->Validity()->DataBlocks()) {
+      types.insert(block.codec->type);
+    }
+    return types;
+  };
+  using enum duckdb::CompressionType;
+  EXPECT_EQ(validity(sparse), std::set{COMPRESSION_ROARING});
+  EXPECT_EQ(validity(scattered), std::set{COMPRESSION_UNCOMPRESSED});
 }
 
 TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {

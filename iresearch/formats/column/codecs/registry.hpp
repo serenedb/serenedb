@@ -53,8 +53,15 @@ const CompressionFunction* AlpFunction(duckdb::PhysicalType physical);
 const CompressionFunction* AlpRdFunction(duckdb::PhysicalType physical);
 const CompressionFunction* RoaringFunction(duckdb::PhysicalType physical);
 
+bool CompressRoaringValidity(ColumnDataCheckpointData& checkpoint_data,
+                             std::span<const WriteChunk> chunks,
+                             duckdb::idx_t limit);
+
 const CompressionFunction* GetCodec(duckdb::CompressionType type,
                                     duckdb::PhysicalType physical);
+
+const CompressionFunction* GetCompressionFunction(
+  duckdb::CompressionType type, duckdb::PhysicalType physical);
 
 bool Compresses(duckdb::CompressionType type, duckdb::PhysicalType physical);
 

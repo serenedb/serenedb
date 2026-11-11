@@ -34,35 +34,16 @@ namespace {
 constexpr uint64_t kEncodeExpansion = 2;
 constexpr uint64_t kEncodeSlack = 8;
 
-struct FsstAnalyzeState final : StringAnalyzeState {
-  const Segment* trial = nullptr;
-};
-
-std::unique_ptr<StringAnalyzeState> FsstInitAnalyze(const AnalyzeInput& input) {
-  auto state = std::make_unique<FsstAnalyzeState>();
-  state->config = {.choice = {input.shape, ByteCodec::Fsst}};
-  return state;
-}
-
-void FsstAnalyze(StringAnalyzeState& base, const AnalyzeInput& input) {
-  auto& state = base.Cast<FsstAnalyzeState>();
-  state.trial = &input.window.TrialCompress(state.config);
-}
-
-uint64_t FsstFinalAnalyze(StringAnalyzeState& state) {
-  return state.Cast<FsstAnalyzeState>().trial->Size();
-}
-
 }  // namespace
 
+Analysis AnalyzeFsst(const AnalyzeInput& input) {
+  const Config config{.choice = {input.shape, ByteCodec::Fsst}};
+  return {.config = config, .score = input.window.TrialCompress(config).Size()};
+}
+
 const StringCompressionFunction& FsstCompressionFunction() {
-  static constexpr auto kFunction = [] {
-    auto function = CompressionFunctionOf<FsstCompressionState>();
-    function.init_analyze = &FsstInitAnalyze;
-    function.analyze = &FsstAnalyze;
-    function.final_analyze = &FsstFinalAnalyze;
-    return function;
-  }();
+  static constexpr auto kFunction =
+    CompressionFunctionOf<FsstCompressionState>();
   return kFunction;
 }
 

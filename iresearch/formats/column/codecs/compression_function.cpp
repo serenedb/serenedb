@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <cstring>
 #include <duckdb/storage/buffer_manager.hpp>
 
@@ -42,6 +44,19 @@ duckdb::BufferHandle& ColumnFetchState::GetOrInsertHandle(
 }
 
 void EmptySkip(const ColumnSegment&, ColumnScanState&, duckdb::idx_t) {}
+
+duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept {
+  duckdb::idx_t rows = 0;
+  for (const auto& chunk : chunks) {
+    rows += chunk.data.size();
+  }
+  return rows;
+}
+
+bool HasRows(std::span<const WriteChunk> chunks) noexcept {
+  return absl::c_any_of(
+    chunks, [](const WriteChunk& chunk) { return chunk.data.size() != 0; });
+}
 
 void ThrowCorrupted(std::string_view codec, std::string_view what) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),

@@ -45,6 +45,7 @@ constexpr double kScoreSlack = 0.02;
 
 struct Candidate {
   ByteCodec leaf = ByteCodec::Lz4;
+  Analysis (*analyze)(const AnalyzeInput& input) = nullptr;
   CompressionMethod method;
 };
 
@@ -57,17 +58,19 @@ constexpr uint8_t kLz4FlushLevels[] = {1};
 constexpr uint8_t kLz4MergeLevels[] = {1, 4, 6};
 
 constexpr Candidate kFlushCandidates[] = {
-  {.leaf = ByteCodec::Fsst},
+  {.leaf = ByteCodec::Fsst, .analyze = AnalyzeFsst},
   {
     .leaf = ByteCodec::Lz4,
+    .analyze = AnalyzeLz4,
     .method = {.levels = kLz4FlushLevels, .max_trial_level = 1},
   },
 };
 
 constexpr Candidate kMergeCandidates[] = {
-  {.leaf = ByteCodec::Fsst},
+  {.leaf = ByteCodec::Fsst, .analyze = AnalyzeFsst},
   {
     .leaf = ByteCodec::Lz4,
+    .analyze = AnalyzeLz4,
     .method = {.levels = kLz4MergeLevels, .local = true, .max_trial_level = 1},
   },
 };
@@ -127,7 +130,7 @@ PooledSegment StringPicker::First() {
     return {};
   }
   const auto current = Current();
-  auto first = GetStringCompressionFunction(current).compress_segment(
+  auto first = GetStringCompressionFunction(current).CompressSegment(
     _compressor, current, _acc, 0);
   if (const bool drift = !due && Drifted(*first); due || drift) {
     return DetectBestCompressionMethod(std::move(first), drift);
@@ -185,27 +188,21 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
   size_t count = 0;
   size_t best = 0;
   for (const auto& candidate : tier.candidates) {
-    const auto& function =
-      GetStringCompressionFunction({.choice = {shape, candidate.leaf}});
-    const AnalyzeInput input{
+    const auto analysis = candidate.analyze({
       .window = window,
       .shape = shape,
       .method = candidate.method,
       .tune = tune,
       .tuned = tuned,
-    };
-    SDB_ASSERT(function.init_analyze && function.analyze &&
-               function.final_analyze);
-    auto state = function.init_analyze(input);
-    function.analyze(*state, input);
-    auto score = static_cast<double>(function.final_analyze(*state));
+    });
+    auto score = static_cast<double>(analysis.score);
     if (candidate.leaf != ByteCodec::Fsst) {
       score *= 1.0 + tier.fsst_preference;
     }
     scored[count] = {
-      .config = state->config,
+      .config = analysis.config,
       .score = score,
-      .trial = state->config.level <= candidate.method.max_trial_level,
+      .trial = analysis.config.level <= candidate.method.max_trial_level,
     };
     if (score < scored[best].score) {
       best = count;

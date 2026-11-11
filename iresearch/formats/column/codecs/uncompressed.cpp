@@ -44,22 +44,8 @@ using duckdb::data_ptr_t;
 using duckdb::idx_t;
 using duckdb::validity_t;
 
-struct CountAnalyze final : AnalyzeState {
-  uint64_t count = 0;
-};
-
-std::unique_ptr<AnalyzeState> InitCountAnalyze(CompressionAnalyzeContext&,
-                                               duckdb::PhysicalType) {
-  return std::make_unique<CountAnalyze>();
-}
-
-bool CountRows(AnalyzeState& state, const duckdb::Vector& input) {
-  state.Cast<CountAnalyze>().count += input.size();
-  return true;
-}
-
 template<typename Appender>
-class UncompressedCompress final : public CompressionState {
+class UncompressedCompress {
  public:
   explicit UncompressedCompress(ColumnDataCheckpointData& checkpoint_data)
     : _checkpoint_data{&checkpoint_data}, _segment{checkpoint_data.type} {
@@ -94,19 +80,14 @@ class UncompressedCompress final : public CompressionState {
 };
 
 template<typename Appender>
-std::unique_ptr<CompressionState> InitCompression(
-  ColumnDataCheckpointData& checkpoint_data, std::unique_ptr<AnalyzeState>) {
-  return std::make_unique<UncompressedCompress<Appender>>(checkpoint_data);
-}
-
-template<typename Appender>
-void Compress(CompressionState& state, const duckdb::Vector& input) {
-  state.Cast<UncompressedCompress<Appender>>().Append(input);
-}
-
-template<typename Appender>
-void FinalizeCompress(CompressionState& state) {
-  state.Cast<UncompressedCompress<Appender>>().Flush();
+void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
+                    std::span<const WriteChunk> chunks) {
+  const auto state =
+    std::make_unique<UncompressedCompress<Appender>>(checkpoint_data);
+  for (const auto& chunk : chunks) {
+    state->Append(chunk.data);
+  }
+  state->Flush();
 }
 
 struct PinnedScan final : SegmentScanState {
@@ -183,8 +164,8 @@ const T* FixedSizeRows(const ColumnSegment& segment, const_data_ptr_t base,
 }
 
 template<typename T>
-idx_t FixedSizeFinalAnalyze(AnalyzeState& state) {
-  return sizeof(T) * state.Cast<CountAnalyze>().count;
+idx_t FixedSizeAnalyze(std::span<const WriteChunk> chunks) {
+  return sizeof(T) * CountRows(chunks);
 }
 
 template<typename T>
@@ -226,13 +207,8 @@ void FixedSizeFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 template<typename T, bool kList, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFixedSize{
   .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-  .init_analyze = InitCountAnalyze,
-  .analyze = CountRows,
-  .final_analyze =
-    FixedSizeFinalAnalyze<std::conditional_t<kList, uint64_t, T>>,
-  .init_compression = InitCompression<FixedSizeAppender<T, kList>>,
-  .compress = Compress<FixedSizeAppender<T, kList>>,
-  .compress_finalize = FinalizeCompress<FixedSizeAppender<T, kList>>,
+  .analyze = FixedSizeAnalyze<std::conditional_t<kList, uint64_t, T>>,
+  .compress = CompressChunks<FixedSizeAppender<T, kList>>,
   .init_scan = InitPinnedScan,
   .scan_vector = FixedSizeScan<std::conditional_t<kList, uint64_t, T>>,
   .scan_partial = FixedSizeScanPartial<std::conditional_t<kList, uint64_t, T>>,
@@ -290,8 +266,8 @@ struct ValidityAppender {
   }
 };
 
-idx_t ValidityFinalAnalyze(AnalyzeState& state) {
-  return (state.Cast<CountAnalyze>().count + 7) / 8;
+idx_t ValidityAnalyze(std::span<const WriteChunk> chunks) {
+  return (CountRows(chunks) + 7) / 8;
 }
 
 const validity_t* ValidityEntries(const ColumnSegment& segment,
@@ -425,12 +401,8 @@ void ValidityFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 constexpr CompressionFunction kValidity{
   .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-  .init_analyze = InitCountAnalyze,
-  .analyze = CountRows,
-  .final_analyze = ValidityFinalAnalyze,
-  .init_compression = InitCompression<ValidityAppender>,
-  .compress = Compress<ValidityAppender>,
-  .compress_finalize = FinalizeCompress<ValidityAppender>,
+  .analyze = ValidityAnalyze,
+  .compress = CompressChunks<ValidityAppender>,
   .init_scan = InitPinnedScan,
   .scan_vector = ValidityScan,
   .scan_partial = ValidityScanPartial,
@@ -447,43 +419,6 @@ constexpr idx_t kCompactionFlushLimit = kBlockSize / 5 * 4;
 
 static_assert(kStringBlockLimit ==
               std::min<idx_t>(kBlockSize / 4 / 8 * 8, kStringBlockLimit));
-
-struct StringAnalyze final : AnalyzeState {
-  uint64_t count = 0;
-  uint64_t total_string_size = 0;
-  uint64_t overflow_strings = 0;
-};
-
-std::unique_ptr<AnalyzeState> StringInitAnalyze(CompressionAnalyzeContext&,
-                                                duckdb::PhysicalType) {
-  return std::make_unique<StringAnalyze>();
-}
-
-bool StringAnalyzeData(AnalyzeState& state_p, const duckdb::Vector& input) {
-  auto& state = state_p.Cast<StringAnalyze>();
-  duckdb::UnifiedVectorFormat data;
-  input.ToUnifiedFormat(data);
-  const auto count = input.size();
-  state.count += count;
-  const auto* strings =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(data);
-  for (idx_t i = 0; i < count; ++i) {
-    const auto idx = data.sel->get_index(i);
-    if (!data.validity.RowIsValid(idx)) {
-      continue;
-    }
-    const auto size = strings[idx].GetSize();
-    state.total_string_size += size;
-    state.overflow_strings += size >= kStringBlockLimit;
-  }
-  return true;
-}
-
-idx_t StringFinalAnalyze(AnalyzeState& state_p) {
-  const auto& state = state_p.Cast<StringAnalyze>();
-  return state.count * sizeof(int32_t) + state.total_string_size +
-         state.overflow_strings * kOverflowMarkerSize;
-}
 
 struct StringAppender {
   static void Begin(CompressedSegment& segment) {
@@ -709,12 +644,7 @@ void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 constexpr CompressionFunction kString{
   .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-  .init_analyze = StringInitAnalyze,
-  .analyze = StringAnalyzeData,
-  .final_analyze = StringFinalAnalyze,
-  .init_compression = InitCompression<StringAppender>,
-  .compress = Compress<StringAppender>,
-  .compress_finalize = FinalizeCompress<StringAppender>,
+  .compress = CompressChunks<StringAppender>,
   .init_scan = InitPinnedScan,
   .scan_vector = StringScan,
   .scan_partial = StringScanPartial,

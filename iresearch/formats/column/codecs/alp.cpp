@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -301,38 +302,53 @@ bool CompareAlpCombinations(const AlpCombination& c1,
 
 template<typename T, bool kPenalizeExceptions>
 uint64_t DryCompressToEstimateSize(std::span<const T> input_vector,
-                                   AlpEncodingIndices encoding_indices) {
-  constexpr uint8_t kExactTypeBitSize = sizeof(T) * 8;
+                                   AlpEncodingIndices encoding_indices,
+                                   uint64_t limit) {
+  constexpr uint64_t kExceptionBits =
+    sizeof(T) * 8 + kExceptionPositionSize * 8;
+  constexpr auto kOverLimit = std::numeric_limits<uint64_t>::max();
+  constexpr size_t kProbe = 8;
   const idx_t n_values = input_vector.size();
   idx_t exceptions_count = 0;
   idx_t non_exceptions_count = 0;
-  uint64_t estimated_compression_size = 0;
   int64_t max_encoded_value = std::numeric_limits<int64_t>::min();
   int64_t min_encoded_value = std::numeric_limits<int64_t>::max();
-  for (const T value : input_vector) {
-    const int64_t encoded_value = EncodeValue(value, encoding_indices);
-    const T decoded_value = DecodeValue<T>(encoded_value, encoding_indices);
-    if (decoded_value == value) {
-      ++non_exceptions_count;
-      max_encoded_value = std::max(encoded_value, max_encoded_value);
-      min_encoded_value = std::min(encoded_value, min_encoded_value);
-      continue;
+  const auto encode = [&](std::span<const T> values) {
+    for (const T value : values) {
+      const int64_t encoded_value = EncodeValue(value, encoding_indices);
+      const T decoded_value = DecodeValue<T>(encoded_value, encoding_indices);
+      if (decoded_value == value) {
+        ++non_exceptions_count;
+        max_encoded_value = std::max(encoded_value, max_encoded_value);
+        min_encoded_value = std::min(encoded_value, min_encoded_value);
+        continue;
+      }
+      ++exceptions_count;
     }
-    ++exceptions_count;
+  };
+  const auto probe = input_vector.first(std::min<size_t>(n_values, kProbe));
+  encode(probe);
+  uint64_t at_least = exceptions_count * kExceptionBits;
+  if (non_exceptions_count) {
+    const uint64_t delta = static_cast<uint64_t>(max_encoded_value) -
+                           static_cast<uint64_t>(min_encoded_value);
+    at_least += n_values * (std::bit_width(delta | 1) - 1);
   }
+  if (at_least > limit) {
+    return kOverLimit;
+  }
+  encode(input_vector.subspan(probe.size()));
   if constexpr (kPenalizeExceptions) {
     if (non_exceptions_count < 2) {
-      return std::numeric_limits<uint64_t>::max();
+      return kOverLimit;
     }
   }
   const uint64_t delta = static_cast<uint64_t>(max_encoded_value) -
                          static_cast<uint64_t>(min_encoded_value);
   const auto estimated_bits_per_value =
     duckdb::ExactNumericCast<uint32_t>(std::ceil(std::log2(delta + 1)));
-  estimated_compression_size += n_values * estimated_bits_per_value;
-  estimated_compression_size +=
-    exceptions_count * (kExactTypeBitSize + (kExceptionPositionSize * 8));
-  return estimated_compression_size;
+  return n_values * estimated_bits_per_value +
+         exceptions_count * kExceptionBits;
 }
 
 template<typename T>
@@ -344,6 +360,8 @@ void FindTopKCombinations(const std::vector<std::vector<T>>& vectors_sampled,
 
   std::array<std::array<uint64_t, kMaxExponent + 1>, kMaxExponent + 1>
     appearances{};
+  AlpEncodingIndices previous_best{.exponent = kMaxExponent,
+                                   .factor = kMaxExponent};
   for (const auto& sampled_vector : vectors_sampled) {
     const idx_t n_samples = sampled_vector.size();
     const idx_t best_total_bits =
@@ -354,23 +372,26 @@ void FindTopKCombinations(const std::vector<std::vector<T>>& vectors_sampled,
       .n_appearances = 0,
       .estimated_compression_size = best_total_bits,
     };
+    const auto consider = [&](AlpEncodingIndices encoding_indices) {
+      const AlpCombination combination{
+        .encoding_indices = encoding_indices,
+        .n_appearances = 0,
+        .estimated_compression_size = DryCompressToEstimateSize<T, true>(
+          sampled_vector, encoding_indices,
+          best_combination.estimated_compression_size),
+      };
+      if (CompareAlpCombinations(combination, best_combination)) {
+        best_combination = combination;
+      }
+    };
+    consider(previous_best);
     for (int32_t exp_idx = kMaxExponent; exp_idx >= 0; --exp_idx) {
       for (int32_t factor_idx = exp_idx; factor_idx >= 0; --factor_idx) {
-        const AlpEncodingIndices current_encoding_indices{
-          .exponent = static_cast<uint8_t>(exp_idx),
-          .factor = static_cast<uint8_t>(factor_idx),
-        };
-        const AlpCombination current_combination{
-          .encoding_indices = current_encoding_indices,
-          .n_appearances = 0,
-          .estimated_compression_size = DryCompressToEstimateSize<T, true>(
-            sampled_vector, current_encoding_indices),
-        };
-        if (CompareAlpCombinations(current_combination, best_combination)) {
-          best_combination = current_combination;
-        }
+        consider({.exponent = static_cast<uint8_t>(exp_idx),
+                  .factor = static_cast<uint8_t>(factor_idx)});
       }
     }
+    previous_best = best_combination.encoding_indices;
     ++appearances[best_combination.encoding_indices.exponent]
                  [best_combination.encoding_indices.factor];
   }
@@ -409,7 +430,8 @@ void FindBestFactorAndExponent(const T* input_vector, idx_t n_values,
   for (const auto& combination : compression_data.best_k_combinations) {
     const uint64_t estimated_compression_size =
       DryCompressToEstimateSize<T, false>({vector_sample, n_samples},
-                                          combination.encoding_indices);
+                                          combination.encoding_indices,
+                                          best_total_bits);
     if (estimated_compression_size >= best_total_bits) {
       ++worse_total_bits_counter;
       if (worse_total_bits_counter == kSamplingEarlyExitThreshold) {
@@ -533,7 +555,7 @@ void Decompress(duckdb::const_data_ptr_t for_encoded, T* output, idx_t count,
 }
 
 template<typename T>
-struct AlpAnalyzeState final : AnalyzeState {
+struct AlpAnalyzeState {
   idx_t vectors_sampled_count = 0;
   idx_t total_values_count = 0;
   idx_t vectors_count = 0;
@@ -543,22 +565,14 @@ struct AlpAnalyzeState final : AnalyzeState {
 };
 
 template<typename T>
-std::unique_ptr<AnalyzeState> AlpInitAnalyze(CompressionAnalyzeContext&,
-                                             duckdb::PhysicalType) {
-  return std::make_unique<AlpAnalyzeState<T>>();
-}
-
-template<typename T>
-bool AlpAnalyze(AnalyzeState& state, const duckdb::Vector& input) {
-  auto& analyze_state = state.Cast<AlpAnalyzeState<T>>();
-
+void AlpSample(AlpAnalyzeState<T>& analyze_state, const duckdb::Vector& input) {
   const auto count = input.size();
   const bool must_skip_current_vector = alp::MustSkipSamplingFromCurrentVector(
     analyze_state.vectors_count, analyze_state.vectors_sampled_count, count);
   analyze_state.vectors_count += 1;
   analyze_state.total_values_count += count;
   if (must_skip_current_vector) {
-    return true;
+    return;
   }
 
   const auto values = input.Values<T>();
@@ -596,15 +610,24 @@ bool AlpAnalyze(AnalyzeState& state, const duckdb::Vector& input) {
     std::move(current_vector_values));
   analyze_state.rowgroup_sample.push_back(std::move(current_vector_sample));
   ++analyze_state.vectors_sampled_count;
-  return true;
 }
 
 template<typename T>
-idx_t AlpFinalAnalyze(AnalyzeState& state) {
-  auto& analyze_state = state.Cast<AlpAnalyzeState<T>>();
+std::unique_ptr<AlpAnalyzeState<T>> AlpSampleRowGroup(
+  std::span<const WriteChunk> chunks) {
+  auto analyze_state = std::make_unique<AlpAnalyzeState<T>>();
+  for (const auto& chunk : chunks) {
+    AlpSample(*analyze_state, chunk.data);
+  }
+  FindTopKCombinations(analyze_state->rowgroup_sample,
+                       analyze_state->compression_data);
+  return analyze_state;
+}
 
-  FindTopKCombinations(analyze_state.rowgroup_sample,
-                       analyze_state.compression_data);
+template<typename T>
+idx_t AlpAnalyzeChunks(std::span<const WriteChunk> chunks) {
+  const auto sampled = AlpSampleRowGroup<T>(chunks);
+  auto& analyze_state = *sampled;
 
   idx_t total_bytes_used = 0;
   idx_t current_bytes_used_in_segment = 0;
@@ -637,7 +660,7 @@ idx_t AlpFinalAnalyze(AnalyzeState& state) {
 }
 
 template<typename T>
-class AlpCompressionState final : public CompressionState {
+class AlpCompressionState {
  public:
   AlpCompressionState(ColumnDataCheckpointData& checkpoint_data,
                       AlpAnalyzeState<T>& analyze_state)
@@ -826,22 +849,14 @@ class AlpCompressionState final : public CompressionState {
 };
 
 template<typename T>
-std::unique_ptr<CompressionState> AlpInitCompression(
-  ColumnDataCheckpointData& checkpoint_data,
-  std::unique_ptr<AnalyzeState> state) {
-  SDB_ASSERT(state);
-  return std::make_unique<AlpCompressionState<T>>(
-    checkpoint_data, state->Cast<AlpAnalyzeState<T>>());
-}
-
-template<typename T>
-void AlpCompress(CompressionState& state, const duckdb::Vector& input) {
-  state.Cast<AlpCompressionState<T>>().Append(input);
-}
-
-template<typename T>
-void AlpFinalizeCompress(CompressionState& state) {
-  state.Cast<AlpCompressionState<T>>().Finalize();
+void AlpCompressChunks(ColumnDataCheckpointData& checkpoint_data,
+                       std::span<const WriteChunk> chunks) {
+  const auto state = std::make_unique<AlpCompressionState<T>>(
+    checkpoint_data, *AlpSampleRowGroup<T>(chunks));
+  for (const auto& chunk : chunks) {
+    state->Append(chunk.data);
+  }
+  state->Finalize();
 }
 
 template<typename T>
@@ -1325,12 +1340,9 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 template<typename T, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_ALP,
-  .init_analyze = AlpInitAnalyze<T>,
-  .analyze = AlpAnalyze<T>,
-  .final_analyze = AlpFinalAnalyze<T>,
-  .init_compression = AlpInitCompression<T>,
-  .compress = AlpCompress<T>,
-  .compress_finalize = AlpFinalizeCompress<T>,
+  .analyze = AlpAnalyzeChunks<T>,
+  .compress = AlpCompressChunks<T>,
+  .accepts = HasRows,
   .init_scan = AlpInitScan<T>,
   .scan_vector = AlpScan<T>,
   .scan_partial = AlpScanPartial<T>,

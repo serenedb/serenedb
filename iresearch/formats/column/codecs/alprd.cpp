@@ -258,7 +258,7 @@ void AlpRdDecompress(duckdb::const_data_ptr_t left_encoded,
 }
 
 template<typename T>
-struct AlpRdAnalyzeState final : AnalyzeState {
+struct AlpRdAnalyzeState {
   idx_t vectors_count = 0;
   idx_t total_values_count = 0;
   idx_t vectors_sampled_count = 0;
@@ -267,15 +267,9 @@ struct AlpRdAnalyzeState final : AnalyzeState {
 };
 
 template<typename T>
-std::unique_ptr<AnalyzeState> AlpRdInitAnalyze(CompressionAnalyzeContext&,
-                                               duckdb::PhysicalType) {
-  return std::make_unique<AlpRdAnalyzeState<T>>();
-}
-
-template<typename T>
-bool AlpRdAnalyze(AnalyzeState& state, const duckdb::Vector& input) {
+void AlpRdSample(AlpRdAnalyzeState<T>& analyze_state,
+                 const duckdb::Vector& input) {
   using Exact = alp::ExactType<T>;
-  auto& analyze_state = state.Cast<AlpRdAnalyzeState<T>>();
 
   const auto count = input.size();
   const bool must_skip_current_vector = alp::MustSkipSamplingFromCurrentVector(
@@ -283,7 +277,7 @@ bool AlpRdAnalyze(AnalyzeState& state, const duckdb::Vector& input) {
   analyze_state.vectors_count += 1;
   analyze_state.total_values_count += count;
   if (must_skip_current_vector) {
-    return true;
+    return;
   }
 
   const auto values = input.Values<T>();
@@ -321,12 +315,14 @@ bool AlpRdAnalyze(AnalyzeState& state, const duckdb::Vector& input) {
   SDB_ASSERT(sample_idx == sampling_params.n_sampled_values);
 
   ++analyze_state.vectors_sampled_count;
-  return true;
 }
 
 template<typename T>
-idx_t AlpRdFinalAnalyze(AnalyzeState& state) {
-  auto& analyze_state = state.Cast<AlpRdAnalyzeState<T>>();
+idx_t AlpRdAnalyzeChunks(std::span<const WriteChunk> chunks) {
+  AlpRdAnalyzeState<T> analyze_state;
+  for (const auto& chunk : chunks) {
+    AlpRdSample(analyze_state, chunk.data);
+  }
   if (!analyze_state.total_values_count) {
     return duckdb::DConstants::INVALID_INDEX;
   }
@@ -361,7 +357,7 @@ idx_t AlpRdFinalAnalyze(AnalyzeState& state) {
 }
 
 template<typename T>
-class AlpRdCompressionState final : public CompressionState {
+class AlpRdCompressionState {
  public:
   using Exact = alp::ExactType<T>;
 
@@ -604,22 +600,20 @@ class AlpRdCompressionState final : public CompressionState {
 };
 
 template<typename T>
-std::unique_ptr<CompressionState> AlpRdInitCompression(
-  ColumnDataCheckpointData& checkpoint_data,
-  std::unique_ptr<AnalyzeState> state) {
-  SDB_ASSERT(state);
-  return std::make_unique<AlpRdCompressionState<T>>(
-    checkpoint_data, state->Cast<AlpRdAnalyzeState<T>>());
-}
-
-template<typename T>
-void AlpRdCompress(CompressionState& state, const duckdb::Vector& input) {
-  state.Cast<AlpRdCompressionState<T>>().Append(input);
-}
-
-template<typename T>
-void AlpRdFinalizeCompress(CompressionState& state) {
-  state.Cast<AlpRdCompressionState<T>>().Finalize();
+void AlpRdCompressChunks(ColumnDataCheckpointData& checkpoint_data,
+                         std::span<const WriteChunk> chunks) {
+  AlpRdAnalyzeState<T> analyze_state;
+  for (const auto& chunk : chunks) {
+    AlpRdSample(analyze_state, chunk.data);
+  }
+  FindBestDictionary<T>(analyze_state.rowgroup_sample,
+                        analyze_state.dictionary);
+  const auto state =
+    std::make_unique<AlpRdCompressionState<T>>(checkpoint_data, analyze_state);
+  for (const auto& chunk : chunks) {
+    state->Append(chunk.data);
+  }
+  state->Finalize();
 }
 
 template<typename T>
@@ -1003,12 +997,9 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 template<typename T, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_ALPRD,
-  .init_analyze = AlpRdInitAnalyze<T>,
-  .analyze = AlpRdAnalyze<T>,
-  .final_analyze = AlpRdFinalAnalyze<T>,
-  .init_compression = AlpRdInitCompression<T>,
-  .compress = AlpRdCompress<T>,
-  .compress_finalize = AlpRdFinalizeCompress<T>,
+  .analyze = AlpRdAnalyzeChunks<T>,
+  .compress = AlpRdCompressChunks<T>,
+  .accepts = HasRows,
   .init_scan = AlpRdInitScan<T>,
   .scan_vector = AlpRdScan<T>,
   .scan_partial = AlpRdScanPartial<T>,

@@ -362,39 +362,33 @@ struct BitpackingState {
 };
 
 template<typename T>
-struct BitpackingAnalyze final : AnalyzeState {
+struct BitpackingAnalyze {
   BitpackingState<T> state;
 };
 
 template<typename T>
-std::unique_ptr<AnalyzeState> InitAnalyze(CompressionAnalyzeContext&,
-                                          duckdb::PhysicalType) {
-  return std::make_unique<BitpackingAnalyze<T>>();
-}
-
-template<typename T>
-bool Analyze(AnalyzeState& state, const duckdb::Vector& input) {
-  const auto type_size = duckdb::GetTypeIdSize(input.GetType().InternalType());
-  if (type_size * kMetadataGroupSize * 2 > kBlockSize) {
-    return false;
+idx_t AnalyzeChunks(std::span<const WriteChunk> chunks) {
+  const auto analyze = std::make_unique<BitpackingAnalyze<T>>();
+  auto& state = analyze->state;
+  NoWriter<T> writer;
+  for (const auto& chunk : chunks) {
+    const auto type_size =
+      duckdb::GetTypeIdSize(chunk.data.GetType().InternalType());
+    if (type_size * kMetadataGroupSize * 2 > kBlockSize) {
+      return kNone;
+    }
+    if (!state.Update(chunk.data.Values<T>(), writer)) {
+      return kNone;
+    }
   }
-  auto& analyze = state.Cast<BitpackingAnalyze<T>>();
-  NoWriter<T> writer;
-  return analyze.state.Update(input.Values<T>(), writer);
-}
-
-template<typename T>
-idx_t FinalAnalyze(AnalyzeState& state) {
-  auto& analyze = state.Cast<BitpackingAnalyze<T>>();
-  NoWriter<T> writer;
-  if (!analyze.state.Flush(writer)) {
+  if (!state.Flush(writer)) {
     return kNone;
   }
-  return analyze.state.total_size;
+  return state.total_size;
 }
 
 template<typename T, bool kStats>
-class BitpackingCompress final : public CompressionState {
+class BitpackingCompress {
  public:
   using S = Signed<T>;
 
@@ -529,19 +523,69 @@ class BitpackingCompress final : public CompressionState {
 };
 
 template<typename T, bool kStats>
-std::unique_ptr<CompressionState> InitCompression(
-  ColumnDataCheckpointData& checkpoint_data, std::unique_ptr<AnalyzeState>) {
-  return std::make_unique<BitpackingCompress<T, kStats>>(checkpoint_data);
+void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
+                    std::span<const WriteChunk> chunks) {
+  const auto state =
+    std::make_unique<BitpackingCompress<T, kStats>>(checkpoint_data);
+  for (const auto& chunk : chunks) {
+    state->Append(chunk.data);
+  }
+  state->Finalize();
 }
 
-template<typename T, bool kStats>
-void Compress(CompressionState& state, const duckdb::Vector& input) {
-  state.Cast<BitpackingCompress<T, kStats>>().Append(input);
+template<typename T>
+bool RangesFit(std::span<const WriteChunk> chunks) {
+  T lo = duckdb::NumericLimits<T>::Maximum();
+  T hi = duckdb::NumericLimits<T>::Minimum();
+  idx_t in_group = 0;
+  const auto fits = [&] {
+    T diff;
+    return hi < lo || duckdb::TrySubtractOperator::Operation(hi, lo, diff);
+  };
+  for (const auto& chunk : chunks) {
+    const auto values = chunk.data.Values<T>();
+    const bool nulls = values.CanHaveNull();
+    for (idx_t i = 0; i < values.size();) {
+      const idx_t take =
+        std::min<idx_t>(values.size() - i, kMetadataGroupSize - in_group);
+      if (!nulls) {
+        for (idx_t k = 0; k < take; ++k) {
+          const T value = values.GetValueUnsafe(i + k);
+          lo = duckdb::MinValue<T>(lo, value);
+          hi = duckdb::MaxValue<T>(hi, value);
+        }
+      } else {
+        for (idx_t k = 0; k < take; ++k) {
+          const auto entry = values[i + k];
+          if (!entry.IsValid()) {
+            continue;
+          }
+          const T value = entry.GetValue();
+          lo = duckdb::MinValue<T>(lo, value);
+          hi = duckdb::MaxValue<T>(hi, value);
+        }
+      }
+      in_group += take;
+      i += take;
+      if (in_group == kMetadataGroupSize) {
+        if (!fits()) {
+          return false;
+        }
+        lo = duckdb::NumericLimits<T>::Maximum();
+        hi = duckdb::NumericLimits<T>::Minimum();
+        in_group = 0;
+      }
+    }
+  }
+  return fits();
 }
 
-template<typename T, bool kStats>
-void FinalizeCompress(CompressionState& state) {
-  state.Cast<BitpackingCompress<T, kStats>>().Finalize();
+template<typename T>
+bool Accepts(std::span<const WriteChunk> chunks) {
+  if constexpr (duckdb::NumericLimits<T>::IsSigned()) {
+    return RangesFit<T>(chunks) || AnalyzeChunks<T>(chunks) != kNone;
+  }
+  return true;
 }
 
 template<typename T>
@@ -1292,12 +1336,9 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
 template<typename T, duckdb::PhysicalType kPhysical, bool kStats, bool kFilter>
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_BITPACKING,
-  .init_analyze = InitAnalyze<T>,
-  .analyze = Analyze<T>,
-  .final_analyze = FinalAnalyze<T>,
-  .init_compression = InitCompression<T, kStats>,
-  .compress = Compress<T, kStats>,
-  .compress_finalize = FinalizeCompress<T, kStats>,
+  .analyze = AnalyzeChunks<T>,
+  .compress = CompressChunks<T, kStats>,
+  .accepts = Accepts<T>,
   .init_scan = InitScan<T>,
   .scan_vector = Scan<T>,
   .scan_partial = ScanPartial<T>,

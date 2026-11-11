@@ -3446,12 +3446,11 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
       duckdb::FlatVector::SetSize(v, end - pos);
       pos = end;
     }
-    irs::codecs::CompressionAnalyzeContext actx{ctx};
-    auto analyze = fn.init_analyze(actx, duckdb::PhysicalType::BOOL);
+    std::vector<irs::WriteChunk> rows;
     for (const auto& v : chunks) {
-      EXPECT_TRUE(fn.analyze(*analyze, v));
+      rows.push_back(irs::RefChunk(v, v.size()));
     }
-    EXPECT_NE(fn.final_analyze(*analyze), duckdb::DConstants::INVALID_INDEX);
+    EXPECT_NE(fn.analyze(rows), duckdb::DConstants::INVALID_INDEX);
     std::vector<Flushed> flushed;
     const auto flush = [&](duckdb::BaseStatistics stats, uint64_t n,
                            std::string_view) {
@@ -3462,11 +3461,7 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
       .ctx = ctx,
       .flush = flush,
     };
-    auto state = fn.init_compression(checkpoint, std::move(analyze));
-    for (const auto& v : chunks) {
-      fn.compress(*state, v);
-    }
-    fn.compress_finalize(*state);
+    fn.compress(checkpoint, rows);
     return flushed;
   };
   std::vector<uint64_t> ends;

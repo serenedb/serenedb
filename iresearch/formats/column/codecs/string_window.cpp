@@ -91,7 +91,7 @@ Segment& StringWindow::TrialCompress(const Config& config) {
     return *seg;
   }
   auto& seg =
-    *_owned.emplace_back(GetStringCompressionFunction(config).trial_compress(
+    *_owned.emplace_back(GetStringCompressionFunction(config).TrialCompress(
       _compressor, config, _acc, _begin, _end));
   _encoded.emplace_back(&seg);
   return seg;

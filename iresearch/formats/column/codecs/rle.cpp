@@ -51,6 +51,7 @@
 #include "iresearch/formats/column/codecs/segment_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -311,7 +312,7 @@ struct RleRuns {
 };
 
 template<typename T>
-struct RleAnalyzeState final : AnalyzeState {
+struct RleAnalyzeState {
   RleState<T> state;
   RleRuns<T> runs;
   idx_t total_count = 0;
@@ -338,14 +339,8 @@ auto AnalyzeSink(RleRuns<T>& runs) {
 }
 
 template<typename T>
-std::unique_ptr<AnalyzeState> InitAnalyze(CompressionAnalyzeContext&,
-                                          duckdb::PhysicalType) {
-  return std::make_unique<RleAnalyzeState<T>>();
-}
-
-template<typename T>
-bool Analyze(AnalyzeState& state, const duckdb::Vector& input) {
-  auto& analyze = state.Cast<RleAnalyzeState<T>>();
+IRS_NO_INLINE void AnalyzeVector(RleAnalyzeState<T>& analyze,
+                                 const duckdb::Vector& input) {
   duckdb::UnifiedVectorFormat vdata;
   input.ToUnifiedFormat(vdata);
   const auto* data = duckdb::UnifiedVectorFormat::GetData<T>(vdata);
@@ -363,12 +358,14 @@ bool Analyze(AnalyzeState& state, const duckdb::Vector& input) {
   analyze.state = run_state;
   analyze.runs = runs;
   analyze.total_count += count;
-  return true;
 }
 
 template<typename T>
-idx_t FinalAnalyze(AnalyzeState& state) {
-  auto& analyze = state.Cast<RleAnalyzeState<T>>();
+idx_t AnalyzeChunks(std::span<const WriteChunk> chunks) {
+  RleAnalyzeState<T> analyze;
+  for (const auto& chunk : chunks) {
+    AnalyzeVector(analyze, chunk.data);
+  }
   auto& runs = analyze.runs;
   if (analyze.state.last_seen_count > 0) {
     FlushRun(analyze.state, AnalyzeSink(runs));
@@ -395,7 +392,7 @@ idx_t FinalAnalyze(AnalyzeState& state) {
 }
 
 template<typename T, bool kWriteStatistics>
-class RleCompressState final : public CompressionState {
+class RleCompressState {
  public:
   explicit RleCompressState(ColumnDataCheckpointData& checkpoint_data)
     : _checkpoint_data{&checkpoint_data},
@@ -490,23 +487,43 @@ class RleCompressState final : public CompressionState {
 };
 
 template<typename T, bool kWriteStatistics>
-std::unique_ptr<CompressionState> InitCompression(
-  ColumnDataCheckpointData& checkpoint_data, std::unique_ptr<AnalyzeState>) {
-  return std::make_unique<RleCompressState<T, kWriteStatistics>>(
-    checkpoint_data);
+void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
+                    std::span<const WriteChunk> chunks) {
+  const auto state =
+    std::make_unique<RleCompressState<T, kWriteStatistics>>(checkpoint_data);
+  for (const auto& chunk : chunks) {
+    duckdb::UnifiedVectorFormat vdata;
+    chunk.data.ToUnifiedFormat(vdata);
+    state->Append(vdata, chunk.data.size());
+  }
+  state->Finalize();
 }
 
-template<typename T, bool kWriteStatistics>
-void Compress(CompressionState& state, const duckdb::Vector& input) {
-  duckdb::UnifiedVectorFormat vdata;
-  input.ToUnifiedFormat(vdata);
-  state.Cast<RleCompressState<T, kWriteStatistics>>().Append(vdata,
-                                                             input.size());
-}
-
-template<typename T, bool kWriteStatistics>
-void FinalizeCompress(CompressionState& state) {
-  state.Cast<RleCompressState<T, kWriteStatistics>>().Finalize();
+template<typename T>
+bool HasRuns(std::span<const WriteChunk> chunks) {
+  if (const auto rows = CountRows(chunks); rows < 2) {
+    return rows == 0;
+  }
+  bool first = true;
+  T previous{};
+  for (const auto& chunk : chunks) {
+    duckdb::UnifiedVectorFormat vdata;
+    chunk.data.ToUnifiedFormat(vdata);
+    const auto* data = duckdb::UnifiedVectorFormat::GetData<T>(vdata);
+    const idx_t count = chunk.data.size();
+    for (idx_t i = 0; i < count; ++i) {
+      const auto idx = vdata.sel->get_index(i);
+      if (!vdata.validity.RowIsValid(idx)) {
+        return true;
+      }
+      if (!first && ValueEqual(data[idx], previous)) {
+        return true;
+      }
+      previous = data[idx];
+      first = false;
+    }
+  }
+  return false;
 }
 
 template<typename T>
@@ -1117,12 +1134,9 @@ template<typename T, duckdb::PhysicalType kPhysical,
          bool kWriteStatistics = true>
 constexpr CompressionFunction kFunction{
   .type = duckdb::CompressionType::COMPRESSION_RLE,
-  .init_analyze = InitAnalyze<T>,
-  .analyze = Analyze<T>,
-  .final_analyze = FinalAnalyze<T>,
-  .init_compression = InitCompression<T, kWriteStatistics>,
-  .compress = Compress<T, kWriteStatistics>,
-  .compress_finalize = FinalizeCompress<T, kWriteStatistics>,
+  .analyze = AnalyzeChunks<T>,
+  .compress = CompressChunks<T, kWriteStatistics>,
+  .accepts = HasRuns<T>,
   .init_scan = InitScan<T>,
   .scan_vector = Scan<T>,
   .scan_partial = ScanPartial<T>,

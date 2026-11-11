@@ -139,13 +139,34 @@ void CompressChunksWith(StringCompressor& compressor, const Config& config,
 }
 
 template<typename State>
-constexpr StringCompressionFunction CompressionFunctionOf() {
-  return {
-    .compress_segment = &CompressSegmentWith<State>,
-    .compress = &CompressWith<State>,
-    .trial_compress = &TrialCompressWith<State>,
-    .compress_chunks = &CompressChunksWith<State>,
-  };
-}
+struct CompressionFunctionOf final : StringCompressionFunction {
+  constexpr CompressionFunctionOf() = default;
+
+  PooledSegment CompressSegment(StringCompressor& compressor,
+                                const Config& config,
+                                const StringAccumulator& acc,
+                                uint64_t begin) const final {
+    return CompressSegmentWith<State>(compressor, config, acc, begin);
+  }
+
+  void Compress(StringCompressor& compressor, const Config& config,
+                const StringAccumulator& acc, uint64_t begin,
+                SegmentSink sink) const final {
+    CompressWith<State>(compressor, config, acc, begin, sink);
+  }
+
+  PooledSegment TrialCompress(StringCompressor& compressor,
+                              const Config& config,
+                              const StringAccumulator& acc, uint64_t begin,
+                              uint64_t end) const final {
+    return TrialCompressWith<State>(compressor, config, acc, begin, end);
+  }
+
+  void CompressChunks(StringCompressor& compressor, const Config& config,
+                      std::span<const WriteChunk> chunks,
+                      SegmentSink sink) const final {
+    CompressChunksWith<State>(compressor, config, chunks, sink);
+  }
+};
 
 }  // namespace irs::codecs::text

@@ -454,7 +454,7 @@ void PackBooleans(ValidityMask& packed,
   }
 }
 
-struct RoaringAnalyzeState final : AnalyzeState {
+struct RoaringAnalyzeState {
   uint16_t one_count = 0;
   uint16_t zero_count = 0;
   uint16_t run_count = 0;
@@ -784,13 +784,12 @@ void Reset(ContainerCompressionState& state) {
   state.uncompressed = nullptr;
 }
 
-struct RoaringCompressState final : CompressionState {
-  explicit RoaringCompressState(ColumnDataCheckpointData& checkpoint_data,
-                                std::unique_ptr<AnalyzeState> analyze);
+struct RoaringCompressState {
+  RoaringCompressState(ColumnDataCheckpointData& checkpoint_data,
+                       const RoaringAnalyzeState& analyze_state);
 
   ColumnDataCheckpointData& checkpoint_data;
-  std::unique_ptr<AnalyzeState> owned_analyze_state;
-  RoaringAnalyzeState& analyze_state;
+  const RoaringAnalyzeState& analyze_state;
   ContainerCompressionState container_state;
   ContainerMetadataCollection metadata_collection;
   CompressedSegment segment;
@@ -952,10 +951,9 @@ void Finalize(RoaringCompressState& state) {
 
 RoaringCompressState::RoaringCompressState(
   ColumnDataCheckpointData& checkpoint_data,
-  std::unique_ptr<AnalyzeState> analyze)
+  const RoaringAnalyzeState& analyze_state)
   : checkpoint_data{checkpoint_data},
-    owned_analyze_state{std::move(analyze)},
-    analyze_state{owned_analyze_state->Cast<RoaringAnalyzeState>()},
+    analyze_state{analyze_state},
     segment{checkpoint_data.type} {
   CreateEmptySegment(*this);
   InitializeContainer(*this);
@@ -1664,71 +1662,77 @@ void ExtractValidityMaskToData(const ValidityMask& validity,
   std::memcpy(write_ptr + aligned, tail.data(), scan_count - aligned);
 }
 
-std::unique_ptr<AnalyzeState> InitAnalyze(CompressionAnalyzeContext&,
-                                          duckdb::PhysicalType) {
-  return std::make_unique<RoaringAnalyzeState>();
-}
-
 template<duckdb::PhysicalType kPhysical>
-bool Analyze(AnalyzeState& state_p, const duckdb::Vector& input) {
-  auto& state = state_p.Cast<RoaringAnalyzeState>();
-  const auto count = input.size();
-  duckdb::UnifiedVectorFormat unified;
-  input.ToUnifiedFormat(unified);
+void CountContainers(RoaringAnalyzeState& state,
+                     std::span<const WriteChunk> chunks) {
   const auto no_stats = [](idx_t, idx_t) {};
-  if constexpr (kPhysical == duckdb::PhysicalType::BOOL) {
-    ValidityMask packed{count};
-    PackBooleans(packed, unified, count);
-    AppendValidity(state, packed, count, no_stats);
-  } else {
-    AppendValidity(state, unified.validity, count, no_stats);
+  for (const auto& chunk : chunks) {
+    const auto count = chunk.data.size();
+    duckdb::UnifiedVectorFormat unified;
+    chunk.data.ToUnifiedFormat(unified);
+    if constexpr (kPhysical == duckdb::PhysicalType::BOOL) {
+      ValidityMask packed{count};
+      PackBooleans(packed, unified, count);
+      AppendValidity(state, packed, count, no_stats);
+    } else {
+      AppendValidity(state, unified.validity, count, no_stats);
+    }
+    state.total_count += count;
   }
-  state.total_count += count;
-  return true;
-}
-
-idx_t FinalAnalyze(AnalyzeState& state_p) {
-  auto& state = state_p.Cast<RoaringAnalyzeState>();
   FlushContainer(state);
   FlushSegment(state);
+}
+
+idx_t Price(const RoaringAnalyzeState& state) noexcept {
   return static_cast<idx_t>(static_cast<double>(state.total_size) *
                             kCompressPenalty);
 }
 
-std::unique_ptr<CompressionState> InitCompression(
-  ColumnDataCheckpointData& checkpoint_data,
-  std::unique_ptr<AnalyzeState> state) {
-  return std::make_unique<RoaringCompressState>(checkpoint_data,
-                                                std::move(state));
+template<duckdb::PhysicalType kPhysical>
+idx_t AnalyzeChunks(std::span<const WriteChunk> chunks) {
+  RoaringAnalyzeState state;
+  CountContainers<kPhysical>(state, chunks);
+  return Price(state);
 }
 
 template<duckdb::PhysicalType kPhysical>
-void Compress(CompressionState& state_p, const duckdb::Vector& input) {
-  auto& state = state_p.Cast<RoaringCompressState>();
-  const auto count = input.size();
-  duckdb::UnifiedVectorFormat unified;
-  input.ToUnifiedFormat(unified);
-  if constexpr (kPhysical == duckdb::PhysicalType::BOOL) {
-    ValidityMask packed{count};
-    PackBooleans(packed, unified, count);
-    const auto* values = duckdb::UnifiedVectorFormat::GetData<bool>(unified);
-    AppendValidity(state, packed, count, [&](idx_t begin, idx_t rows) {
-      for (idx_t i = begin; i < begin + rows; ++i) {
-        const auto idx = unified.sel->get_index(i);
-        if (unified.validity.RowIsValid(idx)) {
-          state.bool_stats_writer.Update(values[idx]);
-        } else {
-          state.bool_stats_writer.SetHasNull();
+void EncodeChunks(ColumnDataCheckpointData& checkpoint_data,
+                  std::span<const WriteChunk> chunks,
+                  const RoaringAnalyzeState& analyze_state) {
+  const auto compress =
+    std::make_unique<RoaringCompressState>(checkpoint_data, analyze_state);
+  auto& state = *compress;
+  for (const auto& chunk : chunks) {
+    const auto count = chunk.data.size();
+    duckdb::UnifiedVectorFormat unified;
+    chunk.data.ToUnifiedFormat(unified);
+    if constexpr (kPhysical == duckdb::PhysicalType::BOOL) {
+      ValidityMask packed{count};
+      PackBooleans(packed, unified, count);
+      const auto* values = duckdb::UnifiedVectorFormat::GetData<bool>(unified);
+      AppendValidity(state, packed, count, [&](idx_t begin, idx_t rows) {
+        for (idx_t i = begin; i < begin + rows; ++i) {
+          const auto idx = unified.sel->get_index(i);
+          if (unified.validity.RowIsValid(idx)) {
+            state.bool_stats_writer.Update(values[idx]);
+          } else {
+            state.bool_stats_writer.SetHasNull();
+          }
         }
-      }
-    });
-  } else {
-    AppendValidity(state, unified.validity, count, [](idx_t, idx_t) {});
+      });
+    } else {
+      AppendValidity(state, unified.validity, count, [](idx_t, idx_t) {});
+    }
   }
+  Finalize(state);
 }
 
-void FinalizeCompress(CompressionState& state) {
-  Finalize(state.Cast<RoaringCompressState>());
+template<duckdb::PhysicalType kPhysical>
+void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
+                    std::span<const WriteChunk> chunks) {
+  RoaringAnalyzeState analyze_state;
+  CountContainers<kPhysical>(analyze_state, chunks);
+  EncodeChunks<kPhysical>(checkpoint_data, chunks, analyze_state);
 }
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
@@ -1798,12 +1802,8 @@ void FetchRowsBoolean(const ColumnSegment& segment, ColumnFetchState& state,
 
 constexpr CompressionFunction kValidity{
   .type = duckdb::CompressionType::COMPRESSION_ROARING,
-  .init_analyze = InitAnalyze,
-  .analyze = Analyze<duckdb::PhysicalType::BIT>,
-  .final_analyze = FinalAnalyze,
-  .init_compression = InitCompression,
-  .compress = Compress<duckdb::PhysicalType::BIT>,
-  .compress_finalize = FinalizeCompress,
+  .analyze = AnalyzeChunks<duckdb::PhysicalType::BIT>,
+  .compress = CompressChunks<duckdb::PhysicalType::BIT>,
   .init_scan = InitScan,
   .scan_vector = ScanValidity,
   .scan_partial = ScanPartialValidity,
@@ -1813,12 +1813,8 @@ constexpr CompressionFunction kValidity{
 
 constexpr CompressionFunction kBoolean{
   .type = duckdb::CompressionType::COMPRESSION_ROARING,
-  .init_analyze = InitAnalyze,
-  .analyze = Analyze<duckdb::PhysicalType::BOOL>,
-  .final_analyze = FinalAnalyze,
-  .init_compression = InitCompression,
-  .compress = Compress<duckdb::PhysicalType::BOOL>,
-  .compress_finalize = FinalizeCompress,
+  .analyze = AnalyzeChunks<duckdb::PhysicalType::BOOL>,
+  .compress = CompressChunks<duckdb::PhysicalType::BOOL>,
   .init_scan = InitScan,
   .scan_vector = ScanBoolean,
   .scan_partial = ScanPartialBoolean,
@@ -1827,6 +1823,19 @@ constexpr CompressionFunction kBoolean{
 };
 
 }  // namespace
+
+bool CompressRoaringValidity(ColumnDataCheckpointData& checkpoint_data,
+                             std::span<const WriteChunk> chunks,
+                             duckdb::idx_t limit) {
+  RoaringAnalyzeState analyze_state;
+  CountContainers<duckdb::PhysicalType::BIT>(analyze_state, chunks);
+  if (Price(analyze_state) >= limit) {
+    return false;
+  }
+  EncodeChunks<duckdb::PhysicalType::BIT>(checkpoint_data, chunks,
+                                          analyze_state);
+  return true;
+}
 
 const CompressionFunction* RoaringFunction(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;

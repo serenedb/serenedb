@@ -154,6 +154,14 @@ void ApplyRange(const ColumnPatch& patch, uint64_t first, uint64_t count,
              });
 }
 
+void Own(duckdb::Vector& vector, duckdb::idx_t count) {
+  duckdb::Vector owned{vector.GetType(), count};
+  owned.Copy(vector, *duckdb::FlatVector::IncrementalSelectionVector(), count,
+             0, 0, count);
+  duckdb::FlatVector::SetSize(owned, count);
+  vector.Reference(owned);
+}
+
 std::vector<ColumnBlockMeta> PatchedBlocks(const ColumnReader& base,
                                            const ColumnPatch& patch) {
   const auto metas = base.DataBlocks();
@@ -435,7 +443,7 @@ duckdb::idx_t PatchedColumnReader::Scan(ScanState& s, duckdb::Vector& result,
   const auto first = _base.GatherCursor(s);
   const auto n = _base.Scan(s, result, count);
   if (n != 0 && _patch->Overlaps(first, first + n)) {
-    result.Flatten();
+    Own(result, n);
     ApplyRange(*_patch, first, n, result, 0);
   }
   return n;
@@ -494,7 +502,7 @@ void PatchedColumnReader::GatherDense(ScanState& s, uint64_t anchor,
   _base.GatherDense(s, anchor, sel, hits, span, out);
   if (hits != 0 && _patch->Overlaps(anchor + sel.get_index(0),
                                     anchor + sel.get_index(hits - 1) + 1)) {
-    out.Flatten();
+    Own(out, hits);
     ApplySelected(anchor, sel, hits, out, 0);
   }
 }
@@ -508,67 +516,19 @@ duckdb::idx_t PatchedColumnReader::GatherFilter(
     return _base.GatherFilter(s, anchor, span, sel, sel_count, filter,
                               filter_state, null_check, scratch);
   }
-  std::array<duckdb::sel_t, STANDARD_VECTOR_SIZE> plain;
-  std::array<duckdb::sel_t, STANDARD_VECTOR_SIZE> patched;
-  duckdb::idx_t plain_count = 0;
-  duckdb::idx_t patched_count = 0;
-  {
-    duckdb::idx_t i = 0;
-    _patch->ForEach(anchor, anchor + span,
-                    [&](uint64_t row, const ColumnPatch::Chunk&, size_t) {
-                      const auto offset = row - anchor;
-                      while (i < sel_count && sel.get_index(i) < offset) {
-                        plain[plain_count++] =
-                          static_cast<duckdb::sel_t>(sel.get_index(i++));
-                      }
-                      if (i < sel_count && sel.get_index(i) == offset) {
-                        patched[patched_count++] =
-                          static_cast<duckdb::sel_t>(sel.get_index(i++));
-                      }
-                    });
-    while (i < sel_count) {
-      plain[plain_count++] = static_cast<duckdb::sel_t>(sel.get_index(i++));
-    }
-  }
-  duckdb::idx_t plain_kept = 0;
-  if (plain_count != 0) {
-    duckdb::SelectionVector plain_sel{plain.data(), plain.size()};
-    plain_kept = _base.GatherFilter(s, anchor, span, plain_sel, plain_count,
-                                    filter, filter_state, null_check, scratch);
-    for (duckdb::idx_t j = 0; j < plain_kept; ++j) {
-      plain[j] = static_cast<duckdb::sel_t>(plain_sel.get_index(j));
-    }
-    scratch.Flatten();
-  } else {
-    const auto cur = _base.GatherCursor(s);
-    SDB_ASSERT(anchor >= cur, "GatherFilter requires ascending rows");
-    _base.Skip(s, anchor + span - cur);
-    scratch.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  }
+  const auto cur = _base.GatherCursor(s);
+  SDB_ASSERT(anchor >= cur, "GatherFilter requires ascending rows");
+  _base.Skip(s, anchor - cur);
+  scratch.Reference(duckdb::Vector{Type(), span});
+  _base.ScanCount(s, scratch, span, 0);
   if (scratch.size() < span) {
     duckdb::FlatVector::SetSize(scratch, span);
   }
   ApplyRange(*_patch, anchor, span, scratch, 0);
-  duckdb::idx_t patched_kept = patched_count;
-  if (patched_count != 0) {
-    duckdb::SelectionVector patched_sel{patched.data(), patched.size()};
-    duckdb::ColumnSegment::FilterSelection(patched_sel, scratch, filter_state,
-                                           span, patched_kept);
-    for (duckdb::idx_t j = 0; j < patched_kept; ++j) {
-      patched[j] = static_cast<duckdb::sel_t>(patched_sel.get_index(j));
-    }
-  }
-  duckdb::idx_t a = 0;
-  duckdb::idx_t b = 0;
-  duckdb::idx_t kept = 0;
-  while (a < plain_kept || b < patched_kept) {
-    if (b == patched_kept || (a < plain_kept && plain[a] < patched[b])) {
-      sel.set_index(kept++, plain[a++]);
-    } else {
-      sel.set_index(kept++, patched[b++]);
-    }
-  }
-  return kept;
+  duckdb::idx_t approved = sel_count;
+  duckdb::ColumnSegment::FilterSelection(sel, scratch, filter_state, span,
+                                         approved);
+  return approved;
 }
 
 bool PatchedColumnReader::FetchPoint(PointReader& reader, uint64_t row,

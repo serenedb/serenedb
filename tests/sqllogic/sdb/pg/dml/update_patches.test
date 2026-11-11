@@ -651,3 +651,101 @@ id	a	c	t
 3	3	31	patched added column 3
 4999	4999	49991	NULL
 5001	5001	50011	patched added column 5001
+
+
+statement ok
+CREATE TABLE up_memory (id INT PRIMARY KEY, a INT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO up_memory SELECT i, i % 10 FROM range(100) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement count 1
+UPDATE up_memory SET a = -1 WHERE id = 1;
+
+
+query
+SELECT count(*) AS n, sum(a) AS s FROM up_memory WHERE a < 5;
+----
+n	s
+50	98
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, a FROM up_memory WHERE id IN (1, 2) ORDER BY id;
+----
+id	a
+1	1
+2	2
+
+
+query
+SELECT count(*) AS n, sum(a) AS s FROM up_memory WHERE a < 5;
+----
+n	s
+50	100
+
+
+statement ok
+CREATE TABLE up_plain (id INT PRIMARY KEY, a INT USING COMPRESSION uncompressed) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO up_plain SELECT i, i % 10 FROM range(5000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) up_plain;
+
+
+statement ok
+BEGIN;
+
+
+statement count 1
+UPDATE up_plain SET a = -1 WHERE id = 1;
+
+
+query
+SELECT count(*) AS n, sum(a) AS s FROM up_plain WHERE a < 5;
+----
+n	s
+2500	4998
+
+
+query
+SELECT a FROM up_plain ORDER BY id LIMIT 3;
+----
+a
+0
+-1
+2
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT a FROM up_plain ORDER BY id LIMIT 3;
+----
+a
+0
+1
+2
+
+
+query
+SELECT count(*) AS n, sum(a) AS s FROM up_plain WHERE a < 5;
+----
+n	s
+2500	5000

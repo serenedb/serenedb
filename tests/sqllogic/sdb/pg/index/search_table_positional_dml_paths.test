@@ -452,15 +452,16 @@ QUERY PLAN
 ╭─ UPDATE ───────────────╮
 │ Table: pg              │
 │ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: v     │
 ╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
-│ Projections: 'x', #0,  │
+│ Projections: 'x',      │
 │              rowid     │
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
 │ Table: pg              │
-│ Projections: id, rowid │
+│ Projections: rowid     │
 │ Column Filter: id = 3  │
 │ ~1 row                 │
 ╰────────────────────────╯

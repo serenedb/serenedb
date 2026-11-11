@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -70,14 +72,16 @@ class DocRemovalBuilder {
  public:
   void Add(uint32_t index, doc_id_t doc);
   void AddRange(uint32_t index, doc_id_t first, doc_id_t last);
+  DocumentMaskBuilder& Group(uint32_t index);
 
-  bool Empty() const noexcept { return _groups.empty(); }
+  bool Empty() const noexcept {
+    return absl::c_all_of(
+      _groups, [](const auto& group) { return group.second.Empty(); });
+  }
 
   std::shared_ptr<const DocRemoval> Finish(const DirectoryReader& reader) &&;
 
  private:
-  DocumentMaskBuilder& Group(uint32_t index);
-
   std::vector<std::pair<uint32_t, DocumentMaskBuilder>> _groups;
   size_t _last = 0;
 };

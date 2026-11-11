@@ -97,13 +97,13 @@ inline std::vector<std::pair<uint64_t, irs::doc_id_t>> RemovedDocs(
   const irs::DocRemoval& removal) {
   std::vector<std::pair<uint64_t, irs::doc_id_t>> docs;
   for (const auto& group : removal.groups) {
-    group.docs.ForEachRun(nullptr,
-                          [&](irs::doc_id_t first, irs::doc_id_t last) {
-                            for (auto doc = first; doc < last; ++doc) {
-                              docs.emplace_back(group.segment, doc);
-                            }
-                            return true;
-                          });
+    irs::DocumentMask::Cursor cursor{group.docs};
+    std::array<irs::doc_id_t, 64> batch;
+    while (const auto count = cursor.Read(batch)) {
+      for (const auto doc : std::span{batch}.first(count)) {
+        docs.emplace_back(group.segment, doc);
+      }
+    }
   }
   return docs;
 }

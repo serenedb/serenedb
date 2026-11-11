@@ -176,7 +176,7 @@ inline std::unique_ptr<PostingsCursor> MaskPostings(
   const irs::SubReader& segment, irs::TermPostings::ptr&& postings,
   irs::IndexFeatures features = irs::IndexFeatures::None) {
   return std::make_unique<PostingsCursor>(std::move(postings), features,
-                                          segment.MaskedDocs());
+                                          segment.docs_mask());
 }
 
 class IndexTestBase : public virtual TestParamBase<index_test_context> {

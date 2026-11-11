@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <memory>
 #include <roaring/roaring.hh>
+#include <span>
 #include <vector>
 
 #include "iresearch/store/data_input.hpp"
@@ -48,25 +49,31 @@ enum class MaskKind : uint8_t {
 
 class DocumentMaskBuilder;
 
+using MaskRun = roaring::api::roaring_uint32_range_closed_t;
+
 class DocumentMask final {
  public:
   static constexpr uint32_t kChunkShift = 16;
   static constexpr uint64_t kChunkDocs = uint64_t{1} << kChunkShift;
 
-  class Iterator final {
+  class Cursor final {
    public:
-    Iterator() = default;
+    explicit Cursor(const DocumentMask& mask) noexcept {
+      roaring::api::roaring_iterator_init(&mask._set, &_it);
+    }
 
-    explicit Iterator(const DocumentMask* mask) noexcept : _mask{mask} {}
+    size_t Read(std::span<doc_id_t> docs) noexcept {
+      return roaring::api::roaring_uint32_iterator_read(
+        &_it, docs.data(), static_cast<uint32_t>(docs.size()));
+    }
 
-    bool Empty() const noexcept { return _mask == nullptr || _mask->Empty(); }
-
-    bool Contains(doc_id_t doc) const noexcept {
-      return _mask != nullptr && _mask->Contains(doc);
+    size_t ReadRuns(std::span<MaskRun> runs) noexcept {
+      return roaring::api::roaring_uint32_iterator_read_ranges(
+        &_it, runs.data(), runs.size());
     }
 
    private:
-    const DocumentMask* _mask = nullptr;
+    roaring::api::roaring_uint32_iterator_t _it;
   };
 
   DocumentMask(std::shared_ptr<const byte_type> frozen, uint64_t size);
@@ -91,32 +98,37 @@ class DocumentMask final {
     roaring::api::roaring_bitmap_frozen_serialize(&_set, buf);
   }
 
-  const roaring::api::roaring_bitmap_t& Bitmap() const noexcept { return _set; }
-
   bool Contains(doc_id_t doc) const noexcept;
 
   uint64_t CountInRange(doc_id_t first, doc_id_t last) const noexcept;
 
-  template<typename Visitor>
-  void ForEachRun(const DocumentMask* except, const Visitor& visitor) const {
-    const auto visit = [&](doc_id_t first, doc_id_t last) {
-      return visitor(first, last + 1);
-    };
-    const auto call = [](uint32_t first, uint32_t last, void* f) -> bool {
-      return (*static_cast<const decltype(visit)*>(f))(first, last);
-    };
-    auto* f = const_cast<void*>(static_cast<const void*>(&visit));
-    if (except) {
-      roaring::api::roaring_bitmap_andnot_iterate_runs(&_set, &except->_set,
-                                                       call, f);
-    } else {
-      roaring::api::roaring_bitmap_iterate_runs(&_set, call, f);
-    }
+  bool Intersects(const DocumentMask& other) const noexcept {
+    return roaring::api::roaring_bitmap_intersect(&_set, &other._set);
+  }
+
+  uint64_t AndCount(const DocumentMask& other) const noexcept {
+    return roaring::api::roaring_bitmap_and_cardinality(&_set, &other._set);
+  }
+
+  void Ranks(std::span<const doc_id_t> docs,
+             std::span<uint64_t> ranks) const noexcept {
+    SDB_ASSERT(docs.size() == ranks.size());
+    roaring::api::roaring_bitmap_rank_many(
+      &_set, docs.data(), docs.data() + docs.size(), ranks.data());
+  }
+
+  void Words(uint32_t first_word, std::span<uint64_t> words) const noexcept {
+    roaring::api::roaring_bitmap_word_range_to_bitset(
+      &_set, first_word, static_cast<uint32_t>(words.size()), words.data());
   }
 
   size_t Count() const noexcept { return _count; }
 
   bool Empty() const noexcept { return _count == 0; }
+
+  doc_id_t Max() const noexcept {
+    return roaring::api::roaring_bitmap_maximum(&_set);
+  }
 
   size_t ByteSize() const noexcept;
 
@@ -175,11 +187,13 @@ class DocumentMaskBuilder final {
   DocumentMaskBuilder(const DocumentMaskBuilder& other);
   DocumentMaskBuilder& operator=(const DocumentMaskBuilder& other);
 
-  bool Contains(doc_id_t doc) const noexcept;
+  size_t Count() const noexcept {
+    return roaring::api::roaring_bitmap_get_cardinality(&_set);
+  }
 
-  size_t Count() const noexcept { return _count; }
-
-  bool Empty() const noexcept { return _count == 0; }
+  bool Empty() const noexcept {
+    return roaring::api::roaring_bitmap_is_empty(&_set);
+  }
 
   size_t ByteSize() const noexcept;
 
@@ -187,18 +201,23 @@ class DocumentMaskBuilder final {
 
   bool Add(doc_id_t doc);
   void AddRange(doc_id_t first, doc_id_t last);
+  void AddSorted(std::span<const doc_id_t> docs);
+  void AddShifted(const DocumentMask& mask, doc_id_t offset);
+  void AddShifted(const DocumentMaskBuilder& other, doc_id_t offset);
   void Merge(const DocumentMaskBuilder& other);
   void Merge(const DocumentMask& published);
+  void Subtract(const DocumentMask& mask);
   void Clear() noexcept;
 
   DocumentMask Finish(uint32_t bitset_from = kBitsetFrom) && noexcept;
   DocumentMask Take() && noexcept;
 
  private:
-  DocumentMaskBuilder(const roaring::api::roaring_bitmap_t& set, size_t count);
+  explicit DocumentMaskBuilder(const roaring::api::roaring_bitmap_t& set);
+
+  void AddShifted(const roaring::api::roaring_bitmap_t& set, doc_id_t offset);
 
   roaring::api::roaring_bitmap_t _set;
-  size_t _count = 0;
 };
 
 }  // namespace irs

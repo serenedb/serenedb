@@ -20,6 +20,7 @@
 
 #include "iresearch/index/document_mask.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <roaring/containers/containers.h>
 
@@ -355,28 +356,26 @@ DocumentMaskBuilder::DocumentMaskBuilder() noexcept {
   roaring::api::roaring_bitmap_init_cleared(&_set);
 }
 
-DocumentMaskBuilder::DocumentMaskBuilder(const roaring_bitmap_t& set,
-                                         size_t count)
+DocumentMaskBuilder::DocumentMaskBuilder(const roaring_bitmap_t& set)
   : DocumentMaskBuilder{} {
-  if (count == 0) {
+  if (roaring::api::roaring_bitmap_is_empty(&set)) {
     return;
   }
   if (!roaring::api::roaring_bitmap_overwrite(&_set, &set)) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                     ERR_MSG("Failed to allocate a copy of the document mask"));
   }
-  _count = count;
 }
 
 DocumentMaskBuilder::DocumentMaskBuilder(const DocumentMask& published)
-  : DocumentMaskBuilder{published._set, published._count} {}
+  : DocumentMaskBuilder{published._set} {}
 
 DocumentMaskBuilder::~DocumentMaskBuilder() {
   roaring::api::roaring_bitmap_clear(&_set);
 }
 
 DocumentMaskBuilder::DocumentMaskBuilder(DocumentMaskBuilder&& other) noexcept
-  : _set{other._set}, _count{std::exchange(other._count, 0)} {
+  : _set{other._set} {
   roaring::api::roaring_bitmap_init_cleared(&other._set);
 }
 
@@ -386,21 +385,16 @@ DocumentMaskBuilder& DocumentMaskBuilder::operator=(
     roaring::api::roaring_bitmap_clear(&_set);
     _set = other._set;
     roaring::api::roaring_bitmap_init_cleared(&other._set);
-    _count = std::exchange(other._count, 0);
   }
   return *this;
 }
 
 DocumentMaskBuilder::DocumentMaskBuilder(const DocumentMaskBuilder& other)
-  : DocumentMaskBuilder{other._set, other._count} {}
+  : DocumentMaskBuilder{other._set} {}
 
 DocumentMaskBuilder& DocumentMaskBuilder::operator=(
   const DocumentMaskBuilder& other) {
   return *this = DocumentMaskBuilder{other};
-}
-
-bool DocumentMaskBuilder::Contains(doc_id_t doc) const noexcept {
-  return roaring::api::roaring_bitmap_contains(&_set, doc);
 }
 
 size_t DocumentMaskBuilder::ByteSize() const noexcept {
@@ -414,59 +408,77 @@ size_t DocumentMaskBuilder::ByteCapacity() const noexcept {
 bool DocumentMaskBuilder::Add(doc_id_t doc) {
   SDB_ASSERT(doc_limits::valid(doc));
   SDB_ASSERT(!doc_limits::eof(doc));
-  if (!roaring::api::roaring_bitmap_add_checked(&_set, doc)) {
-    return false;
-  }
-  ++_count;
-  return true;
+  return roaring::api::roaring_bitmap_add_checked(&_set, doc);
 }
 
 void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
   SDB_ASSERT(doc_limits::valid(first));
   SDB_ASSERT(first <= last);
-  if (first == last) {
-    return;
-  }
-  if (last - first == 1) {
-    Add(first);
-    return;
-  }
-  const auto present =
-    roaring::api::roaring_bitmap_range_cardinality(&_set, first, last);
   roaring::api::roaring_bitmap_add_range(&_set, first, last);
-  _count += (last - first) - present;
+}
+
+void DocumentMaskBuilder::AddSorted(std::span<const doc_id_t> docs) {
+  SDB_ASSERT(absl::c_is_sorted(docs));
+  roaring::api::roaring_bitmap_add_many(&_set, docs.size(), docs.data());
+}
+
+void DocumentMaskBuilder::AddShifted(const DocumentMask& mask,
+                                     doc_id_t offset) {
+  AddShifted(mask._set, offset);
+}
+
+void DocumentMaskBuilder::AddShifted(const DocumentMaskBuilder& other,
+                                     doc_id_t offset) {
+  AddShifted(other._set, offset);
+}
+
+void DocumentMaskBuilder::AddShifted(const roaring_bitmap_t& set,
+                                     doc_id_t offset) {
+  if (roaring::api::roaring_bitmap_is_empty(&set)) {
+    return;
+  }
+  if (offset == 0) {
+    roaring::api::roaring_bitmap_or_inplace(&_set, &set);
+    return;
+  }
+  std::unique_ptr<roaring_bitmap_t,
+                  decltype(&roaring::api::roaring_bitmap_free)>
+    shifted{roaring::api::roaring_bitmap_add_offset(&set, offset),
+            &roaring::api::roaring_bitmap_free};
+  if (!shifted) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to allocate a shifted document mask"));
+  }
+  roaring::api::roaring_bitmap_or_inplace(&_set, shifted.get());
 }
 
 void DocumentMaskBuilder::Merge(const DocumentMaskBuilder& other) {
-  if (other.Empty()) {
-    return;
-  }
   roaring::api::roaring_bitmap_or_inplace(&_set, &other._set);
-  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
 }
 
 void DocumentMaskBuilder::Merge(const DocumentMask& published) {
-  if (published.Empty()) {
-    return;
-  }
   roaring::api::roaring_bitmap_or_inplace(&_set, &published._set);
-  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+}
+
+void DocumentMaskBuilder::Subtract(const DocumentMask& mask) {
+  roaring::api::roaring_bitmap_andnot_inplace(&_set, &mask._set);
 }
 
 void DocumentMaskBuilder::Clear() noexcept {
   roaring::api::roaring_bitmap_clear(&_set);
-  _count = 0;
 }
 
 DocumentMask DocumentMaskBuilder::Finish(uint32_t bitset_from) && noexcept {
   roaring::api::roaring_bitmap_run_optimize(&_set);
   roaring::api::roaring_bitmap_shrink_to_fit(&_set);
   Densify(_set, bitset_from);
-  return DocumentMask{_set, std::exchange(_count, 0)};
+  const auto count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+  return DocumentMask{_set, count};
 }
 
 DocumentMask DocumentMaskBuilder::Take() && noexcept {
-  return DocumentMask{_set, std::exchange(_count, 0)};
+  const auto count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+  return DocumentMask{_set, count};
 }
 
 }  // namespace irs

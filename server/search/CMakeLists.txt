@@ -4,7 +4,6 @@ target_sources(
         hot_keys.cpp
         index_durability.cpp
         log_entry.cpp
-        row_position_wal.cpp
         store.cpp
         store_stats.cpp
         search_analyzer_impl.cpp

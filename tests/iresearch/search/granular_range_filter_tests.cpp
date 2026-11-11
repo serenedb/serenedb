@@ -1357,10 +1357,10 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
         tests::PreparedFilter prepared{query, reader};
         std::vector<int64_t> actual;
         for (size_t i = 0; i != reader.size(); ++i) {
-          const auto mask = reader[i].MaskedDocs();
+          const auto* mask = reader[i].docs_mask();
           auto docs = prepared.Execute(i);
           while (!irs::doc_limits::eof(docs->Next())) {
-            if (!mask.Contains(docs->Value())) {
+            if (!(mask && mask->Contains(docs->Value()))) {
               actual.push_back(pks[i][docs->Value()]);
             }
           }
@@ -1384,10 +1384,10 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       tests::PreparedFilter prepared{removal, snapshot};
       irs::DocRemovalBuilder builder;
       for (uint32_t i = 0; i != snapshot.size(); ++i) {
-        const auto mask = snapshot[i].MaskedDocs();
+        const auto* mask = snapshot[i].docs_mask();
         auto docs = prepared.Execute(i);
         while (!irs::doc_limits::eof(docs->Next())) {
-          if (!mask.Contains(docs->Value())) {
+          if (!(mask && mask->Contains(docs->Value()))) {
             builder.Add(i, docs->Value());
           }
         }

@@ -184,8 +184,10 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     }
     count = 0;
   };
-  docs.ForEachRun(nullptr, [&](irs::doc_id_t first, irs::doc_id_t last) {
-    for (auto doc = first; doc < last; ++doc) {
+  irs::DocumentMask::Cursor cursor{docs};
+  std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE> batch;
+  while (const auto read = cursor.Read(batch)) {
+    for (const auto doc : std::span{batch}.first(read)) {
       const uint64_t row = doc - irs::doc_limits::min();
       const auto start = row - row % STANDARD_VECTOR_SIZE;
       if (count != 0 && start != window) {
@@ -194,8 +196,7 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
       window = start;
       rows.set_index(count++, row - start);
     }
-    return true;
-  });
+  }
   flush();
 }
 
@@ -351,29 +352,37 @@ void TakeRemovals(std::vector<std::shared_ptr<const irs::DocRemoval>>& removals,
                 [](const auto& removal) { return removal->groups.empty(); });
 }
 
-irs::DocumentMaskBuilder TakeRowRemovals(
+std::shared_ptr<const irs::DocumentMask> TakeRowRemovals(
   std::vector<std::shared_ptr<const irs::DocRemoval>>& removals,
   uint64_t rows_id) {
   irs::DocumentMaskBuilder taken;
   TakeRemovals(
     removals, [&](uint64_t segment) { return segment == rows_id; },
     [&](const irs::DocumentMask& docs) { taken.Merge(docs); });
-  return taken;
+  if (taken.Empty()) {
+    return nullptr;
+  }
+  return std::make_shared<const irs::DocumentMask>(std::move(taken).Finish());
 }
 
 void ForEachLiveChunk(duckdb::ColumnDataCollection& rows,
-                      const irs::DocumentMaskBuilder& removed,
-                      const auto& visit) {
+                      const irs::DocumentMask* removed, const auto& visit) {
   duckdb::SelectionVector live{STANDARD_VECTOR_SIZE};
+  std::array<uint64_t, STANDARD_VECTOR_SIZE / 64 + 1> words;
   auto doc = irs::doc_limits::min();
   for (auto& chunk : rows.Chunks()) {
     const auto count = chunk.size();
     const auto first = doc;
     doc += static_cast<irs::doc_id_t>(count);
-    if (!removed.Empty()) {
+    if (removed) {
+      SDB_ASSERT(0 < count && count <= STANDARD_VECTOR_SIZE);
+      const auto first_word = first / 64;
+      removed->Words(first_word, std::span{words}.first(
+                                   (first + count - 1) / 64 - first_word + 1));
       duckdb::idx_t kept = 0;
       for (duckdb::idx_t i = 0; i < count; ++i) {
-        if (!removed.Contains(static_cast<irs::doc_id_t>(first + i))) {
+        const auto bit = first + i - uint64_t{first_word} * 64;
+        if (((words[bit / 64] >> (bit % 64)) & 1) == 0) {
           live.set_index(kept++, i);
         }
       }
@@ -411,24 +420,19 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
   auto& changes = w.changes;
   SDB_ASSERT(changes.HasBufferedRows());
   const auto rows_id = OwnRowsId(w.rows_generation);
-  auto removed = TakeRowRemovals(changes.removals, rows_id);
+  const auto mask = TakeRowRemovals(changes.removals, rows_id);
   auto trx = std::make_unique<irs::IndexWriter::Transaction>(
     store.GetTransaction(/*exclusive_segment=*/true));
   {
     const auto sink = connector::MakeSearchTableInsertSink(
       *trx, store, *changes.catalog, context);
     ForEachLiveChunk(
-      *changes.collection, removed, [&](duckdb::DataChunk& chunk) {
+      *changes.collection, mask.get(), [&](duckdb::DataChunk& chunk) {
         connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,
                                           store.GetId(), context);
       });
   }
   auto segments = store.OpenFlushed(trx->FlushAndFsync());
-  std::shared_ptr<const irs::DocumentMask> mask;
-  if (!removed.Empty()) {
-    mask =
-      std::make_shared<const irs::DocumentMask>(std::move(removed).Finish());
-  }
   irs::doc_id_t rank = 0;
   const auto first_map = w.own_maps.size();
   for (auto& segment : segments) {
@@ -907,8 +911,7 @@ KeyProbe::Segment OwnSegmentSource(
   const std::shared_ptr<const irs::SegmentReaderImpl>& reader,
   const LiveUnits& live) {
   const auto id = reader->Id();
-  return {
-    .unit = id, .sub = reader.get(), .masks = {.removed = live.Removed(id)}};
+  return {.unit = id, .sub = reader.get(), .removed = live.Removed(id)};
 }
 
 KeyProbe::Segment OwnSegmentSource(const OwnSegment& segment,
@@ -933,7 +936,7 @@ void AddOwnRows(KeyProbe& probe, const StoreWrites& w, const LiveUnits& live) {
     probe.Add(KeyProbe::Hot{.unit = rows_id,
                             .keys = &w.buffered_keys,
                             .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
-                            .masks = {.removed = live.Removed(rows_id)}});
+                            .removed = live.Removed(rows_id)});
   }
 }
 
@@ -1182,7 +1185,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
         KeyProbe::Hot{.unit = rows_id,
                       .keys = &w.buffered_keys,
                       .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
-                      .masks = {.removed = live.Removed(rows_id)}});
+                      .removed = live.Removed(rows_id)});
     }
     auto& keys = fresh[spec];
     absl::c_sort(keys);
@@ -1364,11 +1367,10 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       it->checked = 0;
       it->complete = true;
       const auto collect = [&](const irs::SubReader& reader,
-                               const irs::DocumentMaskBuilder* removed) {
+                               const irs::DocumentMask* removed) {
         if (removed) {
           ForEachRowKey(
-            context, w.store->GetId(), *spec, reader,
-            irs::DocumentMaskBuilder{*removed}.Finish(),
+            context, w.store->GetId(), *spec, reader, *removed,
             [&](std::string_view key) { it->keys.emplace_back(key); });
         }
       };
@@ -1443,7 +1445,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
         const auto sink = connector::MakeSearchTableInsertSink(
           piece.trx, *w.store, *changes.catalog, context);
         ForEachLiveChunk(
-          *changes.collection, removed, [&](duckdb::DataChunk& chunk) {
+          *changes.collection, removed.get(), [&](duckdb::DataChunk& chunk) {
             connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,
                                               w.store->GetId(), context);
             if (logged) {
@@ -1456,13 +1458,11 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
         w.piece = piece.trx.SealPiece(piece.id);
       }
       piece.trx.Abort();
-      const std::array<irs::DocMap, 1> sealed{irs::DocMap{
-        .source = rows_id,
-        .target = piece.id,
-        .mask = removed.Empty() ? nullptr
-                                : std::make_shared<const irs::DocumentMask>(
-                                    std::move(removed).Finish()),
-        .rank_end = docs}};
+      const std::array<irs::DocMap, 1> sealed{
+        irs::DocMap{.source = rows_id,
+                    .target = piece.id,
+                    .mask = std::move(removed),
+                    .rank_end = docs}};
       CarryUnitPatches(changes.patches, rows_id, sealed);
       changes.ClearBufferedRows();
     }

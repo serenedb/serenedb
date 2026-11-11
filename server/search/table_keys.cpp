@@ -26,6 +26,7 @@
 
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "catalog/base_catalog.h"
@@ -344,8 +345,8 @@ void KeyProbe::Add(const Segment& segment) {
   if (const auto* field = KeyField(*segment.sub, _field)) {
     _segments.push_back({.unit = segment.unit,
                          .field = field,
-                         .mask = segment.sub->MaskedDocs(),
-                         .masks = segment.masks});
+                         .masks = {.deleted = segment.sub->docs_mask(),
+                                   .removed = segment.removed}});
   }
 }
 
@@ -356,7 +357,7 @@ void KeyProbe::AddLive(const LiveUnits& live, const LiveUnits* since) {
     }
     Add(Segment{.unit = unit.unit->id,
                 .sub = unit.unit->reader.get(),
-                .masks = {.deleted = unit.deleted, .removed = unit.removed}});
+                .removed = unit.removed});
   }
 }
 
@@ -365,7 +366,7 @@ void KeyProbe::ForEach(std::string_view key,
   bool more = true;
   for (const auto& source : _segments) {
     source.field->ReadDocs(Bytes(key), [&](irs::doc_id_t doc) {
-      if (source.mask.Contains(doc) || source.masks.Contains(doc)) {
+      if (source.masks.Contains(doc)) {
         return true;
       }
       more = visit({.unit = source.unit, .doc = doc});
@@ -378,7 +379,7 @@ void KeyProbe::ForEach(std::string_view key,
   for (const auto& hot : _hots) {
     hot.keys->ForEach(_field, key, [&](irs::doc_id_t doc) {
       const auto row = doc - irs::doc_limits::min();
-      if (row >= hot.docs || hot.masks.Contains(doc)) {
+      if (row >= hot.docs || (hot.removed && hot.removed->Contains(doc))) {
         return true;
       }
       more = visit({.unit = hot.unit, .doc = doc});
@@ -404,8 +405,8 @@ void ForEachSegmentKey(
   absl::FunctionRef<bool(std::string_view key, size_t rows)> visit,
   KeyRange range) {
   struct Cursor {
-    const KeyProbe::Segment* segment = nullptr;
-    irs::DocumentMask::Iterator mask;
+    std::unique_ptr<const irs::DocumentMask> merged;
+    const irs::DocumentMask* gone = nullptr;
     irs::SeekTermIterator::ptr terms;
     irs::TermPostings::ptr postings;
   };
@@ -427,10 +428,19 @@ void ForEachSegmentKey(
         ? terms->next()
         : terms->seek_ge(Bytes(range.from)) != irs::SeekResult::End;
     if (positioned) {
+      const auto* deleted = segment.sub->docs_mask();
+      std::unique_ptr<const irs::DocumentMask> merged;
+      if (deleted && segment.removed) {
+        irs::DocumentMaskBuilder gone{*deleted};
+        gone.Merge(*segment.removed);
+        merged =
+          std::make_unique<const irs::DocumentMask>(std::move(gone).Finish());
+      }
+      const auto* gone =
+        merged ? merged.get() : (deleted ? deleted : segment.removed);
       heap.push_back(cursors.size());
-      cursors.push_back({.segment = &segment,
-                         .mask = segment.sub->MaskedDocs(),
-                         .terms = std::move(terms)});
+      cursors.push_back(
+        {.merged = std::move(merged), .gone = gone, .terms = std::move(terms)});
     }
   }
   const auto later = [&](size_t lhs, size_t rhs) {
@@ -454,16 +464,11 @@ void ForEachSegmentKey(
     size_t rows = 0;
     for (const auto i : at) {
       auto& cursor = cursors[i];
-      const auto& masks = cursor.segment->masks;
       cursor.postings = cursor.terms->ReusePostings(irs::IndexFeatures::None,
                                                     std::move(cursor.postings));
+      auto gone = irs::MakeGenericDocsMask(cursor.gone);
       while (const auto n = cursor.postings->NextDocs(docs, nullptr)) {
-        for (uint32_t d = 0; d != n; ++d) {
-          const auto doc = docs[d];
-          if (!cursor.mask.Contains(doc) && !masks.Contains(doc)) {
-            ++rows;
-          }
-        }
+        rows += n - gone.CountMasked(docs, n);
       }
     }
     if (rows != 0 && !visit(Chars(least), rows)) {

@@ -91,7 +91,7 @@ void VerifyUniqueKey(duckdb::ClientContext& context,
 // asking.
 struct RowMasks {
   const irs::DocumentMask* deleted = nullptr;
-  const irs::DocumentMaskBuilder* removed = nullptr;
+  const irs::DocumentMask* removed = nullptr;
 
   bool Contains(irs::doc_id_t doc) const noexcept {
     return (deleted && deleted->Contains(doc)) ||
@@ -110,14 +110,14 @@ class KeyProbe {
   struct Segment {
     uint64_t unit = 0;
     const irs::SubReader* sub = nullptr;
-    RowMasks masks;
+    const irs::DocumentMask* removed = nullptr;
   };
 
   struct Hot {
     uint64_t unit = 0;
     const HotKeys* keys = nullptr;
     irs::doc_id_t docs = 0;
-    RowMasks masks;
+    const irs::DocumentMask* removed = nullptr;
   };
 
   explicit KeyProbe(irs::field_id field) : _field{field} {}
@@ -137,7 +137,6 @@ class KeyProbe {
   struct Source {
     uint64_t unit = 0;
     const irs::TermReader* field = nullptr;
-    irs::DocumentMask::Iterator mask;
     RowMasks masks;
   };
 

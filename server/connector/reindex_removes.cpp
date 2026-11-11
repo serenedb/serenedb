@@ -248,11 +248,9 @@ class SegmentRemoves {
       }
     }
     Flush();
-    std::move(_removed).Finish().ForEachRun(
-      segment.docs_mask(), [&](irs::doc_id_t first, irs::doc_id_t last) {
-        _removal.AddRange(_index, first, last);
-        return true;
-      });
+    if (const auto* deleted = segment.docs_mask(); _docs && deleted) {
+      _docs->Subtract(*deleted);
+    }
   }
 
  private:
@@ -271,7 +269,10 @@ class SegmentRemoves {
 
   void Flush() {
     if (_range_begin != _range_end) {
-      _removed.AddRange(DocAt(_range_begin), DocAt(_range_end));
+      if (!_docs) {
+        _docs = &_removal.Group(_index);
+      }
+      _docs->AddRange(DocAt(_range_begin), DocAt(_range_end));
     }
     _range_begin = _range_end = 0;
   }
@@ -326,7 +327,7 @@ class SegmentRemoves {
   const Deletes& _deletes;
   uint32_t _index;
   irs::DocRemovalBuilder& _removal;
-  irs::DocumentMaskBuilder _removed;
+  irs::DocumentMaskBuilder* _docs = nullptr;
   const irs::ColumnReader* _rows = nullptr;
   std::vector<FileRun> _file_runs;
   uint64_t _range_begin = 0;

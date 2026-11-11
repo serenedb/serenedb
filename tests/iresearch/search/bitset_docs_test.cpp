@@ -889,11 +889,13 @@ TEST(docs_mask_test, clear_empties_a_reusable_mask) {
 
   ASSERT_TRUE(mask.Empty());
   ASSERT_EQ(0, mask.Count());
-  ASSERT_FALSE(mask.Contains(64));
 
   ASSERT_TRUE(mask.Add(7));
+  ASSERT_FALSE(mask.Add(7));
   ASSERT_EQ(1, mask.Count());
-  ASSERT_TRUE(mask.Contains(7));
+  const auto finished = std::move(mask).Finish();
+  ASSERT_FALSE(finished.Contains(64));
+  ASSERT_TRUE(finished.Contains(7));
 }
 
 TEST(docs_mask_test, finish_releases_an_all_zero_mask) {

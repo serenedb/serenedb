@@ -33,6 +33,7 @@
 #include <iresearch/formats/column/hot_column_reader.hpp>
 #include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/segment_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -212,10 +213,6 @@ void Follow(const TableState& state, uint64_t id, const irs::DocumentMask& docs,
   }
 }
 
-bool Intersects(const irs::DocumentMask& lhs, const irs::DocumentMask& rhs) {
-  return roaring::api::roaring_bitmap_intersect(&lhs.Bitmap(), &rhs.Bitmap());
-}
-
 bool PatchedAfter(const TableUnit& unit, const irs::DocumentMask& docs,
                   Tick snapshot) {
   for (const auto& [field, patch] : unit.patches) {
@@ -223,23 +220,34 @@ bool PatchedAfter(const TableUnit& unit, const irs::DocumentMask& docs,
       continue;
     }
     bool found = false;
-    const auto newer = [&](uint64_t row, const irs::ColumnPatch::Chunk& chunk,
-                           size_t i) {
-      found = found || (chunk.ticks[i] > snapshot &&
-                        docs.Contains(static_cast<irs::doc_id_t>(
-                          row + irs::doc_limits::min())));
-    };
     if (docs.Count() < patch->Count()) {
-      docs.ForEachRun(nullptr, [&](irs::doc_id_t first, irs::doc_id_t last) {
-        patch->ForEach(first - irs::doc_limits::min(),
-                       last - irs::doc_limits::min(), newer);
-        return !found;
-      });
+      const auto newer = [&](uint64_t, const irs::ColumnPatch::Chunk& chunk,
+                             size_t i) {
+        found = found || chunk.ticks[i] > snapshot;
+      };
+      irs::DocumentMask::Cursor cursor{docs};
+      std::array<irs::MaskRun, 64> runs;
+      while (const auto count = cursor.ReadRuns(runs)) {
+        for (const auto& run : std::span{runs}.first(count)) {
+          patch->ForEach(run.min - irs::doc_limits::min(),
+                         run.max - irs::doc_limits::min() + 1, newer);
+          if (found) {
+            return true;
+          }
+        }
+      }
     } else {
-      patch->ForEach(0, unit.docs, newer);
-    }
-    if (found) {
-      return true;
+      auto mask = irs::MakeGenericDocsMask(&docs);
+      patch->ForEach(
+        0, unit.docs,
+        [&](uint64_t row, const irs::ColumnPatch::Chunk& chunk, size_t i) {
+          found = found || (chunk.ticks[i] > snapshot &&
+                            mask.Test(static_cast<irs::doc_id_t>(
+                              row + irs::doc_limits::min())));
+        });
+      if (found) {
+        return true;
+      }
     }
   }
   return false;
@@ -248,7 +256,7 @@ bool PatchedAfter(const TableUnit& unit, const irs::DocumentMask& docs,
 bool Conflicting(const TableState& state, uint64_t id,
                  const irs::DocumentMask& docs, Tick snapshot) {
   if (const auto* unit = FindUnit(state, id)) {
-    return (unit->deleted && Intersects(docs, *unit->deleted)) ||
+    return (unit->deleted && docs.Intersects(*unit->deleted)) ||
            PatchedAfter(*unit, docs, snapshot);
   }
   const auto* moved = FindMoved(state, id);
@@ -259,7 +267,7 @@ bool Conflicting(const TableState& state, uint64_t id,
     return true;
   }
   return absl::c_any_of(moved->maps, [&](const irs::DocMap& map) {
-    if (map.mask && Intersects(docs, *map.mask)) {
+    if (map.mask && docs.Intersects(*map.mask)) {
       return true;
     }
     irs::DocumentMaskBuilder mapped;
@@ -270,13 +278,15 @@ bool Conflicting(const TableState& state, uint64_t id,
 
 irs::DocumentMask PatchedDocs(const UnitPatch& patch) {
   irs::DocumentMaskBuilder docs;
+  std::vector<irs::doc_id_t> rows;
   for (const auto& [field, column] : patch.fields) {
+    rows.clear();
     column->ForEach(0, std::numeric_limits<uint64_t>::max(),
                     [&](uint64_t row, const irs::ColumnPatch::Chunk&, size_t) {
-                      const auto doc = static_cast<irs::doc_id_t>(
-                        row + irs::doc_limits::min());
-                      docs.AddRange(doc, doc + 1);
+                      rows.push_back(static_cast<irs::doc_id_t>(
+                        row + irs::doc_limits::min()));
                     });
+    docs.AddSorted(rows);
   }
   return std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical);
 }
@@ -389,16 +399,11 @@ std::shared_ptr<const TableState> InitialState(
   return initial;
 }
 
-size_t AndCount(const irs::DocumentMask& lhs, const irs::DocumentMask& rhs) {
-  return roaring::api::roaring_bitmap_and_cardinality(&lhs.Bitmap(),
-                                                      &rhs.Bitmap());
-}
-
 bool DeletesAll(const irs::DocumentMask* deleted, const irs::DocumentMask& docs,
                 irs::doc_id_t rows) {
   auto count = docs.Count();
   if (deleted) {
-    count += deleted->Count() - AndCount(*deleted, docs);
+    count += deleted->Count() - deleted->AndCount(docs);
   }
   return count >= rows;
 }
@@ -468,15 +473,11 @@ void MemoryDeletes::Finish(TableDelta& delta) && {
   irs::DocumentMaskBuilder docs;
   for (const auto& piece : _pieces) {
     const auto offset = piece.first - base;
-    piece.docs->ForEachRun(
-      nullptr, [&](irs::doc_id_t first, irs::doc_id_t last) {
-        SDB_ENSURE(offset + last <= std::numeric_limits<irs::doc_id_t>::max(),
-                   "the in-memory rows of a table span more rows than a mask "
-                   "can number");
-        docs.AddRange(static_cast<irs::doc_id_t>(offset + first),
-                      static_cast<irs::doc_id_t>(offset + last));
-        return true;
-      });
+    SDB_ENSURE(
+      offset + piece.docs->Max() < std::numeric_limits<irs::doc_id_t>::max(),
+      "the in-memory rows of a table span more rows than a mask "
+      "can number");
+    docs.AddShifted(*piece.docs, static_cast<irs::doc_id_t>(offset));
   }
   delta.memory_base = base;
   delta.memory_deletes = std::make_shared<const irs::DocumentMask>(
@@ -565,10 +566,15 @@ LiveUnits::LiveUnits(
   std::shared_ptr<const TableState> state,
   std::span<const std::shared_ptr<const irs::DocRemoval>> removals)
   : _state{std::move(state)} {
+  Mapped removed;
   for (const auto& removal : removals) {
     for (const auto& group : removal->groups) {
-      Follow(*_state, group.segment, group.docs, _removed);
+      Follow(*_state, group.segment, group.docs, removed);
     }
+  }
+  _removed.reserve(removed.size());
+  for (auto& [id, docs] : removed) {
+    _removed.emplace(id, std::move(docs).Finish());
   }
   _units.reserve(_state->units.size());
   for (const auto& unit : _state->units) {

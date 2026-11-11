@@ -88,27 +88,30 @@ void TableReplay::Delete(uint64_t segment, const irs::DocumentMask& docs) {
 
 void TableReplay::DeleteMemory(uint64_t base, const irs::DocumentMask& docs) {
   _replayed = true;
-  docs.ForEachRun(nullptr, [&](irs::doc_id_t first, irs::doc_id_t last) {
-    const auto from = base + first - irs::doc_limits::min();
-    const auto to = base + last - irs::doc_limits::min();
-    auto it = absl::c_upper_bound(
-      _chunks, from,
-      [](uint64_t row, const Chunk& chunk) { return row < chunk.first; });
-    if (it != _chunks.begin()) {
-      --it;
-    }
-    for (; it != _chunks.end() && it->first < to; ++it) {
-      const auto begin = std::max(from, it->first);
-      const auto end = std::min(to, it->first + it->rows->size());
-      if (begin < end) {
-        it->deleted.AddRange(
-          static_cast<irs::doc_id_t>(begin - it->first +
-                                     irs::doc_limits::min()),
-          static_cast<irs::doc_id_t>(end - it->first + irs::doc_limits::min()));
+  irs::DocumentMask::Cursor cursor{docs};
+  std::array<irs::MaskRun, 64> runs;
+  while (const auto count = cursor.ReadRuns(runs)) {
+    for (const auto& run : std::span{runs}.first(count)) {
+      const auto from = base + run.min - irs::doc_limits::min();
+      const auto to = base + run.max + 1 - irs::doc_limits::min();
+      auto it = absl::c_upper_bound(
+        _chunks, from,
+        [](uint64_t row, const Chunk& chunk) { return row < chunk.first; });
+      if (it != _chunks.begin()) {
+        --it;
+      }
+      for (; it != _chunks.end() && it->first < to; ++it) {
+        const auto begin = std::max(from, it->first);
+        const auto end = std::min(to, it->first + it->rows->size());
+        if (begin < end) {
+          it->deleted.AddRange(static_cast<irs::doc_id_t>(
+                                 begin - it->first + irs::doc_limits::min()),
+                               static_cast<irs::doc_id_t>(
+                                 end - it->first + irs::doc_limits::min()));
+        }
       }
     }
-    return true;
-  });
+  }
 }
 
 void TableReplay::Update(uint64_t segment, const irs::FieldPatch& patch) {
@@ -194,14 +197,7 @@ std::vector<std::shared_ptr<TableUnit>> TableReplay::Units(
     irs::DocumentMaskBuilder deleted;
     irs::doc_id_t offset = 0;
     for (auto& chunk : chunks) {
-      if (!chunk.deleted.Empty()) {
-        std::move(chunk.deleted)
-          .Finish()
-          .ForEachRun(nullptr, [&](irs::doc_id_t first, irs::doc_id_t last) {
-            deleted.AddRange(offset + first, offset + last);
-            return true;
-          });
-      }
+      deleted.AddShifted(chunk.deleted, offset);
       offset += static_cast<irs::doc_id_t>(chunk.rows->size());
     }
     std::vector<irs::FieldPatch> patches;

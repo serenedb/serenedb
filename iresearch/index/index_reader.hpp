@@ -152,10 +152,6 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual uint64_t PatchedDocs() const noexcept { return 0; }
 
-  DocumentMask::Iterator MaskedDocs() const noexcept {
-    return DocumentMask::Iterator{docs_mask()};
-  }
-
   virtual lead::Node::ptr docs_iterator() const = 0;
 
   virtual std::span<const field_id> field_ids() const = 0;

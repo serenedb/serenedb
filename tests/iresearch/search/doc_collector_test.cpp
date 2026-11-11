@@ -411,8 +411,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_skips_deleted) {
 
   ASSERT_EQ(live, count);
   for (size_t i = 0; i != std::min(count, k); ++i) {
-    auto masked = reader[results[i].segment_idx].MaskedDocs();
-    ASSERT_FALSE(masked.Contains(results[i].doc))
+    const auto* masked = reader[results[i].segment_idx].docs_mask();
+    ASSERT_FALSE(masked && masked->Contains(results[i].doc))
       << "deleted doc " << results[i].doc << " reached the top-k";
   }
 }

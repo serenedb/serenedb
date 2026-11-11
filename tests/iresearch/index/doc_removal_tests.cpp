@@ -107,12 +107,9 @@ std::shared_ptr<const irs::DocRemoval> Build(std::span<const Row> rows) {
 std::vector<irs::doc_id_t> DocsOf(const irs::DocumentMask* docs) {
   std::vector<irs::doc_id_t> out;
   if (docs) {
-    docs->ForEachRun(nullptr, [&](irs::doc_id_t first, irs::doc_id_t last) {
-      for (auto doc = first; doc < last; ++doc) {
-        out.emplace_back(doc);
-      }
-      return true;
-    });
+    out.resize(docs->Count());
+    irs::DocumentMask::Cursor cursor{*docs};
+    EXPECT_EQ(out.size(), cursor.Read(out));
   }
   return out;
 }
@@ -362,12 +359,12 @@ TEST(MapDocsTest, AWindowTakesOnlyItsRanks) {
   EXPECT_EQ(irs::doc_limits::invalid(), Mapped(map, 8));
 }
 
-TEST(MapDocsTest, TellsWhetherItAddedADoc) {
+TEST(MapDocsTest, TellsWhetherADocMapped) {
   const auto map = Window(0, 10, 31);
   irs::DocumentMaskBuilder out;
   EXPECT_FALSE(irs::MapDocs(map, *MaskOf({11}), out));
   EXPECT_TRUE(irs::MapDocs(map, *MaskOf({1, 11}), out));
-  EXPECT_FALSE(irs::MapDocs(map, *MaskOf({1}), out));
+  EXPECT_TRUE(irs::MapDocs(map, *MaskOf({1}), out));
   EXPECT_EQ(1, out.Count());
 }
 
@@ -440,5 +437,48 @@ TEST(MapDocsTest, RunsMapLikeOneAtATime) {
       doc += run + gen() % 400;
     }
     ASSERT_EQ(expected, MappedDocs(map, std::move(docs).Finish())) << round;
+  }
+}
+
+TEST(MapRowsTest, SortedRowsMapLikeOneAtATime) {
+  std::mt19937 gen{37};
+  for (int round = 0; round < 30; ++round) {
+    std::vector<irs::doc_id_t> masked;
+    irs::DocumentMaskBuilder mask;
+    for (irs::doc_id_t doc = 1 + gen() % 50; round % 4 != 0 && doc < 300000;) {
+      const auto run = 1 + gen() % (round % 2 == 0 ? 2 : 900);
+      for (auto masked_doc = doc; masked_doc < doc + run; ++masked_doc) {
+        mask.Add(masked_doc);
+        masked.push_back(masked_doc);
+      }
+      doc += run + 1 + gen() % 2000;
+    }
+    const irs::doc_id_t begin = gen() % 40000;
+    const irs::DocMap map{
+      .mask = masked.empty() ? nullptr
+                             : std::make_shared<const irs::DocumentMask>(
+                                 std::move(mask).Finish()),
+      .rank_begin = begin,
+      .rank_end = static_cast<irs::doc_id_t>(begin + gen() % 300000),
+      .base = static_cast<irs::doc_id_t>(1 + gen() % 100000)};
+    std::vector<uint64_t> rows;
+    std::vector<irs::MappedRow> expected;
+    for (uint64_t row = gen() % 9; row < 400000; row += 1 + gen() % 50) {
+      if (const auto mapped = MappedAlone(
+            masked, map,
+            static_cast<irs::doc_id_t>(row + irs::doc_limits::min()));
+          irs::doc_limits::valid(mapped)) {
+        expected.push_back(
+          {.index = rows.size(), .row = mapped - irs::doc_limits::min()});
+      }
+      rows.push_back(row);
+    }
+    std::vector<irs::MappedRow> actual;
+    irs::MapRows(map, rows, actual);
+    ASSERT_EQ(expected.size(), actual.size()) << round;
+    for (size_t i = 0; i != expected.size(); ++i) {
+      ASSERT_EQ(expected[i].index, actual[i].index) << round << " " << i;
+      ASSERT_EQ(expected[i].row, actual[i].row) << round << " " << i;
+    }
   }
 }

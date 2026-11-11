@@ -546,14 +546,14 @@ uint64_t ResolveRemovals(
     if (!target.removed) {
       continue;
     }
-    const auto masked = target.reader->MaskedDocs();
+    const auto* masked = target.reader->docs_mask();
     settled.clear();
-    RemoveKeys(unsettled, key_column, *target.reader,
-               [&](int64_t key, doc_id_t doc) {
-                 if (!masked.Contains(doc) && target.removed->Add(doc)) {
-                   settled.emplace_back(key);
-                 }
-               });
+    RemoveKeys(
+      unsettled, key_column, *target.reader, [&](int64_t key, doc_id_t doc) {
+        if (!(masked && masked->Contains(doc)) && target.removed->Add(doc)) {
+          settled.emplace_back(key);
+        }
+      });
     SortUnique(settled);
     auto next = settled.begin();
     std::erase_if(unsettled, [&](int64_t key) {

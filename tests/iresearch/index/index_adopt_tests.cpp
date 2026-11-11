@@ -154,11 +154,11 @@ class IndexAdoptTest : public TestBase {
       if (!field) {
         continue;
       }
-      const auto masked = segment.MaskedDocs();
+      const auto* masked = segment.docs_mask();
       for (auto terms = field->iterator(); terms->next();) {
         auto& count = counts[irs::ViewCast<char>(terms->value())];
         field->ReadDocs(terms->value(), [&](irs::doc_id_t doc) {
-          count += !masked.Contains(doc);
+          count += !(masked && masked->Contains(doc));
           return true;
         });
       }
@@ -972,11 +972,12 @@ TEST_F(IndexAdoptTest, DocRemovalMasksOnlyTheListedDocs) {
   const auto snapshot = _writer->GetSnapshot();
   ASSERT_EQ(1, snapshot.size());
   EXPECT_EQ(2, snapshot.live_docs_count());
-  auto mask = snapshot[0].MaskedDocs();
-  EXPECT_FALSE(mask.Contains(1));
-  EXPECT_TRUE(mask.Contains(2));
-  EXPECT_FALSE(mask.Contains(3));
-  EXPECT_TRUE(mask.Contains(4));
+  const auto* mask = snapshot[0].docs_mask();
+  ASSERT_NE(nullptr, mask);
+  EXPECT_FALSE(mask->Contains(1));
+  EXPECT_TRUE(mask->Contains(2));
+  EXPECT_FALSE(mask->Contains(3));
+  EXPECT_TRUE(mask->Contains(4));
 }
 
 TEST_F(IndexAdoptTest, DocRemovalOfMaskedDocsChangesNothing) {

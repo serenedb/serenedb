@@ -40,6 +40,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -225,7 +226,7 @@ class LiveUnits {
     const TableUnit* unit = nullptr;
     irs::doc_id_t visible = 0;
     const irs::DocumentMask* deleted = nullptr;
-    const irs::DocumentMaskBuilder* removed = nullptr;
+    const irs::DocumentMask* removed = nullptr;
   };
 
   LiveUnits(std::shared_ptr<const TableState> state,
@@ -237,14 +238,14 @@ class LiveUnits {
   const std::vector<Unit>& Units() const noexcept { return _units; }
   const Unit* Find(uint64_t id) const noexcept;
   // The rows the removals take from `id`, a committed unit or not.
-  const irs::DocumentMaskBuilder* Removed(uint64_t id) const noexcept {
+  const irs::DocumentMask* Removed(uint64_t id) const noexcept {
     const auto it = _removed.find(id);
     return it == _removed.end() ? nullptr : &it->second;
   }
 
  private:
   std::shared_ptr<const TableState> _state;
-  absl::flat_hash_map<uint64_t, irs::DocumentMaskBuilder> _removed;
+  irs::containers::NodeHashMap<uint64_t, irs::DocumentMask> _removed;
   std::vector<Unit> _units;
 };
 

@@ -59,7 +59,6 @@
 #include "connector/row_position.h"
 #include "connector/term_dict.h"
 #include "gtest/gtest.h"
-#include "search/row_position_wal.h"
 #include "search/store.h"
 
 namespace {
@@ -68,7 +67,6 @@ using namespace sdb;
 using namespace sdb::connector;
 using test::EngineDb;
 using test::IdOf;
-using test::OneRowSegments;
 
 irs::IndexWriterOptions WriterOptions() {
   irs::IndexWriterOptions options;
@@ -101,43 +99,6 @@ std::shared_ptr<const irs::DocRemoval> MakeRemoval(
     builder.Add(RowPositionIndex(position), RowPositionDoc(position));
   }
   return std::move(builder).Finish(snapshot);
-}
-
-irs::DocRemoval AsLogged(const irs::DocRemoval& removal) {
-  irs::DocRemoval logged;
-  for (const auto& group : removal.groups) {
-    irs::DocumentMaskBuilder docs;
-    docs.Merge(group.docs);
-    logged.groups.push_back(
-      {.segment = group.segment, .docs = std::move(docs).Finish()});
-  }
-  return logged;
-}
-
-using MapsBySource =
-  irs::containers::FlatHashMap<uint64_t, std::vector<irs::DocMap>>;
-
-irs::DocRemoval Rows(
-  std::initializer_list<std::pair<uint64_t, irs::doc_id_t>> rows) {
-  std::map<uint64_t, irs::DocumentMaskBuilder> groups;
-  for (const auto& [segment, doc] : rows) {
-    groups[segment].Add(doc);
-  }
-  irs::DocRemoval removal;
-  for (auto& [segment, docs] : groups) {
-    removal.groups.push_back(
-      {.segment = segment, .docs = std::move(docs).Finish()});
-  }
-  return removal;
-}
-
-MapsBySource Logged(const irs::IndexWriter& writer,
-                    std::span<const irs::DocRemoval* const> removals) {
-  MapsBySource doc_maps;
-  writer.VisitDocMaps(removals, [&](const std::vector<irs::DocMap>& maps) {
-    doc_maps.insert_or_assign(maps.front().source, maps);
-  });
-  return doc_maps;
 }
 
 const irs::CompactionPolicy& FullMerge() {
@@ -208,11 +169,11 @@ class SearchRowRemovalTest : public ::testing::Test {
     for (uint32_t index = 0; index != reader.size(); ++index) {
       const auto& segment = reader[index];
       const auto rowids = ReadRowids(segment);
-      const auto mask = segment.MaskedDocs();
+      const auto* mask = segment.docs_mask();
       for (size_t row = 0; row < rowids.size(); ++row) {
         const auto doc =
           static_cast<irs::doc_id_t>(row) + irs::doc_limits::min();
-        if (!mask.Contains(doc)) {
+        if (!(mask && mask->Contains(doc))) {
           out.emplace_back(rowids[row], MakeRowPosition(index, doc));
         }
       }
@@ -280,17 +241,6 @@ class SearchRowRemovalTest : public ::testing::Test {
   void Remove(std::span<const uint64_t> positions,
               std::span<const int64_t> victims) {
     Remove(_writer->GetSnapshot(), positions, victims);
-  }
-
-  void RemoveReplayed(const irs::DirectoryReader& snapshot,
-                      std::span<const uint64_t> positions,
-                      std::span<const int64_t> victims) {
-    const auto removal = MakeRemoval(positions, snapshot);
-    const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
-    const auto maps = Logged(*_writer, removals);
-    Commit(
-      search::ReplayRemoval(AsLogged(*removal), _writer->GetSnapshot(), maps),
-      victims);
   }
 
   void Remove(std::span<const int64_t> victims) {
@@ -446,131 +396,6 @@ TEST_F(SearchRowRemovalTest, StalePositionsAreRemappedThroughTwoMerges) {
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   Remove(snapshot, positions, victims);
   ExpectModel();
-}
-
-TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
-  InsertRange(0, 3000);
-  InsertRange(3000, 3000);
-  const std::vector<int64_t> early{10, 3011};
-  Remove(early);
-  std::vector<int64_t> victims;
-  for (int64_t r = 1; r < 6000; r += 17) {
-    victims.push_back(r);
-  }
-  irs::DocRemoval logged;
-  MapsBySource maps;
-  {
-    const auto snapshot = _writer->GetSnapshot();
-    const auto positions = PositionsOf(snapshot, victims);
-    ASSERT_TRUE(_writer->Compact(FullMerge()));
-    _writer->RefreshCommit();
-    const auto removal = MakeRemoval(positions, snapshot);
-    const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
-    maps = Logged(*_writer, removals);
-    logged = AsLogged(*removal);
-  }
-  ASSERT_FALSE(maps.empty());
-  Reopen();
-  ASSERT_EQ(1, _writer->GetSnapshot().size());
-  Commit(search::ReplayRemoval(AsLogged(logged), _writer->GetSnapshot(), {}),
-         {});
-  ExpectModel();
-  Commit(search::ReplayRemoval(std::move(logged), _writer->GetSnapshot(), maps),
-         victims);
-  ExpectModel();
-}
-
-constexpr uint64_t kGone = 1000000;
-constexpr uint64_t kAlsoGone = 1000001;
-
-TEST(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
-  const auto live = IdOf(OneRowSegments()[2]);
-  const auto removal =
-    search::ReplayRemoval(Rows({{live, 1}}), OneRowSegments(), {});
-  ASSERT_EQ(1, removal->groups.size());
-  EXPECT_EQ(live, removal->groups[0].segment);
-  EXPECT_TRUE(removal->groups[0].docs.Contains(1));
-  EXPECT_EQ(irs::utils::downCast<irs::SegmentReader>(OneRowSegments()[2])
-              .GetImpl()
-              ->DocMaps(),
-            removal->groups[0].maps);
-}
-
-TEST(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
-  const auto live = IdOf(OneRowSegments()[3]);
-  MapsBySource maps;
-  maps.emplace(
-    kGone,
-    std::vector<irs::DocMap>{
-      {.source = kGone, .target = kAlsoGone, .rank_end = 10, .base = 5}});
-  maps.emplace(
-    kAlsoGone,
-    std::vector<irs::DocMap>{
-      {.source = kAlsoGone, .target = live, .rank_end = 20, .base = 1}});
-  const auto removal =
-    search::ReplayRemoval(Rows({{kGone, 2}}), OneRowSegments(), maps);
-  ASSERT_EQ(1, removal->groups.size());
-  EXPECT_EQ(live, removal->groups[0].segment);
-  EXPECT_EQ(1, removal->groups[0].docs.Count());
-  EXPECT_TRUE(removal->groups[0].docs.Contains(6));
-}
-
-TEST(ReplayRemovalTest, AGoneSegmentWithoutMapsIsDropped) {
-  EXPECT_TRUE(search::ReplayRemoval(Rows({{kGone, 1}}), OneRowSegments(), {})
-                ->groups.empty());
-}
-
-TEST(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
-  const auto live = IdOf(OneRowSegments()[2]);
-  MapsBySource maps;
-  maps.emplace(
-    live,
-    std::vector<irs::DocMap>{
-      {.source = live, .target = IdOf(OneRowSegments()[3]), .rank_end = 1}});
-  const auto removal =
-    search::ReplayRemoval(Rows({{live, 1}}), OneRowSegments(), maps);
-  ASSERT_EQ(1, removal->groups.size());
-  EXPECT_EQ(live, removal->groups[0].segment);
-}
-
-TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
-  const auto first = IdOf(OneRowSegments()[1]);
-  const auto second = IdOf(OneRowSegments()[4]);
-  MapsBySource maps;
-  maps.emplace(
-    kGone,
-    std::vector<irs::DocMap>{
-      {.source = kGone, .target = first, .rank_end = 5},
-      {.source = kGone, .target = second, .rank_begin = 5, .rank_end = 10}});
-  const auto removal = search::ReplayRemoval(
-    Rows({{kGone, 1}, {kGone, 2}, {kGone, 6}, {kGone, 10}}), OneRowSegments(),
-    maps);
-  ASSERT_EQ(2, removal->groups.size());
-  EXPECT_EQ(first, removal->groups[0].segment);
-  EXPECT_EQ(2, removal->groups[0].docs.Count());
-  EXPECT_TRUE(removal->groups[0].docs.Contains(1));
-  EXPECT_TRUE(removal->groups[0].docs.Contains(2));
-  EXPECT_EQ(second, removal->groups[1].segment);
-  EXPECT_EQ(2, removal->groups[1].docs.Count());
-  EXPECT_TRUE(removal->groups[1].docs.Contains(1));
-  EXPECT_TRUE(removal->groups[1].docs.Contains(5));
-}
-
-TEST(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
-  const auto first = IdOf(OneRowSegments()[1]);
-  const auto second = IdOf(OneRowSegments()[4]);
-  MapsBySource maps;
-  maps.emplace(
-    kGone,
-    std::vector<irs::DocMap>{
-      {.source = kGone, .target = first, .rank_end = 5},
-      {.source = kGone, .target = second, .rank_begin = 5, .rank_end = 10}});
-  const auto removal =
-    search::ReplayRemoval(Rows({{kGone, 7}}), OneRowSegments(), maps);
-  ASSERT_EQ(1, removal->groups.size());
-  EXPECT_EQ(second, removal->groups[0].segment);
-  EXPECT_EQ(1, removal->groups[0].docs.Count());
-  EXPECT_TRUE(removal->groups[0].docs.Contains(2));
 }
 
 TEST_F(SearchRowRemovalTest, CompactionAfterRemovalKeepsRowsRemoved) {
@@ -964,11 +789,7 @@ TEST_F(SearchRowRemovalTest, RandomizedAgainstAModel) {
     if (rng() % 4 == 0) {
       _writer->RefreshCommit();
     }
-    if (round % 2 == 0) {
-      Remove(snapshot, positions, victims);
-    } else {
-      RemoveReplayed(snapshot, positions, victims);
-    }
+    Remove(snapshot, positions, victims);
     ExpectModel();
   }
   _writer->RefreshCommit();

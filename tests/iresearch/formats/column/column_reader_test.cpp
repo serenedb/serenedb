@@ -757,6 +757,118 @@ TEST_F(ColumnReaderTest, RepeatedMapGathersMatchValues) {
   EXPECT_GT(stats.crossing, 0u) << "of " << stats.windows << " windows";
 }
 
+TEST_F(ColumnReaderTest, FrontCodedRowsGatherForEverySmallSelectionOfAGroup) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 4 * STANDARD_VECTOR_SIZE;
+  constexpr uint32_t kGroup = 16;
+  constexpr uint32_t kShared[kGroup] = {0,  12, 12, 5, 9, 9,  9, 2,
+                                        30, 31, 32, 1, 0, 20, 3, 20};
+  constexpr std::string_view kBase =
+    "the-quick-brown-fox-jumps-over-the-lazy-dog";
+  const ValueOf value_of = [&](uint64_t g) {
+    return duckdb::Value{
+      absl::StrCat(kBase.substr(0, kShared[g % kGroup]), "#", g * 7919)};
+  };
+  duckdb::Connection con{Db()};
+  for (const std::string codec : {"fsst", "fsst12"}) {
+    SCOPED_TRACE(codec);
+    auto set = con.Query("SET force_compression = '" + codec + "'");
+    ASSERT_FALSE(set->HasError()) << set->GetError();
+    irs::MemoryDirectory dir{};
+    WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, 4096,
+                value_of);
+    irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kId);
+    ASSERT_NE(col, nullptr);
+    for (uint32_t rows = 1; rows < (1u << kGroup); ++rows) {
+      if (std::popcount(rows) > 3 && rows % 97 != 0) {
+        continue;
+      }
+      SCOPED_TRACE(testing::Message() << "rows " << rows);
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{col->Type(), STANDARD_VECTOR_SIZE};
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      duckdb::idx_t hits = 0;
+      for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
+        if ((rows >> (i % kGroup) & 1) != 0) {
+          sel.set_index(hits++, i);
+        }
+      }
+      const uint64_t anchor = STANDARD_VECTOR_SIZE + rows % kGroup;
+      col->GatherDense(state, anchor, sel, hits, STANDARD_VECTOR_SIZE, out);
+      for (duckdb::idx_t i = 0; i < hits; ++i) {
+        const auto row = anchor + sel.get_index(i);
+        ASSERT_TRUE(
+          duckdb::Value::NotDistinctFrom(out.GetValue(i), value_of(row)))
+          << "row " << row << " got " << out.GetValue(i).ToString();
+      }
+      duckdb::Vector scattered{col->Type(), STANDARD_VECTOR_SIZE};
+      const uint64_t next = anchor + STANDARD_VECTOR_SIZE;
+      col->GatherScatter(state, next, sel, hits, scattered, 0);
+      for (duckdb::idx_t i = 0; i < hits; ++i) {
+        const auto row = next + sel.get_index(i);
+        ASSERT_TRUE(
+          duckdb::Value::NotDistinctFrom(scattered.GetValue(i), value_of(row)))
+          << "row by row: row " << row << " got "
+          << scattered.GetValue(i).ToString();
+      }
+    }
+  }
+  con.Query("SET force_compression = 'auto'");
+}
+
+TEST_F(ColumnReaderTest, FrontCodedRunsOfEveryLengthGatherRowByRow) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 6 * STANDARD_VECTOR_SIZE;
+  constexpr std::string_view kBase =
+    "the-quick-brown-fox-jumps-over-the-lazy-dog";
+  const ValueOf value_of = [&](uint64_t g) {
+    return duckdb::Value{
+      absl::StrCat(kBase.substr(0, (g * 11) % 40), "#", g * 7919)};
+  };
+  std::vector<uint64_t> selected;
+  for (uint64_t row = 3, k = 0; row < kRows; ++k) {
+    const uint64_t run = 1 + (k * 7) % 70;
+    for (uint64_t i = 0; i < run && row + i < kRows; ++i) {
+      selected.push_back(row + i);
+    }
+    row += run + 1 + (k * 3) % 5;
+  }
+  duckdb::Connection con{Db()};
+  for (const std::string codec : {"fsst", "fsst12", "fsst_plus", "onpair"}) {
+    SCOPED_TRACE(codec);
+    auto set = con.Query("SET force_compression = '" + codec + "'");
+    ASSERT_FALSE(set->HasError()) << set->GetError();
+    irs::MemoryDirectory dir{};
+    WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, 4096,
+                value_of);
+    irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kId);
+    ASSERT_NE(col, nullptr);
+    auto state = col->InitScan(r.Ctx());
+    size_t at = 0;
+    for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      duckdb::idx_t hits = 0;
+      for (;
+           at < selected.size() && selected[at] < anchor + STANDARD_VECTOR_SIZE;
+           ++at) {
+        sel.set_index(hits++, selected[at] - anchor);
+      }
+      ASSERT_GT(hits, 64u);
+      duckdb::Vector out{col->Type(), STANDARD_VECTOR_SIZE};
+      col->GatherScatter(state, anchor, sel, hits, out, 0);
+      for (duckdb::idx_t i = 0; i < hits; ++i) {
+        const auto row = anchor + sel.get_index(i);
+        ASSERT_TRUE(
+          duckdb::Value::NotDistinctFrom(out.GetValue(i), value_of(row)))
+          << "row " << row << " got " << out.GetValue(i).ToString();
+      }
+    }
+  }
+  con.Query("SET force_compression = 'auto'");
+}
+
 TEST_F(ColumnReaderTest, GatherFilterReleasesPassedBlocks) {
   constexpr irs::field_id kId = 1;
   constexpr uint64_t kRows = 60000;

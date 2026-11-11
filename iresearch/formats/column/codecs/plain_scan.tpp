@@ -82,8 +82,16 @@ struct PlainScan final : SegmentScanState {
 
   void ScanFlat(duckdb::Vector& result, idx_t result_offset, idx_t start,
                 idx_t count) {
-    WriteEntries(result, result_offset, count,
-                 [&](idx_t i) { return start + i; });
+    const auto entry_at = [&](idx_t i) { return start + i; };
+    if constexpr (Sorted(Leaf::kCodec)) {
+      if (Leaf::Scan::kEntryGroup > 1 && count <= kSparseEntries) {
+        entries.EnsureGroups(count, entry_at, static_cast<uint32_t>(start),
+                             static_cast<uint32_t>(start + count));
+        WriteRefs(result, result_offset, count, entry_at);
+        return;
+      }
+    }
+    WriteEntries(result, result_offset, count, entry_at);
   }
 
   void ScanVector(duckdb::Vector& result, idx_t start, idx_t count) {

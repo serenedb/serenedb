@@ -182,7 +182,7 @@ struct EntryFrames {
     if (Complete()) {
       return;
     }
-    uint32_t f = kNoFrame;
+    auto f = group_frame;
     for (idx_t i = 0; i < count;) {
       const auto e = static_cast<uint32_t>(entry_at(i));
       if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
@@ -208,14 +208,37 @@ struct EntryFrames {
         SDB_ASSERT(lo < hi);
         const uint64_t range =
           (hi - 1 - first) / kUnit - (lo - first) / kUnit + 1;
-        const uint64_t group_bytes =
-          uint64_t{kUnit} * frames[f].raw_len / (end - first);
+        const uint64_t entry_bytes = frames[f].raw_len / (end - first);
+        const uint64_t group_bytes = kUnit * entry_bytes;
         const uint64_t total = (end - first + kUnit - 1) / kUnit;
-        if ((groups * kUnit <= kSparseEntries && range < total) ||
-            groups * (group_bytes + kSparseGroupCost) * 4 <=
-              range * group_bytes * 3) {
-          for (auto k = i; k < j; ++k) {
-            leaf->EnsureEntry(*this, static_cast<uint32_t>(entry_at(k)), f);
+        bool sparse = groups * kUnit <= kSparseEntries && range < total;
+        if constexpr (kUnit > 1) {
+          sparse = sparse || (j - i) * entry_bytes +
+                                 groups * (kChainGroupRows * entry_bytes +
+                                           kChainGroupCost) <=
+                               range * group_bytes;
+        } else {
+          sparse = sparse || groups * (group_bytes + kSparseGroupCost) * 4 <=
+                               range * group_bytes * 3;
+        }
+        if (sparse) {
+          if constexpr (kUnit > 1) {
+            const auto group_of = [&](idx_t k) {
+              return (static_cast<uint32_t>(entry_at(k)) - first) / kUnit;
+            };
+            for (auto k = i; k < j;) {
+              const auto group = group_of(k);
+              uint32_t rows = 0;
+              for (; k < j && group_of(k) == group; ++k) {
+                rows |= uint32_t{1}
+                        << (static_cast<uint32_t>(entry_at(k)) - first) % kUnit;
+              }
+              leaf->EnsureRows(*this, f, group, rows);
+            }
+          } else {
+            for (auto k = i; k < j; ++k) {
+              leaf->EnsureEntry(*this, static_cast<uint32_t>(entry_at(k)), f);
+            }
           }
         } else {
           DecodeFrame(f);
@@ -223,6 +246,7 @@ struct EntryFrames {
       }
       i = j;
     }
+    group_frame = f;
   }
 
   const char* Data() const noexcept {
@@ -255,6 +279,7 @@ struct EntryFrames {
   std::vector<uint64_t> frame_off;
   std::vector<uint8_t> decoded;
   size_t decoded_count = 0;
+  uint32_t group_frame = kNoFrame;
   std::optional<typename Leaf::Scan> leaf;
 };
 

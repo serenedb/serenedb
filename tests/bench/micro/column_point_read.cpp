@@ -59,6 +59,7 @@ enum class Codec {
   Fsst,
   DictLz4,
   DictZstd,
+  AutoText,
   kCount,
 };
 
@@ -89,6 +90,7 @@ duckdb::LogicalType TypeOf(Codec c) {
     case Codec::Fsst:
     case Codec::DictLz4:
     case Codec::DictZstd:
+    case Codec::AutoText:
       return duckdb::LogicalType::VARCHAR;
     default:
       return duckdb::LogicalType::BIGINT;
@@ -123,6 +125,8 @@ duckdb::CompressionType CompressionOf(Codec c) {
       return duckdb::CompressionType::COMPRESSION_DICT_LZ4;
     case Codec::DictZstd:
       return duckdb::CompressionType::COMPRESSION_DICT_ZSTD;
+    case Codec::AutoText:
+      return duckdb::CompressionType::COMPRESSION_AUTO;
     case Codec::Uncompressed:
     case Codec::kCount:
       return duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
@@ -179,7 +183,8 @@ struct Generator {
       case Codec::Zxc:
       case Codec::Fsst:
       case Codec::DictLz4:
-      case Codec::DictZstd: {
+      case Codec::DictZstd:
+      case Codec::AutoText: {
         auto* d = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec);
         for (uint64_t k = 0; k < take; ++k) {
           const auto g = base + k;
@@ -420,6 +425,7 @@ void DenseWarm(benchmark::State& state, Codec codec) {
   BENCHMARK_CAPTURE(fn, fsst, Codec::Fsst);                              \
   BENCHMARK_CAPTURE(fn, dict_lz4, Codec::DictLz4);                       \
   BENCHMARK_CAPTURE(fn, dict_zstd, Codec::DictZstd);                     \
+  BENCHMARK_CAPTURE(fn, auto_text, Codec::AutoText);                     \
   BENCHMARK_CAPTURE(fn, uncompressed, Codec::Uncompressed);              \
   BENCHMARK_CAPTURE(fn, nulls_1pct, Codec::NullsSparse);                 \
   BENCHMARK_CAPTURE(fn, nulls_30pct, Codec::NullsDense)

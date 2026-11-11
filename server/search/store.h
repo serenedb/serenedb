@@ -321,7 +321,7 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   TableReplay* Replay();
   void ScheduleRecovery(duckdb::ClientContext& context,
-                        duckdb::TaskExecutor& executor);
+                        duckdb::TaskExecutor& executor, bool orphans);
   bool FinishReplay();
 
   std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
@@ -370,6 +370,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::IndexReaderOptions ReaderOptions() const;
   void OpenWriter();
   void EnsureOpen();
+  bool OwnsFiles() const noexcept { return _on_disk && !_read_only; }
+  bool CloseFiles();
   void ClaimColumnOids(const irs::DirectoryReader& reader) const;
   void SyncSegments() const;
   bool OwnerDropped() const noexcept {

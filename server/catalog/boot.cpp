@@ -81,13 +81,15 @@ bool HoldsEntries(const std::filesystem::path& directory) {
   return !empty;
 }
 
-void RemoveUnowned(const std::filesystem::path& directory,
+bool RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
+  bool removed = true;
   for (const auto& [oid, path] : OidDirectories(directory)) {
     if (!owned.contains(oid)) {
-      RemoveDirectory(path);
+      removed = RemoveDirectory(path) && removed;
     }
   }
+  return removed;
 }
 
 void OpenLive(search::Store& storage, const duckdb::CatalogEntry& entry) {
@@ -194,6 +196,7 @@ void InitCatalog(bool default_database) {
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
   if (!layout.InMemory()) {
+    BeginStorageWork();
     if (std::filesystem::create_directories(layout.EngineDir())) {
       utils::file_utils::SyncDirectory(layout.EngineDir().parent_path());
     }
@@ -212,6 +215,7 @@ void InitCatalog(bool default_database) {
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;
   auto& transactions = Transactions::Get();
+  bool clean = false;
   if (!layout.InMemory()) {
     auto log = std::make_unique<Log>(
       duckdb::FileSystem::GetFileSystem(instance), layout.LogDir());
@@ -222,10 +226,13 @@ void InitCatalog(bool default_database) {
     log->Replay(
       [&](std::span<uint8_t> payload) {
         context.RunFunctionInTransaction(
-          [&] { ReplayRecord(context, target, payload); });
+          [&] { clean = ReplayRecord(context, target, payload); });
       },
       &CatalogPart);
     transactions.SetReplaying(false);
+    if (clean) {
+      log->Append(StartupRecord());
+    }
     transactions.Open(std::move(log));
   }
   context.RunFunctionInTransaction(
@@ -240,8 +247,10 @@ void InitCatalog(bool default_database) {
   for (const auto& db : attached) {
     OpenStorages(db->GetCatalog().Cast<SereneDBCatalog>(), live);
   }
-  RemoveUnowned(layout.StoreDir(), live);
-  search::RecoverSearchStorages(context, attached);
+  const bool removed = clean || RemoveUnowned(layout.StoreDir(), live);
+  const bool recovered =
+    search::RecoverSearchStorages(context, attached, /*orphans=*/!clean);
+  EndStorageWork(removed && recovered);
   std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
   for (const auto& db : attached) {
     db->GetCatalog()
@@ -259,6 +268,12 @@ void InitCatalog(bool default_database) {
                server.get().name.GetIdentifierName(),
                "': ", duckdb::ErrorData{e}.RawMessage());
     }
+  }
+}
+
+void LogCleanShutdown() {
+  if (auto* log = Transactions::Get().GetLog(); log && StorageTidy()) {
+    log->Append(ShutdownRecord());
   }
 }
 

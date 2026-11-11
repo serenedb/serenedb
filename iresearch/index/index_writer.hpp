@@ -81,8 +81,6 @@ struct IndexWriterOptions : public SegmentOptions {
 
   size_t segment_pool_size = 128;
 
-  bool cleanup_on_open = true;
-
   duckdb::DatabaseInstance* db = nullptr;
 
   ColumnOptionsProvider column_options;

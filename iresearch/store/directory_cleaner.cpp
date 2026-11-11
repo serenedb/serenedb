@@ -38,8 +38,10 @@ size_t DirectoryCleaner::clean(Directory& dir,
       }
       if (dir.remove(filename)) {
         ++remove_count;
+        return true;
       }
-      return true;
+      bool exists = true;
+      return dir.exists(exists, filename) && !exists;
     });
   return remove_count;
 }

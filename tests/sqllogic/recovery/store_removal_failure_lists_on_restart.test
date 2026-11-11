@@ -1,0 +1,93 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE srf (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO srf SELECT i, 'fox ' || i FROM range(0, 100) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+CREATE TABLE srf_keep (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO srf_keep VALUES (1, 'kept');
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+CREATE TABLE srf_paths AS SELECT '${SDB_DATADIR}/engine_v1/store/' || oid AS dir FROM pg_class WHERE relname = 'srf';
+
+
+statement ok
+SET VARIABLE srf_dir = (SELECT dir FROM srf_paths);
+
+
+query
+SELECT count(*) > 0 AS present FROM glob(getvariable('srf_dir') || '/*');
+----
+present
+t
+
+
+statement ok
+SET sdb_faults = 'storage_removal_fails';
+
+
+statement ok
+DROP TABLE srf;
+
+
+statement ok
+CHECKPOINT;
+
+
+query
+SELECT count(*) > 0 AS present FROM glob(getvariable('srf_dir') || '/*');
+----
+present
+t
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_restart
+statement ok
+SET VARIABLE srf_dir = (SELECT dir FROM srf_paths);
+
+
+connection after_restart
+query
+SELECT count(*) AS left_over FROM glob(getvariable('srf_dir') || '/*');
+----
+left_over
+0
+
+
+connection after_restart
+query
+SELECT id, body FROM srf_keep ORDER BY id;
+----
+id	body
+1	kept

@@ -64,24 +64,21 @@ class IndexAdoptTest : public TestBase {
     std::filesystem::remove_all(_path);
   }
 
-  void Open(tests::OpenMode mode, bool cleanup_on_open = true,
-            uint32_t segment_docs_max = 0) {
+  void Open(tests::OpenMode mode, uint32_t segment_docs_max = 0) {
     _impl = std::make_unique<irs::MMapDirectory>(
       _path, irs::DirectoryAttributes{}, GetResourceManager().options);
     _dir = std::make_unique<tests::DirectoryMock>(*_impl);
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
-    options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
     _writer = tests::IndexWriter::Make(*_dir, mode, std::move(options));
   }
 
   // Drops the Directory too, so no in-memory IndexFileRefs survive.
-  void Restart(bool cleanup_on_open, uint32_t segment_docs_max = 0) {
+  void Restart(uint32_t segment_docs_max = 0) {
     _writer.reset();
     _dir.reset();
     _impl.reset();
-    Open(tests::kOmAppend | tests::kOmCreate, cleanup_on_open,
-         segment_docs_max);
+    Open(tests::kOmAppend | tests::kOmCreate, segment_docs_max);
   }
 
   static constexpr irs::field_id kNameFieldId = tests::FieldIdFor("name");
@@ -117,7 +114,7 @@ class IndexAdoptTest : public TestBase {
 };
 
 TEST_F(IndexAdoptTest, FlushAndFsyncReportsEveryFlushedSegment) {
-  Restart(/*cleanup_on_open=*/true, /*segment_docs_max=*/1);
+  Restart(/*segment_docs_max=*/1);
 
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   for (size_t i = 0; i < 3; ++i) {
@@ -207,47 +204,6 @@ TEST_F(IndexAdoptTest, LaterTransactionAbortKeepsOurFlushedSegment) {
   }
 }
 
-TEST_F(IndexAdoptTest, CleanupOnOpenDecidesUnreferencedSegmentSurvival) {
-  std::vector<std::string> files;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "orphan"));
-    files = FilesOf(trx.FlushAndFsync());
-    trx.Abort();  // never committed, never published
-  }
-  ASSERT_FALSE(files.empty());
-
-  Restart(/*cleanup_on_open=*/false);
-  for (const auto& file : files) {
-    EXPECT_TRUE(Exists(file)) << file << " was reclaimed despite the opt-out";
-  }
-
-  Restart(/*cleanup_on_open=*/true);
-  for (const auto& file : files) {
-    EXPECT_FALSE(Exists(file)) << file << " outlived the default cleanup";
-  }
-}
-
-TEST_F(IndexAdoptTest, SegmentIdFlooredAboveKeptSegments) {
-  std::vector<std::string> kept;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "orphan"));
-    kept = FilesOf(trx.FlushAndFsync());
-    trx.Abort();
-  }
-  ASSERT_FALSE(kept.empty());
-
-  Restart(/*cleanup_on_open=*/false);
-  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(trx, "fresh"));
-  for (const auto& file : FilesOf(trx.FlushAndFsync())) {
-    EXPECT_EQ(kept.end(), std::find(kept.begin(), kept.end(), file))
-      << file << " reused a kept segment's id";
-  }
-  trx.Abort();
-}
-
 // Eligibility, not promptness: reclaiming is the host's background cleanup, but
 // a file still holding a ref is invisible to it.
 TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {
@@ -318,7 +274,7 @@ class FixedFieldOptions final : public irs::IndexFieldOptions {
 // EqualOptions to compare that, so "equal options" keeps implying "same config"
 // for the property the backfill depends on.
 TEST_F(IndexAdoptTest, ADifferentFieldConfigCutsANewSegment) {
-  Restart(/*cleanup_on_open=*/false);
+  Restart();
 
   const auto first = std::make_shared<const FixedFieldOptions>();
   const auto second = std::make_shared<const FixedFieldOptions>();
@@ -341,7 +297,7 @@ TEST_F(IndexAdoptTest, ADifferentFieldConfigCutsANewSegment) {
 // inserts". Reusing one config keeps them in a single segment, so the cut above
 // is attributable to the options change.
 TEST_F(IndexAdoptTest, TheSameFieldConfigKeepsOneSegment) {
-  Restart(/*cleanup_on_open=*/false);
+  Restart();
 
   const auto options = std::make_shared<const FixedFieldOptions>();
 
@@ -386,7 +342,7 @@ class SecondFieldOptions final : public irs::IndexFieldOptions {
 // land either side of the boundary read at publish time, so the old one is
 // classifiable as stale before anyone can observe it.
 TEST_F(IndexAdoptTest, SegmentIdSeparatesConfigsAcrossAStraddlingWrite) {
-  Restart(/*cleanup_on_open=*/false);
+  Restart();
 
   static constexpr irs::field_id kExtraFieldId = tests::FieldIdFor("extra");
   const auto before_config = std::make_shared<const FixedFieldOptions>();
@@ -446,7 +402,7 @@ TEST_F(IndexAdoptTest, SegmentIdSeparatesConfigsAcrossAStraddlingWrite) {
 // new field. Detection alone cannot recover from that -- hence a floor, not
 // just a per-segment reservation.
 TEST_F(IndexAdoptTest, MergingStaleSegmentsProducesAFreshId) {
-  Restart(/*cleanup_on_open=*/false);
+  Restart();
 
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -475,7 +431,7 @@ TEST_F(IndexAdoptTest, MergingStaleSegmentsProducesAFreshId) {
 // --- the compaction floor --------------------------------------------------
 
 TEST_F(IndexAdoptTest, CompactionFloorProtectsStaleAndFreesFresh) {
-  Restart(/*cleanup_on_open=*/false);
+  Restart();
 
   // Two segments below the boundary: what a build is going to rewrite.
   for (const auto* value : {"stale_a", "stale_b"}) {
@@ -557,7 +513,7 @@ irs::CompactionPolicy BudgetedPolicy(size_t budget) {
 // its whole budget on them, every candidate is vetoed, and the segments
 // written during the build never consolidate however long it runs.
 TEST_F(IndexAdoptTest, ABudgetedPolicySpendsItsBudgetAboveTheFloor) {
-  Restart(/*cleanup_on_open=*/false);
+  Restart();
 
   for (const auto* value : {"stale_a", "stale_b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -608,7 +564,7 @@ TEST_F(IndexAdoptTest, ABudgetedPolicySpendsItsBudgetAboveTheFloor) {
 }
 
 TEST_F(IndexAdoptTest, AClaimedFloorStopsNewMergesUntilTheRunningOnesFinish) {
-  Restart(/*cleanup_on_open=*/false);
+  Restart();
 
   for (const auto* value : {"running_a", "running_b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -650,7 +606,7 @@ TEST_F(IndexAdoptTest, AClaimedFloorStopsNewMergesUntilTheRunningOnesFinish) {
 }
 
 TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
-  Restart(/*cleanup_on_open=*/false);
+  Restart();
 
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);

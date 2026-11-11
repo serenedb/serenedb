@@ -29,10 +29,13 @@
 namespace sdb::catalog {
 
 void CreateDirectory(const std::filesystem::path& path);
-void RemoveDirectory(const std::filesystem::path& path);
-void RemoveTree(const std::filesystem::path& path) noexcept;
+bool RemoveDirectory(const std::filesystem::path& path);
+bool RemoveTree(const std::filesystem::path& path) noexcept;
 void DeferRemovals() noexcept;
 void ResumeRemovals();
+void BeginStorageWork() noexcept;
+void EndStorageWork(bool tidy) noexcept;
+bool StorageTidy() noexcept;
 
 class DatabaseDirectory final {
  public:

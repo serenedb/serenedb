@@ -50,6 +50,10 @@ std::vector<uint8_t> SequenceRecord(const BaseCatalog& catalog,
 std::vector<uint8_t> SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
                                   const search::TableDelta& delta);
 
+std::vector<uint8_t> ShutdownRecord();
+
+std::vector<uint8_t> StartupRecord();
+
 std::span<uint8_t> CatalogPart(std::span<uint8_t> payload);
 
 std::vector<std::vector<uint8_t>> CompactHistory(
@@ -59,10 +63,10 @@ using ReplayTarget = absl::FunctionRef<BaseCatalog*(duckdb::idx_t)>;
 
 BaseCatalog* InstanceCatalog(duckdb::ClientContext& context, duckdb::idx_t id);
 
-void ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
+bool ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
                   std::span<uint8_t> payload);
 
-void ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
+bool ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
                        std::span<uint8_t> catalog);
 
 using LoggedDatabases =

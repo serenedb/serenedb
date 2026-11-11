@@ -25,6 +25,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <unordered_set>
 
+#include "index/index_tests.hpp"
 #include "tests_shared.hpp"
 
 TEST(directory_cleaner_tests, test_directory_cleaner) {
@@ -178,4 +179,33 @@ TEST(directory_cleaner_tests, test_directory_cleaner) {
 
   // test empty references removed too
   ASSERT_TRUE(refs.refs().empty());
+}
+
+TEST(directory_cleaner_tests, failed_removal_stays_tracked) {
+  struct FailingRemove final : tests::DirectoryMock {
+    using DirectoryMock::DirectoryMock;
+
+    bool remove(std::string_view name) noexcept final {
+      return !fail && DirectoryMock::remove(name);
+    }
+
+    bool fail = true;
+  };
+
+  irs::MemoryDirectory impl;
+  FailingRemove dir{impl};
+  ASSERT_TRUE(dir.create("tracked.file"));
+  dir.attributes().refs().add("tracked.file");
+  ASSERT_TRUE(dir.attributes().refs().add("absent.file"));
+
+  ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+  EXPECT_TRUE(dir.attributes().refs().refs().contains("tracked.file"));
+  EXPECT_FALSE(dir.attributes().refs().refs().contains("absent.file"));
+
+  dir.fail = false;
+  ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));
+  EXPECT_TRUE(dir.attributes().refs().refs().empty());
+  bool exists = true;
+  ASSERT_TRUE(dir.exists(exists, "tracked.file"));
+  EXPECT_FALSE(exists);
 }

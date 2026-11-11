@@ -132,7 +132,7 @@ void ReplayForeignDatabase(duckdb::ClientContext& context,
                            const duckdb::CatalogEntry& entry) {
     OpenForeignStore(store, entry);
     duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
-    store.ScheduleRecovery(context, executor);
+    store.ScheduleRecovery(context, executor, /*orphans=*/false);
     executor.WorkOnTasks();
     store.FinishReplay();
   };

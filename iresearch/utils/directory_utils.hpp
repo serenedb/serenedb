@@ -39,6 +39,8 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name);
 // return success
 bool RemoveAllUnreferenced(Directory& dir);
 
+uint64_t MaxSegmentId(const Directory& dir);
+
 }  // namespace directory_utils
 
 // Track files created/opened via file names

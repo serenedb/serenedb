@@ -118,6 +118,7 @@ struct CatalogRecord {
   std::vector<LsnRecord> lsns;
   std::vector<SequenceRecordValue> sequences;
   std::vector<SecretRecord> secrets;
+  bool shutdown = false;
 
   bool Empty() const noexcept {
     return changes.empty() && lsns.empty() && sequences.empty() &&
@@ -209,6 +210,7 @@ std::vector<uint8_t> WriteCatalogRecord(const CatalogRecord& record) {
         object.WritePropertyWithDefault(102, "secret", secret.secret);
       });
     });
+  serializer.WritePropertyWithDefault(104, "shutdown", record.shutdown);
   serializer.End();
   return {stream.GetData(), stream.GetData() + stream.GetPosition()};
 }
@@ -278,6 +280,7 @@ CatalogRecord ReadCatalogRecord(std::span<uint8_t> bytes) {
         });
       });
     });
+  record.shutdown = deserializer.ReadPropertyWithDefault<bool>(104, "shutdown");
   deserializer.End();
   return record;
 }
@@ -851,6 +854,12 @@ std::vector<uint8_t> SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
   return Join({}, Written(stream));
 }
 
+std::vector<uint8_t> ShutdownRecord() {
+  return Join(WriteCatalogRecord(CatalogRecord{.shutdown = true}), {});
+}
+
+std::vector<uint8_t> StartupRecord() { return Join({}, {}); }
+
 std::span<uint8_t> CatalogPart(std::span<uint8_t> payload) {
   return payload.subspan(sizeof(uint32_t), CatalogSize(payload));
 }
@@ -1191,7 +1200,7 @@ BaseCatalog* InstanceCatalog(duckdb::ClientContext& context, duckdb::idx_t id) {
                   ERR_MSG("the log names a missing catalog ", id));
 }
 
-void ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
+bool ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
                        std::span<uint8_t> catalog) {
   auto record = ReadCatalogRecord(catalog);
   for (auto& change : record.changes) {
@@ -1206,6 +1215,7 @@ void ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
   for (auto& secret : record.secrets) {
     ReplaySecret(context, target, secret);
   }
+  return record.shutdown;
 }
 
 void ReadDatabases(duckdb::ClientContext& context, std::span<uint8_t> catalog,
@@ -1232,15 +1242,15 @@ void ReadDatabases(duckdb::ClientContext& context, std::span<uint8_t> catalog,
   }
 }
 
-void ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
+bool ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
                   std::span<uint8_t> payload) {
   const auto size = CatalogSize(payload);
-  if (size != 0) {
+  const bool shutdown =
+    size != 0 &&
     ReplayCatalogPart(context, target, payload.subspan(sizeof(uint32_t), size));
-  }
   const auto search = payload.subspan(sizeof(uint32_t) + size);
   if (search.empty()) {
-    return;
+    return shutdown;
   }
   duckdb::MemoryStream stream{search.data(), search.size()};
   duckdb::BinaryDeserializer deserializer{stream};
@@ -1253,6 +1263,7 @@ void ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
                           });
                         });
   deserializer.End();
+  return shutdown;
 }
 
 }  // namespace sdb::catalog

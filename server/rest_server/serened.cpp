@@ -175,7 +175,10 @@ int RunServer(int argc, char** argv) {
       // The shutdown checkpoint of every attached database, taken here rather
       // than left to the DuckDB destructor in main(): an inverted index vetoes
       // it unless it can read its definition.
-      stop("storage", [&] { irs::DuckDBEngine::Instance().CloseDatabases(); });
+      stop("storage", [&] {
+        irs::DuckDBEngine::Instance().CloseDatabases();
+        catalog::LogCleanShutdown();
+      });
       SDB_INFO(GENERAL, "SereneDB is shut down");
     };
 
@@ -285,6 +288,7 @@ void CloseShellEngine() {
   services.search.stop();
   services.background.stop();
   irs::DuckDBEngine::Instance().CloseDatabases();
+  catalog::LogCleanShutdown();
   gShellServices.reset();
   irs::DuckDBEngine::Instance().Shutdown();
 }

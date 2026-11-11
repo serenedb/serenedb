@@ -88,9 +88,10 @@ std::vector<std::shared_ptr<Store>> DurableStores() {
 
 }  // namespace
 
-void RecoverSearchStorages(
+bool RecoverSearchStorages(
   duckdb::ClientContext& context,
-  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached) {
+  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached,
+  bool orphans) {
   const auto begin = std::chrono::steady_clock::now();
   std::vector<std::shared_ptr<Store>> tables;
   for (const auto& db : attached) {
@@ -108,33 +109,36 @@ void RecoverSearchStorages(
   context.RunFunctionInTransaction([&] {
     duckdb::TaskExecutor recovery{scheduler};
     for (auto& table : tables) {
-      table->ScheduleRecovery(context, recovery);
+      table->ScheduleRecovery(context, recovery, orphans);
     }
     recovery.WorkOnTasks();
   });
   duckdb::TaskExecutor executor{scheduler};
   std::atomic_size_t replayed_tables{0};
+  std::atomic_bool cleaned{true};
   for (auto& table : tables) {
-    executor.ScheduleTask(
-      duckdb::make_uniq<FinishReplayTask>(executor, [&replayed_tables, table] {
+    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
+      executor, [&replayed_tables, &cleaned, orphans, table] {
         if (table->FinishReplay()) {
           replayed_tables.fetch_add(1, std::memory_order_relaxed);
         }
-        if (const auto status = table->CleanupUnsafe(true).res; !status.ok()) {
+        if (const auto status = table->CleanupUnsafe(orphans).res;
+            !status.ok()) {
+          cleaned.store(false, std::memory_order_relaxed);
           SDB_WARN(SEARCH, "cleanup of table '", table->GetId(),
                    "' after log replay failed: ", status.message());
         }
       }));
   }
   executor.WorkOnTasks();
-  if (tables.empty()) {
-    return;
+  if (!tables.empty()) {
+    const auto duration =
+      absl::FromChrono(std::chrono::steady_clock::now() - begin);
+    SDB_INFO(SEARCH, "recovery: replayed the log into ",
+             replayed_tables.load(std::memory_order_relaxed), " of ",
+             tables.size(), " table(s) in ", absl::FormatDuration(duration));
   }
-  const auto duration =
-    absl::FromChrono(std::chrono::steady_clock::now() - begin);
-  SDB_INFO(SEARCH, "recovery: replayed the log into ",
-           replayed_tables.load(std::memory_order_relaxed), " of ",
-           tables.size(), " table(s) in ", absl::FormatDuration(duration));
+  return cleaned.load(std::memory_order_relaxed);
 }
 
 void WriteOutTables() {

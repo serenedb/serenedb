@@ -72,4 +72,6 @@ std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
 
 void InitCatalog(bool default_database);
 
+void LogCleanShutdown();
+
 }  // namespace sdb::catalog

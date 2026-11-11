@@ -42,7 +42,7 @@
 namespace sdb::catalog {
 namespace {
 
-using Removal = absl::AnyInvocable<void()>;
+using Removal = absl::AnyInvocable<bool()>;
 
 struct RemovalGate {
   std::atomic_bool deferring{false};
@@ -55,6 +55,16 @@ RemovalGate& Gate() {
   return gGate;
 }
 
+struct StorageWork {
+  std::atomic<uint64_t> open{0};
+  std::atomic_bool untidy{false};
+};
+
+StorageWork& Work() {
+  static StorageWork gWork;
+  return gWork;
+}
+
 void RunRemoval(Removal&& removal) {
   if (auto& gate = Gate(); gate.deferring.load()) {
     absl::MutexLock lock{&gate.mutex};
@@ -64,13 +74,36 @@ void RunRemoval(Removal&& removal) {
     }
   }
   if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
-    removal();
+    EndStorageWork(removal());
     return;
   }
-  BackgroundScheduler::instance().Run(std::move(removal)).Detach();
+  BackgroundScheduler::instance()
+    .Run(
+      [removal = std::move(removal)]() mutable { EndStorageWork(removal()); })
+    .Detach();
 }
 
 }  // namespace
+
+void BeginStorageWork() noexcept {
+  Work().open.fetch_add(1, std::memory_order_relaxed);
+}
+
+void EndStorageWork(bool tidy) noexcept {
+  auto& work = Work();
+  if (!tidy) {
+    work.untidy.store(true, std::memory_order_relaxed);
+  }
+  [[maybe_unused]] const auto open =
+    work.open.fetch_sub(1, std::memory_order_release);
+  SDB_ASSERT(open != 0);
+}
+
+bool StorageTidy() noexcept {
+  auto& work = Work();
+  return work.open.load(std::memory_order_acquire) == 0 &&
+         !work.untidy.load(std::memory_order_relaxed);
+}
 
 void DeferRemovals() noexcept {
   [[maybe_unused]] const bool was_deferring = Gate().deferring.exchange(true);
@@ -99,7 +132,7 @@ void CreateDirectory(const std::filesystem::path& path) {
   utils::file_utils::SyncDirectory(path.parent_path());
 }
 
-void RemoveDirectory(const std::filesystem::path& path) {
+bool RemoveDirectory(const std::filesystem::path& path) {
   std::error_code ec;
   SDB_IF_FAILURE("pause_removal_midway") {
     std::vector<std::filesystem::path> files;
@@ -114,15 +147,18 @@ void RemoveDirectory(const std::filesystem::path& path) {
     }
     SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
   }
+  SDB_IF_FAILURE("storage_removal_fails") { return false; }
   std::filesystem::remove_all(path, ec);
   if (ec) {
     SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
+    return false;
   }
+  return true;
 }
 
-void RemoveTree(const std::filesystem::path& path) noexcept {
+bool RemoveTree(const std::filesystem::path& path) noexcept {
   duckdb::TaskScheduler::BlockingScope blocking;
-  RemoveDirectory(path);
+  return RemoveDirectory(path);
 }
 
 DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
@@ -154,8 +190,9 @@ std::optional<std::filesystem::path> DatabaseDirectory::OpenStorage(
 
 void DatabaseDirectory::RemoveStorage(
   std::shared_ptr<DatabaseDirectory> directory, duckdb::idx_t oid) {
+  BeginStorageWork();
   RunRemoval([directory = std::move(directory), oid] {
-    RemoveTree(directory->StoragePath(oid));
+    return RemoveTree(directory->StoragePath(oid));
   });
 }
 

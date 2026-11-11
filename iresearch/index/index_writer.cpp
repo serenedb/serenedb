@@ -64,17 +64,6 @@ std::vector<DocMap> MergeMaps(CompactionView candidates,
   return maps;
 }
 
-uint64_t MaxSegmentId(const Directory& dir) {
-  uint64_t max_id = 0;
-  dir.visit([&max_id](std::string_view name) {
-    if (uint64_t id = 0; ParseSegmentId(name, id)) {
-      max_id = std::max(max_id, id);
-    }
-    return true;
-  });
-  return max_id;
-}
-
 void SyncSegment(RefTrackingDirectory& dir, const SegmentMeta& meta) {
   const auto names = SegmentFiles(meta.name, meta.kinds);
   const std::vector<std::string_view> files{names.begin(), names.end()};
@@ -268,11 +257,6 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, IndexWriterOptions options) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
       std::move(options.column_options), std::move(options.norm_column_id),
       options.row_group_size, std::move(options.anns));
-  }
-  if (options.cleanup_on_open) {
-    directory_utils::RemoveAllUnreferenced(dir);
-  } else {
-    writer->_seg_counter.store(MaxSegmentId(dir), std::memory_order_relaxed);
   }
   return writer;
 }

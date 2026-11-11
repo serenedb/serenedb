@@ -32,6 +32,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <iterator>
 #include <limits>
 #include <span>
@@ -271,15 +272,9 @@ IndexWriter::IndexWriter(irs::Directory& dir, OpenMode mode,
     Publish(dir, {});
   }
   _pins = Pin(dir, Committed(dir));
+  irs::directory_utils::RemoveAllUnreferenced(dir);
   _writer = irs::IndexWriter::Make(dir, std::move(options));
-  uint64_t top = 0;
-  dir.visit([&](std::string_view name) {
-    if (uint64_t id = 0; irs::ParseSegmentId(name, id)) {
-      top = std::max(top, id);
-    }
-    return true;
-  });
-  _writer->ReserveSegmentId(top);
+  _writer->ReserveSegmentId(irs::directory_utils::MaxSegmentId(dir));
 }
 
 IndexWriter::OpenSegment& IndexWriter::Acquire() {

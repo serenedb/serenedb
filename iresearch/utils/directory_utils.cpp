@@ -23,8 +23,10 @@
 
 #include "iresearch/utils/directory_utils.hpp"
 
+#include <algorithm>
 #include <duckdb/parallel/task_scheduler.hpp>
 
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"
@@ -61,6 +63,17 @@ bool RemoveAllUnreferenced(Directory& dir) {
 
   DirectoryCleaner::clean(dir);
   return true;
+}
+
+uint64_t MaxSegmentId(const Directory& dir) {
+  uint64_t max_id = 0;
+  dir.visit([&max_id](std::string_view name) {
+    if (uint64_t id = 0; ParseSegmentId(name, id)) {
+      max_id = std::max(max_id, id);
+    }
+    return true;
+  });
+  return max_id;
 }
 
 }  // namespace directory_utils

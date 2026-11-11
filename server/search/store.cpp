@@ -197,12 +197,36 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
 }
 
 Store::~Store() {
+  const bool tidy = !OwnsFiles() || OwnerDropped() || CloseFiles();
   _table.reset();
   _writer.reset();
   _dir.reset();
   if (OwnerDropped()) {
     catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _id);
   }
+  if (OwnsFiles()) {
+    catalog::EndStorageWork(tidy);
+  }
+}
+
+bool Store::CloseFiles() {
+  if (!_table) {
+    return false;
+  }
+  const auto head = _table->HeadState();
+  _table.reset();
+  _writer.reset();
+  irs::DirectoryCleaner::clean(*_dir);
+  irs::containers::FlatHashSet<std::string> live;
+  for (const auto& unit : head->units) {
+    if (!unit->piece) {
+      for (auto& file : irs::SegmentFiles(unit->meta.name, unit->meta.kinds)) {
+        live.insert(std::move(file));
+      }
+    }
+  }
+  return _dir->attributes().refs().refs().visit(
+    [&](const std::string& name, size_t) { return live.contains(name); });
 }
 
 StorageDirectory OpenStorageDirectory(
@@ -239,6 +263,9 @@ void Store::Open() {
   if (_read_only && _on_disk) {
     _dir = std::make_unique<irs::OverlayDirectory>(std::move(_dir));
   }
+  if (OwnsFiles()) {
+    catalog::BeginStorageWork();
+  }
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
@@ -246,7 +273,6 @@ void Store::Open() {
   writer_options.segment_docs_max = _segment_docs_max;
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
-  writer_options.cleanup_on_open = _is_new;
   if (!IsSearchTable()) {
     SDB_IF_FAILURE("segment_1000_docs_max") {
       writer_options.segment_docs_max = 1000;
@@ -713,7 +739,7 @@ void Store::ReindexReleaser::operator()(Store* store) const noexcept {
 ResultWithTime Store::CleanupUnsafe(bool orphans) {
   const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
-    return {absl::OkStatus(), 0};
+    return {orphans ? BackupInProgressError() : absl::OkStatus(), 0};
   }
   const auto begin = std::chrono::steady_clock::now();
   if (_table) {
@@ -1353,12 +1379,15 @@ TableReplay* Store::Replay() {
 }
 
 void Store::ScheduleRecovery(duckdb::ClientContext& context,
-                             duckdb::TaskExecutor& executor) {
+                             duckdb::TaskExecutor& executor, bool orphans) {
   EnsureOpen();
   if (!_table) {
     return;
   }
   _writer->ReserveSegmentId(_replay.Top());
+  if (orphans) {
+    _writer->ReserveSegmentId(irs::directory_utils::MaxSegmentId(*_dir));
+  }
   for (auto& [id, segment] : _replay.Segments()) {
     executor.ScheduleTask(
       duckdb::make_uniq<RecoveryTask>(executor, [this, id, &segment] {

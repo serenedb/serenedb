@@ -325,7 +325,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     writer.Reset(reader.begin(), reader.end());
     ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment, progress)));
 
-    ASSERT_FALSE(index_segment.files.empty());
+    ASSERT_NE(0, index_segment.kinds);
     ASSERT_EQ(2, index_segment.docs_count);
     ASSERT_EQ(2, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.version);
@@ -350,7 +350,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_FALSE(irs::GetReady(writer.Flush(index_segment, progress)));
 
     ASSERT_TRUE(index_segment.name.empty());
-    ASSERT_TRUE(index_segment.files.empty());
+    ASSERT_EQ(0, index_segment.kinds);
     ASSERT_EQ(0, index_segment.version);
     ASSERT_EQ(0, index_segment.docs_count);
     ASSERT_EQ(0, index_segment.live_docs_count);
@@ -375,7 +375,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     writer.Reset(reader.begin(), reader.end());
     ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment, progress)));
 
-    ASSERT_FALSE(index_segment.files.empty());
+    ASSERT_NE(0, index_segment.kinds);
     ASSERT_EQ(2, index_segment.docs_count);
     ASSERT_EQ(2, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.version);
@@ -409,7 +409,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, call_count);
 
     ASSERT_TRUE(index_segment.name.empty());
-    ASSERT_TRUE(index_segment.files.empty());
+    ASSERT_EQ(0, index_segment.kinds);
     ASSERT_EQ(0, index_segment.version);
     ASSERT_EQ(0, index_segment.docs_count);
     ASSERT_EQ(0, index_segment.live_docs_count);

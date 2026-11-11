@@ -40,10 +40,9 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/formats/segment_meta_reader.hpp>
-#include <iresearch/formats/segment_meta_writer.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -293,23 +292,39 @@ class EmbeddedIndex {
   static irs::DirectoryReader Open(const irs::Directory& dir,
                                    std::span<const IndexFile> files,
                                    const irs::IndexReaderOptions& options) {
-    irs::DirectoryMeta meta;
-    std::vector<irs::SegmentReader> readers;
-    for (const auto& file : files) {
-      if (!absl::EndsWith(file.name,
-                          absl::StrCat(".", irs::segment_meta::kExt))) {
-        continue;
-      }
-      irs::IndexSegment segment;
-      segment.filename = file.name;
-      irs::segment_meta::Read(dir, segment.meta, file.name);
-      readers.emplace_back(
-        irs::SegmentReaderImpl::Open(dir, segment.meta, options));
-      meta.index_meta.segments.push_back(std::move(segment));
+    const auto file = absl::c_find_if(
+      files, [](const IndexFile& file) { return file.name == kSegmentsFile; });
+    if (file == files.end()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("the documentation index carries no ", kSegmentsFile));
     }
-    return irs::DirectoryReader{
-      std::make_shared<const irs::DirectoryReaderImpl>(
-        dir, options, std::move(meta), std::move(readers))};
+    const std::string_view text{
+      reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()};
+    std::vector<irs::SegmentReader> readers;
+    for (const std::string_view line :
+         absl::StrSplit(text, '\n', absl::SkipEmpty())) {
+      const std::vector<std::string_view> parts = absl::StrSplit(line, ' ');
+      uint64_t id = 0;
+      uint32_t kinds = 0;
+      irs::SegmentMeta meta;
+      if (parts.size() != 3 || !absl::SimpleAtoi(parts[0], &id) ||
+          !absl::SimpleAtoi(parts[1], &kinds) ||
+          !absl::SimpleAtoi(parts[2], &meta.docs_count)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("malformed ", kSegmentsFile, " line: ", line));
+      }
+      meta.name = irs::FileName(id);
+      meta.kinds = static_cast<uint8_t>(kinds);
+      meta.live_docs_count = meta.docs_count;
+      for (const auto& name : irs::SegmentFiles(meta.name, meta.kinds)) {
+        uint64_t size = 0;
+        dir.length(size, name);
+        meta.byte_size += size;
+      }
+      readers.emplace_back(irs::SegmentReaderImpl::Open(dir, meta, options));
+    }
+    return {dir, options, std::move(readers), /*stats=*/true};
   }
 
   SpanDirectory _dir;

@@ -61,7 +61,7 @@ void TableReplay::Add(const LoggedSegment& segment) {
   _replayed = true;
   _top = std::max(_top, segment.id);
   auto& added = _segments[segment.id];
-  added.meta_file = segment.meta_file;
+  added.kinds = segment.kinds;
   added.rows = segment.rows;
 }
 
@@ -147,7 +147,8 @@ std::vector<TableReplay::Piece>& TableReplay::Cut() {
       open = nullptr;
       continue;
     }
-    if (!open || chunk.first != end || taken >= target) {
+    if (!open || chunk.first != end || taken >= target ||
+        taken + chunk.rows->size() > irs::doc_limits::kMaxDocs) {
       open = &_pieces.emplace_back(Piece{.begin = i});
       taken = 0;
     }

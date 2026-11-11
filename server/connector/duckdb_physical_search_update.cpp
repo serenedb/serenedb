@@ -148,8 +148,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     target.column_ids.emplace_back(TableColumnId(column));
     target.types.push_back(column.Type());
   }
-  target.buffer_bytes =
-    duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
+  target.buffer_bytes = target.store->InlineRowsMax();
 
   const auto p = target.column_ids.size();
   const bool whole_row = !_patch || _return_chunk;

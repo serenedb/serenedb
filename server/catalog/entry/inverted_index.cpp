@@ -830,8 +830,9 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   const auto key_column =
     keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID
                  : table.GetColumns().LogicalToPhysical(keys.front()).index;
+  const auto latest = _storage->GetTable().State();
   result = SearchTableEntry::ColumnSegmentRows(
-    context, _storage->GetDirectoryReader(), table, key_column,
+    context, latest->reader, table, key_column,
     state.options.include_segment_info);
   return true;
 }

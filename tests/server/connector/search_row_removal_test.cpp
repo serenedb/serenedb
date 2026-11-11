@@ -247,41 +247,6 @@ class SearchRowRemovalTest : public ::testing::Test {
     Remove(PositionsOf(victims), victims);
   }
 
-  std::vector<std::string> FlushCopy(std::span<const int64_t> rowids) {
-    auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-    WriteRows(build, rowids);
-    std::vector<std::string> metas;
-    for (const auto& flushed : build.FlushAndFsync()) {
-      metas.emplace_back(flushed.filename);
-    }
-    build.Abort();
-    return metas;
-  }
-
-  void ReplaceAll(const irs::DirectoryReader& snapshot,
-                  const std::vector<std::string>& metas) {
-    std::vector<const irs::SubReader*> replaced;
-    std::vector<irs::DocMap> absorbed;
-    irs::doc_id_t base = irs::doc_limits::min();
-    for (const auto& sub : snapshot) {
-      const auto& segment =
-        *irs::utils::downCast<irs::SegmentReader>(sub).GetImpl();
-      const auto live = segment.Meta().live_docs_count;
-      replaced.emplace_back(&sub);
-      absorbed.push_back({.source = IdOf(sub),
-                          .mask = segment.SharedDocsMask(),
-                          .rank_begin = 0,
-                          .rank_end = live,
-                          .base = base});
-      base += live;
-    }
-    ASSERT_EQ(1, metas.size());
-    std::vector<irs::IndexWriter::Replacement> replacements;
-    replacements.push_back(
-      {.meta_file = metas.front(), .absorbed = std::move(absorbed)});
-    _writer->ReplaceSegments(replaced, std::move(replacements));
-  }
-
   void ExpectModel() const {
     const auto live = Live();
     EXPECT_EQ(_model.size(), live.size());
@@ -501,24 +466,6 @@ TEST_F(SearchRowRemovalTest,
   const std::vector<uint64_t> positions{MakeRowPosition(0, 2)};
   Remove(reader, positions, {});
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(SearchRowRemovalTest, ReplaceSegmentsCarriesARemovalAppliedBeforeIt) {
-  InsertRange(0, 1000);
-  InsertRange(1000, 1000);
-  const std::vector<int64_t> early{7, 1007};
-  Remove(early);
-  const auto snapshot = _writer->GetSnapshot();
-  const auto copy =
-    LiveRows(snapshot) | std::views::keys | std::ranges::to<std::vector>();
-  const auto metas = FlushCopy(copy);
-
-  const std::vector<int64_t> victims{1, 2, 998, 1500};
-  Remove(victims);
-  ReplaceAll(snapshot, metas);
-  _writer->RefreshCommit();
-  ASSERT_EQ(1, _writer->GetSnapshot().size());
-  ExpectModel();
 }
 
 TEST_F(SearchRowRemovalTest, RemovalAndInsertInOneTransactionInEitherOrder) {

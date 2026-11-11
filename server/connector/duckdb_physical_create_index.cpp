@@ -421,7 +421,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
 
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-    inverted_storage.GetTransaction(/*exclusive_segment=*/true));
+    inverted_storage.GetTransaction());
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx,
@@ -536,7 +536,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     RunSearchTableBackfill(context, *gstate.search_backfill, gstate.progress);
     const auto& table = _relation.Cast<catalog::SearchTableEntry>();
     if (gstate.unique_key) {
-      search::VerifyUniqueKey(context, table.RowsWithOwn(context),
+      search::VerifyUniqueKey(context, table.RowsWithOwn(context).Reader(),
                               *gstate.unique_key);
     }
     table.AdoptAsWritten(context);

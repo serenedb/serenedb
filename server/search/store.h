@@ -158,14 +158,11 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _dropped.load(std::memory_order_acquire);
   }
 
-  irs::DirectoryReader GetDirectoryReader() const { return _table->View({}); }
   irs::DirectoryReader BuildSnapshot();
   void PruneVersions(std::span<const Tick> running, Tick published);
   bool FreeVersions();
 
-  irs::DirectoryReader View(const OwnWrites& own) const {
-    return _table->View(own);
-  }
+  TableRead Read(const OwnWrites& own) const { return _table->Read(own); }
   uint32_t RowGroupSize() const noexcept { return _row_group_size; }
   bool HasTable() const noexcept { return static_cast<bool>(_table); }
   Table& GetTable() noexcept { return *_table; }
@@ -175,6 +172,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::IndexWriter& Writer() noexcept { return *_writer; }
   std::vector<OwnSegment> OpenFlushed(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) const;
+  OwnSegment OpenOwn(irs::SegmentMeta meta) const;
 
   struct Piece {
     irs::IndexWriter::Transaction trx;
@@ -189,13 +187,15 @@ class Store final : public std::enable_shared_from_this<Store>,
   uint64_t PatchBytes() const noexcept {
     return _table ? _table->PatchBytes() : 0;
   }
+  uint64_t InlineRowsMax() noexcept {
+    return GetTasksSettings().compaction_floor_segment_bytes.load(
+      std::memory_order_relaxed);
+  }
   bool FoldPatches();
 
-  // `exclusive_segment` is required of a writer that will record its flushed
-  // segments in the WAL -- see irs::IndexWriter::GetBatch.
-  irs::IndexWriter::Transaction GetTransaction(bool exclusive_segment = false) {
+  irs::IndexWriter::Transaction GetTransaction() {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch(exclusive_segment);
+    return _writer->GetBatch();
   }
 
   void StartTasks();
@@ -382,7 +382,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::shared_ptr<const irs::SegmentReaderImpl> ReplayPiece(
     duckdb::ClientContext& context, std::span<const TableReplay::Chunk> chunks);
   void MaintainPieces();
-  void WriteOutLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
+  bool WriteOutLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
   bool MergePiecesLocked(
     std::span<const std::shared_ptr<const TableUnit>> pieces)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);

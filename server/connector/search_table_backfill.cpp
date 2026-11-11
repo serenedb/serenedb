@@ -254,7 +254,7 @@ void AppendReplacements(const Slice& slice,
                         std::vector<irs::IndexWriter::Replacement>& out) {
   const auto first = out.size();
   for (const auto& flushed : slice.flushed) {
-    out.push_back({.meta_file = flushed.filename});
+    out.push_back({.meta = flushed.meta});
   }
   size_t i = 0;
   uint64_t used = 0;
@@ -444,7 +444,7 @@ std::shared_ptr<const search::TableState> RebuildGroup(
     auto slice = std::make_unique<Slice>();
     // Exclusive: FlushAndFsync hands back exactly this slice's segments, and
     // they must not share one with a concurrent writer.
-    slice->trx = shard.GetTransaction(/*exclusive_segment=*/true);
+    slice->trx = shard.GetTransaction();
     slice->sink =
       MakeSearchTableInsertSink(slice->trx, shard, *target.catalog, context);
     if (!plan) {

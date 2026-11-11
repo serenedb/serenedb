@@ -510,13 +510,10 @@ bool SearchTableEntry::ScanColumnSegmentInfo(
   if (state.position++ != 0) {
     return false;
   }
-  auto reader = _storage->GetDirectoryReader();
-  if (!reader) {
-    return false;
-  }
-  result =
-    ColumnSegmentRows(context, reader, *this, duckdb::COLUMN_IDENTIFIER_ROW_ID,
-                      state.options.include_segment_info);
+  const auto latest = _storage->GetTable().State();
+  result = ColumnSegmentRows(context, latest->reader, *this,
+                             duckdb::COLUMN_IDENTIFIER_ROW_ID,
+                             state.options.include_segment_info);
   return true;
 }
 
@@ -733,12 +730,10 @@ void SearchTableEntry::RequireCurrentSchema() const {
 
 void SearchTableEntry::InternalAppend(
   duckdb::ClientContext& context, duckdb::ColumnDataCollection& collection) {
-  connector::SearchSinkTable target{
-    .store = _storage,
-    .catalog = &catalog,
-    .table_id = oid,
-    .buffer_bytes =
-      duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size};
+  connector::SearchSinkTable target{.store = _storage,
+                                    .catalog = &catalog,
+                                    .table_id = oid,
+                                    .buffer_bytes = _storage->InlineRowsMax()};
   for (const auto& column : GetColumns().Physical()) {
     target.column_ids.emplace_back(connector::TableColumnId(column));
     target.types.push_back(column.Type());
@@ -1617,7 +1612,8 @@ duckdb::unique_ptr<duckdb::Expression> SearchTableEntry::BindConversion(
 
 duckdb::idx_t SearchTableEntry::UnusedColumnOid() const {
   irs::containers::FlatHashSet<irs::field_id> stored;
-  for (const auto& segment : _storage->View({})) {
+  const auto latest = _storage->GetTable().State();
+  for (const auto& segment : latest->reader) {
     if (const auto* columns = segment.GetColReader()) {
       for (const auto& column : columns->Columns()) {
         stored.insert(column->Id());
@@ -1666,7 +1662,7 @@ void SearchTableEntry::Backfill(
     context, BackfillTarget(context, field, std::move(value)), nullptr);
 }
 
-irs::DirectoryReader SearchTableEntry::RowsWithOwn(
+search::TableRead SearchTableEntry::RowsWithOwn(
   duckdb::ClientContext& context) const {
   return SessionOf(context, catalog).SearchTxn().LatestView(context, *_storage);
 }
@@ -1683,7 +1679,7 @@ void SearchTableEntry::VerifyKey(duckdb::ClientContext& context,
       .VerifyReferences(context, *this, spec);
     return;
   }
-  search::VerifyUniqueKey(context, RowsWithOwn(context), spec);
+  search::VerifyUniqueKey(context, RowsWithOwn(context).Reader(), spec);
 }
 
 void SearchTableEntry::ReplaceStoreColumnsAtCommit(
@@ -1703,7 +1699,8 @@ void SearchTableEntry::VerifyExistingRows(
   irs::ColFilterStateCache filter_states;
   duckdb::SelectionVector live_rows{STANDARD_VECTOR_SIZE +
                                     irs::doc_limits::kDocsSlack};
-  for (const auto& segment : RowsWithOwn(context)) {
+  const auto rows = RowsWithOwn(context);
+  for (const auto& segment : rows.Reader()) {
     connector::ScanLiveRows(
       context, segment, 0, segment.Meta().docs_count, projections,
       filter_states, live_rows, chunk,

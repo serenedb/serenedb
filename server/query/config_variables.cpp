@@ -1249,9 +1249,9 @@ constexpr std::pair<std::string_view, VariableDescription>
         "the segment writer of an inverted index over a view fills before "
         "rolling over to a new on-disk segment (also the CREATE INDEX "
         "backfill commit cadence). Their WITH "
-        "(segment_memory_max = ...) overrides it. A serial write to a table "
-        "also buffers up to checkpoint_threshold of rows. Default 268435456 "
-        "(256MB).",
+        "(segment_memory_max = ...) overrides it. A write to a table holds "
+        "up to compaction_floor_segment_bytes of its own rows in memory; more "
+        "go to disk as segments of their own. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexSettings{}.segment_memory_max);

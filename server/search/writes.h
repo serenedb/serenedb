@@ -66,9 +66,13 @@ struct StoreWrites {
   uint64_t revision = 0;
   struct Pin {
     const TableState* state = nullptr;
-    irs::DirectoryReader own;
+    std::optional<irs::DirectoryReader> own;
     const FileManifest* manifest = nullptr;
     uint64_t revision = 0;
+
+    const irs::DirectoryReader& Reader() const noexcept {
+      return own ? *own : state->reader;
+    }
   };
   std::optional<Pin> pin;
   std::atomic<const Pin*> pinned{nullptr};
@@ -180,7 +184,7 @@ class Writes {
   const irs::DirectoryReader& PinnedReader(duckdb::ClientContext& context,
                                            Store& store);
   void ResetPins(bool all) noexcept;
-  irs::DirectoryReader LatestView(duckdb::ClientContext& context, Store& store);
+  TableRead LatestView(duckdb::ClientContext& context, Store& store);
 
   bool Empty() const noexcept { return _writes.empty(); }
 

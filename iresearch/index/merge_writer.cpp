@@ -817,10 +817,12 @@ bool ComputeDocMappingsAndFieldMeta(
     SDB_ASSERT(reader_ctx.reader);
     auto& reader = *reader_ctx.reader;
     const auto docs_count = reader.docs_count();
+    SDB_ENSURE(base_id - doc_limits::min() + reader.live_docs_count() <=
+                 doc_limits::kMaxDocs,
+               "a merge into one segment of more than ", doc_limits::kMaxDocs,
+               " documents");
     reader_ctx.remap.base_id = base_id;
     if (reader.live_docs_count() == docs_count) {
-      SDB_ASSERT(static_cast<uint64_t>(base_id) + docs_count <
-                 std::numeric_limits<doc_id_t>::max());
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
@@ -874,7 +876,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   bool result = false;
   Finally segment_invalidator = [&result, &segment]() noexcept {
     if (!result) [[unlikely]] {
-      segment.files.clear();
+      segment.kinds = 0;
       static_cast<SegmentInfo&>(segment) = SegmentInfo{};
     }
   };
@@ -976,11 +978,11 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return false;
   }
 
-  segment.files = track_dir.FlushTracked(segment.byte_size);
+  segment.kinds = SegmentFileKinds(track_dir.FlushTracked(segment.byte_size));
   if (segment.live_docs_count == 0) {
     co_return false;
   }
-  SDB_ASSERT(!segment.files.empty());
+  SDB_ASSERT(segment.kinds != 0);
   result = true;
   co_return true;
 }

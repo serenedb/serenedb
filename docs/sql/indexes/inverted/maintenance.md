@@ -98,18 +98,18 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 - **Build then index** -- for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Whole-relation aggregates** -- `count(*)` over a table or an index relation (`FROM my_index`) without a `WHERE` clause is answered from the document counts, without reading any document. `min` and `max` of numeric and temporal `INCLUDE`d columns and of keyword columns are answered the same way while the relation holds no deleted documents; deleted documents are dropped by compaction, and until then `min` and `max` read the documents. `EXPLAIN` shows no index scan for an aggregate answered this way.
 - **Top-K** -- set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> ... LIMIT k`.
-- **Write memory** -- [`segment_memory_max`](#write-memory) sets the segment size a write produces and, together with `checkpoint_threshold` for a serial write, what the write holds in memory.
+- **Write memory** -- [`segment_memory_max`](#write-memory) sets the segment size a write produces and what the write holds in memory.
 
 ## Write memory {#write-memory}
 
-A table holds its committed rows in memory, indexed and searchable, until they reach `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB; it then writes them to disk as one segment in the background. A serial write also buffers up to [`checkpoint_threshold`](../../../configuration/overview.md) of its own rows, 16 MB by default, before it indexes them. Estimate the peak for one writing transaction as:
+A table holds its committed rows in memory, indexed and searchable, until they reach `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB; it then writes them to disk as one segment in the background. A write also holds up to `compaction_floor_segment_bytes` of its own rows, 2 MB by default, before it indexes them: below that size a segment of their own would be one compaction merges right away; a write with more rows writes them to disk as segments of its own. Estimate the peak for one writing transaction as:
 
 | Write | Peak memory |
 | :--- | :--- |
-| Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
+| Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + `compaction_floor_segment_bytes` |
 | Parallel `INSERT` / `UPDATE` | ≈ `segment_memory_max` x threads |
 
-Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server.
+Lower `segment_memory_max` to cap that peak, raise it for larger segments and less compaction work.
 
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
@@ -124,7 +124,7 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 
 ## Durability {#durability}
 
-A commit is durable once the server's write-ahead log holds it; one log serves every database. The log grows until it reaches [`checkpoint_threshold`](../../../configuration/overview.md) (16 MiB by default); the server then has each table write the rows the oldest log files hold into its own files and removes those log files, while writes go on. `CHECKPOINT` does the same at once. After a crash, the server replays the log.
+A commit is durable once the server's write-ahead log holds it; one log serves every database. Once the log written since the last snapshot reaches [`max_wal_size`](../../../configuration/overview.md) (1 GB by default), or the size of the last snapshot if that is larger, the server writes a new snapshot of the catalog and of every table and removes the log files the snapshot covers, while writes go on. `CHECKPOINT` writes the rows tables hold in memory to disk and takes a snapshot at once. After a crash, the server reads the snapshot and replays the log written after it.
 
 A server left idle settles on its own: once every table has written the rows it held in memory to segments (see [Background compaction](#background-compaction)) and nothing commits, the server removes the log files it no longer needs, so the log stays small and a restart replays little.
 

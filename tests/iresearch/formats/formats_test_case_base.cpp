@@ -68,7 +68,8 @@ bool VisitFiles(const irs::IndexMeta& meta, Visitor&& visitor) {
       return false;
     }
 
-    for (auto& file : curr_segment.meta.files) {
+    for (const auto& file :
+         irs::SegmentFiles(curr_segment.meta.name, curr_segment.meta.kinds)) {
       if (!visitor(file)) {
         return false;
       }
@@ -916,10 +917,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       docs_mask.Add(100);
       return std::move(docs_mask).Finish();
     }());
-    meta.files.emplace_back("file1");
-    meta.files.emplace_back("index_file2");
-    meta.files.emplace_back("file3");
-    meta.files.emplace_back("stored_file4");
+    meta.kinds = irs::kColFile | irs::kIdxFile | irs::kDocFile;
 
     std::string filename;
 
@@ -940,7 +938,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(meta.version, read_meta.version);
       ASSERT_EQ(meta.byte_size, read_meta.byte_size);
       ASSERT_EQ(meta.docs_mask->FrozenSize(), read_meta.docs_mask_size);
-      ASSERT_EQ(meta.files, read_meta.files);
+      ASSERT_EQ(meta.kinds, read_meta.kinds);
       ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
       ASSERT_EQ(meta.docs_mask->Kind(), read_meta.docs_mask->Kind());
     }
@@ -981,7 +979,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
   meta.live_docs_count = 10;
   meta.byte_size = 42;
   meta.version = 7;
-  meta.files.emplace_back("file1");
+  meta.kinds = irs::kColFile;
 
   {
     auto out = dir().create(sm::FileName(meta));
@@ -989,11 +987,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
 
     irs::format_utils::WriteFooter(
       *out, [&](duckdb::BinarySerializer& meta_out) {
-        meta_out.WriteList(
-          sm::kFieldFiles, "files", meta.files.size(),
-          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-            list.WriteElement<std::string>(meta.files[i]);
-          });
+        meta_out.WriteProperty<uint8_t>(sm::kFieldKinds, "kinds", meta.kinds);
         meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count",
                                          meta.docs_count);
         meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size",
@@ -1054,7 +1048,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
   };
 
   auto write = [&](std::string_view name, uint64_t version,
-                   std::string_view mask, bool files) {
+                   std::string_view mask) {
     auto out = create(name, version);
     if (!mask.empty()) {
       out->WriteData(reinterpret_cast<const irs::byte_type*>(mask.data()),
@@ -1062,32 +1056,23 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
     }
     irs::format_utils::WriteFooter(*out, [&](
                                            duckdb::BinarySerializer& meta_out) {
-      if (files) {
-        meta_out.WriteList(
-          sm::kFieldFiles, "files", 1,
-          [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
-            list.WriteElement<std::string>("file1");
-          });
-      }
+      meta_out.WriteProperty<uint8_t>(sm::kFieldKinds, "kinds", irs::kColFile);
       meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
       meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
     });
   };
 
   // the mask is not a bitmap at all
-  write("not_a_bitmap", 1, "garbage!", true);
+  write("not_a_bitmap", 1, "garbage!");
   rejected("not_a_bitmap", 1, "Corrupted frozen document mask");
 
   // a document id at the eof sentinel, i.e. an unbounded mask
-  write("mask_at_eof", 1, serialize({irs::doc_limits::eof()}), true);
+  write("mask_at_eof", 1, serialize({irs::doc_limits::eof()}));
   rejected("mask_at_eof", 1, "Invalid document id");
 
   // a document id below the first valid one
-  write("mask_below_min", 1, serialize({0}), true);
+  write("mask_below_min", 1, serialize({0}));
   rejected("mask_below_min", 1, "Invalid document id");
-
-  write("no_file_list", 1, serialize({1, 2, 3}), false);
-  rejected("no_file_list", 1, "the segment file list is missing");
 }
 
 TEST_P(FormatTestCase, format_utils_footer) {

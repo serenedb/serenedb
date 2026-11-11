@@ -38,6 +38,7 @@
 #include <duckdb/main/query_result.hpp>
 #include <exception>
 #include <filesystem>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -418,10 +419,18 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
         {.name = absl::StrCat(table_name, "/", file),
          .bytes = utils::file_utils::Slurp((path / file).string())});
     };
+    std::string segments;
     for (const auto& unit : store.GetTable().State()->units) {
-      absl::c_for_each(unit->segment.meta.files, add);
-      add(unit->segment.filename);
+      SDB_ENSURE(!unit->piece && (!unit->deleted || unit->deleted->Empty()),
+                 "the documentation table ", table_name,
+                 " keeps rows in memory or deletes after settling");
+      absl::c_for_each(irs::SegmentFiles(unit->meta.name, unit->meta.kinds),
+                       add);
+      absl::StrAppend(&segments, unit->id, " ", unit->meta.kinds, " ",
+                      unit->docs, "\n");
     }
+    image.push_back({.name = absl::StrCat(table_name, "/", kSegmentsFile),
+                     .bytes = std::move(segments)});
     image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
                      .bytes = DescribeLayout(*table)});
   });

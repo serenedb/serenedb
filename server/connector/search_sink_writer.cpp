@@ -924,7 +924,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size,
                                         const duckdb::Vector* pk) {
   SDB_ASSERT(batch_size > 0);
   _document.reset();
-  _document.emplace(_trx->Insert(false, batch_size));
+  _document.emplace(_trx->Insert(batch_size));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
   // at the flushed segment while the terms land in the fresh one.

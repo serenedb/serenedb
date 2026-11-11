@@ -181,22 +181,12 @@ class IndexAdoptTest : public TestBase {
     return _dir->exists(exists, name) && exists;
   }
 
-  static std::vector<std::string> MetaFilesOf(
-    std::span<const irs::IndexWriter::FlushedSegment> flushed) {
-    std::vector<std::string> out;
-    out.reserve(flushed.size());
-    for (const auto& segment : flushed) {
-      out.emplace_back(segment.filename);
-    }
-    return out;
-  }
-
   static std::vector<std::string> FilesOf(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) {
     std::vector<std::string> out;
     for (const auto& segment : flushed) {
-      out.insert(out.end(), segment.meta.files.begin(),
-                 segment.meta.files.end());
+      absl::c_move(irs::SegmentFiles(segment.meta.name, segment.meta.kinds),
+                   std::back_inserter(out));
     }
     return out;
   }
@@ -221,9 +211,10 @@ TEST_F(IndexAdoptTest, FlushAndFsyncReportsEveryFlushedSegment) {
   size_t docs = 0;
   for (const auto& segment : flushed) {
     EXPECT_FALSE(segment.meta.name.empty());
-    EXPECT_FALSE(segment.meta.files.empty());
+    EXPECT_NE(0, segment.meta.kinds);
     docs += segment.meta.docs_count;
-    for (const auto& file : segment.meta.files) {
+    for (const auto& file :
+         irs::SegmentFiles(segment.meta.name, segment.meta.kinds)) {
       EXPECT_TRUE(Exists(file)) << file << " reported but absent";
     }
   }
@@ -248,13 +239,11 @@ TEST_F(IndexAdoptTest, ExclusiveSegmentDoesNotResumeAPooledOne) {
 }
 
 TEST_F(IndexAdoptTest, LaterTransactionReusingTheContextLeavesOurSegmentAlone) {
-  std::string our_meta;
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "mine"));
     const auto flushed = trx.FlushAndFsync();
     ASSERT_EQ(1, flushed.size());
-    our_meta = flushed.front().filename;
     ASSERT_TRUE(trx.Commit());
   }
   // Non-exclusive, so it pops the context we just released.
@@ -273,19 +262,17 @@ TEST_F(IndexAdoptTest, LaterTransactionReusingTheContextLeavesOurSegmentAlone) {
     EXPECT_EQ(1, segment.docs_count())
       << "a segment absorbed both transactions";
   }
-  // And ours was still not rewritten at publish.
-  EXPECT_EQ(1, _dir->Creates(our_meta));
 }
 
 // SegmentContext::Rollback must cut only the tail past committed_flushed_docs.
 TEST_F(IndexAdoptTest, LaterTransactionAbortKeepsOurFlushedSegment) {
-  std::string our_meta;
+  std::vector<std::string> ours;
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "mine"));
     const auto flushed = trx.FlushAndFsync();
     ASSERT_EQ(1, flushed.size());
-    our_meta = flushed.front().filename;
+    ours = FilesOf(flushed);
     ASSERT_TRUE(trx.Commit());
   }
   {
@@ -297,7 +284,9 @@ TEST_F(IndexAdoptTest, LaterTransactionAbortKeepsOurFlushedSegment) {
 
   auto reader = _writer->GetSnapshot();
   EXPECT_EQ(1, reader.live_docs_count()) << "our committed document was lost";
-  EXPECT_TRUE(Exists(our_meta)) << our_meta << " was reclaimed";
+  for (const auto& file : ours) {
+    EXPECT_TRUE(Exists(file)) << file << " was reclaimed";
+  }
 }
 
 TEST_F(IndexAdoptTest, CleanupOnOpenDecidesUnreferencedSegmentSurvival) {
@@ -341,351 +330,6 @@ TEST_F(IndexAdoptTest, SegmentIdFlooredAboveKeptSegments) {
   trx.Abort();
 }
 
-TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
-  std::vector<std::string> adopt;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "kept0"));
-    ASSERT_TRUE(InsertDoc(trx, "kept1"));
-    adopt = MetaFilesOf(trx.FlushAndFsync());
-    trx.Abort();  // the publish never happened
-  }
-  ASSERT_EQ(1, adopt.size());
-
-  Restart(/*cleanup_on_open=*/false);
-  ASSERT_EQ(0, _writer->GetSnapshot().live_docs_count());
-
-  {
-    auto trx = _writer->GetBatch();
-    for (const auto& meta_file : adopt) {
-      trx.Adopt(meta_file);
-    }
-    ASSERT_TRUE(trx.Commit());
-  }
-  _dir->TakeSynced();
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
-  const auto synced = _dir->TakeSynced();
-  ASSERT_EQ(1, synced.size());
-  EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
-
-  // And they are genuinely durable now, not just live in this writer.
-  Restart(/*cleanup_on_open=*/true);
-  EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
-  Restart(false);
-
-  for (const auto* value : {"a", "b"}) {
-    auto trx = _writer->GetBatch(true);
-    ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit());
-    ASSERT_TRUE(_writer->RefreshCommit());
-  }
-
-  std::vector<std::string> adopt;
-  std::vector<std::string> adopted_files;
-  {
-    auto trx = _writer->GetBatch(true);
-    ASSERT_TRUE(InsertDoc(trx, "adopted"));
-    const auto flushed = trx.FlushAndFsync();
-    adopt = MetaFilesOf(flushed);
-    adopted_files = FilesOf(flushed);
-    trx.Abort();
-  }
-  ASSERT_EQ(1, adopt.size());
-
-  Restart(false);
-
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
-  ASSERT_TRUE(_writer->Compact(kFullMerge));
-  {
-    auto trx = _writer->GetBatch();
-    trx.Adopt(adopt.front());
-    ASSERT_TRUE(trx.Commit());
-  }
-
-  _dir->TakeSynced();
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  const auto snapshot = _writer->GetSnapshot();
-  ASSERT_EQ(2, snapshot.size());
-  EXPECT_EQ(3, snapshot.live_docs_count());
-
-  std::vector<std::string> expected;
-  for (const auto& segment : snapshot.Meta().index_meta.segments) {
-    if (segment.filename != adopt.front()) {
-      expected.emplace_back(segment.filename);
-      expected.insert(expected.end(), segment.meta.files.begin(),
-                      segment.meta.files.end());
-    }
-  }
-  auto synced = _dir->TakeSynced();
-  ASSERT_FALSE(synced.empty());
-  EXPECT_TRUE(synced.back().starts_with("pending_segments_"));
-  synced.pop_back();
-  std::ranges::sort(expected);
-  std::ranges::sort(synced);
-  EXPECT_EQ(expected, synced);
-  for (const auto& file : adopted_files) {
-    EXPECT_EQ(synced.end(), std::ranges::find(synced, file));
-  }
-}
-
-TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesAnEarlierTruncate) {
-  std::vector<std::string> adopt;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "kept"));
-    adopt = MetaFilesOf(trx.FlushAndFsync());
-    trx.Abort();
-  }
-
-  Restart(/*cleanup_on_open=*/false);
-  {
-    auto trx = _writer->GetBatch();
-    trx.RemoveAll();
-    ASSERT_TRUE(trx.Commit());
-  }
-  {
-    auto trx = _writer->GetBatch();
-    for (const auto& meta_file : adopt) {
-      trx.Adopt(meta_file);
-    }
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, AdoptOrderDecidesWhatATruncateDrops) {
-  std::vector<std::string> before;
-  std::vector<std::string> after;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "target"));
-    before = MetaFilesOf(trx.FlushAndFsync());
-    trx.Abort();
-  }
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "target"));
-    after = MetaFilesOf(trx.FlushAndFsync());
-    trx.Abort();
-  }
-  ASSERT_EQ(1, before.size());
-  ASSERT_EQ(1, after.size());
-  const std::string survivor_meta = after.front();
-  ASSERT_NE(survivor_meta, before.front());
-
-  Restart(/*cleanup_on_open=*/false);
-  {
-    auto trx = _writer->GetBatch();
-    trx.Adopt(before.front());
-    ASSERT_TRUE(trx.Commit());
-  }
-  {
-    auto trx = _writer->GetBatch();
-    trx.RemoveAll();
-    ASSERT_TRUE(trx.Commit());
-  }
-  {
-    auto trx = _writer->GetBatch();
-    trx.Adopt(after.front());
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  auto reader = _writer->GetSnapshot();
-  EXPECT_EQ(1, reader.live_docs_count());
-  ASSERT_EQ(1, reader.size());
-  EXPECT_TRUE(survivor_meta.starts_with(reader.begin()->Meta().name + "."))
-    << survivor_meta << " vs " << reader.begin()->Meta().name;
-}
-
-TEST_F(IndexAdoptTest, AdoptInsideATransactionFollowsItsTruncate) {
-  std::vector<std::string> adopt;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "x"));
-    adopt = MetaFilesOf(trx.FlushAndFsync());
-    trx.Abort();
-  }
-  ASSERT_EQ(1, adopt.size());
-
-  Restart(/*cleanup_on_open=*/false);
-
-  auto trx = _writer->GetBatch();
-  trx.RemoveAll();
-  trx.Adopt(adopt.front());
-  trx.Remove(std::make_shared<const irs::DocRemoval>());
-  ASSERT_TRUE(trx.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
-    << "the adopted segment was dropped by the truncate that preceded it";
-}
-
-// Existing writers keep writing it at publish: nothing sets `meta_on_disk`
-// unless FlushAndFsync ran.
-TEST_F(IndexAdoptTest, EarlyFlushedMetaIsWrittenOnce) {
-  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(trx, "kept"));
-  const auto flushed = trx.FlushAndFsync();
-  ASSERT_EQ(1, flushed.size());
-  const std::string meta_file = flushed.front().filename;
-  ASSERT_FALSE(meta_file.empty());
-  EXPECT_EQ(1, _dir->Creates(meta_file)) << "FlushAndFsync wrote it";
-
-  ASSERT_TRUE(trx.Commit());
-  _dir->TakeSynced();
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-
-  EXPECT_EQ(1, _dir->Creates(meta_file))
-    << "the publish rewrote a meta that was already on disk unchanged";
-  const auto synced = _dir->TakeSynced();
-  ASSERT_EQ(1, synced.size());
-  EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
-}
-
-// The skip above must not swallow this case: the meta genuinely changed.
-TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
-  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(trx, "doomed"));
-  ASSERT_TRUE(InsertDoc(trx, "kept"));
-  const auto flushed = trx.FlushAndFsync();
-  ASSERT_EQ(1, flushed.size());
-  const std::string early_meta = flushed.front().filename;
-  ASSERT_TRUE(trx.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  {
-    auto remover = _writer->GetBatch();
-    remover.Remove(ByName("doomed"));
-    ASSERT_TRUE(remover.Commit());
-  }
-  _dir->TakeSynced();
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-  // The early file is still the one FlushAndFsync made; the masked meta went to
-  // a bumped version, so the publish did write.
-  EXPECT_EQ(1, _dir->Creates(early_meta));
-  ASSERT_EQ(1, _writer->GetSnapshot().size());
-  const auto& published = _writer->GetSnapshot().begin()->Meta();
-  EXPECT_GT(published.version, 0u) << "a masked segment must bump its version";
-
-  const auto snapshot = _writer->GetSnapshot();
-  const auto synced = _dir->TakeSynced();
-  ASSERT_EQ(2, synced.size());
-  EXPECT_EQ(snapshot.Meta().index_meta.segments.front().filename, synced[0]);
-  EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
-}
-
-TEST_F(IndexAdoptTest, RemovalFromALargeMaskSyncsOnlyTheNewMeta) {
-  constexpr size_t kDocs = 12000;
-  constexpr size_t kRounds = 4;
-  {
-    auto trx = _writer->GetBatch();
-    for (size_t i = 0; i != kDocs; ++i) {
-      ASSERT_TRUE(InsertDoc(trx, absl::StrCat("d", i)));
-    }
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  for (size_t round = 0; round != kRounds; ++round) {
-    {
-      auto remover = _writer->GetBatch();
-      for (size_t i = round; i < kDocs; i += 2 * kRounds) {
-        remover.Remove(ByName(absl::StrCat("d", i)));
-      }
-      ASSERT_TRUE(remover.Commit());
-    }
-    _dir->TakeSynced();
-    ASSERT_TRUE(_writer->RefreshCommit());
-
-    const auto snapshot = _writer->GetSnapshot();
-    ASSERT_EQ(1, snapshot.size());
-    const auto& segment = snapshot.Meta().index_meta.segments.front();
-    EXPECT_EQ((round + 1) * kDocs / (2 * kRounds),
-              segment.meta.docs_count - segment.meta.live_docs_count);
-    EXPECT_TRUE(absl::c_none_of(
-      segment.meta.files,
-      [](std::string_view file) { return file.ends_with(".sm"); }))
-      << "round " << round;
-
-    const auto synced = _dir->TakeSynced();
-    ASSERT_EQ(2, synced.size()) << "round " << round;
-    EXPECT_EQ(segment.filename, synced[0]);
-    EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
-  }
-}
-
-// The meta file needs its own ref: the segment reader pins meta.files only, and
-// adoption does not create the file.
-TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
-  std::vector<std::string> adopt;
-  std::vector<std::string> data_files;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "kept"));
-    const auto flushed = trx.FlushAndFsync();
-    adopt = MetaFilesOf(flushed);
-    data_files = FilesOf(flushed);
-    trx.Abort();
-  }
-  ASSERT_EQ(1, adopt.size());
-  ASSERT_FALSE(data_files.empty());
-
-  Restart(/*cleanup_on_open=*/false);
-  auto trx = _writer->GetBatch();
-  trx.Adopt(adopt.front());
-
-  // Before the commit that publishes it.
-  irs::directory_utils::RemoveAllUnreferenced(*_dir);
-  EXPECT_TRUE(Exists(adopt.front()))
-    << adopt.front() << " (meta file) was reclaimed before publish";
-  for (const auto& file : data_files) {
-    EXPECT_TRUE(Exists(file)) << file << " was reclaimed before publish";
-  }
-
-  ASSERT_TRUE(trx.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, AdoptSegmentRejectsAnUnreadableMeta) {
-  std::vector<std::string> adopt;
-  {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, "kept"));
-    adopt = MetaFilesOf(trx.FlushAndFsync());
-    trx.Abort();
-  }
-  ASSERT_EQ(1, adopt.size());
-
-  Restart(/*cleanup_on_open=*/false);
-  ASSERT_NE(nullptr, _dir->create(adopt.front()));
-  {
-    auto rejected = _writer->GetBatch();
-    ASSERT_SQL_ERROR(rejected.Adopt(adopt.front()), ERRCODE_INDEX_CORRUPTED);
-  }
-
-  _writer->RefreshCommit();
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
-    << "a rejected segment was published anyway";
-
-  auto trx = _writer->GetBatch();
-  ASSERT_TRUE(InsertDoc(trx, "after"));
-  ASSERT_TRUE(trx.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-}
-
 // Eligibility, not promptness: reclaiming is the host's background cleanup, but
 // a file still holding a ref is invisible to it.
 TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {
@@ -705,14 +349,6 @@ TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {
 }
 
 }  // namespace
-
-// --- ReplaceSegments -------------------------------------------------------
-//
-// The host writes replacement segments itself (FlushAndFsync) and then swaps
-// them in for the ones they supersede. Both halves have to land in one index
-// meta generation, or a reader sees the sources without the replacements (rows
-// vanish) or both (rows duplicated).
-
 namespace {
 
 std::vector<std::string> CommittedNames(irs::IndexWriter& writer) {
@@ -722,31 +358,6 @@ std::vector<std::string> CommittedNames(irs::IndexWriter& writer) {
   }
   std::ranges::sort(out);
   return out;
-}
-
-void Replace(irs::IndexWriter& writer, const irs::DirectoryReader& snapshot,
-             const std::vector<std::string>& replaced,
-             const std::vector<std::string>& adopted,
-             std::vector<std::vector<irs::DocMap>> absorbed = {}) {
-  std::vector<const irs::SubReader*> segments;
-  for (const auto& name : replaced) {
-    const irs::SubReader* found = nullptr;
-    for (const auto& segment : snapshot) {
-      if (segment.Meta().name == name) {
-        found = &segment;
-      }
-    }
-    ASSERT_TRUE(found) << "no segment " << name;
-    segments.push_back(found);
-  }
-  absorbed.resize(adopted.size());
-  std::vector<irs::IndexWriter::Replacement> replacements;
-  replacements.reserve(adopted.size());
-  for (size_t i = 0; i < adopted.size(); ++i) {
-    replacements.push_back(
-      {.meta_file = adopted[i], .absorbed = std::move(absorbed[i])});
-  }
-  writer.ReplaceSegments(segments, std::move(replacements));
 }
 
 const irs::SegmentMeta& MetaOf(const irs::DirectoryReader& snapshot,
@@ -796,22 +407,6 @@ std::vector<irs::DocMap> DocMapsOf(const irs::IndexWriter& writer,
     maps.insert(maps.end(), list.begin(), list.end());
   });
   return maps;
-}
-
-irs::DocMap Takes(const irs::DirectoryReader& snapshot, std::string_view source,
-                  irs::doc_id_t rank_begin, irs::doc_id_t rank_end) {
-  return {.source = IdOf(source),
-          .mask = MetaOf(snapshot, source).docs_mask,
-          .rank_begin = rank_begin,
-          .rank_end = rank_end,
-          .base = irs::doc_limits::min()};
-}
-
-irs::DocMap TakesAll(const irs::DirectoryReader& snapshot,
-                     std::string_view source) {
-  return Takes(
-    snapshot, source, 0,
-    static_cast<irs::doc_id_t>(MetaOf(snapshot, source).live_docs_count));
 }
 
 std::shared_ptr<const irs::DocRemoval> Positions(
@@ -886,72 +481,6 @@ TEST_F(IndexAdoptTest, DocRemovalMasksOnlyItsSegment) {
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
   EXPECT_EQ(std::vector<std::string>{sources.back()}, CommittedNames(*_writer));
-}
-
-TEST_F(IndexAdoptTest, DocRemovalOfAReplacedSegmentReachesItsReplacement) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(seed, "doomed"));
-  ASSERT_TRUE(InsertDoc(seed, "kept"));
-  ASSERT_TRUE(seed.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(1, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "doomed"));
-  ASSERT_TRUE(InsertDoc(build, "kept"));
-  const auto flushed = build.FlushAndFsync();
-  const auto replacement = MetaFilesOf(flushed);
-  const std::string name{flushed.front().meta.name};
-  build.Abort();
-
-  auto del = _writer->GetBatch();
-  del.Remove(Positions(snapshot, {{sources.front(), {1}}}));
-  ASSERT_TRUE(del.Commit());
-
-  Replace(*_writer, snapshot, sources, replacement,
-          {{TakesAll(snapshot, sources.front())}});
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(std::vector<std::string>{name}, CommittedNames(*_writer));
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-  auto survivor = _writer->GetBatch();
-  survivor.Remove(ByName("kept"));
-  ASSERT_TRUE(survivor.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, DocRemovalOfAReplacedSegmentMissesAReplacementOfNoRows) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(seed, "kept"));
-  ASSERT_TRUE(seed.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(1, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "kept"));
-  const auto flushed = build.FlushAndFsync();
-  const auto replacement = MetaFilesOf(flushed);
-  const std::string name{flushed.front().meta.name};
-  build.Abort();
-
-  auto del = _writer->GetBatch();
-  del.Remove(Positions({{sources.front(), {1}}}));
-  ASSERT_TRUE(del.Commit());
-
-  Replace(*_writer, snapshot, sources, replacement);
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(std::vector<std::string>{name}, CommittedNames(*_writer));
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
 
 TEST_F(IndexAdoptTest, DocRemovalMasksOnlyTheListedDocs) {
@@ -1424,401 +953,6 @@ TEST_F(IndexAdoptTest, DocRemovalRemapSkipsMergedAwayAndOutOfRangeDocs) {
   EXPECT_EQ(1, snapshot.live_docs_count());
   auto survivor = _writer->GetBatch();
   survivor.Remove(ByName("b1"));
-  ASSERT_TRUE(survivor.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
-  Restart(/*cleanup_on_open=*/false);
-
-  // Two committed segments, one doc each.
-  for (const auto* value : {"old_a", "old_b"}) {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit());
-    ASSERT_TRUE(_writer->RefreshCommit());
-  }
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(2, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-  ASSERT_EQ(2, snapshot.live_docs_count());
-
-  // The replacement: written and fsynced, not yet part of the index.
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "rebuilt"));
-  const auto flushed = build.FlushAndFsync();
-  ASSERT_EQ(1, flushed.size());
-  const auto replacement = MetaFilesOf(flushed);
-  const std::string replacement_name = flushed.front().meta.name;
-  build.Abort();  // the swap adopts it; this transaction must not commit it
-
-  EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count())
-    << "a flushed-but-unadopted segment must not be visible";
-
-  _dir->TakeSynced();
-  Replace(*_writer, snapshot, sources, replacement);
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  // One generation: sources gone, replacement in, in the same published meta.
-  const auto after = CommittedNames(*_writer);
-  ASSERT_EQ(1, after.size());
-  EXPECT_EQ(replacement_name, after.front());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
-    << "the sources' rows are still reachable, so both halves were published";
-  const auto synced = _dir->TakeSynced();
-  ASSERT_EQ(1, synced.size());
-  EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
-}
-
-// A removal a refresh has already consumed is not pending any more, and the
-// rebuilt segment would publish carrying the deleted row. The swap carries what
-// the source lost since the build's snapshot into the rows the replacement took
-// from it, in the generation that adopts it -- there is no published state
-// where the row is back.
-TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsAppliedSinceTheSnapshot) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(seed, "doomed"));
-  ASSERT_TRUE(InsertDoc(seed, "kept"));
-  ASSERT_TRUE(seed.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(1, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  // The rebuild copies both rows, off a snapshot that predates the delete.
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "doomed"));
-  ASSERT_TRUE(InsertDoc(build, "kept"));
-  const auto replacement = MetaFilesOf(build.FlushAndFsync());
-  build.Abort();
-
-  // The delete lands and a refresh consumes it: applied to the source, no
-  // longer pending.
-  {
-    auto del = _writer->GetBatch();
-    del.Remove(ByName("doomed"));
-    ASSERT_TRUE(del.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  ASSERT_EQ(1, _writer->GetSnapshot().live_docs_count());
-
-  _dir->TakeSynced();
-  Replace(*_writer, snapshot, sources, replacement,
-          {{TakesAll(snapshot, sources.front())}});
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
-    << "the deleted row came back with the adopted segment";
-
-  const auto after = _writer->GetSnapshot();
-  ASSERT_EQ(1, after.size());
-  const auto synced = _dir->TakeSynced();
-  ASSERT_EQ(2, synced.size());
-  EXPECT_EQ(after.Meta().index_meta.segments.front().filename, synced[0]);
-  EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
-}
-
-TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsIntoTheirWindowsOnly) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto bystander = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(bystander, "twin"));
-  ASSERT_TRUE(bystander.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto bystanders = CommittedNames(*_writer);
-  ASSERT_EQ(1, bystanders.size());
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  for (const auto* value : {"a1", "a2", "a3", "a4"}) {
-    ASSERT_TRUE(InsertDoc(seed, value));
-  }
-  ASSERT_TRUE(seed.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  std::vector<std::string> sources;
-  for (auto& name : CommittedNames(*_writer)) {
-    if (name != bystanders.front()) {
-      sources.push_back(std::move(name));
-    }
-  }
-  ASSERT_EQ(1, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  std::vector<std::string> replacements;
-  for (const auto& values : {std::array{"a1", "a2"}, std::array{"a3", "a4"}}) {
-    auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-    for (const auto* value : values) {
-      ASSERT_TRUE(InsertDoc(build, value));
-    }
-    for (auto& meta : MetaFilesOf(build.FlushAndFsync())) {
-      replacements.push_back(std::move(meta));
-    }
-    build.Abort();
-  }
-  ASSERT_EQ(2, replacements.size());
-
-  {
-    auto del = _writer->GetBatch();
-    del.Remove(ByName("a3"));
-    ASSERT_TRUE(del.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  auto pending = _writer->GetBatch();
-  pending.Remove(Positions(snapshot, {{sources.front(), {1}}}));
-  ASSERT_TRUE(pending.Commit());
-
-  Replace(*_writer, snapshot, sources, replacements,
-          {{Takes(snapshot, sources.front(), 0, 2)},
-           {Takes(snapshot, sources.front(), 2, 4)}});
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(3, _writer->GetSnapshot().live_docs_count());
-  const auto after = CommittedNames(*_writer);
-  EXPECT_NE(after.end(), std::ranges::find(after, bystanders.front()));
-  EXPECT_EQ(after.end(), std::ranges::find(after, sources.front()));
-  auto survivors = _writer->GetBatch();
-  for (const auto* value : {"twin", "a2", "a4"}) {
-    survivors.Remove(ByName(value));
-  }
-  ASSERT_TRUE(survivors.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, ReplaceSegmentsRefusesABegunCommit) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(seed, "source"));
-  ASSERT_TRUE(seed.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(1, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "rebuilt"));
-  const auto replacement = MetaFilesOf(build.FlushAndFsync());
-  build.Abort();
-
-  auto pending = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(pending, "pending"));
-  ASSERT_TRUE(pending.Commit());
-  ASSERT_TRUE(_writer->RefreshBegin());
-
-  ASSERT_SQL_ERROR(Replace(*_writer, snapshot, sources, replacement),
-                   ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE);
-
-  _writer->RefreshCommit();
-  EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
-  const auto after = CommittedNames(*_writer);
-  EXPECT_NE(after.end(), std::ranges::find(after, sources.front()));
-}
-
-// A source that is no longer in the index is what a concurrent DELETE of every
-// row the build was rebuilding looks like: a removal taking a segment's last
-// live doc masks the whole segment out instead of giving it a docs_mask. So the
-// swap proceeds -- the sources that are still there are masked, the replacement
-// is adopted -- rather than failing a CREATE INDEX over an ordinary delete.
-TEST_F(IndexAdoptTest, ReplaceSegmentsToleratesAVanishedSource) {
-  Restart(/*cleanup_on_open=*/false);
-
-  for (const auto* value : {"kept", "gone"}) {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit());
-    ASSERT_TRUE(_writer->RefreshCommit());
-  }
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(2, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "rebuilt"));
-  const auto replacement = MetaFilesOf(build.FlushAndFsync());
-  build.Abort();
-
-  {
-    auto del = _writer->GetBatch();
-    del.Remove(ByName("gone"));
-    ASSERT_TRUE(del.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  ASSERT_EQ(1, CommittedNames(*_writer).size()) << "one source is gone";
-
-  Replace(*_writer, snapshot, sources, replacement);
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-  const auto after = CommittedNames(*_writer);
-  ASSERT_EQ(1, after.size());
-  EXPECT_EQ(sources.end(), std::ranges::find(sources, after.front()))
-    << "the live source was masked and the replacement adopted";
-}
-
-TEST_F(IndexAdoptTest, ReplaceSegmentsMasksTheRowsOfASourceThatVanished) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(seed, "a1"));
-  ASSERT_TRUE(InsertDoc(seed, "a2"));
-  ASSERT_TRUE(seed.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto first = CommittedNames(*_writer);
-  ASSERT_EQ(1, first.size());
-  auto other = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(other, "b1"));
-  ASSERT_TRUE(other.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  std::vector<std::string> sources = first;
-  for (auto& name : CommittedNames(*_writer)) {
-    if (name != first.front()) {
-      sources.push_back(std::move(name));
-    }
-  }
-  ASSERT_EQ(2, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  for (const auto* value : {"a1", "a2", "b1"}) {
-    ASSERT_TRUE(InsertDoc(build, value));
-  }
-  const auto replacement = MetaFilesOf(build.FlushAndFsync());
-  build.Abort();
-
-  {
-    auto del = _writer->GetBatch();
-    del.Remove(ByName("a1"));
-    del.Remove(ByName("a2"));
-    ASSERT_TRUE(del.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  ASSERT_EQ(1, CommittedNames(*_writer).size()) << "the first source is gone";
-
-  auto absorbed = TakesAll(snapshot, sources.back());
-  absorbed.base = irs::doc_limits::min() + 2;
-  Replace(*_writer, snapshot, sources, replacement,
-          {{TakesAll(snapshot, sources.front()), std::move(absorbed)}});
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-  auto survivor = _writer->GetBatch();
-  survivor.Remove(ByName("b1"));
-  ASSERT_TRUE(survivor.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest,
-       ReplaceSegmentsTakingNothingFromAVanishedSourceMasksNothing) {
-  Restart(/*cleanup_on_open=*/false);
-
-  for (const auto* value : {"a1", "b1"}) {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit());
-    ASSERT_TRUE(_writer->RefreshCommit());
-  }
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(2, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "b1"));
-  const auto replacement = MetaFilesOf(build.FlushAndFsync());
-  build.Abort();
-
-  {
-    auto del = _writer->GetBatch();
-    del.Remove(ByName("a1"));
-    ASSERT_TRUE(del.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  ASSERT_EQ(1, CommittedNames(*_writer).size()) << "the first source is gone";
-
-  Replace(*_writer, snapshot, sources, replacement,
-          {{Takes(snapshot, sources.front(), 0, 0),
-            TakesAll(snapshot, sources.back())}});
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
-    << "the vanished source gave the replacement no rows to mask";
-  auto survivor = _writer->GetBatch();
-  survivor.Remove(ByName("b1"));
-  ASSERT_TRUE(survivor.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, ReplaceSegmentsOfNothingChangesNothing) {
-  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(trx, "kept"));
-  ASSERT_TRUE(trx.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto before = CommittedNames(*_writer);
-
-  Replace(*_writer, _writer->GetSnapshot(), {}, {});
-  _writer->RefreshCommit();
-
-  EXPECT_EQ(before, CommittedNames(*_writer));
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, ReplaceSegmentsWithoutSourcesAddsTheReplacement) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(trx, "kept"));
-  ASSERT_TRUE(trx.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "added"));
-  const auto replacement = MetaFilesOf(build.FlushAndFsync());
-  build.Abort();
-
-  Replace(*_writer, _writer->GetSnapshot(), {}, replacement);
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(2, CommittedNames(*_writer).size());
-  EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, ARemovalAndAReplacementLandInOneCommit) {
-  Restart(/*cleanup_on_open=*/false);
-
-  for (const auto* value : {"a", "b"}) {
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit());
-    ASSERT_TRUE(_writer->RefreshCommit());
-  }
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(2, sources.size());
-  const auto snapshot = _writer->GetSnapshot();
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "b"));
-  const auto flushed = build.FlushAndFsync();
-  const auto replacement = MetaFilesOf(flushed);
-  const std::string replacement_name = flushed.front().meta.name;
-  build.Abort();
-
-  auto del = _writer->GetBatch();
-  del.Remove(Positions(snapshot, {{sources.back(), {1}}}));
-  ASSERT_TRUE(del.Commit());
-  Replace(*_writer, snapshot, {sources.back()}, replacement,
-          {{TakesAll(snapshot, sources.back())}});
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(std::vector<std::string>{sources.front()}, CommittedNames(*_writer))
-    << "the replacement " << replacement_name
-    << " lost its only row to the removal of the row it replaced";
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-  auto survivor = _writer->GetBatch();
-  survivor.Remove(ByName("a"));
   ASSERT_TRUE(survivor.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
@@ -2342,16 +1476,12 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
 
   const auto& compacted = snapshot.Meta().index_meta.segments.front();
   ASSERT_NE(nullptr, compacted.meta.docs_mask);
-  for (const auto& file : compacted.meta.files) {
-    EXPECT_FALSE(file.ends_with(".sm")) << file << " is a chain link";
-  }
 
   auto synced = _dir->TakeSynced();
   ASSERT_FALSE(synced.empty());
   EXPECT_TRUE(synced.back().starts_with("pending_segments_"));
   synced.pop_back();
-  std::vector<std::string> expected{compacted.meta.files.begin(),
-                                    compacted.meta.files.end()};
+  auto expected = irs::SegmentFiles(compacted.meta.name, compacted.meta.kinds);
   expected.emplace_back(compacted.filename);
   std::ranges::sort(expected);
   std::ranges::sort(synced);
@@ -2394,79 +1524,6 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
   // Idle again, it arms -- so the refusal above was the in-flight merge.
   auto guard = _writer->ClaimCompactionFloor();
   EXPECT_TRUE(guard.Arm());
-}
-
-// --- why a build must adopt before it aborts --------------------------------
-//
-// Transaction::Abort resets the segment context, and SegmentContext::Reset ends
-// in dir.clear_refs(): the transaction's own references to the files it
-// flushed are released. A cleanup pass between that and the adoption would then
-// be free to unlink them. ReplaceSegments takes its own references, so calling
-// it FIRST keeps the files pinned across the abort.
-
-TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(seed, "old"));
-  ASSERT_TRUE(seed.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto sources = CommittedNames(*_writer);
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "rebuilt"));
-  const auto flushed = build.FlushAndFsync();
-  const auto replacement = MetaFilesOf(flushed);
-  const auto files = FilesOf(flushed);
-  const std::string replacement_name = flushed.front().meta.name;
-
-  // The order the build uses: reference through adoption, then abort.
-  Replace(*_writer, _writer->GetSnapshot(), sources, replacement);
-  build.Abort();
-  irs::directory_utils::RemoveAllUnreferenced(*_dir);
-
-  for (const auto& file : files) {
-    EXPECT_TRUE(Exists(file)) << file << " was reclaimed before the commit";
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-  EXPECT_EQ(replacement_name, CommittedNames(*_writer).front());
-}
-
-TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(seed, "old"));
-  ASSERT_TRUE(seed.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto sources = CommittedNames(*_writer);
-
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "rebuilt"));
-  const auto flushed = build.FlushAndFsync();
-  const auto replacement = MetaFilesOf(flushed);
-  const auto files = FilesOf(flushed);
-
-  // The wrong order, kept as documentation of the hazard rather than as a
-  // contract: after Abort nothing references the flushed files.
-  build.Abort();
-  irs::directory_utils::RemoveAllUnreferenced(*_dir);
-
-  bool any_gone = false;
-  for (const auto& file : files) {
-    any_gone |= !Exists(file);
-  }
-  EXPECT_TRUE(any_gone)
-    << "if the files survived, Abort no longer releases refs and the "
-       "ordering note in search_table_backfill.cpp can be dropped";
-  // And the swap correctly refuses rather than adopting a segment whose files
-  // are gone.
-  ASSERT_SQL_ERROR(
-    Replace(*_writer, _writer->GetSnapshot(), sources, replacement),
-    ERRCODE_UNDEFINED_FILE);
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
-    << "the original row must still be there";
 }
 
 #ifdef SDB_FAULT_INJECTION

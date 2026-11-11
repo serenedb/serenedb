@@ -43,6 +43,7 @@
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -72,9 +73,8 @@ irs::doc_id_t PieceDocs(const irs::IndexWriter::Transaction& trx) noexcept;
 
 struct TableUnit {
   uint64_t id = 0;
-  irs::IndexSegment segment;
+  irs::SegmentMeta meta;
   std::shared_ptr<const irs::SegmentReaderImpl> reader;
-  irs::IndexFileRefs::ref_t meta_ref;
   irs::doc_id_t docs = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
   std::vector<irs::FieldPatch> patches;
@@ -89,7 +89,7 @@ void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
 
 struct LoggedSegment {
   uint64_t id = 0;
-  std::string meta_file;
+  uint8_t kinds = 0;
   irs::doc_id_t rows = 0;
 };
 
@@ -171,7 +171,6 @@ struct TableState {
       tick{other.tick},
       memory_end{other.memory_end} {}
   TableState& operator=(const TableState&) = delete;
-  ~TableState() { delete reader.load(std::memory_order_relaxed); }
 
   std::vector<std::shared_ptr<const TableUnit>> units;
   std::shared_ptr<const MovedUnits> moved;
@@ -179,7 +178,16 @@ struct TableState {
   std::shared_ptr<const FileManifest> manifest;
   Tick tick = 0;
   uint64_t memory_end = 0;
-  mutable std::atomic<const irs::DirectoryReader*> reader{nullptr};
+  irs::DirectoryReader reader;
+};
+
+struct TableRead {
+  std::shared_ptr<const TableState> state;
+  std::optional<irs::DirectoryReader> own;
+
+  const irs::DirectoryReader& Reader() const noexcept {
+    return own ? *own : state->reader;
+  }
 };
 
 size_t VersionBytes(const TableState& state) noexcept;
@@ -187,7 +195,7 @@ size_t VersionBytes(const TableState& state) noexcept;
 using TableVersion = Version<TableState>;
 
 struct OwnSegment {
-  irs::IndexSegment segment;
+  irs::SegmentMeta meta;
   std::shared_ptr<const irs::SegmentReaderImpl> reader;
 };
 
@@ -262,12 +270,12 @@ class Table final {
   }
   VersionChain<TableState>& Versions() noexcept { return _versions; }
 
-  const irs::DirectoryReader& Reader(const TableState& state) const;
+  static const irs::DirectoryReader& Reader(const TableState& state) noexcept {
+    return state.reader;
+  }
   irs::DirectoryReader View(const TableState& state,
                             const OwnWrites& own) const;
-  irs::DirectoryReader View(const OwnWrites& own) const {
-    return View(*State(), own);
-  }
+  TableRead Read(const OwnWrites& own) const;
   irs::DirectoryReader ColdView() const {
     return Build(*State(), {}, Scope::Cold);
   }
@@ -277,7 +285,7 @@ class Table final {
   StoreStats Stats() const;
   uint64_t LiveDocs() const;
   uint64_t ByteSize() const;
-  OwnSegment OpenSegment(std::string meta_file) const;
+  OwnSegment OpenSegment(uint64_t id, uint8_t kinds, irs::doc_id_t rows) const;
 
   struct Memory {
     std::vector<std::shared_ptr<const TableUnit>> pieces;
@@ -360,6 +368,8 @@ class Table final {
 
   irs::DirectoryReader Build(const TableState& state, const OwnWrites& own,
                              Scope scope) const;
+  irs::DirectoryReader BuildReader(const TableState& prev,
+                                   const TableState& next) const;
   std::shared_ptr<TableState> SameUnits() const
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Publish(std::shared_ptr<TableState> state, Tick tick)

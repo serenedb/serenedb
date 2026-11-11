@@ -51,6 +51,7 @@
 #include "connector/search_table_backfill.h"
 #include "query/config_variable_names.h"
 #include "search/key_spec.h"
+#include "search/table.h"
 
 namespace duckdb {
 
@@ -192,7 +193,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   const std::vector<search::KeySpec>& KeySpecs() const noexcept {
     return _keys;
   }
-  irs::DirectoryReader RowsWithOwn(duckdb::ClientContext& context) const;
+  search::TableRead RowsWithOwn(duckdb::ClientContext& context) const;
   void AdoptAsWritten(duckdb::ClientContext& context) const;
 
  private:

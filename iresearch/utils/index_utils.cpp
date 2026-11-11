@@ -27,7 +27,6 @@
 #include <set>
 #include <utility>
 
-#include "iresearch/formats/segment_meta_writer.hpp"
 #include "iresearch/index/index_meta.hpp"
 
 namespace irs::index_utils {
@@ -179,21 +178,6 @@ double CompactionScore(const CompactionCandidate& compaction,
 }
 
 }  // namespace tier
-
-void PrepareFlush(IndexSegment& segment, bool increment_version) {
-  auto& meta = segment.meta;
-  SDB_ASSERT(meta.byte_size);  // Ensure segment size is estimated
-  SDB_ASSERT(segment.meta.docs_mask_size <= segment.meta.byte_size);
-
-  SDB_ASSERT(!meta.docs_mask || !meta.docs_mask->Empty());
-  meta.live_docs_count = meta.docs_count;
-  if (const auto removals = RemovalCount(meta); removals != 0) {
-    SDB_ASSERT(removals < meta.docs_count);
-    meta.live_docs_count -= removals;
-    meta.version += uint64_t{increment_version};
-  }
-}
-
 }  // namespace
 
 CompactionPolicy MakePolicy(const CompactionBytes& options) {
@@ -456,12 +440,6 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
     /// Stage 5: pick the best candidate
     absl::c_copy(best, std::back_inserter(candidates));
   };
-}
-
-void FlushIndexSegment(Directory& dir, IndexSegment& segment,
-                       bool increment_version) {
-  PrepareFlush(segment, increment_version);
-  segment_meta::Write(dir, segment.filename, segment.meta);
 }
 
 }  // namespace irs::index_utils

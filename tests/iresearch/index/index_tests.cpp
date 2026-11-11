@@ -11461,11 +11461,6 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
   AssertSnapshotEquality(*writer);
 }
 
-size_t MaskLinks(const irs::SegmentMeta& meta) {
-  return static_cast<size_t>(absl::c_count_if(
-    meta.files, [](std::string_view file) { return file.ends_with(".sm"); }));
-}
-
 // Which bucket document `i` lands in. Deliberately scrambled: consecutive doc
 // ids in one bucket would collapse to a single roaring run, and the mask would
 // never reach the sizes the thresholds key on however many documents it holds.
@@ -11539,7 +11534,6 @@ TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
     writer->RefreshCommit();
 
     const auto meta = segment_meta();
-    ASSERT_EQ(0, MaskLinks(meta)) << "after round " << round;
     ASSERT_NE(nullptr, meta.docs_mask);
     ASSERT_EQ(removed, meta.docs_mask->Count()) << "after round " << round;
     ASSERT_EQ(meta.docs_mask->FrozenSize(), meta.docs_mask_size);

@@ -421,8 +421,8 @@ void FlushRows(duckdb::ClientContext& context, StoreWrites& w) {
   SDB_ASSERT(changes.HasBufferedRows());
   const auto rows_id = OwnRowsId(w.rows_generation);
   const auto mask = TakeRowRemovals(changes.removals, rows_id);
-  auto trx = std::make_unique<irs::IndexWriter::Transaction>(
-    store.GetTransaction(/*exclusive_segment=*/true));
+  auto trx =
+    std::make_unique<irs::IndexWriter::Transaction>(store.GetTransaction());
   {
     const auto sink = connector::MakeSearchTableInsertSink(
       *trx, store, *changes.catalog, context);
@@ -562,7 +562,8 @@ void Writes::AddInlineRows(duckdb::ClientContext& context,
   absl::MutexLock lock{&w.mutex};
   w.changes.AppendInsertRows(std::move(rows), column_ids, catalog);
   ++w.revision;
-  if (w.changes.BufferedBytes() > flush_above) {
+  if (w.changes.BufferedBytes() > flush_above ||
+      w.changes.collection->Count() > irs::doc_limits::kMaxDocs) {
     FlushRows(context, w);
   }
 }
@@ -587,13 +588,13 @@ void Writes::RewriteOwn(
     for (const auto& segment : w.own_segments) {
       own.push_back(segment.reader->Id());
     }
-    const auto reader = store->View(OwnOf(w));
-    auto trx = std::make_unique<irs::IndexWriter::Transaction>(
-      store->GetTransaction(/*exclusive_segment=*/true));
+    const auto read = store->Read(OwnOf(w));
+    auto trx =
+      std::make_unique<irs::IndexWriter::Transaction>(store->GetTransaction());
     {
       const auto sink =
         connector::MakeSearchTableInsertSink(*trx, *store, catalog, context);
-      for (const auto& sub : reader) {
+      for (const auto& sub : read.Reader()) {
         if (absl::c_linear_search(
               own,
               irs::utils::downCast<irs::SegmentReader>(sub).GetImpl()->Id())) {
@@ -671,7 +672,7 @@ const StoreWrites::Pin& Writes::EnsurePin(duckdb::ClientContext& context,
     .manifest = w.manifest ? w.manifest.get() : state->manifest.get(),
     .revision = w.revision});
   if (const auto own = OwnOf(w); HasOwn(own)) {
-    pin.own = table.View(*state, own);
+    pin.own.emplace(table.View(*state, own));
   }
   w.pinned.store(&pin, std::memory_order_release);
   return pin;
@@ -681,12 +682,11 @@ ReadView Writes::Read(duckdb::ClientContext& context, Store& store) {
   const auto& table = store.GetTable();
   if (auto* w = FindStoreWrites(store.GetId())) {
     const auto& pin = EnsurePin(context, *w);
-    return {.reader = pin.own ? &pin.own : &table.Reader(*pin.state),
-            .state = pin.state,
-            .manifest = pin.manifest};
+    return {
+      .reader = &pin.Reader(), .state = pin.state, .manifest = pin.manifest};
   }
   const auto& version = table.VersionAt(Snapshot(), _walks);
-  return {.reader = &table.Reader(*version.state),
+  return {.reader = &version.state->reader,
           .state = version.state.get(),
           .manifest = version.state->manifest.get()};
 }
@@ -707,8 +707,7 @@ const irs::DirectoryReader& Writes::PinnedReader(duckdb::ClientContext& context,
   auto* w = FindStoreWrites(store.GetId());
   SDB_ENSURE(w, "table ", store.GetId(),
              ": deletes without the reader their positions come from");
-  const auto& pin = EnsurePin(context, *w);
-  return pin.own ? pin.own : store.GetTable().Reader(*pin.state);
+  return EnsurePin(context, *w).Reader();
 }
 
 void Writes::ResetPins(bool all) noexcept {
@@ -1231,11 +1230,10 @@ std::shared_ptr<const TableState> Writes::VerifyAllReferences(
   const KeySpec& spec) {
   const auto* parent = ReferencedTable(table, spec, Latest(table));
   const auto own = _writes.find(table.Storage()->GetId());
-  const auto reader = own == _writes.end()
-                        ? table.Storage()->View({})
-                        : table.Storage()->View(OwnOf(own->second));
+  const auto read = table.Storage()->Read(
+    own == _writes.end() ? OwnWrites{} : OwnOf(own->second));
   std::vector<KeyProbe::Segment> segments;
-  for (const auto& segment : reader) {
+  for (const auto& segment : read.Reader()) {
     segments.push_back({.sub = &segment});
   }
   if (!parent || spec.referenced_field == 0) {
@@ -1389,13 +1387,11 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
   w.checked.emplace(std::move(now));
 }
 
-irs::DirectoryReader Writes::LatestView(duckdb::ClientContext& context,
-                                        Store& store) {
+TableRead Writes::LatestView(duckdb::ClientContext& context, Store& store) {
   const auto& table = store.GetTable();
-  const auto state = table.State();
   auto* w = FindStoreWrites(store.GetId());
   if (!w) {
-    return table.View(*state, {});
+    return table.Read({});
   }
   absl::MutexLock lock{&w->mutex};
   if (w->rebuilt_newer) {
@@ -1404,7 +1400,7 @@ irs::DirectoryReader Writes::LatestView(duckdb::ClientContext& context,
   if (store.HasIndexes() && w->changes.HasBufferedRows()) {
     FlushRows(context, *w);
   }
-  return table.View(*state, OwnOf(*w));
+  return table.Read(OwnOf(*w));
 }
 
 void Writes::PrepareCommit(duckdb::ClientContext& context) {

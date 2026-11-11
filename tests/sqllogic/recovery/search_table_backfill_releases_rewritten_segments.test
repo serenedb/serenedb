@@ -54,7 +54,7 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE brs_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'brs_t') || '/*.sm';
+SET VARIABLE brs_dir = '${SDB_DATADIR}/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/' || (SELECT oid FROM pg_class WHERE relname = 'brs_t') || '/*.col';
 
 
 statement ok

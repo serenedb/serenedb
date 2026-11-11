@@ -175,7 +175,7 @@ void WriteTableDelta(duckdb::Serializer& object, const TableDelta& delta) {
         const auto& added = delta.add[i];
         list.WriteObject([&](duckdb::Serializer& segment) {
           segment.WriteProperty<uint64_t>(100, "segment", added.id);
-          segment.WriteProperty(101, "meta_file", added.meta_file);
+          segment.WriteProperty<uint8_t>(101, "kinds", added.kinds);
           segment.WriteProperty<uint32_t>(102, "rows", added.rows);
         });
       });
@@ -257,7 +257,7 @@ void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
       list.ReadObject([&](duckdb::Deserializer& segment) {
         LoggedSegment added;
         added.id = segment.ReadProperty<uint64_t>(100, "segment");
-        added.meta_file = segment.ReadProperty<std::string>(101, "meta_file");
+        added.kinds = segment.ReadProperty<uint8_t>(101, "kinds");
         added.rows = segment.ReadProperty<uint32_t>(102, "rows");
         if (replay) {
           replay->Add(added);

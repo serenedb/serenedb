@@ -2347,7 +2347,8 @@ TEST(index_death_test_formats_15,
   ASSERT_EQ(1, reader.live_docs_count());
   const auto& segments = reader.Meta().index_meta.segments;
   ASSERT_EQ(1, segments.size());
-  for (const auto& file : segments.front().meta.files) {
+  const auto& meta = segments.front().meta;
+  for (const auto& file : irs::SegmentFiles(meta.name, meta.kinds)) {
     bool exists = false;
     ASSERT_TRUE(impl.exists(exists, file));
     EXPECT_TRUE(exists) << file;

@@ -239,16 +239,13 @@ void Store::Open() {
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
   writer_options.cleanup_on_open = _is_new;
-  writer_options.lock_repository = false;
   if (!IsSearchTable()) {
-    writer_options.key_column = connector::term_dict::kPKFieldId;
     SDB_IF_FAILURE("segment_1000_docs_max") {
       writer_options.segment_docs_max = 1000;
     }
   }
 
-  _writer =
-    irs::IndexWriter::Make(*_dir, irs::kOmCreate, std::move(writer_options));
+  _writer = irs::IndexWriter::Make(*_dir, std::move(writer_options));
   {
     absl::MutexLock lock{&_layout_mutex};
     _table =
@@ -260,9 +257,8 @@ void Store::Open() {
     piece_options.ann_env = &AnnBuildEnv();
     piece_options.reader_options = ReaderOptions();
     piece_options.db = piece_options.reader_options.db;
-    piece_options.lock_repository = false;
-    _piece_writer = irs::IndexWriter::Make(*_piece_dir, irs::kOmCreate,
-                                           std::move(piece_options));
+    _piece_writer =
+      irs::IndexWriter::Make(*_piece_dir, std::move(piece_options));
   }
 }
 
@@ -327,20 +323,19 @@ std::vector<OwnSegment> Store::OpenFlushed(
   std::vector<OwnSegment> segments;
   segments.reserve(flushed.size());
   for (const auto& entry : flushed) {
-    OwnSegment segment;
-    segment.segment.filename = entry.filename;
-    segment.segment.meta = entry.meta;
-    segment.reader = irs::SegmentReaderImpl::Open(*_dir, segment.segment.meta,
-                                                  ReaderOptions());
-    segments.push_back(std::move(segment));
+    segments.push_back(OpenOwn(entry.meta));
   }
   return segments;
 }
 
+OwnSegment Store::OpenOwn(irs::SegmentMeta meta) const {
+  auto reader = irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions());
+  return {.meta = std::move(meta), .reader = std::move(reader)};
+}
+
 Store::Piece Store::StartPiece() {
   SDB_ASSERT(_piece_writer);
-  Piece piece{.trx = _piece_writer->GetBatch(/*exclusive_segment=*/true),
-              .id = _writer->NextSegmentId()};
+  Piece piece{.trx = _piece_writer->GetBatch(), .id = _writer->NextSegmentId()};
   piece.trx.SetHot(piece.id);
   return piece;
 }
@@ -421,7 +416,7 @@ bool Store::FoldPatches() {
     }
     if (bytes > most) {
       most = bytes;
-      target = unit->segment.meta.name;
+      target = unit->meta.name;
     }
   }
   const auto options = CompactionOptions();
@@ -464,12 +459,11 @@ bool Store::MergePiecesLocked(
       std::move(source), id, field_options.get(), [] { return true; },
       &AnnBuildEnv()));
     auto& refs = _piece_dir->attributes().refs();
-    for (const auto& file : merged.segment.meta.files) {
+    for (const auto& file :
+         irs::SegmentFiles(merged.meta.name, merged.meta.kinds)) {
       _piece_dir->remove(file);
       refs.remove(file);
     }
-    _piece_dir->remove(merged.segment.filename);
-    refs.remove(merged.segment.filename);
   }
   if (!merged.reader) {
     return false;
@@ -530,14 +524,27 @@ void Store::WriteOut() {
     return;
   }
   absl::MutexLock lock{&_write_out_mutex};
-  WriteOutLocked();
+  while (WriteOutLocked()) {
+  }
 }
 
-void Store::WriteOutLocked() {
-  const auto memory = _table->InMemory();
-  const auto& pieces = memory.pieces;
+bool Store::WriteOutLocked() {
+  auto memory = _table->InMemory();
+  auto& pieces = memory.pieces;
   if (pieces.empty()) {
-    return;
+    return false;
+  }
+  bool rest = false;
+  uint64_t docs = 0;
+  for (size_t i = 0; i < pieces.size(); ++i) {
+    docs += pieces[i]->docs;
+    if (docs > irs::doc_limits::kMaxDocs) {
+      SDB_ASSERT(i != 0);
+      memory.end = pieces[i]->first;
+      pieces.resize(i);
+      rest = true;
+      break;
+    }
   }
   const auto field_options = CompactionOptions();
   auto merged = irs::GetBlocking(_writer->WriteAsync(
@@ -557,14 +564,14 @@ void Store::WriteOutLocked() {
   }
   std::vector<std::shared_ptr<TableUnit>> added;
   if (merged.reader) {
-    added.push_back(
-      _table->SegmentUnit(OwnSegment{.segment = std::move(merged.segment),
-                                     .reader = std::move(merged.reader)}));
+    added.push_back(_table->SegmentUnit(OwnSegment{
+      .meta = std::move(merged.meta), .reader = std::move(merged.reader)}));
   }
   SyncSegments();
   CommitReplace(ids, folded, std::move(added), std::move(merged.maps),
                 memory.end, /*logged=*/true);
   NudgeCompaction();
+  return rest;
 }
 
 std::shared_ptr<const TableState> Store::SnapshotState(
@@ -596,9 +603,8 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
       }
     }
     if (!unit->piece) {
-      delta.add.push_back({.id = unit->id,
-                           .meta_file = unit->segment.filename,
-                           .rows = unit->docs});
+      delta.add.push_back(
+        {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
       for (const auto& patch : unit->patches) {
         delta.updates.push_back({.segment = unit->id, .patch = patch});
       }
@@ -649,7 +655,6 @@ void Store::ApplyOptions(const catalog::InvertedIndexSettings& options) {
     return;
   }
   irs::SegmentOptions segment_options;
-  segment_options.segment_count_max = 0;
   segment_options.segment_memory_max = options.segment_memory_max;
   segment_options.segment_docs_max = options.segment_docs_max;
   _writer->Options(segment_options);
@@ -823,9 +828,8 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
     }
     SyncSegments();
     std::vector<std::shared_ptr<TableUnit>> added;
-    added.push_back(
-      _table->SegmentUnit(OwnSegment{.segment = std::move(merged.segment),
-                                     .reader = std::move(merged.reader)}));
+    added.push_back(_table->SegmentUnit(OwnSegment{
+      .meta = std::move(merged.meta), .reader = std::move(merged.reader)}));
     CommitReplace(ids, folded, std::move(added), std::move(merged.maps), 0,
                   /*logged=*/true);
   } catch (const std::exception& e) {
@@ -980,7 +984,7 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   std::vector<std::shared_ptr<TableUnit>> added;
   std::vector<irs::DocMap> maps;
   for (auto& replacement : replacements) {
-    auto opened = _table->OpenSegment(std::string{replacement.meta_file});
+    auto opened = OpenOwn(std::move(replacement.meta));
     const auto target = opened.reader->Id();
     for (auto& map : replacement.absorbed) {
       map.target = target;
@@ -1349,8 +1353,8 @@ void Store::ScheduleRecovery(duckdb::ClientContext& context,
   _writer->ReserveSegmentId(_replay.Top());
   for (auto& [id, segment] : _replay.Segments()) {
     executor.ScheduleTask(
-      duckdb::make_uniq<RecoveryTask>(executor, [this, &segment] {
-        segment.opened = _table->OpenSegment(segment.meta_file);
+      duckdb::make_uniq<RecoveryTask>(executor, [this, id, &segment] {
+        segment.opened = _table->OpenSegment(id, segment.kinds, segment.rows);
       }));
   }
   for (auto& piece : _replay.Cut()) {
@@ -1392,7 +1396,7 @@ bool Store::FinishReplay() {
   _table->Recover(std::move(_replay).Units(*_table), memory_end,
                   std::move(manifest));
   _replay = TableReplay{};
-  ClaimColumnOids(_table->View({}));
+  ClaimColumnOids(_table->State()->reader);
   return replayed;
 }
 

@@ -39,7 +39,6 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/lead/impl.hpp"
-#include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -70,10 +69,8 @@ class SegmentAllDocs : public lead::Node {
 
 FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
   FileRefs file_refs;
-  file_refs.reserve(meta.files.size());
-
   auto& refs = dir.attributes().refs();
-  for (auto& file : meta.files) {
+  for (const auto& file : SegmentFiles(meta.name, meta.kinds)) {
     file_refs.emplace_back(refs.add(file));
   }
   return file_refs;
@@ -178,33 +175,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
     std::make_unique<ColReader>(*root->col_reader, std::move(replaced));
   data->base = root;
   reader->_data = std::move(data);
-  return reader;
-}
-
-std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
-  const Directory& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options) const {
-  SDB_ASSERT(meta == _info);
-  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = _refs;
-  reader->_id = _id;
-  reader->_doc_maps = _doc_maps;
-  reader->_field_reader = _field_reader;
-  reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options, false);
-  return reader;
-}
-
-std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
-  const Directory& dir, const SegmentMeta& meta) const {
-  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = GetRefs(dir, meta);
-  reader->_id = _id;
-  reader->_patch_tick = _patch_tick;
-  reader->_patched_docs = _patched_docs;
-  reader->_doc_maps = _doc_maps;
-  reader->_field_reader = _field_reader;
-  reader->_data = _data;
   return reader;
 }
 

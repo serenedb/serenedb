@@ -31,14 +31,12 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/hot_column_reader.hpp>
-#include <iresearch/formats/segment_meta_reader.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/segment_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -60,11 +58,16 @@ bool Adjacent(const TableUnit& lhs, const TableUnit& rhs) noexcept {
   return lhs.first + lhs.docs == rhs.first;
 }
 
+bool Mergeable(const TableUnit& piece) noexcept {
+  return piece.docs < irs::doc_limits::kMaxDocs / (2 * kPieceFanIn);
+}
+
 class PieceRuns {
  public:
   bool Next(const TableUnit& piece) noexcept {
     const auto* previous = std::exchange(_previous, &piece);
-    if (!previous || !Adjacent(*previous, piece)) {
+    if (!previous || !Adjacent(*previous, piece) || !Mergeable(*previous) ||
+        !Mergeable(piece)) {
       _same = 1;
       return false;
     }
@@ -489,7 +492,7 @@ std::shared_ptr<TableUnit> PieceUnit(
   auto unit = std::make_shared<TableUnit>();
   unit->id = reader->Id();
   unit->docs = reader->Meta().docs_count;
-  unit->segment.meta.name = reader->Meta().name;
+  unit->meta.name = reader->Meta().name;
   unit->deleted = reader->SharedDocsMask();
   unit->reader = std::move(reader);
   unit->first = first;
@@ -615,7 +618,43 @@ void Table::Publish(std::shared_ptr<TableState> state, Tick tick) {
   state->tick = tick;
   state->config = _config;
   CountPieces(*state);
+  state->reader = BuildReader(*Head().state, *state);
   _versions.Publish(std::move(state), tick);
+}
+
+irs::DirectoryReader Table::BuildReader(const TableState& prev,
+                                        const TableState& next) const {
+  std::vector<irs::SegmentReader> readers;
+  readers.reserve(next.units.size());
+  for (const auto& unit : next.units) {
+    readers.emplace_back(unit->reader);
+  }
+  if (prev.units.empty()) {
+    return {_dir, _options, std::move(readers), /*stats=*/true};
+  }
+  irs::containers::FlatHashMap<uint64_t, const TableUnit*> before;
+  before.reserve(prev.units.size());
+  for (const auto& unit : prev.units) {
+    before.emplace(unit->id, unit.get());
+  }
+  std::vector<irs::SegmentReader> added;
+  std::vector<irs::SegmentReader> patched;
+  size_t kept = 0;
+  for (const auto& unit : next.units) {
+    const auto it = before.find(unit->id);
+    if (it == before.end()) {
+      added.emplace_back(unit->reader);
+      continue;
+    }
+    ++kept;
+    if (it->second->reader->PatchTick() != unit->reader->PatchTick()) {
+      patched.emplace_back(unit->reader);
+    }
+  }
+  if (kept != prev.units.size()) {
+    return {_dir, _options, std::move(readers), /*stats=*/true};
+  }
+  return {prev.reader, std::move(readers), added, patched};
 }
 
 void Table::CountPieces(const TableState& state) noexcept {
@@ -641,42 +680,41 @@ void Table::CountPieces(const TableState& state) noexcept {
 }
 
 std::shared_ptr<TableState> Table::SameUnits() const {
-  const auto& state = *Head().state;
-  auto next = std::make_shared<TableState>(state);
-  if (const auto* cached = state.reader.load(std::memory_order_acquire)) {
-    next->reader.store(new irs::DirectoryReader{*cached},
-                       std::memory_order_relaxed);
-  }
-  return next;
+  return std::make_shared<TableState>(*Head().state);
 }
 
-OwnSegment Table::OpenSegment(std::string meta_file) const {
+OwnSegment Table::OpenSegment(uint64_t id, uint8_t kinds,
+                              irs::doc_id_t rows) const {
   OwnSegment opened;
-  opened.segment.filename = std::move(meta_file);
-  irs::segment_meta::Read(_dir, opened.segment.meta, opened.segment.filename);
-  opened.reader =
-    irs::SegmentReaderImpl::Open(_dir, opened.segment.meta, _options);
+  auto& meta = opened.meta;
+  meta.name = irs::FileName(id);
+  meta.kinds = kinds;
+  meta.docs_count = rows;
+  meta.live_docs_count = rows;
+  for (const auto& file : irs::SegmentFiles(meta.name, kinds)) {
+    uint64_t size = 0;
+    if (!_dir.length(size, file)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                      ERR_MSG("segment file '", file, "' is missing"));
+    }
+    meta.byte_size += size;
+  }
+  opened.reader = irs::SegmentReaderImpl::Open(_dir, meta, _options);
   return opened;
-}
-
-const irs::DirectoryReader& Table::Reader(const TableState& state) const {
-  if (const auto* cached = state.reader.load(std::memory_order_acquire)) {
-    return *cached;
-  }
-  auto built =
-    std::make_unique<const irs::DirectoryReader>(Build(state, {}, Scope::All));
-  const irs::DirectoryReader* installed = nullptr;
-  if (state.reader.compare_exchange_strong(installed, built.get(),
-                                           std::memory_order_acq_rel,
-                                           std::memory_order_acquire)) {
-    return *built.release();
-  }
-  return *installed;
 }
 
 irs::DirectoryReader Table::View(const TableState& state,
                                  const OwnWrites& own) const {
-  return HasOwn(own) ? Build(state, own, Scope::All) : Reader(state);
+  SDB_ASSERT(HasOwn(own));
+  return Build(state, own, Scope::All);
+}
+
+TableRead Table::Read(const OwnWrites& own) const {
+  TableRead read{.state = State()};
+  if (HasOwn(own)) {
+    read.own.emplace(Build(*read.state, own, Scope::All));
+  }
+  return read;
 }
 
 irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
@@ -688,17 +726,9 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       Follow(state, group.segment, group.docs, own_removed);
     }
   }
-  irs::DirectoryMeta meta;
   std::vector<irs::SegmentReader> readers;
-  meta.index_meta.segments.reserve(state.units.size() + own.segments.size() +
-                                   1);
-  readers.reserve(meta.index_meta.segments.capacity());
-  const auto add = [&](const std::string& filename,
-                       std::shared_ptr<const irs::SegmentReaderImpl> reader) {
-    irs::IndexSegment segment;
-    segment.filename = filename;
-    static_cast<irs::SegmentInfo&>(segment.meta) = reader->Meta();
-    meta.index_meta.segments.push_back(std::move(segment));
+  readers.reserve(state.units.size() + own.segments.size() + 1);
+  const auto add = [&](std::shared_ptr<const irs::SegmentReaderImpl> reader) {
     readers.emplace_back(std::move(reader));
   };
   const auto with_own =
@@ -722,6 +752,8 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       }
       return Masked(base, std::move(mask));
     };
+  std::vector<irs::SegmentReader> added;
+  std::vector<irs::SegmentReader> patched;
   const auto with_patches =
     [&](uint64_t id, std::span<const irs::FieldPatch> committed,
         std::shared_ptr<const irs::SegmentReaderImpl> reader) {
@@ -732,31 +764,39 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
       }
       std::vector<irs::FieldPatch> fields{committed.begin(), committed.end()};
       MergePatches(fields, it->fields, 0);
-      return reader->WithPatches(fields);
+      auto patched_reader = reader->WithPatches(fields);
+      patched.emplace_back(patched_reader);
+      return patched_reader;
     };
   for (const auto& unit : state.units) {
     if (own.truncated || (scope == Scope::Cold && unit->piece)) {
       continue;
     }
-    add(unit->segment.filename,
-        with_patches(unit->id, unit->patches,
+    add(with_patches(unit->id, unit->patches,
                      with_own(unit->id, unit->deleted, unit->reader)));
   }
   for (const auto& segment : own.segments) {
     const auto id = segment.reader->Id();
-    add(segment.segment.filename,
-        with_patches(
-          id, {},
-          with_own(id, segment.reader->SharedDocsMask(), segment.reader)));
+    auto reader = with_patches(
+      id, {}, with_own(id, segment.reader->SharedDocsMask(), segment.reader));
+    added.emplace_back(reader);
+    add(std::move(reader));
   }
   if (own.rows != nullptr && own.rows->Count() != 0) {
-    const auto reader =
-      OwnRowsReader(db, own.rows_id, *own.rows, own.row_columns);
-    add({},
-        with_patches(own.rows_id, {}, with_own(own.rows_id, nullptr, reader)));
+    auto reader = with_patches(
+      own.rows_id, {},
+      with_own(own.rows_id, nullptr,
+               OwnRowsReader(db, own.rows_id, *own.rows, own.row_columns)));
+    added.emplace_back(reader);
+    add(std::move(reader));
   }
-  return irs::DirectoryReader{std::make_shared<const irs::DirectoryReaderImpl>(
-    _dir, _options, std::move(meta), std::move(readers))};
+  if (scope == Scope::Cold) {
+    return {_dir, _options, std::move(readers), /*stats=*/false};
+  }
+  if (own.truncated || state.units.empty()) {
+    return {_dir, _options, std::move(readers), /*stats=*/true};
+  }
+  return {state.reader, std::move(readers), added, patched};
 }
 
 StoreStats Table::Stats() const {
@@ -764,10 +804,10 @@ StoreStats Table::Stats() const {
   const auto cold = Build(*state, {}, Scope::Cold);
   auto stats = StoreStats::FromReader(cold);
   stats.numBufferedDocs =
-    Reader(*state).live_docs_count() - cold.live_docs_count();
+    state->reader.live_docs_count() - cold.live_docs_count();
   for (const auto& unit : state->units) {
     if (!unit->piece) {
-      stats.numFiles += unit->segment.meta.files.size();
+      stats.numFiles += std::popcount(unit->meta.kinds);
     }
   }
   return stats;
@@ -792,19 +832,14 @@ uint64_t Table::ByteSize() const {
 irs::DirectoryReader Table::PieceView(
   std::span<const std::shared_ptr<const TableUnit>> pieces,
   bool keep_deleted) const {
-  TableState state;
-  state.units.reserve(pieces.size());
+  std::vector<irs::SegmentReader> readers;
+  readers.reserve(pieces.size());
   for (const auto& piece : pieces) {
-    if (!keep_deleted || !piece->deleted) {
-      state.units.push_back(piece);
-      continue;
-    }
-    auto unit = std::make_shared<TableUnit>(*piece);
-    unit->deleted.reset();
-    unit->reader = piece->reader->WithDocsMask(nullptr);
-    state.units.push_back(std::move(unit));
+    readers.emplace_back(keep_deleted && piece->deleted
+                           ? piece->reader->WithDocsMask(nullptr)
+                           : piece->reader);
   }
-  return Build(state, {}, Scope::All);
+  return {_dir, _options, std::move(readers), /*stats=*/false};
 }
 
 Table::Memory Table::InMemory() const {
@@ -835,6 +870,16 @@ std::vector<std::shared_ptr<const TableUnit>> Table::MergeRun() const {
       }
     } else {
       begin = i + 1 - kPieceFanIn;
+    }
+    uint64_t docs = 0;
+    for (size_t j = begin; j <= i; ++j) {
+      docs += pieces[j]->docs;
+    }
+    for (; docs > irs::doc_limits::kMaxDocs; ++begin) {
+      docs -= pieces[begin]->docs;
+    }
+    if (begin == i) {
+      continue;
     }
     pieces.erase(pieces.begin() + i + 1, pieces.end());
     pieces.erase(pieces.begin(), pieces.begin() + begin);
@@ -957,8 +1002,7 @@ TableDelta Table::CommitDelta(const TableCommit& commit,
       dead.insert(id);
       continue;
     }
-    delta.add.push_back(
-      {.id = id, .meta_file = segment.segment.filename, .rows = rows});
+    delta.add.push_back({.id = id, .kinds = segment.meta.kinds, .rows = rows});
   }
   if (commit.piece) {
     SDB_ASSERT(!rows.chunks.empty());
@@ -1067,10 +1111,8 @@ std::shared_ptr<TableUnit> Table::SegmentUnit(OwnSegment&& segment) const {
   auto unit = std::make_shared<TableUnit>();
   unit->id = segment.reader->Id();
   unit->docs = segment.reader->Meta().docs_count;
-  unit->meta_ref =
-    irs::directory_utils::Reference(_dir, segment.segment.filename);
   unit->deleted = segment.reader->SharedDocsMask();
-  unit->segment = std::move(segment.segment);
+  unit->meta = std::move(segment.meta);
   unit->reader = std::move(segment.reader);
   return unit;
 }
@@ -1148,9 +1190,8 @@ Table::Replacement Table::PrepareReplace(
     if (unit->piece || Dead(*unit)) {
       continue;
     }
-    delta.add.push_back({.id = unit->id,
-                         .meta_file = unit->segment.filename,
-                         .rows = unit->docs});
+    delta.add.push_back(
+      {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
     if (unit->deleted && !unit->deleted->Empty()) {
       delta.deletes.push_back({.segment = unit->id, .docs = unit->deleted});
     }
@@ -1262,6 +1303,7 @@ void Table::Recover(std::vector<std::shared_ptr<TableUnit>> units,
   next->manifest = std::move(manifest);
   next->config = _config;
   CountPieces(*next);
+  next->reader = BuildReader(*Head().state, *next);
   _versions.ReplaceInitial(std::move(next));
 }
 

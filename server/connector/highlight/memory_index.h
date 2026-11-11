@@ -39,17 +39,14 @@ class MemoryIndex {
   std::shared_ptr<const irs::SubReader> IndexChunk(size_t row_count,
                                                    WriteDocs&& write_docs) {
     irs::IndexWriterOptions opts;
-    opts.lock_repository = false;
     opts.db = _db;
     opts.reader_options.db = _db;
-    auto writer =
-      irs::IndexWriter::Make(_dir, irs::OpenMode::kOmCreate, std::move(opts));
-    auto trx = writer->GetBatch(/*exclusive_segment=*/true);
+    auto writer = irs::IndexWriter::Make(_dir, std::move(opts));
+    auto trx = writer->GetBatch();
     const auto id = writer->NextSegmentId();
     trx.SetHot(id);
     {
-      auto doc = trx.Insert(/*disable_flush=*/false,
-                            static_cast<irs::doc_id_t>(row_count));
+      auto doc = trx.Insert(static_cast<irs::doc_id_t>(row_count));
       doc.NextFieldBatch();
       write_docs(doc);
     }

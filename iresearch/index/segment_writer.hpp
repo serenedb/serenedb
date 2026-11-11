@@ -27,7 +27,6 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
-#include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
@@ -56,7 +55,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     Directory& dir, const SegmentWriterOptions& options);
 
   // Begin a batch. Returns first valid doc_id in the batch.
-  doc_id_t begin(uint64_t tick, doc_id_t batch_size = 1);
+  doc_id_t begin(doc_id_t batch_size = 1);
 
   // WithField/WithTokens are the only ingest doors: the FieldInverter
   // Invert* entries are the vocabulary, run under the writer's failure
@@ -124,9 +123,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     _valid = false;
   }
 
-  DocContexts& docs_context() noexcept { return _docs_context; }
-
-  void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask);
+  void flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask);
 
   std::shared_ptr<const SegmentReaderImpl> SealPiece(uint64_t id);
 
@@ -134,7 +131,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
                 uint64_t first, uint64_t count);
 
   const std::string& name() const noexcept { return _seg_name; }
-  size_t buffered_docs() const noexcept { return _docs_context.size(); }
+  size_t buffered_docs() const noexcept { return _docs; }
   bool initialized() const noexcept { return _initialized; }
   bool valid() const noexcept { return _valid; }
   std::string_view Error() const noexcept { return _error; }
@@ -284,7 +281,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   TrackingDirectory _dir;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
-  DocContexts _docs_context;
+  size_t _docs = 0;
   DocumentMaskBuilder _docs_mask;
   FieldsInverter _fields;
   std::unique_ptr<TokenSink> _token_sink;

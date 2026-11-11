@@ -73,12 +73,6 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<const SegmentReaderImpl> WithPatches(
     std::span<const FieldPatch> patches) const;
 
-  std::shared_ptr<const SegmentReaderImpl> ReopenReader(
-    const Directory& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options) const;
-  std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
-    const Directory& dir, const SegmentMeta& meta) const;
-
   uint64_t CountMappedMemory() const final;
 
   const SegmentInfo& Meta() const final { return _info; }

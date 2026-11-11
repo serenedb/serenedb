@@ -24,16 +24,22 @@
 #pragma once
 
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
+#include <span>
+#include <utility>
+#include <vector>
 
-#include "index_reader.hpp"
-#include "iresearch/formats/index_meta_reader.hpp"
-#include "iresearch/utils/object_pool.hpp"
-#include "iresearch/utils/shared.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/index/segment_reader.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
+#include "iresearch/utils/string.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-class DirectoryReaderImpl;
-struct DirectoryMeta;
+struct Directory;
 
 struct FieldTermRange {
   bytes_view min;
@@ -42,63 +48,73 @@ struct FieldTermRange {
   uint64_t docs = 0;
 };
 
-// Interface for an index reader over a directory of segments
 class DirectoryReader final : public IndexReader {
  public:
-  DirectoryReader() noexcept = default;
+  DirectoryReader() = default;
+  DirectoryReader(const Directory& dir, const IndexReaderOptions& opts,
+                  std::vector<SegmentReader> readers, bool stats);
+  DirectoryReader(const DirectoryReader& base,
+                  std::vector<SegmentReader> readers,
+                  std::span<const SegmentReader> added,
+                  std::span<const SegmentReader> patched);
   DirectoryReader(DirectoryReader&&) noexcept = default;
   DirectoryReader& operator=(DirectoryReader&&) noexcept = default;
 
-  // Create an index reader over the specified directory
-  explicit DirectoryReader(
-    const Directory& dir, const IndexReaderOptions& opts = IndexReaderOptions{},
-    MetaPayloadReader payload = {});
-  explicit DirectoryReader(
-    std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept;
-  DirectoryReader(const DirectoryReader& other) noexcept;
-  DirectoryReader& operator=(const DirectoryReader& other) noexcept;
+  const SubReader& operator[](size_t i) const final { return *_readers[i]; }
 
-  // Return the directory_meta this reader is based upon
-  // Note that return value valid on an already open reader until call to
-  // Reopen()
-  const DirectoryMeta& Meta() const;
+  size_t size() const noexcept final { return _readers.size(); }
 
-  explicit operator bool() const noexcept { return nullptr != _impl; }
+  uint64_t docs_count() const noexcept final { return _docs; }
 
-  bool operator==(std::nullptr_t) const noexcept { return !_impl; }
-
-  bool operator==(const DirectoryReader& rhs) const noexcept {
-    return _impl == rhs._impl;
-  }
-
-  DirectoryReader& operator*() noexcept { return *this; }
-  const DirectoryReader& operator*() const noexcept { return *this; }
-  DirectoryReader* operator->() noexcept { return this; }
-  const DirectoryReader* operator->() const noexcept { return this; }
-
-  const SubReader& operator[](size_t i) const final;
+  uint64_t live_docs_count() const noexcept final { return _live; }
 
   uint64_t CountMappedMemory() const final;
 
-  uint64_t docs_count() const final;
+  std::span<const SegmentReader> GetReaders() const noexcept {
+    return _readers;
+  }
 
-  uint64_t live_docs_count() const final;
+  const Directory& Dir() const noexcept { return *_dir; }
+
+  const IndexReaderOptions& Options() const noexcept { return _opts; }
 
   const duckdb::BaseStatistics* GetColumnStats(field_id field) const;
 
   const FieldTermRange* GetTermRange(field_id field, DictRef dict) const;
 
-  size_t size() const final;
-
-  // this call will attempt to reuse segments from the existing reader
-  DirectoryReader Reopen(MetaPayloadReader payload = {}) const;
-
-  const std::shared_ptr<const DirectoryReaderImpl>& GetImpl() const noexcept {
-    return _impl;
-  }
-
  private:
-  std::shared_ptr<const DirectoryReaderImpl> _impl;
+  struct ColumnStats {
+    duckdb::unique_ptr<duckdb::BaseStatistics> merged;
+    duckdb::unique_ptr<duckdb::DistinctStatistics> distinct;
+    duckdb::unique_ptr<duckdb::BaseStatistics> published;
+    uint64_t docs = 0;
+  };
+
+  struct SegmentTerms {
+    bytes_view min;
+    bytes_view max;
+    uint64_t terms = 0;
+    uint64_t docs = 0;
+  };
+
+  struct TermStats {
+    std::vector<SegmentTerms> segments;
+    FieldTermRange range;
+  };
+
+  void Count() noexcept;
+  void AddTerms(const SubReader& reader);
+  void AddColumns(const SubReader& reader, bool new_docs);
+  void Publish();
+
+  const Directory* _dir = nullptr;
+  IndexReaderOptions _opts;
+  std::vector<SegmentReader> _readers;
+  uint64_t _docs = 0;
+  uint64_t _live = 0;
+  bool _stats = false;
+  containers::FlatHashMap<field_id, ColumnStats> _columns;
+  containers::NodeHashMap<std::pair<field_id, DictRef>, TermStats> _terms;
 };
 
 }  // namespace irs

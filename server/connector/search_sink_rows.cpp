@@ -45,7 +45,7 @@ void SearchSinkRows::Append(duckdb::ClientContext& context,
   // Exclusive: Combine reports this thread's segments to the WAL, so they
   // must not also carry a previous transaction's documents.
   _trx = std::make_unique<irs::IndexWriter::Transaction>(
-    table.store->GetTransaction(/*exclusive_segment=*/true));
+    table.store->GetTransaction());
   _sink =
     MakeSearchTableInsertSink(*_trx, *table.store, *table.catalog, context);
   for (auto& chunk : _rows->Chunks()) {

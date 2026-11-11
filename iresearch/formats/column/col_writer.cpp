@@ -262,6 +262,10 @@ bool ColWriter::Commit(uint64_t target_row) {
   return Commit(target_row, kNoCancel);
 }
 
+yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
+  return ComputeAnn(env, kNoCancel);
+}
+
 bool ColWriter::Commit(uint64_t target_row,
                        absl::FunctionRef<bool()> progress) {
   if (_committed) {
@@ -315,10 +319,6 @@ bool ColWriter::Commit(uint64_t target_row,
   _out.reset();
   _committed = true;
   return true;
-}
-
-yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
-  return ComputeAnn(env, kNoCancel);
 }
 
 yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,

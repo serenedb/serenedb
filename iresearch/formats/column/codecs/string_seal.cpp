@@ -65,10 +65,13 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       code = _last_code;
       continue;
     }
-    code = *_distinct.lazy_emplace(value, [&](const auto& construct) {
-      values.push_back(&value);
-      construct(static_cast<uint32_t>(values.size()));
-    });
+    values.push_back(&value);
+    const auto [known, is_new] =
+      _distinct.emplace(static_cast<uint32_t>(values.size()));
+    if (!is_new) {
+      values.pop_back();
+    }
+    code = *known;
     _last = &value;
     _last_code = code;
   }

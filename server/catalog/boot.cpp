@@ -68,19 +68,6 @@ constexpr std::string_view kEngineDir = "engine_v1";
 constexpr std::string_view kLogDir = "wal";
 constexpr std::string_view kStoreDir = "store";
 
-bool HoldsEntries(const std::filesystem::path& directory) {
-  std::error_code ec;
-  const bool empty = std::filesystem::is_empty(directory, ec);
-  if (ec == std::errc::no_such_file_or_directory) {
-    return false;
-  }
-  if (ec) {
-    SDB_FATAL(STARTUP, "cannot list directory '", directory.string(),
-              "': ", ec.message());
-  }
-  return !empty;
-}
-
 bool RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
   bool removed = true;
@@ -204,7 +191,7 @@ void InitCatalog(bool default_database) {
       utils::file_utils::SyncDirectory(layout.EngineDir());
     }
     backup::PrepareDataDirectory(layout);
-    if (!HoldsEntries(layout.LogDir()) &&
+    if (!Log::Exists(layout.LogDir()) &&
         !OidDirectories(layout.StoreDir()).empty()) {
       SDB_FATAL(STARTUP, "'", layout.LogDir().string(),
                 "' holds no catalog log, but '", layout.StoreDir().string(),

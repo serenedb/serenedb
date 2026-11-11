@@ -57,6 +57,7 @@ class Log {
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
 
   static std::string ChunkName(uint64_t number);
+  static bool Exists(const std::filesystem::path& dir);
   static std::vector<duckdb::unique_ptr<duckdb::FileHandle>> LockChunks(
     duckdb::FileSystem& fs, const std::filesystem::path& dir);
   static void Read(duckdb::FileSystem& fs, const std::filesystem::path& dir,

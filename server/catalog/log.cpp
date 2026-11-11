@@ -319,6 +319,18 @@ std::string Log::ChunkName(uint64_t number) {
   return absl::StrFormat("%016x%s", number, kChunkSuffix);
 }
 
+bool Log::Exists(const std::filesystem::path& dir) {
+  const auto exists = [](const std::filesystem::path& path) {
+    std::error_code ec;
+    const bool found = std::filesystem::exists(path, ec);
+    if (ec) {
+      utils::file_utils::ThrowFileError("stat", path.string(), ec);
+    }
+    return found;
+  };
+  return exists(dir / kSnapshotFile) || exists(dir / ChunkName(0));
+}
+
 std::vector<duckdb::unique_ptr<duckdb::FileHandle>> Log::LockChunks(
   duckdb::FileSystem& fs, const std::filesystem::path& dir) {
   const auto snapshot = ReadSnapshot(fs, dir / kSnapshotFile);

@@ -945,6 +945,28 @@ CREATE TABLE search_seg_zero (a INTEGER PRIMARY KEY)
 db error: ERROR: invalid value for parameter "segment_memory_max": "0"
 
 
+statement error
+CREATE TABLE search_seg_big (a INTEGER PRIMARY KEY)
+  WITH (segment_memory_max = 4294967296);
+----
+db error: ERROR: invalid value for parameter "segment_memory_max": "4294967296": it must be below 4294967296
+
+
+statement error
+SET segment_memory_max = 4294967296;
+----
+db error: ERROR: invalid value for parameter "segment_memory_max": "4294967296": it must be below 4294967296
+
+
+statement ok
+CREATE TABLE search_seg_most (a INTEGER PRIMARY KEY)
+  WITH (segment_memory_max = 4294967295);
+
+
+statement ok
+DROP TABLE search_seg_most;
+
+
 # A non-integer literal is rejected through the same validator.
 statement error
 CREATE TABLE search_seg_bad (a INTEGER PRIMARY KEY)

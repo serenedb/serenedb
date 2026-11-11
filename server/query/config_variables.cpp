@@ -193,6 +193,17 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
   }
 }
 
+void SegmentMemoryMax(duckdb::ClientContext& context, duckdb::SetScope scope,
+                      duckdb::Value& value) {
+  RejectZero<"segment_memory_max">(context, scope, value);
+  if (value.GetValue<uint64_t>() > std::numeric_limits<uint32_t>::max()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"segment_memory_max\": \"",
+              value.ToString(), "\": it must be below 4294967296"));
+  }
+}
+
 template<irs::utils::detail::FixedString Name>
 void PositiveOrMinusOne(duckdb::ClientContext&, duckdb::SetScope,
                         duckdb::Value& value) {
@@ -1251,12 +1262,14 @@ constexpr std::pair<std::string_view, VariableDescription>
         "backfill commit cadence). Their WITH "
         "(segment_memory_max = ...) overrides it. A write to a table holds "
         "up to compaction_floor_segment_bytes of its own rows in memory; more "
-        "go to disk as segments of their own. Default 268435456 (256MB).",
+        "go to disk as segments of their own, and to a segment of its own "
+        "when the table already holds this much. Below 4294967296. Default "
+        "268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexSettings{}.segment_memory_max);
         },
-        RejectZero<"segment_memory_max">,
+        SegmentMemoryMax,
       },
     },
     {

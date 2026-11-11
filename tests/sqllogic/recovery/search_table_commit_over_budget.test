@@ -1,0 +1,53 @@
+control substitution on
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE cob (id BIGINT, body TEXT)
+  WITH (compaction_interval = 0, segment_memory_max = 4096);
+
+
+statement ok
+SET sdb_faults = 'pause_search_write_out';
+
+
+statement ok
+INSERT INTO cob SELECT i, repeat('a', 100) FROM range(0, 100) r(i);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_write_out:parked';
+
+
+query
+SELECT value AS files FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'cob') AND metric = 'num_files';
+----
+files
+0
+
+
+statement ok
+INSERT INTO cob VALUES (100, 'b');
+
+
+query
+SELECT value > 0 AS on_disk FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'cob') AND metric = 'num_files';
+----
+on_disk
+t
+
+
+statement ok
+SET sdb_faults = 'pause_search_write_out:release';
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE body = 'b') AS own FROM cob;
+----
+n	own
+101	1

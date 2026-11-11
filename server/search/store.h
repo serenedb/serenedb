@@ -187,6 +187,9 @@ class Store final : public std::enable_shared_from_this<Store>,
   uint64_t PatchBytes() const noexcept {
     return _table ? _table->PatchBytes() : 0;
   }
+  bool OverBudget() const noexcept {
+    return PieceBytes() + PatchBytes() >= _segment_memory_max;
+  }
   uint64_t InlineRowsMax() noexcept {
     return GetTasksSettings().compaction_floor_segment_bytes.load(
       std::memory_order_relaxed);

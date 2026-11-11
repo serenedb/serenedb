@@ -102,7 +102,7 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 
 ## Write memory {#write-memory}
 
-A table holds its committed rows in memory, indexed and searchable, until they reach `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB; it then writes them to disk as one segment in the background. A write also holds up to `compaction_floor_segment_bytes` of its own rows, 2 MB by default, before it indexes them: below that size a segment of their own would be one compaction merges right away; a write with more rows writes them to disk as segments of its own. Estimate the peak for one writing transaction as:
+A table holds its committed rows in memory, indexed and searchable, until they reach `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB; it then writes them to disk as one segment in the background. A write also holds up to `compaction_floor_segment_bytes` of its own rows, 2 MB by default, before it indexes them: below that size a segment of their own would be one compaction merges right away; a write with more rows writes them to disk as segments of its own. A write that commits while its table already holds `segment_memory_max` in memory, because the background write is still running, writes its rows to disk as a segment of its own too, so the memory a table holds stays near its limit. `segment_memory_max` is below 4 GiB. Estimate the peak for one writing transaction as:
 
 | Write | Peak memory |
 | :--- | :--- |

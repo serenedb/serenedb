@@ -162,7 +162,13 @@ class SnapshotWriter {
   explicit SnapshotWriter(duckdb::FileHandle& file) : _file{file} {}
 
   void Record(std::span<const uint8_t> payload) {
-    SDB_ASSERT(!payload.empty() && payload.size() <= kMaxRecordBytes);
+    SDB_ASSERT(!payload.empty());
+    if (payload.size() > kMaxRecordBytes) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                      ERR_MSG("a log snapshot record would take ",
+                              payload.size(), " bytes, more than the ",
+                              kMaxRecordBytes, " a log record can hold"));
+    }
     Header header{.size = static_cast<uint32_t>(payload.size())};
     header.crc = static_cast<uint32_t>(
       absl::ExtendCrc32c(RecordSeed(_position, header.size),

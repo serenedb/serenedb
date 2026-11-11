@@ -1390,6 +1390,9 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
                         ERR_MSG("debug failure point"));
       }
     }
+    if (changes.HasBufferedRows() && w.store->OverBudget()) {
+      FlushRows(context, w);
+    }
     if (changes.HasBufferedRows()) {
       const auto rows_id = OwnRowsId(w.rows_generation);
       auto removed = TakeRowRemovals(changes.removals, rows_id);

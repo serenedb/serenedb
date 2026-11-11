@@ -545,10 +545,10 @@ void Writes::AddInlineRows(duckdb::ClientContext& context,
                            std::span<const connector::ColumnId> column_ids,
                            duckdb::Catalog& catalog,
                            std::unique_ptr<duckdb::ColumnDataCollection> rows,
-                           uint64_t flush_above) {
+                           uint64_t bytes, uint64_t flush_above) {
   auto& w = EnsureStoreWrites(store);
   absl::MutexLock lock{&w.mutex};
-  w.changes.AppendInsertRows(std::move(rows), column_ids, catalog);
+  w.changes.AppendInsertRows(std::move(rows), bytes, column_ids, catalog);
   ++w.revision;
   if (w.changes.BufferedBytes() > flush_above ||
       w.changes.collection->Count() > irs::doc_limits::kMaxDocs) {

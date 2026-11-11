@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
@@ -44,20 +45,19 @@ struct SearchSinkTable {
   std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> types;
   uint64_t buffer_bytes = 0;
+  std::atomic_uint64_t inline_bytes{0};
 };
 
 class SearchSinkRows {
  public:
-  explicit SearchSinkRows(uint64_t budget) : _budget{budget} {}
-
-  void Append(duckdb::ClientContext& context, const SearchSinkTable& table,
+  void Append(duckdb::ClientContext& context, SearchSinkTable& table,
               duckdb::DataChunk& rows);
   void Flush();
   void HandOver(duckdb::ClientContext& context, const SearchSinkTable& table,
                 search::Writes& writes);
 
  private:
-  uint64_t _budget;
+  uint64_t _bytes = 0;
   std::unique_ptr<duckdb::ColumnDataCollection> _rows;
   std::unique_ptr<irs::IndexWriter::Transaction> _trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> _sink;

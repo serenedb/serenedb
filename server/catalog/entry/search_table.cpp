@@ -743,7 +743,7 @@ void SearchTableEntry::InternalAppend(
   RequireCurrentSchema();
   const auto constraints =
     duckdb::Binder::CreateBinder(context)->BindConstraints(*this);
-  connector::SearchSinkRows rows{target.buffer_bytes};
+  connector::SearchSinkRows rows;
   for (auto& chunk : collection.Chunks()) {
     duckdb::DataTable::VerifyRowConstraints(context, *this, constraints, chunk);
     rows.Append(context, target, chunk);

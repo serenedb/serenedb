@@ -70,8 +70,6 @@ struct SearchInsertSourceState final : duckdb::GlobalSourceState {
 };
 
 struct SearchInsertLocalState final : duckdb::LocalSinkState {
-  explicit SearchInsertLocalState(uint64_t budget) : rows{budget} {}
-
   SearchSinkRows rows;
   duckdb::idx_t insert_count = 0;
   // RETURNING only: collected per sink thread so a parallel insert does not
@@ -143,11 +141,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
 duckdb::unique_ptr<duckdb::LocalSinkState>
 SereneDBSearchInsert::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
-  auto& gstate = sink_state->Cast<SearchInsertGlobalState>();
-  const auto threads =
-    context.pipeline ? context.pipeline->GetMaxThreads() : duckdb::idx_t{1};
-  auto lstate = duckdb::make_uniq<SearchInsertLocalState>(
-    gstate.table.buffer_bytes / std::max<duckdb::idx_t>(1, threads));
+  auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
   if (_return_chunk) {
     lstate->returned.emplace(context.client, GetTypes());
   }

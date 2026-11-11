@@ -26,8 +26,7 @@
 namespace sdb::connector {
 
 void SearchSinkRows::Append(duckdb::ClientContext& context,
-                            const SearchSinkTable& table,
-                            duckdb::DataChunk& rows) {
+                            SearchSinkTable& table, duckdb::DataChunk& rows) {
   if (_sink) {
     WriteChunkToSearchSink(*_sink, rows, table.column_ids, table.table_id,
                            context);
@@ -37,11 +36,17 @@ void SearchSinkRows::Append(duckdb::ClientContext& context,
     _rows = std::make_unique<duckdb::ColumnDataCollection>(
       duckdb::BufferManager::GetBufferManager(context), table.types);
   }
+  const auto bytes = rows.GetDataSize();
   _rows->Append(rows);
+  _bytes += bytes;
+  const auto statement_bytes =
+    table.inline_bytes.fetch_add(bytes, std::memory_order_relaxed) + bytes;
   if (_rows->Count() <= STANDARD_VECTOR_SIZE &&
-      _rows->SizeInBytes() <= _budget) {
+      statement_bytes <= table.buffer_bytes) {
     return;
   }
+  table.inline_bytes.fetch_sub(_bytes, std::memory_order_relaxed);
+  _bytes = 0;
   // Exclusive: Combine reports this thread's segments to the WAL, so they
   // must not also carry a previous transaction's documents.
   _trx = std::make_unique<irs::IndexWriter::Transaction>(
@@ -76,7 +81,8 @@ void SearchSinkRows::HandOver(duckdb::ClientContext& context,
     return;
   }
   writes.AddInlineRows(context, table.store, table.column_ids, *table.catalog,
-                       std::move(_rows), table.buffer_bytes);
+                       std::move(_rows), std::exchange(_bytes, 0),
+                       table.buffer_bytes);
 }
 
 }  // namespace sdb::connector

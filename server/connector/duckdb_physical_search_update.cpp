@@ -75,8 +75,6 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
 };
 
 struct SearchUpdateLocalState final : duckdb::LocalSinkState {
-  explicit SearchUpdateLocalState(uint64_t budget) : rows{budget} {}
-
   SearchSinkRows rows;
   irs::DocRemovalBuilder positions;
   std::vector<search::UnitPatch> patches;
@@ -195,11 +193,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
 duckdb::unique_ptr<duckdb::LocalSinkState>
 SereneDBSearchUpdate::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
-  auto& gstate = sink_state->Cast<SearchUpdateGlobalState>();
-  const auto threads =
-    context.pipeline ? context.pipeline->GetMaxThreads() : duckdb::idx_t{1};
-  auto lstate = duckdb::make_uniq<SearchUpdateLocalState>(
-    gstate.table.buffer_bytes / std::max<duckdb::idx_t>(1, threads));
+  auto lstate = duckdb::make_uniq<SearchUpdateLocalState>();
   if (_return_chunk) {
     lstate->returned.emplace(context.client, GetTypes());
   }

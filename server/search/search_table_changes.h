@@ -60,6 +60,7 @@ inline void AddRowPositions(irs::DocRemovalBuilder& positions,
 // Per-search-table, per-transaction write buffer.
 struct LocalTableChangesEntry {
   std::unique_ptr<duckdb::ColumnDataCollection> collection;
+  uint64_t bytes = 0;
   // The shard's stored columns, in chunk order, and the catalog its sink is
   // built against -- both captured with the first buffered chunk so the rows
   // can be replayed into iresearch later, from a commit that never saw the
@@ -72,19 +73,25 @@ struct LocalTableChangesEntry {
   bool truncate = false;
 
   void AppendInsertRows(std::unique_ptr<duckdb::ColumnDataCollection> rows,
+                        uint64_t row_bytes,
                         std::span<const connector::ColumnId> cols,
                         duckdb::Catalog& cat) {
+    bytes += row_bytes;
     if (collection == nullptr) {
       column_ids.assign(cols.begin(), cols.end());
       catalog = &cat;
       collection = std::move(rows);
+    } else if (rows->Count() < STANDARD_VECTOR_SIZE) {
+      for (auto& chunk : rows->Chunks()) {
+        collection->Append(chunk);
+      }
     } else {
       collection->Combine(*rows);
     }
   }
 
   void AppendTruncate(std::shared_ptr<const irs::DocRemoval> visible) {
-    collection.reset();
+    ClearBufferedRows();
     removals.clear();
     patches.clear();
     if (!visible->groups.empty()) {
@@ -100,13 +107,14 @@ struct LocalTableChangesEntry {
   // Bytes a flush would reclaim. Deletes are deliberately not counted: a flush
   // frees none of them (the record carries them to commit either way), so
   // counting them would fire the threshold on memory it cannot release.
-  uint64_t BufferedBytes() const noexcept {
-    return collection == nullptr ? 0 : collection->AllocationSize();
-  }
+  uint64_t BufferedBytes() const noexcept { return bytes; }
 
   // Drops the buffered rows once a flush has taken ownership of them. The
   // removals stay: the record has to carry them to commit.
-  void ClearBufferedRows() { collection.reset(); }
+  void ClearBufferedRows() {
+    collection.reset();
+    bytes = 0;
+  }
 
   bool Empty() const noexcept {
     return collection == nullptr && removals.empty() && patches.empty() &&

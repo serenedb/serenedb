@@ -156,7 +156,7 @@ class Writes {
                      std::span<const connector::ColumnId> column_ids,
                      duckdb::Catalog& catalog,
                      std::unique_ptr<duckdb::ColumnDataCollection> rows,
-                     uint64_t flush_above);
+                     uint64_t bytes, uint64_t flush_above);
 
   void AddRemoval(duckdb::ClientContext& context,
                   const std::shared_ptr<Store>& store,

@@ -55,7 +55,7 @@ uint32_t IndexOf(uint64_t id) {
 
 class SearchTableChangesRows : public ::testing::Test {
  protected:
-  void AppendRows(LocalTableChangesEntry& changes, duckdb::idx_t count) {
+  uint64_t AppendRows(LocalTableChangesEntry& changes, duckdb::idx_t count) {
     duckdb::DataChunk chunk;
     chunk.Initialize(duckdb::Allocator::DefaultAllocator(), _types, count);
     auto* values = duckdb::FlatVector::GetDataMutable<int64_t>(chunk.data[0]);
@@ -66,8 +66,10 @@ class SearchTableChangesRows : public ::testing::Test {
     auto rows = std::make_unique<duckdb::ColumnDataCollection>(
       duckdb::BufferManager::GetBufferManager(EngineDb()), _types);
     rows->Append(chunk);
-    changes.AppendInsertRows(std::move(rows), _columns,
+    const auto bytes = chunk.GetDataSize();
+    changes.AppendInsertRows(std::move(rows), bytes, _columns,
                              duckdb::Catalog::GetSystemCatalog(EngineDb()));
+    return bytes;
   }
 
  private:
@@ -129,6 +131,31 @@ TEST_F(SearchTableChangesRows, BufferedRowsJoinOneCollection) {
   ASSERT_TRUE(changes.HasBufferedRows());
   EXPECT_EQ(5, changes.collection->Count());
   EXPECT_EQ((std::vector<sdb::connector::ColumnId>{0}), changes.column_ids);
+}
+
+TEST_F(SearchTableChangesRows, SmallRowsShareAChunkAndCountTheirData) {
+  LocalTableChangesEntry changes;
+  uint64_t bytes = 0;
+  for (int i = 0; i < 3; ++i) {
+    bytes += AppendRows(changes, 1);
+  }
+  EXPECT_EQ(3, changes.collection->Count());
+  EXPECT_EQ(1, changes.collection->ChunkCount());
+  EXPECT_EQ(bytes, changes.BufferedBytes());
+  EXPECT_LT(changes.BufferedBytes(), changes.collection->AllocationSize());
+  changes.ClearBufferedRows();
+  EXPECT_EQ(0, changes.BufferedBytes());
+}
+
+TEST_F(SearchTableChangesRows, FullChunksJoinWithoutCopying) {
+  LocalTableChangesEntry changes;
+  AppendRows(changes, 1);
+  AppendRows(changes, STANDARD_VECTOR_SIZE);
+  std::vector<duckdb::idx_t> sizes;
+  for (auto& chunk : changes.collection->Chunks()) {
+    sizes.push_back(chunk.size());
+  }
+  EXPECT_EQ((std::vector<duckdb::idx_t>{1, STANDARD_VECTOR_SIZE}), sizes);
 }
 
 TEST_F(SearchTableChangesRows, TruncateDropsEverythingBufferedBeforeIt) {

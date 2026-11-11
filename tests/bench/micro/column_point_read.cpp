@@ -53,6 +53,11 @@ enum class Codec {
   Uncompressed,
   NullsSparse,
   NullsDense,
+  Lz4,
+  Zxc,
+  Fsst,
+  DictLz4,
+  DictZstd,
   kCount,
 };
 
@@ -78,6 +83,11 @@ duckdb::LogicalType TypeOf(Codec c) {
       return duckdb::LogicalType::DOUBLE;
     case Codec::DictFsst:
     case Codec::Zstd:
+    case Codec::Lz4:
+    case Codec::Zxc:
+    case Codec::Fsst:
+    case Codec::DictLz4:
+    case Codec::DictZstd:
       return duckdb::LogicalType::VARCHAR;
     default:
       return duckdb::LogicalType::BIGINT;
@@ -102,6 +112,16 @@ duckdb::CompressionType CompressionOf(Codec c) {
       return duckdb::CompressionType::COMPRESSION_DICT_FSST;
     case Codec::Zstd:
       return duckdb::CompressionType::COMPRESSION_ZSTD;
+    case Codec::Lz4:
+      return duckdb::CompressionType::COMPRESSION_LZ4;
+    case Codec::Zxc:
+      return duckdb::CompressionType::COMPRESSION_ZXC;
+    case Codec::Fsst:
+      return duckdb::CompressionType::COMPRESSION_FSST;
+    case Codec::DictLz4:
+      return duckdb::CompressionType::COMPRESSION_DICT_LZ4;
+    case Codec::DictZstd:
+      return duckdb::CompressionType::COMPRESSION_DICT_ZSTD;
     case Codec::Uncompressed:
     case Codec::kCount:
       return duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
@@ -153,12 +173,18 @@ struct Generator {
         return;
       }
       case Codec::DictFsst:
-      case Codec::Zstd: {
+      case Codec::Zstd:
+      case Codec::Lz4:
+      case Codec::Zxc:
+      case Codec::Fsst:
+      case Codec::DictLz4:
+      case Codec::DictZstd: {
         auto* d = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec);
         for (uint64_t k = 0; k < take; ++k) {
           const auto g = base + k;
           std::string str;
-          if (codec == Codec::DictFsst) {
+          if (codec == Codec::DictFsst || codec == Codec::DictLz4 ||
+              codec == Codec::DictZstd) {
             str = "language_" + std::to_string(Mix(g) % 30);
           } else {
             const auto h = Mix(g);
@@ -229,6 +255,13 @@ struct Seg {
   const irs::ColumnReader* col = nullptr;
 };
 
+uint32_t SegmentTarget() {
+  if (const char* e = std::getenv("SDB_BENCH_SEGMENT_TARGET")) {
+    return static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
+  }
+  return irs::kDefaultColSegmentTarget;
+}
+
 std::unique_ptr<Seg> BuildSeg(Codec codec) {
   auto seg = std::make_unique<Seg>(codec);
   const auto rows = Rows();
@@ -236,7 +269,9 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   {
     irs::ColWriter w{seg->dir, kSeg, CsDb(), irs::WriteTier::Merge};
     auto& cw =
-      w.OpenColumn(kField, type, {.compression = CompressionOf(codec)});
+      w.OpenColumn(kField, type,
+                   {.compression = CompressionOf(codec),
+                    .codec_params = {.segment_target = SegmentTarget()}});
     Generator gen{codec};
     uint64_t pos = 0;
     while (pos < rows) {
@@ -379,6 +414,11 @@ void DenseWarm(benchmark::State& state, Codec codec) {
   BENCHMARK_CAPTURE(fn, alprd, Codec::AlpRd);                            \
   BENCHMARK_CAPTURE(fn, dict_fsst, Codec::DictFsst);                     \
   BENCHMARK_CAPTURE(fn, zstd, Codec::Zstd);                              \
+  BENCHMARK_CAPTURE(fn, lz4, Codec::Lz4);                                \
+  BENCHMARK_CAPTURE(fn, zxc, Codec::Zxc);                                \
+  BENCHMARK_CAPTURE(fn, fsst, Codec::Fsst);                              \
+  BENCHMARK_CAPTURE(fn, dict_lz4, Codec::DictLz4);                       \
+  BENCHMARK_CAPTURE(fn, dict_zstd, Codec::DictZstd);                     \
   BENCHMARK_CAPTURE(fn, uncompressed, Codec::Uncompressed);              \
   BENCHMARK_CAPTURE(fn, nulls_1pct, Codec::NullsSparse);                 \
   BENCHMARK_CAPTURE(fn, nulls_30pct, Codec::NullsDense)

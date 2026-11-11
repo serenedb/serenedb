@@ -146,6 +146,15 @@ class FrameDecoder {
   }
 
  private:
+  struct PackedBlock {
+    const uint8_t* packed = nullptr;
+    uint64_t base = 0;
+    unsigned bits = 0;
+  };
+
+  using FforFrame =
+    std::array<PackedBlock, kFforFrameRows / numeric::kBlockValues>;
+
   static constexpr uint64_t kNearShare = 32;
   static constexpr uint64_t kScanCacheDivisor = 2;
 
@@ -181,8 +190,8 @@ class FrameDecoder {
 
   bool Near(uint64_t row, uint64_t other) const noexcept {
     const uint64_t unit = Blocked() ? numeric::kBlockValues : _per_frame;
-    return row / unit == other / unit &&
-           (row > other ? row - other : other - row) <= unit / kNearShare;
+    return (row > other ? row - other : other - row) <= unit / kNearShare &&
+           row / unit == other / unit;
   }
 
   T ReadAlone(uint64_t row) {
@@ -523,11 +532,24 @@ class FrameDecoder {
   }
 
   void OpenFfor(uint32_t f) {
+    SDB_ENSURE(f < _h.frame_count, "numeric codec: frame out of range");
+    if (_ffor_frames.empty()) {
+      _ffor_frames.resize(_h.frame_count);
+    }
+    auto& frame = _ffor_frames[f];
+    if (!frame.front().packed) {
+      IndexFfor(f, frame);
+    }
+    _ffor = &frame;
+    _ffor_frame = f;
+  }
+
+  IRS_NO_INLINE void IndexFfor(uint32_t f, FforFrame& frame) {
     const auto m = Meta(f);
     const auto rows = EndRow(f) - m.frame.first_entry;
     const auto blocks =
       (rows + numeric::kBlockValues - 1) / numeric::kBlockValues;
-    _ffor_src = Data(m);
+    const auto* src = Data(m);
     size_t off = blocks * kFforBlockMetaBytes;
     SDB_ENSURE(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len,
                "numeric codec: corrupted blocks");
@@ -535,34 +557,25 @@ class FrameDecoder {
                                 ? numeric::kMaxBits<uint32_t>
                                 : numeric::kMaxBits<U>;
     for (size_t b = 0; b < blocks; ++b) {
-      const unsigned bits =
-        _ffor_src[b * kFforBlockMetaBytes + sizeof(uint64_t)];
+      const auto* meta = src + b * kFforBlockMetaBytes;
+      const unsigned bits = meta[sizeof(uint64_t)];
       SDB_ENSURE(bits <= max_bits, "numeric codec: corrupted blocks");
-      _ffor_offsets[b] = static_cast<uint32_t>(off);
+      frame[b] = {
+        .packed = src + off,
+        .base = duckdb::Load<uint64_t>(meta),
+        .bits = bits,
+      };
       off += numeric::PackedBytes(bits);
     }
     SDB_ENSURE(off == m.frame.raw_len, "numeric codec: corrupted blocks");
-    _ffor_frame = f;
   }
-
-  struct PackedBlock {
-    const uint8_t* packed;
-    uint64_t base;
-    unsigned bits;
-  };
 
   IRS_FORCE_INLINE PackedBlock BlockAt(uint64_t row) {
     if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
         f != _ffor_frame) {
       OpenFfor(f);
     }
-    const auto b = row % kFforFrameRows / numeric::kBlockValues;
-    const auto* meta = _ffor_src + b * kFforBlockMetaBytes;
-    return {
-      .packed = _ffor_src + _ffor_offsets[b],
-      .base = duckdb::Load<uint64_t>(meta),
-      .bits = meta[sizeof(uint64_t)],
-    };
+    return (*_ffor)[row % kFforFrameRows / numeric::kBlockValues];
   }
 
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
@@ -801,9 +814,9 @@ class FrameDecoder {
   ScratchVector<uint32_t> _words32;
   ScratchVector<uint64_t> _words64;
   ScratchVector<U> _block;
-  const uint8_t* _ffor_src = nullptr;
+  const FforFrame* _ffor = nullptr;
   uint32_t _ffor_frame = kNoFrame;
-  std::array<uint32_t, kFforFrameRows / numeric::kBlockValues> _ffor_offsets{};
+  std::vector<FforFrame> _ffor_frames;
   std::optional<Zstd::Decompressor> _zstd;
 };
 

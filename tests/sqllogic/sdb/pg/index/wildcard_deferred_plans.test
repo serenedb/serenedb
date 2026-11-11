@@ -556,9 +556,6 @@ CREATE INDEX wdm_c_idx ON wdm_c USING inverted (id, msg wdm_kw3)
 statement ok
 CREATE INDEX wdm_c_kw_idx ON wdm_c USING inverted (id, msg wdm_kw)
 
-statement ok
-VACUUM (REFRESH_TABLE) wdm_c
-
 query
 SELECT id FROM wdm_c_idx WHERE msg LIKE '%Data%' ORDER BY id
 ----
@@ -571,7 +568,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg LIKE '%Data%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: wdm_c_idx              │
-│ Lookup: table                 │
+│ Lookup: search                │
 │ Index Filter:                 │
 │ ╭─ Wildcard NGram ──────────╮ │
 │ │ Field: msg(string)        │ │
@@ -606,7 +603,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg LIKE 'Senior%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: wdm_c_idx              │
-│ Lookup: table                 │
+│ Lookup: search                │
 │ Index Filter:                 │
 │ ╭─ Wildcard NGram ──────────╮ │
 │ │ Field: msg(string)        │ │
@@ -641,7 +638,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg LIKE '%nurse'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: wdm_c_idx             │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Wildcard NGram ─────────╮ │
 │ │ Field: msg(string)       │ │
@@ -678,7 +675,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg NOT LIKE '%Data%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────╮
 │ Index: wdm_c_idx                                    │
-│ Lookup: table                                       │
+│ Lookup: search                                      │
 │ Index Filter:                                       │
 │ ╭─ Not ────────────╮                                │
 │ ╰─────────┬────────╯                                │
@@ -708,7 +705,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ILIKE '%data%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: wdm_c_idx                                                                                                                       │
-│ Lookup: table                                                                                                                          │
+│ Lookup: search                                                                                                                         │
 │ Index Filter:                                                                                                                          │
 │ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: msg(string)                                                                                                                 │ │
@@ -744,7 +741,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ILIKE 'istanbul%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: wdm_c_idx                                                                                                                                                                                                                                                                                                                                                                                             │
-│ Lookup: table                                                                                                                                                                                                                                                                                                                                                                                                │
+│ Lookup: search                                                                                                                                                                                                                                                                                                                                                                                               │
 │ Index Filter:                                                                                                                                                                                                                                                                                                                                                                                                │
 │ ╭─ Wildcard NGram ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: msg(string)                                                                                                                                                                                                                                                                                                                                                                                           │ │
@@ -784,7 +781,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg NOT ILIKE '%data%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: wdm_c_idx                                                                                                                                             │
-│ Lookup: table                                                                                                                                                │
+│ Lookup: search                                                                                                                                               │
 │ Index Filter:                                                                                                                                                │
 │ ╭─ Not ────────────╮                                                                                                                                         │
 │ ╰─────────┬────────╯                                                                                                                                         │
@@ -814,7 +811,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ILIKE '%A#_E%' ESCAPE '#'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
 │ Index: wdm_c_idx                          │
-│ Lookup: table                             │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Wildcard NGram ──────────────────────╮ │
 │ │ Field: msg(string)                    │ │
@@ -849,7 +846,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ~ 'Data'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: wdm_c_idx              │
-│ Lookup: table                 │
+│ Lookup: search                │
 │ Index Filter:                 │
 │ ╭─ Wildcard NGram ──────────╮ │
 │ │ Field: msg(string)        │ │
@@ -885,7 +882,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ~* 'data'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: wdm_c_idx                                                                                                                       │
-│ Lookup: table                                                                                                                          │
+│ Lookup: search                                                                                                                         │
 │ Index Filter:                                                                                                                          │
 │ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: msg(string)                                                                                                                 │ │
@@ -923,7 +920,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg !~* 'data'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: wdm_c_idx                                                                                                                                             │
-│ Lookup: table                                                                                                                                                │
+│ Lookup: search                                                                                                                                               │
 │ Index Filter:                                                                                                                                                │
 │ ╭─ Not ────────────╮                                                                                                                                         │
 │ ╰─────────┬────────╯                                                                                                                                         │
@@ -953,7 +950,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE regexp_matches(msg, '^s', 'i')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: wdm_c_idx                         │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Wildcard NGram ─────────────────────╮ │
 │ │ Field: msg(string)                   │ │
@@ -981,7 +978,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE msg SIMILAR TO '%(nurse|lead)'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: wdm_c_idx                       │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Wildcard NGram ───────────────────╮ │
 │ │ Field: msg(string)                 │ │
@@ -1016,7 +1013,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE regexp_full_match(msg, 'senior.*', 'i')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Index: wdm_c_idx                                                                                                                                                                                                                                                                                                                                                                                             │
-│ Lookup: table                                                                                                                                                                                                                                                                                                                                                                                                │
+│ Lookup: search                                                                                                                                                                                                                                                                                                                                                                                               │
 │ Index Filter:                                                                                                                                                                                                                                                                                                                                                                                                │
 │ ╭─ Wildcard NGram ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field: msg(string)                                                                                                                                                                                                                                                                                                                                                                                           │ │
@@ -1055,7 +1052,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE starts_with(msg, 'reg')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────╮
 │ Index: wdm_c_idx           │
-│ Lookup: table              │
+│ Lookup: search             │
 │ Index Filter:              │
 │ ╭─ Wildcard NGram ───────╮ │
 │ │ Field: msg(string)     │ │
@@ -1090,7 +1087,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE ends_with(msg, 'office')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: wdm_c_idx              │
-│ Lookup: table                 │
+│ Lookup: search                │
 │ Index Filter:                 │
 │ ╭─ Wildcard NGram ──────────╮ │
 │ │ Field: msg(string)        │ │
@@ -1125,7 +1122,7 @@ EXPLAIN SELECT id FROM wdm_c_idx WHERE contains(msg, 'ENGINEER')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: wdm_c_idx                  │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Wildcard NGram ──────────────╮ │
 │ │ Field: msg(string)            │ │
@@ -1160,7 +1157,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg LIKE '%Data%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wdm_c_kw_idx    │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Automaton ────────╮ │
 │ │ Field: msg(string) │ │
@@ -1182,7 +1179,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg LIKE 'Senior%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wdm_c_kw_idx    │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Starts With ──────╮ │
 │ │ Field: msg(string) │ │
@@ -1204,7 +1201,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg LIKE '%nurse'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wdm_c_kw_idx    │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Automaton ────────╮ │
 │ │ Field: msg(string) │ │
@@ -1228,7 +1225,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg NOT LIKE '%Data%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: wdm_c_kw_idx                          │
-│ Lookup: table                                │
+│ Lookup: search                               │
 │ Index Filter:                                │
 │ ╭─ Not ────────────╮                         │
 │ ╰─────────┬────────╯                         │
@@ -1254,7 +1251,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE '%data%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: wdm_c_kw_idx            │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Automaton ────────────────╮ │
 │ │ Field: msg(string)         │ │
@@ -1275,7 +1272,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE 'istanbul%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────╮
 │ Index: wdm_c_kw_idx              │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Automaton ──────────────────╮ │
 │ │ Field: msg(string)           │ │
@@ -1298,7 +1295,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg NOT ILIKE '%data%'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
 │ Index: wdm_c_kw_idx                                  │
-│ Lookup: table                                        │
+│ Lookup: search                                       │
 │ Index Filter:                                        │
 │ ╭─ Not ────────────╮                                 │
 │ ╰─────────┬────────╯                                 │
@@ -1323,7 +1320,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE '%A#_E%' ESCAPE '#'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
 │ Index: wdm_c_kw_idx           │
-│ Lookup: table                 │
+│ Lookup: search                │
 │ Index Filter:                 │
 │ ╭─ Automaton ───────────────╮ │
 │ │ Field: msg(string)        │ │
@@ -1345,7 +1342,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ~ 'Data'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wdm_c_kw_idx    │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Automaton ────────╮ │
 │ │ Field: msg(string) │ │
@@ -1368,7 +1365,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ~* 'data'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: wdm_c_kw_idx                     │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Automaton ─────────────────────────╮ │
 │ │ Field: msg(string)                  │ │
@@ -1391,7 +1388,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg !~* 'data'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────╮
 │ Index: wdm_c_kw_idx                                           │
-│ Lookup: table                                                 │
+│ Lookup: search                                                │
 │ Index Filter:                                                 │
 │ ╭─ Not ────────────╮                                          │
 │ ╰─────────┬────────╯                                          │
@@ -1416,7 +1413,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE regexp_matches(msg, '^s', 'i')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: wdm_c_kw_idx            │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Automaton ────────────────╮ │
 │ │ Field: msg(string)         │ │
@@ -1439,7 +1436,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg SIMILAR TO '%(nurse|lead)'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: wdm_c_kw_idx                 │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Index Filter:                       │
 │ ╭─ Automaton ─────────────────────╮ │
 │ │ Field: msg(string)              │ │
@@ -1461,7 +1458,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE regexp_full_match(msg, 'senior.*', 'i'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: wdm_c_kw_idx       │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Index Filter:             │
 │ ╭─ Automaton ───────────╮ │
 │ │ Field: msg(string)    │ │
@@ -1483,7 +1480,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE starts_with(msg, 'reg')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wdm_c_kw_idx    │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Starts With ──────╮ │
 │ │ Field: msg(string) │ │
@@ -1505,7 +1502,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE ends_with(msg, 'office')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wdm_c_kw_idx    │
-│ Lookup: table          │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Automaton ────────╮ │
 │ │ Field: msg(string) │ │
@@ -1527,7 +1524,7 @@ EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE contains(msg, 'ENGINEER')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: wdm_c_kw_idx     │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Automaton ─────────╮ │
 │ │ Field: msg(string)  │ │
@@ -1547,17 +1544,10 @@ query
 EXPLAIN SELECT id FROM wdm_words_idx WHERE msg ILIKE '%ABC ABC%'
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────╮
-│ Projections: #1                 │
-│ ~1 row                          │
-╰────────────────┬────────────────╯
-╭─ FILTER ───────┴────────────────╮
-│ Expression: msg ~~* '%ABC ABC%' │
-│ ~1 row                          │
-╰────────────────┬────────────────╯
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: wdm_words_idx            │
-│ Lookup: table                   │
-│ Projections: msg, id            │
-│ ~2 rows                         │
-╰─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────╮
+│ Index: wdm_words_idx               │
+│ Lookup: search                     │
+│ Projections: id                    │
+│ Column Filter: msg ~~* '%ABC ABC%' │
+│ ~1 row                             │
+╰────────────────────────────────────╯

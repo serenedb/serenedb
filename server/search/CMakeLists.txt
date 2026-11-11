@@ -11,6 +11,7 @@ target_sources(
         scorer_options.cpp
         table.cpp
         table_keys.cpp
+        table_replay.cpp
         task.cpp
         wal_recovery.cpp
         writer_generations.cpp

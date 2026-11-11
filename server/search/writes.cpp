@@ -40,6 +40,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/base_catalog.h"
 #include "catalog/transaction.h"
 #include "connector/constraint_keys.h"
 #include "connector/full_scanner.h"
@@ -389,6 +390,10 @@ void ForEachLiveChunk(duckdb::ColumnDataCollection& rows,
 
 std::string_view ClaimActivity(Store::Exclusive kind) {
   return kind == Store::Exclusive::Drop ? "is dropping" : "is truncating";
+}
+
+bool Logged(const StoreWrites& w) {
+  return w.table->ParentCatalog().Cast<catalog::BaseCatalog>().Durable();
 }
 
 OwnWrites OwnOf(const StoreWrites& w) {
@@ -1384,25 +1389,24 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
     }
-    if (changes.truncate) {
-      w.log.push_back(LogTruncate());
-    }
-    if (!w.own_segments.empty()) {
-      w.log.push_back(LogAddSegments(w.own_segments));
-    }
     if (changes.HasBufferedRows()) {
       const auto rows_id = OwnRowsId(w.rows_generation);
       auto removed = TakeRowRemovals(changes.removals, rows_id);
       auto piece = w.store->StartPiece();
+      const bool logged = Logged(w);
+      if (logged) {
+        w.rows.columns = changes.column_ids;
+      }
       {
         const auto sink = connector::MakeSearchTableInsertSink(
           piece.trx, *w.store, *changes.catalog, context);
         ForEachLiveChunk(
           *changes.collection, removed, [&](duckdb::DataChunk& chunk) {
-            const auto first = PieceDocs(piece.trx);
             connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,
                                               w.store->GetId(), context);
-            w.log.push_back(LogRows(piece.id, first, chunk));
+            if (logged) {
+              w.rows.chunks.push_back(LogChunk(chunk));
+            }
           });
       }
       const auto docs = PieceDocs(piece.trx);
@@ -1432,7 +1436,6 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
 }
 
 std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
-  std::vector<LogSection> sections;
   for (auto& [store_id, w] : _writes) {
     if (!w.prepared) {
       continue;
@@ -1449,24 +1452,15 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     for (auto& removal : w.changes.removals) {
       table.CheckConflicts(*removal, Snapshot());
       removal = table.Resolve(removal);
-      if (!removal->groups.empty()) {
-        w.log.push_back(LogRemoval(*removal));
-      }
     }
     if (!w.changes.patches.empty()) {
       table.CheckConflicts(w.changes.patches, Snapshot());
       w.changes.patches = table.Resolve(std::move(w.changes.patches));
-      for (const auto& patch : w.changes.patches) {
-        for (const auto& field : patch.fields) {
-          w.log.push_back(LogPatch(patch.unit, field));
-        }
-      }
     }
   }
   for (auto& [store_id, w] : _writes) {
     if (w.prepared) {
       CatchUpKeys(context, w);
-      sections.push_back({.table = w.table, .entries = std::move(w.log)});
     }
   }
   const auto latest = [&](const ReferenceCheck& check) {
@@ -1477,6 +1471,22 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
   for (const auto& check : _reference_checks) {
     if (latest(check) != check.referenced) {
       VerifyAllReferences(context, *check.table, check.spec);
+    }
+  }
+  std::vector<LogSection> sections;
+  for (auto& [store_id, w] : _writes) {
+    if (!w.prepared) {
+      continue;
+    }
+    w.commit = TableCommit{.piece = std::move(w.piece),
+                           .segments = std::move(w.own_segments),
+                           .removals = std::move(w.changes.removals),
+                           .patches = std::move(w.changes.patches),
+                           .truncate = w.changes.truncate};
+    if (Logged(w)) {
+      sections.push_back({.table = w.table,
+                          .delta = w.store->GetTable().CommitDelta(
+                            w.commit, std::move(w.rows))});
     }
   }
   return sections;
@@ -1528,15 +1538,10 @@ void Writes::Apply(Tick tick,
     if (w.prepared) {
       try {
         auto& table = w.store->GetTable();
-        if (!w.own_segments.empty()) {
+        if (!w.commit.segments.empty()) {
           w.store->NudgeCompaction();
         }
-        if (table.Apply(tick,
-                        TableCommit{.piece = std::move(w.piece),
-                                    .segments = std::move(w.own_segments),
-                                    .removals = std::move(w.changes.removals),
-                                    .patches = std::move(w.changes.patches),
-                                    .truncate = w.changes.truncate})) {
+        if (table.Apply(tick, std::move(w.commit))) {
           QueueReleaseCleanup(w.store, tick);
         }
       } catch (const std::exception& e) {

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -116,6 +117,17 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
            std::chrono::steady_clock::now() - begin)
     .count();
 }
+
+struct RecoveryTask final : duckdb::BaseExecutorTask {
+  RecoveryTask(duckdb::TaskExecutor& executor, absl::AnyInvocable<void()> run)
+    : BaseExecutorTask{executor}, run{std::move(run)} {}
+
+  void ExecuteTask() final { run(); }
+
+  std::string TaskType() const final { return "SearchRecovery"; }
+
+  absl::AnyInvocable<void()> run;
+};
 
 }  // namespace
 
@@ -358,7 +370,7 @@ Store::Piece Store::StartPiece() {
 
 void Store::PiecesAdded() {
   if ((_table->PieceBytes() + _table->PatchBytes() < _segment_memory_max &&
-       !_table->HasFullTier()) ||
+       !_table->HasMergeRun()) ||
       !BackgroundScheduler::gInstance ||
       _piece_requests.fetch_add(1, std::memory_order_acq_rel) != 0) {
     return;
@@ -398,8 +410,8 @@ void Store::MaintainPieces() {
       const auto pieces = _table->PieceBytes();
       const auto patches = _table->PatchBytes();
       if (pieces + patches < _segment_memory_max) {
-        const auto tier = _table->FullTier();
-        if (tier.empty() || !MergePiecesLocked(tier)) {
+        const auto run = _table->MergeRun();
+        if (run.empty() || !MergePiecesLocked(run)) {
           return;
         }
         continue;
@@ -493,34 +505,38 @@ bool Store::MergePiecesLocked(
     ids.push_back(piece->id);
     folded.push_back(piece->reader->PatchTick());
   }
-  const auto target = merged.reader->Id();
-  CommitStorage(LogMerge(target, ids), [&](Tick tick) {
-    _table->MergePieces(tick, ids, folded, std::move(merged.reader),
-                        std::move(merged.maps));
-    QueueReleaseCleanup(shared_from_this(), tick);
-  });
+  std::vector<std::shared_ptr<TableUnit>> added;
+  added.push_back(PieceUnit(std::move(merged.reader), pieces.front()->first));
+  CommitReplace(ids, folded, std::move(added), std::move(merged.maps), 0,
+                /*logged=*/false);
   SDB_PARK_ONCE_ON_FAILURE("pause_search_pieces_merged");
   return true;
 }
 
-void Store::CommitStorage(std::string entry,
-                          absl::FunctionRef<void(Tick)> apply) {
+std::shared_ptr<const TableState> Store::CommitReplace(
+  std::span<const uint64_t> replaced, std::span<const Tick> folded,
+  std::vector<std::shared_ptr<TableUnit>> added, std::vector<irs::DocMap> maps,
+  uint64_t memory_below, bool logged) {
   SDB_ASSERT(!_read_only);
+  std::optional<Table::Replacement> prepared;
+  std::shared_ptr<const TableState> published;
   catalog::Transactions::Get().CommitStorage(
     _table->CommitMutex(),
     [&] {
+      prepared.emplace(_table->PrepareReplace(
+        replaced, folded, std::move(added), std::move(maps), memory_below));
       std::vector<uint8_t> record;
-      if (!_in_memory && !OwnerDropped()) {
-        duckdb::vector<std::string> entries;
-        entries.push_back(std::move(entry));
-        record = catalog::SearchRecord(_db_id, _id, entries);
+      if (logged && !_in_memory && !OwnerDropped() && !Empty(prepared->delta)) {
+        record = catalog::SearchRecord(_db_id, _id, prepared->delta);
       }
       return record;
     },
     [&](Tick tick) {
-      apply(tick);
+      published = _table->Replace(tick, std::move(*prepared));
       _storage_tick.store(tick, std::memory_order_release);
+      QueueReleaseCleanup(shared_from_this(), tick);
     });
+  return published;
 }
 
 void Store::CommitUnlogged(absl::FunctionRef<void(Tick)> apply) {
@@ -542,7 +558,8 @@ void Store::WriteOut() {
 }
 
 void Store::WriteOutLocked() {
-  const auto pieces = _table->Pieces();
+  const auto memory = _table->InMemory();
+  const auto& pieces = memory.pieces;
   if (pieces.empty()) {
     return;
   }
@@ -562,21 +579,15 @@ void Store::WriteOutLocked() {
     ids.push_back(piece->id);
     folded.push_back(piece->reader->PatchTick());
   }
-  std::vector<ReplacedSegment> named;
-  std::vector<OwnSegment> segments;
+  std::vector<std::shared_ptr<TableUnit>> added;
   if (merged.reader) {
-    named.push_back({.id = merged.reader->Id(),
-                     .meta_file = merged.segment.filename,
-                     .docs = merged.reader->Meta().docs_count});
-    segments.push_back(OwnSegment{.segment = std::move(merged.segment),
-                                  .reader = std::move(merged.reader)});
+    added.push_back(
+      _table->SegmentUnit(OwnSegment{.segment = std::move(merged.segment),
+                                     .reader = std::move(merged.reader)}));
   }
   SyncSegments();
-  CommitStorage(LogReplace(ids, named, merged.maps), [&](Tick tick) {
-    _table->Replace(tick, ids, folded, std::move(segments),
-                    std::move(merged.maps));
-    QueueReleaseCleanup(shared_from_this(), tick);
-  });
+  CommitReplace(ids, folded, std::move(added), std::move(merged.maps),
+                memory.end, /*logged=*/true);
   NudgeCompaction();
 }
 
@@ -598,36 +609,36 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
       stored = *_table_columns;
     }
   }
-  duckdb::vector<std::string> entries;
-  std::vector<StateUnit> units;
-  units.reserve(state.units.size());
+  TableDelta delta;
+  MemoryDeletes memory;
   for (const auto& unit : state.units) {
-    if (!unit->piece) {
-      units.push_back({.segment = {.id = unit->id,
-                                   .meta_file = unit->segment.filename,
-                                   .docs = unit->docs},
-                       .deleted = unit->deleted,
-                       .patches = unit->patches});
-      continue;
-    }
-    units.push_back({.segment = {.id = unit->id, .docs = unit->docs},
-                     .deleted = unit->deleted});
-    const auto* columns = unit->reader->GetColReader();
-    if (!columns || unit->docs == 0) {
-      continue;
-    }
-    std::vector<const irs::ColumnReader*> readers;
-    std::vector<connector::ColumnId> ids;
-    duckdb::vector<duckdb::LogicalType> types;
-    for (const auto* column : columns->Columns()) {
-      if (stored.contains(column->Id())) {
-        readers.push_back(column);
-        ids.push_back(column->Id());
-        types.push_back(column->Type());
+    if (unit->deleted && !unit->deleted->Empty()) {
+      if (unit->piece) {
+        memory.Add(unit->first, unit->deleted);
+      } else {
+        delta.deletes.push_back({.segment = unit->id, .docs = unit->deleted});
       }
     }
-    if (readers.empty()) {
+    if (!unit->piece) {
+      delta.add.push_back({.id = unit->id,
+                           .meta_file = unit->segment.filename,
+                           .rows = unit->docs});
+      for (const auto& patch : unit->patches) {
+        delta.updates.push_back({.segment = unit->id, .patch = patch});
+      }
       continue;
+    }
+    auto& rows = delta.rows.emplace_back(LoggedRows{.first = unit->first});
+    std::vector<const irs::ColumnReader*> readers;
+    duckdb::vector<duckdb::LogicalType> types;
+    if (const auto* columns = unit->reader->GetColReader()) {
+      for (const auto* column : columns->Columns()) {
+        if (stored.contains(column->Id())) {
+          readers.push_back(column);
+          rows.columns.push_back(column->Id());
+          types.push_back(column->Type());
+        }
+      }
     }
     irs::ReadContext ctx{*ReaderOptions().db};
     std::vector<irs::ColumnReader::ScanState> scans;
@@ -645,12 +656,12 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
         readers[i]->Scan(scans[i], chunk.data[i], count);
       }
       chunk.SetChildCardinality(count);
-      entries.push_back(LogPieceRows(unit->id, first, ids, chunk));
+      rows.chunks.push_back(LogChunk(chunk));
       first += count;
     }
   }
-  entries.push_back(LogState(units));
-  return catalog::SearchRecord(_db_id, _id, entries);
+  std::move(memory).Finish(delta);
+  return catalog::SearchRecord(_db_id, _id, delta);
 }
 
 void Store::ApplyOptions(const catalog::InvertedIndexSettings& options) {
@@ -871,19 +882,13 @@ auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
         ids.push_back(impl.Id());
         folded.push_back(impl.PatchTick());
       }
-      const std::array<ReplacedSegment, 1> named{
-        ReplacedSegment{.id = merged.reader->Id(),
-                        .meta_file = merged.segment.filename,
-                        .docs = merged.reader->Meta().docs_count}};
       SyncSegments();
-      std::vector<OwnSegment> segments;
-      segments.push_back(OwnSegment{.segment = std::move(merged.segment),
-                                    .reader = std::move(merged.reader)});
-      CommitStorage(LogReplace(ids, named, merged.maps), [&](Tick tick) {
-        _table->Replace(tick, ids, folded, std::move(segments),
-                        std::move(merged.maps));
-        QueueReleaseCleanup(shared_from_this(), tick);
-      });
+      std::vector<std::shared_ptr<TableUnit>> added;
+      added.push_back(
+        _table->SegmentUnit(OwnSegment{.segment = std::move(merged.segment),
+                                       .reader = std::move(merged.reader)}));
+      CommitReplace(ids, folded, std::move(added), std::move(merged.maps), 0,
+                    /*logged=*/true);
     } catch (const std::exception& e) {
       co_return absl::InternalError(
         absl::StrCat("compaction of table ", _id,
@@ -1069,8 +1074,7 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
     ids.push_back(impl.Id());
     folded.push_back(impl.PatchTick());
   }
-  std::vector<OwnSegment> segments;
-  std::vector<ReplacedSegment> named;
+  std::vector<std::shared_ptr<TableUnit>> added;
   std::vector<irs::DocMap> maps;
   for (auto& replacement : replacements) {
     auto opened = _table->OpenSegment(std::string{replacement.meta_file});
@@ -1079,19 +1083,12 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
       map.target = target;
       maps.push_back(std::move(map));
     }
-    named.push_back({.id = target,
-                     .meta_file = opened.segment.filename,
-                     .docs = opened.reader->Meta().docs_count});
-    segments.push_back(std::move(opened));
+    added.push_back(_table->SegmentUnit(std::move(opened)));
   }
   SyncSegments();
-  std::shared_ptr<const TableState> published;
-  CommitStorage(LogReplace(ids, named, maps), [&](Tick tick) {
-    published =
-      _table->Replace(tick, ids, folded, std::move(segments), std::move(maps));
-    _table->Rewritten(tick);
-    QueueReleaseCleanup(shared_from_this(), tick);
-  });
+  auto published = CommitReplace(ids, folded, std::move(added), std::move(maps),
+                                 0, /*logged=*/true);
+  _table->Rewritten(published->tick);
   return published;
 }
 
@@ -1462,118 +1459,50 @@ void Store::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
   }
 }
 
-void Store::ReplayRows(duckdb::Catalog& catalog,
-                       std::vector<connector::ColumnId> column_ids,
-                       uint64_t segment, irs::doc_id_t first,
-                       duckdb::unique_ptr<duckdb::DataChunk> chunk) {
+TableReplay* Store::Replay() {
+  EnsureOpen();
+  return _table ? &_replay : nullptr;
+}
+
+void Store::ScheduleRecovery(duckdb::ClientContext& context,
+                             duckdb::TaskExecutor& executor) {
   EnsureOpen();
   if (!_table) {
     return;
   }
-  _table->ReplayRows(segment, first, static_cast<irs::doc_id_t>(chunk->size()));
-  _replayed_rows[segment].push_back({.first = first,
-                                     .chunk = std::move(chunk),
-                                     .column_ids = std::move(column_ids),
-                                     .catalog = &catalog});
-}
-
-void Store::ReplayAddSegment(const ReplacedSegment& segment) {
-  EnsureOpen();
-  if (_table) {
-    _table->ReplayAddSegment(segment);
+  _writer->ReserveSegmentId(_replay.Top());
+  for (auto& [id, segment] : _replay.Segments()) {
+    executor.ScheduleTask(
+      duckdb::make_uniq<RecoveryTask>(executor, [this, &segment] {
+        segment.opened = _table->OpenSegment(segment.meta_file);
+      }));
+  }
+  for (auto& piece : _replay.Cut()) {
+    executor.ScheduleTask(
+      duckdb::make_uniq<RecoveryTask>(executor, [this, &context, &piece] {
+        piece.reader = ReplayPiece(context, _replay.Chunks(piece));
+      }));
   }
 }
 
-void Store::ReplayRemoval(const irs::DocRemoval& removal) {
-  EnsureOpen();
-  if (_table) {
-    _table->ReplayRemoval(removal);
-  }
-}
-
-void Store::ReplayPatch(uint64_t segment, const irs::FieldPatch& patch) {
-  EnsureOpen();
-  if (_table) {
-    _table->ReplayPatch(segment, patch);
-  }
-}
-
-void Store::ReplayTruncate() {
-  EnsureOpen();
-  if (_table) {
-    _table->ReplayTruncate();
-  }
-}
-
-void Store::ReplayReplace(std::span<const uint64_t> replaced,
-                          std::span<const ReplacedSegment> segments,
-                          std::span<const irs::DocMap> maps) {
-  EnsureOpen();
-  if (_table) {
-    for (const auto id : replaced) {
-      _replayed_rows.erase(id);
-    }
-    _table->ReplayReplace(replaced, segments, maps);
-  }
-}
-
-void Store::ReplayMerge(uint64_t target, std::span<const uint64_t> sources) {
-  EnsureOpen();
-  if (!_table) {
-    return;
-  }
-  const bool rebuilt = _table->ReplayMerge(target, sources);
-  std::vector<ReplayedRows> rows;
-  irs::doc_id_t offset = 0;
-  for (const auto id : sources) {
-    const auto it = _replayed_rows.find(id);
-    if (it == _replayed_rows.end()) {
-      continue;
-    }
-    if (rebuilt) {
-      irs::doc_id_t docs = 0;
-      for (auto& replayed : it->second) {
-        docs = std::max(docs, static_cast<irs::doc_id_t>(
-                                replayed.first + replayed.chunk->size()));
-        replayed.first = static_cast<irs::doc_id_t>(replayed.first + offset);
-        rows.push_back(std::move(replayed));
-      }
-      offset = static_cast<irs::doc_id_t>(offset + docs);
-    }
-    _replayed_rows.erase(it);
-  }
-  if (!rows.empty()) {
-    _replayed_rows[target] = std::move(rows);
-  }
-}
-
-void Store::ReplayState(std::span<const StateUnit> units) {
-  EnsureOpen();
-  if (_table) {
-    _table->ReplayState(units);
-  }
-}
-
-void Store::InvertReplayed(duckdb::ClientContext& context) {
-  const auto rows = std::exchange(_replayed_rows, {});
-  if (!_table) {
-    return;
-  }
-  for (const auto& [segment, chunks] : rows) {
-    if (!_table->ReplayPending(segment)) {
-      continue;
-    }
-    for (const auto& replayed : chunks) {
-      _table->ReplayPieceRows(
-        *_piece_writer, segment, replayed.first,
-        [&](irs::IndexWriter::Transaction& trx) {
-          const auto sink = connector::MakeSearchTableInsertSink(
-            trx, *this, *replayed.catalog, context);
-          connector::WriteChunkToSearchSink(*sink, *replayed.chunk,
-                                            replayed.column_ids, _id, context);
-        });
+std::shared_ptr<const irs::SegmentReaderImpl> Store::ReplayPiece(
+  duckdb::ClientContext& context, std::span<const TableReplay::Chunk> chunks) {
+  auto piece = StartPiece();
+  absl::Cleanup abort = [&] { piece.trx.Abort(); };
+  uint64_t rows = 0;
+  {
+    const auto sink = connector::MakeSearchTableInsertSink(
+      piece.trx, *this, _replay.RowsCatalog(), context);
+    for (const auto& chunk : chunks) {
+      connector::WriteChunkToSearchSink(*sink, *chunk.rows, *chunk.columns, _id,
+                                        context);
+      rows += chunk.rows->size();
     }
   }
+  SDB_ENSURE(PieceDocs(piece.trx) == rows, "table ", _id, ": ", rows,
+             " rows of its log indexed into ", PieceDocs(piece.trx),
+             " documents");
+  return piece.trx.SealPiece(piece.id);
 }
 
 bool Store::FinishReplay() {
@@ -1581,10 +1510,12 @@ bool Store::FinishReplay() {
   if (!_table) {
     return false;
   }
-  _writer->ReserveSegmentId(_table->ReplayTop());
-  const bool replayed_records = _table->FinishReplay();
+  const bool replayed = _replay.Replayed();
+  const auto memory_end = _replay.MemoryEnd();
+  _table->Recover(std::move(_replay).Units(*_table), memory_end);
+  _replay = TableReplay{};
   ClaimColumnOids(_table->View({}));
-  return replayed_records;
+  return replayed;
 }
 
 }  // namespace sdb::search

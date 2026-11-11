@@ -34,52 +34,27 @@
 
 #include "connector/column_id.h"
 #include "search/store.h"
+#include "search/table_replay.h"
 
 namespace sdb::search {
 namespace {
 
-enum class LogEntryType : uint8_t {
-  Truncate,
-  AddSegments,
-  Rows,
-  Removal,
-  Replace,
-  State,
-  Merge,
-  Patch,
-  PieceRows,
-};
-
 constexpr std::align_val_t kFrozenAlignment{32};
 
-template<typename Write>
-std::string Encode(LogEntryType type, Write&& write) {
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
-  serializer.Begin();
-  serializer.WriteProperty(100, "type", static_cast<uint8_t>(type));
-  write(serializer);
-  serializer.End();
-  return std::string{reinterpret_cast<const char*>(stream.GetData()),
-                     stream.GetPosition()};
-}
-
-std::string Frozen(const irs::DocumentMask* mask) {
-  if (!mask) {
-    return {};
-  }
-  const auto size = mask->FrozenSize();
+std::string Frozen(const irs::DocumentMask& mask) {
+  const auto size = mask.FrozenSize();
   std::unique_ptr<char, decltype([](char* frozen) {
                     ::operator delete(frozen, kFrozenAlignment);
                   })>
     aligned{static_cast<char*>(::operator new(size, kFrozenAlignment))};
-  mask->WriteFrozen(aligned.get());
+  mask.WriteFrozen(aligned.get());
   return std::string{aligned.get(), size};
 }
 
 std::shared_ptr<const irs::DocumentMask> Thawed(std::string_view bytes) {
   if (bytes.empty()) {
-    return nullptr;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("search log: deletes without rows"));
   }
   std::shared_ptr<irs::byte_type> buffer{
     static_cast<irs::byte_type*>(
@@ -88,64 +63,6 @@ std::shared_ptr<const irs::DocumentMask> Thawed(std::string_view bytes) {
   std::memcpy(buffer.get(), bytes.data(), bytes.size());
   return std::make_shared<const irs::DocumentMask>(std::move(buffer),
                                                    bytes.size());
-}
-
-void WriteSegment(duckdb::Serializer& object, const ReplacedSegment& segment) {
-  object.WriteProperty<uint64_t>(100, "segment", segment.id);
-  object.WriteProperty(101, "meta_file", segment.meta_file);
-  object.WriteProperty<uint32_t>(102, "docs", segment.docs);
-}
-
-ReplacedSegment ReadSegment(duckdb::Deserializer& object) {
-  ReplacedSegment segment;
-  segment.id = object.ReadProperty<uint64_t>(100, "segment");
-  segment.meta_file = object.ReadProperty<std::string>(101, "meta_file");
-  segment.docs = object.ReadProperty<uint32_t>(102, "docs");
-  return segment;
-}
-
-void WriteSegments(duckdb::Serializer& serializer, duckdb::field_id_t field,
-                   const char* tag, std::span<const ReplacedSegment> segments) {
-  serializer.WriteList(field, tag, segments.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteObject([&](duckdb::Serializer& object) {
-                           WriteSegment(object, segments[i]);
-                         });
-                       });
-}
-
-std::vector<ReplacedSegment> ReadSegments(duckdb::Deserializer& deserializer,
-                                          duckdb::field_id_t field,
-                                          const char* tag) {
-  std::vector<ReplacedSegment> segments;
-  deserializer.ReadList(field, tag,
-                        [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-                          list.ReadObject([&](duckdb::Deserializer& object) {
-                            segments.push_back(ReadSegment(object));
-                          });
-                        });
-  return segments;
-}
-
-irs::DocRemoval ReadRemoval(duckdb::Deserializer& deserializer) {
-  irs::DocRemoval removal;
-  deserializer.ReadList(
-    101, "groups", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-      list.ReadObject([&](duckdb::Deserializer& object) {
-        const auto segment = object.ReadProperty<uint64_t>(100, "segment");
-        const auto docs = object.ReadProperty<std::string>(101, "docs");
-        auto thawed = Thawed(docs);
-        if (!thawed) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                          ERR_MSG("search log: a removal without documents"));
-        }
-        removal.groups.push_back(
-          {.segment = segment,
-           .docs = irs::DocumentMaskBuilder{*thawed}.Finish(
-             irs::DocumentMaskBuilder::kCanonical)});
-      });
-    });
-  return removal;
 }
 
 void WritePatch(duckdb::Serializer& object, const irs::FieldPatch& field) {
@@ -190,259 +107,203 @@ irs::FieldPatch ReadPatch(duckdb::Deserializer& object) {
           .patch = irs::ColumnPatch::Merge(nullptr, type, rows, values, 0)};
 }
 
-std::vector<irs::DocMap> ReadMaps(duckdb::Deserializer& deserializer) {
-  std::vector<irs::DocMap> maps;
-  deserializer.ReadList(
-    103, "maps", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-      list.ReadObject([&](duckdb::Deserializer& object) {
-        irs::DocMap map;
-        map.source = object.ReadProperty<uint64_t>(100, "source");
-        map.target = object.ReadProperty<uint64_t>(101, "target");
-        map.base = object.ReadProperty<uint32_t>(102, "base");
-        map.rank_begin = object.ReadProperty<uint32_t>(103, "rank_begin");
-        map.rank_end = object.ReadProperty<uint32_t>(104, "rank_end");
-        map.mask = Thawed(object.ReadProperty<std::string>(105, "mask"));
-        maps.push_back(std::move(map));
-      });
-    });
-  return maps;
+duckdb::unique_ptr<duckdb::DataChunk> ReadChunk(duckdb::ClientContext& context,
+                                                std::string& bytes) {
+  duckdb::MemoryStream stream{
+    reinterpret_cast<duckdb::data_ptr_t>(bytes.data()), bytes.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Set<duckdb::ClientContext&>(context);
+  deserializer.Begin();
+  auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
+  deserializer.ReadObject(100, "chunk", [&](duckdb::Deserializer& object) {
+    chunk->Deserialize(object);
+  });
+  deserializer.End();
+  return chunk;
 }
 
 }  // namespace
 
-std::string LogTruncate() {
-  return Encode(LogEntryType::Truncate, [](duckdb::Serializer&) {});
-}
-
-std::string LogAddSegments(std::span<const OwnSegment> segments) {
-  std::vector<ReplacedSegment> named;
-  named.reserve(segments.size());
-  for (const auto& segment : segments) {
-    named.push_back({.id = segment.reader->Id(),
-                     .meta_file = segment.segment.filename,
-                     .docs = segment.reader->Meta().docs_count});
-  }
-  return Encode(LogEntryType::AddSegments, [&](duckdb::Serializer& serializer) {
-    WriteSegments(serializer, 101, "segments", named);
-  });
-}
-
-std::string LogRows(uint64_t segment, irs::doc_id_t first,
-                    duckdb::DataChunk& chunk) {
+std::string LogChunk(duckdb::DataChunk& chunk) {
   SDB_ASSERT(chunk.size() > 0);
-  return Encode(LogEntryType::Rows, [&](duckdb::Serializer& serializer) {
-    serializer.WriteProperty<uint64_t>(101, "segment", segment);
-    serializer.WriteProperty<uint32_t>(102, "first", first);
-    serializer.WriteProperty(103, "chunk", chunk);
-  });
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  serializer.Begin();
+  serializer.WriteProperty(100, "chunk", chunk);
+  serializer.End();
+  return std::string{reinterpret_cast<const char*>(stream.GetData()),
+                     stream.GetPosition()};
 }
 
-std::string LogRemoval(const irs::DocRemoval& removal) {
-  SDB_ASSERT(!removal.groups.empty());
-  return Encode(LogEntryType::Removal, [&](duckdb::Serializer& serializer) {
-    serializer.WriteList(
-      101, "groups", removal.groups.size(),
+void WriteTableDelta(duckdb::Serializer& object, const TableDelta& delta) {
+  if (!delta.drop.empty()) {
+    object.WriteList(100, "drop", delta.drop.size(),
+                     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                       list.WriteElement<uint64_t>(delta.drop[i]);
+                     });
+  }
+  object.WritePropertyWithDefault<uint64_t>(101, "drop_memory",
+                                            delta.drop_memory, 0);
+  if (!delta.add.empty()) {
+    object.WriteList(
+      102, "add", delta.add.size(),
       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& group = removal.groups[i];
-        list.WriteObject([&](duckdb::Serializer& object) {
-          object.WriteProperty<uint64_t>(100, "segment", group.segment);
-          object.WriteProperty(101, "docs", Frozen(&group.docs));
+        const auto& added = delta.add[i];
+        list.WriteObject([&](duckdb::Serializer& segment) {
+          segment.WriteProperty<uint64_t>(100, "segment", added.id);
+          segment.WriteProperty(101, "meta_file", added.meta_file);
+          segment.WriteProperty<uint32_t>(102, "rows", added.rows);
         });
       });
-  });
-}
-
-std::string LogReplace(std::span<const uint64_t> replaced,
-                       std::span<const ReplacedSegment> segments,
-                       std::span<const irs::DocMap> maps) {
-  return Encode(LogEntryType::Replace, [&](duckdb::Serializer& serializer) {
-    serializer.WriteList(101, "replaced", replaced.size(),
-                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                           list.WriteElement<uint64_t>(replaced[i]);
-                         });
-    WriteSegments(serializer, 102, "segments", segments);
-    serializer.WriteList(
-      103, "maps", maps.size(),
+  }
+  if (!delta.rows.empty()) {
+    object.WriteList(
+      103, "rows", delta.rows.size(),
       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& map = maps[i];
-        list.WriteObject([&](duckdb::Serializer& object) {
-          object.WriteProperty<uint64_t>(100, "source", map.source);
-          object.WriteProperty<uint64_t>(101, "target", map.target);
-          object.WriteProperty<uint32_t>(102, "base", map.base);
-          object.WriteProperty<uint32_t>(103, "rank_begin", map.rank_begin);
-          object.WriteProperty<uint32_t>(104, "rank_end", map.rank_end);
-          object.WriteProperty(105, "mask", Frozen(map.mask.get()));
+        const auto& rows = delta.rows[i];
+        list.WriteObject([&](duckdb::Serializer& run) {
+          run.WriteProperty<uint64_t>(100, "first", rows.first);
+          run.WriteList(
+            101, "columns", rows.columns.size(),
+            [&](duckdb::Serializer::List& columns, duckdb::idx_t c) {
+              columns.WriteElement<uint64_t>(rows.columns[c]);
+            });
+          run.WriteList(102, "chunks", rows.chunks.size(),
+                        [&](duckdb::Serializer::List& chunks, duckdb::idx_t c) {
+                          chunks.WriteElement(rows.chunks[c]);
+                        });
         });
       });
-  });
-}
-
-std::string LogMerge(uint64_t target, std::span<const uint64_t> sources) {
-  return Encode(LogEntryType::Merge, [&](duckdb::Serializer& serializer) {
-    serializer.WriteProperty<uint64_t>(101, "target", target);
-    serializer.WriteList(102, "sources", sources.size(),
-                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                           list.WriteElement<uint64_t>(sources[i]);
-                         });
-  });
-}
-
-std::string LogState(std::span<const StateUnit> units) {
-  return Encode(LogEntryType::State, [&](duckdb::Serializer& serializer) {
-    serializer.WriteList(
-      101, "units", units.size(),
+  }
+  if (!delta.deletes.empty()) {
+    object.WriteList(
+      104, "deletes", delta.deletes.size(),
       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-        const auto& unit = units[i];
-        list.WriteObject([&](duckdb::Serializer& object) {
-          WriteSegment(object, unit.segment);
-          object.WriteProperty(103, "deleted", Frozen(unit.deleted.get()));
-          if (!unit.patches.empty()) {
-            object.WriteList(
-              104, "patches", unit.patches.size(),
-              [&](duckdb::Serializer::List& patches, duckdb::idx_t p) {
-                patches.WriteObject([&](duckdb::Serializer& patch) {
-                  WritePatch(patch, unit.patches[p]);
-                });
-              });
-          }
+        const auto& deleted = delta.deletes[i];
+        list.WriteObject([&](duckdb::Serializer& deletes) {
+          deletes.WriteProperty<uint64_t>(100, "segment", deleted.segment);
+          deletes.WriteProperty(101, "docs", Frozen(*deleted.docs));
         });
       });
-  });
-}
-
-std::string LogPatch(uint64_t segment, const irs::FieldPatch& field) {
-  return Encode(LogEntryType::Patch, [&](duckdb::Serializer& serializer) {
-    serializer.WriteProperty<uint64_t>(101, "segment", segment);
-    serializer.WriteObject(102, "patch", [&](duckdb::Serializer& object) {
-      WritePatch(object, field);
-    });
-  });
-}
-
-std::string LogPieceRows(uint64_t segment, irs::doc_id_t first,
-                         std::span<const connector::ColumnId> columns,
-                         duckdb::DataChunk& chunk) {
-  SDB_ASSERT(chunk.size() > 0 && columns.size() == chunk.ColumnCount());
-  return Encode(LogEntryType::PieceRows, [&](duckdb::Serializer& serializer) {
-    serializer.WriteProperty<uint64_t>(101, "segment", segment);
-    serializer.WriteProperty<uint32_t>(102, "first", first);
-    serializer.WriteList(103, "columns", columns.size(),
-                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                           list.WriteElement<uint64_t>(columns[i]);
-                         });
-    serializer.WriteProperty(104, "chunk", chunk);
-  });
-}
-
-void ReplayLogEntry(duckdb::ClientContext& context,
-                    catalog::SearchTableEntry& table, std::string& entry) {
-  duckdb::MemoryStream stream{
-    reinterpret_cast<duckdb::data_ptr_t>(entry.data()), entry.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
-  deserializer.Set<duckdb::ClientContext&>(context);
-  deserializer.Begin();
-  auto& store = *table.Storage();
-  switch (static_cast<LogEntryType>(
-    deserializer.ReadProperty<uint8_t>(100, "type"))) {
-    case LogEntryType::Truncate:
-      store.ReplayTruncate();
-      break;
-    case LogEntryType::AddSegments:
-      for (const auto& segment : ReadSegments(deserializer, 101, "segments")) {
-        store.ReplayAddSegment(segment);
-      }
-      break;
-    case LogEntryType::Rows: {
-      const auto segment = deserializer.ReadProperty<uint64_t>(101, "segment");
-      const auto first = deserializer.ReadProperty<uint32_t>(102, "first");
-      auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
-      deserializer.ReadObject(103, "chunk", [&](duckdb::Deserializer& object) {
-        chunk->Deserialize(object);
-      });
-      std::vector<connector::ColumnId> column_ids;
-      for (const auto& column : table.GetColumns().Physical()) {
-        column_ids.emplace_back(connector::TableColumnId(column));
-      }
-      store.ReplayRows(table.ParentCatalog(), std::move(column_ids), segment,
-                       first, std::move(chunk));
-      break;
-    }
-    case LogEntryType::PieceRows: {
-      const auto segment = deserializer.ReadProperty<uint64_t>(101, "segment");
-      const auto first = deserializer.ReadProperty<uint32_t>(102, "first");
-      std::vector<connector::ColumnId> column_ids;
-      deserializer.ReadList(
-        103, "columns", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-          column_ids.push_back(
-            static_cast<connector::ColumnId>(list.ReadElement<uint64_t>()));
-        });
-      auto chunk = duckdb::make_uniq<duckdb::DataChunk>();
-      deserializer.ReadObject(104, "chunk", [&](duckdb::Deserializer& object) {
-        chunk->Deserialize(object);
-      });
-      store.ReplayRows(table.ParentCatalog(), std::move(column_ids), segment,
-                       first, std::move(chunk));
-      break;
-    }
-    case LogEntryType::Removal:
-      store.ReplayRemoval(ReadRemoval(deserializer));
-      break;
-    case LogEntryType::Replace: {
-      std::vector<uint64_t> replaced;
-      deserializer.ReadList(
-        101, "replaced", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-          replaced.push_back(list.ReadElement<uint64_t>());
-        });
-      const auto segments = ReadSegments(deserializer, 102, "segments");
-      const auto maps = ReadMaps(deserializer);
-      store.ReplayReplace(replaced, segments, maps);
-      break;
-    }
-    case LogEntryType::State: {
-      std::vector<StateUnit> units;
-      deserializer.ReadList(
-        101, "units", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-          list.ReadObject([&](duckdb::Deserializer& object) {
-            auto& unit = units.emplace_back();
-            unit.segment = ReadSegment(object);
-            unit.deleted =
-              Thawed(object.ReadProperty<std::string>(103, "deleted"));
-            object.ReadOptionalList(
-              104, "patches",
-              [&](duckdb::Deserializer::List& patches, duckdb::idx_t) {
-                patches.ReadObject([&](duckdb::Deserializer& patch) {
-                  unit.patches.push_back(ReadPatch(patch));
-                });
-              });
+  }
+  if (delta.memory_deletes) {
+    object.WriteProperty<uint64_t>(105, "memory_base", delta.memory_base);
+    object.WriteProperty(106, "memory_deletes", Frozen(*delta.memory_deletes));
+  }
+  if (!delta.updates.empty()) {
+    object.WriteList(
+      107, "updates", delta.updates.size(),
+      [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+        const auto& updated = delta.updates[i];
+        list.WriteObject([&](duckdb::Serializer& update) {
+          update.WriteProperty<uint64_t>(100, "segment", updated.segment);
+          update.WriteObject(101, "patch", [&](duckdb::Serializer& patch) {
+            WritePatch(patch, updated.patch);
           });
         });
-      store.ReplayState(units);
-      break;
-    }
-    case LogEntryType::Patch: {
-      const auto segment = deserializer.ReadProperty<uint64_t>(101, "segment");
-      irs::FieldPatch patch;
-      deserializer.ReadObject(102, "patch", [&](duckdb::Deserializer& object) {
-        patch = ReadPatch(object);
       });
-      store.ReplayPatch(segment, patch);
-      break;
-    }
-    case LogEntryType::Merge: {
-      const auto target = deserializer.ReadProperty<uint64_t>(101, "target");
-      std::vector<uint64_t> sources;
-      deserializer.ReadList(
-        102, "sources", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
-          sources.push_back(list.ReadElement<uint64_t>());
-        });
-      store.ReplayMerge(target, sources);
-      break;
-    }
-    default:
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                      ERR_MSG("unknown search log entry"));
   }
-  deserializer.End();
+  if (!delta.memory_updates.empty()) {
+    object.WriteList(108, "memory_updates", delta.memory_updates.size(),
+                     [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                       list.WriteObject([&](duckdb::Serializer& patch) {
+                         WritePatch(patch, delta.memory_updates[i]);
+                       });
+                     });
+  }
+}
+
+void ReplayTableDelta(duckdb::ClientContext& context,
+                      catalog::SearchTableEntry* table,
+                      duckdb::Deserializer& object) {
+  auto* replay = table ? table->Storage()->Replay() : nullptr;
+  std::vector<uint64_t> drop;
+  object.ReadOptionalList(100, "drop",
+                          [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+                            drop.push_back(list.ReadElement<uint64_t>());
+                          });
+  const auto drop_memory =
+    object.ReadPropertyWithExplicitDefault<uint64_t>(101, "drop_memory", 0);
+  if (replay && (!drop.empty() || drop_memory != 0)) {
+    replay->Drop(drop, drop_memory);
+  }
+  object.ReadOptionalList(
+    102, "add", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::Deserializer& segment) {
+        LoggedSegment added;
+        added.id = segment.ReadProperty<uint64_t>(100, "segment");
+        added.meta_file = segment.ReadProperty<std::string>(101, "meta_file");
+        added.rows = segment.ReadProperty<uint32_t>(102, "rows");
+        if (replay) {
+          replay->Add(added);
+        }
+      });
+    });
+  object.ReadOptionalList(
+    103, "rows", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::Deserializer& run) {
+        auto row = run.ReadProperty<uint64_t>(100, "first");
+        auto columns = std::make_shared<std::vector<connector::ColumnId>>();
+        run.ReadList(
+          101, "columns", [&](duckdb::Deserializer::List& ids, duckdb::idx_t) {
+            columns->push_back(
+              static_cast<connector::ColumnId>(ids.ReadElement<uint64_t>()));
+          });
+        run.ReadList(102, "chunks",
+                     [&](duckdb::Deserializer::List& chunks, duckdb::idx_t) {
+                       auto bytes = chunks.ReadElement<std::string>();
+                       if (!replay) {
+                         return;
+                       }
+                       auto chunk = ReadChunk(context, bytes);
+                       const auto size = chunk->size();
+                       replay->Append(table->ParentCatalog(), row, columns,
+                                      std::move(chunk));
+                       row += size;
+                     });
+      });
+    });
+  object.ReadOptionalList(
+    104, "deletes", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::Deserializer& deletes) {
+        const auto segment = deletes.ReadProperty<uint64_t>(100, "segment");
+        const auto docs =
+          Thawed(deletes.ReadProperty<std::string>(101, "docs"));
+        if (replay) {
+          replay->Delete(segment, *docs);
+        }
+      });
+    });
+  const auto memory_base =
+    object.ReadPropertyWithExplicitDefault<uint64_t>(105, "memory_base", 0);
+  const auto memory_deletes =
+    object.ReadPropertyWithExplicitDefault<std::string>(106, "memory_deletes",
+                                                        {});
+  if (replay && !memory_deletes.empty()) {
+    replay->DeleteMemory(memory_base, *Thawed(memory_deletes));
+  }
+  object.ReadOptionalList(
+    107, "updates", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::Deserializer& update) {
+        const auto segment = update.ReadProperty<uint64_t>(100, "segment");
+        irs::FieldPatch patch;
+        update.ReadObject(101, "patch", [&](duckdb::Deserializer& object) {
+          patch = ReadPatch(object);
+        });
+        if (replay) {
+          replay->Update(segment, patch);
+        }
+      });
+    });
+  object.ReadOptionalList(108, "memory_updates",
+                          [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+                            list.ReadObject([&](duckdb::Deserializer& patch) {
+                              const auto read = ReadPatch(patch);
+                              if (replay) {
+                                replay->UpdateMemory(read);
+                              }
+                            });
+                          });
 }
 
 }  // namespace sdb::search

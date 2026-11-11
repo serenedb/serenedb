@@ -48,6 +48,7 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/walk.h"
+#include "connector/column_id.h"
 #include "search/store_stats.h"
 #include "search/version_chain.h"
 
@@ -57,6 +58,9 @@ using Lsn = uint64_t;
 
 inline constexpr Tick kAllApplied = std::numeric_limits<Tick>::max();
 inline constexpr Lsn kNoLsn = std::numeric_limits<Lsn>::max();
+
+inline constexpr uint32_t kPieceTierBits = 3;
+inline constexpr uint32_t kPieceFanIn = uint32_t{1} << kPieceTierBits;
 
 constexpr uint64_t OwnRowsId(uint64_t generation) noexcept {
   return std::numeric_limits<uint64_t>::max() - generation;
@@ -72,7 +76,65 @@ struct TableUnit {
   irs::doc_id_t docs = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
   std::vector<irs::FieldPatch> patches;
+  uint64_t first = 0;
   bool piece = false;
+};
+
+void MergePatches(std::vector<irs::FieldPatch>& patches,
+                  std::span<const irs::FieldPatch> added, Tick tick);
+void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
+                  uint64_t end, std::vector<irs::FieldPatch>& out);
+
+struct LoggedSegment {
+  uint64_t id = 0;
+  std::string meta_file;
+  irs::doc_id_t rows = 0;
+};
+
+struct LoggedRows {
+  uint64_t first = 0;
+  std::vector<connector::ColumnId> columns;
+  std::vector<std::string> chunks;
+};
+
+struct LoggedDeletes {
+  uint64_t segment = 0;
+  std::shared_ptr<const irs::DocumentMask> docs;
+};
+
+struct LoggedUpdate {
+  uint64_t segment = 0;
+  irs::FieldPatch patch;
+};
+
+struct TableDelta {
+  std::vector<uint64_t> drop;
+  uint64_t drop_memory = 0;
+  std::vector<LoggedSegment> add;
+  std::vector<LoggedRows> rows;
+  std::vector<LoggedDeletes> deletes;
+  uint64_t memory_base = 0;
+  std::shared_ptr<const irs::DocumentMask> memory_deletes;
+  std::vector<LoggedUpdate> updates;
+  std::vector<irs::FieldPatch> memory_updates;
+};
+
+bool Empty(const TableDelta& delta) noexcept;
+
+class MemoryDeletes {
+ public:
+  void Add(uint64_t first, std::shared_ptr<const irs::DocumentMask> docs) {
+    _pieces.push_back({first, std::move(docs)});
+  }
+  void Finish(TableDelta& delta) &&;
+
+ private:
+  struct Piece {
+    uint64_t first = 0;
+    std::shared_ptr<const irs::DocumentMask> docs;
+  };
+
+  std::vector<Piece> _pieces;
 };
 
 struct UnitPatch {
@@ -102,7 +164,8 @@ struct TableState {
     : units{other.units},
       moved{other.moved},
       config{other.config},
-      tick{other.tick} {}
+      tick{other.tick},
+      memory_end{other.memory_end} {}
   TableState& operator=(const TableState&) = delete;
   ~TableState() { delete reader.load(std::memory_order_relaxed); }
 
@@ -110,6 +173,7 @@ struct TableState {
   std::shared_ptr<const MovedUnits> moved;
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
   Tick tick = 0;
+  uint64_t memory_end = 0;
   mutable std::atomic<const irs::DirectoryReader*> reader{nullptr};
 };
 
@@ -144,18 +208,6 @@ struct TableCommit {
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
   std::vector<UnitPatch> patches;
   bool truncate = false;
-};
-
-struct ReplacedSegment {
-  uint64_t id = 0;
-  std::string meta_file;
-  irs::doc_id_t docs = 0;
-};
-
-struct StateUnit {
-  ReplacedSegment segment;
-  std::shared_ptr<const irs::DocumentMask> deleted;
-  std::vector<irs::FieldPatch> patches;
 };
 
 // The units of a table's latest applied state, each with the rows it holds,
@@ -221,16 +273,20 @@ class Table final {
   uint64_t ByteSize() const;
   OwnSegment OpenSegment(std::string meta_file) const;
 
-  std::vector<std::shared_ptr<const TableUnit>> Pieces() const;
-  std::vector<std::shared_ptr<const TableUnit>> FullTier() const;
+  struct Memory {
+    std::vector<std::shared_ptr<const TableUnit>> pieces;
+    uint64_t end = 0;
+  };
+  Memory InMemory() const;
+  std::vector<std::shared_ptr<const TableUnit>> MergeRun() const;
   uint64_t PieceBytes() const noexcept {
     return _piece_bytes.load(std::memory_order_relaxed);
   }
   uint64_t PatchBytes() const noexcept {
     return _patch_bytes.load(std::memory_order_relaxed);
   }
-  bool HasFullTier() const noexcept {
-    return _full_tier.load(std::memory_order_relaxed);
+  bool HasMergeRun() const noexcept {
+    return _merge_run.load(std::memory_order_relaxed);
   }
 
   std::shared_ptr<const irs::DocRemoval> Resolve(
@@ -251,16 +307,23 @@ class Table final {
     _last_rewrite.store(tick, std::memory_order_release);
   }
 
+  TableDelta CommitDelta(const TableCommit& commit, LoggedRows&& rows) const;
   [[nodiscard]] bool Apply(Tick tick, TableCommit&& commit);
+
+  struct Replacement {
+    std::vector<uint64_t> replaced;
+    std::vector<std::shared_ptr<TableUnit>> added;
+    std::vector<irs::DocMap> maps;
+    TableDelta delta;
+  };
+  Replacement PrepareReplace(std::span<const uint64_t> replaced,
+                             std::span<const Tick> folded,
+                             std::vector<std::shared_ptr<TableUnit>>&& added,
+                             std::vector<irs::DocMap>&& maps,
+                             uint64_t memory_below) const;
   std::shared_ptr<const TableState> Replace(Tick tick,
-                                            std::span<const uint64_t> replaced,
-                                            std::span<const Tick> folded,
-                                            std::vector<OwnSegment>&& segments,
-                                            std::vector<irs::DocMap>&& maps);
-  std::shared_ptr<const TableState> MergePieces(
-    Tick tick, std::span<const uint64_t> replaced, std::span<const Tick> folded,
-    std::shared_ptr<const irs::SegmentReaderImpl> merged,
-    std::vector<irs::DocMap>&& maps);
+                                            Replacement&& replacement);
+  std::shared_ptr<TableUnit> SegmentUnit(OwnSegment&& segment) const;
 
   bool Collectable(Tick oldest) const;
   void Collect(Tick tick, Tick oldest);
@@ -277,22 +340,8 @@ class Table final {
   std::shared_ptr<const TableState> HeadState() const
     ABSL_LOCKS_EXCLUDED(_state_mutex);
 
-  void ReplayRows(uint64_t id, irs::doc_id_t first, irs::doc_id_t count);
-  bool ReplayPending(uint64_t id) const;
-  void ReplayPieceRows(
-    irs::IndexWriter& writer, uint64_t id, irs::doc_id_t first,
-    absl::FunctionRef<void(irs::IndexWriter::Transaction&)> append);
-  void ReplayAddSegment(const ReplacedSegment& segment);
-  void ReplayRemoval(const irs::DocRemoval& removal);
-  void ReplayPatch(uint64_t id, const irs::FieldPatch& patch);
-  void ReplayTruncate();
-  void ReplayReplace(std::span<const uint64_t> replaced,
-                     std::span<const ReplacedSegment> segments,
-                     std::span<const irs::DocMap> maps);
-  bool ReplayMerge(uint64_t target, std::span<const uint64_t> sources);
-  void ReplayState(std::span<const StateUnit> units);
-  uint64_t ReplayTop() const noexcept { return _replay_top; }
-  bool FinishReplay();
+  void Recover(std::vector<std::shared_ptr<TableUnit>> units,
+               uint64_t memory_end);
 
  private:
   enum class Scope : uint8_t {
@@ -300,28 +349,14 @@ class Table final {
     Cold,
   };
 
-  struct ReplayUnit {
-    std::optional<irs::IndexWriter::Transaction> trx;
-    bool pending = false;
-    std::string meta_file;
-    irs::doc_id_t docs = 0;
-    irs::DocumentMaskBuilder removed;
-    std::vector<irs::FieldPatch> patches;
-  };
-
   const TableVersion& Head() const noexcept { return _versions.Head(); }
 
   irs::DirectoryReader Build(const TableState& state, const OwnWrites& own,
                              Scope scope) const;
-  std::shared_ptr<const TableState> ReplaceUnits(
-    Tick tick, std::span<const uint64_t> replaced, std::span<const Tick> folded,
-    std::vector<std::shared_ptr<TableUnit>>&& added,
-    std::vector<irs::DocMap>&& maps);
   std::shared_ptr<TableState> SameUnits() const
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void Publish(std::shared_ptr<TableState> state, Tick tick)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
-  void Saw(uint64_t id) noexcept { _replay_top = std::max(_replay_top, id); }
   void CountPieces(const TableState& state) noexcept;
 
   irs::Directory& _dir;
@@ -336,10 +371,10 @@ class Table final {
   mutable absl::Mutex _commit_mutex;
   std::atomic<uint64_t> _piece_bytes{0};
   std::atomic<uint64_t> _patch_bytes{0};
-  std::atomic<bool> _full_tier{false};
-  absl::flat_hash_map<uint64_t, ReplayUnit> _replay;
-  bool _replayed = false;
-  uint64_t _replay_top = 0;
+  std::atomic<bool> _merge_run{false};
 };
+
+std::shared_ptr<TableUnit> PieceUnit(
+  std::shared_ptr<const irs::SegmentReaderImpl> reader, uint64_t first);
 
 }  // namespace sdb::search

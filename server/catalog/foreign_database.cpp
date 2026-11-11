@@ -23,6 +23,8 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <filesystem>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -136,7 +138,10 @@ void ReplayForeignDatabase(duckdb::ClientContext& context,
                }
                auto& store = *entry.Cast<SearchTableEntry>().Storage();
                OpenForeignStore(store, entry);
-               store.InvertReplayed(context);
+               duckdb::TaskExecutor executor{
+                 duckdb::TaskScheduler::GetScheduler(context)};
+               store.ScheduleRecovery(context, executor);
+               executor.WorkOnTasks();
                store.FinishReplay();
              });
     own.Scan(transaction, duckdb::CatalogType::INDEX_ENTRY,

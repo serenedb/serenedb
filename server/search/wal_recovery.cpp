@@ -97,13 +97,16 @@ void RecoverSearchStorages(
       },
       [](catalog::InvertedIndexEntry&) {});
   }
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
   context.RunFunctionInTransaction([&] {
+    duckdb::TaskExecutor recovery{scheduler};
     for (auto& table : tables) {
-      table->InvertReplayed(context);
+      table->ScheduleRecovery(context, recovery);
     }
+    recovery.WorkOnTasks();
   });
-  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
-    irs::DuckDBEngine::Instance().instance())};
+  duckdb::TaskExecutor executor{scheduler};
   std::atomic_size_t replayed_tables{0};
   for (auto& table : tables) {
     executor.ScheduleTask(

@@ -20,36 +20,23 @@
 
 #pragma once
 
-#include <cstdint>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <iresearch/index/doc_removal.hpp>
-#include <span>
 #include <string>
-#include <string_view>
 
 #include "catalog/entry/search_table.h"
-#include "connector/column_id.h"
 #include "search/table.h"
 
 namespace sdb::search {
 
-std::string LogTruncate();
-std::string LogAddSegments(std::span<const OwnSegment> segments);
-std::string LogRows(uint64_t segment, irs::doc_id_t first,
-                    duckdb::DataChunk& chunk);
-std::string LogRemoval(const irs::DocRemoval& removal);
-std::string LogReplace(std::span<const uint64_t> replaced,
-                       std::span<const ReplacedSegment> segments,
-                       std::span<const irs::DocMap> maps);
-std::string LogMerge(uint64_t target, std::span<const uint64_t> sources);
-std::string LogState(std::span<const StateUnit> units);
-std::string LogPatch(uint64_t segment, const irs::FieldPatch& field);
-std::string LogPieceRows(uint64_t segment, irs::doc_id_t first,
-                         std::span<const connector::ColumnId> columns,
-                         duckdb::DataChunk& chunk);
+std::string LogChunk(duckdb::DataChunk& chunk);
 
-void ReplayLogEntry(duckdb::ClientContext& context,
-                    catalog::SearchTableEntry& table, std::string& entry);
+void WriteTableDelta(duckdb::Serializer& object, const TableDelta& delta);
+
+void ReplayTableDelta(duckdb::ClientContext& context,
+                      catalog::SearchTableEntry* table,
+                      duckdb::Deserializer& object);
 
 }  // namespace sdb::search

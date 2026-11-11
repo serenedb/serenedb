@@ -547,30 +547,28 @@ void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
                    duckdb::Deserializer& object) {
   const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
   const auto oid = object.ReadProperty<duckdb::idx_t>(101, "table");
-  auto entries =
-    object.ReadProperty<duckdb::vector<std::string>>(102, "entries");
-  auto* catalog = target(id);
-  if (!catalog) {
-    return;
+  SearchTableEntry* table = nullptr;
+  if (auto* catalog = target(id)) {
+    if (auto relation =
+          catalog->FindRelation(catalog->GetCatalogTransaction(context), oid)) {
+      SDB_ENSURE(IsSearchTable(*relation), "the log writes a missing table ",
+                 oid);
+      table = &relation->Cast<SearchTableEntry>();
+    }
   }
-  auto table =
-    catalog->FindRelation(catalog->GetCatalogTransaction(context), oid);
-  if (!table) {
-    return;
-  }
-  SDB_ENSURE(IsSearchTable(*table), "the log writes a missing table ", oid);
-  for (auto& entry : entries) {
-    search::ReplayLogEntry(context, table->Cast<SearchTableEntry>(), entry);
-  }
+  object.ReadObject(102, "delta", [&](duckdb::Deserializer& delta) {
+    search::ReplayTableDelta(context, table, delta);
+  });
 }
 
 void WriteSection(duckdb::Serializer::List& list, duckdb::idx_t catalog,
-                  duckdb::idx_t table,
-                  const duckdb::vector<std::string>& entries) {
+                  duckdb::idx_t table, const search::TableDelta& delta) {
   list.WriteObject([&](duckdb::Serializer& object) {
     object.WriteProperty(100, "catalog", catalog);
     object.WriteProperty(101, "table", table);
-    object.WriteProperty(102, "entries", entries);
+    object.WriteObject(102, "delta", [&](duckdb::Serializer& change) {
+      search::WriteTableDelta(change, delta);
+    });
   });
 }
 
@@ -656,13 +654,13 @@ std::vector<uint8_t> SequenceRecord(const BaseCatalog& catalog,
 }
 
 std::vector<uint8_t> SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
-                                  const duckdb::vector<std::string>& entries) {
+                                  const search::TableDelta& delta) {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer serializer{stream};
   serializer.Begin();
   serializer.WriteList(100, "search", 1,
                        [&](duckdb::Serializer::List& list, duckdb::idx_t) {
-                         WriteSection(list, catalog, table, entries);
+                         WriteSection(list, catalog, table, delta);
                        });
   serializer.End();
   return Join({}, Written(stream));
@@ -908,8 +906,7 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
   }
   auto sections = writes.TakeLog(context);
   std::erase_if(sections, [](const search::LogSection& section) {
-    return section.entries.empty() ||
-           !section.table->ParentCatalog().Cast<BaseCatalog>().Durable();
+    return search::Empty(section.delta);
   });
   CatalogRecord record;
   for (const auto* change : changes) {
@@ -974,7 +971,7 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
         const auto& section = sections[i];
         WriteSection(
           list, section.table->ParentCatalog().Cast<BaseCatalog>().RecordId(),
-          section.table->oid, section.entries);
+          section.table->oid, section.delta);
       });
     serializer.End();
   }

@@ -33,6 +33,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parser/column_list.hpp>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
@@ -62,6 +63,7 @@
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "search/table.h"
+#include "search/table_replay.h"
 #include "search/writer_generations.h"
 #include "utils/drain_gate.h"
 
@@ -356,20 +358,9 @@ class Store final : public std::enable_shared_from_this<Store>,
     std::span<const irs::SubReader* const> replaced,
     std::vector<irs::IndexWriter::Replacement> replacements);
 
-  void ReplayRows(duckdb::Catalog& catalog,
-                  std::vector<connector::ColumnId> column_ids, uint64_t segment,
-                  irs::doc_id_t first,
-                  duckdb::unique_ptr<duckdb::DataChunk> chunk);
-  void ReplayAddSegment(const ReplacedSegment& segment);
-  void ReplayRemoval(const irs::DocRemoval& removal);
-  void ReplayPatch(uint64_t segment, const irs::FieldPatch& patch);
-  void ReplayTruncate();
-  void ReplayReplace(std::span<const uint64_t> replaced,
-                     std::span<const ReplacedSegment> segments,
-                     std::span<const irs::DocMap> maps);
-  void ReplayMerge(uint64_t target, std::span<const uint64_t> sources);
-  void ReplayState(std::span<const StateUnit> units);
-  void InvertReplayed(duckdb::ClientContext& context);
+  TableReplay* Replay();
+  void ScheduleRecovery(duckdb::ClientContext& context,
+                        duckdb::TaskExecutor& executor);
   bool FinishReplay();
 
   std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
@@ -423,8 +414,13 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool OwnerDropped() const noexcept {
     return Dropped() || _directory->Dropped();
   }
-  void CommitStorage(std::string entry, absl::FunctionRef<void(Tick)> apply);
+  std::shared_ptr<const TableState> CommitReplace(
+    std::span<const uint64_t> replaced, std::span<const Tick> folded,
+    std::vector<std::shared_ptr<TableUnit>> added,
+    std::vector<irs::DocMap> maps, uint64_t memory_below, bool logged);
   void CommitUnlogged(absl::FunctionRef<void(Tick)> apply);
+  std::shared_ptr<const irs::SegmentReaderImpl> ReplayPiece(
+    duckdb::ClientContext& context, std::span<const TableReplay::Chunk> chunks);
   void CommitIndex(
     const irs::ProgressReportCallback& progress,
     absl::FunctionRef<void(Tick, std::shared_ptr<const IndexState>)> published);
@@ -500,13 +496,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::atomic<uint64_t> _piece_requests{0};
   std::atomic<uint64_t> _cleanup_requests{0};
   std::atomic<uint32_t> _merges{0};
-  struct ReplayedRows {
-    irs::doc_id_t first = 0;
-    duckdb::unique_ptr<duckdb::DataChunk> chunk;
-    std::vector<connector::ColumnId> column_ids;
-    duckdb::Catalog* catalog = nullptr;
-  };
-  absl::btree_map<uint64_t, std::vector<ReplayedRows>> _replayed_rows;
+  TableReplay _replay;
 
   std::atomic<uint32_t> _reindex_state{0};
 

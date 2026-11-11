@@ -48,7 +48,7 @@ std::vector<uint8_t> SequenceRecord(const BaseCatalog& catalog,
                                     const duckdb::SequenceValue& value);
 
 std::vector<uint8_t> SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
-                                  const duckdb::vector<std::string>& entries);
+                                  const search::TableDelta& delta);
 
 std::span<uint8_t> CatalogPart(std::span<uint8_t> payload);
 

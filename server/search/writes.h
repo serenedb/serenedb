@@ -72,7 +72,8 @@ struct StoreWrites {
   std::atomic<const Pin*> pinned{nullptr};
   StoreWrites* listed = nullptr;
   std::shared_ptr<const irs::SegmentReaderImpl> piece;
-  duckdb::vector<std::string> log;
+  LoggedRows rows;
+  TableCommit commit;
   bool prepared = false;
   bool dropping = false;
   // The keys the table enforces, and what this transaction's rows were
@@ -105,7 +106,7 @@ struct StoreWrites {
 
 struct LogSection {
   const catalog::SearchTableEntry* table = nullptr;
-  duckdb::vector<std::string> entries;
+  TableDelta delta;
 };
 
 class Writes {

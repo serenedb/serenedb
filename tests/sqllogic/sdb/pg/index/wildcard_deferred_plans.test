@@ -553,3 +553,1029 @@ QUERY PLAN
 │ Projections: id                             │
 │ ~1 row                                      │
 ╰─────────────────────────────────────────────╯
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wdm_kw AS keyword()
+
+statement ok
+CREATE TABLE wdm_c (id INTEGER PRIMARY KEY, msg VARCHAR)
+
+statement ok
+INSERT INTO wdm_c VALUES
+    (1, 'Senior Data Engineer'),
+    (2, 'DATA_ENGINEERING lead'),
+    (3, 'İstanbul office'),
+    (4, 'registered nurse'),
+    (5, NULL)
+
+statement ok
+CREATE INDEX wdm_c_idx ON wdm_c USING inverted (id, msg wdm_kw3)
+
+statement ok
+CREATE INDEX wdm_c_kw_idx ON wdm_c USING inverted (id, msg wdm_kw)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdm_c
+
+query
+SELECT id FROM wdm_c_idx WHERE msg LIKE '%Data%' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg LIKE '%Data%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: wdm_c_idx              │
+│ Lookup: table                 │
+│ Index Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\A.*Data.*\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "Data"             │ │
+│ │ Verify: false             │ │
+│ ╰───────────────────────────╯ │
+│ Table Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\A.*Data.*\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "Data"             │ │
+│ │ Verify: table filter      │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg LIKE 'Senior%' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg LIKE 'Senior%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: wdm_c_idx              │
+│ Lookup: table                 │
+│ Index Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\ASenior.*\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "\\xffSenior"       │ │
+│ │ Verify: false             │ │
+│ ╰───────────────────────────╯ │
+│ Table Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\ASenior.*\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "\\xffSenior"       │ │
+│ │ Verify: table filter      │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg LIKE '%nurse' ORDER BY id
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg LIKE '%nurse'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: wdm_c_idx             │
+│ Lookup: table                │
+│ Index Filter:                │
+│ ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: (?s)\\A.*nurse\\z │ │
+│ │ Syntax: perl             │ │
+│ │ Has Pos: false           │ │
+│ │ Query: "nurse\\xff"       │ │
+│ │ Verify: false            │ │
+│ ╰──────────────────────────╯ │
+│ Table Filter:                │
+│ ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: (?s)\\A.*nurse\\z │ │
+│ │ Syntax: perl             │ │
+│ │ Has Pos: false           │ │
+│ │ Query: "nurse\\xff"       │ │
+│ │ Verify: table filter     │ │
+│ ╰──────────────────────────╯ │
+│ Projections: id              │
+│ ~1 row                       │
+╰──────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg NOT LIKE '%Data%' ORDER BY id
+----
+id
+2
+3
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg NOT LIKE '%Data%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────╮
+│ Index: wdm_c_idx                                    │
+│ Lookup: table                                       │
+│ Index Filter:                                       │
+│ ╭─ Not ────────────╮                                │
+│ ╰─────────┬────────╯                                │
+│           ├─────────────────────────╮               │
+│ ╭─ Terms ─┴────────╮  ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(null) │  │ Field: msg(string)        │ │
+│ ╰──────────────────╯  │ Pattern: (?s)\\A.*Data.*\\z │ │
+│                       │ Syntax: perl              │ │
+│                       │ Has Pos: false            │ │
+│                       │ Query: "Data"             │ │
+│                       │ Verify: inline            │ │
+│                       ╰───────────────────────────╯ │
+│ Projections: id                                     │
+│ ~1 row                                              │
+╰─────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg ILIKE '%data%' ORDER BY id
+----
+id
+1
+2
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ILIKE '%data%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: wdm_c_idx                                                                                                                       │
+│ Lookup: table                                                                                                                          │
+│ Index Filter:                                                                                                                          │
+│ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                 │ │
+│ │ Pattern: (?si)\\A.*data.*\\z                                                                                                         │ │
+│ │ Syntax: perl                                                                                                                       │ │
+│ │ Has Pos: false                                                                                                                     │ │
+│ │ Query:                                                                                                                             │ │
+│ │ Or("DATA", "dATA", "DaTA", "daTA", "DAtA", "dAtA", "DatA", "datA", "DATa", "dATa", "DaTa", "daTa", "DAta", "dAta", "Data", "data") │ │
+│ │ Verify: false                                                                                                                      │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Table Filter:                                                                                                                          │
+│ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                 │ │
+│ │ Pattern: (?si)\\A.*data.*\\z                                                                                                         │ │
+│ │ Syntax: perl                                                                                                                       │ │
+│ │ Has Pos: false                                                                                                                     │ │
+│ │ Query:                                                                                                                             │ │
+│ │ Or("DATA", "dATA", "DaTA", "daTA", "DAtA", "dAtA", "DatA", "datA", "DATa", "dATa", "DaTa", "daTa", "DAta", "dAta", "Data", "data") │ │
+│ │ Verify: table filter                                                                                                               │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                                                        │
+│ ~1 row                                                                                                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg ILIKE 'istanbul%' ORDER BY id
+----
+id
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ILIKE 'istanbul%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: wdm_c_idx                                                                                                                                                                                                                                                                                                                                                                                             │
+│ Lookup: table                                                                                                                                                                                                                                                                                                                                                                                                │
+│ Index Filter:                                                                                                                                                                                                                                                                                                                                                                                                │
+│ ╭─ Wildcard NGram ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                                                                                                                                                                                                                                                                                           │ │
+│ │ Pattern: (?si)\\Aistanbul.*\\z                                                                                                                                                                                                                                                                                                                                                                                 │ │
+│ │ Syntax: perl                                                                                                                                                                                                                                                                                                                                                                                                 │ │
+│ │ Has Pos: false                                                                                                                                                                                                                                                                                                                                                                                               │ │
+│ │ Query:                                                                                                                                                                                                                                                                                                                                                                                                       │ │
+│ │ And(Or("\\xffISTA", "\\xffISTa", "\\xffIStA", "\\xffISta", "\\xffIsTA", "\\xffIsTa", "\\xffIstA", "\\xffIsta", "\\xffI\\xc5\\xbfTA", "\\xffI\\xc5\\xbfTa", "\\xffI\\xc5\\xbftA", "\\xffI\\xc5\\xbfta", "\\xffiSTA", "\\xffiSTa", "\\xffiStA", "\\xffiSta", "\\xffisTA", "\\xffisTa", "\\xffistA", "\\xffista", "\\xffi\\xc5\\xbfTA", "\\xffi\\xc5\\xbfTa", "\\xffi\\xc5\\xbftA", "\\xffi\\xc5\\xbfta"), Or("TANB", "tANB", "TaNB", "taNB", "TAnB",   │ │
+│ │ "tAnB", "TanB", "tanB", "TANb", "tANb", "TaNb", "taNb", "TAnb", "tAnb", "Tanb", "tanb"), Or("NBUL", "nBUL", "NbUL", "nbUL", "NBuL", "nBuL", "NbuL", "nbuL", "NBUl", "nBUl", "NbUl", "nbUl", "NBul", "nBul", "Nbul", "nbul"))                                                                                                                                                                                 │ │
+│ │ Verify: false                                                                                                                                                                                                                                                                                                                                                                                                │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Table Filter:                                                                                                                                                                                                                                                                                                                                                                                                │
+│ ╭─ Wildcard NGram ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                                                                                                                                                                                                                                                                                           │ │
+│ │ Pattern: (?si)\\Aistanbul.*\\z                                                                                                                                                                                                                                                                                                                                                                                 │ │
+│ │ Syntax: perl                                                                                                                                                                                                                                                                                                                                                                                                 │ │
+│ │ Has Pos: false                                                                                                                                                                                                                                                                                                                                                                                               │ │
+│ │ Query:                                                                                                                                                                                                                                                                                                                                                                                                       │ │
+│ │ And(Or("\\xffISTA", "\\xffISTa", "\\xffIStA", "\\xffISta", "\\xffIsTA", "\\xffIsTa", "\\xffIstA", "\\xffIsta", "\\xffI\\xc5\\xbfTA", "\\xffI\\xc5\\xbfTa", "\\xffI\\xc5\\xbftA", "\\xffI\\xc5\\xbfta", "\\xffiSTA", "\\xffiSTa", "\\xffiStA", "\\xffiSta", "\\xffisTA", "\\xffisTa", "\\xffistA", "\\xffista", "\\xffi\\xc5\\xbfTA", "\\xffi\\xc5\\xbfTa", "\\xffi\\xc5\\xbftA", "\\xffi\\xc5\\xbfta"), Or("TANB", "tANB", "TaNB", "taNB", "TAnB",   │ │
+│ │ "tAnB", "TanB", "tanB", "TANb", "tANb", "TaNb", "taNb", "TAnb", "tAnb", "Tanb", "tanb"), Or("NBUL", "nBUL", "NbUL", "nbUL", "NBuL", "nBuL", "NbuL", "nbuL", "NBUl", "nBUl", "NbUl", "nbUl", "NBul", "nBul", "Nbul", "nbul"))                                                                                                                                                                                 │ │
+│ │ Verify: table filter                                                                                                                                                                                                                                                                                                                                                                                         │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                                                                                                                                                                                                                                                                                                                              │
+│ ~1 row                                                                                                                                                                                                                                                                                                                                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg NOT ILIKE '%data%' ORDER BY id
+----
+id
+3
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg NOT ILIKE '%data%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: wdm_c_idx                                                                                                                                             │
+│ Lookup: table                                                                                                                                                │
+│ Index Filter:                                                                                                                                                │
+│ ╭─ Not ────────────╮                                                                                                                                         │
+│ ╰─────────┬────────╯                                                                                                                                         │
+│           ├──────────────────────────────────────────────────────────────────────────────╮                                                                   │
+│ ╭─ Terms ─┴────────╮  ╭─ Wildcard NGram ─────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(null) │  │ Field: msg(string)                                                                                                                 │ │
+│ ╰──────────────────╯  │ Pattern: (?si)\\A.*data.*\\z                                                                                                         │ │
+│                       │ Syntax: perl                                                                                                                       │ │
+│                       │ Has Pos: false                                                                                                                     │ │
+│                       │ Query:                                                                                                                             │ │
+│                       │ Or("DATA", "dATA", "DaTA", "daTA", "DAtA", "dAtA", "DatA", "datA", "DATa", "dATa", "DaTa", "daTa", "DAta", "dAta", "Data", "data") │ │
+│                       │ Verify: inline                                                                                                                     │ │
+│                       ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                                                                              │
+│ ~1 row                                                                                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg ILIKE '%A#_E%' ESCAPE '#' ORDER BY id
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ILIKE '%A#_E%' ESCAPE '#'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: wdm_c_idx                          │
+│ Lookup: table                             │
+│ Index Filter:                             │
+│ ╭─ Wildcard NGram ──────────────────────╮ │
+│ │ Field: msg(string)                    │ │
+│ │ Pattern: (?si)\\A.*A_E.*\\z             │ │
+│ │ Syntax: perl                          │ │
+│ │ Has Pos: false                        │ │
+│ │ Query: Or("A_E", "A_e", "a_E", "a_e") │ │
+│ │ Verify: false                         │ │
+│ ╰───────────────────────────────────────╯ │
+│ Table Filter:                             │
+│ ╭─ Wildcard NGram ──────────────────────╮ │
+│ │ Field: msg(string)                    │ │
+│ │ Pattern: (?si)\\A.*A_E.*\\z             │ │
+│ │ Syntax: perl                          │ │
+│ │ Has Pos: false                        │ │
+│ │ Query: Or("A_E", "A_e", "a_E", "a_e") │ │
+│ │ Verify: table filter                  │ │
+│ ╰───────────────────────────────────────╯ │
+│ Projections: id                           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg ~ 'Data' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ~ 'Data'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: wdm_c_idx              │
+│ Lookup: table                 │
+│ Index Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\A.*Data.*\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "Data"             │ │
+│ │ Verify: false             │ │
+│ ╰───────────────────────────╯ │
+│ Table Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\A.*Data.*\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "Data"             │ │
+│ │ Verify: table filter      │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg ~* 'data' ORDER BY id
+----
+id
+1
+2
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg ~* 'data'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: wdm_c_idx                                                                                                                       │
+│ Lookup: table                                                                                                                          │
+│ Index Filter:                                                                                                                          │
+│ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                 │ │
+│ │ Pattern: (?s:.*)(?:(?i)data)(?s:.*)                                                                                                │ │
+│ │ Syntax: perl                                                                                                                       │ │
+│ │ Has Pos: false                                                                                                                     │ │
+│ │ Query:                                                                                                                             │ │
+│ │ Or("DATA", "dATA", "DaTA", "daTA", "DAtA", "dAtA", "DatA", "datA", "DATa", "dATa", "DaTa", "daTa", "DAta", "dAta", "Data", "data") │ │
+│ │ Verify: false                                                                                                                      │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Table Filter:                                                                                                                          │
+│ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                 │ │
+│ │ Pattern: (?s:.*)(?:(?i)data)(?s:.*)                                                                                                │ │
+│ │ Syntax: perl                                                                                                                       │ │
+│ │ Has Pos: false                                                                                                                     │ │
+│ │ Query:                                                                                                                             │ │
+│ │ Or("DATA", "dATA", "DaTA", "daTA", "DAtA", "dAtA", "DatA", "datA", "DATa", "dATa", "DaTa", "daTa", "DAta", "dAta", "Data", "data") │ │
+│ │ Verify: table filter                                                                                                               │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                                                        │
+│ ~1 row                                                                                                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg !~* 'data' ORDER BY id
+----
+id
+3
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg !~* 'data'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: wdm_c_idx                                                                                                                                             │
+│ Lookup: table                                                                                                                                                │
+│ Index Filter:                                                                                                                                                │
+│ ╭─ Not ────────────╮                                                                                                                                         │
+│ ╰─────────┬────────╯                                                                                                                                         │
+│           ├──────────────────────────────────────────────────────────────────────────────╮                                                                   │
+│ ╭─ Terms ─┴────────╮  ╭─ Wildcard NGram ─────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(null) │  │ Field: msg(string)                                                                                                                 │ │
+│ ╰──────────────────╯  │ Pattern: (?s:.*)(?:(?i)data)(?s:.*)                                                                                                │ │
+│                       │ Syntax: perl                                                                                                                       │ │
+│                       │ Has Pos: false                                                                                                                     │ │
+│                       │ Query:                                                                                                                             │ │
+│                       │ Or("DATA", "dATA", "DaTA", "daTA", "DAtA", "dAtA", "DatA", "datA", "DATa", "dATa", "DaTa", "daTa", "DAta", "dAta", "Data", "data") │ │
+│                       │ Verify: inline                                                                                                                     │ │
+│                       ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                                                                              │
+│ ~1 row                                                                                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE regexp_matches(msg, '^s', 'i') ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE regexp_matches(msg, '^s', 'i')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: wdm_c_idx                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Wildcard NGram ─────────────────────╮ │
+│ │ Field: msg(string)                   │ │
+│ │ Pattern: (?:(?i)^s)(?s:.*)           │ │
+│ │ Syntax: perl                         │ │
+│ │ Has Pos: false                       │ │
+│ │ Query:                               │ │
+│ │ Or("\\xffS", "\\xffs", "\\xff\\xc5\\xbf") │ │
+│ │ Verify: false                        │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE msg SIMILAR TO '%(nurse|lead)' ORDER BY id
+----
+id
+2
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE msg SIMILAR TO '%(nurse|lead)'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: wdm_c_idx                       │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Wildcard NGram ───────────────────╮ │
+│ │ Field: msg(string)                 │ │
+│ │ Pattern: ^(?:.*(?:nurse|lead))$    │ │
+│ │ Syntax: perl                       │ │
+│ │ Has Pos: false                     │ │
+│ │ Query: Or("lead\\xff", "nurse\\xff") │ │
+│ │ Verify: false                      │ │
+│ ╰────────────────────────────────────╯ │
+│ Table Filter:                          │
+│ ╭─ Wildcard NGram ───────────────────╮ │
+│ │ Field: msg(string)                 │ │
+│ │ Pattern: ^(?:.*(?:nurse|lead))$    │ │
+│ │ Syntax: perl                       │ │
+│ │ Has Pos: false                     │ │
+│ │ Query: Or("lead\\xff", "nurse\\xff") │ │
+│ │ Verify: table filter               │ │
+│ ╰────────────────────────────────────╯ │
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE regexp_full_match(msg, 'senior.*', 'i') ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE regexp_full_match(msg, 'senior.*', 'i')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: wdm_c_idx                                                                                                                                                                                                                                                                                                                                                                                             │
+│ Lookup: table                                                                                                                                                                                                                                                                                                                                                                                                │
+│ Index Filter:                                                                                                                                                                                                                                                                                                                                                                                                │
+│ ╭─ Wildcard NGram ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                                                                                                                                                                                                                                                                                           │ │
+│ │ Pattern: (?i)senior.*                                                                                                                                                                                                                                                                                                                                                                                        │ │
+│ │ Syntax: perl                                                                                                                                                                                                                                                                                                                                                                                                 │ │
+│ │ Has Pos: false                                                                                                                                                                                                                                                                                                                                                                                               │ │
+│ │ Query:                                                                                                                                                                                                                                                                                                                                                                                                       │ │
+│ │ And(Or("\\xffSENI", "\\xffSENi", "\\xffSEnI", "\\xffSEni", "\\xffSeNI", "\\xffSeNi", "\\xffSenI", "\\xffSeni", "\\xffsENI", "\\xffsENi", "\\xffsEnI", "\\xffsEni", "\\xffseNI", "\\xffseNi", "\\xffsenI", "\\xffseni", "\\xff\\xc5\\xbfENI", "\\xff\\xc5\\xbfENi", "\\xff\\xc5\\xbfEnI", "\\xff\\xc5\\xbfEni", "\\xff\\xc5\\xbfeNI", "\\xff\\xc5\\xbfeNi", "\\xff\\xc5\\xbfenI", "\\xff\\xc5\\xbfeni"), Or("NIOR", "nIOR", "NiOR", "niOR", "NIoR",   │ │
+│ │ "nIoR", "NioR", "nioR", "NIOr", "nIOr", "NiOr", "niOr", "NIor", "nIor", "Nior", "nior"))                                                                                                                                                                                                                                                                                                                     │ │
+│ │ Verify: false                                                                                                                                                                                                                                                                                                                                                                                                │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Table Filter:                                                                                                                                                                                                                                                                                                                                                                                                │
+│ ╭─ Wildcard NGram ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                                                                                                                                                                                                                                                                                           │ │
+│ │ Pattern: (?i)senior.*                                                                                                                                                                                                                                                                                                                                                                                        │ │
+│ │ Syntax: perl                                                                                                                                                                                                                                                                                                                                                                                                 │ │
+│ │ Has Pos: false                                                                                                                                                                                                                                                                                                                                                                                               │ │
+│ │ Query:                                                                                                                                                                                                                                                                                                                                                                                                       │ │
+│ │ And(Or("\\xffSENI", "\\xffSENi", "\\xffSEnI", "\\xffSEni", "\\xffSeNI", "\\xffSeNi", "\\xffSenI", "\\xffSeni", "\\xffsENI", "\\xffsENi", "\\xffsEnI", "\\xffsEni", "\\xffseNI", "\\xffseNi", "\\xffsenI", "\\xffseni", "\\xff\\xc5\\xbfENI", "\\xff\\xc5\\xbfENi", "\\xff\\xc5\\xbfEnI", "\\xff\\xc5\\xbfEni", "\\xff\\xc5\\xbfeNI", "\\xff\\xc5\\xbfeNi", "\\xff\\xc5\\xbfenI", "\\xff\\xc5\\xbfeni"), Or("NIOR", "nIOR", "NiOR", "niOR", "NIoR",   │ │
+│ │ "nIoR", "NioR", "nioR", "NIOr", "nIOr", "NiOr", "niOr", "NIor", "nIor", "Nior", "nior"))                                                                                                                                                                                                                                                                                                                     │ │
+│ │ Verify: table filter                                                                                                                                                                                                                                                                                                                                                                                         │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                                                                                                                                                                                                                                                                                                                              │
+│ ~1 row                                                                                                                                                                                                                                                                                                                                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE starts_with(msg, 'reg') ORDER BY id
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE starts_with(msg, 'reg')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: wdm_c_idx           │
+│ Lookup: table              │
+│ Index Filter:              │
+│ ╭─ Wildcard NGram ───────╮ │
+│ │ Field: msg(string)     │ │
+│ │ Pattern: (?s)\\Areg.*\\z │ │
+│ │ Syntax: perl           │ │
+│ │ Has Pos: false         │ │
+│ │ Query: "\\xffreg"       │ │
+│ │ Verify: false          │ │
+│ ╰────────────────────────╯ │
+│ Table Filter:              │
+│ ╭─ Wildcard NGram ───────╮ │
+│ │ Field: msg(string)     │ │
+│ │ Pattern: (?s)\\Areg.*\\z │ │
+│ │ Syntax: perl           │ │
+│ │ Has Pos: false         │ │
+│ │ Query: "\\xffreg"       │ │
+│ │ Verify: table filter   │ │
+│ ╰────────────────────────╯ │
+│ Projections: id            │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE ends_with(msg, 'office') ORDER BY id
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE ends_with(msg, 'office')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: wdm_c_idx              │
+│ Lookup: table                 │
+│ Index Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\A.*office\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "office\\xff"       │ │
+│ │ Verify: false             │ │
+│ ╰───────────────────────────╯ │
+│ Table Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\A.*office\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "office\\xff"       │ │
+│ │ Verify: table filter      │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_idx WHERE contains(msg, 'ENGINEER') ORDER BY id
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM wdm_c_idx WHERE contains(msg, 'ENGINEER')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: wdm_c_idx                  │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Wildcard NGram ──────────────╮ │
+│ │ Field: msg(string)            │ │
+│ │ Pattern: (?s)\\A.*ENGINEER.*\\z │ │
+│ │ Syntax: perl                  │ │
+│ │ Has Pos: false                │ │
+│ │ Query: "ENGINEER"             │ │
+│ │ Verify: false                 │ │
+│ ╰───────────────────────────────╯ │
+│ Table Filter:                     │
+│ ╭─ Wildcard NGram ──────────────╮ │
+│ │ Field: msg(string)            │ │
+│ │ Pattern: (?s)\\A.*ENGINEER.*\\z │ │
+│ │ Syntax: perl                  │ │
+│ │ Has Pos: false                │ │
+│ │ Query: "ENGINEER"             │ │
+│ │ Verify: table filter          │ │
+│ ╰───────────────────────────────╯ │
+│ Projections: id                   │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg LIKE '%Data%' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg LIKE '%Data%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: wdm_c_kw_idx    │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Automaton ────────╮ │
+│ │ Field: msg(string) │ │
+│ │ Pattern: %Data%    │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg LIKE 'Senior%' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg LIKE 'Senior%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: wdm_c_kw_idx    │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Starts With ──────╮ │
+│ │ Field: msg(string) │ │
+│ │ Prefix: Senior     │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg LIKE '%nurse' ORDER BY id
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg LIKE '%nurse'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: wdm_c_kw_idx    │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Automaton ────────╮ │
+│ │ Field: msg(string) │ │
+│ │ Pattern: %nurse    │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg NOT LIKE '%Data%' ORDER BY id
+----
+id
+2
+3
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg NOT LIKE '%Data%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: wdm_c_kw_idx                          │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Not ────────────╮                         │
+│ ╰─────────┬────────╯                         │
+│           ├──────────────────────╮           │
+│ ╭─ Terms ─┴────────╮  ╭─ Automaton ────────╮ │
+│ │ Field: msg(null) │  │ Field: msg(string) │ │
+│ ╰──────────────────╯  │ Pattern: %Data%    │ │
+│                       ╰────────────────────╯ │
+│ Projections: id                              │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE '%data%' ORDER BY id
+----
+id
+1
+2
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE '%data%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: wdm_c_kw_idx            │
+│ Lookup: table                  │
+│ Index Filter:                  │
+│ ╭─ Automaton ────────────────╮ │
+│ │ Field: msg(string)         │ │
+│ │ Pattern: (?si)\\A.*data.*\\z │ │
+│ ╰────────────────────────────╯ │
+│ Projections: id                │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE 'istanbul%' ORDER BY id
+----
+id
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE 'istanbul%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: wdm_c_kw_idx              │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Automaton ──────────────────╮ │
+│ │ Field: msg(string)           │ │
+│ │ Pattern: (?si)\\Aistanbul.*\\z │ │
+│ ╰──────────────────────────────╯ │
+│ Projections: id                  │
+│ ~1 row                           │
+╰──────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg NOT ILIKE '%data%' ORDER BY id
+----
+id
+3
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg NOT ILIKE '%data%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
+│ Index: wdm_c_kw_idx                                  │
+│ Lookup: table                                        │
+│ Index Filter:                                        │
+│ ╭─ Not ────────────╮                                 │
+│ ╰─────────┬────────╯                                 │
+│           ├──────────────────────────╮               │
+│ ╭─ Terms ─┴────────╮  ╭─ Automaton ──┴─────────────╮ │
+│ │ Field: msg(null) │  │ Field: msg(string)         │ │
+│ ╰──────────────────╯  │ Pattern: (?si)\\A.*data.*\\z │ │
+│                       ╰────────────────────────────╯ │
+│ Projections: id                                      │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE '%A#_E%' ESCAPE '#' ORDER BY id
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ILIKE '%A#_E%' ESCAPE '#'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: wdm_c_kw_idx           │
+│ Lookup: table                 │
+│ Index Filter:                 │
+│ ╭─ Automaton ───────────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?si)\\A.*A_E.*\\z │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg ~ 'Data' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ~ 'Data'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: wdm_c_kw_idx    │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Automaton ────────╮ │
+│ │ Field: msg(string) │ │
+│ │ Pattern: %Data%    │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg ~* 'data' ORDER BY id
+----
+id
+1
+2
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg ~* 'data'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: wdm_c_kw_idx                     │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Automaton ─────────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s:.*)(?:(?i)data)(?s:.*) │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg !~* 'data' ORDER BY id
+----
+id
+3
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg !~* 'data'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────╮
+│ Index: wdm_c_kw_idx                                           │
+│ Lookup: table                                                 │
+│ Index Filter:                                                 │
+│ ╭─ Not ────────────╮                                          │
+│ ╰─────────┬────────╯                                          │
+│           ├──────────────────────────────╮                    │
+│ ╭─ Terms ─┴────────╮  ╭─ Automaton ──────┴──────────────────╮ │
+│ │ Field: msg(null) │  │ Field: msg(string)                  │ │
+│ ╰──────────────────╯  │ Pattern: (?s:.*)(?:(?i)data)(?s:.*) │ │
+│                       ╰─────────────────────────────────────╯ │
+│ Projections: id                                               │
+│ ~1 row                                                        │
+╰───────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE regexp_matches(msg, '^s', 'i') ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE regexp_matches(msg, '^s', 'i')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: wdm_c_kw_idx            │
+│ Lookup: table                  │
+│ Index Filter:                  │
+│ ╭─ Automaton ────────────────╮ │
+│ │ Field: msg(string)         │ │
+│ │ Pattern: (?:(?i)^s)(?s:.*) │ │
+│ ╰────────────────────────────╯ │
+│ Projections: id                │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE msg SIMILAR TO '%(nurse|lead)' ORDER BY id
+----
+id
+2
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE msg SIMILAR TO '%(nurse|lead)'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: wdm_c_kw_idx                 │
+│ Lookup: table                       │
+│ Index Filter:                       │
+│ ╭─ Automaton ─────────────────────╮ │
+│ │ Field: msg(string)              │ │
+│ │ Pattern: ^(?:.*(?:nurse|lead))$ │ │
+│ ╰─────────────────────────────────╯ │
+│ Projections: id                     │
+│ ~1 row                              │
+╰─────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE regexp_full_match(msg, 'senior.*', 'i') ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE regexp_full_match(msg, 'senior.*', 'i')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: wdm_c_kw_idx       │
+│ Lookup: table             │
+│ Index Filter:             │
+│ ╭─ Automaton ───────────╮ │
+│ │ Field: msg(string)    │ │
+│ │ Pattern: (?i)senior.* │ │
+│ ╰───────────────────────╯ │
+│ Projections: id           │
+│ ~1 row                    │
+╰───────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE starts_with(msg, 'reg') ORDER BY id
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE starts_with(msg, 'reg')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: wdm_c_kw_idx    │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Starts With ──────╮ │
+│ │ Field: msg(string) │ │
+│ │ Prefix: reg        │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE ends_with(msg, 'office') ORDER BY id
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE ends_with(msg, 'office')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: wdm_c_kw_idx    │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Automaton ────────╮ │
+│ │ Field: msg(string) │ │
+│ │ Pattern: %office   │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM wdm_c_kw_idx WHERE contains(msg, 'ENGINEER') ORDER BY id
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM wdm_c_kw_idx WHERE contains(msg, 'ENGINEER')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: wdm_c_kw_idx     │
+│ Lookup: table           │
+│ Index Filter:           │
+│ ╭─ Automaton ─────────╮ │
+│ │ Field: msg(string)  │ │
+│ │ Pattern: %ENGINEER% │ │
+│ ╰─────────────────────╯ │
+│ Projections: id         │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+query
+SELECT id FROM wdm_words_idx WHERE msg ILIKE '%ABC ABC%' ORDER BY id
+----
+id
+0
+
+query
+EXPLAIN SELECT id FROM wdm_words_idx WHERE msg ILIKE '%ABC ABC%'
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────╮
+│ Projections: #1                 │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ FILTER ───────┴────────────────╮
+│ Expression: msg ~~* '%ABC ABC%' │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: wdm_words_idx            │
+│ Lookup: table                   │
+│ Projections: msg, id            │
+│ ~2 rows                         │
+╰─────────────────────────────────╯

@@ -89,6 +89,6 @@ num_buffered_docs	0
 num_docs	0
 num_failed_cleanups	0
 num_failed_consolidations	0
-num_files	1
+num_files	0
 num_live_docs	0
 num_segments	0

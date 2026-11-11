@@ -3771,10 +3771,10 @@ QUERY PLAN
 ╭─ UPDATE ───────────────╮
 │ Table: t_dml_point     │
 │ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: val   │
 ╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
-│ Projections: 99, #0,   │
-│              rowid     │
+│ Projections: 99, rowid │
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
@@ -3784,7 +3784,7 @@ QUERY PLAN
 │ │ Field: id(numeric) │ │
 │ │ Value: 3           │ │
 │ ╰────────────────────╯ │
-│ Projections: id, rowid │
+│ Projections: rowid     │
 │ ~1 row                 │
 ╰────────────────────────╯
 
@@ -3911,10 +3911,10 @@ QUERY PLAN
 ╭─ UPDATE ───────────────╮
 │ Table: t_dml_range     │
 │ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: val   │
 ╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
-│ Projections: 0, #0,    │
-│              rowid     │
+│ Projections: 0, rowid  │
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
@@ -3924,7 +3924,7 @@ QUERY PLAN
 │ │ Field: id(numeric) │ │
 │ │ Range: >=2, <=4    │ │
 │ ╰────────────────────╯ │
-│ Projections: id, rowid │
+│ Projections: rowid     │
 │ ~1 row                 │
 ╰────────────────────────╯
 
@@ -4020,9 +4020,10 @@ QUERY PLAN
 ╭─ UPDATE ─────────────────────────────────────╮
 │ Table: t_dml_cpk                             │
 │ Row Ids: ASSUME_UNIQUE                       │
+│ Patched Columns: val                         │
 ╰───────────────────────┬──────────────────────╯
 ╭─ PROJECTION ──────────┴──────────────────────╮
-│ Projections: 99, #0, #1, rowid               │
+│ Projections: 99, rowid                       │
 │ ~1 row                                       │
 ╰───────────────────────┬──────────────────────╯
 ╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
@@ -4035,7 +4036,7 @@ QUERY PLAN
 │ │ Field: a(numeric) │  │ Field: b(numeric) │ │
 │ │ Values: 2         │  │ Values: 4         │ │
 │ ╰───────────────────╯  ╰───────────────────╯ │
-│ Projections: a, b, rowid                     │
+│ Projections: rowid                           │
 │ ~1 row                                       │
 ╰──────────────────────────────────────────────╯
 
@@ -4093,10 +4094,10 @@ QUERY PLAN
 ╭─ UPDATE ───────────────╮
 │ Table: t_dml_cpk       │
 │ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: val   │
 ╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
-│ Projections: 0, #0,    │
-│              #1, rowid │
+│ Projections: 0, rowid  │
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
@@ -4106,8 +4107,7 @@ QUERY PLAN
 │ │ Field: a(numeric) │  │
 │ │ Value: 3          │  │
 │ ╰───────────────────╯  │
-│ Projections: a, b,     │
-│              rowid     │
+│ Projections: rowid     │
 │ ~1 row                 │
 ╰────────────────────────╯
 
@@ -4199,10 +4199,10 @@ QUERY PLAN
 ╭─ UPDATE ───────────────╮
 │ Table: t_dml_ryow      │
 │ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: val   │
 ╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
-│ Projections: 99, #0,   │
-│              rowid     │
+│ Projections: 99, rowid │
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
@@ -4212,7 +4212,7 @@ QUERY PLAN
 │ │ Field: id(numeric) │ │
 │ │ Value: 3           │ │
 │ ╰────────────────────╯ │
-│ Projections: id, rowid │
+│ Projections: rowid     │
 │ ~1 row                 │
 ╰────────────────────────╯
 
@@ -4356,10 +4356,10 @@ QUERY PLAN
 ╭─ UPDATE ───────────────╮
 │ Table: t_dml_corner    │
 │ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: val   │
 ╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
-│ Projections: 99, #0,   │
-│              rowid     │
+│ Projections: 99, rowid │
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
@@ -4369,7 +4369,7 @@ QUERY PLAN
 │ │ Field: id(numeric) │ │
 │ │ Range: <2          │ │
 │ ╰────────────────────╯ │
-│ Projections: id, rowid │
+│ Projections: rowid     │
 │ ~1 row                 │
 ╰────────────────────────╯
 
@@ -4395,10 +4395,10 @@ QUERY PLAN
 ╭─ UPDATE ───────────────╮
 │ Table: t_dml_corner    │
 │ Row Ids: ASSUME_UNIQUE │
+│ Patched Columns: val   │
 ╰────────────┬───────────╯
 ╭─ PROJECTION ───────────╮
-│ Projections: 0, #0,    │
-│              rowid     │
+│ Projections: 0, rowid  │
 │ ~1 row                 │
 ╰────────────┬───────────╯
 ╭─ IRESEARCH_SCAN ───────╮
@@ -4410,7 +4410,7 @@ QUERY PLAN
 │ │ Field: id(numeric) │ │
 │ │ Values: 3          │ │
 │ ╰────────────────────╯ │
-│ Projections: id, rowid │
+│ Projections: rowid     │
 │ ~1 row                 │
 ╰────────────────────────╯
 

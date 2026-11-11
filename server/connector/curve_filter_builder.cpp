@@ -426,7 +426,7 @@ bool AddCurveRangeCandidates(duckdb::ClientContext& context,
         has_upper = true;
       }
       if (lossless && (!lower || lower->exact) && (!upper || upper->exact)) {
-        exact.push_back(range.conjunct);
+        exact.emplace_back(range.conjunct);
       }
     }
     if (!has_lower || !has_upper) {

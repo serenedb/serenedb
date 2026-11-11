@@ -166,7 +166,7 @@ class CurveBoxFilterTestCase : public tests::FilterTestCaseBase {
     for (const auto& segment : segments) {
       for (size_t i = 0; i < segment.size(); ++i) {
         if (match(segment[i])) {
-          docs.push_back(static_cast<irs::doc_id_t>(i + 1));
+          docs.emplace_back(static_cast<irs::doc_id_t>(i + 1));
         }
       }
     }
@@ -337,7 +337,7 @@ TEST_P(CurveBoxFilterTestCase, points_shared_by_many_docs) {
     for (uint32_t i = 0; i < 3000; ++i) {
       const auto point =
         i % copies == 0 ? SmallPoint(random, 2, 64, 8) : segment.back().point;
-      segment.push_back({.point = point});
+      segment.emplace_back(Entry{.point = point});
     }
     Write(options, segments);
     auto reader = open_reader();

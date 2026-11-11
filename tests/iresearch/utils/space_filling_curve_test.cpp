@@ -181,7 +181,8 @@ TEST(SpaceFillingCurve, DecodeInvertsEncode) {
     for (bool hilbert : {false, true}) {
       SCOPED_TRACE(hilbert);
       const auto check = [&](Point point) {
-        std::fill(point.begin() + dimensions, point.end(), 0);
+        auto tail = std::span{point}.subspan(dimensions);
+        absl::c_fill(tail, 0);
         const auto code = Encode(point, dimensions, hilbert);
         ASSERT_EQ(Decode(code.data(), static_cast<uint32_t>(code.size()),
                          dimensions, hilbert),

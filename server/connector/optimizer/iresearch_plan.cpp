@@ -1624,7 +1624,7 @@ bool ClaimSearchConjuncts(
     for (const auto* claimed :
          {&deferred.claim.conjuncts, &deferred.claim.ranges}) {
       for (const auto& conjunct : *claimed) {
-        filters.push_back(conjunct->Copy());
+        filters.emplace_back(conjunct->Copy());
       }
     }
     any_claimed = !root_and->Empty();

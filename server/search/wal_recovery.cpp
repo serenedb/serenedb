@@ -128,7 +128,7 @@ void RecoverSearchStorages(
            tables.size(), " table(s) in ", absl::FormatDuration(duration));
 }
 
-void PrepareSnapshot(uint64_t budget) {
+void PrepareSnapshot(uint64_t budget, bool rows) {
   struct Held {
     uint64_t bytes = 0;
     std::shared_ptr<Store> store;
@@ -136,7 +136,11 @@ void PrepareSnapshot(uint64_t budget) {
   std::vector<Held> held;
   uint64_t total = 0;
   for (auto& store : DurableStores()) {
-    if (const auto bytes = store->PieceBytes(); bytes != 0) {
+    if (rows) {
+      store->WriteOut();
+    }
+    if (const auto bytes = store->PieceBytes() + store->PatchBytes();
+        bytes != 0) {
       total += bytes;
       held.push_back({.bytes = bytes, .store = std::move(store)});
     }
@@ -149,7 +153,13 @@ void PrepareSnapshot(uint64_t budget) {
       break;
     }
     store->WriteOut();
-    total -= bytes;
+    for (auto patches = store->PatchBytes(); patches != 0;) {
+      if (!store->FoldPatches() || store->PatchBytes() >= patches) {
+        break;
+      }
+      patches = store->PatchBytes();
+    }
+    total -= std::min(total, bytes);
   }
 }
 

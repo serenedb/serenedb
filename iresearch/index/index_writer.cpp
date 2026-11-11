@@ -1606,7 +1606,8 @@ auto IndexWriter::MergeAsync(const CompactionPolicy& policy,
       });
     }
     if (candidates.empty() ||
-        (candidates.size() == 1 && !HasRemovals(candidates.front()->Meta()))) {
+        (candidates.size() == 1 && !HasRemovals(candidates.front()->Meta()) &&
+         candidates.front()->PatchedDocs() == 0)) {
       co_return merged;
     }
     for (const auto* candidate : candidates) {

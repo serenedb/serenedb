@@ -357,7 +357,8 @@ Store::Piece Store::StartPiece() {
 }
 
 void Store::PiecesAdded() {
-  if ((_table->PieceBytes() < _segment_memory_max && !_table->HasFullTier()) ||
+  if ((_table->PieceBytes() + _table->PatchBytes() < _segment_memory_max &&
+       !_table->HasFullTier()) ||
       !BackgroundScheduler::gInstance ||
       _piece_requests.fetch_add(1, std::memory_order_acq_rel) != 0) {
     return;
@@ -391,17 +392,68 @@ void Store::MaintainPieces() {
   if (!_piece_writer || OwnerDropped()) {
     return;
   }
-  absl::MutexLock lock{&_write_out_mutex};
   for (;;) {
-    if (_table->PieceBytes() >= _segment_memory_max) {
-      WriteOutLocked();
-      return;
+    {
+      absl::MutexLock lock{&_write_out_mutex};
+      const auto pieces = _table->PieceBytes();
+      const auto patches = _table->PatchBytes();
+      if (pieces + patches < _segment_memory_max) {
+        const auto tier = _table->FullTier();
+        if (tier.empty() || !MergePiecesLocked(tier)) {
+          return;
+        }
+        continue;
+      }
+      if (pieces >= patches) {
+        WriteOutLocked();
+        continue;
+      }
     }
-    const auto tier = _table->FullTier();
-    if (tier.empty() || !MergePiecesLocked(tier)) {
+    const auto patches = _table->PatchBytes();
+    if (!FoldPatches() || _table->PatchBytes() >= patches) {
       return;
     }
   }
+}
+
+bool Store::FoldPatches() {
+  if (!_table || OwnerDropped()) {
+    return false;
+  }
+  std::string target;
+  uint64_t most = 0;
+  for (const auto& unit : _table->State()->units) {
+    if (unit->piece) {
+      continue;
+    }
+    uint64_t bytes = 0;
+    for (const auto& patch : unit->patches) {
+      bytes += patch.patch->Bytes();
+    }
+    if (bytes > most) {
+      most = bytes;
+      target = unit->segment.meta.name;
+    }
+  }
+  const auto options = CompactionOptions();
+  if (target.empty() || !options) {
+    return false;
+  }
+  const irs::CompactionPolicy fold =
+    [&target](irs::Compaction& candidates, const irs::IndexReader& reader,
+              const irs::CompactingSegments& busy) {
+      for (size_t i = 0; i < reader.size(); ++i) {
+        if (reader[i].Meta().name == target && !busy.contains(target)) {
+          candidates.emplace_back(&reader[i]);
+          return;
+        }
+      }
+    };
+  bool empty = false;
+  const auto folded = irs::GetBlocking(CompactUnsafeAsync(
+    ClaimMaintenance(), fold, [] { return true; }, empty, options.get(),
+    &AnnBuildEnv()));
+  return folded.res.ok() && !empty;
 }
 
 bool Store::MergePiecesLocked(

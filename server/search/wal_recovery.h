@@ -42,7 +42,7 @@ void RecoverSearchStorages(
   duckdb::ClientContext& context,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);
 void StartSearchStorageTasks();
-void PrepareSnapshot(uint64_t budget);
+void PrepareSnapshot(uint64_t budget, bool rows);
 std::vector<TableSnapshot> CaptureSnapshot();
 std::vector<std::vector<uint8_t>> SnapshotRecords(
   std::span<const TableSnapshot> tables);

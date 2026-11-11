@@ -203,6 +203,10 @@ class Store final : public std::enable_shared_from_this<Store>,
   uint64_t PieceBytes() const noexcept {
     return _table ? _table->PieceBytes() : 0;
   }
+  uint64_t PatchBytes() const noexcept {
+    return _table ? _table->PatchBytes() : 0;
+  }
+  bool FoldPatches();
 
   std::shared_ptr<const FileManifest> GetFileManifest() const
     ABSL_LOCKS_EXCLUDED(_index_mutex) {

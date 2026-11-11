@@ -503,15 +503,23 @@ void Table::Publish(std::shared_ptr<TableState> state, Tick tick) {
 
 void Table::CountPieces(const TableState& state) noexcept {
   uint64_t bytes = 0;
+  uint64_t patches = 0;
   std::array<uint32_t, kPieceTiers> tiers{};
   bool full = false;
   for (const auto& unit : state.units) {
+    uint64_t patched = 0;
+    for (const auto& patch : unit->patches) {
+      patched += patch.patch->Bytes();
+    }
     if (unit->piece) {
-      bytes += unit->reader->Meta().byte_size;
+      bytes += unit->reader->Meta().byte_size + patched;
       full |= ++tiers[PieceTier(unit->docs)] == kPieceFanIn;
+    } else {
+      patches += patched;
     }
   }
   _piece_bytes.store(bytes, std::memory_order_relaxed);
+  _patch_bytes.store(patches, std::memory_order_relaxed);
   _full_tier.store(full, std::memory_order_relaxed);
 }
 

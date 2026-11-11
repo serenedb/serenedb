@@ -1,0 +1,90 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pfm (id BIGINT PRIMARY KEY, v INT, s TEXT) WITH (compaction_interval = 0, segment_memory_max = 1048576);
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+INSERT INTO pfm SELECT i, 0, 'row number ' || i FROM range(200000) t(i);
+
+
+statement ok
+RESET threads;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pfm;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) pfm;
+
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM pfm;
+----
+segments
+1
+
+
+statement ok
+CREATE TEMP TABLE pfm_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*.col');
+
+
+statement ok
+UPDATE pfm SET v = 1 WHERE id % 2 = 0;
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) > 0 AS folded FROM (SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*.col') EXCEPT SELECT file FROM pfm_files);
+----
+folded
+t
+
+
+query
+SELECT v, count(*) AS n, min(s) AS s FROM pfm GROUP BY v ORDER BY v;
+----
+v	n	s
+0	100000	row number 1
+1	100000	row number 0
+
+
+statement ok
+UPDATE pfm SET v = 2, s = 'patched after the fold' WHERE id = 7;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT v, count(*) AS n FROM pfm GROUP BY v ORDER BY v;
+----
+v	n
+0	99999
+1	100000
+2	1
+
+
+connection after_crash
+query
+SELECT id, v, s FROM pfm WHERE id IN (6, 7, 8) ORDER BY id;
+----
+id	v	s
+6	1	row number 6
+7	2	patched after the fold
+8	1	row number 8

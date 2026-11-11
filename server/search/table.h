@@ -226,6 +226,9 @@ class Table final {
   uint64_t PieceBytes() const noexcept {
     return _piece_bytes.load(std::memory_order_relaxed);
   }
+  uint64_t PatchBytes() const noexcept {
+    return _patch_bytes.load(std::memory_order_relaxed);
+  }
   bool HasFullTier() const noexcept {
     return _full_tier.load(std::memory_order_relaxed);
   }
@@ -332,6 +335,7 @@ class Table final {
   std::atomic<Tick> _last_rewrite{0};
   mutable absl::Mutex _commit_mutex;
   std::atomic<uint64_t> _piece_bytes{0};
+  std::atomic<uint64_t> _patch_bytes{0};
   std::atomic<bool> _full_tier{false};
   absl::flat_hash_map<uint64_t, ReplayUnit> _replay;
   bool _replayed = false;

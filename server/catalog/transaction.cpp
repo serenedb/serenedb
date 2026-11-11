@@ -722,10 +722,9 @@ absl::Status Transactions::TruncateLog(LogCycle cycle,
       "debug_checkpoint_abort");
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_log_truncate_before_cover");
-  search::PrepareSnapshot(cycle == LogCycle::Checkpoint
-                            ? 0
-                            : _max_log_bytes.load(std::memory_order_relaxed) /
-                                kSnapshotDataShare);
+  search::PrepareSnapshot(
+    _max_log_bytes.load(std::memory_order_relaxed) / kSnapshotDataShare,
+    cycle == LogCycle::Checkpoint);
   Lsn covered = 0;
   std::vector<search::TableSnapshot> tables;
   {

@@ -88,21 +88,28 @@ struct RowSource {
 struct ColumnPlan {
   absl::flat_hash_set<ColumnId> scanned;
   absl::flat_hash_set<ColumnId> copied;
+  std::vector<ColumnId> carried;
 };
 
 ColumnPlan PlanColumns(const SearchSinkInsertBaseImpl& sink,
-                       const irs::IndexFieldOptions& options,
+                       const catalog::InvertedIndexConfig& config,
                        const SearchBackfillTarget& target) {
   ColumnPlan plan;
   for (const auto column : target.column_ids) {
-    if (!options.AnnFields(column).empty() ||
-        options.GetColumnOptions(column).distinct != irs::DistinctStats::None) {
+    if (!config.AnnFields(column).empty() ||
+        config.GetColumnOptions(column).distinct != irs::DistinctStats::None) {
       plan.scanned.insert(column);
       continue;
     }
     plan.copied.insert(column);
     if (!sink.TermFieldsForColumn(column).empty()) {
       plan.scanned.insert(column);
+    }
+  }
+  for (const auto column : config.table_columns) {
+    if (!absl::c_linear_search(target.column_ids, column) &&
+        !absl::c_linear_search(target.added_ids, column)) {
+      plan.carried.push_back(column);
     }
   }
   std::vector<KeyRead> expression_reads;
@@ -147,6 +154,9 @@ void InitRowSource(duckdb::ClientContext& context,
       .output_slot = types.size(), .column_id = column});
     source.write_ids.push_back(column);
     types.push_back(target.column_types[i]);
+  }
+  if (plan) {
+    absl::c_copy(plan->carried, std::back_inserter(source.copied));
   }
   auto& allocator = duckdb::Allocator::Get(context);
   source.chunk.Initialize(allocator, types);

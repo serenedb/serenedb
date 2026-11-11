@@ -122,26 +122,35 @@ def sizes():
     yield "a dense square", 20000, 64, 3
 
 
-for number, (title, rows, spread, copies) in enumerate(sizes()):
+def build(table, title, rows, spread, copies, second=False, deletes=False):
     t.part()
-    table = f"cdsm_{number}"
     t.section(f"{title}: {rows} rows.")
     setup(table, rows, spread, copies)
+    if second:
+        t.section("Two segments.")
+        t.statement(f"INSERT INTO {table} SELECT i + {rows}, (i // {copies}) * 251 % {spread}, "
+                    f"(i // {copies}) * 241 % {spread}, i % 5, {body('i')} FROM range({rows}) t(i)")
+        t.refresh(table)
+    if deletes:
+        t.section("After deletes.")
+        t.statement(f"DELETE FROM {table} WHERE id % 5 = 1")
+        t.refresh(table)
+
+
+for number, (title, rows, spread, copies) in enumerate(sizes()):
+    table = f"cdsm_{number}"
+    data = (table, title, rows, spread, copies)
+    build(*data)
     check_rows(table, spread)
     check_scores(table, spread)
-    t.section("Two segments.")
-    t.statement(f"INSERT INTO {table} SELECT i + {rows}, (i // {copies}) * 251 % {spread}, "
-                f"(i // {copies}) * 241 % {spread}, i % 5, {body('i')} FROM range({rows}) t(i)")
-    t.refresh(table)
+    build(*data, second=True)
     check_rows(table, spread)
     check_scores(table, spread)
-    t.section("After deletes.")
-    t.statement(f"DELETE FROM {table} WHERE id % 5 = 1")
-    t.refresh(table)
+    build(*data, second=True, deletes=True)
     check_rows(table, spread)
+    build(*data, second=True, deletes=True)
     t.section("On one thread.")
     t.statement("SET threads = 1")
     check_rows(table, spread)
-    t.statement("RESET threads")
 
 t.write()

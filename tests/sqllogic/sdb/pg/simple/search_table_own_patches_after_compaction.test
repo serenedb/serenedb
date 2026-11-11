@@ -1,0 +1,116 @@
+statement ok
+CREATE TABLE opc (a INTEGER, b INTEGER)
+
+
+statement ok
+INSERT INTO opc SELECT g, g FROM generate_series(1, 100) g
+
+
+statement ok
+INSERT INTO opc SELECT g, g FROM generate_series(101, 200) g
+
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement count 1
+UPDATE opc SET b = NULL WHERE a = 7
+
+
+connection b
+statement ok
+VACUUM (COMPACT_TABLE) opc
+
+
+connection a
+statement error
+ALTER TABLE opc ALTER COLUMN b SET NOT NULL
+----
+db error: ERROR: column "b" of relation "opc" contains null values
+
+
+connection a
+statement ok
+ROLLBACK
+
+
+statement ok
+INSERT INTO opc SELECT g, NULL FROM generate_series(201, 210) g
+
+
+connection a
+statement ok
+BEGIN
+
+
+connection a
+statement count 10
+UPDATE opc SET b = 0 WHERE b IS NULL
+
+
+connection b
+statement ok
+VACUUM (COMPACT_TABLE) opc
+
+
+connection a
+statement ok
+ALTER TABLE opc ALTER COLUMN b SET NOT NULL
+
+
+connection a
+statement ok
+COMMIT
+
+
+query
+SELECT count(*) FILTER (WHERE b = 0) AS zeros, count(*) FILTER (WHERE b IS NULL) AS nulls FROM opc
+----
+zeros	nulls
+10	0
+
+
+connection a
+statement ok
+BEGIN ISOLATION LEVEL READ COMMITTED
+
+
+connection a
+statement count 1
+UPDATE opc SET b = -7 WHERE a = 7
+
+
+connection b
+statement ok
+VACUUM (COMPACT_TABLE) opc
+
+
+connection b
+statement ok
+INSERT INTO opc VALUES (211, 211)
+
+
+connection a
+query
+SELECT a, b FROM opc WHERE a IN (7, 8) ORDER BY a
+----
+a	b
+7	-7
+8	8
+
+
+connection a
+statement ok
+COMMIT
+
+
+query
+SELECT a, b FROM opc WHERE a IN (7, 8, 211) ORDER BY a
+----
+a	b
+7	-7
+8	8
+211	211

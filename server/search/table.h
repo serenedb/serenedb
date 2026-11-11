@@ -148,6 +148,7 @@ struct UnitPatch {
 void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
                   irs::field_id field, const duckdb::LogicalType& type,
                   std::span<const uint64_t> rows, const duckdb::Vector& values);
+irs::DocumentMask PatchedDocs(const UnitPatch& patch);
 void MergeUnitPatches(std::vector<UnitPatch>& into,
                       std::vector<UnitPatch>&& added);
 void CarryUnitPatches(std::vector<UnitPatch>& patches, uint64_t source,
@@ -305,7 +306,6 @@ class Table final {
     const std::shared_ptr<const irs::DocRemoval>& removal) const;
   std::vector<UnitPatch> Resolve(std::vector<UnitPatch>&& patches) const;
   void CheckConflicts(const irs::DocRemoval& removal, Tick snapshot) const;
-  void CheckConflicts(std::span<const UnitPatch> patches, Tick snapshot) const;
   Tick LastWrite() const noexcept {
     return _last_write.load(std::memory_order_acquire);
   }

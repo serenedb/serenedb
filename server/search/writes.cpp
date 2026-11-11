@@ -64,14 +64,29 @@ void ReleaseWriter(StoreWrites& w) noexcept { w.registration.reset(); }
                              " already exists."));
 }
 
+void AddChanged(StoreWrites& w, Tick snapshot,
+                std::shared_ptr<const irs::DocRemoval> rows) {
+  if (w.changed.empty() || w.changed.back().snapshot != snapshot) {
+    w.changed.push_back({.snapshot = snapshot});
+  }
+  w.changed.back().rows.push_back(std::move(rows));
+}
+
+void CheckChanged(const StoreWrites& w,
+                  std::span<const StoreWrites::ChangedRows> changed) {
+  const auto& table = w.store->GetTable();
+  for (const auto& [snapshot, rows] : changed) {
+    for (const auto& removal : rows) {
+      table.CheckConflicts(*removal, snapshot);
+    }
+  }
+}
+
 [[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
                                            const StoreWrites& w,
                                            const KeySpec& spec,
-                                           std::string_view key,
-                                           Tick snapshot) {
-  for (const auto& removal : w.changes.removals) {
-    w.store->GetTable().CheckConflicts(*removal, snapshot);
-  }
+                                           std::string_view key) {
+  CheckChanged(w, w.changed);
   ThrowDuplicate(context, spec, key);
 }
 
@@ -791,6 +806,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
     removal = std::move(translated);
   }
   if (!removal->groups.empty()) {
+    AddChanged(w, Snapshot(), removal);
     w.changes.removals.push_back(std::move(removal));
   }
 }
@@ -801,7 +817,12 @@ void Writes::AddPatches(const std::shared_ptr<Store>& store,
   absl::MutexLock lock{&w.mutex};
   ++w.revision;
   const auto rows_id = OwnRowsId(w.rows_generation);
+  auto changed = std::make_shared<irs::DocRemoval>();
   for (auto& patch : patches) {
+    if (patch.unit < rows_id) {
+      changed->groups.push_back(
+        {.segment = patch.unit, .docs = PatchedDocs(patch)});
+    }
     std::vector<UnitPatch> added;
     added.push_back(std::move(patch));
     if (added.front().unit > rows_id) {
@@ -809,12 +830,17 @@ void Writes::AddPatches(const std::shared_ptr<Store>& store,
     }
     MergeUnitPatches(w.changes.patches, std::move(added));
   }
+  if (!changed->groups.empty()) {
+    AddChanged(w, Snapshot(), std::move(changed));
+  }
 }
 
-void Writes::CheckPatches(const Store& store) const {
+void Writes::CheckConflicts(const Store& store) const {
   if (const auto* w = FindStoreWrites(store.GetId())) {
     absl::MutexLock lock{&w->mutex};
-    store.GetTable().CheckConflicts(w->changes.patches, Snapshot());
+    if (!w->changed.empty() && w->changed.back().snapshot == Snapshot()) {
+      CheckChanged(*w, std::span{w->changed}.last(1));
+    }
   }
 }
 
@@ -840,6 +866,9 @@ void Writes::AddSearchTruncate(duckdb::ClientContext& context,
   w.own_maps.clear();
   w.checked_segments = 0;
   ++w.rows_generation;
+  if (!removal->groups.empty()) {
+    AddChanged(w, Snapshot(), removal);
+  }
   w.changes.AppendTruncate(std::move(removal));
   ++w.revision;
 }
@@ -1151,7 +1180,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     absl::c_sort(keys);
     if (auto duplicate =
           FindDuplicate(context, key_spec, segments, keys, existing)) {
-      ThrowDuplicateOrConflict(context, w, key_spec, *duplicate, Snapshot());
+      ThrowDuplicateOrConflict(context, w, key_spec, *duplicate);
     }
   }
   for (const auto& row : keyed) {
@@ -1256,7 +1285,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         continue;
       }
       if (auto duplicate = FindDuplicate(context, spec, segments, {}, fresh)) {
-        ThrowDuplicateOrConflict(context, w, spec, *duplicate, Snapshot());
+        ThrowDuplicateOrConflict(context, w, spec, *duplicate);
       }
     }
   }
@@ -1365,12 +1394,7 @@ TableRead Writes::LatestView(duckdb::ClientContext& context, Store& store) {
 
 void Writes::PrepareCommit(duckdb::ClientContext& context) {
   for (const auto& [store_id, w] : _writes) {
-    for (const auto& removal : w.changes.removals) {
-      w.store->GetTable().CheckConflicts(*removal, Snapshot());
-    }
-    if (!w.changes.patches.empty()) {
-      w.store->GetTable().CheckConflicts(w.changes.patches, Snapshot());
-    }
+    CheckChanged(w, w.changed);
   }
   for (auto& [store_id, w] : _writes) {
     auto& changes = w.changes;
@@ -1450,12 +1474,11 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
                 w.store->Dropped() ? "dropped" : "is dropping", " it"));
     }
     auto& table = w.store->GetTable();
+    CheckChanged(w, w.changed);
     for (auto& removal : w.changes.removals) {
-      table.CheckConflicts(*removal, Snapshot());
       removal = table.Resolve(removal);
     }
     if (!w.changes.patches.empty()) {
-      table.CheckConflicts(w.changes.patches, Snapshot());
       w.changes.patches = table.Resolve(std::move(w.changes.patches));
     }
   }

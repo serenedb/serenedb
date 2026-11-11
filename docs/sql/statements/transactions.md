@@ -61,9 +61,11 @@ SereneDB's concurrency model guarantees snapshot isolation. Transactions that vi
 Two of [PostgreSQL's transaction isolation levels](https://www.postgresql.org/docs/current/transaction-iso.html) exist:
 
 -   `REPEATABLE READ`, the default: the transaction reads one snapshot from its first statement to its end.
--   `READ COMMITTED`: each statement sees the data committed before it started, until the transaction writes. From its first `INSERT`, `UPDATE`, `DELETE` or DDL statement on, the transaction keeps one snapshot to its end, so its own uncommitted changes stay consistent.
+-   `READ COMMITTED`: each statement sees the data committed before it started, and the transaction's own changes. From the transaction's first DDL statement on, it keeps one snapshot to its end.
 
 Pick one with `BEGIN ISOLATION LEVEL READ COMMITTED`. `SERIALIZABLE` is refused with `transaction isolation level "serializable" is not supported`.
+
+Two transactions that update or delete the same row conflict: the first to commit wins, and the other fails with `could not serialize access due to concurrent update`, at the latest at its `COMMIT`. Under `READ COMMITTED`, a row conflicts when another transaction committed a change to it after the statement that updated or deleted it started, even if a later statement of the transaction saw that change; PostgreSQL would wait for the other writer and re-check the row instead.
 
 `ALTER TABLE` and `DROP TABLE` wait for the commits that are already writing the table to finish, then change it. A transaction that wrote to the table but commits only after the change fails at `COMMIT` with a serialization failure; PostgreSQL would have made the `ALTER TABLE` wait for that transaction instead.
 

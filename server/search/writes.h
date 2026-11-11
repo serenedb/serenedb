@@ -78,6 +78,11 @@ struct StoreWrites {
   StoreWrites* listed = nullptr;
   std::shared_ptr<const irs::SegmentReaderImpl> piece;
   std::shared_ptr<const FileManifest> manifest;
+  struct ChangedRows {
+    Tick snapshot = 0;
+    std::vector<std::shared_ptr<const irs::DocRemoval>> rows;
+  };
+  std::vector<ChangedRows> changed;
   LoggedRows rows;
   TableCommit commit;
   bool prepared = false;
@@ -164,7 +169,7 @@ class Writes {
 
   void AddPatches(const std::shared_ptr<Store>& store,
                   std::vector<UnitPatch>&& patches);
-  void CheckPatches(const Store& store) const;
+  void CheckConflicts(const Store& store) const;
 
   void AddSearchTruncate(duckdb::ClientContext& context,
                          const std::shared_ptr<Store>& store);

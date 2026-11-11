@@ -269,21 +269,6 @@ bool Conflicting(const TableState& state, uint64_t id,
   });
 }
 
-irs::DocumentMask PatchedDocs(const UnitPatch& patch) {
-  irs::DocumentMaskBuilder docs;
-  std::vector<irs::doc_id_t> rows;
-  for (const auto& [field, column] : patch.fields) {
-    rows.clear();
-    column->ForEach(0, std::numeric_limits<uint64_t>::max(),
-                    [&](uint64_t row, const irs::ColumnPatch::Chunk&, size_t) {
-                      rows.push_back(static_cast<irs::doc_id_t>(
-                        row + irs::doc_limits::min()));
-                    });
-    docs.AddSorted(rows);
-  }
-  return std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical);
-}
-
 void MergeField(std::vector<irs::FieldPatch>& fields, irs::field_id field,
                 const duckdb::LogicalType& type, std::span<const uint64_t> rows,
                 const duckdb::Vector& values, std::span<const uint64_t> ticks) {
@@ -327,6 +312,29 @@ void FollowPatch(const TableState& state, uint64_t id, irs::field_id field,
     const duckdb::Vector picked{values, sel, mapped.size()};
     FollowPatch(state, map.target, field, type, target_rows, picked, out);
   }
+}
+
+bool PatchesCurrent(const TableState& state,
+                    std::span<const UnitPatch> patches) {
+  return absl::c_all_of(patches, [&](const UnitPatch& patch) {
+    return FindUnit(state, patch.unit) || !FindMoved(state, patch.unit);
+  });
+}
+
+std::vector<UnitPatch> FollowPatches(const TableState& state,
+                                     std::span<const UnitPatch> patches) {
+  std::vector<UnitPatch> followed;
+  for (const auto& patch : patches) {
+    for (const auto& [field, column] : patch.fields) {
+      std::vector<uint64_t> rows;
+      std::vector<uint64_t> ticks;
+      duckdb::Vector values{column->Type(), column->Count()};
+      column->Entries(rows, values, ticks);
+      FollowPatch(state, patch.unit, field, column->Type(), rows, values,
+                  followed);
+    }
+  }
+  return followed;
 }
 
 template<typename Keep>
@@ -501,6 +509,21 @@ void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
   }
   const uint64_t own = 0;
   MergeField(it->fields, field, type, rows, values, {&own, 1});
+}
+
+irs::DocumentMask PatchedDocs(const UnitPatch& patch) {
+  irs::DocumentMaskBuilder docs;
+  std::vector<irs::doc_id_t> rows;
+  for (const auto& [field, column] : patch.fields) {
+    rows.clear();
+    column->ForEach(0, std::numeric_limits<uint64_t>::max(),
+                    [&](uint64_t row, const irs::ColumnPatch::Chunk&, size_t) {
+                      rows.push_back(static_cast<irs::doc_id_t>(
+                        row + irs::doc_limits::min()));
+                    });
+    docs.AddSorted(rows);
+  }
+  return std::move(docs).Finish(irs::DocumentMaskBuilder::kCanonical);
 }
 
 void MergeUnitPatches(std::vector<UnitPatch>& into,
@@ -744,12 +767,18 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
     };
   std::vector<irs::SegmentReader> added;
   std::vector<irs::SegmentReader> patched;
+  std::vector<UnitPatch> followed;
+  auto own_patches = own.patches;
+  if (!PatchesCurrent(state, own_patches)) {
+    followed = FollowPatches(state, own_patches);
+    own_patches = followed;
+  }
   const auto with_patches =
     [&](uint64_t id, std::span<const irs::FieldPatch> committed,
         std::shared_ptr<const irs::SegmentReaderImpl> reader) {
       const auto it = absl::c_find_if(
-        own.patches, [&](const UnitPatch& patch) { return patch.unit == id; });
-      if (it == own.patches.end()) {
+        own_patches, [&](const UnitPatch& patch) { return patch.unit == id; });
+      if (it == own_patches.end()) {
         return reader;
       }
       std::vector<irs::FieldPatch> fields{committed.begin(), committed.end()};
@@ -919,35 +948,12 @@ void Table::CheckConflicts(const irs::DocRemoval& removal,
   }
 }
 
-void Table::CheckConflicts(std::span<const UnitPatch> patches,
-                           Tick snapshot) const {
-  const auto state = State();
-  if (absl::c_any_of(patches, [&](const UnitPatch& patch) {
-        return Conflicting(*state, patch.unit, PatchedDocs(patch), snapshot);
-      })) {
-    ThrowConcurrentUpdate();
-  }
-}
-
 std::vector<UnitPatch> Table::Resolve(std::vector<UnitPatch>&& patches) const {
   const auto state = State();
-  if (absl::c_all_of(patches, [&](const UnitPatch& patch) {
-        return FindUnit(*state, patch.unit) || !FindMoved(*state, patch.unit);
-      })) {
+  if (PatchesCurrent(*state, patches)) {
     return std::move(patches);
   }
-  std::vector<UnitPatch> resolved;
-  for (const auto& patch : patches) {
-    for (const auto& [field, column] : patch.fields) {
-      std::vector<uint64_t> rows;
-      std::vector<uint64_t> ticks;
-      duckdb::Vector values{column->Type(), column->Count()};
-      column->Entries(rows, values, ticks);
-      FollowPatch(*state, patch.unit, field, column->Type(), rows, values,
-                  resolved);
-    }
-  }
-  return resolved;
+  return FollowPatches(*state, patches);
 }
 
 TableDelta Table::CommitDelta(const TableCommit& commit,

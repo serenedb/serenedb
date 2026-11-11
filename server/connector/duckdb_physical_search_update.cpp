@@ -356,7 +356,7 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   }
   SDB_PARK_ONCE_ON_FAILURE("search_update_before_key_check");
   if (_patch) {
-    search_txn.CheckPatches(*gstate.table.store);
+    search_txn.CheckConflicts(*gstate.table.store);
   } else {
     search_txn.CheckKeys(context, *gstate.table.store);
   }

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/btree_map.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -34,6 +35,9 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
+#include <duckdb/parser/parsed_data/alter_job_info.hpp>
+#include <duckdb/parser/parsed_data/alter_sequence_info.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
@@ -82,7 +86,7 @@ struct ChangeRecord {
   duckdb::idx_t owner = 0;
   std::string body;
   duckdb::vector<duckdb::idx_t> references;
-  std::string supersedes;
+  duckdb::vector<std::string> supersedes;
 };
 
 struct LsnRecord {
@@ -228,7 +232,8 @@ CatalogRecord ReadCatalogRecord(std::span<uint8_t> bytes) {
             object.ReadPropertyWithDefault<duckdb::vector<duckdb::idx_t>>(
               105, "references"),
           .supersedes =
-            object.ReadPropertyWithDefault<std::string>(106, "supersedes"),
+            object.ReadPropertyWithDefault<duckdb::vector<std::string>>(
+              106, "supersedes"),
         });
       });
     });
@@ -401,29 +406,200 @@ duckdb::vector<duckdb::idx_t> References(const Change& change) {
   return references;
 }
 
-std::string Supersedes(const duckdb::AlterInfo& info) {
-  switch (info.type) {
-    case duckdb::AlterType::REPLACE_DEFINITION:
-      return "definition";
-    case duckdb::AlterType::SET_COMMENT:
-      return "comment";
-    case duckdb::AlterType::SET_COLUMN_COMMENT:
-      return absl::StrCat("comment:", info.Cast<duckdb::SetColumnCommentInfo>()
-                                        .column_name.GetIdentifierName());
-    default:
-      return {};
+constexpr std::string_view kComment = "comment";
+constexpr std::string_view kDefinition = "definition";
+constexpr std::string_view kConfig = "config";
+constexpr std::string_view kFiring = "firing";
+constexpr std::string_view kDefault = "default";
+constexpr std::string_view kNotNull = "notnull";
+
+std::string ColumnKey(std::string_view attribute,
+                      const duckdb::CatalogEntry& subject,
+                      const duckdb::Identifier& column) {
+  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
+    const auto& columns =
+      subject.Cast<duckdb::TableCatalogEntry>().GetColumns();
+    if (columns.ColumnExists(column)) {
+      return absl::StrCat(attribute, ":",
+                          columns.GetColumn(column).CatalogOid());
+    }
+  }
+  return absl::StrCat(attribute, ":name:", column.GetIdentifierName());
+}
+
+std::string OptionKey(std::string_view option) {
+  return absl::StrCat("options:", absl::AsciiStrToLower(option));
+}
+
+void RoleKeys(const duckdb::AlterRoleInfo& alter,
+              duckdb::vector<std::string>& keys) {
+  if (!alter.new_name.GetIdentifierName().empty() ||
+      !alter.grant_role.empty() || alter.grant_role_id != 0) {
+    return;
+  }
+  const auto options = static_cast<uint32_t>(alter.set_options) |
+                       static_cast<uint32_t>(alter.clear_options);
+  for (uint32_t bit = 1; bit != 0 && bit <= options; bit <<= 1) {
+    if ((options & bit) != 0) {
+      keys.push_back(absl::StrCat("role:", bit));
+    }
+  }
+  if (alter.set_password) {
+    keys.emplace_back("password");
+  }
+  if (alter.set_conn_limit) {
+    keys.emplace_back("connlimit");
+  }
+  if (alter.set_valid_until) {
+    keys.emplace_back("validuntil");
+  }
+  if (alter.reset_all_config) {
+    keys.emplace_back(kConfig);
+  }
+  for (const std::string_view setting : alter.set_config) {
+    keys.push_back(absl::StrCat(
+      kConfig, ":",
+      absl::AsciiStrToLower(setting.substr(0, setting.find('=')))));
+  }
+  for (const auto& setting : alter.reset_config) {
+    keys.push_back(absl::StrCat(kConfig, ":", absl::AsciiStrToLower(setting)));
   }
 }
 
-bool Commutes(std::string_view earlier, std::string_view later) {
-  constexpr std::string_view kComment = "comment";
-  if (earlier == kComment) {
-    return true;
+void TableKeys(const duckdb::AlterTableInfo& alter,
+               const duckdb::CatalogEntry& subject,
+               duckdb::vector<std::string>& keys) {
+  const auto column = [&](std::string_view attribute,
+                          const duckdb::vector<duckdb::Identifier>& path) {
+    if (path.size() == 1) {
+      keys.push_back(ColumnKey(attribute, subject, path.front()));
+    }
+  };
+  switch (alter.alter_table_type) {
+    case duckdb::AlterTableType::SET_TABLE_OPTIONS:
+      for (const auto& [name, value] :
+           alter.Cast<duckdb::SetTableOptionsInfo>().table_options) {
+        keys.push_back(OptionKey(name));
+      }
+      break;
+    case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
+      for (const auto& name :
+           alter.Cast<duckdb::ResetTableOptionsInfo>().table_options) {
+        keys.push_back(OptionKey(name.GetIdentifierName()));
+      }
+      break;
+    case duckdb::AlterTableType::SET_TRIGGER_FIRING: {
+      const auto& trigger = alter.Cast<duckdb::SetTriggerFiringInfo>()
+                              .trigger_name.GetIdentifierName();
+      keys.push_back(trigger.empty() ? std::string{kFiring}
+                                     : absl::StrCat(kFiring, ":", trigger));
+      break;
+    }
+    case duckdb::AlterTableType::SET_DEFAULT:
+      column(kDefault, alter.Cast<duckdb::SetDefaultInfo>().column_path);
+      break;
+    case duckdb::AlterTableType::SET_NOT_NULL:
+      column(kNotNull, alter.Cast<duckdb::SetNotNullInfo>().column_path);
+      break;
+    case duckdb::AlterTableType::DROP_NOT_NULL:
+      column(kNotNull, alter.Cast<duckdb::DropNotNullInfo>().column_path);
+      break;
+    default:
+      break;
   }
-  if (earlier.starts_with(kComment)) {
-    return later.starts_with(kComment);
+}
+
+duckdb::vector<std::string> Supersedes(const duckdb::AlterInfo& info,
+                                       const duckdb::CatalogEntry& subject) {
+  duckdb::vector<std::string> keys;
+  switch (info.type) {
+    case duckdb::AlterType::REPLACE_DEFINITION:
+      keys.emplace_back(kDefinition);
+      break;
+    case duckdb::AlterType::SET_COMMENT:
+      keys.emplace_back(kComment);
+      break;
+    case duckdb::AlterType::SET_COLUMN_COMMENT:
+      keys.push_back(
+        ColumnKey(kComment, subject,
+                  info.Cast<duckdb::SetColumnCommentInfo>().column_name));
+      break;
+    case duckdb::AlterType::CHANGE_OWNERSHIP:
+      keys.emplace_back("owned_by");
+      break;
+    case duckdb::AlterType::ALTER_SEQUENCE:
+      if (info.Cast<duckdb::AlterSequenceInfo>().alter_sequence_type ==
+          duckdb::AlterSequenceType::RESTART_SEQUENCE) {
+        keys.emplace_back("restart");
+      }
+      break;
+    case duckdb::AlterType::ALTER_JOB:
+      switch (info.Cast<duckdb::AlterJobInfo>().alter_job_type) {
+        case duckdb::AlterJobType::SUSPEND:
+        case duckdb::AlterJobType::RESUME:
+          keys.emplace_back("state");
+          break;
+        case duckdb::AlterJobType::SET_SCHEDULE:
+          keys.emplace_back("schedule");
+          break;
+        case duckdb::AlterJobType::RENAME:
+          break;
+      }
+      break;
+    case duckdb::AlterType::ALTER_ROLE:
+      RoleKeys(info.Cast<duckdb::AlterRoleInfo>(), keys);
+      break;
+    case duckdb::AlterType::ALTER_INDEX: {
+      const auto& alter = info.Cast<duckdb::AlterIndexInfo>();
+      if (alter.alter_index_type == duckdb::AlterIndexType::SET_INDEX_OPTIONS) {
+        for (const auto& [name, value] :
+             alter.Cast<duckdb::SetIndexOptionsInfo>().options) {
+          keys.push_back(OptionKey(name));
+        }
+      } else if (alter.alter_index_type ==
+                 duckdb::AlterIndexType::RESET_INDEX_OPTIONS) {
+        for (const auto& name :
+             alter.Cast<duckdb::ResetIndexOptionsInfo>().options) {
+          keys.push_back(OptionKey(name.GetIdentifierName()));
+        }
+      }
+      break;
+    }
+    case duckdb::AlterType::ALTER_TABLE:
+      TableKeys(info.Cast<duckdb::AlterTableInfo>(), subject, keys);
+      break;
+    default:
+      break;
   }
-  return later == kComment;
+  absl::c_sort(keys);
+  keys.erase(std::ranges::unique(keys).begin(), keys.end());
+  return keys;
+}
+
+bool Covers(std::string_view all, std::string_view key) {
+  return key.size() > all.size() && key.starts_with(all) &&
+         key[all.size()] == ':';
+}
+
+bool Interacts(std::string_view key, std::string_view other) {
+  const auto one_way = [](std::string_view a, std::string_view b) {
+    return ((a == kConfig || a == kFiring) && Covers(a, b)) ||
+           (a == kDefinition && (Covers(kComment, b) || Covers(kDefault, b) ||
+                                 Covers(kNotNull, b)));
+  };
+  return one_way(key, other) || one_way(other, key);
+}
+
+bool Commutes(std::span<const std::string_view> earlier,
+              const duckdb::vector<std::string>& later) {
+  if (later.empty()) {
+    return absl::c_all_of(earlier,
+                          [](std::string_view key) { return key == kComment; });
+  }
+  return absl::c_none_of(earlier, [&](std::string_view key) {
+    return absl::c_any_of(
+      later, [&](std::string_view other) { return Interacts(key, other); });
+  });
 }
 
 std::string ChangeBody(const Change& change) {
@@ -690,7 +866,11 @@ std::vector<std::vector<uint8_t>> CompactHistory(
   std::vector<size_t> change_life;
   std::vector<const ChangeRecord*> changes;
   std::vector<bool> folded;
-  irs::containers::FlatHashMap<Key, std::vector<size_t>> superseded;
+  struct Pending {
+    size_t change = 0;
+    std::vector<std::string_view> keys;
+  };
+  irs::containers::FlatHashMap<Key, std::vector<Pending>> superseded;
   irs::containers::FlatHashMap<duckdb::idx_t, std::vector<size_t>> referencing;
   irs::containers::FlatHashMap<Key, size_t> live;
   irs::containers::FlatHashMap<duckdb::idx_t, std::vector<size_t>> contained;
@@ -735,17 +915,21 @@ std::vector<std::vector<uint8_t>> CompactHistory(
       changes.push_back(&change);
       folded.push_back(false);
       auto& pending = superseded[key];
-      std::erase_if(pending, [&](size_t earlier) {
-        const auto& kept = changes[earlier]->supersedes;
-        if (kept == change.supersedes) {
-          folded[earlier] = true;
+      std::erase_if(pending, [&](Pending& earlier) {
+        std::erase_if(earlier.keys, [&](std::string_view kept) {
+          return absl::c_binary_search(change.supersedes, kept);
+        });
+        if (earlier.keys.empty()) {
+          folded[earlier.change] = true;
           return true;
         }
         return change.kind != ChangeKind::Alter ||
-               !Commutes(kept, change.supersedes);
+               !Commutes(earlier.keys, change.supersedes);
       });
       if (!change.supersedes.empty()) {
-        pending.push_back(at);
+        pending.push_back(
+          {.change = at,
+           .keys = {change.supersedes.begin(), change.supersedes.end()}});
       }
       for (const auto oid : change.references) {
         referencing[oid].push_back(at);
@@ -933,7 +1117,8 @@ std::vector<uint8_t> WriteRecord(duckdb::ClientContext& context,
     written.references = References(*change);
     if (change->kind == ChangeKind::Alter) {
       auto alter = change->alter;
-      written.supersedes = Supersedes(*DeserializeAlter(context, alter));
+      written.supersedes =
+        Supersedes(*DeserializeAlter(context, alter), subject);
     }
   }
   for (const auto& update : transaction.LsnUpdates()) {

@@ -800,6 +800,115 @@ DROP TABLE public.tesp_cat;
 
 
 statement ok
+CREATE SCHEMA tesp_shop;
+
+
+statement ok
+CREATE FUNCTION public.tesp_price_ok(p INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT p >= 0';
+
+
+statement ok
+CREATE FUNCTION tesp_shop.tesp_price_ok(p INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT p > 0';
+
+
+statement ok
+CREATE FUNCTION public.tesp_code() RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION tesp_shop.tesp_code() RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 2';
+
+
+statement ok
+CREATE FUNCTION public.tesp_conv(p INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS 'SELECT p + 10';
+
+
+statement ok
+CREATE FUNCTION tesp_shop.tesp_conv(p INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS 'SELECT p + 20';
+
+
+statement ok
+SET search_path = tesp_shop;
+
+
+statement ok
+CREATE TABLE tesp_items (id INT, price INT, raw INT);
+
+
+statement ok
+INSERT INTO tesp_items VALUES (1, 1, 1);
+
+
+statement ok
+ALTER TABLE tesp_items ADD CONSTRAINT tesp_items_price CHECK (tesp_price_ok(price));
+
+
+statement ok
+ALTER TABLE tesp_items ADD COLUMN code INT DEFAULT tesp_code();
+
+
+statement ok
+ALTER TABLE tesp_items ALTER COLUMN id SET DEFAULT tesp_code();
+
+
+statement ok
+ALTER TABLE tesp_items ALTER COLUMN raw TYPE BIGINT USING tesp_conv(raw);
+
+
+statement ok
+RESET search_path;
+
+
+statement error
+INSERT INTO tesp_shop.tesp_items (price) VALUES (0);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_items" with expression CHECK(tesp_price_ok(price))
+
+
+statement ok
+INSERT INTO tesp_shop.tesp_items (price, raw) VALUES (5, 0);
+
+
+query
+SELECT id, price, raw, code FROM tesp_shop.tesp_items ORDER BY price;
+----
+id	price	raw	code
+1	1	21	2
+2	5	0	2
+
+
+query
+SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'tesp_items_price';
+----
+def
+CHECK (tesp_price_ok(price))
+
+
+query
+SELECT pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'tesp_shop.tesp_items'::regclass ORDER BY adnum;
+----
+def
+tesp_code()
+tesp_code()
+
+
+statement ok
+DROP SCHEMA tesp_shop CASCADE;
+
+
+statement ok
+DROP FUNCTION public.tesp_price_ok(INT);
+
+
+statement ok
+DROP FUNCTION public.tesp_code();
+
+
+statement ok
+DROP FUNCTION public.tesp_conv(INT);
+
+
+statement ok
 DROP DATABASE tesp_db_${__DATABASE__};
 
 

@@ -1,0 +1,67 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pkcm(i INTEGER PRIMARY KEY, t TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO pkcm VALUES (0, 'first');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pkcm;
+
+
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+
+connection writer
+statement async ok
+INSERT INTO pkcm VALUES (1, 'parked');
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+
+connection other
+statement ok
+SET threads = 1;
+
+
+connection other
+statement ok
+INSERT INTO pkcm SELECT i, 'bulk' FROM generate_series(100, 5099) g(i);
+
+
+connection other
+statement ok
+VACUUM (FLUSH_TABLE) pkcm;
+
+
+connection other
+statement ok
+VACUUM (COMPACT_TABLE) pkcm;
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_commit_prepared:release';
+
+
+wait
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE t = 'parked') AS parked FROM pkcm;
+----
+n	parked
+5002	1

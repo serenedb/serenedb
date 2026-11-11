@@ -109,7 +109,7 @@ class ColWriter final {
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  IndexOutput::ptr _file;
+  IndexOutput::ptr _out;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<ColumnEntry> _columns;
   irs::containers::FlatHashMap<field_id, size_t> _by_id;

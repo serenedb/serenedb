@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/base/optimization.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -538,7 +539,7 @@ void Decompress(duckdb::const_data_ptr_t for_encoded, T* output, idx_t count,
     .exponent = vector_exponent,
     .factor = vector_factor,
   };
-  uint64_t for_decoded[kVectorSize] = {};
+  ABSL_CACHELINE_ALIGNED uint64_t for_decoded[kVectorSize] = {};
   if (bit_width) {
     duckdb::BitpackingPrimitives::UnPackBuffer<uint64_t>(
       reinterpret_cast<duckdb::data_ptr_t>(for_decoded), for_encoded, count,

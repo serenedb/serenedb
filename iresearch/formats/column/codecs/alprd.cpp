@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/base/optimization.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -260,8 +261,8 @@ void AlpRdDecompress(duckdb::const_data_ptr_t left_encoded,
                      const uint16_t* exceptions_positions,
                      uint8_t left_bit_width, uint8_t right_bit_width) {
   using Exact = alp::ExactType<T>;
-  uint16_t left_decoded[kVectorSize] = {};
-  Exact right_decoded[kVectorSize] = {};
+  ABSL_CACHELINE_ALIGNED uint16_t left_decoded[kVectorSize] = {};
+  ABSL_CACHELINE_ALIGNED Exact right_decoded[kVectorSize] = {};
 
   duckdb::BitpackingPrimitives::UnPackBuffer<uint16_t>(
     reinterpret_cast<duckdb::data_ptr_t>(left_decoded), left_encoded,
@@ -454,8 +455,8 @@ class AlpRdCompressionState {
   }
 
   void CompressVectorData() {
-    uint64_t right_parts[kVectorSize];
-    uint16_t left_parts[kVectorSize];
+    ABSL_CACHELINE_ALIGNED uint64_t right_parts[kVectorSize];
+    ABSL_CACHELINE_ALIGNED uint16_t left_parts[kVectorSize];
     const auto right_bit_width = _dictionary.right_bit_width;
     const auto left_bit_width = _dictionary.left_bit_width;
     const auto actual_dictionary_size = _dictionary.actual_dictionary_size;

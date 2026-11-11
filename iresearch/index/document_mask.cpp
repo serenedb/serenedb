@@ -464,6 +464,34 @@ void DocumentMaskBuilder::Subtract(const DocumentMask& mask) {
   roaring::api::roaring_bitmap_andnot_inplace(&_set, &mask._set);
 }
 
+void DocumentMaskBuilder::BitsetFree::operator()(Bitset* bits) const noexcept {
+  roaring::internal::bitset_container_free(bits);
+}
+
+DocumentMaskBuilder::BitsetPtr DocumentMaskBuilder::NewBitset() {
+  BitsetPtr bits{roaring::internal::bitset_container_create()};
+  if (!bits) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to allocate a document mask container"));
+  }
+  return bits;
+}
+
+uint64_t* DocumentMaskBuilder::Words(Bitset& bits) noexcept {
+  return bits.words;
+}
+
+void DocumentMaskBuilder::AppendBitset(uint16_t chunk, BitsetPtr bits) {
+  auto& ra = _set.high_low_container;
+  SDB_ASSERT(ra.size == 0 || ra.keys[ra.size - 1] < chunk);
+  bits->cardinality =
+    roaring::internal::bitset_container_compute_cardinality(bits.get());
+  if (bits->cardinality != 0) {
+    roaring::internal::ra_append(&ra, chunk, bits.release(),
+                                 BITSET_CONTAINER_TYPE);
+  }
+}
+
 void DocumentMaskBuilder::Clear() noexcept {
   roaring::api::roaring_bitmap_clear(&_set);
 }

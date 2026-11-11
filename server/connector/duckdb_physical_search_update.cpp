@@ -281,8 +281,10 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  search::AddRowPositions(lstate.positions,
-                          chunk.data[gstate.rowid.input_col_idx]);
+  if (!gstate.updated_rows) {
+    search::AddRowPositions(lstate.positions,
+                            chunk.data[gstate.rowid.input_col_idx]);
+  }
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.table.types);
@@ -306,11 +308,6 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
   lstate.rows.Flush();
   absl::MutexLock lock{&gstate.mutex};
   auto& search_txn = gstate.sdb_txn->SearchTxn();
-#ifdef SDB_DEV
-  SDB_ASSERT(!gstate.updated_rows ||
-             gstate.updated_rows->Covers(
-               search_txn.PinnedReader(context.client, *gstate.table.store)));
-#endif
   lstate.rows.HandOver(context.client, gstate.table, search_txn);
   if (!lstate.positions.Empty()) {
     search_txn.AddRemoval(context.client, gstate.table.store,
@@ -357,11 +354,18 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
+  if (!_patch && gstate.updated_rows) {
+    if (auto positions = std::move(*gstate.updated_rows).Positions();
+        !positions.Empty()) {
+      search_txn.AddRemoval(context, gstate.table.store, std::move(positions));
+    }
+  }
   SDB_PARK_ONCE_ON_FAILURE("search_update_before_key_check");
   if (_patch) {
-    gstate.sdb_txn->SearchTxn().CheckPatches(*gstate.table.store);
+    search_txn.CheckPatches(*gstate.table.store);
   } else {
-    gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store);
+    search_txn.CheckKeys(context, *gstate.table.store);
   }
   return duckdb::SinkFinalizeType::READY;
 }

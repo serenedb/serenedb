@@ -23,25 +23,17 @@
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/document_mask.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
-#include <span>
-#include <vector>
 
 namespace sdb::connector {
 
-// TODO(Dronplane): a DELETE that deduplicates records every position twice:
-// here and in each sink thread's DocRemovalBuilder. This bitset already holds
-// the whole deduplicated set, so the DELETE could drop the per-thread builders
-// and build its one removal from the bitset in Finalize, a single pass over the
-// touched pages instead of a Finish per thread under the operator's mutex.
-// Profile the joined DELETE first: worth it only if AddRowPositions and Finish
-// show.
 class RowPositionDeduplicator {
  public:
-  explicit RowPositionDeduplicator(std::span<const irs::doc_id_t> segment_docs);
-  explicit RowPositionDeduplicator(const irs::DirectoryReader& reader);
+  explicit RowPositionDeduplicator(const irs::IndexReader& view);
   ~RowPositionDeduplicator();
 
   RowPositionDeduplicator(const RowPositionDeduplicator&) = delete;
@@ -49,28 +41,16 @@ class RowPositionDeduplicator {
 
   duckdb::idx_t KeepFirst(duckdb::DataChunk& chunk, duckdb::idx_t rowid);
 
-#ifdef SDB_DEV
-  bool Covers(const irs::DirectoryReader& reader) const noexcept {
-    for (size_t i = 0; i != _segments.size(); ++i) {
-      if (i >= reader.size() || reader[i].docs_count() < _segments[i].docs) {
-        return false;
-      }
-    }
-    return true;
-  }
-#endif
+  irs::DocRemovalBuilder Positions() &&;
 
  private:
-  using Word = std::atomic<uint64_t>;
+  using Bitset = irs::DocumentMaskBuilder::Bitset;
 
-  struct Segment {
-    irs::doc_id_t docs = 0;
-    std::unique_ptr<std::atomic<Word*>[]> pages;
-  };
+  uint64_t* WordsOf(uint32_t unit, irs::doc_id_t doc);
 
-  Word& WordOf(uint32_t index, irs::doc_id_t doc);
-
-  std::vector<Segment> _segments;
+  uint32_t _units;
+  std::unique_ptr<uint32_t[]> _first_page;
+  std::unique_ptr<std::atomic<Bitset*>[]> _pages;
 };
 
 }  // namespace sdb::connector

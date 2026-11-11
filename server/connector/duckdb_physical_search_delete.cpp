@@ -149,17 +149,18 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
-  if (gstate.deleted_rows &&
-      gstate.deleted_rows->KeepFirst(chunk, _rowid.input_col_idx) == 0) {
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  if (gstate.deleted_rows) {
+    if (gstate.deleted_rows->KeepFirst(chunk, _rowid.input_col_idx) == 0) {
+      return duckdb::SinkResultType::NEED_MORE_INPUT;
+    }
+  } else {
+    search::AddRowPositions(lstate.positions, chunk.data[_rowid.input_col_idx]);
   }
   const auto num_rows = chunk.size();
   if (const auto& progress = duckdb::ClientConfig::GetConfig(context.client)
                                .sink_progress_callback) {
     progress(num_rows, chunk.GetAllocationSize());
   }
-
-  search::AddRowPositions(lstate.positions, chunk.data[_rowid.input_col_idx]);
 
   if (lstate.returned) {
     duckdb::DataChunk row;
@@ -188,12 +189,6 @@ duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
   absl::MutexLock lock{&gstate.mutex};
-#ifdef SDB_DEV
-  SDB_ASSERT(
-    !gstate.deleted_rows ||
-    gstate.deleted_rows->Covers(gstate.sdb_txn->SearchTxn().PinnedReader(
-      context.client, *gstate.search_table)));
-#endif
   if (!lstate.positions.Empty()) {
     gstate.sdb_txn->SearchTxn().AddRemoval(context.client, gstate.search_table,
                                            std::move(lstate.positions));
@@ -209,7 +204,14 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
   duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
-  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.search_table);
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
+  if (gstate.deleted_rows) {
+    if (auto positions = std::move(*gstate.deleted_rows).Positions();
+        !positions.Empty()) {
+      search_txn.AddRemoval(context, gstate.search_table, std::move(positions));
+    }
+  }
+  search_txn.CheckKeys(context, *gstate.search_table);
   return duckdb::SinkFinalizeType::READY;
 }
 

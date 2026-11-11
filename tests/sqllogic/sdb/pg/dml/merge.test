@@ -43,6 +43,42 @@ statement ok
 DROP TABLE merge_plain;
 
 
+statement ok
+CREATE TABLE merge_multi(a INTEGER PRIMARY KEY, b INTEGER);
+
+statement count 2
+INSERT INTO merge_multi VALUES (1, 10), (2, 20);
+
+statement error
+MERGE INTO merge_multi t
+USING (SELECT * FROM (VALUES (1, 11), (1, 12)) AS v(a, b)) s
+ON t.a = s.a
+WHEN MATCHED THEN UPDATE SET b = s.b;
+----
+db error: ERROR: MERGE INTO command cannot affect the same target row more than once. A target row matched more than one source row; ensure the source rows are deduplicated or the ON condition is unique.
+
+
+statement error
+MERGE INTO merge_multi t
+USING (SELECT * FROM (VALUES (2, 0), (2, 1)) AS v(a, b)) s
+ON t.a = s.a
+WHEN MATCHED AND s.b = 0 THEN UPDATE SET b = s.b
+WHEN MATCHED THEN DELETE;
+----
+db error: ERROR: MERGE INTO command cannot affect the same target row more than once. A target row matched more than one source row; ensure the source rows are deduplicated or the ON condition is unique.
+
+
+query
+SELECT a, b FROM merge_multi ORDER BY a;
+----
+a	b
+1	10
+2	20
+
+statement ok
+DROP TABLE merge_multi;
+
+
 # Same merge actions against a table with an inverted index.
 
 statement ok

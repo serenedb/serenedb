@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <roaring/containers/bitset.h>
 #include <roaring/roaring.h>
 
 #include <cstddef>
@@ -207,6 +208,18 @@ class DocumentMaskBuilder final {
   void Merge(const DocumentMaskBuilder& other);
   void Merge(const DocumentMask& published);
   void Subtract(const DocumentMask& mask);
+
+  using Bitset = roaring::internal::bitset_container_t;
+
+  struct BitsetFree {
+    void operator()(Bitset* bits) const noexcept;
+  };
+
+  using BitsetPtr = std::unique_ptr<Bitset, BitsetFree>;
+
+  static BitsetPtr NewBitset();
+  static uint64_t* Words(Bitset& bits) noexcept;
+  void AppendBitset(uint16_t chunk, BitsetPtr bits);
   void Clear() noexcept;
 
   DocumentMask Finish(uint32_t bitset_from = kBitsetFrom) && noexcept;

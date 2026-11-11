@@ -6623,13 +6623,34 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_TextAnchorsSkipTheirSide) {
   }
 }
 
-TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesThreeArg) {
-  // 3-arg form (with options) -- not claimed.
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_ThreeArgCaseOptions) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::BooleanFilter{},
-               "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 'i')",
-               columns, false);
+  const std::pair<std::string_view, std::string_view> cases[] = {
+    {"i", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"},  {"c", "(?s:.*)(?:[a-z]+)(?s:.*)"},
+    {"ci", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"}, {"ic", "(?s:.*)(?:[a-z]+)(?s:.*)"},
+    {"mi", "(?s:.*)(?:(?i)[a-z]+)(?s:.*)"},
+  };
+  for (const auto& [options, pattern] : cases) {
+    irs::BooleanFilter expected;
+    AddRegexpFilter(expected, 1, pattern);
+    AssertFilter(expected,
+                 absl::StrCat("SELECT * FROM foo WHERE regexp_matches(b, "
+                              "'[a-z]+', '",
+                              options, "')"),
+                 columns, true);
+  }
+}
+
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesOtherOptions) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  for (const std::string_view sql : {
+         "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 's')",
+         "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 'il')",
+       }) {
+    AssertFilter(irs::BooleanFilter{}, sql, columns, false);
+  }
 }
 
 TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesNonKeywordAnalyzer) {

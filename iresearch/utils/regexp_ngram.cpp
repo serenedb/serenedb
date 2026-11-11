@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -175,10 +176,8 @@ bool IsSurrogate(re2::Rune rune) noexcept {
   return rune >= 0xD800 && rune <= 0xDFFF;
 }
 
-// RE2 keeps `FoldCase` on a literal only for ASCII letters and for runes with
-// no other case; past ASCII we cannot tell those apart, so assume a fold.
 bool MayFold(re2::Rune rune) noexcept {
-  return rune >= 0x80 || absl::ascii_isalpha(static_cast<unsigned char>(rune));
+  return rune < 0x80 && absl::ascii_isalpha(static_cast<unsigned char>(rune));
 }
 
 bstring Encode(const Runes& runes, byte_type boundary, bool bytes) {
@@ -424,7 +423,7 @@ class Extractor {
       _poisoned = _poisoned || IsSurrogate(rune);
       if (fold && MayFold(rune)) {
         flush();
-        pieces.push_back(rune < 0x80 ? AsciiCases(rune) : AnyChar());
+        pieces.push_back(AsciiCases(rune));
       } else {
         run.push_back(static_cast<char32_t>(rune));
       }
@@ -638,51 +637,56 @@ class LikeShape {
 
   std::optional<GramPlan> Extract(re2::Regexp* root,
                                   const GramQueryLimits& limits) {
+    _limits = limits;
     if (!Collect(root, 0)) {
       return std::nullopt;
     }
-    std::vector<bstring> parts;
-    bstring best;
-    const auto flush = [&](bytes_view piece) {
-      if ((_bytes ? piece.size() : RuneLength(piece)) >= _n) {
-        parts.emplace_back(piece);
-      } else if (best.size() <= piece.size()) {
-        best = piece;
+    std::vector<Spellings> parts;
+    Spellings best{bstring{}};
+    const auto flush = [&](Spellings& piece) {
+      const auto& first = piece.front();
+      if ((_bytes ? first.size() : RuneLength(first)) >= _n) {
+        parts.push_back(std::move(piece));
+      } else if (best.front().size() <= first.size()) {
+        best = std::move(piece);
       }
     };
     bool exact = true;
-    bstring piece(1, _boundary);
+    Spellings piece{bstring(1, _boundary)};
     for (size_t i = 0; i != _tokens.size(); ++i) {
       const auto& token = _tokens[i];
       if (token.unit == Unit::Literal) {
-        piece += token.bytes;
+        piece = Cross(piece, token.spellings);
         continue;
       }
       exact = exact && token.unit == Unit::Any && token.dot_nl &&
               (i == 0 || i + 1 == _tokens.size());
       flush(piece);
-      piece.clear();
+      piece = {bstring{}};
     }
-    if (!piece.empty()) {
-      piece += _boundary;
+    if (!piece.front().empty()) {
+      for (auto& spelling : piece) {
+        spelling += _boundary;
+      }
       flush(piece);
     }
     GramPlan plan{.exact = exact};
     if (!parts.empty()) {
       for (auto& part : parts) {
         plan.query =
-          Combine(Kind::And, std::move(plan.query),
-                  GramQuery{.kind = Kind::Literal, .literal = std::move(part)});
+          Combine(Kind::And, std::move(plan.query), AnyOf(std::move(part)));
       }
       plan.query = Prune(std::move(plan.query), limits.max_leaves);
-    } else if (exact || best != bytes_view{&_boundary, 1}) {
-      SDB_ASSERT(!best.empty());
-      plan.query = {.kind = Kind::Literal, .literal = std::move(best)};
+    } else if (exact || best.front() != bytes_view{&_boundary, 1}) {
+      SDB_ASSERT(!best.front().empty());
+      plan.query = AnyOf(std::move(best));
     }
     return plan;
   }
 
  private:
+  using Spellings = std::vector<bstring>;
+
   enum class Unit : uint8_t {
     Literal,
     One,
@@ -692,8 +696,30 @@ class LikeShape {
   struct Token {
     Unit unit;
     bool dot_nl{false};
-    bstring bytes;
+    Spellings spellings;
   };
+
+  static Spellings Cross(const Spellings& heads, const Spellings& tails) {
+    Spellings out;
+    out.reserve(heads.size() * tails.size());
+    for (const auto& head : heads) {
+      for (const auto& tail : tails) {
+        out.push_back(head + tail);
+      }
+    }
+    return out;
+  }
+
+  static GramQuery AnyOf(Spellings spellings) {
+    absl::c_sort(spellings);
+    GramQuery any{.kind = Kind::None};
+    for (auto& spelling : spellings) {
+      any = Combine(
+        Kind::Or, std::move(any),
+        GramQuery{.kind = Kind::Literal, .literal = std::move(spelling)});
+    }
+    return any;
+  }
 
   bool Collect(re2::Regexp* re, size_t depth) {
     if (depth == kMaxDepth) {
@@ -725,7 +751,7 @@ class LikeShape {
       case re2::kRegexpAnyChar:
         return Wildcard(Unit::One, true);
       case re2::kRegexpCharClass:
-        return AnyButNewline(re) && Wildcard(Unit::One, false);
+        return AnyButNewline(re) ? Wildcard(Unit::One, false) : Class(re);
       case re2::kRegexpStar:
       case re2::kRegexpPlus: {
         auto* sub = re->sub()[0];
@@ -744,25 +770,69 @@ class LikeShape {
   }
 
   bool Literal(re2::Regexp* re, std::span<const re2::Rune> runes) {
-    if (_end || (re->parse_flags() & re2::Regexp::FoldCase) != 0) {
+    const bool fold = (re->parse_flags() & re2::Regexp::FoldCase) != 0;
+    for (auto rune : runes) {
+      if (fold && MayFold(rune)) {
+        const auto c = static_cast<unsigned char>(rune);
+        const std::array<re2::Rune, 2> cases{absl::ascii_tolower(c),
+                                             absl::ascii_toupper(c)};
+        if (!Append(cases)) {
+          return false;
+        }
+      } else if (!Append({&rune, 1})) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool Class(re2::Regexp* re) {
+    std::vector<re2::Rune> runes;
+    for (const auto& range : *re->cc()) {
+      if (runes.size() + static_cast<size_t>(range.hi - range.lo) >=
+          _limits.max_class) {
+        return false;
+      }
+      for (auto rune = range.lo; rune <= range.hi; ++rune) {
+        runes.push_back(rune);
+      }
+    }
+    return Append(runes);
+  }
+
+  bool Append(std::span<const re2::Rune> runes) {
+    if (_end) {
       return false;
     }
     if (_tokens.empty() || _tokens.back().unit != Unit::Literal) {
-      _tokens.push_back({.unit = Unit::Literal});
+      _tokens.push_back({.unit = Unit::Literal, .spellings = {bstring{}}});
     }
-    auto& bytes = _tokens.back().bytes;
+    auto& spellings = _tokens.back().spellings;
+    if (spellings.size() * runes.size() > _limits.max_exact) {
+      return false;
+    }
+    Spellings tails;
+    tails.reserve(runes.size());
     for (auto rune : runes) {
       if (IsSurrogate(rune)) {
         return false;
       }
+      auto& tail = tails.emplace_back();
       if (_bytes) {
-        bytes += static_cast<byte_type>(rune);
+        tail += static_cast<byte_type>(rune);
         continue;
       }
       char utf8[re2::UTFmax];
       const int n = re2::runetochar(utf8, &rune);
-      bytes.append(reinterpret_cast<const byte_type*>(utf8),
-                   static_cast<size_t>(n));
+      tail.append(reinterpret_cast<const byte_type*>(utf8),
+                  static_cast<size_t>(n));
+    }
+    if (tails.size() == 1) {
+      for (auto& spelling : spellings) {
+        spelling += tails.front();
+      }
+    } else {
+      spellings = Cross(spellings, tails);
     }
     return true;
   }
@@ -779,6 +849,7 @@ class LikeShape {
   byte_type _boundary;
   bool _bytes;
   std::vector<Token> _tokens;
+  GramQueryLimits _limits;
   bool _end{false};
 };
 

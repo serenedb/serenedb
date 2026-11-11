@@ -36,7 +36,7 @@ struct TextHead {
   uint64_t total_freq = 0;
   field_id norm = field_limits::invalid();
   bool has_score_bounds = false;
-  std::string prefixes;
+  std::string prefix_trie;
 };
 
 struct RangesHead {

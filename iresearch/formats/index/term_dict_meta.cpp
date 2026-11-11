@@ -97,6 +97,7 @@ constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
 constexpr duckdb::field_id_t kTextNorm = 2;
 constexpr duckdb::field_id_t kTextPrefixes = 3;
+constexpr duckdb::field_id_t kTextPrefixTrie = 4;
 
 constexpr duckdb::field_id_t kRangesOffset = 0;
 constexpr duckdb::field_id_t kRangesSize = 1;
@@ -125,7 +126,7 @@ void WriteOptionalBytes(duckdb::BinarySerializer& out, duckdb::field_id_t id,
 
 bool Empty(const TextHead& text) noexcept {
   return text.total_freq == 0 && !text.has_score_bounds &&
-         !field_limits::valid(text.norm) && text.prefixes.empty();
+         !field_limits::valid(text.norm) && text.prefix_trie.empty();
 }
 
 void WriteSlot(duckdb::BinarySerializer& out, const FieldHead& head) {
@@ -144,7 +145,7 @@ void WriteText(duckdb::BinarySerializer& out, const TextHead& text) {
                                      text.has_score_bounds, false);
   out.WritePropertyWithDefault<uint64_t>(kTextNorm, "norm", text.norm,
                                          field_limits::invalid());
-  WriteOptionalBytes(out, kTextPrefixes, "prefixes", text.prefixes);
+  WriteOptionalBytes(out, kTextPrefixTrie, "prefix_trie", text.prefix_trie);
 }
 
 void WriteRanges(duckdb::BinarySerializer& out, const RangesHead& ranges) {
@@ -248,8 +249,9 @@ void ReadText(duckdb::BinaryDeserializer& in, TextHead& text) {
     kTextScoreBounds, "has_score_bounds", false);
   text.norm = in.ReadPropertyWithExplicitDefault<uint64_t>(
     kTextNorm, "norm", field_limits::invalid());
-  text.prefixes =
-    in.ReadPropertyWithDefault<std::string>(kTextPrefixes, "prefixes");
+  in.ReadDeletedProperty<std::string>(kTextPrefixes, "prefixes");
+  text.prefix_trie =
+    in.ReadPropertyWithDefault<std::string>(kTextPrefixTrie, "prefix_trie");
 }
 
 void ReadRanges(duckdb::BinaryDeserializer& in, RangesHead& ranges) {
@@ -325,7 +327,7 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
     IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0;
   const bool has_ranges = !head.ranges.counts.empty() || head.ranges.size != 0;
   if ((has_ranges && (!ranged || head.term_count == 1)) ||
-      (head.term_count == 1 && !head.text.prefixes.empty()) ||
+      (head.term_count == 1 && !head.text.prefix_trie.empty()) ||
       (field_limits::valid(head.text.norm) &&
        !IsSubsetOf(IndexFeatures::Norm, head.features))) {
     Corrupted("dictionary", head.id);

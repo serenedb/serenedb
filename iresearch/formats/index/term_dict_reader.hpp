@@ -161,15 +161,29 @@ class TermReaderImpl final : public TermReader {
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
   InlinePages::Span InlineSpan(uint32_t block) const noexcept;
   void PrefetchLookup(uint32_t block) const;
-  bool Gates(bytes_view head) const noexcept {
-    return _prefixes && head.size() < kTermPrefix;
+  TrieCursor TrieRoot() const noexcept {
+    return _trie ? PrefixTrie::Root()
+                 : TrieCursor{.node = kTrieBelow, .labels = 0, .matched = 0};
   }
-  uint32_t NextLabel(bytes_view head, uint32_t from,
-                     const uint32_t*& at) const noexcept {
-    if (!Gates(head) || from >= kNoLabel) {
-      return from;
-    }
-    return _prefixes->NextLabel(head, from, at);
+  static bool Gates(TrieCursor head) noexcept {
+    return head.node < kTrieMissing;
+  }
+  bytes_view Labels(TrieCursor head) const noexcept {
+    SDB_ASSERT(Gates(head));
+    return _trie->Labels(head);
+  }
+  TrieCursor ChildAt(TrieCursor head, uint32_t slot) const noexcept {
+    SDB_ASSERT(Gates(head));
+    return _trie->ChildAt(head, slot);
+  }
+  TrieCursor Child(TrieCursor head, byte_type label) const noexcept {
+    return Gates(head) ? _trie->Child(head, label) : head;
+  }
+  bytes_view Edge(TrieCursor head) const noexcept {
+    return Gates(head) ? _trie->Edge(head) : bytes_view{};
+  }
+  bool MayEnd(TrieCursor head) const noexcept {
+    return !Gates(head) || _trie->Terminal(head);
   }
   std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
   uint32_t RangePrefix() const noexcept { return _range_prefix; }
@@ -201,7 +215,7 @@ class TermReaderImpl final : public TermReader {
   FreqAttr _freq;
   Root _root;
   std::vector<RangeLevel> _levels;
-  std::unique_ptr<PrefixIndex> _prefixes;
+  std::unique_ptr<PrefixTrie> _trie;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   uint32_t _range_prefix = 0;
 };

@@ -35,6 +35,7 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
+#include "iresearch/formats/index/term_dict_prefixes.hpp"
 #include "iresearch/formats/index/term_dict_ranges.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -134,7 +135,7 @@ class FieldWriter final {
   std::string _inline_starts;
   bstring _range_regions;
   std::vector<FieldHead> _heads;
-  std::vector<uint32_t> _prefixes;
+  PrefixTrieBuilder _trie;
   bstring _key_prefix;
   bstring _min;
   PostingMeta _single;

@@ -195,7 +195,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   const auto corrupted = [&] { Corrupted("record", head.id); };
   SDB_ASSERT(head.term_count > 1);
   if (head.width > kMaxStride ||
-      (!head.text.prefixes.empty() && head.width != 0)) {
+      (!head.text.prefix_trie.empty() && head.width != 0)) {
     corrupted();
   }
   _prefix_size = static_cast<uint32_t>(prefix.size());
@@ -220,12 +220,12 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   if (_blocks > 1) {
     _root = Root{Slice(separators, _first_block, _blocks - 1), key_width != 0};
     bytes += _root.MemoryBytes();
-    if (!head.text.prefixes.empty()) {
-      _prefixes = std::make_unique<PrefixIndex>(DecodePrefixes(
-        ViewCast<byte_type>(std::string_view{head.text.prefixes}), head.id));
-      bytes += _prefixes->MemoryBytes();
+    if (!head.text.prefix_trie.empty()) {
+      _trie = std::make_unique<PrefixTrie>(
+        ViewCast<byte_type>(std::string_view{head.text.prefix_trie}), head.id);
+      bytes += _trie->MemoryBytes();
     }
-  } else if (!head.text.prefixes.empty()) {
+  } else if (!head.text.prefix_trie.empty()) {
     corrupted();
   } else {
     _inline_base = head.inline_base;

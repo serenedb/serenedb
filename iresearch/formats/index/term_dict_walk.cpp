@@ -859,96 +859,131 @@ LabelRange LiveRangeOf(const A& a, const typename A::State& state) {
   return range;
 }
 
-constexpr size_t kMaxContinuation = 4;
+constexpr size_t kMaxTail = 32;
+constexpr size_t kMaxGuess = 4;
+constexpr TrieCursor kUngated{.node = kTrieBelow, .labels = 0, .matched = 0};
 
 template<typename A>
 struct Live {
   uint32_t label;
   typename A::State next;
-  const uint32_t* at;
-};
-
-class TermHead {
- public:
-  explicit TermHead(bytes_view term, const uint32_t* at = nullptr) noexcept
-    : _size{std::min(term.size(), kTermPrefix)}, _at{at} {
-    std::memcpy(_bytes.data(), term.data(), _size);
-  }
-
-  bytes_view View() const noexcept { return {_bytes.data(), _size}; }
-  const uint32_t* At() const noexcept { return _at; }
-
-  TermHead Child(byte_type label, const uint32_t* at) const noexcept {
-    TermHead child = *this;
-    if (child._size != kTermPrefix) {
-      child._bytes[child._size++] = label;
-      child._at = at;
-    }
-    return child;
-  }
-
- private:
-  std::array<byte_type, kTermPrefix> _bytes{};
-  size_t _size;
-  const uint32_t* _at = nullptr;
+  TrieCursor child;
 };
 
 template<typename A>
-Live<A> FirstLive(const TermReaderImpl& field, bytes_view head,
-                  const uint32_t* at, const A& a,
+Live<A> FirstLive(const TermReaderImpl& field, TrieCursor head, const A& a,
                   const typename A::State& state, uint32_t from,
                   LabelRange range) {
-  for (auto label = std::max(from, range.lo); label <= range.hi;) {
-    const auto next = a.Step(state, static_cast<byte_type>(label));
-    if (!A::Alive(next)) {
-      ++label;
-      continue;
+  const auto lo = std::max(from, range.lo);
+  if (!TermReaderImpl::Gates(head)) {
+    for (auto label = lo; label <= range.hi; ++label) {
+      const auto next = a.Step(state, static_cast<byte_type>(label));
+      if (A::Alive(next)) {
+        return {.label = label, .next = next, .child = head};
+      }
     }
-    const auto existing = field.NextLabel(head, label, at);
-    if (existing == label) {
-      return {.label = label, .next = next, .at = at};
-    }
-    label = existing;
+    return {.label = kNoLabel, .next = {}, .child = head};
   }
-  return {.label = kNoLabel, .next = {}, .at = nullptr};
+  const auto labels = field.Labels(head);
+  for (auto it = absl::c_lower_bound(labels, lo);
+       it != labels.end() && *it <= range.hi; ++it) {
+    const auto next = a.Step(state, *it);
+    if (A::Alive(next)) {
+      return {
+        .label = *it,
+        .next = next,
+        .child =
+          field.ChildAt(head, static_cast<uint32_t>(it - labels.begin())),
+      };
+    }
+  }
+  return {.label = kNoLabel, .next = {}, .child = head};
+}
+
+enum class EdgeStep : uint8_t {
+  Live,
+  Dead,
+  Unknown,
+};
+
+template<typename A>
+EdgeStep StepEdge(const A& a, typename A::State& state, bytes_view edge) {
+  for (size_t i = 0; i != edge.size(); ++i) {
+    if constexpr (A::kCheapRuns) {
+      typename A::State next{};
+      i += a.StepRun(state, edge.data() + i, edge.size() - i, next);
+      if (i == edge.size()) {
+        break;
+      }
+      state = next;
+    } else {
+      state = a.Step(state, edge[i]);
+    }
+    if (!A::Alive(state)) {
+      return EdgeStep::Dead;
+    }
+    if constexpr (A::kMayBeUnknown) {
+      if (A::Unknown(state)) {
+        return EdgeStep::Unknown;
+      }
+    }
+  }
+  return EdgeStep::Live;
 }
 
 constexpr size_t kDeadEnd = std::numeric_limits<size_t>::max();
 
-using Tail = std::array<byte_type, kMaxContinuation>;
+using Tail = std::array<byte_type, kMaxTail>;
 
 template<typename A>
-size_t Continuation(const TermReaderImpl& field, TermHead head, const A& a,
-                    const typename A::State& state, std::span<byte_type> tail) {
+size_t Continuation(const TermReaderImpl& field, TrieCursor head, const A& a,
+                    typename A::State state, std::span<byte_type> tail) {
   if constexpr (A::kMayBeUnknown) {
     if (A::Unknown(state)) {
       return 0;
     }
   }
-  typename A::PayloadType payload{};
-  if (tail.empty() || a.Accept(state, payload)) {
-    return 0;
+  const bool gated = TermReaderImpl::Gates(head);
+  if (!gated) {
+    tail = tail.first(std::min(tail.size(), kMaxGuess));
   }
-  const bool gated = field.Gates(head.View());
+  size_t extra = 0;
+  if (const auto edge = field.Edge(head); !edge.empty()) {
+    extra = std::min(edge.size(), tail.size());
+    absl::c_copy(edge.substr(0, extra), tail.begin());
+    switch (StepEdge(a, state, edge)) {
+      case EdgeStep::Dead:
+        return kDeadEnd;
+      case EdgeStep::Unknown:
+        return extra;
+      case EdgeStep::Live:
+        break;
+    }
+    head.matched += static_cast<uint32_t>(edge.size());
+    tail = extra == edge.size() ? tail.subspan(extra) : std::span<byte_type>{};
+  }
+  typename A::PayloadType payload{};
+  if (field.MayEnd(head) && a.Accept(state, payload)) {
+    return extra;
+  }
   const auto range = LiveRangeOf(a, state);
-  const uint32_t* at = head.At();
+  if (tail.empty()) {
+    return gated && FirstLive(field, head, a, state, 0, range).label == kNoLabel
+             ? kDeadEnd
+             : extra;
+  }
   for (uint32_t from = 0;;) {
-    const auto live = FirstLive(field, head.View(), at, a, state, from, range);
+    const auto live = FirstLive(field, head, a, state, from, range);
     if (live.label == kNoLabel) {
-      return gated ? kDeadEnd : 0;
+      return gated ? kDeadEnd : extra;
     }
-    if (live.label == 0) {
-      return 0;
-    }
-    const auto label = static_cast<byte_type>(live.label);
-    const size_t rest = Continuation(field, head.Child(label, live.at), a,
-                                     live.next, tail.subspan(1));
+    const size_t rest =
+      Continuation(field, live.child, a, live.next, tail.subspan(1));
     if (rest != kDeadEnd) {
-      tail[0] = label;
-      return rest + 1;
+      tail[0] = static_cast<byte_type>(live.label);
+      return extra + 1 + rest;
     }
     from = live.label + 1;
-    at = live.at;
   }
 }
 
@@ -959,27 +994,97 @@ struct Branch {
 };
 
 template<typename A>
-Branch NextBranch(const TermReaderImpl& field, bytes_view term,
-                  const uint32_t*& at, const A& a,
+Branch NextBranch(const TermReaderImpl& field, TrieCursor head, const A& a,
                   const typename A::State& state, uint32_t from,
                   LabelRange range) {
   Branch branch{.label = kNoLabel, .extra = 0, .tail = {}};
-  const TermHead head{term};
   for (;; from = branch.label + 1) {
-    const auto live = FirstLive(field, head.View(), at, a, state, from, range);
+    const auto live = FirstLive(field, head, a, state, from, range);
     branch.label = live.label;
     if (live.label == kNoLabel) {
       return branch;
     }
-    branch.extra = Continuation(
-      field, head.Child(static_cast<byte_type>(live.label), live.at), a,
-      live.next, branch.tail);
+    branch.extra = Continuation(field, live.child, a, live.next, branch.tail);
     if (branch.extra != kDeadEnd) {
       return branch;
     }
-    at = live.at;
   }
 }
+
+class TrieHeads {
+ public:
+  TrieHeads(const TermReaderImpl& field, size_t k) : _field{&field}, _k{k} {
+    _heads.push_back(field.TrieRoot());
+  }
+
+  TrieCursor operator[](size_t depth) const noexcept {
+    SDB_ASSERT(depth >= _k);
+    const size_t at = depth - _k;
+    SDB_ASSERT(at < _heads.size() || !TermReaderImpl::Gates(_heads.back()));
+    return at < _heads.size() ? _heads[at] : _heads.back();
+  }
+
+  size_t Extend(bytes_view path, size_t depth) {
+    SDB_ASSERT(_k <= depth && depth <= path.size());
+    if (!TermReaderImpl::Gates(_heads.front())) {
+      return depth;
+    }
+    size_t at = CommonPrefixLength(bytes_view{_path}, path.substr(_k));
+    _path.resize(at);
+    _heads.resize(at + 1);
+    const auto want = path.substr(_k, depth - _k);
+    while (at < want.size() && TermReaderImpl::Gates(_heads.back())) {
+      const auto head = _heads.back();
+      if (const auto edge = _field->Edge(head); !edge.empty()) {
+        const auto matched = CommonPrefixLength(edge, want.substr(at));
+        for (size_t i = 1; i <= matched; ++i) {
+          _heads.push_back({
+            .node = head.node,
+            .labels = head.labels,
+            .matched = head.matched + static_cast<uint32_t>(i),
+          });
+        }
+        _path.append(want.substr(at, matched));
+        at += matched;
+        if (matched != edge.size() && at != want.size()) {
+          return _k + at;
+        }
+        continue;
+      }
+      const auto child = _field->Child(head, want[at]);
+      if (child.node == kTrieMissing) {
+        return _k + at;
+      }
+      _heads.push_back(child);
+      _path.push_back(want[at]);
+      ++at;
+    }
+    return depth;
+  }
+
+  bool Branchable(bytes_view path, size_t& depth) const noexcept {
+    if (!TermReaderImpl::Gates(_heads.front())) {
+      return true;
+    }
+    for (;;) {
+      const auto head = (*this)[depth];
+      const auto edge = _field->Edge(head);
+      if (edge.empty() || edge.front() > path[depth]) {
+        return true;
+      }
+      if (depth == _k + head.matched) {
+        return false;
+      }
+      depth -= head.matched + 1;
+    }
+  }
+
+ private:
+  const TermReaderImpl* _field;
+  containers::SmallVector<TrieCursor, 16> _heads;
+  bstring _path;
+  size_t _k;
+};
 
 template<typename A>
 bstring UpperBound(const A& a) {
@@ -1011,7 +1116,11 @@ class BlockPlan {
   using State = typename A::State;
 
   BlockPlan(const TermReaderImpl& field, const A& a)
-    : _field{&field}, _a{&a}, _k{field.KeyPrefix().size()}, _valid{_k} {
+    : _field{&field},
+      _a{&a},
+      _k{field.KeyPrefix().size()},
+      _valid{_k},
+      _heads{field, _k} {
     _states.assign(_k + 1, a.Start());
   }
 
@@ -1045,8 +1154,7 @@ class BlockPlan {
     }
     Tail tail;
     const size_t extra =
-      Continuation(*_field, TermHead{lower.substr(_k), _hint}, *_a,
-                   _states[lower.size()], tail);
+      Continuation(*_field, kUngated, *_a, _states[lower.size()], tail);
     if (extra == kDeadEnd) {
       if (lower.size() == _k) {
         return false;
@@ -1078,11 +1186,14 @@ class BlockPlan {
   }
 
   bool NextTarget(bytes_view prefix) {
-    for (size_t depth = _valid;; --depth) {
+    for (size_t depth = _heads.Extend(prefix, _valid);; --depth) {
+      if (!_heads.Branchable(prefix, depth)) {
+        return false;
+      }
       const auto& state = _states[depth];
       const auto branch =
-        NextBranch(*_field, prefix.substr(_k, depth - _k), _hint, *_a, state,
-                   prefix[depth] + 1u, LiveRangeOf(*_a, state));
+        NextBranch(*_field, _heads[depth], *_a, state, prefix[depth] + 1u,
+                   LiveRangeOf(*_a, state));
       if (branch.label != kNoLabel) {
         auto* target = _target.Resize(depth + 1 + branch.extra);
         std::memcpy(target, prefix.data(), depth);
@@ -1123,7 +1234,7 @@ class BlockPlan {
   SeparatorBuffer _upper_key;
   PaddedKey _target;
   size_t _valid;
-  const uint32_t* _hint = nullptr;
+  TrieHeads _heads;
   uint32_t _run_begin = 0;
   uint32_t _run_end = 0;
 };
@@ -1198,7 +1309,8 @@ class AcceptorIterator : public SeekTermIterator {
       _by_literal{MatchesByLiteral(a)},
       _cursor{field},
       _plan{field, a},
-      _filter{MakeFilter(a)} {
+      _filter{MakeFilter(a)},
+      _heads{field, _k} {
     if constexpr (A::kHasPayload) {
       _pay.value = {&_payload, sizeof(_payload)};
     }
@@ -1342,10 +1454,13 @@ class AcceptorIterator : public SeekTermIterator {
   bool NextTarget(bytes_view path, size_t& depth) {
     SDB_ASSERT(depth >= _k);
     const auto& field = _cursor.Field();
+    depth = _heads.Extend(path, depth);
     for (;;) {
-      const auto branch =
-        NextBranch(field, path.substr(_k, depth - _k), _hint, *_a,
-                   _states[depth], path[depth] + 1u, LiveRange(depth));
+      if (!_heads.Branchable(path, depth)) {
+        return false;
+      }
+      const auto branch = NextBranch(field, _heads[depth], *_a, _states[depth],
+                                     path[depth] + 1u, LiveRange(depth));
       if (branch.label != kNoLabel) {
         auto* target = Retarget(path, depth, 1 + branch.extra);
         target[0] = static_cast<byte_type>(branch.label);
@@ -1359,21 +1474,16 @@ class AcceptorIterator : public SeekTermIterator {
     }
   }
 
-  bool TargetFrom(bytes_view key, size_t& valid) {
+  bool TargetFrom(bytes_view key, size_t& valid, bool boundary) {
     const auto& field = _cursor.Field();
-    const auto term = key.substr(_k);
     size_t depth = StepAlong(key, valid);
-    for (size_t i = valid - _k;
-         _k + i < depth && field.Gates(term.substr(0, i)); ++i) {
-      if (field.NextLabel(term.substr(0, i), term[i], _hint) != term[i]) {
-        depth = _k + i;
-        break;
-      }
+    if (!boundary) {
+      depth = _heads.Extend(key, depth);
     }
     if (depth == key.size()) {
       Tail tail;
-      const size_t extra =
-        Continuation(field, TermHead{term, _hint}, *_a, _states[depth], tail);
+      const size_t extra = Continuation(
+        field, boundary ? kUngated : _heads[depth], *_a, _states[depth], tail);
       if (extra != kDeadEnd) {
         std::memcpy(Retarget(key, key.size(), extra), tail.data(), extra);
         valid = depth;
@@ -1402,7 +1512,8 @@ class AcceptorIterator : public SeekTermIterator {
       return false;
     }
     _target.Assign(field.KeyPrefix(), target);
-    if (!TargetFrom(_target.Key(), valid) || _target.Key() > field.MaxKey()) {
+    if (!TargetFrom(_target.Key(), valid, false) ||
+        _target.Key() > field.MaxKey()) {
       return false;
     }
     return Land(field.BlockOf(_target.View()), valid);
@@ -1473,7 +1584,8 @@ class AcceptorIterator : public SeekTermIterator {
         }
         const auto separator = field.GetRoot().Separator(block, _separator_key);
         valid = std::min(base, CommonPrefixLength(_target.Key(), separator));
-        if (!TargetFrom(separator, valid) || _target.Key() > field.MaxKey()) {
+        if (!TargetFrom(separator, valid, true) ||
+            _target.Key() > field.MaxKey()) {
           return false;
         }
         block = static_cast<uint32_t>(
@@ -1521,7 +1633,7 @@ class AcceptorIterator : public SeekTermIterator {
     const auto separator = field.GetRoot().Separator(next, _separator_key);
     size_t valid =
       std::min(_valid, CommonPrefixLength(_cursor.Key(), separator));
-    if (!TargetFrom(separator, valid) || _target.Key() > field.MaxKey()) {
+    if (!TargetFrom(separator, valid, true) || _target.Key() > field.MaxKey()) {
       return false;
     }
     return Land(static_cast<uint32_t>(field.GetRoot().FindFrom(
@@ -1627,9 +1739,9 @@ class AcceptorIterator : public SeekTermIterator {
   containers::SmallVector<State, 64> _states;
   containers::SmallVector<LabelRange, 64> _ranges;
   PaddedKey _target;
-  const uint32_t* _hint = nullptr;
   PayAttr _pay;
   KeyFilter _filter;
+  TrieHeads _heads;
 };
 
 template<typename A>

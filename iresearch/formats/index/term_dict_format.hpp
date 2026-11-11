@@ -83,16 +83,7 @@ constexpr uint64_t RecordGroups(uint64_t count) noexcept {
 
 inline constexpr size_t kMaxRangeLevels = 8;
 
-inline constexpr size_t kTermPrefix = sizeof(uint32_t);
 inline constexpr uint32_t kNoLabel = 256;
-
-constexpr uint32_t TermPrefix(bytes_view term) noexcept {
-  uint32_t value = 0;
-  for (size_t i = 0; i != kTermPrefix; ++i) {
-    value = value << 8 | (i < term.size() ? term[i] : 0);
-  }
-  return value;
-}
 
 [[noreturn]] inline void Corrupted(std::string_view what) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),

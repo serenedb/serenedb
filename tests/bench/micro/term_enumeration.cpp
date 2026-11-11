@@ -20,6 +20,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include <array>
 #include <filesystem>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/formats/term_reader.hpp>
@@ -35,11 +36,14 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/levenshtein_acceptor.hpp>
+#include <iresearch/utils/levenshtein_utils.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
+#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -79,6 +83,42 @@ std::string TermAt(size_t i) {
   return absl::StrFormat("%c%05x", 'a' + static_cast<char>(i % 26), i);
 }
 
+enum class Shape : uint8_t {
+  Hex,
+  Random,
+  Url,
+};
+
+std::string RandomAlnum(std::mt19937_64& rng) {
+  constexpr std::string_view kAlnum = "0123456789abcdefghijklmnopqrstuvwxyz";
+  std::string term(6 + rng() % 5, '\0');
+  for (auto& c : term) {
+    c = kAlnum[rng() % kAlnum.size()];
+  }
+  return term;
+}
+
+std::vector<std::string> TermsOf(Shape shape, size_t num_terms) {
+  std::vector<std::string> terms;
+  terms.reserve(num_terms);
+  std::mt19937_64 rng{42};
+  for (size_t i = 0; i < num_terms; ++i) {
+    switch (shape) {
+      case Shape::Hex:
+        terms.push_back(TermAt(i));
+        break;
+      case Shape::Random:
+        terms.push_back(RandomAlnum(rng));
+        break;
+      case Shape::Url:
+        terms.push_back(absl::StrFormat("https://www.site%d.com/%s",
+                                        rng() % 2000, RandomAlnum(rng)));
+        break;
+    }
+  }
+  return terms;
+}
+
 struct CachedIndex {
   std::filesystem::path path;
   std::unique_ptr<irs::MMapDirectory> dir;
@@ -86,24 +126,22 @@ struct CachedIndex {
   std::vector<std::string> terms;
 };
 
-const CachedIndex& IndexOf(size_t num_terms) {
-  static std::map<size_t, CachedIndex> gCache;
-  auto [it, added] = gCache.try_emplace(num_terms);
+const CachedIndex& IndexOf(size_t num_terms, Shape shape = Shape::Hex) {
+  static std::array<std::map<size_t, CachedIndex>, 3> gCache;
+  auto [it, added] = gCache[static_cast<size_t>(shape)].try_emplace(num_terms);
   auto& cached = it->second;
   if (!added) {
     return cached;
   }
 
   cached.path = std::filesystem::temp_directory_path() /
-                absl::StrFormat("serenedb-bench-term-enum-%d", num_terms);
+                absl::StrFormat("serenedb-bench-term-enum-%d-%d", num_terms,
+                                static_cast<int>(shape));
   std::filesystem::remove_all(cached.path);
   std::filesystem::create_directories(cached.path);
   cached.dir = std::make_unique<irs::MMapDirectory>(cached.path);
 
-  cached.terms.reserve(num_terms);
-  for (size_t i = 0; i < num_terms; ++i) {
-    cached.terms.push_back(TermAt(i));
-  }
+  cached.terms = TermsOf(shape, num_terms);
 
   auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
@@ -460,6 +498,32 @@ void RegexpSourceBuild(benchmark::State& state) {
     benchmark::DoNotOptimize(source->ok());
   }
   state.SetItemsProcessed(state.iterations());
+}
+
+void FuzzyWalk(benchmark::State& state) {
+  const auto& index = IndexOf(static_cast<size_t>(state.range(1)),
+                              static_cast<Shape>(state.range(0)));
+  const auto& field = FieldOf(index);
+  auto targets = SampleTerms(index, 100);
+  if (state.range(2) != 0) {
+    for (auto& target : targets) {
+      target[target.size() / 2] = 'X';
+      target[target.size() / 2 + 1] = 'Y';
+    }
+  }
+  const auto description = irs::MakeParametricDescription(1, true);
+  std::vector<std::unique_ptr<irs::LevenshteinAcceptor>> compiled;
+  compiled.reserve(targets.size());
+  for (const auto& target : targets) {
+    compiled.push_back(std::make_unique<irs::LevenshteinAcceptor>(
+      description, irs::bytes_view{}, AsBytes(target)));
+  }
+  size_t i = 0;
+  size_t produced = 0;
+  for (auto _ : state) {
+    produced += DrainAcceptor(field, *compiled[i++ % compiled.size()]);
+  }
+  ReportTerms(state, produced);
 }
 
 void RegexpAcceptorWalk(benchmark::State& state) {
@@ -892,6 +956,12 @@ BENCHMARK(RegexpAcceptorBuildScaling)
   ->Unit(benchmark::kMicrosecond);
 BENCHMARK(RegexpSourceBuild)->Unit(benchmark::kMicrosecond);
 BENCHMARK(RegexpAcceptorWalk)->Apply(ApplySizes);
+BENCHMARK(FuzzyWalk)
+  ->ArgsProduct({{static_cast<int64_t>(Shape::Random),
+                  static_cast<int64_t>(Shape::Url)},
+                 {500'000, 2'000'000},
+                 {0, 1}})
+  ->Unit(benchmark::kMicrosecond);
 
 BENCHMARK(FusedSourceBuild)->Unit(benchmark::kMicrosecond);
 BENCHMARK(FusedSourceWalk)->Apply(ApplySizes);

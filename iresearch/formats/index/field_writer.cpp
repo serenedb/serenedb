@@ -512,10 +512,7 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
 
 void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
   if (_width == 0) {
-    const auto prefix = TermPrefix(term);
-    if (_prefixes.empty() || _prefixes.back() != prefix) {
-      _prefixes.push_back(prefix);
-    }
+    _trie.Add(term);
   }
   if (_terms++ == 0) {
     _min.assign(term);
@@ -791,12 +788,7 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
     head.inline_base = first_inline;
     head.inline_size = _inline.size() - first_inline;
   } else if (text && _width == 0) {
-    auto out = std::back_inserter(head.text.prefixes);
-    uint32_t last = 0;
-    for (const auto prefix : _prefixes) {
-      WriteVarint(prefix - last, out);
-      last = prefix;
-    }
+    head.text.prefix_trie = _trie.Finish();
   }
   if (_ranges.Active()) {
     const auto prefix = CommonPrefixLength(bytes_view{_min}, max);
@@ -815,7 +807,7 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
 
 void FieldWriter::ResetField() noexcept {
   _ranges.Clear();
-  _prefixes.clear();
+  _trie.Clear();
   _min.clear();
   _terms = 0;
   _first_block = kNoBlock;

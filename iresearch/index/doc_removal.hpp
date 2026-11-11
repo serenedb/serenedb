@@ -30,15 +30,12 @@
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
 class DirectoryReader;
-class SegmentReaderImpl;
-struct DocMapsSlot;
 
 struct DocMap {
   uint64_t source = 0;
@@ -47,25 +44,15 @@ struct DocMap {
   doc_id_t rank_begin = 0;
   doc_id_t rank_end = 0;
   doc_id_t base = doc_limits::min();
-  std::shared_ptr<const DocMapsSlot> next;
-};
-
-struct DocMapsSlot {
-  std::vector<DocMap> maps;
 };
 
 struct DocRemoval {
   struct Group {
     uint64_t segment = 0;
     DocumentMask docs;
-    std::shared_ptr<const DocMapsSlot> maps;
   };
 
   std::vector<Group> groups;
-};
-
-struct KeyRemoval {
-  std::vector<int64_t> keys;
 };
 
 class DocRemovalBuilder {
@@ -96,18 +83,5 @@ struct MappedRow {
 
 void MapRows(const DocMap& map, std::span<const uint64_t> rows,
              std::vector<MappedRow>& out);
-
-struct RemovalTarget {
-  const SegmentReaderImpl* reader;
-  DocumentMaskBuilder* removed;
-};
-
-using RemovalTargets = containers::FlatHashMap<uint64_t, RemovalTarget>;
-
-// Lands a removal on the segments that hold its docs now. A group names the
-// segment the docs were in when it was recorded; where a consolidation has
-// since replaced that segment, the group's own maps carry the docs forward,
-// which is why a removal cannot simply be matched by segment id.
-void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets);
 
 }  // namespace irs

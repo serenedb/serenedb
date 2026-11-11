@@ -123,7 +123,7 @@ void DFIIndexTest::BuildFixture() {
 
   auto opts = irs::tests::DefaultWriterOptions();
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
@@ -137,7 +137,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
   auto impl = std::make_unique<irs::DFI>(irs::DFIMeasure::Standardized);
 
   auto index = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
   irs::ByTerm filter;
   *filter.mutable_field_id() = kBodyFieldId;
@@ -145,7 +145,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
   MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, *index, impl.get(), counter};
+  tests::PreparedFilter prepared{filter, index, impl.get(), counter};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);

@@ -67,9 +67,7 @@ class DatabaseDirectoryTest : public ::testing::Test {
 
 TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {
   const DatabaseDirectory directory{_root / "5"};
-  directory.Create();
-  EXPECT_TRUE(std::filesystem::is_directory(_root / "5"));
-  EXPECT_ANY_THROW(directory.Create());
+  std::filesystem::create_directory(_root / "5");
   EXPECT_FALSE(directory.OpenStorage(7).has_value());
   EXPECT_EQ(directory.CreateStorage(7), _root / "5" / "7");
   EXPECT_ANY_THROW(directory.CreateStorage(7));
@@ -78,7 +76,7 @@ TEST_F(DatabaseDirectoryTest, CreatesOnceAndOpensOnlyWhatExists) {
 
 TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
   auto directory = std::make_shared<DatabaseDirectory>(_root / "5");
-  directory->Create();
+  std::filesystem::create_directory(_root / "5");
   directory->CreateStorage(7);
   directory->CreateStorage(8);
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
@@ -87,20 +85,6 @@ TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5" / "8"));
   directory.reset();
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5" / "8"));
-}
-
-TEST_F(DatabaseDirectoryTest, ADroppedDatabaseGoesAfterItsLastStorage) {
-  auto directory = std::make_shared<DatabaseDirectory>(_root / "5");
-  directory->Create();
-  directory->CreateStorage(7);
-  std::ofstream{_root / "5" / "data.db"} << "pages";
-  std::ofstream{_root / "5" / "7" / "segment"} << "rows";
-  auto storage = directory;
-  directory->MarkDropped();
-  directory.reset();
-  EXPECT_TRUE(std::filesystem::is_directory(_root / "5" / "7"));
-  DatabaseDirectory::RemoveStorage(std::move(storage), 7);
-  EXPECT_TRUE(Gone(_root / "5"));
 }
 
 }  // namespace

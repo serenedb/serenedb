@@ -39,6 +39,7 @@
 #include <exception>
 #include <filesystem>
 #include <iresearch/index/file_names.hpp>
+#include <iresearch/index/segment_list.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -426,8 +427,7 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
                  " keeps rows in memory or deletes after settling");
       absl::c_for_each(irs::SegmentFiles(unit->meta.name, unit->meta.kinds),
                        add);
-      absl::StrAppend(&segments, unit->id, " ", unit->meta.kinds, " ",
-                      unit->docs, "\n");
+      irs::AppendSegmentList(segments, unit->id, unit->meta.kinds, unit->docs);
     }
     image.push_back({.name = absl::StrCat(table_name, "/", kSegmentsFile),
                      .bytes = std::move(segments)});

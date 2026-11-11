@@ -49,7 +49,6 @@ namespace {
 
 constexpr uint64_t kSystemIdentifier = 4242;
 constexpr uint64_t kStartLsn = 1000;
-constexpr duckdb::idx_t kDatabase = 5;
 constexpr duckdb::idx_t kStore = 77;
 constexpr std::string_view kLogLink = "log";
 constexpr size_t kPayload = 100;
@@ -92,7 +91,7 @@ class RestoreTest : public ::testing::Test {
     _cut.log_link =
       std::filesystem::path{"engine_v1"} / kBackupDir / std::string{kLogLink};
     _cut.log_size = _ends[2];
-    _cut.stores.push_back({.database_oid = kDatabase, .oid = kStore});
+    _cut.stores.push_back({.oid = kStore});
   }
 
   void TearDown() final { std::filesystem::remove_all(_root); }
@@ -150,9 +149,7 @@ class RestoreTest : public ::testing::Test {
     return _layout->LogDir() / catalog::Log::ChunkName(number);
   }
 
-  std::filesystem::path StoreDir() const {
-    return _layout->StorageDir(kDatabase, kStore);
-  }
+  std::filesystem::path StoreDir() const { return _layout->StorageDir(kStore); }
 
   void WriteLabel(uint64_t system_identifier = kSystemIdentifier) const {
     std::ofstream out{_root / kBackupLabelFile, std::ios::trunc};

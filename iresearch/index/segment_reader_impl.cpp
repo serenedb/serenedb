@@ -84,7 +84,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
   ParseSegmentId(meta.name, reader->_id);
-  reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options, options.index);
   reader->_field_reader =
@@ -103,7 +102,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
   const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_id = id;
-  reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->col_reader = std::move(columns);
   return reader;
@@ -114,7 +112,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenPiece(
   std::shared_ptr<const PieceFields> fields) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_id = id;
-  reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->col_reader = std::move(columns);
   reader->_pieces = std::move(fields);
@@ -132,7 +129,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   reader->_id = _id;
   reader->_patch_tick = _patch_tick;
   reader->_patched_docs = _patched_docs;
-  reader->_doc_maps = _doc_maps;
   reader->_field_reader = _field_reader;
   reader->_pieces = _pieces;
   reader->_data = _data;
@@ -147,7 +143,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = _refs;
   reader->_id = _id;
-  reader->_doc_maps = _doc_maps;
   reader->_field_reader = _field_reader;
   reader->_pieces = _pieces;
   const auto& root = _data->base ? _data->base : _data;

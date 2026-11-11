@@ -152,13 +152,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       tests::JsonDocGenerator gen(resource("granular_sequential.json"),
                                   &ByRangeJsonFieldFactory);
 
-      add_segment(gen, irs::kOmCreate);
+      add_segment(gen, tests::kOmCreate);
     }
 
     auto rdr = open_reader();
-    ASSERT_EQ(1, rdr->size());
+    ASSERT_EQ(1, rdr.size());
 
-    auto& segment = (*rdr)[0];
+    auto& segment = (rdr)[0];
 
     MaxMemoryCounter counter;
 
@@ -204,7 +204,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       tests::JsonDocGenerator gen(resource("granular_sequential.json"),
                                   &ByRangeJsonFieldFactory);
 
-      add_segment(gen, irs::kOmCreate);
+      add_segment(gen, tests::kOmCreate);
     }
 
     auto rdr = open_reader();
@@ -438,7 +438,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &ByRangeJsonFieldFactory);
 
-      add_segment(gen, irs::kOmCreate);
+      add_segment(gen, tests::kOmCreate);
     }
 
     auto rdr = open_reader();
@@ -1240,7 +1240,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       }
     }
 
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     for (size_t segment = 0; segment != kSegments; ++segment) {
       for (size_t pk = segment * kRows / kSegments;
            pk != (segment + 1) * kRows / kSegments; ++pk) {
@@ -1563,7 +1563,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &ByRangeJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate);
+    add_segment(gen, tests::kOmCreate);
   }
 
   auto rdr = open_reader();
@@ -1694,7 +1694,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
 
 TEST_P(GranularRangeFilterTestCase, by_range_order_multiple_sorts) {
   {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     ASSERT_NE(nullptr, writer);
 
     // add segment
@@ -1731,7 +1731,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order_multiple_sorts) {
 
   // value = [...;...)
   const int seed = -6;
-  for (int begin = seed, end = begin + int(rdr->docs_count()); begin != end;
+  for (int begin = seed, end = begin + int(rdr.docs_count()); begin != end;
        ++begin) {
     Docs docs;
     docs.resize(size_t(end - begin));
@@ -1804,11 +1804,11 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     ASSERT_NE(nullptr, cs);
     irs::tests::StoreFieldAt(*cs, kKey, doc.DocId(), *key);
   };
-  add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+  add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
               store_key);
 
   auto reader = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader->size());
+  ASSERT_EQ(1, reader.size());
   auto& segment = reader[0];
 
   // a > -inf && a < 30.

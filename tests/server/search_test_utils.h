@@ -43,6 +43,7 @@
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "engine_context.h"
+#include "index/test_index_writer.hpp"
 
 namespace sdb::test {
 
@@ -115,10 +116,10 @@ inline const irs::DirectoryReader& OneRowSegments() {
     options.db = &EngineDb();
     options.reader_options.db = &EngineDb();
     auto writer =
-      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+      ::tests::IndexWriter::Make(dir, ::tests::kOmCreate, std::move(options));
     for (int64_t value = 0; value != 8; ++value) {
-      auto trx = writer->GetBatch(/*exclusive_segment=*/true);
-      WriteValues(trx, std::array{value});
+      auto trx = writer->GetBatch();
+      WriteValues(trx.Native(), std::array{value});
       EXPECT_TRUE(trx.Commit());
       writer->RefreshCommit();
     }

@@ -36,6 +36,8 @@
 
 namespace bench {
 
+inline constexpr std::string_view kSegmentListFile = "segments";
+
 struct BenchConfig {
   std::string_view scorer = "bm25";
   std::string_view scorer_options = R"({})";
@@ -85,6 +87,7 @@ struct EmitResult {
 class Executor {
  public:
   explicit Executor(std::string_view path);
+  explicit Executor(irs::DirectoryReader reader);
 
   size_t ExecuteTopK(size_t k, std::string_view query);
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
@@ -125,7 +128,7 @@ class Executor {
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::analysis::Tokenizer::ptr _tokenizer;
-  irs::MMapDirectory _dir;
+  std::optional<irs::MMapDirectory> _dir;
   irs::DirectoryReader _reader;
 };
 

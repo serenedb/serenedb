@@ -291,23 +291,24 @@ class IndexUnderTest {
  public:
   MemoryDirectory& dir() noexcept { return _dir; }
 
-  std::shared_ptr<IndexWriter> Open() {
+  ::tests::IndexWriter::ptr Open() {
     auto options = irs::tests::DefaultWriterOptions();
     options.norm_column_id = [](field_id id) -> field_id {
       return static_cast<field_id>(id + 1000);
     };
-    return IndexWriter::Make(_dir, kOmCreate, std::move(options));
+    return ::tests::IndexWriter::Make(_dir, ::tests::kOmCreate,
+                                      std::move(options));
   }
 
   DirectoryReader Read() {
-    return DirectoryReader(_dir, irs::tests::DefaultReaderOptions());
+    return ::tests::OpenReader(_dir, irs::tests::DefaultReaderOptions());
   }
 
  private:
   MemoryDirectory _dir;
 };
 
-void WriteBlock(IndexWriter::Transaction& trx,
+void WriteBlock(::tests::IndexWriter::Transaction& trx,
                 irs::analysis::Tokenizer& tokenizer, const TokenTraits& traits,
                 std::span<const FieldPlan> plan,
                 std::span<const std::string> keys,
@@ -362,7 +363,7 @@ void WriteBlock(IndexWriter::Transaction& trx,
   }
 }
 
-void WriteMultiValueDocs(IndexWriter::Transaction& trx,
+void WriteMultiValueDocs(::tests::IndexWriter::Transaction& trx,
                          irs::analysis::Tokenizer& tokenizer,
                          const TokenTraits& traits,
                          std::span<const FieldPlan> plan,
@@ -425,7 +426,6 @@ void ReadIndex(IndexUnderTest& index, std::span<const FieldPlan> plan,
                Verification& out,
                std::map<std::string, TermMap>* exact = nullptr) {
   auto reader = index.Read();
-  ASSERT_TRUE(reader);
   out.segments = reader.size();
   out.docs = reader.docs_count();
   for (size_t s = 0; s < reader.size(); ++s) {

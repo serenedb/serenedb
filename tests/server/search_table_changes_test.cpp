@@ -136,12 +136,22 @@ TEST_F(SearchTableChangesRows, TruncateDropsEverythingBufferedBeforeIt) {
   const std::vector<uint64_t> positions{11, 12};
   AppendRows(changes, 2);
   changes.removals.push_back(Removal(positions));
-  changes.AppendTruncate(false);
+  changes.AppendTruncate(std::make_shared<const irs::DocRemoval>());
   EXPECT_TRUE(changes.truncate);
-  EXPECT_FALSE(changes.ClearsShard());
   EXPECT_FALSE(changes.HasBufferedRows());
   EXPECT_TRUE(changes.removals.empty());
   EXPECT_FALSE(changes.Empty());
+}
+
+TEST_F(SearchTableChangesRows, TruncateRemovesWhatItsSnapshotSees) {
+  LocalTableChangesEntry changes;
+  const std::vector<uint64_t> positions{11, 12};
+  AppendRows(changes, 2);
+  changes.AppendTruncate(Removal(positions));
+  EXPECT_TRUE(changes.truncate);
+  EXPECT_FALSE(changes.HasBufferedRows());
+  ASSERT_EQ(1, changes.removals.size());
+  EXPECT_EQ(Positions(*changes.removals.front()), positions);
 }
 
 TEST(SearchTableChanges, EmptyDeleteLeavesNothingPending) {

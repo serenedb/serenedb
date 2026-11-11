@@ -59,8 +59,7 @@ std::vector<DocMap> MergeMaps(CompactionView candidates,
                     .target = merged.Id(),
                     .mask = segment.SharedDocsMask(),
                     .rank_end = segment.Meta().live_docs_count,
-                    .base = merger[i].remap.base_id,
-                    .next = merged.DocMaps()});
+                    .base = merger[i].remap.base_id});
   }
   return maps;
 }
@@ -254,8 +253,11 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, IndexWriterOptions options) {
              "IndexWriterOptions::db must be set; iresearch indexes require a "
              "duckdb::DatabaseInstance");
 
-  auto hnsw_bases = std::make_unique<HnswBases>();
-  options.reader_options.hnsw_bases = hnsw_bases.get();
+  std::unique_ptr<HnswBases> hnsw_bases;
+  if (!options.reader_options.hnsw_bases) {
+    hnsw_bases = std::make_unique<HnswBases>();
+    options.reader_options.hnsw_bases = hnsw_bases.get();
+  }
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, dir, options.segment_pool_size, SegmentOptions{options},
     options.reader_options);
@@ -477,7 +479,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
-    .hnsw_bases = _hnsw_bases.get(),
+    .hnsw_bases = _reader_options.hnsw_bases,
   };
 }
 

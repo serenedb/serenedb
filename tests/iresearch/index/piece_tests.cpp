@@ -27,7 +27,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
@@ -41,6 +40,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
+#include "test_index_writer.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 
@@ -275,11 +275,11 @@ TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
   constexpr uint32_t kPieceDocs = 100;
 
   MemoryDirectory flushed_dir;
-  auto flushed_writer = IndexWriter::Make(flushed_dir, kOmCreate,
-                                          irs::tests::DefaultWriterOptions());
+  auto flushed_writer = ::tests::IndexWriter::Make(
+    flushed_dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
   {
     auto trx = flushed_writer->GetBatch();
-    InsertDocs(trx, kDocs);
+    InsertDocs(trx.Native(), kDocs);
     ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(flushed_writer->RefreshCommit());
@@ -288,19 +288,15 @@ TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
 
   MemoryDirectory piece_dir;
   auto piece_writer =
-    IndexWriter::Make(piece_dir, kOmCreate, irs::tests::DefaultWriterOptions());
-  DirectoryMeta meta;
+    IndexWriter::Make(piece_dir, irs::tests::DefaultWriterOptions());
   std::vector<SegmentReader> pieces;
   for (uint32_t first = 0; first != kDocs; first += kPieceDocs) {
-    auto trx = piece_writer->GetBatch(/*exclusive_segment=*/true);
+    auto trx = piece_writer->GetBatch();
     trx.SetHot(0);
     InsertDocs(trx, kPieceDocs, first);
     auto piece = trx.SealPiece(first + 1);
     trx.Abort();
     ASSERT_NE(nullptr, piece);
-    IndexSegment segment;
-    static_cast<SegmentInfo&>(segment.meta) = piece->Meta();
-    meta.index_meta.segments.push_back(std::move(segment));
     pieces.emplace_back(std::move(piece));
   }
   size_t files = 0;
@@ -310,14 +306,14 @@ TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
   });
   EXPECT_EQ(0, files);
 
-  const DirectoryReader source{std::make_shared<const DirectoryReaderImpl>(
-    piece_dir, irs::tests::DefaultReaderOptions(), std::move(meta),
-    std::move(pieces))};
+  DirectoryReader source{piece_dir, irs::tests::DefaultReaderOptions(),
+                         std::move(pieces), /*stats=*/false};
   MemoryDirectory written_dir;
-  auto writer = IndexWriter::Make(written_dir, kOmCreate,
-                                  irs::tests::DefaultWriterOptions());
+  auto writer =
+    IndexWriter::Make(written_dir, irs::tests::DefaultWriterOptions());
   auto written = GetBlocking(writer->WriteAsync(
-    source, writer->NextSegmentId(), nullptr, [] { return true; }, nullptr));
+    std::move(source), writer->NextSegmentId(), nullptr, [] { return true; },
+    nullptr));
   ASSERT_NE(nullptr, written.reader);
   EXPECT_EQ(kDocs / kPieceDocs, written.maps.size());
   ExpectSameSegment(flushed[0], *written.reader);
@@ -328,11 +324,11 @@ TEST(PieceTest, MergedPiecesReadLikeFlushedSegment) {
   constexpr uint32_t kDocs = 300;
 
   MemoryDirectory flushed_dir;
-  auto flushed_writer = IndexWriter::Make(flushed_dir, kOmCreate,
-                                          irs::tests::DefaultWriterOptions());
+  auto flushed_writer = ::tests::IndexWriter::Make(
+    flushed_dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
   {
     auto trx = flushed_writer->GetBatch();
-    InsertDocs(trx, kDocs);
+    InsertDocs(trx.Native(), kDocs);
     ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(flushed_writer->RefreshCommit());
@@ -341,33 +337,28 @@ TEST(PieceTest, MergedPiecesReadLikeFlushedSegment) {
 
   MemoryDirectory piece_dir;
   auto piece_writer =
-    IndexWriter::Make(piece_dir, kOmCreate, irs::tests::DefaultWriterOptions());
-  DirectoryMeta meta;
+    IndexWriter::Make(piece_dir, irs::tests::DefaultWriterOptions());
   std::vector<SegmentReader> pieces;
   uint32_t first = 0;
   for (const auto docs : kPieceDocs) {
-    auto trx = piece_writer->GetBatch(/*exclusive_segment=*/true);
+    auto trx = piece_writer->GetBatch();
     trx.SetHot(0);
     InsertDocs(trx, docs, first);
     auto piece = trx.SealPiece(first + 1);
     trx.Abort();
     ASSERT_NE(nullptr, piece);
-    IndexSegment segment;
-    static_cast<SegmentInfo&>(segment.meta) = piece->Meta();
-    meta.index_meta.segments.push_back(std::move(segment));
     pieces.emplace_back(std::move(piece));
     first += docs;
   }
   ASSERT_EQ(kDocs, first);
 
-  const DirectoryReader source{std::make_shared<const DirectoryReaderImpl>(
-    piece_dir, irs::tests::DefaultReaderOptions(), std::move(meta),
-    std::move(pieces))};
+  DirectoryReader source{piece_dir, irs::tests::DefaultReaderOptions(),
+                         std::move(pieces), /*stats=*/false};
   MemoryDirectory merged_dir;
-  auto writer = IndexWriter::Make(merged_dir, kOmCreate,
-                                  irs::tests::DefaultWriterOptions());
+  auto writer =
+    IndexWriter::Make(merged_dir, irs::tests::DefaultWriterOptions());
   const auto merged =
-    writer->MergePieces(source, writer->NextSegmentId(), nullptr);
+    writer->MergePieces(std::move(source), writer->NextSegmentId(), nullptr);
   ASSERT_NE(nullptr, merged.reader);
   EXPECT_EQ(kPieceDocs.size(), merged.maps.size());
   ExpectSameSegment(flushed[0], *merged.reader);
@@ -383,11 +374,11 @@ TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
   constexpr uint32_t kDocs = 300;
 
   MemoryDirectory flushed_dir;
-  auto flushed_writer = IndexWriter::Make(flushed_dir, kOmCreate,
-                                          irs::tests::DefaultWriterOptions());
+  auto flushed_writer = ::tests::IndexWriter::Make(
+    flushed_dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
   {
     auto trx = flushed_writer->GetBatch();
-    InsertDocs(trx, kDocs);
+    InsertDocs(trx.Native(), kDocs);
     ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(flushed_writer->RefreshCommit());
@@ -397,10 +388,10 @@ TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
 
   MemoryDirectory piece_dir;
   auto piece_writer =
-    IndexWriter::Make(piece_dir, kOmCreate, irs::tests::DefaultWriterOptions());
+    IndexWriter::Make(piece_dir, irs::tests::DefaultWriterOptions());
   std::shared_ptr<const SegmentReaderImpl> piece;
   {
-    auto trx = piece_writer->GetBatch(/*exclusive_segment=*/true);
+    auto trx = piece_writer->GetBatch();
     trx.SetHot(0);
     InsertDocs(trx, kDocs);
     piece = trx.SealPiece(42);
@@ -438,10 +429,9 @@ TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
 
 TEST(PieceTest, AbortedPieceRemovesItsFiles) {
   MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer = IndexWriter::Make(dir, irs::tests::DefaultWriterOptions());
   {
-    auto trx = writer->GetBatch(/*exclusive_segment=*/true);
+    auto trx = writer->GetBatch();
     trx.SetHot(0);
     const std::vector<ReplayToken> short_doc = {{"word", 1, 0, 4}};
     const std::vector<ReplayToken> long_doc = {{"word", 1, 0, 4},
@@ -465,10 +455,9 @@ TEST(PieceTest, AbortedPieceRemovesItsFiles) {
 
 TEST(PieceTest, SealsSingleDocumentPieces) {
   MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer = IndexWriter::Make(dir, irs::tests::DefaultWriterOptions());
   for (uint64_t id = 1; id != 4; ++id) {
-    auto trx = writer->GetBatch(/*exclusive_segment=*/true);
+    auto trx = writer->GetBatch();
     trx.SetHot(0);
     InsertDocs(trx, 1);
     const auto piece = trx.SealPiece(id);
@@ -490,11 +479,11 @@ TEST(PieceTest, SealsSingleDocumentPieces) {
 TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
   constexpr uint32_t kDocs = 50;
   MemoryDirectory flushed_dir;
-  auto flushed_writer = IndexWriter::Make(flushed_dir, kOmCreate,
-                                          irs::tests::DefaultWriterOptions());
+  auto flushed_writer = ::tests::IndexWriter::Make(
+    flushed_dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
   {
     auto trx = flushed_writer->GetBatch();
-    InsertDocs(trx, kDocs);
+    InsertDocs(trx.Native(), kDocs);
     ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(flushed_writer->RefreshCommit());
@@ -503,8 +492,8 @@ TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
 
   MemoryDirectory piece_dir;
   auto piece_writer =
-    IndexWriter::Make(piece_dir, kOmCreate, irs::tests::DefaultWriterOptions());
-  auto trx = piece_writer->GetBatch(/*exclusive_segment=*/true);
+    IndexWriter::Make(piece_dir, irs::tests::DefaultWriterOptions());
+  auto trx = piece_writer->GetBatch();
   trx.SetHot(0);
   InsertDocs(trx, kDocs);
   const auto piece = trx.SealPiece(9);
@@ -536,9 +525,8 @@ TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
 
 TEST(PieceTest, SeeksAndRangesFollowTheSortedTerms) {
   MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
-  auto trx = writer->GetBatch(/*exclusive_segment=*/true);
+  auto writer = IndexWriter::Make(dir, irs::tests::DefaultWriterOptions());
+  auto trx = writer->GetBatch();
   trx.SetHot(0);
   InsertDocs(trx, 50);
   const auto piece = trx.SealPiece(7);

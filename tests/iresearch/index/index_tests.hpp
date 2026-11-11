@@ -26,7 +26,6 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
@@ -76,10 +75,6 @@ class DirectoryMock : public irs::Directory {
 
   bool length(uint64_t& result, std::string_view name) const noexcept override {
     return _impl.length(result, name);
-  }
-
-  irs::IndexLock::ptr make_lock(std::string_view name) noexcept override {
-    return _impl.make_lock(name);
   }
 
   bool mtime(std::time_t& result,
@@ -167,7 +162,8 @@ struct CallbackDirectory : DirectoryMock {
 
 typedef std::tuple<tests::dir_param_f> index_test_context;
 
-void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
+void AssertSnapshotEquality(const irs::DirectoryReader& lhs,
+                            const irs::DirectoryReader& rhs);
 
 // A posting list is written before anything is deleted, so a reader walking
 // one sees documents the segment no longer has. Only a plan knows about the
@@ -193,37 +189,37 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
 
   irs::doc_id_t GetPostingsBlockSize() const;
 
-  irs::IndexWriter::ptr open_writer(
-    irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
+  tests::IndexWriter::ptr open_writer(
+    irs::Directory& dir, tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, mode,
-                                  EnsureWriterDb(std::move(options)));
+    return tests::IndexWriter::Make(dir, mode,
+                                    EnsureWriterDb(std::move(options)));
   }
 
-  irs::IndexWriter::ptr open_writer(
-    irs::OpenMode mode = irs::kOmCreate,
+  tests::IndexWriter::ptr open_writer(
+    tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, mode,
-                                  EnsureWriterDb(std::move(options)));
+    return tests::IndexWriter::Make(*_dir, mode,
+                                    EnsureWriterDb(std::move(options)));
   }
 
   irs::DirectoryReader open_reader(
     const irs::IndexReaderOptions& options = CsDefaultReaderOptions()) const {
-    return irs::DirectoryReader{*_dir, options};
+    return tests::OpenReader(*_dir, options);
   }
 
-  void AssertSnapshotEquality(const irs::IndexWriter& writer);
+  void AssertSnapshotEquality(const tests::IndexWriter& writer);
 
   void assert_index(irs::IndexFeatures features, size_t skip = 0,
                     const irs::RegexpAcceptor* acceptor = nullptr) const {
-    tests::AssertIndex(open_reader().GetImpl(), index(), features, skip,
-                       acceptor);
+    tests::AssertIndex(open_reader(), index(), features, skip, acceptor);
   }
 
   void SetUp() final {
     TestBase::SetUp();
 
     // set directory
+    _dir = nullptr;
     _dir = get_directory(*this);
     ASSERT_NE(nullptr, _dir);
   }
@@ -240,26 +236,26 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   using StoreHook =
     std::function<void(irs::IndexWriter::Document&, const tests::Document&)>;
 
-  void write_segment(irs::IndexWriter& writer, tests::IndexSegment& segment,
+  void write_segment(tests::IndexWriter& writer, tests::IndexSegment& segment,
                      tests::DocGeneratorBase& gen, const StoreHook& store = {});
 
-  void write_segment_batched(irs::IndexWriter& writer,
+  void write_segment_batched(tests::IndexWriter& writer,
                              tests::IndexSegment& segment,
                              tests::DocGeneratorBase& gen, size_t batch_size);
 
-  void add_segment(irs::IndexWriter& writer, tests::DocGeneratorBase& gen,
+  void add_segment(tests::IndexWriter& writer, tests::DocGeneratorBase& gen,
                    const StoreHook& store = {});
 
-  void add_segments(irs::IndexWriter& writer,
+  void add_segments(tests::IndexWriter& writer,
                     std::vector<DocGeneratorBase::ptr>& gens);
 
   void add_segment(tests::DocGeneratorBase& gen,
-                   irs::OpenMode mode = irs::kOmCreate,
+                   tests::OpenMode mode = tests::kOmCreate,
                    irs::IndexWriterOptions opts = CsDefaultWriterOptions(),
                    const StoreHook& store = {});
   void add_segment_batched(
     tests::DocGeneratorBase& gen, size_t batch_size,
-    irs::OpenMode mode = irs::kOmCreate,
+    tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions opts = CsDefaultWriterOptions());
 
  private:

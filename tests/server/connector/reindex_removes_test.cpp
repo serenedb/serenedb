@@ -28,10 +28,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/segment_reader.hpp>
-#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <roaring/roaring.hh>
@@ -93,7 +90,8 @@ class ReindexRemovesTest : public ::testing::Test {
     options.reader_options.db = &EngineDb();
     options.column_options = [](irs::field_id) { return irs::ColumnOptions{}; };
     options.row_group_size = kRowGroupSize;
-    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    _writer =
+      ::tests::IndexWriter::Make(_dir, ::tests::kOmCreate, std::move(options));
   }
 
   void TearDown() override { _writer.reset(); }
@@ -110,8 +108,8 @@ class ReindexRemovesTest : public ::testing::Test {
       row_numbers[i] = rows[i].second;
       values.emplace_back(rows[i].second);
     }
-    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    test::WriteValues(trx, values, &key, catalog::PkColumnKind::Has);
+    auto trx = _writer->GetBatch();
+    test::WriteValues(trx.Native(), values, &key, catalog::PkColumnKind::Has);
     EXPECT_TRUE(trx.Commit());
     _writer->RefreshCommit();
     for (const auto segment : Segments()) {
@@ -195,19 +193,16 @@ class ReindexRemovesTest : public ::testing::Test {
   }
 
   irs::MemoryDirectory _dir;
-  irs::IndexWriter::ptr _writer;
+  ::tests::IndexWriter::ptr _writer;
 };
 
-TEST_F(ReindexRemovesTest, ARemovalNamesItsSegmentsAndHoldsTheirDocMaps) {
+TEST_F(ReindexRemovesTest, ARemovalNamesItsSegments) {
   const auto segment = AddFile(1, Rows(0, 4));
   const auto snapshot = _writer->GetSnapshot();
   const std::vector<uint64_t> files{1};
   const auto removal = ResolveRemoves(snapshot, files, {}, {}).Finish(snapshot);
   ASSERT_EQ(1, removal->groups.size());
   EXPECT_EQ(segment, removal->groups.front().segment);
-  EXPECT_EQ(
-    irs::utils::downCast<irs::SegmentReader>(snapshot[0]).GetImpl()->DocMaps(),
-    removal->groups.front().maps);
 }
 
 TEST_F(ReindexRemovesTest, NothingToRemoveIsNoRemoval) {

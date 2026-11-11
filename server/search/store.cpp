@@ -226,6 +226,7 @@ irs::IndexReaderOptions Store::ReaderOptions() const {
   irs::IndexReaderOptions options;
   options.db = &irs::DuckDBEngine::Instance().instance();
   options.scorer = _topk_scorer.get();
+  options.hnsw_bases = _hnsw_bases.get();
   return options;
 }
 

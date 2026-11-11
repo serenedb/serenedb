@@ -65,9 +65,9 @@ add_executable(
     connector/pgoutput_test.cpp
     connector/reindex_removes_test.cpp
     connector/row_position_deduplicator_test.cpp
+    connector/row_position_test.cpp
     connector/scan_segment_work_test.cpp
     connector/scram_client_test.cpp
-    connector/search_row_removal_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp
@@ -75,7 +75,7 @@ add_executable(
 
 target_link_libraries(
     serenedb-tests
-    PRIVATE sereneserver gtest serene_docs_corpus
+    PRIVATE sereneserver gtest serene_docs_corpus iresearch-test-writer
 )
 sdb_link_duckdb_extensions(serenedb-tests)
 

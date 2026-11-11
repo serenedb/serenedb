@@ -37,6 +37,7 @@
 #include <duckdb/parser/column_list.hpp>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/formats/hnsw/hnsw_bases.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -418,6 +419,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   uint32_t _segment_docs_max = 0;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;
+  std::unique_ptr<irs::HnswBases> _hnsw_bases =
+    std::make_unique<irs::HnswBases>();
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   std::unique_ptr<irs::Directory> _piece_dir;

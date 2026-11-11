@@ -1201,7 +1201,7 @@ TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
     gen.reset();
-    add_segment(gen, irs::kOmAppend);
+    add_segment(gen, tests::kOmAppend);
   }
 
   auto rdr = open_reader();
@@ -1260,7 +1260,7 @@ TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
     gen.reset();
-    add_segment(gen, irs::kOmAppend);
+    add_segment(gen, tests::kOmAppend);
   }
 
   auto rdr = open_reader();

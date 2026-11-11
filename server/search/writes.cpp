@@ -340,8 +340,7 @@ void TakeRemovals(std::vector<std::shared_ptr<const irs::DocRemoval>>& removals,
       rest->groups.push_back(
         {.segment = group.segment,
          .docs = irs::DocumentMaskBuilder{group.docs}.Finish(
-           irs::DocumentMaskBuilder::kCanonical),
-         .maps = group.maps});
+           irs::DocumentMaskBuilder::kCanonical)});
     }
     removal = std::move(rest);
   }

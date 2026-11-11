@@ -640,7 +640,6 @@ void BuildIndex(const std::string& corpus_path,
   bench::IndexBuilderOptions builder_options{
     .batch_size = 100000,
     .indexer_threads = 1,
-    .refresh_interval_ms = 0,
     .compaction_interval_ms = 5000,
     .compaction_threads = 0,
     .compact_all = gSegmentDocs == 0,
@@ -847,8 +846,8 @@ void WarmUp(bench::Executor& executor, const std::vector<ParsedQuery>& queries,
   } while (std::chrono::steady_clock::now() < deadline);
 }
 
-bool DeleteBuckets(irs::IndexWriter& writer, size_t from, size_t to) {
-  const auto reader = writer.GetSnapshot();
+void DeleteBuckets(bench::IndexBuilder& builder, size_t from, size_t to) {
+  const auto reader = builder.GetReader();
   irs::DocRemovalBuilder removal;
   for (uint32_t index = 0; index != reader.size(); ++index) {
     const auto* field = reader[index].field(kBucketId);
@@ -864,9 +863,7 @@ bool DeleteBuckets(irs::IndexWriter& writer, size_t from, size_t to) {
                       });
     }
   }
-  auto ctx = writer.GetBatch();
-  ctx.Remove(std::move(removal).Finish(reader));
-  return ctx.Commit();
+  builder.Remove(*std::move(removal).Finish(reader));
 }
 
 std::vector<size_t> ParseRatios(std::string_view spec) {
@@ -1458,9 +1455,7 @@ TEST_F(LoadTest, DeleteRatioLatency) {
   for (const auto per_mille : steps) {
     if (per_mille != 0) {
       const auto start = std::chrono::steady_clock::now();
-      ASSERT_TRUE(
-        DeleteBuckets(gBuilder->GetWriter(), deleted_upto, per_mille));
-      gBuilder->GetWriter().RefreshCommit();
+      DeleteBuckets(*gBuilder, deleted_upto, per_mille);
       deleted_upto = per_mille;
       std::cout << absl::StrCat(
         "deleted up to ", per_mille, " per-mille in ",
@@ -1469,7 +1464,7 @@ TEST_F(LoadTest, DeleteRatioLatency) {
         " s\n");
     }
 
-    gExecutor = std::make_unique<bench::Executor>(gIndexDir.string());
+    gExecutor = std::make_unique<bench::Executor>(gBuilder->GetReader());
     gExecutor->SetPrintSink(_null_sink);
     const auto& reader = gExecutor->GetReader();
     ASSERT_GT(reader.size(), 0);

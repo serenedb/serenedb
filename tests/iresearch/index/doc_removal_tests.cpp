@@ -30,7 +30,6 @@
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -52,8 +51,8 @@ constexpr uint32_t kSegments = 8;
 const irs::DirectoryReader& Segments() {
   static irs::MemoryDirectory dir;
   static const irs::DirectoryReader reader = [] {
-    auto writer = irs::IndexWriter::Make(
-      dir, irs::kOmCreate,
+    auto writer = tests::IndexWriter::Make(
+      dir, tests::kOmCreate,
       tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
     for (uint32_t segment = 0; segment != kSegments; ++segment) {
       tests::StringField field{"name", "doc"};
@@ -170,12 +169,12 @@ TEST(ParseSegmentIdTest, InvertsFileName) {
 TEST(ParseSegmentIdTest, ParsesSegmentNamesAndTheirFiles) {
   for (const auto& [name, id] :
        std::initializer_list<std::pair<const char*, uint64_t>>{
-         {"_0", 0},
-         {"_5", 5},
-         {"_5.sm", 5},
-         {"_5.0.col", 5},
-         {"_123456789", 123456789},
-         {"_18446744073709551615", std::numeric_limits<uint64_t>::max()}}) {
+         {"0000000000000000", 0},
+         {"0000000000000005", 5},
+         {"0000000000000005.col", 5},
+         {"000000000000000a.idx", 10},
+         {"00000000075bcd15", 123456789},
+         {"ffffffffffffffff", std::numeric_limits<uint64_t>::max()}}) {
     uint64_t parsed = 0;
     EXPECT_TRUE(irs::ParseSegmentId(name, parsed)) << name;
     EXPECT_EQ(id, parsed) << name;
@@ -184,8 +183,9 @@ TEST(ParseSegmentIdTest, ParsesSegmentNamesAndTheirFiles) {
 
 TEST(ParseSegmentIdTest, RejectsOtherNames) {
   for (const auto* name :
-       {"", "_", "5", "x_5", "_x", "_5x", "_-5", "_+5", "_ 5", "__5", "_5_",
-        "_0x10", "_18446744073709551616", "segments_3"}) {
+       {"", "_", "5", "_5", "000000000000005", "00000000000000005",
+        "000000000000000g", "-000000000000005", "+000000000000005",
+        "0000000000000005col", "segments_3"}) {
     uint64_t parsed = 0;
     EXPECT_FALSE(irs::ParseSegmentId(name, parsed)) << name;
   }
@@ -293,19 +293,6 @@ TEST(DocRemovalBuilderTest, SegmentsLeftWithoutDocsAreDropped) {
   const auto removal = std::move(builder).Finish(Segments());
   EXPECT_EQ(IdsOf({6}), SegmentsOf(removal));
   EXPECT_EQ((std::vector<irs::doc_id_t>{3}), DocsOf(&removal->groups[0].docs));
-}
-
-TEST(DocRemovalBuilderTest, AGroupHoldsTheDocMapsOfItsSegment) {
-  irs::DocRemovalBuilder builder;
-  builder.Add(1, 1);
-  builder.Add(6, 1);
-  const auto removal = std::move(builder).Finish(Segments());
-  ASSERT_EQ(IdsOf({1, 6}), SegmentsOf(removal));
-  for (size_t i = 0; const auto index : {1, 6}) {
-    const auto& segment =
-      irs::utils::downCast<irs::SegmentReader>(Segments()[index]);
-    EXPECT_EQ(segment.GetImpl()->DocMaps(), removal->groups[i++].maps);
-  }
 }
 
 TEST(DocRemovalBuilderTest, ARunOfRowsTakesAFewBytes) {

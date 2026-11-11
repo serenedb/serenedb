@@ -111,19 +111,6 @@ TEST(WriterGenerationsTest, WritersLeavingBeforeTheFlipDoNotHoldTheDrain) {
   EXPECT_NO_THROW(drain.get());
 }
 
-TEST(WriterGenerationsTest, TruncateClaimExcludesOtherWriters) {
-  WriterGenerations gens;
-  const auto truncator = gens.Register();
-  auto writer = gens.Register();
-  EXPECT_FALSE(gens.ClaimTruncate());
-  writer.reset();
-  auto truncate = gens.ClaimTruncate();
-  EXPECT_TRUE(truncate);
-  EXPECT_FALSE(gens.Register());
-  truncate.reset();
-  EXPECT_TRUE(gens.Register());
-}
-
 TEST(WriterGenerationsTest, DrainWithNoWritersIgnoresAnInterrupt) {
   WriterGenerations gens;
   auto connection = irs::DuckDBEngine::Instance().CreateConnection();

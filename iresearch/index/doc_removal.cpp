@@ -113,37 +113,11 @@ std::shared_ptr<const DocRemoval> DocRemovalBuilder::Finish(
       *utils::downCast<SegmentReader>(reader[index]).GetImpl();
     removal->groups.push_back(
       {.segment = segment.Id(),
-       .docs = std::move(docs).Finish(DocumentMaskBuilder::kCanonical),
-       .maps = segment.DocMaps()});
+       .docs = std::move(docs).Finish(DocumentMaskBuilder::kCanonical)});
   }
   _groups = {};
   _last = 0;
   return removal;
-}
-
-void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets) {
-  const auto removed_of = [&](uint64_t id) -> DocumentMaskBuilder* {
-    const auto it = targets.find(id);
-    return it != targets.end() ? it->second.removed : nullptr;
-  };
-  const auto follow = [&](this const auto& self, const DocMapsSlot& slot,
-                          const DocumentMask& docs) -> void {
-    for (const auto& map : slot.maps) {
-      if (auto* removed = removed_of(map.target)) {
-        MapDocs(map, docs, *removed);
-      } else if (DocumentMaskBuilder moved; MapDocs(map, docs, moved)) {
-        SDB_ASSERT(map.next != nullptr);
-        self(*map.next, std::move(moved).Take());
-      }
-    }
-  };
-  for (const auto& group : removal.groups) {
-    if (auto* removed = removed_of(group.segment)) {
-      removed->Merge(group.docs);
-    } else if (group.maps != nullptr) {
-      follow(*group.maps, group.docs);
-    }
-  }
 }
 
 bool MapDocs(const DocMap& map, const DocumentMask& docs,

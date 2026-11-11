@@ -17,6 +17,7 @@ target_sources(
         merge_writer.cpp
         norm.cpp
         segment_reader.cpp
+        segment_list.cpp
         segment_reader_impl.cpp
         segment_writer.cpp
         table_filter_iterator.cpp

@@ -18,6 +18,13 @@ target_link_libraries(
     PUBLIC iresearch gtest simdjson simdutf
 )
 
+add_library(iresearch-test-writer OBJECT index/test_index_writer.cpp)
+target_include_directories(
+    iresearch-test-writer
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(iresearch-test-writer PUBLIC iresearch)
+
 add_executable(
     iresearch-tests
     analysis/analyzer_test.cpp
@@ -99,7 +106,6 @@ add_executable(
     index/index_adopt_tests.cpp
     index/index_column_tests.cpp
     index/index_death_tests.cpp
-    index/index_meta_tests.cpp
     index/index_profile_tests.cpp
     index/index_tests.cpp
     index/inverter_oracle_test.cpp
@@ -204,7 +210,7 @@ add_executable(
 )
 target_link_libraries(
     iresearch-tests
-    PRIVATE iresearch-test-support search-benchmark-common
+    PRIVATE iresearch-test-support iresearch-test-writer search-benchmark-common
 )
 sdb_link_duckdb_extensions(iresearch-tests)
 

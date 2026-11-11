@@ -46,6 +46,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/index/segment_list.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
@@ -295,32 +296,10 @@ class EmbeddedIndex {
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("the documentation index carries no ", kSegmentsFile));
     }
-    const std::string_view text{
-      reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()};
-    std::vector<irs::SegmentReader> readers;
-    for (const std::string_view line :
-         absl::StrSplit(text, '\n', absl::SkipEmpty())) {
-      const std::vector<std::string_view> parts = absl::StrSplit(line, ' ');
-      uint64_t id = 0;
-      uint32_t kinds = 0;
-      irs::SegmentMeta meta;
-      if (parts.size() != 3 || !absl::SimpleAtoi(parts[0], &id) ||
-          !absl::SimpleAtoi(parts[1], &kinds) ||
-          !absl::SimpleAtoi(parts[2], &meta.docs_count)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                        ERR_MSG("malformed ", kSegmentsFile, " line: ", line));
-      }
-      meta.name = irs::FileName(id);
-      meta.kinds = static_cast<uint8_t>(kinds);
-      meta.live_docs_count = meta.docs_count;
-      for (const auto& name : irs::SegmentFiles(meta.name, meta.kinds)) {
-        uint64_t size = 0;
-        dir.length(size, name);
-        meta.byte_size += size;
-      }
-      readers.emplace_back(irs::SegmentReaderImpl::Open(dir, meta, options));
-    }
-    return {dir, options, std::move(readers), /*stats=*/true};
+    return irs::OpenSegmentList(
+      dir,
+      {reinterpret_cast<const char*>(file->bytes.data()), file->bytes.size()},
+      options);
   }
 
   SpanDirectory _dir;

@@ -128,45 +128,17 @@ void RecoverSearchStorages(
            tables.size(), " table(s) in ", absl::FormatDuration(duration));
 }
 
-void PrepareSnapshot(uint64_t budget, bool rows) {
-  struct Held {
-    uint64_t bytes = 0;
-    std::shared_ptr<Store> store;
-  };
-  std::vector<Held> held;
-  uint64_t total = 0;
-  for (auto& store : DurableStores()) {
-    if (rows) {
-      store->WriteOut();
-    }
-    if (const auto bytes = store->PieceBytes() + store->PatchBytes();
-        bytes != 0) {
-      total += bytes;
-      held.push_back({.bytes = bytes, .store = std::move(store)});
-    }
-  }
-  absl::c_sort(held, [](const Held& lhs, const Held& rhs) {
-    return lhs.bytes > rhs.bytes;
-  });
-  for (const auto& [bytes, store] : held) {
-    if (total <= budget) {
-      break;
-    }
+void WriteOutTables() {
+  for (const auto& store : DurableStores()) {
     store->WriteOut();
-    for (auto patches = store->PatchBytes(); patches != 0;) {
-      if (!store->FoldPatches() || store->PatchBytes() >= patches) {
-        break;
-      }
-      patches = store->PatchBytes();
-    }
-    total -= std::min(total, bytes);
   }
 }
 
-std::vector<TableSnapshot> CaptureSnapshot() {
+std::vector<TableSnapshot> CaptureSnapshot(Tick snapshot,
+                                           catalog::WalkCounters& walks) {
   std::vector<TableSnapshot> tables;
   for (auto& store : DurableStores()) {
-    if (auto state = store->SnapshotState()) {
+    if (auto state = store->SnapshotState(snapshot, walks)) {
       tables.push_back({.store = std::move(store), .state = std::move(state)});
     }
   }

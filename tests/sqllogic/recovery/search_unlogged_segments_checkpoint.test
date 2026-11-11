@@ -41,7 +41,7 @@ CHECKPOINT;
 
 query
 SELECT (SELECT value FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND relation_id = 'susc'::regclass) AS buffered,
-       (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_size_on_disk') < 4096 AS small_log;
+       (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes') < 4096 AS small_log;
 ----
 buffered	small_log
 0	t

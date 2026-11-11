@@ -47,7 +47,9 @@ WHERE relation_id IS NULL
 ORDER BY metric;
 ----
 metric	description
+catalog_history_bytes	bytes of catalog changes the catalog wal snapshot keeps
 catalog_wal_appended_bytes	bytes appended to the catalog wal since start
+catalog_wal_since_snapshot_bytes	bytes of the catalog wal written since its last snapshot, which a restart replays
 catalog_wal_size_on_disk	current catalog wal file size in bytes
 cleanup_active	Search cleanup tasks currently running
 cleanup_pending	Search cleanup tasks waiting to run

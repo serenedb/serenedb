@@ -168,13 +168,6 @@ linked	truncated
 t	0
 
 
-connection default
-statement ok
-CREATE TEMP TABLE bclc_during AS
-SELECT min(regexp_extract(file, '[^/]+$')) AS oldest
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
-
-
 connection holder
 query
 SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
@@ -190,8 +183,7 @@ CREATE TABLE bclc_3 (x BIGINT);
 
 connection default
 query
-SELECT min(regexp_extract(file, '[^/]+$')) > (SELECT oldest FROM bclc_during) AS compacted
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT value < 4096 AS compacted FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
 ----
 compacted
 t

@@ -161,10 +161,6 @@ statement ok
 DROP TABLE melstroi_churn_19;
 
 
-statement ok
-CREATE TEMP TABLE log_first AS SELECT min(file) AS oldest FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
-
-
 connection pudge
 statement ok
 BEGIN;
@@ -192,15 +188,10 @@ SET sdb_faults = '-compact_inside_ddl';
 
 connection default
 query
-SELECT min(file) > (SELECT oldest FROM log_first) AS truncated FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT value < 4096 AS truncated FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
 ----
 truncated
 t
-
-
-connection default
-statement ok
-CREATE TEMP TABLE log_second AS SELECT min(file) AS oldest FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
 
 
 connection pudge
@@ -225,7 +216,7 @@ SET sdb_faults = '-compact_inside_ddl';
 
 connection default
 query
-SELECT min(file) > (SELECT oldest FROM log_second) AS truncated FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT value < 4096 AS truncated FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
 ----
 truncated
 t

@@ -52,8 +52,8 @@ std::vector<uint8_t> SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
 
 std::span<uint8_t> CatalogPart(std::span<uint8_t> payload);
 
-std::vector<Log::HistoryEntry> CompactHistory(
-  std::vector<Log::HistoryEntry> entries);
+std::vector<std::vector<uint8_t>> CompactHistory(
+  std::span<const std::span<uint8_t>> parts);
 
 using ReplayTarget = absl::FunctionRef<BaseCatalog*(duckdb::idx_t)>;
 

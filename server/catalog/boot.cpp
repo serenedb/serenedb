@@ -292,18 +292,14 @@ void InitCatalog(bool default_database) {
     const auto target = [&](duckdb::idx_t id) {
       return InstanceCatalog(context, id);
     };
+    transactions.SetReplaying(true);
     log->Replay(
-      [&](Lsn lsn, std::span<uint8_t> catalog) {
-        transactions.SetReplaying(lsn);
-        context.RunFunctionInTransaction(
-          [&] { ReplayCatalogPart(context, target, catalog); });
-      },
-      [&](const Log::Range& range, std::span<uint8_t> payload) {
-        transactions.SetReplaying(range.end);
+      [&](std::span<uint8_t> payload) {
         context.RunFunctionInTransaction(
           [&] { ReplayRecord(context, target, payload); });
-      });
-    transactions.SetReplaying(0);
+      },
+      &CatalogPart);
+    transactions.SetReplaying(false);
     transactions.Open(std::move(log));
   }
   context.RunFunctionInTransaction(

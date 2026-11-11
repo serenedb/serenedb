@@ -580,12 +580,14 @@ void Store::WriteOutLocked() {
   NudgeCompaction();
 }
 
-std::shared_ptr<const TableState> Store::SnapshotState() {
+std::shared_ptr<const TableState> Store::SnapshotState(
+  Tick snapshot, catalog::WalkCounters& walks) {
   EnsureOpen();
-  if (!_table || _in_memory || OwnerDropped()) {
+  if (!_table || _in_memory) {
     return nullptr;
   }
-  return _table->HeadState();
+  const auto& version = _table->VersionAt(snapshot, walks);
+  return version.tick <= snapshot ? version.state : nullptr;
 }
 
 std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {

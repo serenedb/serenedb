@@ -220,11 +220,12 @@ class Transactions final {
     return _next_id.fetch_add(1, std::memory_order_relaxed);
   }
 
-  void Open(std::unique_ptr<Log> log) { _log = std::move(log); }
+  void Open(std::unique_ptr<Log> log) ABSL_LOCKS_EXCLUDED(_sequence_mutex);
   Log* GetLog() noexcept { return _log.get(); }
 
-  void SetReplaying(Lsn lsn) noexcept { _replaying = lsn; }
-  Lsn Replaying() const noexcept { return _replaying; }
+  void SetReplaying(bool replaying) noexcept { _replaying = replaying; }
+  std::optional<Lsn> CommitEnd(duckdb::transaction_t commit)
+    ABSL_LOCKS_EXCLUDED(_sequence_mutex);
 
   void Commit(SessionTransaction& transaction, duckdb::ClientContext& context);
   void CommitStorage(absl::Mutex& table,
@@ -339,6 +340,9 @@ class Transactions final {
   absl::Mutex _sequence_mutex;
   duckdb::transaction_t _reserved_commit ABSL_GUARDED_BY(_sequence_mutex) =
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP;
+  std::array<Lsn, kPublishRing> _commit_end ABSL_GUARDED_BY(_sequence_mutex){};
+  duckdb::transaction_t _opened_commit ABSL_GUARDED_BY(_sequence_mutex) = 0;
+  Lsn _opened_end ABSL_GUARDED_BY(_sequence_mutex) = 0;
   std::array<std::atomic<uint64_t>, kPublishRing> _ready{};
   std::atomic<duckdb::transaction_t> _last_commit{
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
@@ -346,7 +350,7 @@ class Transactions final {
   std::atomic<duckdb::idx_t> _catalog_version{
     duckdb::SYSTEM_TRANSACTION_TIMESTAMP};
   std::unique_ptr<Log> _log;
-  Lsn _replaying = 0;
+  bool _replaying = false;
   std::atomic<uint64_t> _max_log_bytes{kDefaultMaxLogBytes};
   std::atomic<bool> _truncating{false};
   std::atomic<bool> _preparing_spare{false};
@@ -366,6 +370,9 @@ class CommittedView final {
   }
   CommittedView(const CommittedView&) = delete;
   CommittedView& operator=(const CommittedView&) = delete;
+
+  duckdb::transaction_t Snapshot() const noexcept { return _snapshot; }
+  WalkCounters& Walks() const noexcept { return _slot.walks; }
 
   duckdb::SnapshotView View() const {
     return duckdb::SnapshotView{duckdb::TRANSACTION_ID_START - 1,

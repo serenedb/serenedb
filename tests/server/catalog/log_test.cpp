@@ -42,8 +42,19 @@ constexpr size_t kPayload = 100;
 
 std::string Payload(char fill) { return std::string(kPayload, fill); }
 
+std::string Half(char fill) { return std::string(Log::kChunkBytes / 2, fill); }
+
 std::span<const uint8_t> Bytes(const std::string& payload) {
   return {reinterpret_cast<const uint8_t*>(payload.data()), payload.size()};
+}
+
+std::vector<std::vector<uint8_t>> Keep(
+  std::span<const std::span<uint8_t>> parts) {
+  std::vector<std::vector<uint8_t>> kept;
+  for (const auto part : parts) {
+    kept.emplace_back(part.begin(), part.end());
+  }
+  return kept;
 }
 
 class LogTest : public ::testing::Test {
@@ -58,14 +69,18 @@ class LogTest : public ::testing::Test {
 
   std::unique_ptr<Log> Open() {
     _records.clear();
-    const auto append = [&](std::span<uint8_t> payload) {
-      _records.emplace_back(payload.begin(), payload.end());
-    };
     auto log = std::make_unique<Log>(*_fs, _dir);
     log->Replay(
-      [&](Lsn, std::span<uint8_t> payload) { append(payload); },
-      [&](const Log::Range&, std::span<uint8_t> payload) { append(payload); });
+      [&](std::span<uint8_t> payload) {
+        _records.emplace_back(payload.begin(), payload.end());
+      },
+      [](std::span<uint8_t> payload) { return payload; });
     return log;
+  }
+
+  static void Snapshot(Log& log, Lsn covered) {
+    log.WriteSnapshot(
+      covered, {}, [](std::span<uint8_t> payload) { return payload; }, &Keep);
   }
 
   struct Written {
@@ -81,10 +96,6 @@ class LogTest : public ::testing::Test {
 
   std::filesystem::path Chunk(uint64_t number) const {
     return _dir / Log::ChunkName(number);
-  }
-
-  uint64_t ChunkHeader(uint64_t number, Lsn begin, Lsn end) const {
-    return std::filesystem::file_size(Chunk(number)) - (end - begin);
   }
 
   void Overwrite(uint64_t number, uint64_t at, const std::string& bytes) const {
@@ -113,25 +124,22 @@ class LogTest : public ::testing::Test {
   std::vector<std::string> _records;
 };
 
-TEST_F(LogTest, ReplayFollowsTheChunkChain) {
+TEST_F(LogTest, ReplayFollowsTheChunks) {
   {
     auto log = Open();
-    log->Append(Bytes(Payload('A')));
-    log->Switch();
-    log->Append(Bytes(Payload('B')));
-    log->Switch();
-    log->Append(Bytes(Payload('C')));
+    log->Append(Bytes(Half('A')));
+    log->Append(Bytes(Half('B')));
+    log->Append(Bytes(Half('C')));
   }
+  EXPECT_TRUE(std::filesystem::exists(Chunk(2)));
   {
     auto log = Open();
-    EXPECT_EQ(_records,
-              (std::vector{Payload('A'), Payload('B'), Payload('C')}));
+    EXPECT_EQ(_records, (std::vector{Half('A'), Half('B'), Half('C')}));
     log->Append(Bytes(Payload('D')));
   }
   Open();
-  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B'), Payload('C'),
-                                   Payload('D')}));
-  EXPECT_TRUE(std::filesystem::exists(Chunk(2)));
+  EXPECT_EQ(_records,
+            (std::vector{Half('A'), Half('B'), Half('C'), Payload('D')}));
   EXPECT_FALSE(std::filesystem::exists(Chunk(3)));
 }
 
@@ -140,15 +148,12 @@ TEST_F(LogTest, ChunksAfterALostTailAreRemoved) {
   {
     auto log = Open();
     log->Append(Bytes(Payload('A')));
-    lost = WriteUnsynced(*log, Payload('B'));
-    log->Switch();
-    WriteUnsynced(*log, Payload('C'));
-    log->Switch();
-    WriteUnsynced(*log, Payload('E'));
+    lost = WriteUnsynced(*log, Half('B'));
+    WriteUnsynced(*log, Half('C'));
+    WriteUnsynced(*log, Half('E'));
   }
-  const auto header =
-    ChunkHeader(1, lost.end, lost.end + (lost.end - lost.begin));
-  Overwrite(0, header + lost.begin, std::string(lost.end - lost.begin, '\0'));
+  EXPECT_TRUE(std::filesystem::exists(Chunk(2)));
+  Overwrite(0, lost.begin, std::string(lost.end - lost.begin, '\0'));
   {
     auto log = Open();
     EXPECT_EQ(_records, std::vector{Payload('A')});
@@ -177,63 +182,38 @@ TEST_F(LogTest, ARecordAfterATornOneIsNotRevived) {
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('D')}));
 }
 
-TEST_F(LogTest, ADamagedChunkBeforeASyncedOneIsRefused) {
-  Written damaged;
-  Lsn end = 0;
-  {
-    auto log = Open();
-    log->Append(Bytes(Payload('A')));
-    damaged = WriteUnsynced(*log, Payload('B'));
-    log->Switch();
-    end = log->Append(Bytes(Payload('C')));
-  }
-  const auto header = ChunkHeader(1, damaged.end, end);
-  Overwrite(0, header + damaged.begin, std::string(1, 'X'));
-  try {
-    Open();
-    FAIL() << "a log with a damaged synced chunk was replayed";
-  } catch (const irs::SqlException& e) {
-    EXPECT_EQ(e.message(),
-              absl::StrCat("log '", _dir.string(),
-                           "' is damaged: chunk 0 ends at LSN ", damaged.begin,
-                           ", but chunk 1 was synced from LSN ", damaged.end));
-  }
-}
-
 TEST_F(LogTest, ChunksTheSnapshotCoversAreRemovedOnRestart) {
   {
     auto log = Open();
-    const auto a = log->Append(Bytes(Payload('A')));
-    log->Switch();
-    log->Append(Bytes(Payload('B')));
-    log->WriteSnapshot(
-      a, {}, [](std::span<uint8_t> payload) { return payload; },
-      [](std::vector<Log::HistoryEntry> entries) { return entries; });
+    const auto a = log->Append(Bytes(Half('A')));
+    log->Append(Bytes(Half('B')));
+    Snapshot(*log, a);
   }
   EXPECT_TRUE(std::filesystem::exists(Chunk(0)));
   Open();
-  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+  EXPECT_EQ(_records, (std::vector{Half('A'), Half('B')}));
   EXPECT_FALSE(std::filesystem::exists(Chunk(0)));
+  EXPECT_TRUE(std::filesystem::exists(Chunk(1)));
 }
 
-TEST_F(LogTest, ASnapshotAtTheStartOfAnUnwrittenChunkReplays) {
+TEST_F(LogTest, ASnapshotOfTheWholeLogKeepsTheCurrentChunk) {
   {
     auto log = Open();
-    log->Append(Bytes(Payload('A')));
-    const auto covered = log->Switch();
-    log->WriteSnapshot(
-      covered, {}, [](std::span<uint8_t> payload) { return payload; },
-      [](std::vector<Log::HistoryEntry> entries) { return entries; });
+    log->Append(Bytes(Half('A')));
+    const auto b = log->Append(Bytes(Half('B')));
+    Snapshot(*log, b);
     log->DropCovered();
   }
   EXPECT_FALSE(std::filesystem::exists(Chunk(0)));
+  EXPECT_TRUE(std::filesystem::exists(Chunk(1)));
   {
     auto log = Open();
-    EXPECT_EQ(_records, std::vector{Payload('A')});
-    log->Append(Bytes(Payload('B')));
+    EXPECT_EQ(_records, (std::vector{Half('A'), Half('B')}));
+    log->Append(Bytes(Payload('C')));
   }
   Open();
-  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+  EXPECT_EQ(_records, (std::vector{Half('A'), Half('B'), Payload('C')}));
+  EXPECT_FALSE(std::filesystem::exists(Chunk(2)));
 }
 
 TEST_F(LogTest, ARecordOverTheSizeLimitIsRefused) {
@@ -248,20 +228,14 @@ TEST_F(LogTest, ARecordOverTheSizeLimitIsRefused) {
 }
 
 TEST_F(LogTest, ARecordCopiedToAnotherLsnIsNotReplayed) {
-  Lsn end = 0;
-  Lsn next = 0;
+  Lsn a = 0;
+  Lsn b = 0;
   {
     auto log = Open();
-    end = log->Append(Bytes(Payload('A')));
-    log->Switch();
-    next = log->Append(Bytes(Payload('B')));
+    a = log->Append(Bytes(Payload('A')));
+    b = log->Append(Bytes(Payload('B')));
   }
-  const auto header = ChunkHeader(1, end, next);
-  {
-    auto log = Open();
-    EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
-  }
-  Overwrite(1, header + (next - end), ReadBytes(1, header, next - end));
+  Overwrite(0, b, ReadBytes(0, a, b - a));
   Open();
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
 }

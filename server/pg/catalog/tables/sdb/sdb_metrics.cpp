@@ -98,6 +98,14 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
   rows.emplace_back("catalog_wal_size_on_disk",
                     log ? static_cast<int64_t>(log->Size()) : 0,
                     "current catalog wal file size in bytes");
+  rows.emplace_back(
+    "catalog_wal_since_snapshot_bytes",
+    log ? static_cast<int64_t>(log->End() - log->Covered()) : 0,
+    "bytes of the catalog wal written since its last snapshot, which a "
+    "restart replays");
+  rows.emplace_back("catalog_history_bytes",
+                    log ? static_cast<int64_t>(log->HistoryBytes()) : 0,
+                    "bytes of catalog changes the catalog wal snapshot keeps");
   return rows;
 }
 

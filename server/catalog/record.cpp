@@ -672,12 +672,12 @@ std::span<uint8_t> CatalogPart(std::span<uint8_t> payload) {
   return payload.subspan(sizeof(uint32_t), CatalogSize(payload));
 }
 
-std::vector<Log::HistoryEntry> CompactHistory(
-  std::vector<Log::HistoryEntry> entries) {
+std::vector<std::vector<uint8_t>> CompactHistory(
+  std::span<const std::span<uint8_t>> parts) {
   std::vector<CatalogRecord> records;
-  records.reserve(entries.size());
-  for (auto& entry : entries) {
-    records.push_back(ReadCatalogRecord(entry.catalog));
+  records.reserve(parts.size());
+  for (const auto part : parts) {
+    records.push_back(ReadCatalogRecord(part));
   }
   std::vector<Life> lives;
   std::vector<size_t> change_life;
@@ -863,11 +863,10 @@ std::vector<Log::HistoryEntry> CompactHistory(
       kept[slot.record].secrets.push_back(std::move(slot.value));
     }
   }
-  std::vector<Log::HistoryEntry> compacted;
-  for (size_t r = 0; r < kept.size(); ++r) {
-    if (!kept[r].Empty()) {
-      compacted.push_back(
-        {.lsn = entries[r].lsn, .catalog = WriteCatalogRecord(kept[r])});
+  std::vector<std::vector<uint8_t>> compacted;
+  for (const auto& record : kept) {
+    if (!record.Empty()) {
+      compacted.push_back(Join(WriteCatalogRecord(record), {}));
     }
   }
   return compacted;

@@ -214,8 +214,7 @@ FORCE CHECKPOINT;
 
 connection default
 query
-SELECT min(regexp_extract(file, '[^/]+$')) > (SELECT oldest FROM bcmd_wal) AS checkpointed
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/log/*.log');
+SELECT value < 4096 AS checkpointed FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
 ----
 checkpointed
 t

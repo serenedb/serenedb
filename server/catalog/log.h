@@ -49,32 +49,25 @@ class Log {
     std::shared_ptr<Chunk> chunk;
   };
 
-  struct HistoryEntry {
-    Lsn lsn = 0;
-    std::vector<uint8_t> catalog;
-  };
-
+  using Apply = absl::FunctionRef<void(std::span<uint8_t>)>;
   using CatalogPart = absl::FunctionRef<std::span<uint8_t>(std::span<uint8_t>)>;
-  using Compact =
-    absl::FunctionRef<std::vector<HistoryEntry>(std::vector<HistoryEntry>)>;
+  using Compact = absl::FunctionRef<std::vector<std::vector<uint8_t>>(
+    std::span<const std::span<uint8_t>>)>;
 
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
 
   static std::string ChunkName(uint64_t number);
   static std::vector<duckdb::unique_ptr<duckdb::FileHandle>> LockChunks(
     duckdb::FileSystem& fs, const std::filesystem::path& dir);
-  static void Read(
-    duckdb::FileSystem& fs, const std::filesystem::path& dir,
-    absl::FunctionRef<void(Lsn, std::span<uint8_t>)> history,
-    absl::FunctionRef<void(const Range&, std::span<uint8_t>)> apply);
+  static void Read(duckdb::FileSystem& fs, const std::filesystem::path& dir,
+                   Apply apply);
   static void Move(const std::filesystem::path& from,
                    const std::filesystem::path& to);
   static void Cut(const std::filesystem::path& dir, Lsn end);
 
   Log(duckdb::FileSystem& fs, std::filesystem::path dir);
 
-  void Replay(absl::FunctionRef<void(Lsn, std::span<uint8_t>)> history,
-              absl::FunctionRef<void(const Range&, std::span<uint8_t>)> apply);
+  void Replay(Apply apply, CatalogPart part);
 
   Range Reserve(size_t payload_size);
   void Write(const Range& range, std::span<const uint8_t> payload);
@@ -93,6 +86,9 @@ class Log {
   }
   uint64_t SnapshotBytes() const noexcept {
     return _snapshot_bytes.load(std::memory_order_relaxed);
+  }
+  uint64_t HistoryBytes() const noexcept {
+    return _history_bytes.load(std::memory_order_relaxed);
   }
 
   Lsn Reserved() const {
@@ -119,8 +115,6 @@ class Log {
   }
   uint64_t Size() const { return Reserved() - Oldest(); }
 
-  Lsn Switch();
-
   bool HasSpare() const noexcept {
     return _has_spare.load(std::memory_order_relaxed);
   }
@@ -130,7 +124,6 @@ class Log {
   struct Chunk {
     uint64_t number = 0;
     Lsn begin = 0;
-    bool sealed = false;
     duckdb::unique_ptr<duckdb::FileHandle> file;
   };
 
@@ -153,6 +146,7 @@ class Log {
   std::filesystem::path _dir;
   mutable absl::Mutex _mutex;
   absl::btree_map<Lsn, std::shared_ptr<Chunk>> _chunks ABSL_GUARDED_BY(_mutex);
+  uint64_t _next_number ABSL_GUARDED_BY(_mutex) = 0;
   Lsn _replayed ABSL_GUARDED_BY(_mutex) = 0;
   Lsn _reserved ABSL_GUARDED_BY(_mutex) = 0;
   uint64_t _reserved_seq ABSL_GUARDED_BY(_mutex) = 0;
@@ -170,9 +164,11 @@ class Log {
   std::atomic<Lsn> _oldest{0};
   std::atomic<Lsn> _newest{0};
   std::atomic<Lsn> _covered{0};
+  std::atomic<uint64_t> _covered_number{0};
   std::atomic<uint64_t> _snapshot_bytes{0};
+  std::atomic<uint64_t> _history_bytes{0};
   absl::Mutex _files_mutex;
-  std::vector<HistoryEntry> _history ABSL_GUARDED_BY(_files_mutex);
+  std::vector<std::vector<uint8_t>> _history ABSL_GUARDED_BY(_files_mutex);
 };
 
 }  // namespace sdb::catalog

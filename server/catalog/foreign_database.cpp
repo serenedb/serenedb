@@ -98,14 +98,9 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
     .locks = Log::LockChunks(fs, layout.LogDir()),
   };
   LoggedDatabases databases;
-  Log::Read(
-    fs, foreign.dir,
-    [&](Lsn, std::span<uint8_t> catalog) {
-      ReadDatabases(context, catalog, databases);
-    },
-    [&](const Log::Range&, std::span<uint8_t> payload) {
-      ReadDatabases(context, CatalogPart(payload), databases);
-    });
+  Log::Read(fs, foreign.dir, [&](std::span<uint8_t> payload) {
+    ReadDatabases(context, CatalogPart(payload), databases);
+  });
   const auto it = absl::c_find_if(databases, [&](const auto& database) {
     return database.second.GetIdentifierName() == name;
   });
@@ -127,14 +122,10 @@ void ReplayForeignDatabase(duckdb::ClientContext& context,
   const auto target = [&](duckdb::idx_t id) -> BaseCatalog* {
     return id == foreign.database ? &catalog : nullptr;
   };
-  Log::Read(
-    duckdb::FileSystem::GetFileSystem(context), foreign.dir,
-    [&](Lsn, std::span<uint8_t> part) {
-      ReplayCatalogPart(context, target, part);
-    },
-    [&](const Log::Range&, std::span<uint8_t> payload) {
-      ReplayRecord(context, target, payload);
-    });
+  Log::Read(duckdb::FileSystem::GetFileSystem(context), foreign.dir,
+            [&](std::span<uint8_t> payload) {
+              ReplayRecord(context, target, payload);
+            });
   const auto transaction = catalog.GetCatalogTransaction(context);
   catalog.ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
     auto& own = schema.Cast<Schema>();

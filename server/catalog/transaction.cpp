@@ -50,8 +50,6 @@
 namespace sdb::catalog {
 namespace {
 
-constexpr uint64_t kSnapshotDataShare = 8;
-
 class [[nodiscard]] CommitGate final {
  public:
   CommitGate(absl::Mutex& gate, bool exclusive) ABSL_NO_THREAD_SAFETY_ANALYSIS
@@ -524,7 +522,7 @@ void Transactions::Commit(SessionTransaction& transaction,
   Log::Range range;
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
-  const auto layouts = _replaying == 0
+  const auto layouts = !_replaying
                          ? transaction.LayoutClaims()
                          : std::span<const std::shared_ptr<search::Store>>{};
   {
@@ -532,11 +530,11 @@ void Transactions::Commit(SessionTransaction& transaction,
                                           !transaction.LsnUpdates().empty() ||
                                           writes.CrossTable()};
     const TableLocks tables{writes.CommitMutexes(layouts)};
-    if (_replaying == 0) {
+    if (!_replaying) {
       CheckDependencies(transaction);
     }
     record = WriteRecord(context, transaction, writes);
-    const bool logged = !record.empty() && _log && _replaying == 0;
+    const bool logged = !record.empty() && _log && !_replaying;
     if (logged) {
       SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
       SDB_IF_FAILURE("catalog_append_fails") {
@@ -552,6 +550,7 @@ void Transactions::Commit(SessionTransaction& transaction,
       }
       commit = ++_reserved_commit;
       end = range.end != 0 ? range.end : ReservedEnd();
+      _commit_end[commit % kPublishRing] = end;
     }
     for (const auto& change : transaction.Changes()) {
       change.version->timestamp = commit;
@@ -621,11 +620,12 @@ void Transactions::CommitStorage(
     record = build();
     {
       absl::MutexLock sequence{&_sequence_mutex};
-      if (!record.empty() && _log && _replaying == 0) {
+      if (!record.empty() && _log && !_replaying) {
         range = _log->Reserve(record.size());
       }
       commit = ++_reserved_commit;
       end = range.end != 0 ? range.end : ReservedEnd();
+      _commit_end[commit % kPublishRing] = end;
     }
     apply(commit);
   }
@@ -668,7 +668,9 @@ void Transactions::MaintainLog(Lsn end) {
   }
   const auto covered = _log->Covered();
   if (end <= covered ||
-      end - covered <= _max_log_bytes.load(std::memory_order_relaxed) ||
+      end - covered <=
+        std::max<uint64_t>(_max_log_bytes.load(std::memory_order_relaxed),
+                           _log->SnapshotBytes()) ||
       _log->NewestChunk() <= _log->Oldest()) {
     return;
   }
@@ -705,7 +707,7 @@ void Transactions::TruncateInBackground(LogCycle cycle) {
 
 absl::Status Transactions::TruncateLog(LogCycle cycle,
                                        duckdb::CheckpointAbort abort) {
-  if (!_log || _replaying != 0) {
+  if (!_log || _replaying) {
     return absl::OkStatus();
   }
   const auto pass = _checkpoints.TryEnter();
@@ -722,18 +724,19 @@ absl::Status Transactions::TruncateLog(LogCycle cycle,
       "debug_checkpoint_abort");
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_log_truncate_before_cover");
-  search::PrepareSnapshot(
-    _max_log_bytes.load(std::memory_order_relaxed) / kSnapshotDataShare,
-    cycle == LogCycle::Checkpoint);
+  if (cycle == LogCycle::Checkpoint) {
+    search::WriteOutTables();
+  }
   Lsn covered = 0;
   std::vector<search::TableSnapshot> tables;
   {
-    absl::MutexLock gate{&_commit_gate};
-    covered = cycle == LogCycle::Budget ? _log->End() : _log->Switch();
-    tables = search::CaptureSnapshot();
-  }
-  if (covered <= _log->Covered()) {
-    return absl::OkStatus();
+    const CommittedView view;
+    const auto end = CommitEnd(view.Snapshot());
+    if (!end || *end <= _log->Covered()) {
+      return absl::OkStatus();
+    }
+    covered = *end;
+    tables = search::CaptureSnapshot(view.Snapshot(), view.Walks());
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
   const auto records = search::SnapshotRecords(tables);
@@ -751,7 +754,25 @@ absl::Status Transactions::TruncateLog(LogCycle cycle,
 }
 
 Lsn Transactions::ReservedEnd() const {
-  return _log && _replaying == 0 ? _log->Reserved() : 0;
+  return _log && !_replaying ? _log->Reserved() : 0;
+}
+
+void Transactions::Open(std::unique_ptr<Log> log) {
+  absl::MutexLock sequence{&_sequence_mutex};
+  _opened_commit = _reserved_commit;
+  _opened_end = log->End();
+  _log = std::move(log);
+}
+
+std::optional<Lsn> Transactions::CommitEnd(duckdb::transaction_t commit) {
+  absl::MutexLock sequence{&_sequence_mutex};
+  if (commit <= _opened_commit) {
+    return _opened_end;
+  }
+  if (_reserved_commit - commit >= kPublishRing) {
+    return std::nullopt;
+  }
+  return _commit_end[commit % kPublishRing];
 }
 
 void Transactions::Publish(duckdb::transaction_t commit, bool catalog,

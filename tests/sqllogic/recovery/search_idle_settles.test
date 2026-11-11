@@ -20,7 +20,7 @@ INSERT INTO sis SELECT i, 'row ' || i FROM range(20000, 30000) t(i);
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT (SELECT value FROM sdb_metrics WHERE metric = 'num_buffered_docs' AND relation_id = 'sis'::regclass) AS buffered,
        (SELECT value FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = 'sis'::regclass) AS segments,
-       (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_size_on_disk') < 4096 AS small_log;
+       (SELECT value FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes') < 4096 AS small_log;
 ----
 buffered	segments	small_log
 0	1	t

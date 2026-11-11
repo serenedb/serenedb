@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/row_id_deduplicator.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -39,7 +40,7 @@ class RowPositionDeduplicator {
   RowPositionDeduplicator(const RowPositionDeduplicator&) = delete;
   RowPositionDeduplicator& operator=(const RowPositionDeduplicator&) = delete;
 
-  duckdb::idx_t KeepFirst(duckdb::DataChunk& chunk, duckdb::idx_t rowid);
+  duckdb::idx_t Register(duckdb::DataChunk& chunk, duckdb::idx_t rowid);
 
   irs::DocRemovalBuilder Positions() &&;
 
@@ -51,6 +52,19 @@ class RowPositionDeduplicator {
   uint32_t _units;
   std::unique_ptr<uint32_t[]> _first_page;
   std::unique_ptr<std::atomic<Bitset*>[]> _pages;
+};
+
+class RowPositionSet final : public duckdb::RowIdSet {
+ public:
+  explicit RowPositionSet(const irs::IndexReader& view) : _rows{view} {}
+
+  duckdb::idx_t Register(duckdb::DataChunk& input,
+                         duckdb::idx_t row_id_start) final {
+    return _rows.Register(input, row_id_start);
+  }
+
+ private:
+  RowPositionDeduplicator _rows;
 };
 
 }  // namespace sdb::connector

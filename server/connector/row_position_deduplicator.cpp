@@ -74,8 +74,8 @@ uint64_t* RowPositionDeduplicator::WordsOf(uint32_t unit, irs::doc_id_t doc) {
   return irs::DocumentMaskBuilder::Words(*bits);
 }
 
-duckdb::idx_t RowPositionDeduplicator::KeepFirst(duckdb::DataChunk& chunk,
-                                                 duckdb::idx_t rowid) {
+duckdb::idx_t RowPositionDeduplicator::Register(duckdb::DataChunk& chunk,
+                                                duckdb::idx_t rowid) {
   const auto count = chunk.size();
   auto places = chunk.data[rowid].Values<int64_t>();
   duckdb::SelectionVector keep;

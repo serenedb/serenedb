@@ -97,7 +97,7 @@ std::vector<int64_t> Kept(RowPositionDeduplicator& seen,
     values[i] = static_cast<int64_t>(positions[i]);
   }
   chunk.SetCardinality(positions.size());
-  const auto kept = seen.KeepFirst(chunk, 0);
+  const auto kept = seen.Register(chunk, 0);
   EXPECT_EQ(kept, chunk.size());
   std::vector<int64_t> result;
   for (duckdb::idx_t i = 0; i != chunk.size(); ++i) {

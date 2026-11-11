@@ -154,6 +154,10 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
 
+  duckdb::unique_ptr<duckdb::RowIdSet> GetMatchedRowSet(
+    duckdb::ClientContext& context,
+    duckdb::vector<duckdb::LogicalType> row_id_types) const final;
+
   void InternalAppend(duckdb::ClientContext& context,
                       duckdb::ColumnDataCollection& collection) final;
 

@@ -87,6 +87,7 @@
 #include "connector/constraint_keys.h"
 #include "connector/full_scanner.h"
 #include "connector/primary_key.h"
+#include "connector/row_position_deduplicator.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_sink_rows.h"
 #include "connector/search_table_backfill.h"
@@ -540,6 +541,14 @@ duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
 
 duckdb::vector<duckdb::column_t> SearchTableEntry::GetRowIdColumns() const {
   return {connector::kColumnIdentifierDocAddress};
+}
+
+duckdb::unique_ptr<duckdb::RowIdSet> SearchTableEntry::GetMatchedRowSet(
+  duckdb::ClientContext& context, duckdb::vector<duckdb::LogicalType>) const {
+  auto& writes = SessionOf(context, catalog).SearchTxn();
+  writes.RegisterWriter(_storage, *this);
+  return duckdb::make_uniq<connector::RowPositionSet>(
+    writes.PinnedReader(context, *_storage));
 }
 
 void SearchTableEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {

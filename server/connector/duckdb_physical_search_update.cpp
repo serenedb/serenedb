@@ -213,7 +213,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   auto& lstate = input.local_state.Cast<SearchUpdateLocalState>();
   if (gstate.updated_rows &&
-      gstate.updated_rows->KeepFirst(chunk, gstate.rowid.input_col_idx) == 0) {
+      gstate.updated_rows->Register(chunk, gstate.rowid.input_col_idx) == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   const auto num_rows = chunk.size();

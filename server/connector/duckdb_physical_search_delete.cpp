@@ -150,7 +150,7 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
   if (gstate.deleted_rows) {
-    if (gstate.deleted_rows->KeepFirst(chunk, _rowid.input_col_idx) == 0) {
+    if (gstate.deleted_rows->Register(chunk, _rowid.input_col_idx) == 0) {
       return duckdb::SinkResultType::NEED_MORE_INPUT;
     }
   } else {

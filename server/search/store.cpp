@@ -1067,11 +1067,16 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
                            index.config->constraint_keys.end());
   };
   for (const auto& index : configs) {
-    if (index.oid != skip) {
+    if (index.oid != skip && index.oid != _id) {
       add(index);
     }
   }
   absl::c_for_each(retired, add);
+  for (const auto& index : configs) {
+    if (index.oid == _id) {
+      add(index);
+    }
+  }
   for (const auto& key : constraint_keys) {
     fields.emplace(key.field,
                    catalog::InvertedIndexField{{.indexed_term_dict = true}});

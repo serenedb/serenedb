@@ -28,12 +28,15 @@
 #include <cstdint>
 #include <cstdlib>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/utils/system_compiler.hpp>
 #include <iterator>
 #include <memory>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "backup/backup_label.h"
 #include "backup/pg_control.h"
@@ -49,6 +52,13 @@ constexpr uint64_t kStartLsn = 1000;
 constexpr duckdb::idx_t kDatabase = 5;
 constexpr duckdb::idx_t kStore = 77;
 constexpr std::string_view kLogLink = "log";
+constexpr size_t kPayload = 100;
+
+std::string Payload(char fill) { return std::string(kPayload, fill); }
+
+std::span<const uint8_t> Bytes(const std::string& payload) {
+  return {reinterpret_cast<const uint8_t*>(payload.data()), payload.size()};
+}
 
 class RestoreTest : public ::testing::Test {
  protected:
@@ -59,9 +69,7 @@ class RestoreTest : public ::testing::Test {
     std::filesystem::create_directory(_root);
     _layout = std::make_unique<catalog::DataDirectory>(_root.string());
     WritePgControl(_root, {.system_identifier = kSystemIdentifier});
-    std::filesystem::create_directories(Link());
-    WriteFile(Link() / catalog::Log::ChunkName(0), 200, 'L');
-    WriteFile(Link() / catalog::Log::ChunkName(200), 100, 'M');
+    BackUpLog(false);
     std::filesystem::create_directories(_layout->LogDir());
     WriteFile(Chunk(0), 500, 'X');
     std::filesystem::create_directories(StoreDir());
@@ -73,12 +81,58 @@ class RestoreTest : public ::testing::Test {
     WriteFile(_root / "standby.signal", 0, ' ');
     _cut.log_link =
       std::filesystem::path{"engine_v1"} / kBackupDir / std::string{kLogLink};
-    _cut.log_size = 250;
+    _cut.log_size = _ends[2];
     _cut.stores.push_back(
       {.database_oid = kDatabase, .oid = kStore, .generation = 2});
   }
 
   void TearDown() final { std::filesystem::remove_all(_root); }
+
+  void BackUpLog(bool snapshot) {
+    std::filesystem::remove_all(Link());
+    const auto source = _root / "source";
+    std::filesystem::remove_all(source);
+    _ends.clear();
+    {
+      const auto fs = duckdb::FileSystem::CreateLocal();
+      catalog::Log log{*fs, source};
+      log.Replay([](catalog::Lsn, std::span<uint8_t>) {},
+                 [](const catalog::Log::Range&, std::span<uint8_t>) {});
+      _ends.push_back(log.Append(Bytes(Payload('A'))));
+      _ends.push_back(log.Append(Bytes(Payload('B'))));
+      log.Switch();
+      _ends.push_back(log.Append(Bytes(Payload('C'))));
+      if (snapshot) {
+        log.WriteSnapshot(
+          _ends[1], {}, [](std::span<uint8_t> payload) { return payload; },
+          [](std::vector<catalog::Log::HistoryEntry> entries) {
+            return entries;
+          });
+        log.DropCovered();
+      }
+      _ends.push_back(log.Append(Bytes(Payload('D'))));
+      log.Link(Link());
+    }
+    std::filesystem::remove_all(source);
+    _chunk_header =
+      std::filesystem::file_size(Link() / catalog::Log::ChunkName(1)) -
+      (_ends[3] - _ends[1]);
+  }
+
+  std::vector<std::string> Records() const {
+    std::vector<std::string> records;
+    const auto append = [&](std::span<uint8_t> payload) {
+      records.emplace_back(payload.begin(), payload.end());
+    };
+    const auto fs = duckdb::FileSystem::CreateLocal();
+    catalog::Log::Read(
+      *fs, _layout->LogDir(),
+      [&](catalog::Lsn, std::span<uint8_t> payload) { append(payload); },
+      [&](const catalog::Log::Range&, std::span<uint8_t> payload) {
+        append(payload);
+      });
+    return records;
+  }
 
   static void WriteFile(const std::filesystem::path& path, size_t size,
                         char fill) {
@@ -95,8 +149,8 @@ class RestoreTest : public ::testing::Test {
     return _layout->EngineDir() / kBackupDir / std::string{kLogLink};
   }
 
-  std::filesystem::path Chunk(catalog::Lsn begin) const {
-    return _layout->LogDir() / catalog::Log::ChunkName(begin);
+  std::filesystem::path Chunk(uint64_t number) const {
+    return _layout->LogDir() / catalog::Log::ChunkName(number);
   }
 
   std::filesystem::path StoreDir() const {
@@ -163,14 +217,15 @@ class RestoreTest : public ::testing::Test {
   std::filesystem::path _root;
   std::unique_ptr<catalog::DataDirectory> _layout;
   Cut _cut;
+  std::vector<catalog::Lsn> _ends;
+  uint64_t _chunk_header = 0;
 };
 
 TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
   WriteLabel();
   Prepare();
 
-  EXPECT_EQ(Content(Chunk(0)), std::string(200, 'L'));
-  EXPECT_EQ(Content(Chunk(200)), std::string(50, 'M'));
+  EXPECT_EQ(Records(), (std::vector{Payload('A'), Payload('B'), Payload('C')}));
   EXPECT_FALSE(Exists(_layout->EngineDir() / kBackupDir));
 
   EXPECT_TRUE(Exists(StoreDir() / "segments_1"));
@@ -193,23 +248,31 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
 }
 
 TEST_F(RestoreTest, AChunkPastTheCutIsRemoved) {
-  _cut.log_size = 150;
+  _cut.log_size = _ends[0];
   WriteLabel();
   Prepare();
-  EXPECT_EQ(Content(Chunk(0)), std::string(150, 'L'));
-  EXPECT_FALSE(Exists(Chunk(200)));
+  EXPECT_EQ(Records(), std::vector{Payload('A')});
+  EXPECT_FALSE(Exists(Chunk(1)));
 }
 
 TEST_F(RestoreTest, ARestartedRestoreFinishes) {
-  std::filesystem::remove(Chunk(0));
   std::filesystem::rename(Link() / catalog::Log::ChunkName(0), Chunk(0));
-  std::filesystem::rename(Link() / catalog::Log::ChunkName(200), Chunk(200));
+  std::filesystem::rename(Link() / catalog::Log::ChunkName(1), Chunk(1));
   std::filesystem::remove(Link());
   WriteLabel();
   Prepare();
-  EXPECT_EQ(Content(Chunk(0)), std::string(200, 'L'));
-  EXPECT_EQ(Content(Chunk(200)), std::string(50, 'M'));
+  EXPECT_EQ(Records(), (std::vector{Payload('A'), Payload('B'), Payload('C')}));
   EXPECT_TRUE(Exists(_root / "backup_label.old"));
+}
+
+TEST_F(RestoreTest, TheRestoredLogStartsAtItsSnapshot) {
+  BackUpLog(true);
+  _cut.log_size = _ends[3];
+  WriteLabel();
+  Prepare();
+  EXPECT_EQ(Records(), (std::vector{Payload('A'), Payload('B'), Payload('C'),
+                                    Payload('D')}));
+  EXPECT_EQ(Content(Chunk(0)), std::string(500, 'X'));
 }
 
 TEST_F(RestoreTest, ACrashAfterTheLogIsFinishedByTheNextBoot) {
@@ -278,14 +341,16 @@ TEST_F(RestoreTest, RefusesAMissingStoreDirectory) {
 
 TEST_F(RestoreTest, RefusesALogShorterThanTheCut) {
   WriteLabel();
-  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(200), 20);
-  ExpectRefused("it has 20 bytes, the backup recorded 50");
+  const auto size = _chunk_header + (_ends[2] - _ends[1]) - 1;
+  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(1), size);
+  ExpectRefused(absl::StrCat("has ", size, " bytes, the cut needs ", size + 1));
 }
 
 TEST_F(RestoreTest, RefusesALogWithAShortChunkBeforeTheCut) {
   WriteLabel();
-  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(0), 100);
-  ExpectRefused("it has 100 bytes, the log needs 200");
+  const auto size = _chunk_header + _ends[1] - 1;
+  std::filesystem::resize_file(Link() / catalog::Log::ChunkName(0), size);
+  ExpectRefused(absl::StrCat("has ", size, " bytes, the log needs ", size + 1));
 }
 
 }  // namespace

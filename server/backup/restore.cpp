@@ -20,14 +20,9 @@
 
 #include "backup/restore.h"
 
-#include <absl/container/btree_map.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
-#include <cerrno>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <filesystem>
@@ -93,28 +88,6 @@ void Remove(const std::filesystem::path& path) {
   }
 }
 
-void TruncateFile(const std::filesystem::path& path, uint64_t size) {
-  const int fd = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
-  if (fd < 0) {
-    utils::file_utils::ThrowFileError("open", path.string(), errno);
-  }
-  struct stat st{};
-  bool ok = ::fstat(fd, &st) == 0;
-  int error = errno;
-  if (ok && static_cast<uint64_t>(st.st_size) < size) {
-    ::close(fd);
-    Fail("the copy is incomplete:", path,
-         absl::StrCat("it has ", st.st_size, " bytes, the backup recorded ",
-                      size));
-  }
-  ok = ok && ::ftruncate(fd, static_cast<off_t>(size)) == 0 && ::fsync(fd) == 0;
-  error = ok ? 0 : errno;
-  ::close(fd);
-  if (!ok) {
-    utils::file_utils::ThrowFileError("truncate", path.string(), error);
-  }
-}
-
 template<typename Visit>
 void ForEachFile(const std::filesystem::path& directory, Visit&& visit) {
   std::error_code ec;
@@ -175,50 +148,10 @@ void Restore(const catalog::DataDirectory& layout,
     if (ec) {
       utils::file_utils::ThrowFileError("create", log.string(), ec);
     }
-    ForEachFile(link,
-                [&](const std::filesystem::path& path, std::string_view name) {
-                  if (name != catalog::Log::kSnapshotFile &&
-                      !catalog::Log::ChunkBegin(name)) {
-                    return;
-                  }
-                  std::filesystem::rename(path, log / name, ec);
-                  if (ec) {
-                    utils::file_utils::ThrowFileError("restore the log from",
-                                                      path.string(), ec);
-                  }
-                });
-    utils::file_utils::SyncDirectory(log);
+    catalog::Log::Move(link, log);
     Remove(link);
   }
-  absl::btree_map<catalog::Lsn, std::filesystem::path> chunks;
-  ForEachFile(log,
-              [&](const std::filesystem::path& path, std::string_view name) {
-                if (const auto begin = catalog::Log::ChunkBegin(name)) {
-                  chunks.emplace(*begin, path);
-                }
-              });
-  if (const auto from = catalog::Log::SnapshotCut(log);
-      from && *from < cut.log_size &&
-      (chunks.empty() || chunks.begin()->first > *from)) {
-    Fail("the copy is incomplete:", log,
-         absl::StrCat("the log needs the records from ", *from,
-                      ", its first file starts at ",
-                      chunks.empty() ? cut.log_size : chunks.begin()->first));
-  }
-  for (auto it = chunks.begin(); it != chunks.end(); ++it) {
-    const auto& [begin, path] = *it;
-    const auto next = std::next(it);
-    if (begin > cut.log_size) {
-      Remove(path);
-    } else if (next == chunks.end() || next->first > cut.log_size) {
-      TruncateFile(path, cut.log_size - begin);
-    } else if (std::filesystem::file_size(path) < next->first - begin) {
-      Fail("the copy is incomplete:", path,
-           absl::StrCat("it has ", std::filesystem::file_size(path),
-                        " bytes, the log needs ", next->first - begin));
-    }
-  }
-  utils::file_utils::SyncDirectory(log);
+  catalog::Log::Cut(log, cut.log_size);
   SDB_IF_FAILURE("crash_in_restore_after_log") { SDB_IMMEDIATE_ABORT(); }
 
   for (const auto& store : cut.stores) {

@@ -30,10 +30,8 @@
 #include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace sdb::catalog {
@@ -61,17 +59,17 @@ class Log {
     absl::FunctionRef<std::vector<HistoryEntry>(std::vector<HistoryEntry>)>;
 
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
-  static constexpr std::string_view kSnapshotFile = "snapshot";
 
-  static std::optional<Lsn> ChunkBegin(std::string_view name);
-  static std::string ChunkName(Lsn begin);
-  static std::optional<Lsn> SnapshotCut(const std::filesystem::path& dir);
+  static std::string ChunkName(uint64_t number);
   static std::vector<duckdb::unique_ptr<duckdb::FileHandle>> LockChunks(
     duckdb::FileSystem& fs, const std::filesystem::path& dir);
   static void Read(
     duckdb::FileSystem& fs, const std::filesystem::path& dir,
     absl::FunctionRef<void(Lsn, std::span<uint8_t>)> history,
     absl::FunctionRef<void(const Range&, std::span<uint8_t>)> apply);
+  static void Move(const std::filesystem::path& from,
+                   const std::filesystem::path& to);
+  static void Cut(const std::filesystem::path& dir, Lsn end);
 
   Log(duckdb::FileSystem& fs, std::filesystem::path dir);
 
@@ -130,7 +128,10 @@ class Log {
 
  private:
   struct Chunk {
+    uint64_t number = 0;
     Lsn begin = 0;
+    uint64_t id = 0;
+    bool sealed = false;
     duckdb::unique_ptr<duckdb::FileHandle> file;
   };
 
@@ -141,8 +142,9 @@ class Log {
 
   static constexpr uint64_t kWrittenRing = uint64_t{1} << 16;
 
-  std::filesystem::path ChunkPath(Lsn begin) const;
-  std::shared_ptr<Chunk> OpenChunk(Lsn begin, bool create) const;
+  std::filesystem::path ChunkPath(uint64_t number) const;
+  duckdb::unique_ptr<duckdb::FileHandle> OpenChunk(uint64_t number,
+                                                   bool create) const;
   void StartChunk() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   void SyncDirectory() const;
   void AdvanceWritten() noexcept;
@@ -164,7 +166,7 @@ class Log {
   std::atomic<uint64_t> _syncs{0};
   uint64_t _directory_changes ABSL_GUARDED_BY(_mutex) = 0;
   uint64_t _directory_synced ABSL_GUARDED_BY(_mutex) = 0;
-  std::shared_ptr<Chunk> _spare ABSL_GUARDED_BY(_mutex);
+  duckdb::unique_ptr<duckdb::FileHandle> _spare ABSL_GUARDED_BY(_mutex);
   std::atomic<bool> _has_spare{false};
   std::atomic<Lsn> _oldest{0};
   std::atomic<Lsn> _newest{0};

@@ -74,10 +74,9 @@ void AddChanged(StoreWrites& w, Tick snapshot,
 
 void CheckChanged(const StoreWrites& w,
                   std::span<const StoreWrites::ChangedRows> changed) {
-  const auto& table = w.store->GetTable();
   for (const auto& [snapshot, rows] : changed) {
     for (const auto& removal : rows) {
-      table.CheckConflicts(*removal, snapshot);
+      w.store->GetTable().CheckConflicts(*removal, snapshot);
     }
   }
 }

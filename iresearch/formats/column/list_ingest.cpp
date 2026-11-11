@@ -135,8 +135,9 @@ void ListIngest::Add(const duckdb::Vector& vec, duckdb::idx_t off,
     }
     _dedup = true;
     OpenWindow();
+  } else {
+    _keys.SetChunk(ListKeys::kSource, child);
   }
-  _keys.SetChunk(ListKeys::kSource, child);
   _fresh.clear();
   _picked.clear();
   AddRows(parent, entries, TrackSource(vec), off, count);

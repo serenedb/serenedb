@@ -121,6 +121,7 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta);
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d);
 
 struct VariantScanState;
+struct ListScanState;
 
 struct ListRun {
   uint64_t begin = 0;
@@ -179,11 +180,7 @@ class ColumnReader {
     bool certified_dictionary = false;
     bool initialized = false;
     duckdb::SelectionVector sel;
-    std::unique_ptr<VectorScratch> list_codes;
-    std::unique_ptr<VectorScratch> list_ends;
-    std::unique_ptr<ListDictionary> list_dict;
-    std::vector<duckdb::sel_t> list_picked;
-    duckdb::SelectionVector list_sel;
+    std::unique_ptr<ListScanState> list;
     struct Fetch {
       std::unique_ptr<codecs::ColumnSegment> segment;
       codecs::ColumnFetchState state;
@@ -471,6 +468,14 @@ class ColumnReader {
   void SkipValidity(ScanState& s, duckdb::idx_t count) const;
   duckdb::ScanVectorType GetVectorScanType(ScanState& s, duckdb::idx_t count,
                                            duckdb::Vector& result) const;
+};
+
+struct ListScanState {
+  std::unique_ptr<ColumnReader::VectorScratch> codes;
+  std::unique_ptr<ColumnReader::VectorScratch> ends;
+  ListDictionary dictionary;
+  std::vector<duckdb::sel_t> picked;
+  duckdb::SelectionVector sel;
 };
 
 inline void KeepReadahead(const ColumnReader::ScanState& from,

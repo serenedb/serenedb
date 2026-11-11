@@ -47,9 +47,13 @@ enum class Shape : uint8_t {
   StructRepeated,
   MapWide,
   VariantShredded,
+  ListLongRepeated,
+  ListLongUnique,
+  ListIntRepeated,
+  ListIntUnique,
 };
 
-constexpr size_t kShapes = 7;
+constexpr size_t kShapes = 11;
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
 
@@ -92,6 +96,14 @@ std::string ValueSql(Shape shape) {
     case Shape::VariantShredded:
       return "{'service': 'service.' || (i % 50), 'latency': i % 1000, "
              "'trace': 'trace.' || i}::VARIANT";
+    case Shape::ListLongRepeated:
+      return "list_transform(range(64), lambda k: ((i // 37) % 300) * 64 + k)";
+    case Shape::ListLongUnique:
+      return "list_transform(range(64), lambda k: i * 64 + k)";
+    case Shape::ListIntRepeated:
+      return "[i % 50, i % 7, (i // 11) % 3]";
+    case Shape::ListIntUnique:
+      return "[i, i % 7, (i * 7919) % 1000003]";
   }
   return {};
 }
@@ -107,6 +119,10 @@ std::string EmptySql(Shape shape) {
   }
   if (shape == Shape::VariantShredded) {
     return "('leftover.' || i)::VARIANT";
+  }
+  if (shape == Shape::ListLongRepeated || shape == Shape::ListLongUnique ||
+      shape == Shape::ListIntRepeated || shape == Shape::ListIntUnique) {
+    return "[]::BIGINT[]";
   }
   return "[]::VARCHAR[]";
 }
@@ -389,27 +405,39 @@ void PointGather(benchmark::State& state, Shape shape) {
 
 }  // namespace
 
-#define NESTED_CASES(fn)                                          \
-  BENCHMARK_CAPTURE(fn, list_repeated, Shape::ListRepeated)       \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, list_unique, Shape::ListUnique)           \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, map_repeated, Shape::MapRepeated)         \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, map_unique, Shape::MapUnique)             \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, struct_repeated, Shape::StructRepeated)   \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, map_wide, Shape::MapWide)                 \
-    ->Unit(benchmark::kMillisecond)                               \
-    ->UseRealTime();                                              \
-  BENCHMARK_CAPTURE(fn, variant_shredded, Shape::VariantShredded) \
-    ->Unit(benchmark::kMillisecond)                               \
+#define NESTED_CASES(fn)                                             \
+  BENCHMARK_CAPTURE(fn, list_repeated, Shape::ListRepeated)          \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_unique, Shape::ListUnique)              \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, map_repeated, Shape::MapRepeated)            \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, map_unique, Shape::MapUnique)                \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, struct_repeated, Shape::StructRepeated)      \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, map_wide, Shape::MapWide)                    \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, variant_shredded, Shape::VariantShredded)    \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_long_repeated, Shape::ListLongRepeated) \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_long_unique, Shape::ListLongUnique)     \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_int_repeated, Shape::ListIntRepeated)   \
+    ->Unit(benchmark::kMillisecond)                                  \
+    ->UseRealTime();                                                 \
+  BENCHMARK_CAPTURE(fn, list_int_unique, Shape::ListIntUnique)       \
+    ->Unit(benchmark::kMillisecond)                                  \
     ->UseRealTime()
 
 NESTED_CASES(WriteSeal);

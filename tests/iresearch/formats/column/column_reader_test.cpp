@@ -3330,6 +3330,72 @@ TEST_F(ColumnReaderTest, ListCodesStayConsecutiveOnceDedupTurnsOff) {
   }
 }
 
+TEST_F(ColumnReaderTest, EqualListsShareACodeInEveryElementVectorForm) {
+  constexpr duckdb::idx_t kLists = 8;
+  constexpr duckdb::idx_t kShortest = 60;
+  constexpr duckdb::idx_t kRows = 64;
+  constexpr duckdb::idx_t kElements =
+    kRows * kShortest + kRows / kLists * (kLists * (kLists - 1) / 2);
+  enum class Form : uint8_t {
+    Flat,
+    Selected,
+    Nullable,
+  };
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+  irs::ListIngest ingest{type, /*borrow=*/false};
+  const auto add = [&](Form form) {
+    const bool reversed = form == Form::Selected;
+    const duckdb::idx_t rows = kRows + (form == Form::Nullable);
+    duckdb::Vector lists{type, STANDARD_VECTOR_SIZE};
+    duckdb::ListVector::Reserve(lists, kElements + 1);
+    auto* entries =
+      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(lists);
+    auto& child = duckdb::ListVector::GetChildMutable(lists);
+    auto* values = duckdb::FlatVector::GetDataMutable<int64_t>(child);
+    duckdb::idx_t element = 0;
+    for (duckdb::idx_t row = 0; row < kRows; ++row) {
+      const auto list = row % kLists;
+      const auto length = kShortest + list;
+      entries[row] = duckdb::list_entry_t{element, length};
+      for (duckdb::idx_t j = 0; j < length; ++j, ++element) {
+        values[reversed ? kElements - 1 - element : element] =
+          static_cast<int64_t>(list * 1000 + j);
+      }
+    }
+    ASSERT_EQ(element, kElements);
+    if (form == Form::Nullable) {
+      entries[kRows] = duckdb::list_entry_t{kElements, 1};
+      values[kElements] = 0;
+      auto& validity = duckdb::FlatVector::ValidityMutable(child);
+      validity.Reset(kElements + 1);
+      validity.SetInvalid(kElements);
+      ++element;
+    }
+    duckdb::ListVector::SetListSize(lists, element);
+    duckdb::FlatVector::SetSize(lists, rows);
+    if (reversed) {
+      duckdb::SelectionVector backwards{kElements};
+      for (duckdb::idx_t i = 0; i < kElements; ++i) {
+        backwards.set_index(i, kElements - 1 - i);
+      }
+      child.Slice(backwards, kElements);
+    }
+    ingest.Add(lists, 0, rows);
+  };
+  add(Form::Flat);
+  add(Form::Selected);
+  add(Form::Nullable);
+  const auto parts = ingest.Take();
+  ASSERT_EQ(parts.codes.size(), 3 * kRows + 1);
+  EXPECT_EQ(parts.distinct, kLists + 1);
+  for (duckdb::idx_t row = 0; row < 3 * kRows; ++row) {
+    ASSERT_EQ(parts.codes[row], row % kRows % kLists) << "row " << row;
+  }
+  EXPECT_EQ(parts.codes.back(), kLists);
+  EXPECT_EQ(parts.elem_count,
+            kLists * kShortest + kLists * (kLists - 1) / 2 + 1);
+}
+
 TEST_F(ColumnReaderTest, RepeatedListRowGroupsKeepTheirCodes) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   irs::MemoryDirectory dir{};

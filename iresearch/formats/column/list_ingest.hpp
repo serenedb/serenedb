@@ -92,6 +92,9 @@ class ListKeys {
   };
 
   struct Node {
+    static constexpr uint64_t kHashedTogether = 64;
+    static constexpr uint64_t kMaxHashedWidth = 16;
+
     duckdb::UnifiedVectorFormat format;
     Kind kind = Kind::Fixed;
     bool flat = false;
@@ -164,6 +167,27 @@ class ListKeys {
     }
 
     template<typename H>
+    H HashFixedRange(H h, uint64_t e, uint64_t length) const {
+      if (flat) {
+        const auto* at = format.data + e * width;
+        for (uint64_t k = 0; k < length; k += kHashedTogether) {
+          const auto take = std::min(kHashedTogether, length - k);
+          h = H::combine_contiguous(std::move(h), at + k * width, take * width);
+        }
+        return h;
+      }
+      std::array<duckdb::data_t, kHashedTogether * kMaxHashedWidth> gathered;
+      for (uint64_t k = 0; k < length; k += kHashedTogether) {
+        const auto take = std::min(kHashedTogether, length - k);
+        for (uint64_t i = 0; i < take; ++i) {
+          std::memcpy(gathered.data() + i * width, At(e + k + i), width);
+        }
+        h = H::combine_contiguous(std::move(h), gathered.data(), take * width);
+      }
+      return h;
+    }
+
+    template<typename H>
     H HashRange(H h, uint64_t e, uint64_t length) const {
       if (kind == Kind::Struct && RangeValid(e, length)) {
         for (const auto& child : children) {
@@ -171,7 +195,11 @@ class ListKeys {
         }
         return h;
       }
-      if (all_valid && flat && (kind == Kind::Fixed || kind == Kind::String)) {
+      if (kind == Kind::Fixed && width <= kMaxHashedWidth &&
+          RangeValid(e, length)) {
+        return HashFixedRange(std::move(h), e, length);
+      }
+      if (all_valid && flat && kind == Kind::String) {
         for (uint64_t k = e; k < e + length; ++k) {
           h = H::combine(std::move(h), absl::HashOf(Bytes(k)));
         }

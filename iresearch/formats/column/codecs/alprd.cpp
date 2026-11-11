@@ -35,6 +35,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <span>
@@ -145,83 +146,109 @@ double EstimateCompressionSize(uint8_t right_bit_width, uint8_t left_bit_width,
   return estimated_size;
 }
 
-template<typename T, bool kPersistDict>
-double BuildLeftPartsDictionary(std::span<const alp::ExactType<T>> values,
-                                uint8_t right_bit_width,
-                                AlpRdDictionary& dictionary) {
-  containers::FlatHashMap<alp::ExactType<T>, int32_t> left_parts_hash;
-  for (const auto value : values) {
-    ++left_parts_hash[value >> right_bit_width];
+std::vector<AlpRdLeftPartInfo> CountLeftParts(
+  std::span<const uint16_t> sorted_tops, idx_t left_bits) {
+  std::vector<AlpRdLeftPartInfo> left_parts;
+  for (const auto top : sorted_tops) {
+    const uint64_t left_part = top >> (kCuttingLimit - left_bits);
+    if (left_parts.empty() || left_parts.back().hash != left_part) {
+      left_parts.emplace_back(0, left_part);
+    }
+    ++left_parts.back().count;
   }
+  return left_parts;
+}
 
-  std::vector<AlpRdLeftPartInfo> left_parts_sorted_repetitions;
-  left_parts_sorted_repetitions.reserve(left_parts_hash.size());
-  for (const auto& [left_part, count] : left_parts_hash) {
-    left_parts_sorted_repetitions.emplace_back(static_cast<uint32_t>(count),
-                                               left_part);
+void DropLowestBit(std::vector<AlpRdLeftPartInfo>& left_parts) {
+  size_t merged = 0;
+  for (const auto part : left_parts) {
+    const auto left_part = part.hash >> 1;
+    if (merged && left_parts[merged - 1].hash == left_part) {
+      left_parts[merged - 1].count += part.count;
+    } else {
+      left_parts[merged++] = {part.count, left_part};
+    }
   }
-  absl::c_sort(left_parts_sorted_repetitions, [](const AlpRdLeftPartInfo& a,
-                                                 const AlpRdLeftPartInfo& b) {
-    return a.count > b.count || (a.count == b.count && a.hash < b.hash);
-  });
+  left_parts.resize(merged);
+}
 
+uint8_t LeftBitWidth(uint64_t dictionary_size) {
+  return std::max<uint8_t>(1, duckdb::ExactNumericCast<uint8_t>(
+                                std::ceil(std::log2(dictionary_size))));
+}
+
+double EstimateLeftParts(std::span<const AlpRdLeftPartInfo> left_parts,
+                         std::vector<uint32_t>& counts, idx_t right_bit_width,
+                         uint64_t sample_count) {
   uint32_t exceptions_count = 0;
-  for (idx_t i = kMaxDictionarySize; i < left_parts_sorted_repetitions.size();
-       ++i) {
-    exceptions_count += left_parts_sorted_repetitions[i].count;
-  }
-
-  const uint64_t actual_dictionary_size = std::min<uint64_t>(
-    kMaxDictionarySize, left_parts_sorted_repetitions.size());
-  const uint8_t left_bit_width =
-    std::max<uint8_t>(1, duckdb::ExactNumericCast<uint8_t>(
-                           std::ceil(std::log2(actual_dictionary_size))));
-
-  if constexpr (kPersistDict) {
-    for (idx_t dict_idx = 0; dict_idx < actual_dictionary_size; ++dict_idx) {
-      dictionary.left_parts_dict[dict_idx] =
-        static_cast<uint16_t>(left_parts_sorted_repetitions[dict_idx].hash);
-      dictionary.left_parts_dict_map.try_emplace(
-        dictionary.left_parts_dict[dict_idx], static_cast<uint16_t>(dict_idx));
+  if (left_parts.size() > kMaxDictionarySize) {
+    counts.clear();
+    for (const auto& part : left_parts) {
+      counts.push_back(part.count);
     }
-    for (idx_t i = actual_dictionary_size + 1;
-         i < left_parts_sorted_repetitions.size(); ++i) {
-      dictionary.left_parts_dict_map.try_emplace(
-        static_cast<uint16_t>(left_parts_sorted_repetitions[i].hash),
-        static_cast<uint16_t>(i));
+    absl::c_nth_element(counts, counts.begin() + kMaxDictionarySize,
+                        std::greater{});
+    for (const auto count : std::span{counts}.subspan(kMaxDictionarySize)) {
+      exceptions_count += count;
     }
-    dictionary.left_bit_width = left_bit_width;
-    dictionary.right_bit_width = right_bit_width;
-    dictionary.actual_dictionary_size =
-      static_cast<uint8_t>(actual_dictionary_size);
-    SDB_ASSERT(dictionary.left_bit_width > 0 &&
-               dictionary.right_bit_width > 0 &&
-               dictionary.left_bit_width <= kMaxDictionaryBitWidth &&
-               dictionary.actual_dictionary_size <= kMaxDictionarySize);
   }
-
-  return EstimateCompressionSize(right_bit_width, left_bit_width,
-                                 exceptions_count, values.size());
+  return EstimateCompressionSize(
+    static_cast<uint8_t>(right_bit_width),
+    LeftBitWidth(std::min<uint64_t>(kMaxDictionarySize, left_parts.size())),
+    exceptions_count, sample_count);
 }
 
 template<typename T>
 double FindBestDictionary(std::span<const alp::ExactType<T>> values,
                           AlpRdDictionary& dictionary) {
   constexpr idx_t kExactTypeBitSize = sizeof(alp::ExactType<T>) * 8;
-  uint8_t right_bit_width = 0;
-  auto best_dict_size =
-    static_cast<double>(std::numeric_limits<int32_t>::max());
-  for (idx_t i = 1; i <= kCuttingLimit; ++i) {
-    const auto candidate_right_bit_width =
-      static_cast<uint8_t>(kExactTypeBitSize - i);
-    const double estimated_size = BuildLeftPartsDictionary<T, false>(
-      values, candidate_right_bit_width, dictionary);
-    if (estimated_size <= best_dict_size) {
-      right_bit_width = candidate_right_bit_width;
+  std::vector<uint16_t> sorted_tops(values.size());
+  absl::c_transform(values, sorted_tops.begin(), [](auto value) {
+    return static_cast<uint16_t>(value >> (kExactTypeBitSize - kCuttingLimit));
+  });
+  absl::c_sort(sorted_tops);
+
+  auto left_parts = CountLeftParts(sorted_tops, kCuttingLimit);
+  std::vector<uint32_t> counts;
+  idx_t left_bits = kCuttingLimit;
+  double best_dict_size = EstimateLeftParts(
+    left_parts, counts, kExactTypeBitSize - kCuttingLimit, values.size());
+  for (idx_t i = kCuttingLimit - 1; i != 0; --i) {
+    DropLowestBit(left_parts);
+    const double estimated_size = EstimateLeftParts(
+      left_parts, counts, kExactTypeBitSize - i, values.size());
+    if (estimated_size < best_dict_size) {
+      left_bits = i;
       best_dict_size = estimated_size;
     }
   }
-  return BuildLeftPartsDictionary<T, true>(values, right_bit_width, dictionary);
+
+  left_parts = CountLeftParts(sorted_tops, left_bits);
+  absl::c_sort(
+    left_parts, [](const AlpRdLeftPartInfo& a, const AlpRdLeftPartInfo& b) {
+      return a.count > b.count || (a.count == b.count && a.hash < b.hash);
+    });
+  const uint64_t actual_dictionary_size =
+    std::min<uint64_t>(kMaxDictionarySize, left_parts.size());
+  for (idx_t dict_idx = 0; dict_idx < actual_dictionary_size; ++dict_idx) {
+    dictionary.left_parts_dict[dict_idx] =
+      static_cast<uint16_t>(left_parts[dict_idx].hash);
+    dictionary.left_parts_dict_map.try_emplace(
+      dictionary.left_parts_dict[dict_idx], static_cast<uint16_t>(dict_idx));
+  }
+  for (idx_t i = actual_dictionary_size + 1; i < left_parts.size(); ++i) {
+    dictionary.left_parts_dict_map.try_emplace(
+      static_cast<uint16_t>(left_parts[i].hash), static_cast<uint16_t>(i));
+  }
+  dictionary.left_bit_width = LeftBitWidth(actual_dictionary_size);
+  dictionary.right_bit_width =
+    static_cast<uint8_t>(kExactTypeBitSize - left_bits);
+  dictionary.actual_dictionary_size =
+    static_cast<uint8_t>(actual_dictionary_size);
+  SDB_ASSERT(dictionary.left_bit_width > 0 && dictionary.right_bit_width > 0 &&
+             dictionary.left_bit_width <= kMaxDictionaryBitWidth &&
+             dictionary.actual_dictionary_size <= kMaxDictionarySize);
+  return best_dict_size;
 }
 
 template<typename T>

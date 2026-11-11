@@ -326,7 +326,9 @@ uint64_t DryCompressToEstimateSize(std::span<const T> input_vector,
       ++exceptions_count;
     }
   };
-  const auto probe = input_vector.first(std::min<size_t>(n_values, kProbe));
+  const auto probe = input_vector.first(limit < n_values * kExceptionBits / 2
+                                          ? std::min<size_t>(n_values, kProbe)
+                                          : 0);
   encode(probe);
   uint64_t at_least = exceptions_count * kExceptionBits;
   if (non_exceptions_count) {

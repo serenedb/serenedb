@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -3208,6 +3209,88 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
 #else
     EXPECT_ANY_THROW(scan());
 #endif
+  }
+}
+
+TEST_F(ColCodecsTest, AlpRdSplitsDoublesWhereTheFewestBitsRemain) {
+  struct Case {
+    std::string_view name;
+    std::span<const uint64_t> leading;
+    uint64_t frequent;
+    uint64_t rare_percent;
+    uint64_t random_bits;
+  };
+  constexpr uint64_t kRows = 8 * STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kLeadingBits = 16;
+  constexpr uint64_t kDictionaryBits = 3;
+  constexpr uint64_t kExceptionBytes = 4;
+  constexpr uint64_t kLeading[] = {0x0123, 0x1234, 0x2345, 0x3456,
+                                   0x4567, 0x5678, 0x6789, 0x789A,
+                                   0x0127, 0x1230, 0x2341, 0x3452};
+  constexpr uint64_t kPrefixes[] = {0b000'0000001, 0b001'0101010, 0b010'0110011,
+                                    0b100'0001111, 0b110'1100110};
+  const Case cases[] = {
+    {"sixteen leading bits", std::span{kLeading}.first(5), 5, 0, 0},
+    {"ten leading bits", kPrefixes, 5, 0, 6},
+    {"frequent leading bits", kLeading, 8, 4, 0},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    std::mt19937_64 random{42};
+    std::vector<double> expected;
+    expected.reserve(kRows);
+    irs::MemoryDirectory dir;
+    {
+      irs::ColWriter w{dir, kSeg, Db()};
+      auto& cw = w.OpenColumn(
+        kField, duckdb::LogicalType::DOUBLE,
+        {.compression = duckdb::CompressionType::COMPRESSION_ALPRD});
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        duckdb::Vector v{duckdb::LogicalType::DOUBLE, STANDARD_VECTOR_SIZE};
+        auto* values = duckdb::FlatVector::GetDataMutable<double>(v);
+        for (uint64_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+          const auto index =
+            random() % 100 < c.rare_percent
+              ? c.frequent + random() % (c.leading.size() - c.frequent)
+              : random() % c.frequent;
+          const auto leading = c.leading[index] << c.random_bits |
+                               random() % (uint64_t{1} << c.random_bits);
+          values[k] = std::bit_cast<double>(leading << (64 - kLeadingBits) |
+                                            random() >> kLeadingBits);
+          expected.push_back(values[k]);
+        }
+        duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+        cw.Append(v, STANDARD_VECTOR_SIZE);
+      }
+      ASSERT_TRUE(w.Commit(0));
+    }
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    uint64_t stored = 0;
+    for (const auto& block : col->DataBlocks()) {
+      ASSERT_EQ(block.codec->type, duckdb::CompressionType::COMPRESSION_ALPRD);
+      stored += block.byte_size;
+    }
+    const auto packed =
+      kRows * (64 - kLeadingBits + c.random_bits + kDictionaryBits) / 8;
+    const auto exceptions =
+      c.rare_percent ? kRows * (c.rare_percent + 1) / 100 * kExceptionBytes : 0;
+    EXPECT_GE(stored, packed);
+    EXPECT_LT(stored, packed + exceptions + kRows / 16);
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector out{duckdb::LogicalType::DOUBLE, STANDARD_VECTOR_SIZE};
+      ASSERT_EQ(col->Scan(state, out, STANDARD_VECTOR_SIZE),
+                STANDARD_VECTOR_SIZE);
+      out.Flatten(STANDARD_VECTOR_SIZE);
+      const auto* values = duckdb::FlatVector::GetData<double>(out);
+      for (uint64_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        ASSERT_EQ(std::bit_cast<uint64_t>(values[k]),
+                  std::bit_cast<uint64_t>(expected[pos + k]))
+          << "row " << pos + k;
+      }
+    }
   }
 }
 

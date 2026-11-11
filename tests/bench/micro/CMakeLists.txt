@@ -5,6 +5,7 @@ target_link_libraries(
         sereneserver
         benchmark
         search-benchmark-common
+        iresearch-test-writer
         simdutf
         simdjson
         faiss

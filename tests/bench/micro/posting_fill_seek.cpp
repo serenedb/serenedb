@@ -87,6 +87,7 @@
 #include <string_view>
 #include <vector>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 
 namespace {
@@ -251,7 +252,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
   auto writer =
-    irs::IndexWriter::Make(*index.dir, irs::kOmCreate, std::move(opts));
+    tests::IndexWriter::Make(*index.dir, tests::kOmCreate, std::move(opts));
 
   {
     auto trx = writer->GetBatch();
@@ -266,7 +267,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   writer->RefreshCommit();
 
   index.reader =
-    irs::DirectoryReader{*index.dir, irs::IndexReaderOptions{.db = db}};
+    tests::OpenReader(*index.dir, irs::IndexReaderOptions{.db = db});
   SDB_ASSERT(index.reader.size() == 1,
              "corpus must be one segment or the encodings get mixed");
   return index;

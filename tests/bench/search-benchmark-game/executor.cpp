@@ -81,6 +81,8 @@ bool StripSuffix(std::string_view& name, std::string_view suffix) {
   return true;
 }
 
+}  // namespace
+
 irs::DirectoryReader OpenIndex(const irs::Directory& dir,
                                const irs::IndexReaderOptions& options) {
   const auto in = dir.open(kSegmentListFile, irs::IOAdvice::SEQUENTIAL);
@@ -91,8 +93,6 @@ irs::DirectoryReader OpenIndex(const irs::Directory& dir,
   in->ReadData(0, reinterpret_cast<irs::byte_type*>(text.data()), text.size());
   return irs::OpenSegmentList(dir, text, options);
 }
-
-}  // namespace
 
 Command ParseCommand(std::string_view name) {
   Command cmd{.kind = Kind::Count};

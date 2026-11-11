@@ -18,13 +18,6 @@ target_link_libraries(
     PUBLIC iresearch gtest simdjson simdutf
 )
 
-add_library(iresearch-test-writer OBJECT index/test_index_writer.cpp)
-target_include_directories(
-    iresearch-test-writer
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-)
-target_link_libraries(iresearch-test-writer PUBLIC iresearch)
-
 add_executable(
     iresearch-tests
     analysis/analyzer_test.cpp

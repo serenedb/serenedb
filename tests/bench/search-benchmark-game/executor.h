@@ -38,6 +38,9 @@ namespace bench {
 
 inline constexpr std::string_view kSegmentListFile = "segments";
 
+irs::DirectoryReader OpenIndex(const irs::Directory& dir,
+                               const irs::IndexReaderOptions& options);
+
 struct BenchConfig {
   std::string_view scorer = "bm25";
   std::string_view scorer_options = R"({})";

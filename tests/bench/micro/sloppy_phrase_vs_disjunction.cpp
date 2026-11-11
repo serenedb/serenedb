@@ -71,6 +71,7 @@
 #include <utility>
 #include <vector>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 #include "test_resources.hpp"
 #include "text_chain.hpp"
@@ -396,7 +397,7 @@ Corpus BuildIndex() {
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(*dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -428,7 +429,7 @@ Corpus BuildIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, reader_opts};
+  auto rdr = tests::OpenReader(*dir, reader_opts);
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
                 .reader = std::move(rdr)};
@@ -452,7 +453,7 @@ Corpus BuildSyntheticIndex() {
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(*dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -488,7 +489,7 @@ Corpus BuildSyntheticIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, reader_opts};
+  auto rdr = tests::OpenReader(*dir, reader_opts);
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
                 .reader = std::move(rdr)};
@@ -512,7 +513,7 @@ Corpus BuildDense3Index() {
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(*dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -544,7 +545,7 @@ Corpus BuildDense3Index() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, reader_opts};
+  auto rdr = tests::OpenReader(*dir, reader_opts);
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
                 .reader = std::move(rdr)};
@@ -565,7 +566,7 @@ Corpus BuildAllSameIndex() {
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(*dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -597,7 +598,7 @@ Corpus BuildAllSameIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, reader_opts};
+  auto rdr = tests::OpenReader(*dir, reader_opts);
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
                 .reader = std::move(rdr)};
@@ -622,7 +623,7 @@ Corpus BuildFarApartIndex() {
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(*dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -660,7 +661,7 @@ Corpus BuildFarApartIndex() {
 
   irs::IndexReaderOptions reader_opts2;
   reader_opts2.db = db;
-  auto rdr2 = irs::DirectoryReader{*dir, reader_opts2};
+  auto rdr2 = tests::OpenReader(*dir, reader_opts2);
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
                 .reader = std::move(rdr2)};

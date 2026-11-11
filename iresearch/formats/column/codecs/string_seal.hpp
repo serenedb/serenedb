@@ -66,21 +66,40 @@ class StringAccumulator {
  private:
   using Values = std::vector<const duckdb::string_t*>;
 
+  static constexpr size_t kFirstValues = 64;
+
   struct Hash {
-    size_t operator()(uint32_t code) const noexcept {
-      const auto& value = *(*values)[code - 1];
+    using is_transparent = void;
+
+    size_t operator()(const duckdb::string_t& value) const noexcept {
       if (value.IsInlined()) {
         return absl::HashOf(std::bit_cast<std::array<uint64_t, 2>>(value));
       }
       return absl::HashOf(std::string_view{value.GetData(), value.GetSize()});
     }
 
+    size_t operator()(uint32_t code) const noexcept {
+      return (*this)(*(*values)[code - 1]);
+    }
+
     const Values* values;
   };
 
   struct Eq {
+    using is_transparent = void;
+
     bool operator()(uint32_t lhs, uint32_t rhs) const noexcept {
-      return *(*values)[lhs - 1] == *(*values)[rhs - 1];
+      return lhs == rhs;
+    }
+
+    bool operator()(uint32_t code,
+                    const duckdb::string_t& value) const noexcept {
+      return *(*values)[code - 1] == value;
+    }
+
+    bool operator()(const duckdb::string_t& value,
+                    uint32_t code) const noexcept {
+      return *(*values)[code - 1] == value;
     }
 
     const Values* values;

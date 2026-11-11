@@ -27,6 +27,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -189,8 +190,7 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   std::fprintf(
     stderr, "shape %-9s %-4s rows=%llu blocks=%zu codec=%s\n", shape.name,
     shape.codec, static_cast<unsigned long long>(c->windows * kWindow),
-    blocks.size(),
-    duckdb::EnumUtil::ToChars<duckdb::CompressionType>(blocks[0].codec->type));
+    blocks.size(), irs::codecs::NameOf(blocks[0].codec->type).data());
   return c;
 }
 

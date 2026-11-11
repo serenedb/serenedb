@@ -40,6 +40,7 @@
 #include <iresearch/formats/column/codecs/numeric.hpp>
 #include <iresearch/formats/column/codecs/numeric_kernels.hpp>
 #include <iresearch/formats/column/codecs/numeric_layout.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -401,8 +402,7 @@ class ColNumericCodecTest : public TestBase {
     irs::BlockWindow window{};
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
-      if (block.codec->type ==
-          duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
+      if (block.codec->type == irs::codecs::CodecType::Numeric) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
         out.emplace_back(seg->function.get_segment_info(*seg)[key]);
@@ -432,8 +432,7 @@ class ColNumericCodecTest : public TestBase {
     irs::BlockWindow window{};
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
-      if (block.codec->type ==
-          duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
+      if (block.codec->type == irs::codecs::CodecType::Numeric) {
         window = col->Locate(row, window);
         auto seg = col->OpenSegment(window.block, ctx);
         auto info = seg->function.get_segment_info(*seg);
@@ -572,8 +571,7 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     const auto& block = col->DataBlocks().front();
-    ASSERT_EQ(block.codec->type,
-              duckdb::CompressionType::COMPRESSION_COL_NUMERIC);
+    ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Numeric);
     offset = block.file_offset;
     size = block.byte_size;
   }
@@ -626,8 +624,7 @@ TEST_F(ColNumericCodecTest, DictFforBaseThatWrapsTheCodeRangeIsRejected) {
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     const auto& block = col->DataBlocks().front();
-    ASSERT_EQ(block.codec->type,
-              duckdb::CompressionType::COMPRESSION_COL_NUMERIC);
+    ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Numeric);
     offset = block.file_offset;
     size = block.byte_size;
   }
@@ -745,8 +742,7 @@ TEST_F(ColNumericCodecTest, CompactsClusteredTimestamps) {
   ASSERT_NE(col, nullptr);
   uint64_t bytes = 0;
   for (const auto& block : col->DataBlocks()) {
-    EXPECT_EQ(block.codec->type,
-              duckdb::CompressionType::COMPRESSION_COL_NUMERIC);
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Numeric);
     bytes += block.byte_size;
   }
   EXPECT_LT(bytes, kRows * 2);
@@ -813,8 +809,7 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
     std::optional<uint64_t> back;
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
-      const bool numeric =
-        block.codec->type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC;
+      const bool numeric = block.codec->type == irs::codecs::CodecType::Numeric;
       if (row < kFirst) {
         EXPECT_TRUE(numeric) << "row " << row;
       } else if (row < kFirst + kRandom) {
@@ -855,8 +850,7 @@ TEST_F(ColNumericCodecTest,
   uint64_t row = 0;
   uint64_t changed = 0;
   for (const auto& block : col->DataBlocks()) {
-    const bool numeric =
-      block.codec->type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC;
+    const bool numeric = block.codec->type == irs::codecs::CodecType::Numeric;
     if (row < kRandom) {
       EXPECT_FALSE(numeric) << "row " << row;
     } else {
@@ -894,20 +888,20 @@ TEST_F(ColNumericCodecTest, ForcedRleLeavesRowGroupsWithoutRepeatsPlain) {
     irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
-    std::vector<duckdb::CompressionType> types;
+    std::vector<irs::codecs::CodecType> types;
     for (const auto& block : col->DataBlocks()) {
       types.push_back(block.codec->type);
     }
     return types;
   };
-  using enum duckdb::CompressionType;
+  using irs::codecs::CodecType;
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
-    EXPECT_EQ(codecs(unique, tier), std::vector(6, COMPRESSION_UNCOMPRESSED));
-    EXPECT_EQ(codecs(runs, tier), std::vector(6, COMPRESSION_RLE));
-    const std::vector mixed{COMPRESSION_UNCOMPRESSED, COMPRESSION_UNCOMPRESSED,
-                            COMPRESSION_RLE,          COMPRESSION_UNCOMPRESSED,
-                            COMPRESSION_UNCOMPRESSED, COMPRESSION_UNCOMPRESSED};
+    EXPECT_EQ(codecs(unique, tier), std::vector(6, CodecType::Uncompressed));
+    EXPECT_EQ(codecs(runs, tier), std::vector(6, CodecType::Rle));
+    const std::vector mixed{CodecType::Uncompressed, CodecType::Uncompressed,
+                            CodecType::Rle,          CodecType::Uncompressed,
+                            CodecType::Uncompressed, CodecType::Uncompressed};
     EXPECT_EQ(codecs(one_repeat, tier), mixed);
     EXPECT_EQ(codecs(one_null, tier), mixed);
   }
@@ -932,19 +926,19 @@ TEST_F(ColNumericCodecTest, ForcedBitpackingLeavesAnOverflowingRangePlain) {
     irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
-    std::set<duckdb::CompressionType> types;
+    std::set<irs::codecs::CodecType> types;
     for (const auto& block : col->DataBlocks()) {
       types.insert(block.codec->type);
     }
     return types;
   };
-  using enum duckdb::CompressionType;
+  using irs::codecs::CodecType;
   EXPECT_EQ(codecs(duckdb::LogicalType::BIGINT, wide),
-            std::set{COMPRESSION_UNCOMPRESSED});
+            std::set{CodecType::Uncompressed});
   EXPECT_EQ(codecs(duckdb::LogicalType::BIGINT, narrow),
-            std::set{COMPRESSION_BITPACKING});
+            std::set{CodecType::Bitpacking});
   EXPECT_EQ(codecs(duckdb::LogicalType::UBIGINT, wide),
-            std::set{COMPRESSION_BITPACKING});
+            std::set{CodecType::Bitpacking});
 }
 
 TEST_F(ColNumericCodecTest, ValidityIsRoaringOnlyBelowHalfTheBitmap) {
@@ -970,15 +964,15 @@ TEST_F(ColNumericCodecTest, ValidityIsRoaringOnlyBelowHalfTheBitmap) {
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     EXPECT_NE(col->Validity(), nullptr);
-    std::set<duckdb::CompressionType> types;
+    std::set<irs::codecs::CodecType> types;
     for (const auto& block : col->Validity()->DataBlocks()) {
       types.insert(block.codec->type);
     }
     return types;
   };
-  using enum duckdb::CompressionType;
-  EXPECT_EQ(validity(sparse), std::set{COMPRESSION_ROARING});
-  EXPECT_EQ(validity(scattered), std::set{COMPRESSION_UNCOMPRESSED});
+  using irs::codecs::CodecType;
+  EXPECT_EQ(validity(sparse), std::set{CodecType::Roaring});
+  EXPECT_EQ(validity(scattered), std::set{CodecType::Uncompressed});
 }
 
 TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
@@ -1250,7 +1244,7 @@ TEST_F(ColNumericCodecTest, ConstantRowGroupsAreConstantBlocks) {
       uint64_t row = 0;
       for (const auto& block : col->DataBlocks()) {
         const bool constant =
-          block.codec->type == duckdb::CompressionType::COMPRESSION_CONSTANT;
+          block.codec->type == irs::codecs::CodecType::Constant;
         EXPECT_EQ(constant, kConstant[row / kRowGroup]) << "row " << row;
         if (constant) {
           EXPECT_EQ(block.byte_size, 0u) << "row " << row;
@@ -1302,9 +1296,8 @@ TEST_F(ColNumericCodecTest, ConstantRowGroupsKeepZeroSigns) {
     ASSERT_NE(col, nullptr);
     uint64_t row = 0;
     for (const auto& block : col->DataBlocks()) {
-      EXPECT_EQ(
-        block.codec->type == duckdb::CompressionType::COMPRESSION_CONSTANT,
-        kConstant[row / kRowGroup])
+      EXPECT_EQ(block.codec->type == irs::codecs::CodecType::Constant,
+                kConstant[row / kRowGroup])
         << "row " << row;
       row += block.tuple_count;
     }
@@ -1433,8 +1426,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     const auto& block = col->DataBlocks().front();
-    ASSERT_EQ(block.codec->type,
-              duckdb::CompressionType::COMPRESSION_COL_NUMERIC);
+    ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Numeric);
     offset = block.file_offset;
     size = block.byte_size;
   }

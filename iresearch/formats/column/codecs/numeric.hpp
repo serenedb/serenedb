@@ -21,7 +21,6 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
@@ -30,6 +29,7 @@
 #include <span>
 #include <string>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/reuse_policy.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -54,7 +54,7 @@ inline constexpr uint64_t kNoRival = std::numeric_limits<uint64_t>::max();
 struct NumericTuning {
   ReusePolicy<NumericChoice> reuse;
   double codes_ratio = 1;
-  duckdb::CompressionType rival = duckdb::CompressionType::COMPRESSION_AUTO;
+  const CompressionFunction* rival = nullptr;
 };
 
 uint64_t Packed(uint64_t count, uint64_t max_value) noexcept;

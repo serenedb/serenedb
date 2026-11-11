@@ -266,9 +266,11 @@ void CheckCompressionLevel(std::string_view column_name,
   if (level == 0) {
     return;
   }
+  const auto* codec =
+    irs::codecs::FindCodec(duckdb::CompressionTypeToString(type));
   const uint32_t max_level =
-    columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD
-      ? irs::codecs::MaxLevel(type)
+    codec && (columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD)
+      ? irs::codecs::MaxLevel(codec->type)
       : 0;
   const auto name =
     duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type));
@@ -383,12 +385,18 @@ void CheckColumnCodec(duckdb::ClientContext& context,
                 ? "deprecated and only has decompress support"
                 : "not available yet"));
   }
+  const auto* codec =
+    irs::codecs::FindCodec(duckdb::CompressionTypeToString(type));
   const auto compresses = [&](duckdb::PhysicalType physical) {
+    if (!codec) {
+      return false;
+    }
     if (physical == duckdb::PhysicalType::VARCHAR &&
-        irs::codecs::ChoiceOf(type)) {
+        irs::codecs::ChoiceOf(codec->type)) {
       return true;
     }
-    return irs::codecs::Compresses(type, physical);
+    const auto* function = codec->function(physical);
+    return function && function->compress;
   };
   const auto physical = column_type.InternalType();
   if (compresses(physical)) {
@@ -460,7 +468,7 @@ void AppendIResearchBlockRows(
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
     info.compression_type =
-      meta.codec ? duckdb::CompressionTypeToString(meta.codec->type)
+      meta.codec ? std::string{irs::codecs::NameOf(meta.codec->type)}
                  : std::string{"Uncompressed"};
     info.segment_stats = meta.statistics.ToStruct();
     info.has_updates = false;

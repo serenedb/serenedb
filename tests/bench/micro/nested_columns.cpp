@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>

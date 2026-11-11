@@ -20,9 +20,9 @@
 
 #pragma once
 
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <span>
+#include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
@@ -30,7 +30,8 @@
 namespace irs::codecs {
 
 struct Codec {
-  duckdb::CompressionType type;
+  CodecType type;
+  std::string_view name;
   const CompressionFunction* (&function)(duckdb::PhysicalType physical);
   StringChoice choice{};
 };
@@ -65,18 +66,17 @@ bool CompressRoaringValidity(ColumnDataCheckpointData& checkpoint_data,
                              std::span<const WriteChunk> chunks,
                              duckdb::idx_t limit);
 
-const CompressionFunction* GetCodec(duckdb::CompressionType type,
+const CompressionFunction* GetCodec(CodecType type,
                                     duckdb::PhysicalType physical);
 
-const CompressionFunction* GetCompressionFunction(
-  duckdb::CompressionType type, duckdb::PhysicalType physical);
+const Codec* FindCodec(std::string_view name) noexcept;
 
-bool Compresses(duckdb::CompressionType type, duckdb::PhysicalType physical);
+std::string_view NameOf(CodecType type) noexcept;
 
-const StringChoice* ChoiceOf(duckdb::CompressionType type);
+const StringChoice* ChoiceOf(CodecType type) noexcept;
 
-duckdb::CompressionType TypeOf(StringChoice choice) noexcept;
+CodecType TypeOf(StringChoice choice) noexcept;
 
-uint8_t MaxLevel(duckdb::CompressionType type);
+uint8_t MaxLevel(CodecType type) noexcept;
 
 }  // namespace irs::codecs

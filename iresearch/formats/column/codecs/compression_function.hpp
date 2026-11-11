@@ -39,6 +39,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -130,7 +131,8 @@ class CompressedSegment {
 };
 
 struct CompressionFunction {
-  duckdb::CompressionType type = duckdb::CompressionType::COMPRESSION_AUTO;
+  CodecType type = CodecType::Uncompressed;
+  bool framed = false;
   duckdb::idx_t (*analyze)(std::span<const WriteChunk> chunks) = nullptr;
   void (*compress)(ColumnDataCheckpointData& checkpoint_data,
                    std::span<const WriteChunk> chunks) = nullptr;

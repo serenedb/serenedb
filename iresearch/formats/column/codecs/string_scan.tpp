@@ -418,9 +418,10 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 }
 
 template<typename Scan>
-constexpr CompressionFunction StringFunction(duckdb::CompressionType type) {
+constexpr CompressionFunction StringFunction(CodecType type) {
   CompressionFunction f{
     .type = type,
+    .framed = true,
     .init_scan = InitScan<Scan>,
     .scan_vector = ScanVector<Scan>,
     .scan_partial = ScanPartial<Scan>,

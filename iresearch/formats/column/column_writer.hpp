@@ -33,6 +33,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/list_ingest.hpp"
@@ -115,15 +116,14 @@ class ColumnWriter final {
 
   void CompressData(const duckdb::LogicalType& type,
                     std::span<const WriteChunk> chunks,
-                    duckdb::CompressionType method,
+                    const codecs::Codec* method,
                     std::vector<ColumnBlockMeta>& sink);
 
   void CompressStrings(const duckdb::LogicalType& type,
                        std::span<const WriteChunk> chunks,
                        std::vector<ColumnBlockMeta>& sink);
 
-  void CompressPlain(const duckdb::LogicalType& type,
-                     duckdb::CompressionType codec,
+  void CompressPlain(const duckdb::LogicalType& type, codecs::CodecType codec,
                      std::span<WriteChunk> chunks,
                      std::vector<ColumnBlockMeta>& sink);
 
@@ -174,10 +174,9 @@ class ColumnWriter final {
   bool _ingest_lists = false;
   uint32_t _row_group_size = 0;
   duckdb::CompressionType _forced = duckdb::CompressionType::COMPRESSION_AUTO;
-  duckdb::CompressionType _method = duckdb::CompressionType::COMPRESSION_AUTO;
-  duckdb::CompressionType _global_method =
-    duckdb::CompressionType::COMPRESSION_AUTO;
-  duckdb::vector<duckdb::CompressionType> _disabled;
+  const codecs::Codec* _method = nullptr;
+  const codecs::Codec* _global_method = nullptr;
+  codecs::CodecSet _disabled;
 
   ColCodecParams _codec_params;
   std::vector<WriteChunk> _staged;

@@ -206,7 +206,7 @@ void FixedSizeFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 template<typename T, bool kList, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFixedSize{
-  .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+  .type = CodecType::Uncompressed,
   .analyze = FixedSizeAnalyze<std::conditional_t<kList, uint64_t, T>>,
   .compress = CompressChunks<FixedSizeAppender<T, kList>>,
   .init_scan = InitPinnedScan,
@@ -400,7 +400,7 @@ void ValidityFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 }
 
 constexpr CompressionFunction kValidity{
-  .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+  .type = CodecType::Uncompressed,
   .analyze = ValidityAnalyze,
   .compress = CompressChunks<ValidityAppender>,
   .init_scan = InitPinnedScan,
@@ -643,7 +643,7 @@ void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 }
 
 constexpr CompressionFunction kString{
-  .type = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+  .type = CodecType::Uncompressed,
   .compress = CompressChunks<StringAppender>,
   .init_scan = InitPinnedScan,
   .scan_vector = StringScan,

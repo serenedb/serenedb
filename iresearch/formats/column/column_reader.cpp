@@ -67,13 +67,13 @@ void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
 
 ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
                                            duckdb::PhysicalType physical) {
-  const auto compression_type = static_cast<duckdb::CompressionType>(
-    d.ReadProperty<uint8_t>(0, "compression_type"));
+  const auto compression_type = d.ReadProperty<uint8_t>(0, "compression_type");
   const auto tuple_count = d.ReadProperty<uint64_t>(1, "tuple_count");
   const auto file_offset = d.ReadProperty<uint64_t>(2, "file_offset");
   const auto byte_size = d.ReadProperty<uint64_t>(3, "byte_size");
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
-  const auto* codec = codecs::GetCodec(compression_type, physical);
+  const auto* codec =
+    codecs::GetCodec(codecs::CodecType{compression_type}, physical);
   if (!codec) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -120,7 +120,7 @@ void ReadBlockMetas(duckdb::BinaryDeserializer& d, duckdb::field_id_t id,
 
 bool BorrowsBlockStrings(const codecs::ColumnSegment& segment) {
   return segment.type.InternalType() == duckdb::PhysicalType::VARCHAR &&
-         !duckdb::IsSereneDBCompressionType(segment.function.type);
+         !segment.function.framed;
 }
 
 void ScanSegment(const codecs::ColumnSegment& segment,
@@ -161,14 +161,14 @@ struct GatherBands {
   uint32_t native;
 };
 
-GatherBands BandsFor(duckdb::CompressionType codec,
+GatherBands BandsFor(codecs::CodecType codec,
                      const duckdb::LogicalType& type) noexcept {
   switch (codec) {
-    case duckdb::CompressionType::COMPRESSION_CONSTANT:
+    case codecs::CodecType::Constant:
       return {0, 1000};
-    case duckdb::CompressionType::COMPRESSION_RLE:
+    case codecs::CodecType::Rle:
       return {2, 70};
-    case duckdb::CompressionType::COMPRESSION_COL_NUMERIC:
+    case codecs::CodecType::Numeric:
       return {10, 1000};
     default:
       return type.InternalType() == duckdb::PhysicalType::VARCHAR
@@ -382,20 +382,19 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
     .count = m.tuple_count,
     .size = m.byte_size,
   });
-  const bool ours = duckdb::IsSereneDBCompressionType(codec.type);
   if (m.byte_size == 0) {
-    if (codec.type != duckdb::CompressionType::COMPRESSION_CONSTANT &&
-        codec.type != duckdb::CompressionType::COMPRESSION_EMPTY) [[unlikely]] {
-      codecs::ThrowCorrupted(duckdb::CompressionTypeToString(codec.type),
+    if (codec.type != codecs::CodecType::Constant &&
+        codec.type != codecs::CodecType::Empty) [[unlikely]] {
+      codecs::ThrowCorrupted(codecs::NameOf(codec.type),
                              "segment has no bytes");
     }
     return segment;
   }
-  if (!ours && m.byte_size > codecs::kBlockSize) [[unlikely]] {
-    codecs::ThrowCorrupted(duckdb::CompressionTypeToString(codec.type),
+  if (!codec.framed && m.byte_size > codecs::kBlockSize) [[unlikely]] {
+    codecs::ThrowCorrupted(codecs::NameOf(codec.type),
                            "segment is larger than a block");
   }
-  if (ours) {
+  if (codec.framed) {
     auto& slot = segment->cache_slot;
     slot.file_id = _file_id;
     slot.file_offset = m.file_offset;
@@ -776,7 +775,6 @@ void ColumnReader::SelectAcross(ScanState& s,
   SkipRows(s, span - row);
 }
 
-
 bool ColumnReader::SelectNative(ScanState& s,
                                 const duckdb::SelectionVector& sel,
                                 duckdb::idx_t hits, duckdb::idx_t span,
@@ -902,8 +900,8 @@ bool ColumnReader::ValiditySpanAllValid(ScanState& s, uint64_t anchor,
   }
   SDB_ASSERT(!s.child_states.empty());
   const auto w = _validity->Locate(anchor, s.child_states[0].window);
-  return anchor + span <= w.end && _validity->_segments[w.block].codec->type ==
-                                     duckdb::CompressionType::COMPRESSION_EMPTY;
+  return anchor + span <= w.end &&
+         _validity->_segments[w.block].codec->type == codecs::CodecType::Empty;
 }
 
 void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
@@ -932,7 +930,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
                                                  uint64_t file_id) {
   std::unique_ptr<ColumnReader> validity;
   if (absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
-        return m.codec->type != duckdb::CompressionType::COMPRESSION_EMPTY;
+        return m.codec->type != codecs::CodecType::Empty;
       })) {
     validity.reset(new ColumnReader{
       meta.id,

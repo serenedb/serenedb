@@ -63,10 +63,10 @@ namespace irs::codecs {
 
 constinit const CompressionFunction kFsstPlusFunction =
   text::StringFunction<text::PlainScan<text::FsstPlusLeaf>>(
-    duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS);
+    CodecType::FsstPlus);
 
 constinit const CompressionFunction kDictFsstPlusFunction =
   text::StringFunction<text::DictionaryScan<text::FsstPlusLeaf>>(
-    duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS);
+    CodecType::DictFsstPlus);
 
 }  // namespace irs::codecs

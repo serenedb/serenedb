@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <filesystem>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -293,12 +294,12 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   }
   std::string codecs;
   for (const auto& block : seg->col->DataBlocks()) {
-    codecs += duckdb::CompressionTypeToString(block.codec->type) + " ";
+    absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
   }
   if (const auto* validity = seg->col->Validity()) {
     codecs += "| validity ";
     for (const auto& block : validity->DataBlocks()) {
-      codecs += duckdb::CompressionTypeToString(block.codec->type) + " ";
+      absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
     }
   }
   std::fprintf(stderr, "codec %d: %s\n", static_cast<int>(codec),

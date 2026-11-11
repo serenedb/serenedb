@@ -47,6 +47,7 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <filesystem>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -353,8 +354,7 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
     in->ReadData(file.data(), file.size());
     uint64_t parts[7]{};
     for (const auto& block : data_blocks) {
-      if (!block.codec || block.byte_size == 0 ||
-          !duckdb::IsSereneDBCompressionType(block.codec->type)) {
+      if (!block.codec || block.byte_size == 0 || !block.codec->framed) {
         continue;
       }
       const auto* p = file.data() + block.file_offset;
@@ -400,8 +400,7 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
   Built built;
   for (const auto& block : data_blocks) {
     built.bytes += block.byte_size;
-    if (block.codec &&
-        block.codec->type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
+    if (block.codec && block.codec->type == irs::codecs::CodecType::Numeric) {
       built.ours += block.tuple_count;
     }
   }
@@ -597,7 +596,7 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
   irs::BlockWindow window{};
   uint64_t row = 0;
   for (const auto& block : seg.col->DataBlocks()) {
-    std::string key = duckdb::CompressionTypeToString(block.codec->type);
+    std::string key{irs::codecs::NameOf(block.codec->type)};
     if (block.codec->get_segment_info && block.byte_size != 0) {
       window = seg.col->Locate(row, window);
       auto segment = seg.col->OpenSegment(window.block, ctx);

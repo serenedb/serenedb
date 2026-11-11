@@ -1342,7 +1342,7 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 
 template<typename T, duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
-  .type = duckdb::CompressionType::COMPRESSION_ALP,
+  .type = CodecType::Alp,
   .analyze = AlpAnalyzeChunks<T>,
   .compress = AlpCompressChunks<T>,
   .accepts = HasRows,

@@ -46,6 +46,7 @@
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <iresearch/formats/column/codecs/compression_function.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -151,8 +152,8 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
                shape.name, static_cast<unsigned long long>(w),
                blk->type.ToString().c_str(), col->DataBlocks().size(),
                static_cast<unsigned long long>(blk->rows),
-               duckdb::EnumUtil::ToChars<duckdb::CompressionType>(fn.type),
-               fn.select != nullptr, fn.fetch_rows != nullptr);
+               irs::codecs::NameOf(fn.type).data(), fn.select != nullptr,
+               fn.fetch_rows != nullptr);
   return blk;
 }
 

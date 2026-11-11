@@ -682,14 +682,12 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
       ASSERT_NE(col, nullptr);
       ASSERT_EQ(col->RowCount(), c.rows);
       if (codec != "auto") {
-        auto forced = duckdb::EnumUtil::FromString<duckdb::CompressionType>(
-          duckdb::StringUtil::Upper(codec));
-        if (const auto choice = irs::codecs::ChoiceOf(forced);
-            choice && c.type.id() == duckdb::LogicalTypeId::VARCHAR) {
-          forced = irs::codecs::TypeOf(*choice);
-        }
+        const auto forced =
+          duckdb::EnumUtil::FromString<duckdb::CompressionType>(
+            duckdb::StringUtil::Upper(codec));
         EXPECT_TRUE(absl::c_any_of(col->DataBlocks(), [&](const auto& b) {
-          return b.codec->type == forced;
+          return irs::codecs::NameOf(b.codec->type) ==
+                 duckdb::CompressionTypeToString(forced);
         }));
       }
       GatherStats stats;
@@ -1032,19 +1030,23 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
   ASSERT_NE(col, nullptr) << c.name;
   std::string codecs;
   for (const auto& block : col->DataBlocks()) {
-    codecs += duckdb::CompressionTypeToString(block.codec->type) + " ";
+    absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
   }
-  ASSERT_TRUE(std::ranges::any_of(
-    col->DataBlocks(),
-    [&](const auto& block) { return block.codec->type == c.codec; }))
+  ASSERT_TRUE(
+    std::ranges::any_of(col->DataBlocks(),
+                        [&](const auto& block) {
+                          return irs::codecs::NameOf(block.codec->type) ==
+                                 duckdb::CompressionTypeToString(c.codec);
+                        }))
     << c.name << ": " << codecs;
   if (c.validity_codec) {
     ASSERT_NE(col->Validity(), nullptr) << c.name;
-    ASSERT_TRUE(std::ranges::any_of(col->Validity()->DataBlocks(),
-                                    [&](const auto& block) {
-                                      return block.codec->type ==
-                                             *c.validity_codec;
-                                    }))
+    ASSERT_TRUE(std::ranges::any_of(
+      col->Validity()->DataBlocks(),
+      [&](const auto& block) {
+        return irs::codecs::NameOf(block.codec->type) ==
+               duckdb::CompressionTypeToString(*c.validity_codec);
+      }))
       << c.name;
   }
 
@@ -3302,8 +3304,7 @@ TEST_F(ColumnReaderTest, UniqueListRowGroupsBitpackTheirCodes) {
   ASSERT_NE(col, nullptr);
   ASSERT_FALSE(col->DataBlocks().empty());
   for (const auto& block : col->DataBlocks()) {
-    EXPECT_EQ(block.codec->type,
-              duckdb::CompressionType::COMPRESSION_BITPACKING);
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Bitpacking);
   }
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
   ExpectGathered(*col, r.Ctx(), expected,
@@ -3603,7 +3604,8 @@ void FetchWithCorruptedFooter(duckdb::DatabaseInstance& db,
   }
   ASSERT_EQ(metas.size(), 2);
   ASSERT_EQ(metas.front().id, kId);
-  ASSERT_EQ(metas.front().data.front().codec->type, codec);
+  ASSERT_EQ(irs::codecs::NameOf(metas.front().data.front().codec->type),
+            duckdb::CompressionTypeToString(codec));
   corrupt(metas.front());
   {
     auto out = dir.create(file);
@@ -5183,11 +5185,10 @@ TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
   for (size_t rg = 0; rg < blocks.size(); ++rg) {
     ASSERT_NE(blocks[rg].codec, nullptr) << "row-group " << rg;
     const auto codec = blocks[rg].codec->type;
-    EXPECT_TRUE(codec == duckdb::CompressionType::COMPRESSION_ALP ||
-                codec == duckdb::CompressionType::COMPRESSION_ALPRD ||
-                codec == duckdb::CompressionType::COMPRESSION_COL_NUMERIC)
-      << "row-group " << rg
-      << " codec=" << duckdb::CompressionTypeToString(codec);
+    EXPECT_TRUE(codec == irs::codecs::CodecType::Alp ||
+                codec == irs::codecs::CodecType::AlpRd ||
+                codec == irs::codecs::CodecType::Numeric)
+      << "row-group " << rg << " codec=" << irs::codecs::NameOf(codec);
   }
 }
 
@@ -5247,8 +5248,7 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
   ASSERT_FALSE(blocks.empty());
   for (size_t rg = 0; rg < blocks.size(); ++rg) {
     ASSERT_NE(blocks[rg].codec, nullptr) << "row-group " << rg;
-    EXPECT_EQ(blocks[rg].codec->type,
-              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED)
+    EXPECT_EQ(blocks[rg].codec->type, irs::codecs::CodecType::Uncompressed)
       << "row-group " << rg;
   }
 
@@ -5274,10 +5274,9 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
 }
 
 TEST_F(ColumnReaderTest, UnknownCompressionIsRefused) {
-  auto unknown =
-    *irs::codecs::GetCodec(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-                           duckdb::PhysicalType::INT64);
-  unknown.type = static_cast<duckdb::CompressionType>(200);
+  auto unknown = *irs::codecs::GetCodec(irs::codecs::CodecType::Uncompressed,
+                                        duckdb::PhysicalType::INT64);
+  unknown.type = irs::codecs::CodecType{200};
 
   irs::ColumnMeta meta;
   meta.id = 7;

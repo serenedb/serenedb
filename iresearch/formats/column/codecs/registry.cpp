@@ -21,18 +21,22 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/match.h>
 
 #include <cstddef>
+#include <iterator>
+#include <magic_enum/magic_enum.hpp>
 #include <span>
+#include <utility>
 
 #include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/codecs/zxc.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs {
 namespace {
 
-using duckdb::CompressionType;
 using duckdb::PhysicalType;
 
 template<const CompressionFunction& kFunction>
@@ -45,123 +49,121 @@ const CompressionFunction* EmptyFunction(PhysicalType physical) {
 }
 
 constexpr Codec kCodecs[] = {
-  {CompressionType::COMPRESSION_UNCOMPRESSED, UncompressedFunction},
-  {CompressionType::COMPRESSION_RLE, RleFunction},
-  {CompressionType::COMPRESSION_BITPACKING, BitpackingFunction},
-  {CompressionType::COMPRESSION_ALP, AlpFunction},
-  {CompressionType::COMPRESSION_ALPRD, AlpRdFunction},
-  {CompressionType::COMPRESSION_ROARING, RoaringFunction},
-  {CompressionType::COMPRESSION_CONSTANT, ConstantFunction},
-  {CompressionType::COMPRESSION_EMPTY, EmptyFunction},
-  {CompressionType::COMPRESSION_COL_NUMERIC, NumericFunction},
-  {CompressionType::COMPRESSION_DICT_LZ4,
+  {CodecType::Uncompressed, "Uncompressed", UncompressedFunction},
+  {CodecType::Rle, "RLE", RleFunction},
+  {CodecType::Bitpacking, "BitPacking", BitpackingFunction},
+  {CodecType::Alp, "ALP", AlpFunction},
+  {CodecType::AlpRd, "ALPRD", AlpRdFunction},
+  {CodecType::Roaring, "Roaring", RoaringFunction},
+  {CodecType::Constant, "Constant", ConstantFunction},
+  {CodecType::Empty, "Empty Validity", EmptyFunction},
+  {CodecType::Numeric, "Numeric", NumericFunction},
+  {CodecType::DictLz4,
+   "DICT_LZ4",
    Text<kDictLz4Function>,
    {Shape::Dedup, ByteCodec::Lz4}},
-  {CompressionType::COMPRESSION_LZ4,
-   Text<kLz4Function>,
-   {Shape::Plain, ByteCodec::Lz4}},
-  {CompressionType::COMPRESSION_DICT_ZSTD,
+  {CodecType::Lz4, "LZ4", Text<kLz4Function>, {Shape::Plain, ByteCodec::Lz4}},
+  {CodecType::DictZstd,
+   "DICT_ZSTD",
    Text<kDictZstdFunction>,
    {Shape::Dedup, ByteCodec::Zstd}},
-  {CompressionType::COMPRESSION_COL_ZSTD,
+  {CodecType::Zstd,
+   "ZSTD",
    Text<kZstdFunction>,
    {Shape::Plain, ByteCodec::Zstd}},
-  {CompressionType::COMPRESSION_DICT_ZXC,
+  {CodecType::DictZxc,
+   "DICT_ZXC",
    Text<kDictZxcFunction>,
    {Shape::Dedup, ByteCodec::Zxc}},
-  {CompressionType::COMPRESSION_ZXC,
-   Text<kZxcFunction>,
-   {Shape::Plain, ByteCodec::Zxc}},
-  {CompressionType::COMPRESSION_COL_DICT_FSST,
+  {CodecType::Zxc, "ZXC", Text<kZxcFunction>, {Shape::Plain, ByteCodec::Zxc}},
+  {CodecType::DictFsst,
+   "DICT_FSST",
    Text<kDictFsstFunction>,
    {Shape::Dedup, ByteCodec::Fsst}},
-  {CompressionType::COMPRESSION_COL_FSST,
+  {CodecType::Fsst,
+   "FSST",
    Text<kFsstFunction>,
    {Shape::Plain, ByteCodec::Fsst}},
-  {CompressionType::COMPRESSION_COL_DICT_FSST_PLUS,
+  {CodecType::DictFsstPlus,
+   "DICT_FSST_PLUS",
    Text<kDictFsstPlusFunction>,
    {Shape::Dedup, ByteCodec::FsstPlus}},
-  {CompressionType::COMPRESSION_COL_FSST_PLUS,
+  {CodecType::FsstPlus,
+   "FSST_PLUS",
    Text<kFsstPlusFunction>,
    {Shape::Plain, ByteCodec::FsstPlus}},
-  {CompressionType::COMPRESSION_COL_DICT_ONPAIR,
+  {CodecType::DictOnPair,
+   "DICT_ONPAIR",
    Text<kDictOnPairFunction>,
    {Shape::Dedup, ByteCodec::OnPair}},
-  {CompressionType::COMPRESSION_COL_ONPAIR,
+  {CodecType::OnPair,
+   "ONPAIR",
    Text<kOnPairFunction>,
    {Shape::Plain, ByteCodec::OnPair}},
-  {CompressionType::COMPRESSION_COL_DICT_FSST12,
+  {CodecType::DictFsst12,
+   "DICT_FSST12",
    Text<kDictFsst12Function>,
    {Shape::Dedup, ByteCodec::Fsst12}},
-  {CompressionType::COMPRESSION_COL_FSST12,
+  {CodecType::Fsst12,
+   "FSST12",
    Text<kFsst12Function>,
    {Shape::Plain, ByteCodec::Fsst12}},
 };
 
-constexpr size_t kInternalBegin = 6;
-constexpr size_t kTextBegin = 9;
-static_assert(kCodecs[kInternalBegin].type ==
-              CompressionType::COMPRESSION_CONSTANT);
-static_assert(kCodecs[kTextBegin].type ==
-              CompressionType::COMPRESSION_DICT_LZ4);
+static_assert(std::size(kCodecs) == magic_enum::enum_count<CodecType>());
+static_assert([] {
+  for (size_t i = 0; i < std::size(kCodecs); ++i) {
+    if (std::to_underlying(kCodecs[i].type) != i) {
+      return false;
+    }
+  }
+  return true;
+}());
+
+constexpr size_t kInternalBegin = std::to_underlying(CodecType::Constant);
+constexpr size_t kTextBegin = std::to_underlying(CodecType::DictLz4);
 
 constexpr std::span<const Codec> kAnalyzed =
   std::span{kCodecs}.first(kInternalBegin);
 constexpr std::span<const Codec> kText = std::span{kCodecs}.subspan(kTextBegin);
 
-constexpr CompressionType Canonical(CompressionType type) noexcept {
-  switch (type) {
-    case CompressionType::COMPRESSION_ZSTD:
-      return CompressionType::COMPRESSION_COL_ZSTD;
-    case CompressionType::COMPRESSION_DICT_FSST:
-      return CompressionType::COMPRESSION_COL_DICT_FSST;
-    case CompressionType::COMPRESSION_FSST:
-      return CompressionType::COMPRESSION_COL_FSST;
-    default:
-      return type;
-  }
-}
-
-const Codec* Find(std::span<const Codec> codecs,
-                  CompressionType type) noexcept {
-  const auto it = absl::c_find_if(
-    codecs, [&](const Codec& codec) { return codec.type == type; });
-  return it == codecs.end() ? nullptr : &*it;
-}
-
 }  // namespace
 
 std::span<const Codec> AnalyzedCodecs() noexcept { return kAnalyzed; }
 
-const CompressionFunction* GetCodec(CompressionType type,
-                                    PhysicalType physical) {
-  const auto* codec = Find(kCodecs, type);
-  return codec ? codec->function(physical) : nullptr;
+const CompressionFunction* GetCodec(CodecType type, PhysicalType physical) {
+  const auto index = std::to_underlying(type);
+  return index < std::size(kCodecs) ? kCodecs[index].function(physical)
+                                    : nullptr;
 }
 
-const CompressionFunction* GetCompressionFunction(CompressionType type,
-                                                  PhysicalType physical) {
-  const auto* function = GetCodec(type, physical);
-  return function && function->analyze ? function : nullptr;
+const Codec* FindCodec(std::string_view name) noexcept {
+  const auto* it = absl::c_find_if(kCodecs, [&](const Codec& codec) {
+    return absl::EqualsIgnoreCase(codec.name, name);
+  });
+  return it == std::end(kCodecs) ? nullptr : it;
 }
 
-bool Compresses(CompressionType type, PhysicalType physical) {
-  const auto* function = GetCodec(type, physical);
-  return function && function->compress;
+std::string_view NameOf(CodecType type) noexcept {
+  SDB_ASSERT(std::to_underlying(type) < std::size(kCodecs));
+  return kCodecs[std::to_underlying(type)].name;
 }
 
-const StringChoice* ChoiceOf(CompressionType type) {
-  const auto* codec = Find(kText, Canonical(type));
-  return codec ? &codec->choice : nullptr;
+const StringChoice* ChoiceOf(CodecType type) noexcept {
+  const auto index = std::to_underlying(type);
+  return kTextBegin <= index && index < std::size(kCodecs)
+           ? &kCodecs[index].choice
+           : nullptr;
 }
 
-CompressionType TypeOf(StringChoice choice) noexcept {
+CodecType TypeOf(StringChoice choice) noexcept {
   const auto it = absl::c_find_if(
     kText, [&](const Codec& codec) { return codec.choice == choice; });
-  return it == kText.end() ? CompressionType::COMPRESSION_AUTO : it->type;
+  SDB_ASSERT(it != kText.end());
+  return it->type;
 }
 
-uint8_t MaxLevel(CompressionType type) {
+uint8_t MaxLevel(CodecType type) noexcept {
   const auto* choice = ChoiceOf(type);
   if (!choice) {
     return 0;

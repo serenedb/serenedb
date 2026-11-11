@@ -1133,7 +1133,7 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
 template<typename T, duckdb::PhysicalType kPhysical,
          bool kWriteStatistics = true>
 constexpr CompressionFunction kFunction{
-  .type = duckdb::CompressionType::COMPRESSION_RLE,
+  .type = CodecType::Rle,
   .analyze = AnalyzeChunks<T>,
   .compress = CompressChunks<T, kWriteStatistics>,
   .accepts = HasRuns<T>,

@@ -1136,7 +1136,8 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
 template<typename T>
 constexpr CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
   return {
-    .type = duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
+    .type = CodecType::Numeric,
+    .framed = true,
     .init_scan = InitScan<T>,
     .scan_vector = ScanVector<T>,
     .scan_partial = ScanPartial<T>,

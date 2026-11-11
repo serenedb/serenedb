@@ -21,7 +21,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <core_functions/array_kernels.hpp>
 #include <deque>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
@@ -230,8 +229,8 @@ class AnnBatchTest : public ::testing::TestWithParam<BatchCase> {
     std::vector<float> normalized{queries.begin(), queries.end()};
     if (opts.metric == irs::VectorMetric::Cosine) {
       for (size_t q = 0; q < normalized.size(); q += kDim) {
-        duckdb::L2NormalizeOp::Operation(normalized.data() + q,
-                                         normalized.data() + q, kDim);
+        const auto query = std::span{normalized}.subspan(q, kDim);
+        irs::ann::NormalizeQuery(query, query);
       }
     }
     ann->SearchBatch(segment, {}, opts,

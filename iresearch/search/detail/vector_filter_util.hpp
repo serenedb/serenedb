@@ -21,7 +21,6 @@
 #pragma once
 
 #include <array>
-#include <core_functions/array_kernels.hpp>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -32,6 +31,7 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/ann/batch.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/queries/vector_state.hpp"
@@ -107,7 +107,7 @@ inline bool PrepareVectorState(const IvfIndex& index, const SubReader& segment,
   std::span<const float> query = opts.query;
   if (opts.metric == VectorMetric::Cosine) {
     normalized_query.resize(query.size());
-    duckdb::L2NormalizeOp::Operation(query.data(), normalized_query.data(), d);
+    ann::NormalizeQuery(query.first(d), normalized_query);
     query = normalized_query;
   }
 

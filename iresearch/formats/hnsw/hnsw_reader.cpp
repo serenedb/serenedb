@@ -30,6 +30,7 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/ann/batch.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -44,9 +45,7 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
                                    VectorMetric metric, uint32_t d) {
   std::vector<float> q{query.begin(), query.end()};
   if (metric == VectorMetric::Cosine) {
-    std::vector<float> normalized(q.size());
-    duckdb::L2NormalizeOp::Operation(q.data(), normalized.data(), d);
-    q = std::move(normalized);
+    ann::NormalizeQuery(query.first(d), q);
   }
   return q;
 }

@@ -42,4 +42,7 @@ struct QueryBatch {
 
 uint32_t BatchRows(AnnKind kind, uint32_t d) noexcept;
 
+void NormalizeQuery(std::span<const float> query,
+                    std::span<float> out) noexcept;
+
 }  // namespace irs::ann

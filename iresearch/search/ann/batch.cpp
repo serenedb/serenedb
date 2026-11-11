@@ -21,6 +21,7 @@
 #include "iresearch/search/ann/batch.hpp"
 
 #include <algorithm>
+#include <core_functions/array_kernels.hpp>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/ann/family.hpp"
@@ -36,6 +37,12 @@ uint32_t BatchRows(AnnKind /*kind*/, uint32_t d) noexcept {
   constexpr size_t kMaxRows = 2048;
   return static_cast<uint32_t>(std::clamp<size_t>(
     kQueryBlockBytes / (size_t{d} * sizeof(float)), 1, kMaxRows));
+}
+
+void NormalizeQuery(std::span<const float> query,
+                    std::span<float> out) noexcept {
+  SDB_ASSERT(out.size() >= query.size());
+  duckdb::L2NormalizeOp::Operation(query.data(), out.data(), query.size());
 }
 
 }  // namespace ann

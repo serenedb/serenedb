@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <core_functions/array_kernels.hpp>
 #include <deque>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
@@ -236,7 +235,7 @@ void PrepareQueries(const AnnJoinGlobalState& g, AnnJoinLocalState& l,
     l.vectors.insert(l.vectors.end(), data + first, data + first + d);
     if (g.vs.metric == irs::VectorMetric::Cosine) {
       auto* query = l.vectors.data() + l.vectors.size() - d;
-      duckdb::L2NormalizeOp::Operation(query, query, d);
+      irs::ann::NormalizeQuery({query, d}, {query, d});
     }
     l.rows.push_back(static_cast<uint32_t>(row));
   }

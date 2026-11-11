@@ -96,11 +96,18 @@ struct PlainScan final : SegmentScanState {
   }
 
   void SelectFlat(duckdb::Vector& result, idx_t result_offset, idx_t start,
-                  idx_t, const duckdb::SelectionVector& rows, idx_t first,
+                  idx_t span, const duckdb::SelectionVector& rows, idx_t first,
                   idx_t count, idx_t base) {
-    WriteEntries(result, result_offset, count, [&](idx_t i) {
+    const auto entry_at = [&](idx_t i) {
       return start + (rows.get_index(first + i) - base);
-    });
+    };
+    if constexpr (Sorted(Leaf::kCodec)) {
+      entries.EnsureGroups(count, entry_at, static_cast<uint32_t>(start),
+                           static_cast<uint32_t>(start + span));
+      WriteRefs(result, result_offset, count, entry_at);
+    } else {
+      WriteEntries(result, result_offset, count, entry_at);
+    }
   }
 
   template<typename Entry>
@@ -108,6 +115,12 @@ struct PlainScan final : SegmentScanState {
                                      idx_t result_offset, idx_t count,
                                      Entry entry_at) {
     entries.EnsureEach(count, entry_at);
+    WriteRefs(result, result_offset, count, entry_at);
+  }
+
+  template<typename Entry>
+  IRS_FORCE_INLINE void WriteRefs(duckdb::Vector& result, idx_t result_offset,
+                                  idx_t count, Entry entry_at) {
     entries.ReferenceHeap(result);
     auto writer =
       duckdb::FlatVector::Writer<string_t>(result, count, result_offset);

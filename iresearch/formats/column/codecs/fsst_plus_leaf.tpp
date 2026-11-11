@@ -120,6 +120,8 @@ inline std::string_view DecodePlusEntry(const FsstDecoder& fsst,
 }
 
 struct FsstPlusScan {
+  static constexpr uint32_t kEntryGroup = 1;
+
   template<typename Frames>
   FsstPlusScan(const ColumnSegment&, const Frames& s)
     : ids{s.base + s.header.off_lcps, s.header.lcp_width} {

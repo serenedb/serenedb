@@ -65,6 +65,8 @@ inline uint64_t FirstToken(ChainGroups& groups, PackedReader& counts,
 }
 
 struct OnPairScan {
+  static constexpr uint32_t kEntryGroup = 1;
+
   template<typename Frames>
   OnPairScan(const ColumnSegment&, const Frames& s) {
     SDB_ENSURE(table.Open(OnPairSide(s.header, s.base)),

@@ -123,6 +123,8 @@ uint32_t WalkInPlace(const FsstDecoder& fsst, const char* in,
 }
 
 struct FsstScan {
+  static constexpr uint32_t kEntryGroup = kChainRestart;
+
   template<typename Frames>
   FsstScan(const ColumnSegment&, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {

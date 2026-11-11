@@ -175,6 +175,56 @@ struct EntryFrames {
     }
   }
 
+  template<typename Entry>
+  void EnsureGroups(idx_t count, Entry entry_at, uint32_t window_first,
+                    uint32_t window_end) {
+    constexpr uint32_t kUnit = Leaf::Scan::kEntryGroup;
+    if (Complete()) {
+      return;
+    }
+    uint32_t f = kNoFrame;
+    for (idx_t i = 0; i < count;) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+        f = FrameOf(e);
+      }
+      const auto first = frames[f].first_entry;
+      const auto end = FrameEnd(f);
+      auto last = (e - first) / kUnit;
+      uint64_t groups = 1;
+      auto j = i + 1;
+      for (; j < count; ++j) {
+        const auto next = static_cast<uint32_t>(entry_at(j));
+        if (next < first || next >= end) {
+          break;
+        }
+        const auto group = (next - first) / kUnit;
+        groups += group != last;
+        last = group;
+      }
+      if (!decoded[f]) {
+        const auto lo = std::max(window_first, first);
+        const auto hi = std::min(window_end, end);
+        SDB_ASSERT(lo < hi);
+        const uint64_t range =
+          (hi - 1 - first) / kUnit - (lo - first) / kUnit + 1;
+        const uint64_t group_bytes =
+          uint64_t{kUnit} * frames[f].raw_len / (end - first);
+        const uint64_t total = (end - first + kUnit - 1) / kUnit;
+        if ((groups * kUnit <= kSparseEntries && range < total) ||
+            groups * (group_bytes + kSparseGroupCost) * 4 <=
+              range * group_bytes * 3) {
+          for (auto k = i; k < j; ++k) {
+            leaf->EnsureEntry(*this, static_cast<uint32_t>(entry_at(k)), f);
+          }
+        } else {
+          DecodeFrame(f);
+        }
+      }
+      i = j;
+    }
+  }
+
   const char* Data() const noexcept {
     return reinterpret_cast<const char*>(base + header.off_data);
   }

@@ -37,6 +37,7 @@
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/scalar_vector_limits.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -185,6 +186,9 @@ const VectorScorerOptions& PrepareVectorScorer(
   }
   SDB_ENSURE(!vs.query_vector.empty(),
              "a vector search has a query vector to search for");
+  if (irs::IsScalar(vs.quant) || irs::IsHalfFloat(vs.quant)) {
+    irs::CheckScalarQuery(vs.query_vector);
+  }
   if (state.top_k) {
     if (vs.kind == irs::AnnKind::Hnsw) {
       const auto k = static_cast<double>(*state.top_k);

@@ -612,8 +612,47 @@ WriteChunk& ColumnWriter::OpenChunk() {
   return chunk;
 }
 
+void ColumnWriter::ValidateVector(const duckdb::Vector& vec,
+                                  duckdb::idx_t count) const {
+  duckdb::UnifiedVectorFormat rows;
+  duckdb::UnifiedVectorFormat values;
+  vec.ToUnifiedFormat(count, rows);
+  duckdb::ArrayVector::GetChild(vec).ToUnifiedFormat(values);
+  if (!_vector_limits && values.validity.AllValid()) {
+    return;
+  }
+  const auto* data = duckdb::UnifiedVectorFormat::GetData<float>(values);
+  const auto dimensions = duckdb::ArrayType::GetSize(_type);
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    const auto index = rows.sel->get_index(row);
+    if (!rows.validity.RowIsValid(index)) {
+      continue;
+    }
+    double component = 0;
+    double norm2 = 0;
+    for (duckdb::idx_t j = 0; j < dimensions; ++j) {
+      const auto child = values.sel->get_index(index * dimensions + j);
+      if (!values.validity.RowIsValid(child)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                        ERR_MSG("Vector components must not be NULL"));
+      }
+      if (_vector_limits) {
+        const double value = data[child];
+        component = std::max(component, std::abs(value));
+        norm2 += value * value;
+      }
+    }
+    if (_vector_limits) {
+      _vector_limits->Check(component, norm2);
+    }
+  }
+}
+
 void ColumnWriter::AppendDense(const duckdb::Vector& vec, duckdb::idx_t count) {
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
+  if (_has_ann) {
+    ValidateVector(vec, count);
+  }
   duckdb::idx_t off = 0;
   while (off < count) {
     auto& back = OpenChunk();

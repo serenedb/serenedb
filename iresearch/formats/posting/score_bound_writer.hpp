@@ -94,7 +94,6 @@ enum ScoreBoundTag : uint32_t {
   // How to Produce best Entry?
   // Produce max freq
   kScoreBoundMaxFreq = 1U << 2U,
-  // Produce max freq, min norm, but norm >= freq
   kScoreBoundMinNorm = 1U << 3U,
   // Produce max freq/norm
   kScoreBoundDivNorm = 1U << 4U,
@@ -131,10 +130,8 @@ class FreqNormProducer {
     SDB_ASSERT(0.f < avg_dl);
     SDB_ASSERT(0 < tf_1);
     SDB_ASSERT(0 < dl_1);
-    SDB_ASSERT(tf_1 <= dl_1);
     SDB_ASSERT(0 < tf_2);
     SDB_ASSERT(0 < dl_2);
-    SDB_ASSERT(tf_2 <= dl_2);
     // idf * tf / (k * (1 - b + b * dl / avg_dl) + tf)
     // 1. idf -- doesn't affect compare
     // tf_1 / (k * (1 - b + b * dl_1 / avg_dl) + tf_1)
@@ -169,7 +166,6 @@ class FreqNormProducer {
       to.freq = from.freq > to.freq ? from.freq : to.freq;
       if constexpr (kMinNorm) {
         to.norm = from.norm < to.norm ? from.norm : to.norm;
-        to.norm = to.norm < to.freq ? to.freq : to.norm;
       }
     } else if constexpr (kDivNorm) {
       ProduceDivNorm(from.freq, from.norm, to);
@@ -182,7 +178,7 @@ class FreqNormProducer {
     SDB_ASSERT(entry.freq >= 1);
     out.WriteV32(entry.freq);
     if constexpr (kNorm) {
-      SDB_ASSERT(entry.norm >= entry.freq);
+      SDB_ASSERT(entry.norm >= 1);
       if (entry.norm != entry.freq) {
         out.WriteV32(entry.norm - entry.freq);
       }
@@ -202,7 +198,7 @@ class FreqNormProducer {
     SDB_ASSERT(entry.freq >= 1);
     size_t size = bytes_io<uint32_t>::vsize(entry.freq);
     if constexpr (kNorm) {
-      SDB_ASSERT(entry.norm >= entry.freq);
+      SDB_ASSERT(entry.norm >= 1);
       if (entry.norm != entry.freq) {
         size += bytes_io<uint32_t>::vsize(entry.norm - entry.freq);
       }
@@ -249,7 +245,7 @@ class FreqNormProducer {
           ProduceDivNorm(freqs[i], norms[i], to);
         } else {
           to.freq = std::max(freqs[i], to.freq);
-          to.norm = std::max(std::min(norms[i], to.norm), to.freq);
+          to.norm = std::min(norms[i], to.norm);
         }
       }
     } else {
@@ -293,7 +289,6 @@ class FreqNormProducer {
       // fallback, create virtual document
       to.freq = freq > to.freq ? freq : to.freq;
       to.norm = norm < to.norm ? norm : to.norm;
-      to.norm = to.norm < to.freq ? to.freq : to.norm;
     }
   }
 

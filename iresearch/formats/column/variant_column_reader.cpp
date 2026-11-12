@@ -20,7 +20,6 @@
 
 #include "iresearch/formats/column/variant_column_reader.hpp"
 
-#include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -139,8 +138,7 @@ const ColumnReader* VariantColumnReader::FindShreddedLeaf(
   }
   const auto& fields = duckdb::StructType::GetChildTypes(tv.Type());
   for (size_t fi = 0; fi < fields.size(); ++fi) {
-    if (duckdb::StringUtil::CIEquals(path[0],
-                                     fields[fi].first.GetIdentifierName())) {
+    if (path[0] == fields[fi].first.GetIdentifierName()) {
       return FindShreddedLeaf(tv.StructField(fi), path.subspan(1));
     }
   }

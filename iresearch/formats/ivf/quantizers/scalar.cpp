@@ -702,15 +702,16 @@ class ScalarQuantizerReader final : public QuantizerReader {
     double var = weighted / 12.0;
     if (_fast && _weights.int_ip()) {
       const double unit = uniform ? vdiff[0] / 255.0 : 1.0;
-      const double t = _weights.int_dot_scale / unit;
-      const double mid = _weights.int_sum_scale / unit;
       double rounding = 0;
       for (size_t j = 0; j < d; ++j) {
-        const double src = uniform ? double{_query[j]} : double{_weights.a[j]};
-        const double e = _weights.uq[j] * t + mid - src;
+        const double src =
+          uniform ? double{_query[j]} * unit : double{_weights.a[j]};
+        const double e =
+          static_cast<double>(_weights.uq[j]) * _weights.int_dot_scale +
+          _weights.int_sum_scale - src;
         rounding += e * e;
       }
-      var += unit * unit * (255.0 * 255.0 / 3.0) * rounding;
+      var += (255.0 * 255.0 / 3.0) * rounding;
     }
     _error_unit = static_cast<float>(std::sqrt(var));
   }

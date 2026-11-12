@@ -32,6 +32,7 @@
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/index/scalar_vector_limits.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
@@ -83,6 +84,7 @@ class ColumnWriter final {
   friend class ColWriter;
 
   void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
+  void ValidateVector(const duckdb::Vector& vec, duckdb::idx_t count) const;
   void PadNestedNulls(uint64_t count);
   WriteChunk& OpenChunk();
 
@@ -134,6 +136,7 @@ class ColumnWriter final {
   field_id _id;
   duckdb::LogicalType _type;
   bool _skip_validity = false;
+  bool _has_ann = false;
   uint32_t _row_group_size = 0;
   duckdb::CompressionType _forced = duckdb::CompressionType::COMPRESSION_AUTO;
   std::vector<WriteChunk> _staged;
@@ -148,6 +151,7 @@ class ColumnWriter final {
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
   ColumnMeta _meta;
+  std::optional<ScalarVectorLimits> _vector_limits;
 };
 
 }  // namespace irs

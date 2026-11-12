@@ -27,7 +27,10 @@ def blocks(text):
 
 
 def join(parts):
-    return "\n\n".join("\n".join(block) for block in parts) + "\n"
+    return "\n\n".join(
+        "\n".join(block).rstrip("\n") +
+        ("\n" if block[head(block)] in ("statement error", "query error") else "")
+        for block in parts) + "\n"
 
 
 def spots(block):

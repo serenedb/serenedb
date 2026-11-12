@@ -1,0 +1,112 @@
+statement ok
+CREATE TABLE variant_case (
+  id INTEGER PRIMARY KEY,
+  payload VARIANT,
+  mixed VARIANT,
+  wrapped STRUCT(payload VARIANT)
+);
+
+statement ok
+CREATE INDEX variant_case_idx ON variant_case USING inverted(id)
+  INCLUDE (payload, mixed, wrapped)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO variant_case VALUES
+  (-2, NULL, NULL, NULL),
+  (-1, '{"a":7,"nested":{"Key":11}}'::JSON::VARIANT,
+       '{"a":1,"A":2}'::JSON::VARIANT,
+       ROW('{"a":13}'::JSON::VARIANT));
+
+statement ok
+VACUUM (REFRESH_TABLE) variant_case;
+
+query
+SELECT (payload."A")::INTEGER AS value FROM variant_case_idx WHERE id = -1;
+----
+value
+NULL
+
+statement ok
+INSERT INTO variant_case
+SELECT i, payload, mixed, wrapped
+FROM variant_case CROSS JOIN range(30000) r(i)
+WHERE id = -1;
+
+statement ok
+VACUUM (REFRESH_TABLE) variant_case;
+
+query
+SELECT (payload."A")::INTEGER AS value FROM variant_case WHERE id = 7;
+----
+value
+NULL
+
+query
+SELECT (payload."A")::INTEGER AS value FROM variant_case_idx WHERE id = 7;
+----
+value
+NULL
+
+query
+SELECT (payload.a)::INTEGER AS value FROM variant_case_idx WHERE id = 7;
+----
+value
+7
+
+query
+SELECT count(*) AS n FROM variant_case_idx
+WHERE (payload."A")::INTEGER IS NOT NULL;
+----
+n
+0
+
+query
+SELECT id, (mixed."A")::INTEGER AS value FROM variant_case_idx
+WHERE id IN (-2, -1, 7) ORDER BY id;
+----
+id	value
+-2	NULL
+-1	2
+7	2
+
+query
+SELECT (mixed.a)::INTEGER AS value FROM variant_case_idx WHERE id = 7;
+----
+value
+1
+
+query
+SELECT (payload.nested."key")::INTEGER AS value FROM variant_case_idx
+WHERE id = 7;
+----
+value
+NULL
+
+query
+SELECT (payload.nested."Key")::INTEGER AS value FROM variant_case_idx
+WHERE id = 7;
+----
+value
+11
+
+query
+SELECT (payload."NESTED"."Key")::INTEGER AS value FROM variant_case_idx
+WHERE id = 7;
+----
+value
+NULL
+
+query
+SELECT (wrapped."PAYLOAD"."A")::INTEGER AS value FROM variant_case_idx
+WHERE id = 7;
+----
+value
+NULL
+
+query
+SELECT (wrapped."PAYLOAD".a)::INTEGER AS value FROM variant_case_idx
+WHERE id = 7;
+----
+value
+13

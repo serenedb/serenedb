@@ -102,6 +102,12 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
 
+Scalar quantization (`sq8`, `sq4`, `usq8`, `usq4`, `fp16`, `bf16`) requires finite vectors. For dimension `N`, the squared Euclidean norm of a stored vector or query must not exceed `FLOAT_MAX / (16 * N)`, where `FLOAT_MAX` is approximately `3.4028235e38`. This bound leaves room for distances and quantization estimates without floating-point overflow. Additionally, each stored `fp16` component must lie between `-65504` and `65504`, inclusive. An out-of-range value rejects the insert, update or index creation; it is never silently discarded from search results. Scale vectors before indexing if they exceed these limits.
+
+If an index created by an older version already contains out-of-range vectors, correct those vectors and recreate the index.
+
+Uniform scalar quantization accepts constant vectors, including all-zero vectors and segments containing a single row. Such segments remain searchable with re-scoring enabled.
+
 Quantization makes queries faster as well as the index smaller: a quantized `ivf` index scans its clusters faster, so [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) can probe more of them at the same latency.
 
 ### Re-scoring {#rescoring}
@@ -174,6 +180,8 @@ Here `lang` is `INCLUDE`d and `id` is indexed: the part on indexed fields -- a c
 ## Column types
 
 A vector column must be a fixed-size `FLOAT[N]` array -- all rows share dimension `N` (an unsized `FLOAT[]` is rejected). Unlike text and `INCLUDE`d columns, a vector column does not take a storage `compression` codec -- use `quant` instead to control its on-disk size.
+
+A whole `NULL` vector is allowed and has no nearest-neighbour entry. A non-NULL vector must not contain `NULL` components, regardless of its quantization.
 
 ## See also
 

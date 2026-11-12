@@ -698,6 +698,45 @@ void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
   if (FetchSparse(s, anchor, sel, hits, out, at)) {
     return;
   }
+  for (duckdb::idx_t i = 0; i < hits;) {
+    const auto first = sel.get_index(i);
+    auto end = i + 1;
+    while (end < hits && sel.get_index(end) - first < STANDARD_VECTOR_SIZE) {
+      ++end;
+    }
+    const auto* window = &sel;
+    if (first != 0) {
+      if (!s.window_sel.IsSet()) {
+        s.window_sel.Initialize(STANDARD_VECTOR_SIZE);
+      }
+      for (auto k = i; k < end; ++k) {
+        s.window_sel.set_index(k - i, sel.get_index(k) - first);
+      }
+      window = &s.window_sel;
+    }
+    if ((i == 0 && end == hits) ||
+        !FetchSparse(s, anchor + first, *window, end - i, out, at + i)) {
+      GatherWindow(s, anchor + first, *window, end - i,
+                   sel.get_index(end - 1) - first + 1, out, at + i);
+    }
+    i = end;
+  }
+}
+
+void ColumnReader::GatherWindow(ScanState& s, uint64_t anchor,
+                                const duckdb::SelectionVector& sel,
+                                duckdb::idx_t hits, duckdb::idx_t span,
+                                duckdb::Vector& out, duckdb::idx_t at) const {
+  SDB_ASSERT(hits > 0 && hits <= span && span <= STANDARD_VECTOR_SIZE);
+  if (hits != span && anchor < _row_count &&
+      !ScatterWins(_segments[Locate(anchor, s.window).block], _type, sel, hits,
+                   span)) {
+    SkipTo(s, anchor);
+    if (SelectNative(s, sel, hits, span, out, at,
+                     duckdb::ScanVectorType::SCAN_FLAT_VECTOR)) {
+      return;
+    }
+  }
   column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
 }
 
@@ -721,7 +760,8 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
     column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
     return;
   }
-  if (SelectNative(s, sel, hits, span, out)) {
+  if (SelectNative(s, sel, hits, span, out, 0,
+                   duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR)) {
     return;
   }
   if (FewStringRuns(_type, sel, hits, span)) {
@@ -740,7 +780,8 @@ bool ColumnReader::SelectsAcross(const ScanState& s,
   }
   for (size_t block = s.window.block;
        block < _segments.size() && _offsets[block] < end; ++block) {
-    if (!_segments[block].codec->select_partial) {
+    const auto* choice = codecs::ChoiceOf(_segments[block].codec->type);
+    if (!choice || choice->shape != codecs::Shape::Plain) {
       return false;
     }
   }
@@ -750,8 +791,11 @@ bool ColumnReader::SelectsAcross(const ScanState& s,
 void ColumnReader::SelectAcross(ScanState& s,
                                 const duckdb::SelectionVector& sel,
                                 duckdb::idx_t hits, duckdb::idx_t span,
-                                duckdb::Vector& out) const {
+                                duckdb::Vector& out, duckdb::idx_t at) const {
   out.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  if (!s.piece.IsSet()) {
+    s.piece.Initialize(STANDARD_VECTOR_SIZE);
+  }
   duckdb::idx_t row = 0;
   for (duckdb::idx_t i = 0; i < hits;) {
     SkipRows(s, sel.get_index(i) - row);
@@ -763,9 +807,12 @@ void ColumnReader::SelectAcross(ScanState& s,
     while (end < hits && sel.get_index(end) - row < rows) {
       ++end;
     }
+    for (auto k = i; k < end; ++k) {
+      s.piece.set_index(k - i, sel.get_index(k) - row);
+    }
     const auto& segment = *s.segments.back();
-    segment.function.select_partial(segment, s.st, rows, out, i, sel, i,
-                                    end - i, row);
+    segment.function.select(segment, s.st, rows, out, at + i, s.piece, end - i,
+                            duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
     const auto taken = sel.get_index(end - 1) + 1 - row;
     s.st.offset_in_column += taken;
     s.st.internal_index = s.st.offset_in_column;
@@ -778,7 +825,8 @@ void ColumnReader::SelectAcross(ScanState& s,
 bool ColumnReader::SelectNative(ScanState& s,
                                 const duckdb::SelectionVector& sel,
                                 duckdb::idx_t hits, duckdb::idx_t span,
-                                duckdb::Vector& out) const {
+                                duckdb::Vector& out, duckdb::idx_t at,
+                                duckdb::ScanVectorType scan_type) const {
   BeginScanVector(s);
   const bool within =
     (s.window.end - s.window.begin) - s.st.offset_in_column >= span;
@@ -799,18 +847,20 @@ bool ColumnReader::SelectNative(ScanState& s,
   }
   if (within) {
     const auto& segment = *s.segments.back();
-    segment.function.select(segment, s.st, span, out, sel, hits);
+    segment.function.select(segment, s.st, span, out, at, sel, hits,
+                            scan_type);
     s.st.offset_in_column += span;
     s.st.internal_index = s.st.offset_in_column;
   } else {
-    SelectAcross(s, sel, hits, span, out);
+    SelectAcross(s, sel, hits, span, out, at);
   }
   if (self_valid) {
     SkipValidity(s, span);
   } else if (_validity) {
     auto& vs = s.child_states[0];
     const auto& validity = *vs.segments.back();
-    validity.function.select(validity, vs.st, span, out, sel, hits);
+    validity.function.select(validity, vs.st, span, out, at, sel, hits,
+                             scan_type);
     vs.st.offset_in_column += span;
     vs.st.internal_index = vs.st.offset_in_column;
   }

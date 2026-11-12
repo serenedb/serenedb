@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/enums/scan_vector_type.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
@@ -147,14 +148,9 @@ struct CompressionFunction {
                        duckdb::idx_t result_offset) = nullptr;
   void (*select)(const ColumnSegment& segment, ColumnScanState& state,
                  duckdb::idx_t vector_count, duckdb::Vector& result,
-                 const duckdb::SelectionVector& sel,
-                 duckdb::idx_t sel_count) = nullptr;
-  void (*select_partial)(const ColumnSegment& segment, ColumnScanState& state,
-                         duckdb::idx_t vector_count, duckdb::Vector& result,
-                         duckdb::idx_t result_offset,
-                         const duckdb::SelectionVector& sel,
-                         duckdb::idx_t sel_offset, duckdb::idx_t sel_count,
-                         duckdb::idx_t sel_base) = nullptr;
+                 duckdb::idx_t result_offset,
+                 const duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
+                 duckdb::ScanVectorType scan_type) = nullptr;
   void (*filter)(const ColumnSegment& segment, ColumnScanState& state,
                  duckdb::idx_t vector_count, duckdb::Vector& result,
                  duckdb::SelectionVector& sel, duckdb::idx_t& sel_count,

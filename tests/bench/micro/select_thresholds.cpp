@@ -238,7 +238,8 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
       irs::codecs::ColumnScanState probe_st;
       duckdb::Vector probe{blk.type};
       probe_st.scan_state = fn.init_scan(segment);
-      fn.select(segment, probe_st, w, probe, sel, k);
+      fn.select(segment, probe_st, w, probe, 0, sel, k,
+                duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR);
     } catch (const std::exception&) {
       state.SkipWithError("select can't take a block-sized window");
       return;
@@ -265,7 +266,8 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
       }
       case Arm::Select:
         st.scan_state = fn.init_scan(segment);
-        fn.select(segment, st, w, out, sel, k);
+        fn.select(segment, st, w, out, 0, sel, k,
+                  duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR);
         break;
       case Arm::Entire: {
         st.scan_state = fn.init_scan(segment);

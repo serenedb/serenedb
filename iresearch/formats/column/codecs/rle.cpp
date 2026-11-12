@@ -897,17 +897,19 @@ void Scan(const ColumnSegment& segment, ColumnScanState& state,
 
 template<typename T>
 void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
-            duckdb::Vector& result, const duckdb::SelectionVector& sel,
-            idx_t sel_count) {
+            duckdb::Vector& result, idx_t result_offset,
+            const duckdb::SelectionVector& sel, idx_t sel_count,
+            duckdb::ScanVectorType scan_type) {
   auto& scan = state.scan_state->Cast<RleScanState<T>>();
   const auto run_length = CurrentRunLength(scan);
-  if (scan.position_in_entry < run_length &&
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
+      scan.position_in_entry < run_length &&
       CanEmitConstantVector<true>(scan.position_in_entry, run_length,
                                   vector_count)) {
     ScanConstant(scan, run_length, vector_count, result);
     return;
   }
-  auto writer = duckdb::FlatVector::Writer<T>(result, sel_count);
+  auto writer = duckdb::FlatVector::Writer<T>(result, sel_count, result_offset);
   idx_t prev_idx = 0;
   for (idx_t i = 0; i < sel_count; ++i) {
     const auto next_idx = sel.get_index(i);

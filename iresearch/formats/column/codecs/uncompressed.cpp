@@ -368,7 +368,8 @@ void ValidityScan(const ColumnSegment& segment, ColumnScanState& state,
 
 void ValiditySelect(const ColumnSegment& segment, ColumnScanState& state,
                     idx_t vector_count, duckdb::Vector& result,
-                    const duckdb::SelectionVector& sel, idx_t sel_count) {
+                    idx_t result_offset, const duckdb::SelectionVector& sel,
+                    idx_t sel_count, duckdb::ScanVectorType) {
   if (sel_count == 0) {
     return;
   }
@@ -379,7 +380,7 @@ void ValiditySelect(const ColumnSegment& segment, ColumnScanState& state,
   auto& result_mask = duckdb::FlatVector::ValidityMutable(result);
   for (idx_t i = 0; i < sel_count; ++i) {
     if (!RowValid(input, start + sel.get_index(i))) {
-      result_mask.SetInvalid(i);
+      result_mask.SetInvalid(result_offset + i);
     }
   }
 }
@@ -617,13 +618,14 @@ void StringScan(const ColumnSegment& segment, ColumnScanState& state,
 
 void StringSelect(const ColumnSegment& segment, ColumnScanState& state,
                   idx_t vector_count, duckdb::Vector& result,
-                  const duckdb::SelectionVector& sel, idx_t sel_count) {
+                  idx_t result_offset, const duckdb::SelectionVector& sel,
+                  idx_t sel_count, duckdb::ScanVectorType) {
   const StringLayout layout{segment, ScanBase(state)};
   const auto start = state.GetPositionInSegment();
   layout.Validate(start, vector_count);
   auto* target = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   for (idx_t i = 0; i < sel_count; ++i) {
-    target[i] =
+    target[result_offset + i] =
       ReadEntry(segment, result, layout.Entry(start + sel.get_index(i)));
   }
 }

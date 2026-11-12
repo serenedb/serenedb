@@ -208,18 +208,13 @@ struct EntryFrames {
         SDB_ASSERT(lo < hi);
         const uint64_t range =
           (hi - 1 - first) / kUnit - (lo - first) / kUnit + 1;
-        const uint64_t entry_bytes = frames[f].raw_len / (end - first);
-        const uint64_t group_bytes = kUnit * entry_bytes;
         const uint64_t total = (end - first + kUnit - 1) / kUnit;
-        bool sparse = groups * kUnit <= kSparseEntries && range < total;
-        if constexpr (kUnit > 1) {
-          sparse = sparse || (j - i) * entry_bytes +
-                                 groups * (kChainGroupRows * entry_bytes +
-                                           kChainGroupCost) <=
-                               range * group_bytes;
-        } else {
-          sparse = sparse || groups * (group_bytes + kSparseGroupCost) * 4 <=
-                               range * group_bytes * 3;
+        bool sparse = range < total;
+        if constexpr (kUnit == 1) {
+          const uint64_t group_bytes = frames[f].raw_len / (end - first);
+          sparse = (groups <= kSparseEntries && sparse) ||
+                   groups * (group_bytes + kSparseGroupCost) * 4 <=
+                     range * group_bytes * 3;
         }
         if (sparse) {
           if constexpr (kUnit > 1) {
@@ -247,6 +242,74 @@ struct EntryFrames {
       i = j;
     }
     group_frame = f;
+  }
+
+  template<typename Entry>
+  void SelectChained(duckdb::Vector& result, idx_t result_offset, idx_t count,
+                     Entry entry_at, uint32_t window_first,
+                     uint32_t window_end) {
+    constexpr uint32_t kUnit = Leaf::Scan::kEntryGroup;
+    auto writer =
+      duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
+    auto& arena = duckdb::StringVector::GetStringAllocator(result);
+    bool referenced = false;
+    auto f = group_frame;
+    for (idx_t i = 0; i < count;) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+        f = FrameOf(e);
+      }
+      const auto first = frames[f].first_entry;
+      const auto end = FrameEnd(f);
+      auto last = (e - first) / kUnit;
+      uint64_t groups = 1;
+      auto j = i + 1;
+      for (; j < count; ++j) {
+        const auto next = static_cast<uint32_t>(entry_at(j));
+        if (next < first || next >= end) {
+          break;
+        }
+        const auto group = (next - first) / kUnit;
+        groups += group != last;
+        last = group;
+      }
+      if (!decoded[f]) {
+        const auto lo = std::max(window_first, first);
+        const auto hi = std::min(window_end, end);
+        SDB_ASSERT(lo < hi);
+        const uint64_t range =
+          (hi - 1 - first) / kUnit - (lo - first) / kUnit + 1;
+        const uint64_t entry_bytes = frames[f].raw_len / (end - first);
+        const uint64_t total = (end - first + kUnit - 1) / kUnit;
+        if ((groups * kUnit <= kSparseEntries && range < total) ||
+            (j - i) * entry_bytes + groups * kChainGroupCost <=
+              range * kUnit * entry_bytes) {
+          while (i < j) {
+            const auto group =
+              (static_cast<uint32_t>(entry_at(i)) - first) / kUnit;
+            uint32_t rows = 0;
+            for (; i < j; ++i) {
+              const auto at = static_cast<uint32_t>(entry_at(i)) - first;
+              if (at / kUnit != group) {
+                break;
+              }
+              rows |= uint32_t{1} << at % kUnit;
+            }
+            leaf->DecodeRows(*this, f, group, rows, arena, writer);
+          }
+          continue;
+        }
+        DecodeFrame(f);
+      }
+      referenced = true;
+      for (; i < j; ++i) {
+        writer.WriteStringRef(values[entry_at(i)]);
+      }
+    }
+    group_frame = f;
+    if (referenced) {
+      ReferenceHeap(result);
+    }
   }
 
   const char* Data() const noexcept {
@@ -339,20 +402,12 @@ void ScanVector(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
 
 template<typename Scan>
 void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
-            duckdb::Vector& result, const duckdb::SelectionVector& sel,
-            idx_t sel_count) {
-  state.scan_state->Cast<Scan>().Select(result, state.GetPositionInSegment(),
-                                        vector_count, sel, sel_count);
-}
-
-template<typename Scan>
-void SelectPartial(const ColumnSegment&, ColumnScanState& state,
-                   idx_t vector_count, duckdb::Vector& result,
-                   idx_t result_offset, const duckdb::SelectionVector& sel,
-                   idx_t sel_offset, idx_t sel_count, idx_t sel_base) {
-  state.scan_state->Cast<Scan>().SelectFlat(
-    result, result_offset, state.GetPositionInSegment(), vector_count, sel,
-    sel_offset, sel_count, sel_base);
+            duckdb::Vector& result, idx_t result_offset,
+            const duckdb::SelectionVector& sel, idx_t sel_count,
+            duckdb::ScanVectorType scan_type) {
+  state.scan_state->Cast<Scan>().Select(result, result_offset,
+                                        state.GetPositionInSegment(),
+                                        vector_count, sel, sel_count, scan_type);
 }
 
 template<typename Scan>
@@ -458,8 +513,6 @@ constexpr CompressionFunction StringFunction(CodecType type) {
   };
   if constexpr (Scan::kShape == Shape::Dedup) {
     f.filter = Filter<Scan>;
-  } else {
-    f.select_partial = SelectPartial<Scan>;
   }
   return f;
 }

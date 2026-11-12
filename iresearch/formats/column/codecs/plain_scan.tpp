@@ -98,21 +98,20 @@ struct PlainScan final : SegmentScanState {
     ScanFlat(result, 0, start, count);
   }
 
-  void Select(duckdb::Vector& result, idx_t start, idx_t span,
-              const duckdb::SelectionVector& rows, idx_t count) {
-    SelectFlat(result, 0, start, span, rows, 0, count, 0);
-  }
-
-  void SelectFlat(duckdb::Vector& result, idx_t result_offset, idx_t start,
-                  idx_t span, const duckdb::SelectionVector& rows, idx_t first,
-                  idx_t count, idx_t base) {
-    const auto entry_at = [&](idx_t i) {
-      return start + (rows.get_index(first + i) - base);
-    };
+  void Select(duckdb::Vector& result, idx_t result_offset, idx_t start,
+              idx_t span, const duckdb::SelectionVector& rows, idx_t count,
+              duckdb::ScanVectorType) {
+    const auto entry_at = [&](idx_t i) { return start + rows.get_index(i); };
     if constexpr (Sorted(Leaf::kCodec)) {
-      entries.EnsureGroups(count, entry_at, static_cast<uint32_t>(start),
-                           static_cast<uint32_t>(start + span));
-      WriteRefs(result, result_offset, count, entry_at);
+      if constexpr (Leaf::Scan::kEntryGroup > 1) {
+        entries.SelectChained(result, result_offset, count, entry_at,
+                              static_cast<uint32_t>(start),
+                              static_cast<uint32_t>(start + span));
+      } else {
+        entries.EnsureGroups(count, entry_at, static_cast<uint32_t>(start),
+                             static_cast<uint32_t>(start + span));
+        WriteRefs(result, result_offset, count, entry_at);
+      }
     } else {
       WriteEntries(result, result_offset, count, entry_at);
     }

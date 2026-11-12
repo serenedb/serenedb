@@ -293,6 +293,61 @@ struct FsstScan {
     group_rows[index] = static_cast<uint16_t>(kept | used);
   }
 
+  template<typename Frames, typename Writer>
+  void DecodeRows(Frames& s, uint32_t f, uint32_t g, uint32_t rows,
+                  duckdb::ArenaAllocator& arena, Writer& writer) {
+    const auto restart = s.frames[f].first_entry + g * kChainRestart;
+    const uint32_t n = std::bit_width(rows);
+    SDB_ASSERT(n != 0 && n <= kChainRestart && restart + n <= s.FrameEnd(f));
+    std::array<uint64_t, kChainRestart + 1> off;
+    std::array<uint32_t, kChainRestart> lcp;
+    std::array<uint32_t, kChainRestart> enc;
+    lcps.Read(restart, n, lcp.data());
+    s.length_reader.Read(restart, n, enc.data());
+    lcp[0] = 0;
+    off[0] = groups.Offset(s.length_reader, s.frames[f], f, g);
+    for (uint32_t i = 0; i < n; ++i) {
+      off[i + 1] = off[i] + enc[i];
+    }
+    SDB_ENSURE(off[n] <= s.header.data_size,
+               "col codec: corrupted front coding");
+    uint32_t used = 0;
+    uint64_t need = 0;
+    uint64_t capacity = 0;
+    for (uint32_t i = n; i-- > 0;) {
+      const uint32_t decode = (rows >> i & 1) | uint32_t{lcp[i] < need};
+      used |= decode << i;
+      need = decode != 0 ? lcp[i] : need;
+      capacity += decode * (lcp[i] + uint64_t{enc[i]} * kFsstMaxExpansion);
+    }
+    auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
+    uint64_t written = 0;
+    const char* prev = nullptr;
+    uint64_t prev_len = 0;
+    for (auto left = used; left != 0; left &= left - 1) {
+      const auto i = static_cast<uint32_t>(std::countr_zero(left));
+      SDB_ENSURE(lcp[i] <= prev_len, "col codec: corrupted front coding");
+      auto* at = out + written;
+      if (lcp[i] != 0) {
+        std::memcpy(at, prev, lcp[i]);
+      }
+      const auto room = capacity - (written + lcp[i]);
+      const auto dec =
+        enc[i] == 0
+          ? 0
+          : decoder.Decode(s.Data() + off[i], enc[i], at + lcp[i], room);
+      SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+      prev = at;
+      prev_len = lcp[i] + dec;
+      written += prev_len;
+      if ((rows >> i & 1) != 0) {
+        writer.WriteStringRef(
+          duckdb::string_t{at, static_cast<uint32_t>(prev_len)});
+      }
+    }
+    arena.ShrinkHead(capacity - written);
+  }
+
   template<typename Frames>
   void DecodeGroup(Frames& s, uint32_t f, uint32_t g) {
     const auto first = s.frames[f].first_entry + g * kChainRestart;

@@ -1012,10 +1012,11 @@ void ScanVector(const ColumnSegment& segment, ColumnScanState& state,
 
 template<typename T>
 void Select(const ColumnSegment&, ColumnScanState& state, idx_t,
-            duckdb::Vector& result, const duckdb::SelectionVector& sel,
-            idx_t sel_count) {
+            duckdb::Vector& result, idx_t result_offset,
+            const duckdb::SelectionVector& sel, idx_t sel_count,
+            duckdb::ScanVectorType) {
   auto& frames = state.scan_state->Cast<ScanState<T>>().frames;
-  auto* out = duckdb::FlatVector::GetDataMutable<T>(result);
+  auto* out = duckdb::FlatVector::GetDataMutable<T>(result) + result_offset;
   const uint64_t start = state.GetPositionInSegment();
   for (idx_t i = 0; i < sel_count; ++i) {
     const uint64_t row = start + sel.get_index(i);

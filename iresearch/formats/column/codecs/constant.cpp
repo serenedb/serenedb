@@ -112,16 +112,26 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState&, const idx_t*,
 }
 
 void SelectValidity(const ColumnSegment& segment, ColumnScanState& state, idx_t,
-                    duckdb::Vector& result, const duckdb::SelectionVector&,
-                    idx_t sel_count) {
-  ScanValidity(segment, state, sel_count, result);
+                    duckdb::Vector& result, idx_t result_offset,
+                    const duckdb::SelectionVector&, idx_t sel_count,
+                    duckdb::ScanVectorType scan_type) {
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    ScanValidity(segment, state, sel_count, result);
+    return;
+  }
+  FillValidity(segment, result, result_offset, sel_count);
 }
 
 template<typename T>
 void Select(const ColumnSegment& segment, ColumnScanState& state,
-            idx_t vector_count, duckdb::Vector& result,
-            const duckdb::SelectionVector&, idx_t) {
-  Scan<T>(segment, state, vector_count, result);
+            idx_t vector_count, duckdb::Vector& result, idx_t result_offset,
+            const duckdb::SelectionVector&, idx_t sel_count,
+            duckdb::ScanVectorType scan_type) {
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    Scan<T>(segment, state, vector_count, result);
+    return;
+  }
+  Fill<T>(segment, result, result_offset, sel_count);
 }
 
 void FilterValidity(const ColumnSegment& segment, ColumnScanState& state,

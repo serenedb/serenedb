@@ -519,12 +519,14 @@ struct DictionaryScan final : SegmentScanState {
     result.Dictionary(entries.dictionary, Codes(start, count), count);
   }
 
-  void Select(duckdb::Vector& result, idx_t start, idx_t vector_count,
-              const duckdb::SelectionVector& sel, idx_t sel_count) {
-    if (!full && sel_count * 4 < vector_count) {
+  void Select(duckdb::Vector& result, idx_t result_offset, idx_t start,
+              idx_t vector_count, const duckdb::SelectionVector& sel,
+              idx_t sel_count, duckdb::ScanVectorType scan_type) {
+    if (scan_type == duckdb::ScanVectorType::SCAN_FLAT_VECTOR ||
+        (!full && sel_count * 4 < vector_count)) {
       const auto& codes = Codes(start, vector_count, sel, sel_count);
       EnsureCodes(codes, sel_count);
-      WriteCodes(result, 0, codes, sel_count);
+      WriteCodes(result, result_offset, codes, sel_count);
       return;
     }
     EnsureDictionary();

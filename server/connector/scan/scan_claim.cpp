@@ -489,10 +489,12 @@ uint32_t SegmentAt(const ScanGlobalState& g, uint32_t pos) noexcept {
 
 uint32_t LargestRange(const ScanGlobalState& g,
                       const ScanLocalState& l) noexcept {
+  uint32_t own_begin = 0;
   uint32_t ahead_begin = 0;
   uint32_t ahead_end = 0;
   if (l.owned_seg != std::numeric_limits<uint32_t>::max()) {
     const auto& own = g.segments[l.owned_seg];
+    own_begin = own.base;
     ahead_begin = l.claimed_end;
     ahead_end = own.base + own.Units();
   }
@@ -504,7 +506,7 @@ uint32_t LargestRange(const ScanGlobalState& g,
     const auto r = g.ranges[w].range.load(std::memory_order_relaxed);
     const auto next = RangeNext(r);
     const auto end = RangeEnd(r);
-    if (end <= next) {
+    if (end <= next || (next >= own_begin && next < ahead_begin)) {
       continue;
     }
     if (end - next > most) {

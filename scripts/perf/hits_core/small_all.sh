@@ -6,11 +6,12 @@ if [ $# -ne 1 ]; then
 fi
 MODE=$1
 source "$(dirname "$0")/lib.sh"
-for side in main_duck main_search branch; do
+read -ra forward <<<"${HB_SIDES:-main_duck main_search branch}"
+backward=()
+for side in "${forward[@]}"; do
 	rm -f "$HB_RESULTS/$side.$MODE/small.tsv"
+	backward=("$side" "${backward[@]}")
 done
-forward=(main_duck main_search branch)
-backward=(branch main_search main_duck)
 n=0
 for readers in none column index; do
 	for pk in pk nopk; do

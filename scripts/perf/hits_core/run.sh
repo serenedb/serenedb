@@ -85,11 +85,14 @@ series() {
 	for _ in $(seq 1 "$REPEAT"); do
 		args+=(-c "$sql")
 	done
+	perf_start "$name"
 	if ! out=$("${PSQL[@]}" "${args[@]}" 2>&1); then
+		perf_stop
 		record "$name" FAIL "$(printf '%s' "$out" | tr '\n\t' '  ' | cut -c1-300)"
 		echo "FAIL $name: $out" >&2
 		return 0
 	fi
+	perf_stop
 	times=$(printf '%s\n' "$out" | awk '/^Time: /{print $2}')
 	first=$(printf '%s\n' "$times" | head -1)
 	median=$(printf '%s\n' "$times" | sort -n | awk '{a[NR] = $1} END{print a[int((NR + 1) / 2)]}')

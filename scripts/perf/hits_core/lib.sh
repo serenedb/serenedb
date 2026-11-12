@@ -121,10 +121,30 @@ record() {
 	printf '%s\n' "$*" >>"$RESULTS"
 }
 
+perf_start() {
+	PERF_PID=""
+	if [ -n "${HB_PERF:-}" ]; then
+		mkdir -p "$OUT/perf"
+		perf record -g -F "${HB_PERF_FREQ:-499}" -p "$SERVER_PID" -o "$OUT/perf/$1.data" >/dev/null 2>&1 &
+		PERF_PID=$!
+		timeout 0.5 tail -f /dev/null || true
+	fi
+}
+
+perf_stop() {
+	if [ -n "${PERF_PID:-}" ]; then
+		kill -INT "$PERF_PID" 2>/dev/null || true
+		wait "$PERF_PID" 2>/dev/null || true
+		PERF_PID=""
+	fi
+}
+
 run_timed() {
 	local name=$1 sql=$2 out c0 c1 ms cpu
+	perf_start "$name"
 	c0=$(server_ticks)
 	if ! out=$("${PSQL[@]}" -c '\timing on' -c "$sql" 2>&1); then
+		perf_stop
 		record "$name" FAIL "$(printf '%s' "$out" | tr '\n\t' '  ' | cut -c1-300)"
 		echo "FAIL $name: $out" >&2
 		return 0
@@ -133,6 +153,7 @@ run_timed() {
 	ms=$(printf '%s\n' "$out" | awk '/^Time: /{s += $2} END{printf "%.1f", s}')
 	cpu=$(echo "scale=2; ($c1 - $c0) / $CLK_TCK" | bc)
 	settle
+	perf_stop
 	record "$name" "$ms" "$cpu" "$BG_CPU_S" "$SETTLE_S"
 	echo "$name: ${ms} ms, cpu ${cpu} s, background ${BG_CPU_S} s over ${SETTLE_S} s"
 }
@@ -140,9 +161,11 @@ run_timed() {
 index_timed() {
 	local name=$1 sql=$2 index=$3 table=$4 out want got t0 ready c0 cpu
 	want=$(qa "SELECT count(*) FROM $table")
+	perf_start "$name"
 	c0=$(server_ticks)
 	t0=$(date +%s%N)
 	if ! out=$("${PSQL[@]}" -c "$sql" 2>&1); then
+		perf_stop
 		record "$name" FAIL "$(printf '%s' "$out" | tr '\n\t' '  ' | cut -c1-300)"
 		echo "FAIL $name: $out" >&2
 		return 0
@@ -155,11 +178,13 @@ index_timed() {
 	ready=$(echo "scale=1; ($(date +%s%N) - $t0) / 1000000" | bc)
 	cpu=$(echo "scale=2; ($(server_ticks) - $c0) / $CLK_TCK" | bc)
 	if [ "$got" != "$want" ]; then
+		perf_stop
 		record "$name" FAIL "index has $got of $want rows after ${ready} ms"
 		echo "FAIL $name: index has $got of $want rows after ${ready} ms" >&2
 		return 0
 	fi
 	settle
+	perf_stop
 	record "$name" "$ready" "$cpu" "$BG_CPU_S" "$SETTLE_S"
 	echo "$name: ${ready} ms until the index has all $want rows, cpu ${cpu} s, background ${BG_CPU_S} s over ${SETTLE_S} s"
 }

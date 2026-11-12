@@ -60,6 +60,7 @@ q "CREATE INDEX events_idx ON events USING inverted (searchphrase hb_dict, title
 settle
 
 PGB=(pgbench -h 127.0.0.1 -p "$PORT" -U postgres -n -M prepared)
+perf_start "$NAME"
 c0=$(server_ticks)
 rpid=""
 case $READERS_KIND in
@@ -77,6 +78,7 @@ if [ -n "$rpid" ]; then
 	wait "$rpid" || true
 fi
 c1=$(server_ticks)
+perf_stop
 
 pgb_field() {
 	awk -v k="$2" 'index($0, k) == 1 {sub(k, ""); print $1; exit}' "$1"

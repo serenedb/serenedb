@@ -41,6 +41,7 @@
 #include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/async.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -225,10 +226,11 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   if (_col_writer) {
     _fields.FinalizeNorms();
     norms = _col_writer->SealNorms(docs);
-    column_bytes = _col_writer->StagedBytes();
     HotChunkStats stats;
     for (auto& column : _col_writer->Snapshot(docs)) {
-      columns.push_back(HotColumnReader::Make(_db, std::move(column), &stats));
+      auto& reader = columns.emplace_back(
+        HotColumnReader::Make(_db, std::move(column), &stats));
+      column_bytes += utils::downCast<HotColumnReader>(*reader).Bytes();
     }
   }
   auto fields = std::make_shared<PieceFields>();

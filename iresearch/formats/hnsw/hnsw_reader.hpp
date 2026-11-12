@@ -80,6 +80,11 @@ class HnswIndex final : public AnnIndex {
                                  bool inclusive, uint32_t effort,
                                  AnnQueryCache* cache) const final;
 
+  void SearchBatch(const SubReader& segment, const PrepareContext& ctx,
+                   const VectorFilterOptions& opts,
+                   const ann::QueryBatch& batch, uint32_t effort,
+                   std::span<ann::Collector> collectors) const final;
+
   AnnExactCodes PrepareExact(const SubReader& segment,
                              std::span<const float> query,
                              VectorMetric metric) const final;
@@ -92,6 +97,7 @@ class HnswIndex final : public AnnIndex {
   QueryBuilder::ptr PrepareSearch(const SubReader& segment,
                                   const PrepareContext& ctx,
                                   const VectorFilterOptions& opts,
+                                  std::span<const float> query,
                                   HnswSearchLimits limits,
                                   AnnQueryCache* cache) const;
 

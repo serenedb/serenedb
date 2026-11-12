@@ -21,6 +21,7 @@
 #include "iresearch/search/queries/hnsw_query.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 
 #include <algorithm>
 #include <bit>
@@ -120,46 +121,121 @@ struct HnswColumnDist {
   }
 };
 
+struct HnswDistInput {
+  std::span<const float> query;
+  std::shared_ptr<const QuantizerCodebook> codebook;
+  const PanoramaQuery* panorama = nullptr;
+};
+
+template<typename T>
+using HnswDists = absl::InlinedVector<T, 1>;
+
 template<typename Fn>
-void WithHnswDist(const HnswData& data, std::span<const float> query,
-                  const std::shared_ptr<const QuantizerCodebook>& codebook,
-                  const PanoramaQuery* panorama, VectorMetric metric,
-                  uint32_t d, uint32_t record_size, Fn&& fn) {
-  if (codebook) {
-    auto reader = MakeQuantizerReader(codebook);
-    reader->StartCluster(data.centroid.empty() ? nullptr
-                                               : data.centroid.data());
-    HnswCodeDist dist{.codes = data.codes.data(),
-                      .record_size = record_size,
-                      .qr = reader.get()};
-    if (panorama && !data.tails.empty()) {
-      dist.bound = {.width = kHnswCodeLevel,
-                    .query_step = kHnswPanoramaLevel,
-                    .query = panorama->tails,
-                    .rows = data.tails.data(),
-                    .row_stride = HnswCodeTails(d)};
+void WithHnswDists(const HnswData& data, std::span<const HnswDistInput> inputs,
+                   VectorMetric metric, uint32_t d, uint32_t record_size,
+                   Fn&& fn) {
+  SDB_ASSERT(!inputs.empty());
+  if (inputs.front().codebook) {
+    HnswDists<std::unique_ptr<QuantizerReader>> readers;
+    HnswDists<HnswCodeDist> dists;
+    for (const auto& input : inputs) {
+      auto& reader = readers.emplace_back(MakeQuantizerReader(input.codebook));
+      reader->StartCluster(data.centroid.empty() ? nullptr
+                                                 : data.centroid.data());
+      auto& dist = dists.emplace_back(HnswCodeDist{
+        .codes = data.codes.data(),
+        .record_size = record_size,
+        .qr = reader.get(),
+      });
+      if (input.panorama && !data.tails.empty()) {
+        dist.bound = {.width = kHnswCodeLevel,
+                      .query_step = kHnswPanoramaLevel,
+                      .query = input.panorama->tails,
+                      .rows = data.tails.data(),
+                      .row_stride = HnswCodeTails(d)};
+      }
     }
-    fn(dist);
+    fn(std::span{dists});
     return;
   }
   ResolveEnum<VectorMetric>(
     EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
       if constexpr (M == VectorMetric::L2Sqr ||
                     M == VectorMetric::InnerProduct) {
-        if (panorama) {
-          HnswPanoramaDist<M> dist{.base = data.vectors.data(),
-                                   .d = d,
-                                   .q = panorama->rotated.data(),
-                                   .tails = panorama->tails.data(),
-                                   .norms = data.norms.data()};
-          fn(dist);
+        if (inputs.front().panorama) {
+          HnswDists<HnswPanoramaDist<M>> dists;
+          for (const auto& input : inputs) {
+            dists.push_back({.base = data.vectors.data(),
+                             .d = d,
+                             .q = input.panorama->rotated.data(),
+                             .tails = input.panorama->tails.data(),
+                             .norms = data.norms.data()});
+          }
+          fn(std::span{dists});
           return;
         }
       }
-      HnswQueryDist<M> dist{
-        .base = data.vectors.data(), .d = d, .q = query.data()};
-      fn(dist);
+      HnswDists<HnswQueryDist<M>> dists;
+      for (const auto& input : inputs) {
+        dists.push_back(
+          {.base = data.vectors.data(), .d = d, .q = input.query.data()});
+      }
+      fn(std::span{dists});
     });
+}
+
+template<typename Fn>
+void WithHnswDist(const HnswData& data, std::span<const float> query,
+                  const std::shared_ptr<const QuantizerCodebook>& codebook,
+                  const PanoramaQuery* panorama, VectorMetric metric,
+                  uint32_t d, uint32_t record_size, Fn&& fn) {
+  const HnswDistInput input{
+    .query = query, .codebook = codebook, .panorama = panorama};
+  WithHnswDists(data, {&input, 1}, metric, d, record_size,
+                [&](auto dists) { fn(dists.front()); });
+}
+
+void HnswWiden(QuantizerReader& reader, const HnswData& data,
+               uint32_t record_size, float rescore_width, uint32_t top_k,
+               HnswSearchScratch& scratch, std::vector<score_t>& spreads) {
+  auto& nearest = scratch.nearest;
+  const size_t n = nearest.size();
+  if (n == 0) {
+    return;
+  }
+  auto& ids = scratch.batch;
+  auto& scores = scratch.scores;
+  ids.resize(n);
+  scores.resize(3 * n);
+  for (size_t i = 0; i < n; ++i) {
+    ids[i] = nearest[i].node;
+    scores[i] = nearest[i].score;
+  }
+  const std::span<score_t> estimates{scores.data(), n};
+  score_t* errors = scores.data() + n;
+  reader.ScoreErrors(data.codes.data(), record_size, ids, estimates, errors);
+  const auto z = rescore_width;
+  auto floor = std::numeric_limits<score_t>::lowest();
+  if (top_k != 0 && n > top_k) {
+    const std::span<score_t> lower{scores.data() + 2 * n, n};
+    for (size_t i = 0; i < n; ++i) {
+      lower[i] = estimates[i] - z * errors[i];
+    }
+    const auto kth = lower.begin() + (top_k - 1);
+    absl::c_nth_element(lower, kth, std::greater{});
+    floor = *kth;
+  }
+  size_t kept = 0;
+  spreads.clear();
+  for (size_t i = 0; i < n; ++i) {
+    const auto spread = z * errors[i];
+    if (estimates[i] + spread < floor) {
+      continue;
+    }
+    nearest[kept++] = {.score = estimates[i], .node = ids[i]};
+    spreads.push_back(spread);
+  }
+  nearest.resize(kept);
 }
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
@@ -564,7 +640,8 @@ void HnswScanTopK(Docs&& docs, const HnswGraph& graph, Dist& dist, uint32_t ef,
 
 HnswQuery::HnswQuery(const SubReader& segment,
                      std::shared_ptr<const HnswData> data,
-                     const VectorFilterOptions& opts, uint32_t record_size,
+                     const VectorFilterOptions& opts,
+                     std::span<const float> query, uint32_t record_size,
                      HnswSearchLimits limits, score_t boost,
                      QueryBuilder::ptr&& inner, QueryBuilder::ptr&& index_only,
                      AnnQueryCache* cache)
@@ -578,10 +655,10 @@ HnswQuery::HnswQuery(const SubReader& segment,
                            ? _index_only->Postings()
                            : segment.docs_count() - segment.live_docs_count()},
     _exact{segment.Column(opts.column_id)},
-    _query{opts.query.size(),
-           [&](float& slot, size_t i) noexcept { slot = opts.query[i]; }},
+    _query{query.size(),
+           [&](float& slot, size_t i) noexcept { slot = query[i]; }},
     _metric{opts.metric},
-    _d{static_cast<uint32_t>(opts.query.size())},
+    _d{static_cast<uint32_t>(query.size())},
     _record_size{record_size},
     _ef{limits.ef},
     _top_k{opts.top_k},
@@ -592,11 +669,7 @@ HnswQuery::HnswQuery(const SubReader& segment,
     _filter_mode{opts.hnsw_filter_mode},
     _column_filter{opts.hnsw_column_filter},
     _dual{opts.dual},
-    _inclusive{limits.inclusive} {
-  if (_metric == VectorMetric::Cosine) {
-    duckdb::L2NormalizeOp::Operation(_query.data(), _query.data(), _d);
-  }
-}
+    _inclusive{limits.inclusive} {}
 
 template<typename Dist>
 void HnswQuery::RunRadius(Dist& dist, detail::TableFilter* table,
@@ -617,9 +690,11 @@ void HnswQuery::RunRadius(Dist& dist, detail::TableFilter* table,
 template<typename Dist>
 void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                             detail::TableFilter* columns,
+                            detail::LazyBitset* admitted,
                             HnswSearchScratch& scratch) const {
   SDB_ASSERT(_ef != 0 && (_inner || table));
   SDB_ASSERT(!columns || _inner);
+  SDB_ASSERT(!admitted || (!table && !columns));
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
   const auto record = HnswCandidateBytes(_record_size, _d, _data->stats.get());
@@ -658,8 +733,10 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
       matches = expected(docs_count);
     } else if (!table && inner->Kind() == QueryKind::Boolean &&
                inner->EstimateMin() != inner->EstimateMax()) {
-      probe.emplace(detail::MakeDocSet(inner, docs_count, nullptr));
-      matches = most = probe->Count();
+      if (!admitted) {
+        probe.emplace(detail::MakeDocSet(inner, docs_count, nullptr));
+      }
+      matches = most = admitted ? admitted->Count() : probe->Count();
     } else {
       matches = expected(inner->EstimateMatches());
       most = inner->EstimateMax();
@@ -670,9 +747,13 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   if (plan.ask_per_hop) {
     probe.reset();
   }
-  auto set = probe ? std::move(*probe)
-                   : detail::MakeDocSet(inner, docs_count,
-                                        plan.ask_per_hop ? nullptr : table);
+  std::optional<detail::LazyBitset> own;
+  if (!admitted) {
+    own.emplace(probe ? std::move(*probe)
+                      : detail::MakeDocSet(inner, docs_count,
+                                           plan.ask_per_hop ? nullptr : table));
+  }
+  auto& set = admitted ? *admitted : *own;
   const auto admit = AdmitIn(set);
   uint64_t budget = matches;
   scratch.admit_share =
@@ -710,7 +791,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
       SDB_IF_FAILURE("irs::HnswColumnsStalled") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
-      RunFiltered(dist, index_table, nullptr, scratch);
+      RunFiltered(dist, index_table, nullptr, nullptr, scratch);
       return;
     }
     table->Rewind();
@@ -786,51 +867,10 @@ void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
                s);
 }
 
-void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
-                      std::vector<score_t>& spreads) const {
-  auto& nearest = scratch.nearest;
-  const size_t n = nearest.size();
-  if (n == 0) {
-    return;
-  }
-  auto& ids = scratch.batch;
-  auto& scores = scratch.scores;
-  ids.resize(n);
-  scores.resize(3 * n);
-  for (size_t i = 0; i < n; ++i) {
-    ids[i] = nearest[i].node;
-    scores[i] = nearest[i].score;
-  }
-  const std::span<score_t> estimates{scores.data(), n};
-  score_t* errors = scores.data() + n;
-  reader.ScoreErrors(_data->codes.data(), _record_size, ids, estimates, errors);
-  const auto z = _rescore_width;
-  auto floor = std::numeric_limits<score_t>::lowest();
-  if (_top_k != 0 && n > _top_k) {
-    const std::span<score_t> lower{scores.data() + 2 * n, n};
-    for (size_t i = 0; i < n; ++i) {
-      lower[i] = estimates[i] - z * errors[i];
-    }
-    const auto kth = lower.begin() + (_top_k - 1);
-    absl::c_nth_element(lower, kth, std::greater{});
-    floor = *kth;
-  }
-  size_t kept = 0;
-  spreads.clear();
-  for (size_t i = 0; i < n; ++i) {
-    const auto spread = z * errors[i];
-    if (estimates[i] + spread < floor) {
-      continue;
-    }
-    nearest[kept++] = {.score = estimates[i], .node = ids[i]};
-    spreads.push_back(spread);
-  }
-  nearest.resize(kept);
-}
-
-std::vector<ScoreDoc> HnswQuery::RunSearch(
-  detail::TableFilter* table, detail::TableFilter* columns,
-  std::vector<score_t>* spreads) const {
+std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table,
+                                           detail::TableFilter* columns,
+                                           std::vector<score_t>* spreads,
+                                           detail::LazyBitset* admitted) const {
   HnswSearchScratch scratch;
   std::vector<score_t> widened;
   bool wide = false;
@@ -850,13 +890,14 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
                  if (_ef == 0) {
                    RunRadius(dist, table, scratch);
                  } else if (_inner || table) {
-                   RunFiltered(dist, table, columns, scratch);
+                   RunFiltered(dist, table, columns, admitted, scratch);
                  } else {
                    HnswSearchTopK(_data->graph, dist, _ef, scratch);
                  }
                  if constexpr (requires { dist.qr; }) {
                    if (spreads && _ef != 0 && _rescore_width > 0.f) {
-                     Widen(*dist.qr, scratch, widened);
+                     HnswWiden(*dist.qr, *_data, _record_size, _rescore_width,
+                               _top_k, scratch, widened);
                      wide = true;
                    }
                  }
@@ -870,6 +911,109 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
     });
   }
   return hits;
+}
+
+void HnswSearchBatch(const SubReader& segment, const HnswData& data,
+                     const VectorFilterOptions& opts, uint32_t record_size,
+                     uint32_t ef, const ann::QueryBatch& batch, score_t boost,
+                     std::span<ann::Collector> collectors) {
+  constexpr size_t kLockstep = 8;
+  const auto& graph = data.graph;
+  const auto d = batch.d;
+  const auto count = batch.Size();
+  if (graph.Empty() || count == 0) {
+    return;
+  }
+  const auto queries = batch.vectors;
+  std::vector<std::shared_ptr<const PanoramaQuery>> panoramas(count);
+  std::vector<HnswDistInput> inputs(count);
+  for (uint32_t q = 0; q < count; ++q) {
+    const std::span<const float> query{queries.data() + size_t{q} * d, d};
+    if (data.rotation) {
+      panoramas[q] =
+        RotateQuery(nullptr, data.rotation, data.byte_rotation, query);
+    }
+    inputs[q] = {
+      .query = query,
+      .codebook =
+        data.stats ? QueryCodebook(nullptr, *data.stats,
+                                   panoramas[q] ? panoramas[q]->rotated : query)
+                   : nullptr,
+      .panorama = panoramas[q].get(),
+    };
+  }
+  WithHnswDists(data, inputs, opts.metric, d, record_size, [&](auto dists) {
+    std::vector<HnswCandidate> entries(count);
+    {
+      HnswSearchScratch scratch;
+      for (uint32_t q = 0; q < count; ++q) {
+        HnswResetSearch(scratch);
+        entries[q] = HnswDescendToBase(graph, dists[q], ef, scratch);
+      }
+    }
+    std::vector<uint32_t> order(count);
+    absl::c_iota(order, 0);
+    absl::c_stable_sort(order, [&](uint32_t l, uint32_t r) {
+      return entries[l].node < entries[r].node;
+    });
+    std::array<HnswSearchScratch, kLockstep> scratch;
+    std::vector<size_t> active;
+    std::vector<score_t> widened;
+    std::vector<score_t> spreads;
+    std::vector<score_t> scores;
+    std::vector<doc_id_t> docs;
+    for (size_t first = 0; first < count; first += kLockstep) {
+      const auto group = std::span<const uint32_t>{order}.subspan(
+        first, std::min(kLockstep, count - first));
+      active.clear();
+      for (size_t i = 0; i < group.size(); ++i) {
+        auto& s = scratch[i];
+        const auto entry = entries[group[i]];
+        HnswResetSearch(s);
+        s.visited.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()),
+                        HnswWalks::One);
+        s.visited.TestAndSet(entry.node);
+        s.frontier.assign(1, entry);
+        s.nearest.assign(1, entry);
+        active.push_back(i);
+      }
+      while (!active.empty()) {
+        std::erase_if(active, [&](size_t i) {
+          return HnswExpandOne(graph, dists[group[i]], 0, ef, scratch[i],
+                               HnswAcceptAll{}) != HnswStep::Continue;
+        });
+      }
+      for (size_t i = 0; i < group.size(); ++i) {
+        const auto q = group[i];
+        auto& s = scratch[i];
+        bool wide = false;
+        if constexpr (requires { dists[q].qr; }) {
+          if (opts.rescore_width > 0.f) {
+            HnswWiden(*dists[q].qr, data, record_size, opts.rescore_width,
+                      opts.top_k, s, widened);
+            wide = true;
+          }
+        }
+        const auto hits = wide
+                            ? CollectHits(s.nearest, segment, widened, spreads)
+                            : CollectHits(s.nearest, segment);
+        if (!wide) {
+          spreads.assign(hits.size(), 0.f);
+        }
+        docs.resize(hits.size());
+        scores.resize(hits.size());
+        for (size_t h = 0; h < hits.size(); ++h) {
+          docs[h] = hits[h].doc;
+          scores[h] = hits[h].score * boost;
+          spreads[h] *= boost;
+        }
+        if (!hits.empty()) {
+          collectors[q].Append(docs.data(), scores.data(), spreads.data(),
+                               hits.size());
+        }
+      }
+    }
+  });
 }
 
 }  // namespace irs

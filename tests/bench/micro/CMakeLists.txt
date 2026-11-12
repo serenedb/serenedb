@@ -30,6 +30,7 @@ function(add_bench name)
     )
 endfunction()
 
+add_bench(ann_batch)
 add_bench(bm25_byte_norm)
 add_bench(ascii_probe)
 add_bench(vector_access)

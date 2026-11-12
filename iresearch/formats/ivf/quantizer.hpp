@@ -116,6 +116,12 @@ class QuantizerReader {
                                std::span<const uint32_t> ids, score_t threshold,
                                score_t* out);
 
+  virtual void StartBlocks(std::span<QuantizerReader* const> /*readers*/) {}
+
+  virtual void ComputeBlocks(std::span<QuantizerReader* const> readers,
+                             std::span<const byte_type> block,
+                             std::span<const score_t> thresholds, score_t* out);
+
   virtual bool ComputeGatheredBounded(const byte_type* /*base*/,
                                       uint32_t /*record_size*/,
                                       std::span<const uint32_t> /*ids*/,

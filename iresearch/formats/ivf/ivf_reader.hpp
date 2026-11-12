@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
@@ -112,8 +114,24 @@ class IvfIndex final : public AnnIndex {
                                  bool inclusive, uint32_t effort,
                                  AnnQueryCache* cache) const final;
 
+  void SearchBatch(const SubReader& segment, const PrepareContext& ctx,
+                   const VectorFilterOptions& opts,
+                   const ann::QueryBatch& batch, uint32_t effort,
+                   std::span<ann::Collector> collectors) const final;
+
+  std::shared_ptr<const QuantizerStats> QuantStats(IndexInput& idx_in,
+                                                   VectorQuantization quant,
+                                                   VectorMetric metric) const;
+
  private:
   CentroidsTree _tree;
+  mutable absl::Mutex _stats_mutex;
+  mutable std::shared_ptr<const QuantizerStats> _stats
+    ABSL_GUARDED_BY(_stats_mutex);
+  mutable VectorQuantization _stats_quant ABSL_GUARDED_BY(_stats_mutex) =
+    VectorQuantization::None;
+  mutable VectorMetric _stats_metric ABSL_GUARDED_BY(_stats_mutex) =
+    VectorMetric::L2Sqr;
 };
 
 }  // namespace irs

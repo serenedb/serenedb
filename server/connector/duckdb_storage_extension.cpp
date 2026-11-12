@@ -55,6 +55,7 @@
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
+#include "connector/optimizer/ann_join_plan.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/catalog/functions/functions.h"
@@ -281,6 +282,7 @@ void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
     duckdb::PlannerExtension{
       .post_bind_function = &optimizer::WrapVariantOutputs,
       .get_sql_value_function = &pg::SystemUserValueFunction,
+      .plan_lateral_join_function = &optimizer::PlanAnnJoin,
     });
   optimizer::RegisterIResearchPlanOptimizer(db);
 }

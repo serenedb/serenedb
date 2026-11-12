@@ -161,11 +161,10 @@ void AssertQuantizedPath(const irs::SubReader& segment) {
   auto idx_in = segment.ReopenAnn();
   ASSERT_NE(nullptr, idx_in);
   const std::vector<float> query(kDim, 0.f);
-  ASSERT_NE(nullptr,
-            irs::ReadQuantizerCodebook(
-              static_cast<const irs::IvfIndex*>(ann)->Tree(), *idx_in,
-              irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
-              query, irs::CodebookUse::Search));
+  ASSERT_NE(nullptr, irs::ReadQuantizerCodebook(
+                       *static_cast<const irs::IvfIndex*>(ann), *idx_in,
+                       irs::VectorQuantization::SQ8, irs::VectorMetric::L2Sqr,
+                       query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
   ASSERT_NE(nullptr, postings);
   ASSERT_NE(irs::IndexFeatures::None,

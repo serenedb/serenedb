@@ -247,6 +247,10 @@ struct ScanBindData final : duckdb::FunctionData {
   }
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
+  uint64_t RowGroupSize() const noexcept {
+    return relation.row_group_size != 0 ? relation.row_group_size
+                                        : DEFAULT_ROW_GROUP_SIZE;
+  }
   bool DefersChecks() const noexcept {
     return offsets.requests.empty() && !score.vector;
   }

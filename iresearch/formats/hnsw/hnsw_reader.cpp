@@ -25,10 +25,13 @@
 #include <limits>
 #include <span>
 #include <utility>
+#include <vector>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/ann/batch.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -42,9 +45,7 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
                                    VectorMetric metric, uint32_t d) {
   std::vector<float> q{query.begin(), query.end()};
   if (metric == VectorMetric::Cosine) {
-    std::vector<float> normalized(q.size());
-    duckdb::L2NormalizeOp::Operation(q.data(), normalized.data(), d);
-    q = std::move(normalized);
+    ann::NormalizeQuery(query.first(d), q);
   }
   return q;
 }
@@ -124,7 +125,8 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
                                         uint32_t /*effort*/,
                                         AnnQueryCache* cache) const {
   SDB_ASSERT(opts.ef_search != 0);
-  return PrepareSearch(segment, ctx, opts,
+  const auto query = NormalizedQuery(opts.query, opts.metric, _meta.header.d);
+  return PrepareSearch(segment, ctx, opts, query,
                        {.ef = std::max(opts.ef_search, opts.min_ef)}, cache);
 }
 
@@ -134,7 +136,8 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
                                           float radius, bool inclusive,
                                           uint32_t /*effort*/,
                                           AnnQueryCache* cache) const {
-  return PrepareSearch(segment, ctx, opts,
+  const auto query = NormalizedQuery(opts.query, opts.metric, _meta.header.d);
+  return PrepareSearch(segment, ctx, opts, query,
                        {.threshold = RadiusThreshold(opts.metric, radius),
                         .max_results = static_cast<size_t>(_meta.header.rows),
                         .inclusive = inclusive},
@@ -144,9 +147,10 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
 QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
                                            const PrepareContext& ctx,
                                            const VectorFilterOptions& opts,
+                                           std::span<const float> query,
                                            HnswSearchLimits limits,
                                            AnnQueryCache* cache) const {
-  SDB_ASSERT(opts.query.size() == _meta.header.d);
+  SDB_ASSERT(query.size() == _meta.header.d);
   if (Empty()) {
     return QueryBuilder::Empty();
   }
@@ -166,10 +170,67 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
     SDB_ASSERT(prepared);
   }
   auto built = memory::make_tracked<HnswQuery>(
-    ctx.memory, segment, std::move(data), opts, _meta.header.record_size,
+    ctx.memory, segment, std::move(data), opts, query, _meta.header.record_size,
     limits, ctx.boost, std::move(inner), std::move(index_only), cache);
   built->SetStats(ctx.Record());
   return built;
+}
+
+void HnswIndex::SearchBatch(const SubReader& segment, const PrepareContext& ctx,
+                            const VectorFilterOptions& opts,
+                            const ann::QueryBatch& batch, uint32_t effort,
+                            std::span<ann::Collector> collectors) const {
+  if (Empty()) {
+    return;
+  }
+  if (opts.dual) {
+    AnnIndex::SearchBatch(segment, ctx, opts, batch, effort, collectors);
+    return;
+  }
+  if (opts.inner || HasRemovals(segment.Meta())) {
+    QueryBuilder::ptr inner;
+    if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+      return;
+    }
+    auto admitted = detail::MakeDocSet(
+      inner.get(), static_cast<doc_id_t>(segment.docs_count()));
+    admitted.Reach(admitted.End());
+    const HnswSearchLimits limits{.ef = std::max(opts.ef_search, opts.min_ef)};
+    std::vector<score_t> spreads;
+    std::vector<score_t> scores;
+    std::vector<doc_id_t> docs;
+    for (uint32_t q = 0; q < batch.Size(); ++q) {
+      const auto prepared =
+        PrepareSearch(segment, ctx, opts, batch.Query(q), limits, nullptr);
+      if (QueryBuilder::IsEmpty(*prepared)) {
+        continue;
+      }
+      spreads.clear();
+      const auto hits = static_cast<const HnswQuery&>(*prepared).RunSearch(
+        nullptr, nullptr, &spreads, &admitted);
+      spreads.resize(hits.size());
+      docs.resize(hits.size());
+      scores.resize(hits.size());
+      for (size_t h = 0; h < hits.size(); ++h) {
+        docs[h] = hits[h].doc;
+        scores[h] = hits[h].score * ctx.boost;
+        spreads[h] *= ctx.boost;
+      }
+      if (!hits.empty()) {
+        collectors[q].Append(docs.data(), scores.data(), spreads.data(),
+                             hits.size());
+      }
+    }
+    return;
+  }
+  const auto data = Load(segment);
+  if (!data) {
+    return;
+  }
+  SDB_ASSERT(opts.ef_search != 0);
+  HnswSearchBatch(segment, *data, opts, _meta.header.record_size,
+                  std::max(opts.ef_search, opts.min_ef), batch, ctx.boost,
+                  collectors);
 }
 
 AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,

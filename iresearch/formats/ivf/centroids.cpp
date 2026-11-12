@@ -43,8 +43,55 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shuffle.hpp"
 
+extern "C" int sgemm_(const char* transa, const char* transb, const int* m,
+                      const int* n, const int* k, const float* alpha,
+                      const float* a, const int* lda, const float* b,
+                      const int* ldb, const float* beta, float* c,
+                      const int* ldc);
+
 namespace irs {
 namespace {
+
+constexpr size_t kTileQueries = 4;
+constexpr size_t kTileWork = size_t{1} << 16;
+
+void SquaredNorms(std::span<const float> rows, size_t d,
+                  std::vector<float>& out) {
+  out.resize(rows.size() / d);
+  for (size_t i = 0; i < out.size(); ++i) {
+    const float* row = rows.data() + i * d;
+    out[i] = duckdb::InnerProductOp::Operation(row, row, d);
+  }
+}
+
+void Dots(const float* queries, size_t nq, const float* centroids, size_t nc,
+          size_t d, float* out) {
+  const auto m = static_cast<int>(nc);
+  const auto n = static_cast<int>(nq);
+  const auto k = static_cast<int>(d);
+  const float one = 1.f;
+  const float zero = 0.f;
+  sgemm_("T", "N", &m, &n, &k, &one, centroids, &k, queries, &k, &zero, out,
+         &m);
+}
+
+template<VectorMetric Metric>
+float FromDot(float dot, float query_norm, float centroid_norm) {
+  if constexpr (Metric == VectorMetric::L2Sqr) {
+    return -(query_norm + centroid_norm - 2.f * dot);
+  } else if constexpr (Metric == VectorMetric::InnerProduct) {
+    return dot;
+  } else {
+    static_assert(Metric == VectorMetric::Cosine);
+    const auto denominator = std::sqrt(static_cast<double>(query_norm) *
+                                       static_cast<double>(centroid_norm));
+    if (denominator == 0) {
+      return 0;
+    }
+    const auto similarity = static_cast<float>(dot / denominator);
+    return std::max(-1.f, std::min(similarity, 1.f));
+  }
+}
 
 constexpr size_t kTrainSeed = 42;
 constexpr uint64_t kSampleSegmentOversample = 4;
@@ -428,6 +475,16 @@ void IVFHeader::Serialize(IndexOutput& out) const {
   out.WriteU32(d);
 }
 
+CentroidsTree::CentroidsTree(IVFHeader&& head, CentroidsNode&& root,
+                             size_t next_level_offset)
+  : _head{std::move(head)},
+    _root{std::move(root)},
+    _next_level_offset{next_level_offset} {
+  if (_head.metric != VectorMetric::L1 && _head.d != 0) {
+    SquaredNorms(_root.centroids, _head.d, _root_norms);
+  }
+}
+
 CentroidsTree CentroidsTree::Deserialize(IndexInput& in,
                                          uint64_t root_byte_size) {
   const uint64_t start = in.Position();
@@ -448,44 +505,173 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                            uint32_t nprobe, std::vector<uint32_t>& out_ids,
                            std::vector<float>* out_centroids,
                            uint32_t beam) const {
+  BatchRoutes routes;
+  SearchBatch(query, in, nprobe, beam, routes);
+  out_ids.reserve(out_ids.size() + routes.probes.size());
+  for (const auto& probe : routes.probes) {
+    out_ids.push_back(probe.cluster);
+    if (out_centroids && probe.centroid) {
+      out_centroids->insert(out_centroids->end(), probe.centroid,
+                            probe.centroid + _head.d);
+    }
+  }
+}
+
+void CentroidsTree::SearchBatch(std::span<const float> queries, IndexInput& in,
+                                uint32_t nprobe, uint32_t beam,
+                                BatchRoutes& out) const {
+  const auto d = _head.d;
+  const auto count = static_cast<uint32_t>(queries.size() / d);
+  out.probes.clear();
+  out.layers.clear();
   if (_root.size == 0) {
-    out_ids.push_back(0);
+    for (uint32_t q = 0; q < count; ++q) {
+      out.probes.push_back(
+        {.cluster = 0, .query = q, .score = 0.f, .centroid = nullptr});
+    }
     return;
   }
   const auto width = beam != 0 ? beam : nprobe;
   if (_root.level > 0) {
     in.Seek(_next_level_offset);
   }
-  const CentroidsNodeView root_view{
+  struct Scored {
+    float dist;
+    size_t start;
+    size_t count;
+  };
+  struct Selected {
+    size_t start;
+    size_t count;
+    uint32_t query;
+  };
+  std::vector<CentroidsNodeView> nodes{CentroidsNodeView{
     .centroids = std::span<const float>{_root.centroids},
     .child_offsets = std::span<const size_t>{_root.child_offsets},
     .base = 0,
-    .size = _root.size};
-  std::vector<LayerBuffers> layers;
-  std::vector<CentroidsNode::Candidate> leaves;
+    .size = _root.size}};
+  std::vector<std::vector<uint32_t>> node_queries(1);
+  node_queries[0].resize(count);
+  absl::c_iota(node_queries[0], 0);
+  std::vector<std::vector<CentroidsNode::Candidate>> leaves(count);
+  std::vector<std::vector<Scored>> scored(count);
+  std::vector<Selected> selected;
+  size_t layer_base = 0;
+  size_t layer_total = _root.size;
+  const auto by_dist_desc = [](const auto& l, const auto& r) {
+    return l.dist > r.dist;
+  };
+  std::vector<float> query_norms;
+  std::vector<float> gathered;
+  std::vector<float> centroid_norms;
+  std::vector<float> dots;
+  if (_head.metric != VectorMetric::L1 && count >= kTileQueries) {
+    SquaredNorms(queries, d, query_norms);
+  }
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(query, in, width, _root.level,
-                                  std::span{&root_view, 1}, 0, _root.size,
-                                  layers, leaves);
-    const auto k = std::min<size_t>(nprobe, leaves.size());
-    const auto mid = leaves.begin() + k;
-    const auto by_dist_desc = [](const CentroidsNode::Candidate& l,
-                                 const CentroidsNode::Candidate& r) {
-      return l.dist > r.dist;
-    };
-    absl::c_nth_element(leaves, mid, by_dist_desc);
-    std::sort(leaves.begin(), mid, by_dist_desc);
-    out_ids.reserve(out_ids.size() + k);
-    if (out_centroids) {
-      out_centroids->reserve(out_centroids->size() + k * _head.d);
-    }
-    for (auto it = leaves.begin(); it != mid; ++it) {
-      out_ids.emplace_back(static_cast<uint32_t>(it->id));
-      if (out_centroids) {
-        out_centroids->append_range(it->centroid);
+    for (size_t level = _root.level;; --level) {
+      for (size_t n = 0; n < nodes.size(); ++n) {
+        const auto& node = nodes[n];
+        const auto& own = node_queries[n];
+        bool tile = false;
+        const float* norms = nullptr;
+        if constexpr (Metric != VectorMetric::L1) {
+          tile = own.size() >= kTileQueries &&
+                 own.size() * node.size * d >= kTileWork;
+          if (tile) {
+            const float* tile_queries = queries.data();
+            if (own.size() != count) {
+              gathered.resize(own.size() * size_t{d});
+              for (size_t j = 0; j < own.size(); ++j) {
+                std::copy_n(queries.data() + size_t{own[j]} * d, d,
+                            gathered.data() + j * d);
+              }
+              tile_queries = gathered.data();
+            }
+            if (level == _root.level) {
+              norms = _root_norms.data();
+            } else {
+              SquaredNorms(node.centroids, d, centroid_norms);
+              norms = centroid_norms.data();
+            }
+            dots.resize(own.size() * node.size);
+            Dots(tile_queries, own.size(), node.centroids.data(), node.size, d,
+                 dots.data());
+          }
+        }
+        for (size_t j = 0; j < own.size(); ++j) {
+          const auto q = own[j];
+          const float* query = queries.data() + size_t{q} * d;
+          for (size_t i = 0; i < node.size; ++i) {
+            const auto centroid = node.centroids.subspan(i * d, d);
+            float dist;
+            if constexpr (Metric != VectorMetric::L1) {
+              dist = tile ? FromDot<Metric>(dots[j * node.size + i],
+                                            query_norms[q], norms[i])
+                          : ComputeDistance<Metric>(query, centroid.data(), d);
+            } else {
+              dist = ComputeDistance<Metric>(query, centroid.data(), d);
+            }
+            const bool is_leaf =
+              level == 0 || node.child_offsets[i + 1] == node.child_offsets[i];
+            if (is_leaf) {
+              leaves[q].emplace_back(dist, layer_base + node.base + i,
+                                     centroid);
+            } else {
+              scored[q].push_back(
+                {dist, node.child_offsets[i],
+                 node.child_offsets[i + 1] - node.child_offsets[i]});
+            }
+          }
+        }
       }
+      selected.clear();
+      for (uint32_t q = 0; q < count; ++q) {
+        auto& own = scored[q];
+        const auto k = std::min<size_t>(width, own.size());
+        absl::c_nth_element(own, own.begin() + k, by_dist_desc);
+        for (size_t i = 0; i < k; ++i) {
+          selected.push_back({own[i].start, own[i].count, q});
+        }
+        own.clear();
+      }
+      if (level == 0 || selected.empty()) {
+        break;
+      }
+      absl::c_sort(selected, [](const Selected& l, const Selected& r) {
+        return std::tie(l.start, l.query) < std::tie(r.start, r.query);
+      });
+      std::vector<size_t> starts;
+      std::vector<size_t> sizes;
+      node_queries.clear();
+      for (const auto& s : selected) {
+        if (starts.empty() || starts.back() != s.start) {
+          starts.push_back(s.start);
+          sizes.push_back(s.count);
+          node_queries.emplace_back();
+        }
+        node_queries.back().push_back(s.query);
+      }
+      size_t n_total = 0;
+      nodes = CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes,
+                                       out.layers.emplace_back(), n_total);
+      layer_base += layer_total;
+      layer_total = n_total;
     }
   });
+  for (uint32_t q = 0; q < count; ++q) {
+    auto& own = leaves[q];
+    const auto k = std::min<size_t>(nprobe, own.size());
+    const auto mid = own.begin() + k;
+    absl::c_nth_element(own, mid, by_dist_desc);
+    std::sort(own.begin(), mid, by_dist_desc);
+    for (auto it = own.begin(); it != mid; ++it) {
+      out.probes.push_back({.cluster = static_cast<uint32_t>(it->id),
+                            .query = q,
+                            .score = it->dist,
+                            .centroid = it->centroid.data()});
+    }
+  }
 }
 
 void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,

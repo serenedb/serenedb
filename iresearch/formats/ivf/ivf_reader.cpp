@@ -107,6 +107,23 @@ const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
     duckdb::ArrayVector::GetChildMutable(out));
 }
 
+std::shared_ptr<const QuantizerStats> IvfIndex::QuantStats(
+  IndexInput& idx_in, VectorQuantization quant, VectorMetric metric) const {
+  {
+    absl::ReaderMutexLock lock{&_stats_mutex};
+    if (_stats && _stats_quant == quant && _stats_metric == metric) {
+      return _stats;
+    }
+  }
+  auto stats = ReadQuantizerStats(_tree, idx_in, quant,
+                                  static_cast<uint32_t>(_tree.Dim()), metric);
+  absl::MutexLock lock{&_stats_mutex};
+  _stats = stats;
+  _stats_quant = quant;
+  _stats_metric = metric;
+  return stats;
+}
+
 QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        const VectorFilterOptions& opts,
@@ -119,7 +136,7 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
       ? effort
       : IvfAutoNprobe(segment.docs_count(), opts.posting_size, opts.top_k,
                       _tree.Levels() == 1 ? _tree.RootSize() : 0);
-  if (!PrepareVectorState(_tree, segment, ctx, opts, nprobe, state, inner,
+  if (!PrepareVectorState(*this, segment, ctx, opts, nprobe, state, inner,
                           CodebookUse::Search,
                           IvfSearchBeam(nprobe, opts.min_search_fanout,
                                         opts.max_search_fanout))) {
@@ -143,7 +160,7 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
                                          AnnQueryCache* /*cache*/) const {
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
-  if (!PrepareVectorState(_tree, segment, ctx, opts,
+  if (!PrepareVectorState(*this, segment, ctx, opts,
                           std::numeric_limits<uint32_t>::max(), state, inner,
                           CodebookUse::Range)) {
     return QueryBuilder::Empty();

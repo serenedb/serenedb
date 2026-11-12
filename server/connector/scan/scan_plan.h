@@ -54,6 +54,8 @@ void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
                                     const ScanBindData& bind_data);
 
+void EnsureLookupable(const ScanGlobalState& state, const ScanBindData& ss);
+
 bool IsLookupServed(const ScanBindData& bind,
                     const duckdb::ColumnIndex& column_index);
 

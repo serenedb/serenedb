@@ -32,6 +32,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -41,14 +42,15 @@ namespace irs {
 class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  public:
   HnswQuery(const SubReader& segment, std::shared_ptr<const HnswData> data,
-            const VectorFilterOptions& opts, uint32_t record_size,
-            HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
-            QueryBuilder::ptr&& index_only, AnnQueryCache* cache);
+            const VectorFilterOptions& opts, std::span<const float> query,
+            uint32_t record_size, HnswSearchLimits limits, score_t boost,
+            QueryBuilder::ptr&& inner, QueryBuilder::ptr&& index_only,
+            AnnQueryCache* cache);
 
-  std::vector<ScoreDoc> RunSearch(
-    detail::TableFilter* table = nullptr,
-    detail::TableFilter* columns = nullptr,
-    std::vector<score_t>* spreads = nullptr) const;
+  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr,
+                                  detail::TableFilter* columns = nullptr,
+                                  std::vector<score_t>* spreads = nullptr,
+                                  detail::LazyBitset* admitted = nullptr) const;
 
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
@@ -65,7 +67,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
   template<typename Dist>
   void RunFiltered(Dist& dist, detail::TableFilter* table,
-                   detail::TableFilter* columns,
+                   detail::TableFilter* columns, detail::LazyBitset* admitted,
                    HnswSearchScratch& scratch) const;
 
   void PrepareDistance() const;
@@ -73,9 +75,6 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   bool ScansByColumn() const;
 
   void ScanColumn(HnswSearchScratch& scratch) const;
-
-  void Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
-             std::vector<score_t>& spreads) const;
 
   std::shared_ptr<const HnswData> _data;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;
@@ -103,5 +102,10 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 };
 
 extern template class QueryBuilderImpl<HnswQuery>;
+
+void HnswSearchBatch(const SubReader& segment, const HnswData& data,
+                     const VectorFilterOptions& opts, uint32_t record_size,
+                     uint32_t ef, const ann::QueryBatch& batch, score_t boost,
+                     std::span<ann::Collector> collectors);
 
 }  // namespace irs

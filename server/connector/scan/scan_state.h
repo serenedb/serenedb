@@ -127,23 +127,24 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
 
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
-  std::atomic_uint32_t next_claim{0};
-  std::atomic_uint32_t done_rgs{0};
+  uint32_t base = 0;
+  uint32_t chunk = 1;
+  uint32_t first_start = 0;
+  uint32_t start_count = 0;
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
+  std::atomic_bool owned{false};
   std::vector<LiveClaim> claims;
   std::unique_ptr<OrderedUnits> ordered;
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_start{0};
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_rgs{0};
 
   uint32_t LiveCount() const noexcept {
     return claims.empty() ? rg_count : claims.back().live;
   }
 
-  uint32_t LiveLeft(uint32_t next) const noexcept {
-    if (claims.empty()) {
-      return next < rg_count ? rg_count - next : 0;
-    }
-    return next < claims.size() - 1 ? claims.back().live - claims[next].live
-                                    : 0;
+  uint32_t Units() const noexcept {
+    return claims.empty() ? rg_count : static_cast<uint32_t>(claims.size() - 1);
   }
 };
 
@@ -270,9 +271,16 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   std::vector<uint32_t> segment_order;
   std::unique_ptr<SegmentWork[]> segments;
-  std::unique_ptr<std::atomic_uint32_t[]> joinable;
+  struct ABSL_CACHELINE_ALIGNED RangeSlot {
+    std::atomic_uint64_t range{0};
+  };
+  std::unique_ptr<RangeSlot[]> ranges;
+  std::vector<uint32_t> split_bases;
+  std::vector<uint32_t> split_segments;
+  std::vector<uint64_t> starts;
   uint32_t live_segments = 0;
   bool ordered = false;
+  ABSL_CACHELINE_ALIGNED std::atomic_uint32_t arrivals{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_segment{0};
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t done_segments{0};
   ABSL_CACHELINE_ALIGNED absl::Mutex ordered_mutex;
@@ -365,6 +373,8 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   irs::ColFilterClassification seg_cls;
   irs::ColFilterClassification column_form_cls;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
+  uint32_t owned_seg = std::numeric_limits<uint32_t>::max();
+  std::atomic_uint64_t private_range{0};
   uint32_t batch_next = 0;
   uint32_t batch_end = 0;
   uint32_t finished_segments = 0;
@@ -372,6 +382,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;
+  bool starts_exhausted = false;
   uint64_t rg_units = 0;
   uint64_t produced_rows = 0;
 
@@ -391,7 +402,7 @@ struct FetchLocalState {
 
 struct CountLocalState final : public ScanLocalState {
   uint64_t local_count = 0;
-  uint64_t local_emitted = 0;
+  bool whole_backlog = false;
   ColFilterVerify col_verify;
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();

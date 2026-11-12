@@ -19,11 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
-#include <absl/container/inlined_vector.h>
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
@@ -38,8 +36,6 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/multiterm_query.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/bit_utils.hpp>
-#include <iresearch/utils/containers/bitset.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <optional>
 #include <span>
@@ -232,6 +228,12 @@ std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
   ScanGlobalState& g, SegmentWork& work, uint32_t seg,
   duckdb::Value segment_key);
 
+void BuildOrderedHeap(ScanGlobalState& g) {
+  g.order_dynamic_filter = FindOrderDynamicFilter(g);
+  g.ordered_barrier.Reset(static_cast<uint32_t>(g.segment_order.size()));
+  g.ordered = true;
+}
+
 void BuildOrderedUnits(ScanGlobalState& g, uint32_t seg) {
   const auto& order = *g.Bind().scan_order;
   duckdb::Value v;
@@ -243,47 +245,12 @@ void BuildOrderedUnits(ScanGlobalState& g, uint32_t seg) {
   work.ordered = BuildSegmentOrderedUnits(g, work, seg, std::move(v));
 }
 
-void BuildNextOrderedUnits(ScanGlobalState& g, std::atomic_uint32_t& next) {
-  const auto size = static_cast<uint32_t>(g.segment_order.size());
-  for (auto i = next.fetch_add(1, std::memory_order_relaxed); i < size;
-       i = next.fetch_add(1, std::memory_order_relaxed)) {
-    BuildOrderedUnits(g, g.segment_order[i]);
-  }
-}
-
-struct OrderedSlice final : duckdb::BaseExecutorTask {
-  OrderedSlice(duckdb::TaskExecutor& executor, ScanGlobalState& g,
-               std::atomic_uint32_t& next)
-    : BaseExecutorTask{executor}, g{g}, next{next} {}
-
-  void ExecuteTask() final { BuildNextOrderedUnits(g, next); }
-
-  ScanGlobalState& g;
-  std::atomic_uint32_t& next;
-};
-
-void BuildOrderedHeap(ScanGlobalState& g, duckdb::ClientContext& context,
-                      uint64_t threads) {
-  const auto& order = *g.Bind().scan_order;
-  g.order_dynamic_filter = FindOrderDynamicFilter(g);
-  const auto helpers = std::min<uint64_t>(threads, g.segment_order.size());
-  std::atomic_uint32_t next{0};
-  if (helpers <= 1) {
-    BuildNextOrderedUnits(g, next);
-  } else {
-    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
-                                  context.GetSchedulerAccount()};
-    for (uint64_t i = 0; i != helpers; ++i) {
-      executor.ScheduleTask(duckdb::make_uniq<OrderedSlice>(executor, g, next));
-    }
-    executor.WorkOnTasks();
-  }
+void FinishOrderedHeap(ScanGlobalState& g) {
   g.ordered_heap.reserve(g.segment_order.size());
   for (const auto seg : g.segment_order) {
     g.ordered_heap.push_back({seg, g.Segment(seg).ordered->keys.front()});
   }
-  absl::c_make_heap(g.ordered_heap, HeapOrder(order));
-  g.ordered = true;
+  absl::c_make_heap(g.ordered_heap, HeapOrder(*g.Bind().scan_order));
 }
 
 std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
@@ -403,15 +370,7 @@ void SetOwned(ScanGlobalState& g, ScanLocalState& l, uint32_t seg,
   OwnRange(g, l).store(range, std::memory_order_relaxed);
 }
 
-ScanUnit UnitOf(const SegmentWork& work, uint32_t seg, uint32_t begin,
-                uint32_t end) noexcept {
-  if (const auto& claims = work.claims; !claims.empty()) {
-    return {.seg = seg,
-            .rg_begin = claims[begin].rg,
-            .rg_end = claims[end].rg,
-            .live = claims[end].live - claims[begin].live,
-            .whole = false};
-  }
+ScanUnit UnitOf(uint32_t seg, uint32_t begin, uint32_t end) noexcept {
   return {.seg = seg,
           .rg_begin = begin,
           .rg_end = end,
@@ -434,8 +393,8 @@ bool ClaimOwned(ScanGlobalState& g, ScanLocalState& l) {
                                   std::memory_order_relaxed,
                                   std::memory_order_relaxed)) {
       l.claimed_end = next + take;
-      TakeUnit(l, UnitOf(work, l.owned_seg, next - work.base,
-                         next + take - work.base));
+      TakeUnit(l,
+               UnitOf(l.owned_seg, next - work.base, next + take - work.base));
       return true;
     }
   }
@@ -581,145 +540,6 @@ bool ClaimBatch(ScanGlobalState& g, ScanLocalState& l) {
   }
 }
 
-constexpr uint32_t kLiveSamples = 16;
-constexpr uint64_t kParallelLiveRowGroups = 1024;
-constexpr uint64_t kLiveSlicesPerThread = 2;
-constexpr uint64_t kMinLiveSlice = 256;
-
-bool RowGroupDead(const irs::ColumnReader& reader,
-                  const duckdb::ExpressionFilter& filter,
-                  duckdb::TableFilterState& state, irs::BlockWindow& window,
-                  uint64_t begin, uint64_t end) {
-  for (auto row = begin; row < end; row = window.end) {
-    window = reader.Locate(row, window);
-    if (!irs::ZoneDead(filter.CheckStatistics(
-          reader.RowGroupStatistics(window.block), state))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-struct RowGroupCheck {
-  const irs::ColumnReader* reader;
-  const duckdb::ExpressionFilter* filter;
-  duckdb::TableFilterState* state;
-  mutable irs::BlockWindow window;
-};
-
-using RowGroupChecks = absl::InlinedVector<RowGroupCheck, 4>;
-
-struct LivePass {
-  SegmentWork* work;
-  const irs::ColReader* col_reader;
-  std::vector<irs::ColFilterSpec> specs;
-  duckdb::ClientContext* context;
-  uint64_t rows;
-  uint64_t rg_size;
-  irs::bitset live;
-};
-
-RowGroupChecks MakeChecks(const LivePass& pass,
-                          irs::ColFilterStateCache& states) {
-  RowGroupChecks checks;
-  for (const auto& spec : pass.specs) {
-    if (spec.is_score || spec.row_gather) {
-      continue;
-    }
-    SDB_ASSERT(spec.row_fields.empty());
-    const auto* column = pass.col_reader->Column(spec.field);
-    SDB_ASSERT(column);
-    const auto* reader = irs::FilteredColumn(*column, spec);
-    if (!reader || reader->Type().IsNested()) {
-      continue;
-    }
-    SDB_ASSERT(reader->RowCount() == pass.rows);
-    checks.emplace_back(reader, &spec.filter->Cast<duckdb::ExpressionFilter>(),
-                        &states.State(*pass.context, *spec.filter));
-  }
-  return checks;
-}
-
-bool RowGroupLive(const LivePass& pass, const RowGroupChecks& checks,
-                  uint32_t rg) {
-  const auto begin = uint64_t{rg} * pass.rg_size;
-  const auto end = std::min(pass.rows, begin + pass.rg_size);
-  return absl::c_none_of(checks, [&](const RowGroupCheck& c) {
-    return RowGroupDead(*c.reader, *c.filter, *c.state, c.window, begin, end);
-  });
-}
-
-void MarkLive(LivePass& pass, const RowGroupChecks& checks, uint32_t begin,
-              uint32_t end) {
-  for (auto rg = begin; rg != end; ++rg) {
-    if (RowGroupLive(pass, checks, rg)) {
-      pass.live.set(rg);
-    }
-  }
-}
-
-bool SampleRuledOut(const LivePass& pass, irs::ColFilterStateCache& states) {
-  const auto checks = MakeChecks(pass, states);
-  if (checks.empty()) {
-    return false;
-  }
-  const auto rg_count = pass.work->rg_count;
-  const auto samples = std::min(kLiveSamples, rg_count);
-  for (uint32_t i = 0; i != samples; ++i) {
-    if (!RowGroupLive(pass, checks,
-                      static_cast<uint32_t>((uint64_t{2} * i + 1) * rg_count /
-                                            (uint64_t{2} * samples)))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-struct LiveSlice final : duckdb::BaseExecutorTask {
-  LiveSlice(duckdb::TaskExecutor& executor, LivePass& pass, uint32_t begin,
-            uint32_t end)
-    : BaseExecutorTask{executor}, pass{pass}, begin{begin}, end{end} {}
-
-  void ExecuteTask() final {
-    irs::ColFilterStateCache states;
-    MarkLive(pass, MakeChecks(pass, states), begin, end);
-  }
-
-  LivePass& pass;
-  uint32_t begin;
-  uint32_t end;
-};
-
-void MarkLiveRowGroups(std::span<LivePass> passes,
-                       irs::ColFilterStateCache& states,
-                       duckdb::ClientContext& context, uint64_t threads) {
-  uint64_t total = 0;
-  for (const auto& pass : passes) {
-    total += pass.work->rg_count;
-  }
-  if (total < kParallelLiveRowGroups) {
-    for (auto& pass : passes) {
-      MarkLive(pass, MakeChecks(pass, states), 0, pass.work->rg_count);
-    }
-    return;
-  }
-  constexpr uint64_t kWord = irs::BitsRequired<irs::bitset::word_t>();
-  const auto per = (total + kLiveSlicesPerThread * threads - 1) /
-                   (kLiveSlicesPerThread * threads);
-  const auto slice = static_cast<uint32_t>(
-    (std::max(per, kMinLiveSlice) + kWord - 1) / kWord * kWord);
-  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
-                                context.GetSchedulerAccount()};
-  for (auto& pass : passes) {
-    const auto rg_count = pass.work->rg_count;
-    for (uint32_t begin = 0; begin < rg_count; begin += slice) {
-      executor.ScheduleTask(duckdb::make_uniq<LiveSlice>(
-        executor, pass, begin, std::min(rg_count, begin + slice)));
-    }
-  }
-  executor.WorkOnTasks();
-}
-
 void CutStarts(ScanGlobalState& g, uint64_t positions) {
   const auto segments = g.split_segments.size();
   if (segments == 0 || segments >= g.workers) {
@@ -850,33 +670,6 @@ void PrepareSegments(ScanGlobalState& g, duckdb::ClientContext& context,
 
 }  // namespace
 
-std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads) {
-  const auto live_count = static_cast<uint32_t>(live.count());
-  if (live_count == 0) {
-    return {{.rg = static_cast<uint32_t>(live.size())}};
-  }
-  const auto step = [&](uint32_t claimed) {
-    return claimed + std::max<uint32_t>(1, (live_count - claimed) / threads);
-  };
-  std::vector<LiveClaim> claims{LiveClaim{}};
-  auto next = step(0);
-  uint32_t seen = 0;
-  uint32_t word_rg = 0;
-  for (const auto bits : live) {
-    const auto ones = static_cast<uint32_t>(std::popcount(bits));
-    for (; next < seen + ones; next = step(next)) {
-      const auto bit = irs::SelectInWord(bits, next - seen);
-      claims.push_back(
-        {.rg = word_rg + static_cast<uint32_t>(bit), .live = next});
-    }
-    seen += ones;
-    word_rg += irs::BitsRequired<irs::bitset::word_t>();
-  }
-  claims.push_back(
-    {.rg = static_cast<uint32_t>(live.size()), .live = live_count});
-  return claims;
-}
-
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const auto& bind = g.Bind();
   const bool scan_ordered =
@@ -920,7 +713,9 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
                               ConstantCount(*where);
   std::vector<uint8_t> counts_whole;
   if (g.shape == ScanShape::Count && g.col_filters.empty() && where &&
-      !constant_count && !g.vector_scorer && g.split != SplitMode::Never) {
+      !constant_count && !g.vector_scorer && g.split != SplitMode::Never &&
+      where->type() != irs::Type<irs::BooleanFilter>::id() &&
+      g.live_segments < threads) {
     std::vector<uint32_t> candidates;
     for (const auto seg : g.segment_order) {
       const auto& sub = (*g.reader)[seg];
@@ -940,7 +735,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
   irs::ColFilterStateCache states;
   irs::ColFilterClassification cls;
-  std::vector<LivePass> passes;
   uint64_t parallel = 0;
   uint64_t rgs = 0;
   uint64_t whole = 0;
@@ -963,28 +757,10 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       run_end = i;
       if (!ordered && !g.col_filters.empty() && threads > 1) {
         ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
-        if (cls.segment_dead) {
-          work.claims = {{.rg = work.rg_count}};
-        } else {
-          LivePass pass{.work = &work,
-                        .col_reader = sub.GetColReader(),
-                        .specs = cls.active,
-                        .context = &context,
-                        .rows = docs,
-                        .rg_size = g.rg_size};
-          SDB_ASSERT(pass.col_reader);
-          if (SampleRuledOut(pass, states)) {
-            pass.live.reset(work.rg_count);
-            passes.push_back(std::move(pass));
-          }
-        }
+        work.dead = cls.segment_dead;
       }
     }
     work.run_end = run_end;
-  }
-  MarkLiveRowGroups(passes, states, context, threads);
-  for (const auto& pass : passes) {
-    pass.work->claims = CutClaims(pass.live, static_cast<uint32_t>(threads));
   }
   uint32_t skipped = 0;
   uint64_t positions = 0;
@@ -1025,9 +801,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   g.ranges = std::make_unique<ScanGlobalState::RangeSlot[]>(g.workers);
   for (const auto seg : g.split_segments) {
     auto& work = g.Segment(seg);
-    if (work.claims.empty()) {
-      work.chunk = std::max<uint32_t>(1, work.rg_count / g.workers);
-    }
+    work.chunk = std::max<uint32_t>(1, work.rg_count / g.workers);
   }
   if (g.split == SplitMode::Tail && !ordered) {
     CutStarts(g, positions);
@@ -1036,7 +810,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   g.fold_rgs = kFoldSharers * rgs / g.workers;
 
   if (ordered) {
-    BuildOrderedHeap(g, context, threads);
+    BuildOrderedHeap(g);
   }
 }
 
@@ -1120,10 +894,131 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
   return false;
 }
 
+namespace {
+
+void BuildRowGroupChecks(const ScanGlobalState& g, ScanLocalState& l,
+                         uint32_t seg) {
+  l.rg_checks.clear();
+  l.checked_seg = seg;
+  const auto* col_reader = (*g.reader)[seg].GetColReader();
+  if (!col_reader) {
+    return;
+  }
+  for (const auto& spec : l.seg_cls.active) {
+    if (spec.is_score || spec.row_gather || !spec.row_fields.empty()) {
+      continue;
+    }
+    const auto* column = col_reader->Column(spec.field);
+    if (!column) {
+      continue;
+    }
+    const auto* reader = irs::FilteredColumn(*column, spec);
+    if (!reader || reader->Type().IsNested()) {
+      continue;
+    }
+    l.rg_checks.push_back(
+      {.reader = reader,
+       .filter = &spec.filter->Cast<duckdb::ExpressionFilter>(),
+       .state = &l.filter_states.State(*g.client_context, *spec.filter),
+       .window = {}});
+  }
+}
+
+bool RowGroupDead(RowGroupCheck& check, uint64_t begin, uint64_t end) {
+  for (auto row = begin; row < end; row = check.window.end) {
+    check.window = check.reader->Locate(row, check.window);
+    if (!irs::ZoneDead(check.filter->CheckStatistics(
+          check.reader->RowGroupStatistics(check.window.block),
+          *check.state))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void AddDone(ScanGlobalState& g, ScanLocalState& l, uint32_t seg,
+             uint32_t rgs) {
+  auto& work = g.Segment(seg);
+  if (work.done_rgs.fetch_add(rgs, std::memory_order_acq_rel) + rgs ==
+      work.rg_count) {
+    ++l.finished_segments;
+  }
+}
+
+bool TrimDeadRowGroups(ScanGlobalState& g, ScanLocalState& l) {
+  auto& unit = l.unit;
+  if (unit.whole) {
+    return true;
+  }
+  if (l.checked_seg != unit.seg) {
+    BuildRowGroupChecks(g, l, unit.seg);
+  }
+  if (l.rg_checks.empty()) {
+    return true;
+  }
+  const uint64_t docs = (*g.reader)[unit.seg].Meta().docs_count;
+  auto first = unit.rg_end;
+  auto last = unit.rg_begin;
+  uint32_t live = 0;
+  for (auto rg = unit.rg_begin; rg != unit.rg_end; ++rg) {
+    const auto begin = uint64_t{rg} * g.rg_size;
+    const auto end = std::min(docs, begin + g.rg_size);
+    bool dead = false;
+    for (auto& check : l.rg_checks) {
+      if (RowGroupDead(check, begin, end)) {
+        dead = true;
+        break;
+      }
+    }
+    if (!dead) {
+      ++live;
+      first = std::min(first, rg);
+      last = rg + 1;
+    }
+  }
+  l.rg_units -= unit.live - live;
+  if (live == 0) {
+    return false;
+  }
+  const auto trimmed = (first - unit.rg_begin) + (unit.rg_end - last);
+  if (trimmed != 0) {
+    AddDone(g, l, unit.seg, trimmed);
+    unit.rg_begin = first;
+    unit.rg_end = last;
+  }
+  unit.live = live;
+  return true;
+}
+
+}  // namespace
+
+bool RunOrderedStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
+                     ScanLocalState& l) {
+  if (!g.Ordered() || g.segment_order.empty() || g.ordered_barrier.Released()) {
+    return true;
+  }
+  const auto size = static_cast<uint32_t>(g.segment_order.size());
+  for (auto i = g.ordered_next.fetch_add(1, std::memory_order_relaxed);
+       i < size; i = g.ordered_next.fetch_add(1, std::memory_order_relaxed)) {
+    BuildOrderedUnits(g, g.segment_order[i]);
+    if (g.ordered_barrier.Arrive()) {
+      FinishOrderedHeap(g);
+      g.ordered_barrier.Release(input);
+      return true;
+    }
+  }
+  if (g.ordered_barrier.Park(input, *g.client_context)) {
+    l.parked_on = &g.ordered_barrier;
+    return false;
+  }
+  g.ordered_barrier.Wait();
+  return true;
+}
+
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l) {
   while (ClaimUnit(g, l)) {
     l.Classify(g, l.unit.seg);
-    if (!l.seg_cls.segment_dead) {
+    if (!l.seg_cls.segment_dead && TrimDeadRowGroups(g, l)) {
       return true;
     }
     FinishUnit(g, l);

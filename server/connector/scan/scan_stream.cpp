@@ -160,7 +160,7 @@ bool Deliver(duckdb::ClientContext& ctx, ScanGlobalState& g,
 void RunStreamScan(duckdb::ClientContext& ctx,
                    duckdb::TableFunctionInput& input, ScanGlobalState& g,
                    StreamLocalState& l, duckdb::DataChunk& output) {
-  if (!RunPrepareStage(input, g, l)) {
+  if (!RunPrepareStage(input, g, l) || !RunOrderedStage(input, g, l)) {
     return;
   }
   l.EnsureHitBatcher(g);

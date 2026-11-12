@@ -87,9 +87,12 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
 
 }  // namespace
 
-void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
+void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                 ScanGlobalState& g, ColScanLocalState& l,
                 duckdb::DataChunk& output) {
+  if (!RunOrderedStage(input, g, l)) {
+    return;
+  }
   if (!l.live_sel_data) {
     l.live_sel_data = duckdb::make_buffer<duckdb::SelectionData>(
       STANDARD_VECTOR_SIZE + irs::doc_limits::kDocsSlack);

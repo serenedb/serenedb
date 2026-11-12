@@ -22,7 +22,6 @@
 
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
-#include <absl/synchronization/notification.h>
 
 #include <atomic>
 #include <duckdb.hpp>
@@ -138,26 +137,32 @@ class ScanBarrier {
     return _arrived.fetch_add(1, std::memory_order_acq_rel) + 1 == _total;
   }
 
-  bool Released() const noexcept { return _notification.HasBeenNotified(); }
-
-  bool Failed() const noexcept {
-    return _failed.load(std::memory_order_acquire);
+  bool Released() const noexcept {
+    return _state.load(std::memory_order_acquire) != State::Open;
   }
 
-  void Release() noexcept { Finish(false); }
+  bool Failed() const noexcept {
+    return _state.load(std::memory_order_acquire) == State::Failed;
+  }
 
-  void Abandon() noexcept { Finish(true); }
+  void Release() noexcept { Finish(State::Released); }
 
-  void Wait();
+  void Abandon() noexcept { Finish(State::Failed); }
+
+  void Wait() const noexcept;
 
  private:
-  void Finish(bool failed) noexcept;
+  enum class State : uint32_t {
+    Open,
+    Released,
+    Failed,
+  };
+
+  void Finish(State state) noexcept;
 
   std::atomic_uint32_t _arrived{0};
   uint32_t _total = 0;
-  std::atomic_bool _finished{false};
-  std::atomic_bool _failed{false};
-  absl::Notification _notification;
+  std::atomic<State> _state{State::Open};
 };
 
 struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {

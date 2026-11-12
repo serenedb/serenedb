@@ -791,7 +791,9 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     return;
   }
   _id = field_id;
-  _layout = term_dict::LayoutOf(type, entry && entry->HasJsonLeafFields());
+  _layout = entry && entry->curve
+              ? irs::DictLayout::Numeric
+              : term_dict::LayoutOf(type, entry && entry->HasJsonLeafFields());
   const auto append_stored = [&] {
     if (is_stored) {
       AppendToColumn(field_id, type, vec, count);
@@ -861,7 +863,10 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     case duckdb::LogicalTypeId::BLOB:
     case duckdb::LogicalTypeId::GEOMETRY: {
       auto& tokenizer = ResolveTokenizer(field_id);
-      _field.PrepareForStringValue(tokenizer, irs::StringLayout::kStrings);
+      _field.PrepareForStringValue(tokenizer,
+                                   _layout == irs::DictLayout::Numeric
+                                     ? irs::NumericLayout::kNumbers
+                                     : irs::StringLayout::kStrings);
       if (kind == duckdb::LogicalTypeId::GEOMETRY) {
         irs::analysis::GeoTokenizer::Cast(*tokenizer.analyzer)
           .SetWkbInput(true);

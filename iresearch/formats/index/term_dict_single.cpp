@@ -190,6 +190,13 @@ void SingleTermReader::VisitRange(bytes_view from, bytes_view to,
   }
 }
 
+void SingleTermReader::VisitPruned(const RangePruner& pruner,
+                                   RangeVisitor visit) const {
+  if (pruner.Select(min(), nullptr, 0, 0, 1) != 0) {
+    visit(min(), _single);
+  }
+}
+
 std::unique_ptr<IndexInput> SingleTermReader::ReopenPayload() const {
   return _owner->Postings().ReopenPayload();
 }

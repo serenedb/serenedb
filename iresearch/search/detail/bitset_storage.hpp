@@ -48,15 +48,21 @@ class BitsetStorage {
     : _end{kMin + docs_count},
       _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
       _alloc{_words + kWindowDocs / kBits + 1},
-      _bits{std::make_unique<uint64_t[]>(_alloc + 1)} {}
+      _bits{std::make_shared<uint64_t[]>(_alloc + 1)} {}
 
   BitsetStorage(doc_id_t docs_count, memory::AllocateOnlyTag)
     : _end{kMin + docs_count},
       _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
       _alloc{_words + kWindowDocs / kBits + 1},
-      _bits{std::make_unique_for_overwrite<uint64_t[]>(_alloc + 1)} {
+      _bits{std::make_shared_for_overwrite<uint64_t[]>(_alloc + 1)} {
     _bits[0] = 0;
   }
+
+  BitsetStorage(BitsetStorage&&) noexcept = default;
+  BitsetStorage& operator=(BitsetStorage&&) noexcept = default;
+
+  BitsetStorage Share() const noexcept { return BitsetStorage{*this}; }
+  bool Shared() const noexcept { return _bits.use_count() > 1; }
 
   uint64_t* Words() noexcept { return _bits.get() + 1; }
   const uint64_t* Words() const noexcept { return _bits.get() + 1; }
@@ -76,10 +82,12 @@ class BitsetStorage {
   }
 
  private:
+  BitsetStorage(const BitsetStorage&) = default;
+
   doc_id_t _end = 0;
   uint32_t _words = 0;
   uint32_t _alloc = 0;
-  std::unique_ptr<uint64_t[]> _bits;
+  std::shared_ptr<uint64_t[]> _bits;
 };
 
 inline uint64_t CountBits(const BitsetStorage& set) noexcept {

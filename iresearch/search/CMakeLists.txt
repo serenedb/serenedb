@@ -24,6 +24,7 @@ target_sources(
         filters/automaton_filter.cpp
         filters/boolean_filter.cpp
         filters/boolean_rules.cpp
+        filters/curve_box_filter.cpp
         filters/deferral.cpp
         filters/filter.cpp
         filters/filter_optimizer.cpp
@@ -165,6 +166,7 @@ target_sources(
         make/query/all.cpp
         make/query/approx.cpp
         make/query/boolean.cpp
+        make/query/doc_set.cpp
         make/query/multi_term.cpp
         make/query/ngram_similarity.cpp
         make/query/phrase.cpp

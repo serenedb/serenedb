@@ -548,6 +548,20 @@ class Cursor {
   const BlockView& View() const noexcept { return _view; }
   uint32_t BlockIndex() const noexcept { return _block; }
   uint32_t Entry() const noexcept { return _entry; }
+  uint32_t BlockStop() const noexcept { return _stop; }
+  uint32_t StopBefore(bytes_view upper) noexcept {
+    SDB_ASSERT(_view.fixed);
+    return upper.empty()
+             ? _stop
+             : std::min(_stop,
+                        FixedLowerBound(
+                          _view, _probe.Assign(_field->KeyPrefix(), upper)));
+  }
+  void MoveTo(uint32_t entry) noexcept {
+    SDB_ASSERT(_view.fixed);
+    SDB_ASSERT(entry < _stop);
+    _entry = entry;
+  }
   const byte_type* NextSuffix() const noexcept { return _sp; }
   bool AtBlockEnd() const noexcept {
     return _entry != kNoEntry && _entry + 1 == _stop;
@@ -789,14 +803,22 @@ class Cursor {
     }
     const auto probe = _probe.Assign(field.KeyPrefix(), key);
     const uint32_t block = field.BlockOf(probe);
+    if (prefetch && (block != _block || _entry == kNoEntry)) {
+      field.PrefetchLookup(block);
+    }
+    return SeekIn(block, probe);
+  }
+
+  SeekResult SeekIn(uint32_t block, bytes_view key) {
+    return SeekIn(block, _probe.Assign(_field->KeyPrefix(), key));
+  }
+
+  SeekResult SeekIn(uint32_t block, Probe probe) {
     if (block != _block || _entry == kNoEntry) {
-      if (prefetch) {
-        field.PrefetchLookup(block);
-      }
       Load(block);
     }
     if (!LowerBound(probe)) {
-      SDB_ASSERT(block + 1 < field.Blocks());
+      SDB_ASSERT(block + 1 < _field->Blocks());
       Load(block + 1);
       Next();
       return SeekResult::NotFound;

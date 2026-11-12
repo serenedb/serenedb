@@ -58,6 +58,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
 #include "connector/column_id.h"
+#include "connector/curve_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/inverted_store_index.h"
@@ -324,6 +325,7 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
   auto& serene = catalog.Cast<SereneDBCatalog>();
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
+    resolved.curve = field.curve;
     if (field.HasTextDictionary()) {
       const auto dict =
         serene.FindIn<TokenizerCatalogEntry>(&context, field.text_dictionary);
@@ -355,6 +357,15 @@ ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
     return {};
   }
   const auto& field = it->second;
+  if (field.curve) {
+    return {
+      .analyzer =
+        Tokenizer::TokenizerWrapper{
+          std::make_unique<connector::CurveTokenizer>(*field.curve).release(),
+          Tokenizer::Deleter{}},
+      .features = irs::IndexFeatures::Ranges,
+    };
+  }
   if (!field.tokenizer) {
     return {.analyzer = Tokenizer::TokenizerWrapper{
               std::make_unique<irs::KeywordTokenizer>().release(),

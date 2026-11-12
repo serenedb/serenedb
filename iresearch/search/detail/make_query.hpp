@@ -65,6 +65,9 @@ template<typename Family, typename Ctx>
 typename Family::Result MakeQuery(const ApproxQuery& query, const Ctx& ctx);
 
 template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const DocSetQuery& query, const Ctx& ctx);
+
+template<typename Family, typename Ctx>
 typename Family::Result MakeQuery(const TokenPhraseQuery& query,
                                   const Ctx& ctx);
 

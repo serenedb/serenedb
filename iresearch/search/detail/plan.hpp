@@ -47,6 +47,7 @@ class AllQuery;
 class NGramSimilarityQuery;
 class WildcardNGramQuery;
 class ApproxQuery;
+class DocSetQuery;
 class TokenPhraseQuery;
 class ByNestedQuery;
 class HnswQuery;

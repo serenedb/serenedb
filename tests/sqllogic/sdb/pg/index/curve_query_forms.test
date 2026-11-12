@@ -1,0 +1,266 @@
+statement ok
+CREATE TABLE curve_forms(id INTEGER PRIMARY KEY, x INTEGER, y INTEGER, s VARCHAR);
+
+statement ok
+INSERT INTO curve_forms SELECT i, i % 5, i % 3, 'x' || i FROM range(60) t(i);
+
+statement ok
+CREATE INDEX curve_forms_idx ON curve_forms USING inverted(id, (curve(ROW(x, y)))) INCLUDE (x, y, s);
+
+statement ok
+CREATE INDEX curve_forms_insert ON curve_forms USING inverted(id, (curve(struct_insert({'x': x}, y := y)))) INCLUDE (x, y);
+
+statement ok
+CREATE INDEX curve_forms_null ON curve_forms USING inverted(id, (curve(ROW(NULL, x)))) INCLUDE (x);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_forms;
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ s::TSQUERY;
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ 'foo'::TSQUERY;
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement ok
+SET disabled_optimizers = 'expression_rewriter';
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ 'foo'::TSQUERY;
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+query
+SELECT count(*) AS n FROM curve_forms_idx WHERE x BETWEEN NULL::INTEGER AND 3 AND y BETWEEN 0 AND 1;
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM curve_forms_idx WHERE x >= 0 AND x <= NULL::INTEGER AND y BETWEEN 0 AND 1;
+----
+n
+0
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x BETWEEN 1 AND 1 AND y::DOUBLE >= 0.5 AND y BETWEEN 0 AND 1;
+----
+ids
+{1,16,31,46}
+
+statement ok
+RESET disabled_optimizers;
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(1::HUGEINT, 0), ROW(3::HUGEINT, 1), true, true);
+----
+db error: ERROR: ts_between: bound HUGEINT does not match coordinate 1 of type INTEGER; cast the bound explicitly
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(1::UHUGEINT, 0), ROW(3::UHUGEINT, 1), true, true);
+----
+db error: ERROR: ts_between: bound UHUGEINT does not match coordinate 1 of type INTEGER; cast the bound explicitly
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_phrase('a', 'b');
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(x, 0), ROW(1, 1), true, true);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(y, 1), true, true);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1, 1), x > 0, true);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1, 1), true, y > 0);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1, 1), NULL, true);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1, 1), true, NULL);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW('abc'::INTEGER, 0), ROW(1, 1), true, true);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(5, 6, true, true);
+----
+db error: ERROR: ts_between bounds of a curve() must be ROWs of 2 values, got INTEGER
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1, 1), true, true)::boost(2);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(NULL, NULL, true, true)::boost(2);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1, 1), true, true)::slop(2);
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between('10.0.0.1'::INET, '10.0.0.2'::INET, true, true);
+----
+db error: ERROR: ts_between bounds of a curve() must be ROWs of 2 values, got INET
+
+
+statement error
+SELECT id FROM curve_forms_insert WHERE curve(struct_insert({'x': x}, y := y)) @@ ts_between(ROW(0, 0), ROW(1, 1), true, true);
+----
+db error: ERROR: curve() @@ needs the point written as ROW(...) of its coordinates
+
+
+statement error
+PREPARE curve_forms_option AS SELECT curve(ROW(1, 2), max_level := $1);
+----
+db error: ERROR: curve(): option "max_level" must be a constant
+
+
+query
+SELECT count(*) AS n FROM curve_forms_null WHERE curve(ROW(NULL, x)) @@ ts_between(ROW(NULL, 0), ROW(NULL, 5), true, true);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM curve_forms_null WHERE curve(ROW(NULL, x)) @@ ts_between(ROW(1, 0), ROW(2, 5), true, true);
+----
+n
+0
+
+query
+SELECT count(*) AS groups, sum(n) AS total FROM (SELECT curve(ROW(x, y)) AS k, count(*) AS n FROM curve_forms_idx GROUP BY 1) t;
+----
+groups	total
+15	60
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE curve(ROW(x, y)) = curve(ROW(1, 1));
+----
+ids
+{1,16,31,46}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x <> 2 AND x BETWEEN 1 AND 3 AND y = 1;
+----
+ids
+{1,13,16,28,31,43,46,58}
+
+query
+SELECT (SELECT count(*) FROM curve_forms_idx WHERE x BETWEEN y AND 3 AND y BETWEEN 0 AND 1)
+ = (SELECT count(*) FROM curve_forms WHERE x BETWEEN y AND 3 AND y BETWEEN 0 AND 1) AS same;
+----
+same
+t
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x::SMALLINT BETWEEN 1 AND 1 AND y::UINTEGER BETWEEN 1 AND 1;
+----
+ids
+{1,16,31,46}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x BETWEEN 1 AND 1 AND y::UBIGINT BETWEEN 1 AND 5000000000 AND y <= 1;
+----
+ids
+{1,16,31,46}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x::HUGEINT <= 5000000000000000000000 AND x BETWEEN 1 AND 1 AND y = 1;
+----
+ids
+{1,16,31,46}
+
+query
+SELECT count(*) AS n FROM (
+ SELECT curve(ROW(x, y)) IS NOT NULL AS a, curve(ROW(x, y)) IS NOT NULL AS b FROM curve_forms) t WHERE a AND b;
+----
+n
+60
+
+query
+SELECT curve(ROW(x, 1)) IS NULL AS n
+FROM (SELECT {'ip_type': NULL::UTINYINT, 'address': NULL::HUGEINT, 'mask': NULL::USMALLINT}::INET AS x) t;
+----
+n
+t
+
+statement ok
+ALTER TABLE curve_forms RENAME COLUMN x TO x2;
+
+query
+SELECT count(*) AS n FROM curve_forms_idx WHERE curve(ROW(x2, y)) @@ ts_between(ROW(0, 0), ROW(1, 1), true, true);
+----
+n
+16
+
+query
+SELECT count(*) AS n FROM curve_forms_idx WHERE x2 BETWEEN 0 AND 1 AND y BETWEEN 0 AND 1;
+----
+n
+16
+
+statement error
+ALTER TABLE curve_forms ALTER COLUMN y TYPE BIGINT;
+----
+db error: ERROR: Cannot change the type of this column: an index depends on it!
+
+
+statement ok
+ALTER TABLE curve_forms DROP COLUMN y;
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'curve_forms_idx';
+----
+n
+0
+
+statement ok
+DROP TABLE curve_forms;

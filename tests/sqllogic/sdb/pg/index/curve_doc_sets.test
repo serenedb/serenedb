@@ -1,0 +1,330 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY curve_sets_dict AS split_text(case := 'lower')
+  WITH (frequency, position);
+
+statement ok
+CREATE TABLE curve_sets(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT, tag INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO curve_sets SELECT i, (i * 7919) % 100000, (i * 104729) % 100000, i % 7,
+ CASE WHEN i % 3 = 0 THEN 'alpha beta' ELSE 'alpha' END FROM range(200000) t(i);
+
+statement ok
+INSERT INTO curve_sets SELECT 200000 + i, 200000, 200000, i % 7, 'alpha beta' FROM range(150) t(i);
+
+statement ok
+INSERT INTO curve_sets SELECT 201000 + i, 210000 + (i % 2) * 10000, 210000 + (i % 2) * 10000, i % 7, 'alpha beta' FROM range(300) t(i);
+
+statement ok
+INSERT INTO curve_sets VALUES (202000, 200000, 200001, 1, 'alpha'), (202001, 210000, 210001, 1, 'alpha'), (202002, 500, 500, 1, 'alpha');
+
+statement ok
+CREATE INDEX curve_sets_idx ON curve_sets USING inverted(id, tag, body curve_sets_dict, (curve(ROW(x, y))));
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_sets;
+
+query
+SELECT
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1000, 1000), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE x BETWEEN 0 AND 1000 AND y BETWEEN 0 AND 1000) AS few,
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(50000, 50000), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE x BETWEEN 0 AND 50000 AND y BETWEEN 0 AND 50000) AS many,
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(200000, 200000), ROW(200000, 200002), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE x = 200000 AND y BETWEEN 200000 AND 200002) AS run,
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(210000, 210000), ROW(210000, 210002), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE x = 210000 AND y BETWEEN 210000 AND 210002) AS gaps,
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(250000, 250000), true, true)) =
+ (SELECT sum(id) FROM curve_sets) AS every;
+----
+few	many	run	gaps	every
+t	t	t	t	t
+
+statement ok
+VACUUM (COMPACT_TABLE) curve_sets;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(200000, 200000), ROW(200000, 200002), true, true)) =
+ (SELECT list(id ORDER BY id) FROM curve_sets WHERE x = 200000 AND y BETWEEN 200000 AND 200002) AS run,
+ (SELECT list(id ORDER BY id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(210000, 210000), ROW(210000, 210002), true, true)) =
+ (SELECT list(id ORDER BY id) FROM curve_sets WHERE x = 210000 AND y BETWEEN 210000 AND 210002) AS gaps,
+ (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(200000, 200000), ROW(200000, 200002), true, true)) AS run_rows,
+ (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(210000, 210000), ROW(210000, 210002), true, true)) AS gaps_rows;
+----
+run	gaps	run_rows	gaps_rows
+t	t	151	151
+
+query
+SELECT
+ (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1000, 1000), true, true)) =
+ (SELECT count(*) FROM curve_sets WHERE x BETWEEN 0 AND 1000 AND y BETWEEN 0 AND 1000) AS few,
+ (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(50000, 50000), true, true)) =
+ (SELECT count(*) FROM curve_sets WHERE x BETWEEN 0 AND 50000 AND y BETWEEN 0 AND 50000) AS many;
+----
+few	many
+t	t
+
+query
+SELECT
+ (SELECT sum(id) FROM curve_sets_idx WHERE tag = 3 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1000, 1000), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE tag = 3 AND x BETWEEN 0 AND 1000 AND y BETWEEN 0 AND 1000) AS few,
+ (SELECT sum(id) FROM curve_sets_idx WHERE tag = 3 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(50000, 50000), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE tag = 3 AND x BETWEEN 0 AND 50000 AND y BETWEEN 0 AND 50000) AS many,
+ (SELECT sum(id) FROM curve_sets_idx WHERE tag <> 3 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(50000, 50000), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE tag <> 3 AND x BETWEEN 0 AND 50000 AND y BETWEEN 0 AND 50000) AS excluded,
+ (SELECT count(*) FROM curve_sets_idx WHERE tag = 3 AND x BETWEEN 0 AND 50000 AND y BETWEEN 0 AND 50000) =
+ (SELECT count(*) FROM curve_sets WHERE tag = 3 AND x BETWEEN 0 AND 50000 AND y BETWEEN 0 AND 50000) AS ranges;
+----
+few	many	excluded	ranges
+t	t	t	t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_sets_idx WHERE id >= 1000 AND id < 60000 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(5000, 5000), true, true)) =
+ (SELECT list(id ORDER BY id) FROM curve_sets WHERE id >= 1000 AND id < 60000 AND x BETWEEN 0 AND 5000 AND y BETWEEN 0 AND 5000) AS sparse,
+ (SELECT list(id ORDER BY id) FROM curve_sets_idx WHERE id >= 1000 AND id < 2000 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(90000, 90000), true, true)) =
+ (SELECT list(id ORDER BY id) FROM curve_sets WHERE id >= 1000 AND id < 2000 AND x BETWEEN 0 AND 90000 AND y BETWEEN 0 AND 90000) AS dense;
+----
+sparse	dense
+t	t
+
+query
+SELECT count(*) AS n FROM (
+ SELECT id FROM curve_sets_idx WHERE body @@ 'beta' AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(5000, 5000), true, true)
+ ORDER BY bm25(tableoid) DESC LIMIT 5) t;
+----
+n
+5
+
+query
+SELECT count(*) AS n FROM (
+ SELECT id FROM curve_sets_idx WHERE body @@ 'beta' AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(90000, 90000), true, true)
+ ORDER BY bm25(tableoid) DESC LIMIT 5) t;
+----
+n
+5
+
+query
+SELECT count(*) AS n FROM (
+ SELECT id FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1000, 1000), true, true)
+ ORDER BY bm25(tableoid) DESC LIMIT 1) t;
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM (
+ SELECT id FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(90000, 90000), true, true)
+ ORDER BY bm25(tableoid) DESC LIMIT 5) t;
+----
+n
+5
+
+query
+SELECT (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(5, 5), ROW(4, 4), true, true)) AS inverted,
+ (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(300000, 300000), ROW(400000, 400000), true, true)) AS beyond;
+----
+inverted	beyond
+0	0
+
+statement ok
+DELETE FROM curve_sets WHERE id % 11 = 0 OR (id >= 200000 AND id < 200100);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_sets;
+
+query
+SELECT
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1000, 1000), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE x BETWEEN 0 AND 1000 AND y BETWEEN 0 AND 1000) AS few,
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(50000, 50000), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE x BETWEEN 0 AND 50000 AND y BETWEEN 0 AND 50000) AS many,
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(200000, 200000), ROW(200000, 200002), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE x = 200000 AND y BETWEEN 200000 AND 200002) AS run;
+----
+few	many	run
+t	t	t
+
+statement ok
+VACUUM (COMPACT_TABLE) curve_sets;
+
+query
+SELECT
+ (SELECT sum(id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(50000, 50000), true, true)) =
+ (SELECT sum(id) FROM curve_sets WHERE x BETWEEN 0 AND 50000 AND y BETWEEN 0 AND 50000) AS compacted;
+----
+compacted
+t
+
+statement ok
+PREPARE curve_sets_ranges AS SELECT count(*) AS n, sum(id) AS total FROM curve_sets_idx
+ WHERE tag = $1 AND x BETWEEN 0 AND 5000 AND y BETWEEN 0 AND 5000;
+
+statement ok
+PREPARE curve_sets_box AS SELECT count(*) AS n, sum(id) AS total FROM curve_sets_idx
+ WHERE tag = $1 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(5000, 5000), true, true);
+
+statement ok
+PREPARE curve_sets_open AS SELECT count(*) AS n, sum(id) AS total FROM curve_sets_idx
+ WHERE id >= $1 AND curve(ROW(x, y)) @@ ts_between(ROW(0, NULL), ROW(5000, NULL), true, true);
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM curve_sets WHERE tag = 3 AND x BETWEEN 0 AND 5000 AND y BETWEEN 0 AND 5000;
+----
+n	total
+63	6666177
+
+query
+EXECUTE curve_sets_ranges(3);
+----
+n	total
+63	6666177
+
+query
+EXECUTE curve_sets_ranges(3);
+----
+n	total
+63	6666177
+
+query
+EXECUTE curve_sets_box(3);
+----
+n	total
+63	6666177
+
+query
+EXECUTE curve_sets_box(3);
+----
+n	total
+63	6666177
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM curve_sets WHERE tag = 4 AND x BETWEEN 0 AND 5000 AND y BETWEEN 0 AND 5000;
+----
+n	total
+67	6482380
+
+query
+EXECUTE curve_sets_ranges(4);
+----
+n	total
+67	6482380
+
+query
+EXECUTE curve_sets_box(4);
+----
+n	total
+67	6482380
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM curve_sets WHERE id >= 100000 AND x BETWEEN 0 AND 5000;
+----
+n	total
+4547	682078712
+
+query
+EXECUTE curve_sets_open(100000);
+----
+n	total
+4547	682078712
+
+statement ok
+DEALLOCATE curve_sets_ranges;
+
+statement ok
+DEALLOCATE curve_sets_box;
+
+statement ok
+DEALLOCATE curve_sets_open;
+
+statement ok
+DROP TABLE curve_sets;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY curve_sets_dict;
+
+statement ok
+CREATE TABLE curve_knn(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT, tag INTEGER, emb FLOAT[2]);
+
+statement ok
+INSERT INTO curve_knn SELECT i, i % 100, (i * 13) % 100, i % 5, [i, 0]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+INSERT INTO curve_knn VALUES (3000, NULL, 10, 3, [0, 0]::FLOAT[2]);
+
+statement ok
+CREATE INDEX curve_knn_idx ON curve_knn USING inverted(
+ id, tag, (curve(ROW(x, y))), emb hnsw (metric = 'l2', quant = 'none')) INCLUDE (x, y, tag);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_knn;
+
+query
+SELECT list(id ORDER BY id) AS ids FROM (
+ SELECT id FROM curve_knn WHERE tag = 3 AND x BETWEEN 0 AND 30 AND y BETWEEN 0 AND 30
+ ORDER BY array_distance(emb, [0, 0]::FLOAT[2]) LIMIT 3) t;
+----
+ids
+{8,108,208}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM (
+ SELECT id FROM curve_knn_idx WHERE tag = 3 AND x BETWEEN 0 AND 30 AND y BETWEEN 0 AND 30
+ ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3) t;
+----
+ids
+{8,108,208}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM (
+ SELECT id FROM curve_knn_idx WHERE tag = 3 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(30, 30), true, true)
+ ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3) t;
+----
+ids
+{8,108,208}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM (
+ SELECT id FROM curve_knn_idx WHERE tag = 3 AND curve(ROW(x, y)) @@ ts_between(ROW(NULL, 0), ROW(NULL, 30), true, true)
+ ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3) t;
+----
+ids
+{8,33,48}
+
+statement ok
+DROP TABLE curve_knn;
+
+statement ok
+CREATE TABLE curve_knn_wide(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT, tag INTEGER, emb FLOAT[2]);
+
+statement ok
+INSERT INTO curve_knn_wide SELECT i, i % 2000, (i * 7) % 2000, i % 5, [i, 0]::FLOAT[2] FROM range(30000) t(i);
+
+statement ok
+CREATE INDEX curve_knn_wide_idx ON curve_knn_wide USING inverted(
+ id, tag, (curve(ROW(x, y))), emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_knn_wide;
+
+statement ok
+VACUUM (COMPACT_TABLE) curve_knn_wide;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM (
+   SELECT id FROM curve_knn_wide_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(5, 35), ROW(5, 35), true, true)
+   ORDER BY emb <-> [20000, 0]::FLOAT[2] LIMIT 3) t) AS few,
+ (SELECT list(id ORDER BY id) FROM (
+   SELECT id FROM curve_knn_wide_idx WHERE x = 5 AND y = 35
+   ORDER BY emb <-> [20000, 0]::FLOAT[2] LIMIT 3) t) AS few_ranges,
+ (SELECT list(id ORDER BY id) FROM (
+   SELECT id FROM curve_knn_wide WHERE x = 5 AND y = 35
+   ORDER BY array_distance(emb, [20000, 0]::FLOAT[2]) LIMIT 3) t) AS truth;
+----
+few	few_ranges	truth
+{18005,20005,22005}	{18005,20005,22005}	{18005,20005,22005}
+
+statement ok
+DROP TABLE curve_knn_wide;

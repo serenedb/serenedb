@@ -119,6 +119,24 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
     .count();
 }
 
+bool RemoveFiles(irs::Directory& dir) {
+  auto& refs = dir.attributes().refs().refs();
+  SDB_IF_FAILURE("pause_removal_midway") {
+    std::string first;
+    refs.visit([&](const std::string& name, size_t) {
+      first = name;
+      return false;
+    });
+    if (!first.empty()) {
+      dir.remove(first);
+    }
+    SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
+  }
+  SDB_IF_FAILURE("storage_removal_fails") { return false; }
+  irs::DirectoryCleaner::clean(dir);
+  return refs.empty();
+}
+
 absl::Status RemoveUnreferenced(irs::Directory& dir, duckdb::idx_t id,
                                 bool orphans) {
   try {
@@ -200,10 +218,15 @@ Store::~Store() {
   const bool tidy = !OwnsFiles() || OwnerDropped() || CloseFiles();
   _table.reset();
   _writer.reset();
-  _dir.reset();
-  if (OwnerDropped()) {
-    catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _id);
+  if (OwnerDropped() && OwnsFiles()) {
+    catalog::DatabaseDirectory::RemoveStorage(
+      std::move(_directory), _id, [dir = std::move(_dir)]() mutable {
+        const bool removed = RemoveFiles(*dir);
+        dir.reset();
+        return removed;
+      });
   }
+  _dir.reset();
   if (OwnsFiles()) {
     catalog::EndStorageWork(tidy);
   }

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <atomic>
 #include <duckdb/common/typedefs.hpp>
 #include <filesystem>
@@ -30,7 +32,6 @@ namespace sdb::catalog {
 
 void CreateDirectory(const std::filesystem::path& path);
 bool RemoveDirectory(const std::filesystem::path& path);
-bool RemoveTree(const std::filesystem::path& path) noexcept;
 void DeferRemovals() noexcept;
 void ResumeRemovals();
 void BeginStorageWork() noexcept;
@@ -47,7 +48,8 @@ class DatabaseDirectory final {
   std::filesystem::path CreateStorage(duckdb::idx_t oid) const;
   std::optional<std::filesystem::path> OpenStorage(duckdb::idx_t oid) const;
   static void RemoveStorage(std::shared_ptr<DatabaseDirectory> directory,
-                            duckdb::idx_t oid);
+                            duckdb::idx_t oid,
+                            absl::AnyInvocable<bool()> remove_files);
 
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);

@@ -186,7 +186,7 @@ int RunServer(int argc, char** argv) {
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
-    catalog::InitCatalog(true);
+    catalog::InitCatalog(true, db_path.initialized());
     network.StartIoPool();
     up_network = true;
     // Timers can be armed now. InitCatalog above already scheduled a drop per
@@ -246,7 +246,7 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
     server::query::RegisterServerExtensions(engine.instance());
     auto& services = gShellServices.emplace();
     services.background.start();
-    catalog::InitCatalog(!client);
+    catalog::InitCatalog(!client, false);
     services.network.StartIoPool();
     services.background.OpenDelays();
     services.search.start();

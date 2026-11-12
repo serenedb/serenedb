@@ -40,10 +40,13 @@ class DatabasePathFeature final {
 
   const std::string& hbaConfigFile() const { return _hba_config_file; }
 
+  bool initialized() const noexcept { return _initialized; }
+
  private:
   std::string _directory;
   std::string _hba_config_file;
   FileLock _lock;
+  bool _initialized = false;
 };
 
 }  // namespace sdb

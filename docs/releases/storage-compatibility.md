@@ -38,6 +38,8 @@ Beside `engine_v1`, the root of the data directory holds:
 
 `engine_v1` holds everything a server needs when it starts again except the authentication rules, so a copy of the data directory needs `pg_hba.conf` as well. `tmp/` and `extensions/` hold nothing a server needs when it starts again. Another server reads a database of the data directory with [`serenedb_fdw`](../sql/statements/create_server/index.md#read-only-serenedb-databases).
 
-Dropping a table or an index, or the database that holds it, removes its directory once no query uses it any more. If the server stops before that or in the middle of it, or crashes while an object is being created, it removes what is left of the directory when it starts again. A server refuses to start when `engine_v1/wal` is missing but `engine_v1/store` holds table directories, instead of starting empty beside them. It also refuses to start when the directory of a table or an index is missing; its log names the directory and the object.
+Dropping a table or an index, or the database that holds it, removes its files and its directory once no query uses them any more. If the server stops before that or in the middle of it, or crashes while an object is being created, it removes what is left of the directory when it starts again.
+
+A server started on a data directory without `PG_VERSION` creates a new instance there; `PG_VERSION` appears once the catalog log holds the instance's first commit, so a first start that stops before that starts over the next time. A data directory with `PG_VERSION` but no catalog log in `engine_v1/wal` is refused instead of starting empty. A server also refuses to start when the directory of a table or an index is missing; its log names the directory and the object.
 
 For the meaning of version numbers and release lines, see [Versioning](./versioning.md).

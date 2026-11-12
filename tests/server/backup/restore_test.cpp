@@ -50,7 +50,6 @@ namespace {
 constexpr uint64_t kSystemIdentifier = 4242;
 constexpr uint64_t kStartLsn = 1000;
 constexpr duckdb::idx_t kStore = 77;
-constexpr std::string_view kLogLink = "log";
 constexpr size_t kPayload = 100;
 
 std::string Payload(char fill) { return std::string(kPayload, fill); }
@@ -88,8 +87,7 @@ class RestoreTest : public ::testing::Test {
     WriteFile(StoreDir() / "_1.data", 4, 'S');
     WriteFile(_root / "recovery.signal", 0, ' ');
     WriteFile(_root / "standby.signal", 0, ' ');
-    _cut.log_link =
-      std::filesystem::path{"engine_v1"} / kBackupDir / std::string{kLogLink};
+    _cut.log_link = std::filesystem::path{"engine_v1"} / kBackupDir;
     _cut.log_size = _ends[2];
     _cut.stores.push_back({.oid = kStore});
   }
@@ -142,7 +140,7 @@ class RestoreTest : public ::testing::Test {
   }
 
   std::filesystem::path Link() const {
-    return _layout->EngineDir() / kBackupDir / std::string{kLogLink};
+    return _layout->EngineDir() / kBackupDir;
   }
 
   std::filesystem::path Chunk(uint64_t number) const {
@@ -232,7 +230,6 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
   EXPECT_EQ(control->checkpoint, kStartLsn);
   EXPECT_FALSE(Exists(_root / kBackupLabelFile));
   EXPECT_TRUE(Exists(_root / "backup_label.old"));
-  EXPECT_TRUE(Exists(_root / kPgVersionFile));
 }
 
 TEST_F(RestoreTest, AChunkPastTheCutIsRemoved) {
@@ -291,7 +288,6 @@ TEST_F(RestoreTest, WithoutALabelOnlyTheLeftoverBackupDirectoryGoes) {
   EXPECT_TRUE(Exists(StoreDir() / "_1.data"));
   EXPECT_TRUE(Exists(_root / "recovery.signal"));
   EXPECT_TRUE(ReadPgControl(_root));
-  EXPECT_TRUE(Exists(_root / kPgVersionFile));
 }
 
 TEST_F(RestoreTest, RefusesATamperedLabel) {

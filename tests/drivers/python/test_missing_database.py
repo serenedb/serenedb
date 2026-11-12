@@ -85,7 +85,7 @@ def test_missing_catalog_log(tmp_path: Path) -> None:
     try:
         assert not refused.wait_ready(timeout=30)
         assert refused.proc.wait(timeout=30) != 0
-        assert "holds table directories" in refused.output()
+        assert "holds no catalog log" in refused.output()
     finally:
         refused.stop()
     assert storage.is_dir()

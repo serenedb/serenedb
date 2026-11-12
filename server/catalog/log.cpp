@@ -365,6 +365,25 @@ void Log::Move(const std::filesystem::path& from,
   utils::file_utils::SyncDirectory(to);
 }
 
+bool Log::Remove(const std::filesystem::path& dir) {
+  std::error_code ec;
+  if (!std::filesystem::exists(dir, ec)) {
+    return !ec;
+  }
+  const auto fs = duckdb::FileSystem::CreateLocal();
+  RemoveFrom(dir, ReadSnapshot(*fs, dir / kSnapshotFile).header.number);
+  std::filesystem::remove(dir / kSnapshotFile, ec);
+  if (!ec) {
+    std::filesystem::remove(dir, ec);
+  }
+  if (ec) {
+    SDB_WARN(GENERAL, "could not remove '", dir.string(), "': ", ec.message());
+    return false;
+  }
+  utils::file_utils::SyncDirectory(dir.parent_path());
+  return true;
+}
+
 void Log::Cut(const std::filesystem::path& dir, Lsn end) {
   const auto fs = duckdb::FileSystem::CreateLocal();
   const auto snapshot = ReadSnapshot(*fs, dir / kSnapshotFile).header;
@@ -816,8 +835,11 @@ Lsn Log::Link(const std::filesystem::path& dir) {
   {
     absl::MutexLock lock{&_mutex};
     durable = _durable.load(std::memory_order_acquire);
+    const auto first = _covered_number.load(std::memory_order_relaxed);
     for (const auto& [_, chunk] : _chunks) {
-      names.push_back(ChunkName(chunk->number));
+      if (chunk->number >= first) {
+        names.push_back(ChunkName(chunk->number));
+      }
     }
   }
   std::filesystem::create_directories(dir);

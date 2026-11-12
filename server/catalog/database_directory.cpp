@@ -20,15 +20,12 @@
 
 #include "catalog/database_directory.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cerrno>
 #include <cstring>
-#include <duckdb/common/fault_points.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
 #include <system_error>
@@ -63,6 +60,16 @@ struct StorageWork {
 StorageWork& Work() {
   static StorageWork gWork;
   return gWork;
+}
+
+bool RemoveEmptyDirectory(const std::filesystem::path& path) {
+  std::error_code ec;
+  std::filesystem::remove(path, ec);
+  if (ec) {
+    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
+    return false;
+  }
+  return true;
 }
 
 void RunRemoval(Removal&& removal) {
@@ -134,31 +141,12 @@ void CreateDirectory(const std::filesystem::path& path) {
 
 bool RemoveDirectory(const std::filesystem::path& path) {
   std::error_code ec;
-  SDB_IF_FAILURE("pause_removal_midway") {
-    std::vector<std::filesystem::path> files;
-    for (const auto& entry :
-         std::filesystem::recursive_directory_iterator{path, ec}) {
-      if (entry.is_regular_file()) {
-        files.push_back(entry.path());
-      }
-    }
-    if (!files.empty()) {
-      std::filesystem::remove(*absl::c_min_element(files));
-    }
-    SDB_PARK_ONCE_ON_FAILURE("pause_removal_midway");
-  }
-  SDB_IF_FAILURE("storage_removal_fails") { return false; }
   std::filesystem::remove_all(path, ec);
   if (ec) {
     SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
     return false;
   }
   return true;
-}
-
-bool RemoveTree(const std::filesystem::path& path) noexcept {
-  duckdb::TaskScheduler::BlockingScope blocking;
-  return RemoveDirectory(path);
 }
 
 DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
@@ -189,10 +177,12 @@ std::optional<std::filesystem::path> DatabaseDirectory::OpenStorage(
 }
 
 void DatabaseDirectory::RemoveStorage(
-  std::shared_ptr<DatabaseDirectory> directory, duckdb::idx_t oid) {
+  std::shared_ptr<DatabaseDirectory> directory, duckdb::idx_t oid,
+  absl::AnyInvocable<bool()> remove_files) {
   BeginStorageWork();
-  RunRemoval([directory = std::move(directory), oid] {
-    return RemoveTree(directory->StoragePath(oid));
+  RunRemoval([directory = std::move(directory), oid,
+              remove_files = std::move(remove_files)]() mutable {
+    return remove_files() && RemoveEmptyDirectory(directory->StoragePath(oid));
   });
 }
 

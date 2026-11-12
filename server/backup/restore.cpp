@@ -78,9 +78,15 @@ void RequireDirectory(const std::filesystem::path& path) {
 
 void Remove(const std::filesystem::path& path) {
   std::error_code ec;
-  std::filesystem::remove_all(path, ec);
+  std::filesystem::remove(path, ec);
   if (ec) {
     utils::file_utils::ThrowFileError("remove", path.string(), ec);
+  }
+}
+
+void RemoveLogCopy(const std::filesystem::path& dir) {
+  if (!catalog::Log::Remove(dir)) {
+    utils::file_utils::ThrowFileError("remove", dir.string(), EIO);
   }
 }
 
@@ -111,19 +117,20 @@ void Restore(const catalog::DataDirectory& layout,
   const auto link = data_dir / cut.log_link;
   std::error_code ec;
   if (Exists(link)) {
+    catalog::Log::Cut(link, cut.log_size);
     std::filesystem::create_directories(log, ec);
     if (ec) {
       utils::file_utils::ThrowFileError("create", log.string(), ec);
     }
     catalog::Log::Move(link, log);
-    Remove(link);
+    RemoveLogCopy(link);
   }
   catalog::Log::Cut(log, cut.log_size);
   SDB_IF_FAILURE("crash_in_restore_after_log") { SDB_IMMEDIATE_ABORT(); }
 
   Remove(data_dir / "recovery.signal");
   Remove(data_dir / "standby.signal");
-  Remove(engine_dir / kBackupDir);
+  RemoveLogCopy(engine_dir / kBackupDir);
   SDB_IF_FAILURE("crash_in_restore_after_cleanup") { SDB_IMMEDIATE_ABORT(); }
   utils::file_utils::Spit((engine_dir / kSubscriptionHoldFile).string(), "",
                           true);
@@ -154,10 +161,9 @@ void PrepareDataDirectory(const catalog::DataDirectory& layout) {
     if (Exists(label_path)) {
       Restore(layout, label_path);
     } else {
-      Remove(layout.EngineDir() / kBackupDir);
+      RemoveLogCopy(layout.EngineDir() / kBackupDir);
     }
     PositionSource::Instance().Open(data_dir);
-    EnsurePgVersion(data_dir);
   } catch (const std::exception& e) {
     SDB_FATAL(STARTUP, "cannot prepare data directory '", data_dir.string(),
               "': ", duckdb::ErrorData{e}.RawMessage());

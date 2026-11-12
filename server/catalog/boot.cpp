@@ -46,6 +46,7 @@
 #include <utility>
 #include <vector>
 
+#include "backup/pg_control.h"
 #include "backup/restore.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -178,7 +179,7 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
           .transaction_manager = duckdb::make_uniq<TransactionManager>(db)};
 }
 
-void InitCatalog(bool default_database) {
+void InitCatalog(bool default_database, bool initialized) {
   auto& instance = irs::DuckDBEngine::Instance().instance();
   auto& cluster = ClusterOf(instance);
   const auto& layout = cluster.Layout();
@@ -191,12 +192,11 @@ void InitCatalog(bool default_database) {
       utils::file_utils::SyncDirectory(layout.EngineDir());
     }
     backup::PrepareDataDirectory(layout);
-    if (!Log::Exists(layout.LogDir()) &&
-        !OidDirectories(layout.StoreDir()).empty()) {
-      SDB_FATAL(STARTUP, "'", layout.LogDir().string(),
-                "' holds no catalog log, but '", layout.StoreDir().string(),
-                "' holds table directories: refusing to start without the "
-                "catalog that owns them");
+    if (initialized && !Log::Exists(layout.LogDir())) {
+      SDB_FATAL(STARTUP, "'", layout.directory, "' holds ",
+                backup::kPgVersionFile, " but '", layout.LogDir().string(),
+                "' holds no catalog log: refusing to start an empty catalog "
+                "in it");
     }
   }
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
@@ -227,6 +227,9 @@ void InitCatalog(bool default_database) {
   auth::PublishRoles(cluster);
   if (layout.InMemory()) {
     return;
+  }
+  if (!initialized) {
+    backup::PublishPgVersion(layout.directory);
   }
   const auto attached =
     SereneDBDatabases(duckdb::DatabaseManager::Get(instance));

@@ -41,6 +41,7 @@
 #include "catalog/database_directory.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/log.h"
 #include "catalog/transaction.h"
 #include "search/store.h"
 #include "search/task.h"
@@ -106,15 +107,14 @@ uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
                 [](const auto& db) { return db->GetCatalog().InMemory(); });
   const auto& layout = catalog::ClusterOf().Layout();
   auto backup_dir = layout.EngineDir() / kBackupDir;
-  std::error_code ec;
-  std::filesystem::remove_all(backup_dir, ec);
-  if (ec) {
-    utils::file_utils::ThrowFileError("remove directory", backup_dir.string(),
-                                      ec);
+  if (!catalog::Log::Remove(backup_dir)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("could not remove the leftover backup directory '",
+                            backup_dir.string(), "'"));
   }
   catalog::CreateDirectory(backup_dir);
   absl::Cleanup remove_backup_dir = [&]() noexcept {
-    catalog::RemoveTree(backup_dir);
+    catalog::Log::Remove(backup_dir);
   };
 
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
@@ -180,7 +180,7 @@ void BackupSession::Stop() noexcept {
   _checkpoints.reset();
   catalog::ResumeRemovals();
   _pins.clear();
-  catalog::RemoveTree(_backup_dir);
+  catalog::Log::Remove(_backup_dir);
   _backup_dir.clear();
   _owner = {};
   _label_file.clear();

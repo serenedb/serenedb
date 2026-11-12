@@ -70,9 +70,15 @@ DatabasePathFeature::DatabasePathFeature()
     }
   }
 
-  backup::EnsurePgVersion(_directory);
+  const std::filesystem::path data_dir{_directory};
+  const auto version = data_dir / backup::kPgVersionFile;
+  _initialized = std::filesystem::exists(version, ec);
+  if (ec) {
+    SDB_FATAL(GENERAL, "Unable to check '", version.string(),
+              "': ", ec.message());
+  }
   auto lock = FileLock::Take(
-    (std::filesystem::path{_directory} / backup::kPgVersionFile).string(),
+    (_initialized ? version : backup::PendingPgVersion(data_dir)).string(),
     FileLock::Mode::Exclusive);
   if (!lock.ok()) {
     SDB_FATAL(GENERAL, lock.status().message());

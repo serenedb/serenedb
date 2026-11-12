@@ -70,7 +70,7 @@ duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
 std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
   const std::filesystem::path& directory);
 
-void InitCatalog(bool default_database);
+void InitCatalog(bool default_database, bool initialized);
 
 void LogCleanShutdown();
 

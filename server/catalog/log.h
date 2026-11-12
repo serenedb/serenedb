@@ -63,6 +63,7 @@ class Log {
   static void Move(const std::filesystem::path& from,
                    const std::filesystem::path& to);
   static void Cut(const std::filesystem::path& dir, Lsn end);
+  static bool Remove(const std::filesystem::path& dir);
 
   Log(duckdb::FileSystem& fs, std::filesystem::path dir);
 

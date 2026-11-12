@@ -80,7 +80,9 @@ TEST_F(DatabaseDirectoryTest, ARemovedStorageLeavesItsSiblings) {
   directory->CreateStorage(7);
   directory->CreateStorage(8);
   std::ofstream{_root / "5" / "7" / "segment"} << "rows";
-  DatabaseDirectory::RemoveStorage(directory, 7);
+  DatabaseDirectory::RemoveStorage(directory, 7, [this] {
+    return std::filesystem::remove(_root / "5" / "7" / "segment");
+  });
   EXPECT_TRUE(Gone(_root / "5" / "7"));
   EXPECT_TRUE(std::filesystem::is_directory(_root / "5" / "8"));
   directory.reset();

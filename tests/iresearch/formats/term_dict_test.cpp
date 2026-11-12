@@ -4466,7 +4466,7 @@ TEST(TermDictPrefixTrieTest, stays_within_its_budget) {
   }
   const auto trie = DecodeTrie(BuildTrie(terms));
   ASSERT_LE(trie.MemoryBytes(),
-            std::max(irs::term_dict::kTrieBytesPerTerm * terms.size(),
+            std::max(terms.size() / irs::term_dict::kTrieTermsPerByte,
                      irs::term_dict::kTrieMinBudget) +
               8 * exact.size() + sizeof(trie) + 256);
   AssertTrie(std::move(terms));

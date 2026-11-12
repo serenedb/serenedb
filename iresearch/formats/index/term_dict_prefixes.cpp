@@ -37,7 +37,7 @@ constexpr uint32_t kInnerKind = 1;
 constexpr uint32_t kEndKind = 2;
 
 uint64_t Budget(uint64_t terms) noexcept {
-  return std::max(kTrieBytesPerTerm * terms, kTrieMinBudget);
+  return std::max(terms / kTrieTermsPerByte, kTrieMinBudget);
 }
 
 void SetBit(std::vector<uint64_t>& bits, uint64_t at) {

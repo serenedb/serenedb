@@ -38,7 +38,7 @@ namespace irs::term_dict {
 
 inline constexpr uint32_t kTrieExactBytes = 4;
 inline constexpr uint64_t kTrieLeafTerms = 1;
-inline constexpr uint64_t kTrieBytesPerTerm = 2;
+inline constexpr uint64_t kTrieTermsPerByte = 2;
 inline constexpr uint64_t kTrieMinBudget = 16384;
 
 struct TrieCursor {

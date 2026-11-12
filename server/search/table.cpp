@@ -649,22 +649,23 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
   }
   std::vector<irs::SegmentReader> added;
   std::vector<irs::SegmentReader> patched;
-  size_t kept = 0;
   for (const auto& unit : next.units) {
     const auto it = before.find(unit->id);
     if (it == before.end()) {
       added.emplace_back(unit->reader);
       continue;
     }
-    ++kept;
     if (it->second->reader->PatchTick() != unit->reader->PatchTick()) {
       patched.emplace_back(unit->reader);
     }
+    before.erase(it);
   }
-  if (kept != prev.units.size()) {
-    return {_dir, _options, std::move(readers), /*stats=*/true};
+  std::vector<irs::SegmentReader> removed;
+  removed.reserve(before.size());
+  for (const auto& [id, unit] : before) {
+    removed.emplace_back(unit->reader);
   }
-  return {prev.reader, std::move(readers), added, patched};
+  return {prev.reader, std::move(readers), added, patched, removed};
 }
 
 void Table::CountPieces(const TableState& state) noexcept {
@@ -812,7 +813,7 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
   if (state.units.empty()) {
     return {_dir, _options, std::move(readers), /*stats=*/true};
   }
-  return {state.reader, std::move(readers), added, patched};
+  return {state.reader, std::move(readers), added, patched, {}};
 }
 
 StoreStats Table::Stats() const {

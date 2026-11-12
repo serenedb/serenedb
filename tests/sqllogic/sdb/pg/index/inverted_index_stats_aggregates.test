@@ -555,6 +555,84 @@ count
 1
 
 statement ok
+CREATE TABLE sag_up (id BIGINT, x BIGINT, s VARCHAR) WITH (compaction_interval = 0)
+
+statement ok
+INSERT INTO sag_up VALUES (1, 1, 'alpha-past-the-inline-size'), (2, 10, 'omega-past-the-inline-size'),
+    (3, 7, 'kappa-past-the-inline-size'), (4, 20, 'zeta-past-the-inline-size')
+
+statement ok
+DELETE FROM sag_up WHERE id = 4
+
+query
+EXPLAIN SELECT min(x), max(x) FROM sag_up
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─╮
+│ Aggregates: min(#0),  │
+│             max(#0)   │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Table: sag_up         │
+│ Projections: x        │
+│ ~3 rows               │
+╰───────────────────────╯
+
+statement ok
+VACUUM (FLUSH_TABLE) sag_up
+
+query
+SELECT count(*), min(x), max(x), min(s), max(s) FROM sag_up
+----
+count	min	max	min	max
+3	1	10	alpha-past-the-inline-size	omega-past-the-inline-size
+
+statement ok
+UPDATE sag_up SET x = 5 WHERE id = 2
+
+query
+EXPLAIN SELECT count(*) FROM sag_up
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+EXPLAIN SELECT min(x), max(x) FROM sag_up
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─╮
+│ Aggregates: min(#0),  │
+│             max(#0)   │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Table: sag_up         │
+│ Projections: x        │
+│ ~3 rows               │
+╰───────────────────────╯
+
+query
+SELECT count(*), min(x), max(x), max(s) FROM sag_up
+----
+count	min	max	max
+3	1	7	omega-past-the-inline-size
+
+statement ok
+UPDATE sag_up SET x = NULL WHERE id = 1
+
+query
+SELECT min(x), max(x) FROM sag_up
+----
+min	max
+5	7
+
+statement ok
+DROP TABLE sag_up
+
+statement ok
 DROP TABLE sag_nul
 
 statement ok

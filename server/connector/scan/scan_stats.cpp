@@ -223,7 +223,8 @@ duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
   auto& stats = result.emplace_back();
   stats.count = reader.live_docs_count();
   stats.count_type = duckdb::CountType::COUNT_EXACT;
-  if (reader.docs_count() == reader.live_docs_count()) {
+  if (reader.docs_count() == reader.live_docs_count() &&
+      reader.PatchedDocs() == 0) {
     stats.partition_row_group =
       duckdb::make_shared_ptr<ScanPartition>(bind, reader);
   }

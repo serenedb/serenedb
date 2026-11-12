@@ -432,7 +432,7 @@ PatchedColumnReader::PatchedColumnReader(
   _validity_view = base.Validity();
   _row_count = base.RowCount();
   auto stats = base.MergedStatistics().Copy();
-  stats.Merge(_patch->Stats());
+  stats.Merge(_patch->Stats(), duckdb::StatsMergeType::EXPAND_BOUNDS);
   _stats = stats.ToUnique();
   _distinct = SharedDistinct(base);
   _array_size = base.ArraySize();

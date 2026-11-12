@@ -56,7 +56,8 @@ class DirectoryReader final : public IndexReader {
   DirectoryReader(const DirectoryReader& base,
                   std::vector<SegmentReader> readers,
                   std::span<const SegmentReader> added,
-                  std::span<const SegmentReader> patched);
+                  std::span<const SegmentReader> patched,
+                  std::span<const SegmentReader> removed);
   DirectoryReader(DirectoryReader&&) noexcept = default;
   DirectoryReader& operator=(DirectoryReader&&) noexcept = default;
 
@@ -78,6 +79,8 @@ class DirectoryReader final : public IndexReader {
 
   const IndexReaderOptions& Options() const noexcept { return _opts; }
 
+  uint64_t PatchedDocs() const noexcept { return _patched; }
+
   const duckdb::BaseStatistics* GetColumnStats(field_id field) const;
 
   const FieldTermRange* GetTermRange(field_id field, DictRef dict) const;
@@ -91,6 +94,7 @@ class DirectoryReader final : public IndexReader {
   };
 
   struct SegmentTerms {
+    const TermReader* field = nullptr;
     bytes_view min;
     bytes_view max;
     uint64_t terms = 0;
@@ -103,7 +107,9 @@ class DirectoryReader final : public IndexReader {
   };
 
   void Count() noexcept;
-  void AddTerms(const SubReader& reader);
+  void Build();
+  void AddTerms(const SubReader& reader, bool keep_sorted);
+  void RemoveTerms(const SubReader& reader);
   void AddColumns(const SubReader& reader, bool new_docs);
   void Publish();
 
@@ -112,6 +118,7 @@ class DirectoryReader final : public IndexReader {
   std::vector<SegmentReader> _readers;
   uint64_t _docs = 0;
   uint64_t _live = 0;
+  uint64_t _patched = 0;
   bool _stats = false;
   containers::FlatHashMap<field_id, ColumnStats> _columns;
   containers::NodeHashMap<std::pair<field_id, DictRef>, TermStats> _terms;

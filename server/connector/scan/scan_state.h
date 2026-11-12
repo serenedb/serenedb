@@ -75,18 +75,6 @@ enum class ScanShape : uint8_t {
   Stream,
 };
 
-enum class SplitMode : uint8_t {
-  Tail,
-  Always,
-  Never,
-};
-
-enum class OrderMode : uint8_t {
-  SmallestFirst,
-  LargestFirst,
-  Order,
-};
-
 struct ScanUnit {
   uint32_t seg = 0;
   uint32_t rg_begin = 0;
@@ -129,7 +117,6 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   uint32_t start_count = 0;
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
-  std::atomic_bool owned{false};
   bool dead = false;
   std::unique_ptr<OrderedUnits> ordered;
   ABSL_CACHELINE_ALIGNED std::atomic_uint32_t next_start{0};
@@ -254,9 +241,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   ScanBarrier ordered_barrier;
 
   ScanShape shape = ScanShape::Stream;
-  SplitMode split = SplitMode::Tail;
-  OrderMode order = OrderMode::LargestFirst;
-  uint32_t no_split_rgs = 1;
   bool splittable = true;
   uint32_t workers = 1;
   uint64_t rg_size = 0;

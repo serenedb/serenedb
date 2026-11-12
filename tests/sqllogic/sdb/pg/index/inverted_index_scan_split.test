@@ -1,8 +1,7 @@
-# Every scan shape answers the same under every unit-claiming mode: whole
-# segments only (`never`), row-group units from the first claim (`always`) and
-# the tail protocol (`tail`), single-threaded and with several workers. One
-# 300000-row INSERT makes a three-row-group segment; a second INSERT makes a
-# small one; compaction is off so they stay apart.
+# Every scan shape answers the same whether its segments are split across
+# workers or not, single-threaded and with several workers. One 300000-row
+# INSERT makes a three-row-group segment; a second INSERT makes a small one;
+# compaction is off so they stay apart.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY sp_en AS split_text_csv(' ')
@@ -45,10 +44,6 @@ FROM generate_series(300001, 305000) s(i)
 
 statement ok
 SET threads = 1
-
-
-statement ok
-SET sdb_scan_split = 'never'
 
 
 query
@@ -126,10 +121,6 @@ g
 9999
 9999
 9999
-
-
-statement ok
-SET sdb_scan_split = 'always'
 
 
 query
@@ -213,10 +204,6 @@ statement ok
 SET threads = 4
 
 
-statement ok
-SET sdb_scan_split = 'tail'
-
-
 query
 SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
 ----
@@ -294,10 +281,6 @@ g
 9999
 
 
-statement ok
-SET sdb_scan_split = 'always'
-
-
 query
 SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
 ----
@@ -356,10 +339,6 @@ statement ok
 DELETE FROM sp WHERE id % 7 = 0
 
 
-statement ok
-SET sdb_scan_split = 'never'
-
-
 query
 SELECT count(*), sum(CASE WHEN id % 7 = 0 THEN 1 ELSE 0 END), min(id)
 FROM sp_idx;
@@ -373,10 +352,6 @@ SELECT count(*) FROM sp_idx WHERE body @@ 'dog';
 ----
 count
 87142
-
-
-statement ok
-SET sdb_scan_split = 'always'
 
 
 query
@@ -404,10 +379,6 @@ FROM sp_idx;
 ----
 count	sum	min
 261429	0	1
-
-
-statement ok
-RESET sdb_scan_split
 
 
 statement ok

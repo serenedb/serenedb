@@ -21,8 +21,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <array>
-#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
@@ -34,15 +32,12 @@
 #include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/search/queries/multiterm_query.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <optional>
-#include <span>
 #include <vector>
 
 #include "connector/scan/scan_state.h"
-#include "query/config.h"
 
 namespace sdb::connector {
 
@@ -117,29 +112,6 @@ duckdb::Value UnitOrderKey(const irs::ColumnReader& reader,
     }
   }
   return best;
-}
-
-constexpr std::array<std::string_view, 3> kSplitModes{"tail", "always",
-                                                      "never"};
-constexpr std::array<std::string_view, 3> kOrderModes{"smallest_first",
-                                                      "largest_first", "order"};
-
-std::optional<SplitMode> ReadSplit(duckdb::ClientContext& context) {
-  const auto i = GetEnumSetting(context, "sdb_scan_split", kSplitModes);
-  if (i == kSplitModes.size()) {
-    return std::nullopt;
-  }
-  return static_cast<SplitMode>(i);
-}
-
-OrderMode ReadOrder(duckdb::ClientContext& context, bool scan_ordered) {
-  const auto i = GetEnumSetting(context, "sdb_scan_order", kOrderModes);
-  const auto mode =
-    i == kOrderModes.size()
-      ? (scan_ordered ? OrderMode::Order : OrderMode::LargestFirst)
-      : static_cast<OrderMode>(i);
-  return mode == OrderMode::Order && !scan_ordered ? OrderMode::LargestFirst
-                                                   : mode;
 }
 
 const irs::ColumnReader* OrderColumn(const ScanGlobalState& g, uint32_t seg) {
@@ -614,73 +586,16 @@ bool ClaimStart(ScanGlobalState& g, ScanLocalState& l) {
   return false;
 }
 
-bool CountsWhole(const irs::QueryBuilder& query) {
-  switch (query.Kind()) {
-    case irs::QueryKind::Empty:
-    case irs::QueryKind::Term:
-      return true;
-    case irs::QueryKind::Terms:
-      return irs::utils::downCast<irs::MultiTermQuery>(query)
-               .State()
-               .Terms()
-               .size() <= 1;
-    default:
-      return false;
-  }
-}
-
-struct PreparePass {
-  ScanGlobalState& g;
-  std::span<const uint32_t> segments;
-  std::atomic_uint32_t next{0};
-};
-
-void PrepareNext(PreparePass& pass) {
-  const auto size = static_cast<uint32_t>(pass.segments.size());
-  for (auto i = pass.next.fetch_add(1, std::memory_order_relaxed); i < size;
-       i = pass.next.fetch_add(1, std::memory_order_relaxed)) {
-    EnsureSegmentQuery(pass.g, nullptr, pass.segments[i]);
-  }
-}
-
-struct PrepareSlice final : duckdb::BaseExecutorTask {
-  PrepareSlice(duckdb::TaskExecutor& executor, PreparePass& pass)
-    : BaseExecutorTask{executor}, pass{pass} {}
-
-  void ExecuteTask() final { PrepareNext(pass); }
-
-  PreparePass& pass;
-};
-
-void PrepareSegments(ScanGlobalState& g, duckdb::ClientContext& context,
-                     uint64_t threads, std::span<const uint32_t> segments) {
-  PreparePass pass{.g = g, .segments = segments};
-  const auto helpers = std::min<uint64_t>(threads, segments.size());
-  if (helpers <= 1) {
-    PrepareNext(pass);
-    return;
-  }
-  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
-                                context.GetSchedulerAccount()};
-  for (uint64_t i = 0; i != helpers; ++i) {
-    executor.ScheduleTask(duckdb::make_uniq<PrepareSlice>(executor, pass));
-  }
-  executor.WorkOnTasks();
-}
-
 }  // namespace
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const auto& bind = g.Bind();
-  const bool scan_ordered =
+  const bool ordered =
     bind.scan_order.has_value() &&
     (g.shape == ScanShape::Stream || g.shape == ScanShape::ColScan);
 
   g.rg_size = bind.relation.row_group_size != 0 ? bind.relation.row_group_size
                                                 : DEFAULT_ROW_GROUP_SIZE;
-
-  g.order = ReadOrder(context, scan_ordered);
-  const bool ordered = g.order == OrderMode::Order;
 
   const auto threads =
     static_cast<uint64_t>(duckdb::TaskScheduler::QueryThreads(context));
@@ -688,22 +603,10 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   g.segments = std::make_unique<SegmentWork[]>(g.total_segments);
   g.live_segments = static_cast<uint32_t>(g.segment_order.size());
 
-  g.split = !g.splittable
-              ? SplitMode::Never
-              : ReadSplit(context).value_or(scan_ordered ? SplitMode::Always
-                                                         : SplitMode::Tail);
-  g.no_split_rgs = g.split == SplitMode::Never
-                     ? 0
-                     : GetIntSetting(context, "sdb_scan_no_split_row_groups");
-
-  if (g.order == OrderMode::SmallestFirst ||
-      g.order == OrderMode::LargestFirst) {
+  if (!ordered) {
     const auto& reader = *g.reader;
-    const bool largest_first = g.order == OrderMode::LargestFirst;
     absl::c_sort(g.segment_order, [&](uint32_t l, uint32_t r) {
-      const auto lhs = reader[l].live_docs_count();
-      const auto rhs = reader[r].live_docs_count();
-      return largest_first ? lhs > rhs : lhs < rhs;
+      return reader[l].live_docs_count() > reader[r].live_docs_count();
     });
   }
 
@@ -711,26 +614,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool constant_count = g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
-  std::vector<uint8_t> counts_whole;
-  if (g.shape == ScanShape::Count && g.col_filters.empty() && where &&
-      !constant_count && !g.vector_scorer && g.split != SplitMode::Never &&
-      where->type() != irs::Type<irs::BooleanFilter>::id() &&
-      g.live_segments < threads) {
-    std::vector<uint32_t> candidates;
-    for (const auto seg : g.segment_order) {
-      const auto& sub = (*g.reader)[seg];
-      if (sub.live_docs_count() == sub.docs_count() &&
-          (sub.Meta().docs_count + g.rg_size - 1) / g.rg_size >
-            g.no_split_rgs) {
-        candidates.push_back(seg);
-      }
-    }
-    PrepareSegments(g, context, threads, candidates);
-    counts_whole.resize(g.total_segments);
-    for (const auto seg : candidates) {
-      counts_whole[seg] = CountsWhole(*g.queries[seg]);
-    }
-  }
   const auto unique = UniqueBound(g, where.get());
   const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
   irs::ColFilterStateCache states;
@@ -748,9 +631,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     work.rg_count = static_cast<uint32_t>(
       std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
     const bool split =
-      g.split != SplitMode::Never && work.rg_count > g.no_split_rgs &&
-      !(constant_count && sub.live_docs_count() == sub.docs_count()) &&
-      !(!counts_whole.empty() && counts_whole[seg]);
+      g.splittable && work.rg_count > 1 &&
+      !(constant_count && sub.live_docs_count() == sub.docs_count());
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
     if (split) {
@@ -803,7 +685,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     auto& work = g.Segment(seg);
     work.chunk = std::max<uint32_t>(1, work.rg_count / g.workers);
   }
-  if (g.split == SplitMode::Tail && !ordered) {
+  if (!ordered) {
     CutStarts(g, positions);
   }
   constexpr uint64_t kFoldSharers = 4;
@@ -830,58 +712,26 @@ bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l) {
   if (ClaimOwned(g, l)) {
     return true;
   }
-  if (g.split == SplitMode::Always) {
-    PublishFinished(g, l);
-    for (;;) {
-      auto i = g.next_segment.load(std::memory_order_relaxed);
-      if (i >= g.live_segments) {
-        break;
-      }
-      const auto seg = g.segment_order[i];
+  while (ClaimStart(g, l)) {
+    if (ClaimOwned(g, l)) {
+      return true;
+    }
+  }
+  for (;;) {
+    while (l.batch_next != l.batch_end) {
+      const auto seg = g.segment_order[l.batch_next++];
       auto& work = g.Segment(seg);
       if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
-        if (g.next_segment.compare_exchange_weak(
-              i, i + 1, std::memory_order_relaxed, std::memory_order_relaxed)) {
-          TakeUnit(l, WholeUnit(seg, work));
-          return true;
-        }
-        continue;
-      }
-      if (!work.owned.exchange(true, std::memory_order_relaxed) &&
-          Own(g, l, seg)) {
+        TakeUnit(l, WholeUnit(seg, work));
         return true;
       }
-      if (Steal(g, l)) {
-        if (ClaimOwned(g, l)) {
-          return true;
-        }
-        continue;
-      }
-      g.next_segment.compare_exchange_strong(
-        i, i + 1, std::memory_order_relaxed, std::memory_order_relaxed);
-    }
-  } else {
-    while (ClaimStart(g, l)) {
-      if (ClaimOwned(g, l)) {
+      if (g.starts.empty() && Own(g, l, seg)) {
         return true;
       }
     }
-    for (;;) {
-      while (l.batch_next != l.batch_end) {
-        const auto seg = g.segment_order[l.batch_next++];
-        auto& work = g.Segment(seg);
-        if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
-          TakeUnit(l, WholeUnit(seg, work));
-          return true;
-        }
-        if (g.starts.empty() && Own(g, l, seg)) {
-          return true;
-        }
-      }
-      PublishFinished(g, l);
-      if (!ClaimBatch(g, l)) {
-        break;
-      }
+    PublishFinished(g, l);
+    if (!ClaimBatch(g, l)) {
+      break;
     }
   }
   while (Steal(g, l)) {

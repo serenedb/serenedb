@@ -1112,10 +1112,13 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     return;
   }
   auto& w = found->second;
-  const LockedWrites locked{_writes, w};
-  if (!w.table || (w.keys.empty() && w.removed_keys.empty())) {
-    return;
+  {
+    absl::ReaderMutexLock lock{&w.mutex};
+    if (!w.table || (w.keys.empty() && w.removed_keys.empty())) {
+      return;
+    }
   }
+  const LockedWrites locked{_writes, w};
   if (w.keyed_generation != w.rows_generation) {
     w.buffered_keys.Clear();
     w.keyed_rows = 0;
@@ -1123,19 +1126,22 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
   }
   std::vector<std::vector<std::string>> fresh(w.keys.size());
   std::vector<KeyedRow> keyed;
-  duckdb::idx_t rows = 0;
-  if (w.changes.HasBufferedRows()) {
+  const duckdb::idx_t rows =
+    w.changes.HasBufferedRows() ? w.changes.collection->Count() : 0;
+  if (rows > w.keyed_rows) {
+    const auto& collection = *w.changes.collection;
     std::vector<connector::ConstraintKeyEncoder> encoders;
     encoders.reserve(w.keys.size());
     for (const auto& spec : w.keys) {
       encoders.emplace_back(context, w.store->GetId(), spec.key);
     }
-    for (auto& chunk : w.changes.collection->Chunks()) {
-      const auto first = rows;
-      rows += chunk.size();
-      if (rows <= w.keyed_rows) {
-        continue;
-      }
+    duckdb::ColumnDataScanState scan;
+    collection.InitializeScan(scan);
+    duckdb::DataChunk chunk;
+    collection.InitializeScanChunk(scan, chunk);
+    for (bool more = collection.Seek(w.keyed_rows, scan, chunk); more;
+         more = collection.Scan(scan, chunk)) {
+      const auto first = scan.current_row_index;
       for (size_t spec = 0; spec != w.keys.size(); ++spec) {
         ForEachChunkKey(
           chunk, w.changes.column_ids, encoders[spec],
@@ -1163,6 +1169,10 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     if (key_spec.kind != KeyKind::Unique) {
       continue;
     }
+    auto& keys = fresh[spec];
+    if (keys.empty() && segments.empty()) {
+      continue;
+    }
     KeyProbe existing{key_spec.key.field};
     existing.AddLive(live);
     for (size_t i = 0; i < w.checked_segments; ++i) {
@@ -1175,7 +1185,6 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
                       .docs = static_cast<irs::doc_id_t>(w.keyed_rows),
                       .removed = live.Removed(rows_id)});
     }
-    auto& keys = fresh[spec];
     absl::c_sort(keys);
     if (auto duplicate =
           FindDuplicate(context, key_spec, segments, keys, existing)) {
@@ -1295,18 +1304,21 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
     if (replica || spec.kind != KeyKind::Reference) {
       continue;
     }
-    const auto keys = OwnKeys(w, spec.key.field, now);
-    if (keys.empty()) {
-      continue;
-    }
-    if (const auto* parent = ReferencedTable(*w.table, spec, latest)) {
+    const auto* parent = ReferencedTable(*w.table, spec, latest);
+    if (parent) {
       const auto& store = *parent->Storage();
       const auto it = w.related_checked.find(store.GetId());
       if (it != w.related_checked.end() &&
           it->second == store.GetTable().State()) {
         continue;
       }
-      w.related_checked.erase(store.GetId());
+    }
+    const auto keys = OwnKeys(w, spec.key.field, now);
+    if (keys.empty()) {
+      continue;
+    }
+    if (parent) {
+      w.related_checked.erase(parent->Storage()->GetId());
     }
     CheckReferences(context, w, spec, keys);
   }
@@ -1439,7 +1451,6 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       if (docs != 0) {
         w.piece = piece.trx.SealPiece(piece.id);
       }
-      piece.trx.Abort();
       const std::array<irs::DocMap, 1> sealed{
         irs::DocMap{.source = rows_id,
                     .target = piece.id,
@@ -1526,7 +1537,7 @@ bool Writes::CrossTable() const {
                            [](const KeySpec& spec) {
                              return spec.kind == KeyKind::Reference;
                            }) ||
-            !w.store->ReferencingKeys().empty());
+            w.store->HasReferencing());
   });
 }
 

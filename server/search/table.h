@@ -57,10 +57,7 @@
 
 namespace sdb::search {
 
-using Lsn = uint64_t;
-
 inline constexpr Tick kAllApplied = std::numeric_limits<Tick>::max();
-inline constexpr Lsn kNoLsn = std::numeric_limits<Lsn>::max();
 
 inline constexpr uint32_t kPieceTierBits = 3;
 inline constexpr uint32_t kPieceFanIn = uint32_t{1} << kPieceTierBits;

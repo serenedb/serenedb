@@ -166,15 +166,12 @@ std::shared_ptr<const irs::SegmentReaderImpl> OwnRowsReader(
     staged.push_back(irs::StagedColumn{.id = columns[i], .type = types[i]});
   }
   for (duckdb::idx_t c = 0; c < rows.ChunkCount(); ++c) {
-    duckdb::DataChunk scanned;
-    rows.InitializeScanChunk(scanned);
-    rows.FetchChunk(c, scanned);
-    duckdb::DataChunk owned;
-    owned.Initialize(duckdb::Allocator::DefaultAllocator(), types);
-    scanned.Copy(owned);
+    duckdb::DataChunk chunk;
+    rows.InitializeScanChunk(duckdb::Allocator::DefaultAllocator(), chunk);
+    rows.FetchChunk(c, chunk);
     for (size_t i = 0; i < staged.size(); ++i) {
       staged[i].chunks.push_back(
-        irs::WriteChunk{duckdb::Vector::Ref(owned.data[i]), owned.size()});
+        irs::WriteChunk{duckdb::Vector::Ref(chunk.data[i]), chunk.size()});
     }
   }
   std::vector<std::unique_ptr<irs::ColumnReader>> readers;

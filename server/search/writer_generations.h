@@ -44,10 +44,6 @@ class WriterGenerations final {
   using Writer = std::unique_ptr<WriterGenerations, Leaver>;
 
   [[nodiscard]] Writer Register() noexcept;
-  bool SoleWriter() const noexcept {
-    const auto state = _state.load(std::memory_order_acquire);
-    return Writers(state, 0) + Writers(state, 1) == 1;
-  }
   void Drain(duckdb::ClientContext& context, const Writer* own);
 
  private:

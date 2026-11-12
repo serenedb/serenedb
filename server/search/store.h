@@ -181,7 +181,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   };
   Piece StartPiece();
   void WriteOut();
-  void PiecesAdded();
+  void PiecesAdded() noexcept;
   uint64_t PieceBytes() const noexcept {
     return _table ? _table->PieceBytes() : 0;
   }
@@ -270,6 +270,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   // version declaring one is alive.
   void AddReferencing(std::weak_ptr<const Referencing> referencing);
   std::vector<std::shared_ptr<const Referencing>> ReferencingKeys() const;
+  bool HasReferencing() const;
 
   class [[nodiscard]] BuildClaim {
    public:
@@ -309,7 +310,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   [[nodiscard]] WriterGenerations::Writer RegisterWriter() noexcept {
     return _writers.Register();
   }
-  bool SoleWriter() const noexcept { return _writers.SoleWriter(); }
   void DrainPriorWriters(duckdb::ClientContext& context);
 
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor(
@@ -385,6 +385,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::shared_ptr<const irs::SegmentReaderImpl> ReplayPiece(
     duckdb::ClientContext& context, std::span<const TableReplay::Chunk> chunks);
   void MaintainPieces();
+  void RunCoalesced(std::atomic<uint64_t> Store::* requests,
+                    void (*work)(Store&), std::string_view what) noexcept;
   bool WriteOutLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_write_out_mutex);
   bool MergePiecesLocked(
     std::span<const std::shared_ptr<const TableUnit>> pieces)

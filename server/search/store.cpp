@@ -374,36 +374,49 @@ Store::Piece Store::StartPiece() {
   return piece;
 }
 
-void Store::PiecesAdded() {
-  if ((_table->PieceBytes() + _table->PatchBytes() < _segment_memory_max &&
-       !_table->HasMergeRun()) ||
-      !BackgroundScheduler::gInstance ||
-      _piece_requests.fetch_add(1, std::memory_order_acq_rel) != 0) {
+void Store::PiecesAdded() noexcept {
+  if (_table->PieceBytes() + _table->PatchBytes() < _segment_memory_max &&
+      !_table->HasMergeRun()) {
     return;
   }
-  BackgroundScheduler::instance()
-    .Run([weak = weak_from_this()] {
-      const auto store = weak.lock();
-      if (!store) {
-        return;
-      }
-      auto requests = store->_piece_requests.load(std::memory_order_acquire);
-      do {
-        try {
-          store->MaintainPieces();
-        } catch (const std::exception& e) {
-          store->_piece_requests.store(0, std::memory_order_release);
-          SDB_WARN(SEARCH, "table ", store->_id,
-                   ": writing out the rows it holds in memory failed: ",
-                   duckdb::ErrorData{e}.RawMessage());
+  RunCoalesced(
+    &Store::_piece_requests, [](Store& store) { store.MaintainPieces(); },
+    "writing out the rows it holds in memory");
+}
+
+void Store::RunCoalesced(std::atomic<uint64_t> Store::* requests,
+                         void (*work)(Store&), std::string_view what) noexcept {
+  if (!BackgroundScheduler::gInstance || lifecycle::IsStopping() ||
+      BackgroundScheduler::instance().IsStopping() ||
+      (this->*requests).fetch_add(1, std::memory_order_acq_rel) != 0) {
+    return;
+  }
+  try {
+    BackgroundScheduler::instance()
+      .Run([weak = weak_from_this(), requests, work, what] {
+        const auto store = weak.lock();
+        if (!store) {
           return;
         }
-        requests = store->_piece_requests.fetch_sub(requests,
-                                                    std::memory_order_acq_rel) -
-                   requests;
-      } while (requests != 0);
-    })
-    .Detach();
+        auto& counter = (*store).*requests;
+        auto pending = counter.load(std::memory_order_acquire);
+        do {
+          try {
+            work(*store);
+          } catch (const std::exception& e) {
+            counter.store(0, std::memory_order_release);
+            SDB_WARN(SEARCH, "table ", store->_id, ": ", what,
+                     " failed: ", duckdb::ErrorData{e}.RawMessage());
+            return;
+          }
+          pending =
+            counter.fetch_sub(pending, std::memory_order_acq_rel) - pending;
+        } while (pending != 0);
+      })
+      .Detach();
+  } catch (...) {
+    (this->*requests).store(0, std::memory_order_release);
+  }
 }
 
 void Store::MaintainPieces() {
@@ -621,7 +634,7 @@ std::shared_ptr<const TableState> Store::SnapshotState(
 std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
   irs::containers::FlatHashSet<irs::field_id> stored;
   {
-    absl::MutexLock lock{&_layout_mutex};
+    absl::ReaderMutexLock lock{&_layout_mutex};
     if (_table_columns) {
       stored = *_table_columns;
     }
@@ -765,39 +778,7 @@ ResultWithTime Store::CleanupUnsafe(bool orphans) {
 }
 
 void Store::RequestCleanup() noexcept {
-  if (!BackgroundScheduler::gInstance || lifecycle::IsStopping() ||
-      BackgroundScheduler::instance().IsStopping() ||
-      _cleanup_requests.fetch_add(1, std::memory_order_acq_rel) != 0) {
-    return;
-  }
-  try {
-    BackgroundScheduler::instance()
-      .Run([weak = weak_from_this()] {
-        const auto store = weak.lock();
-        if (!store) {
-          return;
-        }
-        auto requests =
-          store->_cleanup_requests.load(std::memory_order_acquire);
-        do {
-          try {
-            DoCleanup(*store);
-          } catch (const std::exception& e) {
-            store->_cleanup_requests.store(0, std::memory_order_release);
-            SDB_WARN(SEARCH, "table ", store->_id,
-                     ": cleaning up its files failed: ",
-                     duckdb::ErrorData{e}.RawMessage());
-            return;
-          }
-          requests = store->_cleanup_requests.fetch_sub(
-                       requests, std::memory_order_acq_rel) -
-                     requests;
-        } while (requests != 0);
-      })
-      .Detach();
-  } catch (...) {
-    _cleanup_requests.store(0, std::memory_order_release);
-  }
+  RunCoalesced(&Store::_cleanup_requests, &DoCleanup, "cleaning up its files");
 }
 
 auto Store::CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
@@ -1157,7 +1138,7 @@ void Store::ClaimExclusive(duckdb::ClientContext& context,
 }
 
 Store::Exclusive Store::ExclusiveClaim() const {
-  absl::MutexLock lock{&_layout_mutex};
+  absl::ReaderMutexLock lock{&_layout_mutex};
   return _layout.owner == kNoLayoutOwner ? Exclusive::None : _layout.exclusive;
 }
 
@@ -1288,6 +1269,12 @@ std::vector<std::shared_ptr<const Referencing>> Store::ReferencingKeys() const {
   return live;
 }
 
+bool Store::HasReferencing() const {
+  absl::ReaderMutexLock lock{&_referencing_mutex};
+  return absl::c_any_of(_referencing,
+                        [](const auto& entry) { return !entry.expired(); });
+}
+
 Store::BuildClaim Store::BeginIndexBuild(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
@@ -1410,7 +1397,6 @@ void Store::ScheduleRecovery(duckdb::ClientContext& context,
 std::shared_ptr<const irs::SegmentReaderImpl> Store::ReplayPiece(
   duckdb::ClientContext& context, std::span<const TableReplay::Chunk> chunks) {
   auto piece = StartPiece();
-  absl::Cleanup abort = [&] { piece.trx.Abort(); };
   uint64_t rows = 0;
   {
     const auto sink = connector::MakeSearchTableInsertSink(

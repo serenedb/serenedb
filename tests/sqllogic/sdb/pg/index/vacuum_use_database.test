@@ -66,14 +66,6 @@ VACUUM (COMPACT_INDEX) docs_idx;
 
 
 statement ok
-VACUUM (RECOMPUTE_STATS_TABLE) docs;
-
-
-statement ok
-VACUUM (RECOMPUTE_STATS_COLUMN) docs.body;
-
-
-statement ok
 USE ${__DATABASE__};
 
 

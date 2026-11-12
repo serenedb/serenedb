@@ -61,14 +61,12 @@ enum class Scope : uint8_t {
   Schema,
   Table,
   Index,
-  Column,
   All,
 };
 
 enum class Action : uint8_t {
   Compact,
   Flush,
-  RecomputeStats,
 };
 
 struct Verb {
@@ -88,11 +86,6 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"flush_table", {Action::Flush, Scope::Table}},
     {"flush_index", {Action::Flush, Scope::Index}},
     {"flush_all", {Action::Flush, Scope::All}},
-    {"recompute_stats_table", {Action::RecomputeStats, Scope::Table}},
-    {"recompute_stats_schema", {Action::RecomputeStats, Scope::Schema}},
-    {"recompute_stats_database", {Action::RecomputeStats, Scope::Database}},
-    {"recompute_stats_all", {Action::RecomputeStats, Scope::All}},
-    {"recompute_stats_column", {Action::RecomputeStats, Scope::Column}},
   };
   for (const auto& [name, verb] : kVerbs) {
     if (option == name) {
@@ -158,7 +151,6 @@ struct ResolvedName {
   std::string database;
   std::string schema;
   std::string object;
-  std::string column;
 };
 
 ResolvedName ResolveName(duckdb::ClientContext& context,
@@ -190,21 +182,6 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
       out.database = catalog.GetIdentifierName();
       out.schema = schema.GetIdentifierName();
       out.object = bind.name;
-    } break;
-    case Scope::Column: {
-      // [<schema>.]<table>.<column> -- the trailing identifier is the column.
-      if (bind.schema.empty()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("VACUUM (RECOMPUTE_STATS_COLUMN) expects "
-                                "[<schema>.]<table>.<column>"));
-      }
-      duckdb::Identifier catalog;
-      duckdb::Identifier schema{bind.catalog};
-      duckdb::Binder::BindSchemaOrCatalog(context, catalog, schema);
-      out.database = catalog.GetIdentifierName();
-      out.schema = schema.GetIdentifierName();
-      out.object = bind.schema;
-      out.column = bind.name;
     } break;
     case Scope::All:
       break;
@@ -372,8 +349,7 @@ void ForEachTable(duckdb::ClientContext& context, Scope scope,
   };
 
   switch (scope) {
-    case Scope::Table:
-    case Scope::Column: {
+    case Scope::Table: {
       auto entry = FindEntry(context, duckdb::CatalogType::TABLE_ENTRY, target);
       if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
         THROW_SQL_ERROR(
@@ -478,54 +454,6 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   }
 }
 
-void DispatchRecomputeStats(duckdb::ClientContext& context,
-                            ConnectionContext& conn_ctx, Scope scope,
-                            const ResolvedName& target,
-                            pg::ProgressMetrics& progress) {
-  std::vector<duckdb::reference<duckdb::TableCatalogEntry>> targets;
-  ForEachTable(context, scope, target, [&](duckdb::TableCatalogEntry& table) {
-    if (scope == Scope::Column &&
-        !table.ColumnExists(duckdb::Identifier{target.column})) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                      ERR_MSG("column \"", target.column, "\" of relation \"",
-                              target.object, "\" does not exist"));
-    }
-    if (!dynamic_cast<const catalog::SearchTableEntry*>(&table) &&
-        MayMaintain(conn_ctx, table.permissions, table.name.GetIdentifierName(),
-                    "analyze")) {
-      targets.emplace_back(table);
-    }
-  });
-
-  pg::ProgressMetrics::Set(progress.items_total,
-                           static_cast<int64_t>(targets.size()));
-  progress.SetPhase(pg::progress_phase::Analyze::ComputingStatistics);
-  std::string column_clause;
-  if (!target.column.empty()) {
-    column_clause = absl::StrCat(
-      " (", duckdb::KeywordHelper::WriteQuotedAndEscaped(target.column, '"'),
-      ")");
-  }
-  duckdb::Connection conn(*context.db);
-  for (const duckdb::TableCatalogEntry& t : targets) {
-    context.InterruptCheck();
-    pg::ProgressMetrics::Set(progress.current_relid,
-                             static_cast<int64_t>(t.oid));
-    auto result = conn.Query(
-      absl::StrCat("VACUUM ANALYZE ",
-                   duckdb::QualifiedName{t.ParentCatalog().GetName(),
-                                         t.ParentSchemaName(), t.name}
-                     .ToString(),
-                   column_clause));
-    if (result->HasError()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("recompute_stats failed: ", result->GetError()));
-    }
-    pg::ProgressMetrics::Add(progress.items_processed, 1);
-    SDB_WAIT_ON_FAILURE("pause_recompute_stats_mid_walk");
-  }
-}
-
 void VacuumExecute(duckdb::ClientContext& context,
                    duckdb::TableFunctionInput& input,
                    duckdb::DataChunk& output) {
@@ -558,32 +486,18 @@ void VacuumExecute(duckdb::ClientContext& context,
   }
 
   duckdb::idx_t relid = pg::kInvalidOid;
-  if (verb->scope == Scope::Table || verb->scope == Scope::Column) {
+  if (verb->scope == Scope::Table) {
     if (auto table =
           FindEntry(context, duckdb::CatalogType::TABLE_ENTRY, target)) {
       relid = table->oid;
     }
   }
   auto& progress = conn_ctx.Progress();
-  if (verb->action == Action::RecomputeStats) {
-    progress.SetCommand(pg::ProgressCommand::Analyze);
-    progress.SetPhase(pg::progress_phase::Analyze::Initializing);
-  } else {
-    progress.SetCommand(pg::ProgressCommand::Vacuum);
-    progress.SetPhase(pg::progress_phase::Vacuum::Initializing);
-  }
+  progress.SetCommand(pg::ProgressCommand::Vacuum);
+  progress.SetPhase(pg::progress_phase::Vacuum::Initializing);
   pg::ProgressMetrics::Set(progress.relid, static_cast<int64_t>(relid));
-
-  switch (verb->action) {
-    case Action::Compact:
-    case Action::Flush:
-      DispatchStores(context, conn_ctx, verb->action, verb->scope, target,
-                     progress);
-      break;
-    case Action::RecomputeStats:
-      DispatchRecomputeStats(context, conn_ctx, verb->scope, target, progress);
-      break;
-  }
+  DispatchStores(context, conn_ctx, verb->action, verb->scope, target,
+                 progress);
 
   output.SetCardinality(0);
 }

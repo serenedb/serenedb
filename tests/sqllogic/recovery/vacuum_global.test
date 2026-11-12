@@ -141,11 +141,6 @@ count
 3
 
 
-# RECOMPUTE_STATS_ALL runs VACUUM ANALYZE on every store table instance-wide.
-statement ok
-VACUUM (RECOMPUTE_STATS_ALL);
-
-
 statement ok
 CREATE TABLE public.vg (id INTEGER) WITH (compaction_interval = 0);
 

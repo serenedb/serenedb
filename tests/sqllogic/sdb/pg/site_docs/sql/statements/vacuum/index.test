@@ -99,11 +99,6 @@ CREATE INDEX articles_idx ON articles USING inverted(id, body en);
 statement ok
 VACUUM (COMPACT_TABLE) articles;
 
-# DOCS_TEST: example_009
-# DOCS_TEST_BODY
-statement ok
-VACUUM (RECOMPUTE_STATS_TABLE) articles;
-
 # DOCS_TEST: example_010
 statement ok
 DROP TABLE IF EXISTS my_table;

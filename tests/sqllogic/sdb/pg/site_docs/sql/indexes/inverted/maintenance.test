@@ -29,13 +29,6 @@ id
 statement ok
 VACUUM (COMPACT_TABLE) my_logs;
 
-# DOCS_TEST: example_003
-
-# DOCS_TEST_BODY
-
-statement ok
-VACUUM (RECOMPUTE_STATS_TABLE) my_logs;
-
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY

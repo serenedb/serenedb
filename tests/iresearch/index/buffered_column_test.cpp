@@ -98,7 +98,8 @@ void AssertNormReads(const irs::NormColumnReader& col,
     for (size_t i = 0; i < block_docs.size(); ++i) {
       block_docs[i] = doc(first + i);
     }
-    reader->GetPostingBlock(block_docs, block_values);
+    reader->GetPostingBlock(block_docs, block_values,
+                            irs::doc_limits::invalid());
     for (size_t i = 0; i < block_docs.size(); ++i) {
       ASSERT_EQ(block_values[i], expected[first + i])
         << "first=" << first << " i=" << i;

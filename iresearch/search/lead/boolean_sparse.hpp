@@ -49,6 +49,7 @@ class BooleanSparse {
   static constexpr bool kInherited = std::is_same_v<Score, detail::Inherited>;
   static constexpr bool kDecides =
     kOptional && probe::OptionalDecides<Optional>();
+  static constexpr bool kTracksDoc = kOptional && !kDecides;
   static_assert(kProbes || kOptional || kExcludes);
   static_assert(kScored || kDecides || !kOptional);
   static_assert(!kInherited || (!kProbes && !kOptional));
@@ -75,9 +76,6 @@ class BooleanSparse {
 
   IRS_FORCE_INLINE doc_id_t Seek(doc_id_t target,
                                  doc_id_t max = doc_limits::eof()) {
-    if (target <= _doc) {
-      return _doc;
-    }
     return Converge(_lead.Seek(target), max);
   }
 
@@ -102,12 +100,20 @@ class BooleanSparse {
     }
   }
 
-  uint32_t Gather(doc_id_t& doc, doc_id_t max, doc_id_t* IRS_RESTRICT out,
-                  uint32_t cap)
+  uint32_t GatherAll(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out)
+    requires(!kScored && !kInherited)
+  {
+    auto doc = _lead.Seek(min);
+    return Gather<false>(doc, max, out, 0);
+  }
+
+  template<bool Capped = true>
+  IRS_FORCE_INLINE uint32_t Gather(doc_id_t& doc, doc_id_t max,
+                                   doc_id_t* IRS_RESTRICT out, uint32_t cap)
     requires(!kScored && !kInherited)
   {
     uint32_t n = 0;
-    while (doc < max && n != cap) {
+    while (doc < max && (!Capped || n != cap)) {
       if (!Aligned(doc)) {
         continue;
       }
@@ -115,11 +121,10 @@ class BooleanSparse {
       n += static_cast<uint32_t>(detail::Kept(_excludes, doc));
       doc = _lead.Next();
     }
-    if (n != 0) {
-      _doc = out[n - 1];
-    }
-    if (doc < max) {
-      doc = Converge(doc, max);
+    if constexpr (Capped) {
+      if (doc < max) {
+        doc = Converge(doc, max);
+      }
     }
     return n;
   }
@@ -204,7 +209,10 @@ class BooleanSparse {
         doc = _lead.Next();
         continue;
       }
-      return _doc = doc;
+      if constexpr (kTracksDoc) {
+        _doc = doc;
+      }
+      return doc;
     }
     return doc;
   }
@@ -213,7 +221,7 @@ class BooleanSparse {
   [[no_unique_address]] Probes _probes;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
-  doc_id_t _doc = doc_limits::invalid();
+  [[no_unique_address]] utils::Need<kTracksDoc, doc_id_t> _doc{};
   [[no_unique_address]] Score _score;
 };
 

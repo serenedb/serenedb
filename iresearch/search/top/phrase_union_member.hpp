@@ -74,16 +74,22 @@ class PhraseUnionMember : public UnionMember,
   }
 
   void ForEachScoredBlock(doc_id_t max, Visit visit) final {
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
     while (_doc < max) {
       uint32_t len = 0;
       do {
-        _docs[len] = _doc;
+        docs[len] = _doc;
         FetchScoreArgs(len);
         ++len;
         Settle(_slots.Next(_doc));
       } while (len != kScoreBlock && _doc < max);
-      ScoreBatch(len);
-      visit(_docs, len, _scores);
+      if (len == kScoreBlock) {
+        FetchAndScoreBlock(_fetcher, _func, docs, scores);
+      } else {
+        FetchAndScore(_fetcher, _func, docs, scores, len);
+      }
+      visit(docs, len, scores);
     }
   }
 
@@ -96,12 +102,13 @@ class PhraseUnionMember : public UnionMember,
 
   uint32_t ScoreCandidates(doc_id_t* docs, score_t* scores, uint32_t count,
                            bool required) final {
+    ABSL_CACHELINE_ALIGNED doc_id_t hit_docs[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED score_t hit_scores[kScoreBlock];
     uint32_t slots[kScoreBlock];
     uint32_t hits = 0;
     uint32_t out = 0;
-    const auto flush = [&] {
-      ScoreBatch(hits);
-      irs::detail::MergeHits(required, _docs, slots, _scores, hits, docs,
+    const auto merge = [&] {
+      irs::detail::MergeHits(required, hit_docs, slots, hit_scores, hits, docs,
                              scores, out);
       hits = 0;
     };
@@ -113,15 +120,17 @@ class PhraseUnionMember : public UnionMember,
       if (_doc != doc) {
         continue;
       }
-      _docs[hits] = doc;
+      hit_docs[hits] = doc;
       FetchScoreArgs(hits);
       slots[hits] = i;
       if (++hits == kScoreBlock) {
-        flush();
+        FetchAndScoreBlock(_fetcher, _func, hit_docs, hit_scores);
+        merge();
       }
     }
     if (hits != 0) {
-      flush();
+      FetchAndScore(_fetcher, _func, hit_docs, hit_scores, hits);
+      merge();
     }
     return required ? out : count;
   }
@@ -134,12 +143,6 @@ class PhraseUnionMember : public UnionMember,
     return _doc = doc;
   }
 
-  void ScoreBatch(uint32_t len) {
-    FetchAndScore(_fetcher, _func, _docs, _scores, len);
-  }
-
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
-  ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
   PhraseBound _bound;
   ScoreFunction _func;
   ColumnArgsFetcher& _fetcher;

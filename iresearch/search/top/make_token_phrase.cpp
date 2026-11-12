@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/token_phrase_of.hpp"
 #include "iresearch/search/lead/impl.hpp"
@@ -54,12 +55,14 @@ class PrunedTokenPhrase : public Root {
     const auto& field = query.Reader();
     _anchor.Prepare(*query.Anchor(), *irs::detail::DocOf(field),
                     irs::detail::LayoutOf(field), query.Segment(), field, args);
-    _provider.freq.value = &_freq;
     _score =
       irs::detail::PrepareScore(args, query.Segment(), field.meta(), _provider);
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    Batch batch;
+    uint32_t size = 0;
+    uint32_t end = 0;
     for (auto doc = _approx.Seek(min); doc < max;) {
       _anchor.Seek(doc);
       const auto last = std::min(_anchor.BlockLast(), max - 1);
@@ -67,63 +70,76 @@ class PrunedTokenPhrase : public Root {
         doc = _approx.Seek(last + 1);
         continue;
       }
+      const auto least = _anchor.LeastFreq(collector.ScoreThreshold());
       for (; doc <= last; doc = _approx.Next()) {
         _anchor.Seek(doc);
         const auto freq = _anchor.Freq();
-        const auto bound = Score(doc, freq);
-        if (bound <= collector.ScoreThreshold()) {
+        if (freq < least) {
           continue;
         }
-        _docs[_size] = doc;
-        _freqs[_size] = freq;
-        _bounds[_size] = bound;
-        if (++_size == kBatch) {
-          Flush(collector);
+        batch.docs[end] = doc;
+        batch.freqs[end] = freq;
+        if (++end - size == kScoreBlock) {
+          _provider.freq.value = batch.freqs + size;
+          FetchAndScoreBlock(_fetcher, _score, batch.docs + size,
+                             batch.bounds + size);
+          size += irs::detail::FilterScores(
+            batch.docs + size, batch.freqs + size, batch.bounds + size,
+            kScoreBlock, collector.ScoreThreshold());
+          if (size >= kBatch) {
+            Flush(batch, std::exchange(size, 0), collector);
+          }
+          end = size;
         }
       }
     }
-    Flush(collector);
+    if (end != size) {
+      _provider.freq.value = batch.freqs + size;
+      FetchAndScore(_fetcher, _score, batch.docs + size, batch.bounds + size,
+                    end - size);
+      size += irs::detail::FilterScores(batch.docs + size, batch.freqs + size,
+                                        batch.bounds + size, end - size,
+                                        collector.ScoreThreshold());
+    }
+    Flush(batch, size, collector);
     _admit.Flush(collector);
   }
 
  private:
-  score_t Score(doc_id_t doc, uint32_t freq) {
-    _freq = freq;
-    _fetcher.Fetch(doc);
-    return _score.Score();
-  }
+  struct Batch {
+    doc_id_t docs[kBatch + kScoreBlock];
+    uint32_t freqs[kBatch + kScoreBlock];
+    score_t bounds[kBatch + kScoreBlock];
+  };
 
-  void Flush(LoserScoreCollector& collector) {
-    const auto rows = _rows.Gather({_docs, _size});
+  void Flush(const Batch& batch, uint32_t size,
+             LoserScoreCollector& collector) {
+    const auto rows = _rows.Gather({batch.docs, size});
     for (size_t i = 0; i != rows; ++i) {
-      if (_bounds[i] <= collector.ScoreThreshold()) {
+      if (batch.bounds[i] <= collector.ScoreThreshold()) {
         continue;
       }
-      const auto verdict = _rows.Check(i, _freqs[i]);
+      auto verdict = _rows.Check(i, batch.freqs[i]);
       if (verdict.freq == 0) {
         continue;
       }
-      auto score = _bounds[i];
-      if (verdict.freq != _freqs[i]) {
-        SDB_ASSERT(verdict.freq < _freqs[i]);
-        score = Score(_docs[i], verdict.freq);
+      auto score = batch.bounds[i];
+      if (verdict.freq != batch.freqs[i]) {
+        SDB_ASSERT(verdict.freq < batch.freqs[i]);
+        _provider.freq.value = &verdict.freq;
+        _fetcher.Fetch(batch.docs[i]);
+        score = _score.Score();
       }
-      _admit.Add(collector, score, _docs[i]);
+      _admit.Add(collector, score, batch.docs[i]);
     }
-    _size = 0;
   }
 
-  doc_id_t _docs[kBatch];
-  uint32_t _freqs[kBatch];
-  score_t _bounds[kBatch];
   lead::Erased _approx;
   PostingPrunedLead<Input> _anchor;
   irs::detail::PhraseRows _rows;
   irs::detail::LeafProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
-  uint32_t _size = 0;
-  uint32_t _freq = 0;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

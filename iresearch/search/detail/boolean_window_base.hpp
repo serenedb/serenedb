@@ -40,7 +40,7 @@ namespace irs::detail {
 
 template<typename Lead>
 inline constexpr bool kBatchLead = requires(Lead& lead, doc_id_t doc) {
-  { lead.Sparse() } -> std::same_as<bool>;
+  { lead.Batches() } -> std::same_as<bool>;
   lead.Rest(doc);
   lead.Seek(doc);
 };
@@ -169,10 +169,9 @@ class BooleanWindowBase {
   }
 
   Scratch _mask{};
-  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<Scored, score_t[kWindowDocs]> _window{};
-  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<Scored, score_t[kScoreBlock]> _gathered{};
+  [[no_unique_address]] utils::Need<Scored, WindowBuf<score_t>> _window{};
+  [[no_unique_address]] utils::Need<Scored, SlackBuf<score_t, kScoreBlock, 0>>
+    _gathered{};
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::eof();
   doc_id_t _doc = doc_limits::invalid();

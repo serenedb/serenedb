@@ -331,11 +331,12 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   }
 
   template<typename Visitor>
-  IRS_FORCE_INLINE void Emit(doc_id_t* docs, uint32_t len, Visitor&& visit) {
+  IRS_FORCE_INLINE decltype(auto) Emit(doc_id_t* docs, uint32_t len,
+                                       Visitor&& visit) {
     if (!_scored) {
       ScoreLeaf();
     }
-    visit(docs, len, Scores() + (docs - std::begin(_docs)));
+    return visit(docs, len, Scores() + (docs - std::begin(_docs)));
   }
 
   IRS_FORCE_INLINE uint32_t ScoreKept(const doc_id_t* docs, uint32_t len,
@@ -413,7 +414,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
                         IRS_FORCE_INLINE { Emit(docs, len, visit); });
   }
 
-  void ScoreLeaf() {
+  IRS_FORCE_INLINE void ScoreLeaf() {
     _scored = true;
     Base::ScoreLeaf(doc_limits::kBlockSize - _len, _len);
   }
@@ -505,7 +506,10 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
           return;
         }
       }
-      i = visit(i);
+      const auto last = _last;
+      do {
+        i = visit(i);
+      } while (i != n && docs[i] <= last);
     }
   }
 

@@ -43,29 +43,35 @@ class Walk : public Root {
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
-    scores_size_t batch = 0;
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
+    uint32_t batch = 0;
 
     for (auto doc = lead::SeekBelow(_node, min, max); doc < max;
          doc = lead::NextBelow(_node, max)) {
-      _docs[batch] = doc;
+      docs[batch] = doc;
       _node.FetchScoreArgs(batch);
       if (++batch == kScoreBlock) {
-        FetchAndScore(_fetcher, _score, _docs, _scores, kScoreBlock);
-        _admit.AddDocs(collector, _docs, kScoreBlock, _scores);
+        AddBlock(docs, scores, collector);
         batch = 0;
       }
     }
 
     if (batch != 0) {
-      FetchAndScore(_fetcher, _score, _docs, _scores, batch);
-      _admit.AddDocs(collector, _docs, batch, _scores);
+      FetchAndScore(_fetcher, _score, docs, scores, batch);
+      _admit.AddDocs(collector, docs, batch, scores);
     }
     _admit.Flush(collector);
   }
 
  private:
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
-  ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
+  IRS_NO_INLINE void AddBlock(const doc_id_t* IRS_RESTRICT docs,
+                              score_t* IRS_RESTRICT scores,
+                              LoserScoreCollector& collector) {
+    FetchAndScoreBlock(_fetcher, _score, docs, scores);
+    _admit.AddDocs(collector, docs, kScoreBlock, scores);
+  }
+
   ColumnArgsFetcher& _fetcher;
   Node _node;
   ScoreFunction _score;

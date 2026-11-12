@@ -98,20 +98,26 @@ class WalkScored {
 
   doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
                 score_t* IRS_RESTRICT scores) {
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED score_t batch[kScoreBlock];
     auto doc = From(min);
     scores_size_t n = 0;
     while (doc < max) {
       const uint32_t offset = doc - min;
       SetBit(mask[offset / detail::kWindowBits], offset % detail::kWindowBits);
-      _docs[n] = doc;
+      docs[n] = doc;
       _leaf.FetchScoreArgs(n);
       if (++n == kScoreBlock) {
-        Settle(min, n, scores);
+        FetchAndScoreBlock(_fetcher, _score, docs, batch);
+        Settle(min, docs, batch, kScoreBlock, scores);
         n = 0;
       }
       doc = _leaf.Next();
     }
-    Settle(min, n, scores);
+    if (n != 0) {
+      FetchAndScore(_fetcher, _score, docs, batch, n);
+      Settle(min, docs, batch, n, scores);
+    }
     return _doc = doc;
   }
 
@@ -125,20 +131,16 @@ class WalkScored {
     return doc;
   }
 
-  void Settle(doc_id_t min, scores_size_t n, score_t* IRS_RESTRICT scores) {
-    if (n == 0) {
-      return;
-    }
-    FetchAndScore(_fetcher, _score, _docs, _scores, n);
+  void Settle(doc_id_t min, const doc_id_t* IRS_RESTRICT docs,
+              const score_t* IRS_RESTRICT batch, scores_size_t n,
+              score_t* IRS_RESTRICT scores) const {
     irs::ResolveMergeType(_merge, [&]<ScoreMergeType Merge> {
       for (scores_size_t i = 0; i != n; ++i) {
-        irs::Merge<Merge>(scores[_docs[i] - min], _scores[i]);
+        irs::Merge<Merge>(scores[docs[i] - min], batch[i]);
       }
     });
   }
 
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
-  ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
   Leaf _leaf;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;

@@ -145,7 +145,6 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     _provider.freq.value = _freqs.data;
   }
 
- private:
   uint32_t LeastFreq(score_t required) {
     if (required == _required) {
       return _least_freq;
@@ -167,6 +166,7 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     return _least_freq;
   }
 
+ private:
   doc_id_t SkipTo(doc_id_t target) {
     if (!_walk.Armed() || (_left_in_leaf != 0 && target <= _last)) {
       return Seek(target);

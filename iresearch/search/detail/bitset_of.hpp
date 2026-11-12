@@ -131,7 +131,9 @@ inline constexpr double kLeafDocsReadCost =
   static_cast<double>(doc_limits::kBlockSize) * kDecodeCost;
 inline constexpr double kLeafReadCost =
   kLeafDocsReadCost + static_cast<double>(doc_limits::kBlockSize) * kDecodeCost;
-inline constexpr double kBoundCheckCost = kStepJumpCost + kHitCost;
+inline constexpr double kNormFetchCost = kStepJumpCost;
+inline constexpr double kBoundCheckCost =
+  kStepJumpCost + kNormFetchCost + kHitCost;
 
 inline double LeadLocateCost(uint64_t lead_docs, uint64_t docs) noexcept {
   return std::min(1.0,

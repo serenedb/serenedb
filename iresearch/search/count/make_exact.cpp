@@ -31,15 +31,17 @@ class ExactCount : public Root {
     : _scanner{query}, _table{table} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
+    doc_id_t docs[irs::detail::ExactScanner::kRun];
+    score_t dists[irs::detail::ExactScanner::kRun];
     _scanner.Reset(min, max);
     uint64_t count = 0;
     for (;;) {
-      auto n = _scanner.NextMatches(_docs, _dists);
+      auto n = _scanner.NextMatches(docs, dists);
       if (n == 0) {
         return count;
       }
       if (_table) {
-        n = _table->Narrow(_docs, nullptr, n);
+        n = _table->Narrow(docs, nullptr, n);
       }
       count += n;
     }
@@ -48,8 +50,6 @@ class ExactCount : public Root {
  private:
   irs::detail::ExactScanner _scanner;
   detail::TableFilter* _table;
-  doc_id_t _docs[irs::detail::ExactScanner::kRun];
-  score_t _dists[irs::detail::ExactScanner::kRun];
 };
 
 }  // namespace

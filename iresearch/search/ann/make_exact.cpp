@@ -49,25 +49,26 @@ class ExactChain : public Root {
   }
 
   void Run(Collector& collector) final {
+    Batch batch;
     _scanner.Reset(doc_limits::min(), doc_limits::eof());
     for (;;) {
-      auto n = _scanner.NextDocs(_docs);
+      auto n = _scanner.NextDocs(batch.docs);
       if (n == 0) {
         return;
       }
       if (_codes.bound) {
-        n = Prune(n, collector);
+        n = Prune(batch, n, collector);
         if (n == 0) {
           continue;
         }
       }
-      _scanner.Distances({_docs, n}, _dists);
+      _scanner.Distances({batch.docs, n}, batch.dists);
       const auto bar = Bar(collector);
       uint32_t kept = 0;
       for (uint32_t i = 0; i < n; ++i) {
-        if (_dists[i] > bar && _scanner.Inside(_dists[i])) {
-          _docs[kept] = _docs[i];
-          _block[kept] = _dists[i];
+        if (batch.dists[i] > bar && _scanner.Inside(batch.dists[i])) {
+          batch.docs[kept] = batch.docs[i];
+          _block[kept] = batch.dists[i];
           ++kept;
         }
       }
@@ -75,18 +76,29 @@ class ExactChain : public Root {
         continue;
       }
       n = kept;
-      _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
-      _score.Score(_scores, static_cast<scores_size_t>(n));
+      FetchAndScore(_fetcher, _score, batch.docs, batch.scores, n);
       if (_table) {
-        n = _table->Narrow(_docs, _scores, n);
+        n = _table->Narrow(batch.docs, batch.scores, n);
       }
-      std::fill_n(_spreads, n, score_t{0});
-      collector.Append(_docs, _scores, _spreads, n);
+      std::fill_n(batch.spreads, n, score_t{0});
+      collector.Append(batch.docs, batch.scores, batch.spreads, n);
     }
   }
 
  private:
   static constexpr uint32_t kRun = irs::detail::ExactScanner::kRun;
+
+  struct Batch {
+    ABSL_CACHELINE_ALIGNED score_t scores[kRun];
+    ABSL_CACHELINE_ALIGNED score_t spreads[kRun];
+    ABSL_CACHELINE_ALIGNED score_t dists[kRun];
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[kRun];
+    ABSL_CACHELINE_ALIGNED score_t approx[kRun];
+    ABSL_CACHELINE_ALIGNED score_t lower[kRun];
+    ABSL_CACHELINE_ALIGNED score_t upper[kRun];
+    uint32_t nodes[kRun];
+    uint32_t slots[kRun];
+  };
 
   score_t Bar(const Collector& collector) const noexcept {
     if (_boost <= 0.f) {
@@ -95,26 +107,27 @@ class ExactChain : public Root {
     return collector.Floor() / _boost;
   }
 
-  uint32_t Prune(uint32_t n, const Collector& collector) {
+  uint32_t Prune(Batch& batch, uint32_t n, const Collector& collector) {
     uint32_t coded = 0;
     for (uint32_t i = 0; i < n; ++i) {
-      const auto node = static_cast<uint32_t>(_docs[i] - doc_limits::min());
+      const auto node =
+        static_cast<uint32_t>(batch.docs[i] - doc_limits::min());
       if (node < _codes.levels.size() && _codes.levels[node] != 0) {
-        _nodes[coded] = node;
-        _slots[coded] = i;
+        batch.nodes[coded] = node;
+        batch.slots[coded] = i;
         ++coded;
       }
     }
     if (coded == 0) {
       return n;
     }
-    _codes.bound->Score(_codes.codes, _codes.record_size, {_nodes, coded},
-                        _approx);
-    _codes.bound->Bounds({_approx, coded}, _lower, _upper);
+    _codes.bound->Score(_codes.codes, _codes.record_size, {batch.nodes, coded},
+                        batch.approx);
+    _codes.bound->Bounds({batch.approx, coded}, batch.lower, batch.upper);
     if (_ranked) {
       for (uint32_t j = 0; j < coded; ++j) {
-        if (_scanner.Inside(_lower[j])) {
-          Offer(_lower[j]);
+        if (_scanner.Inside(batch.lower[j])) {
+          Offer(batch.lower[j]);
         }
       }
     }
@@ -124,13 +137,13 @@ class ExactChain : public Root {
                          : std::numeric_limits<score_t>::lowest();
     uint32_t kept = 0;
     for (uint32_t i = 0, j = 0; i < n; ++i) {
-      if (j < coded && _slots[j] == i) {
-        const auto upper = _upper[j++];
+      if (j < coded && batch.slots[j] == i) {
+        const auto upper = batch.upper[j++];
         if (upper <= bar || upper < floor || !_scanner.Inside(upper)) {
           continue;
         }
       }
-      _docs[kept++] = _docs[i];
+      batch.docs[kept++] = batch.docs[i];
     }
     return kept;
   }
@@ -147,15 +160,6 @@ class ExactChain : public Root {
   }
 
   ABSL_CACHELINE_ALIGNED score_t _block[kRun];
-  ABSL_CACHELINE_ALIGNED score_t _scores[kRun];
-  ABSL_CACHELINE_ALIGNED score_t _spreads[kRun];
-  ABSL_CACHELINE_ALIGNED score_t _dists[kRun];
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[kRun];
-  ABSL_CACHELINE_ALIGNED score_t _approx[kRun];
-  ABSL_CACHELINE_ALIGNED score_t _lower[kRun];
-  ABSL_CACHELINE_ALIGNED score_t _upper[kRun];
-  uint32_t _nodes[kRun];
-  uint32_t _slots[kRun];
   irs::detail::ExactScanner _scanner;
   AnnExactCodes _codes;
   irs::detail::ScaleProvider _provider;

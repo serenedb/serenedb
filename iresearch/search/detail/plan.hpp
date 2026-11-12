@@ -182,6 +182,8 @@ inline constexpr uint32_t kBitplaneMaxMatch = 2;
 
 inline constexpr uint64_t kDensityThresholdInverse = 32;
 
+inline constexpr uint64_t kBatchThresholdInverse = 4096;
+
 template<typename Result>
 using ApproxNode = std::conditional_t<std::is_same_v<Result, ProbeNode::ptr>,
                                       probe::Erased, lead::Erased>;

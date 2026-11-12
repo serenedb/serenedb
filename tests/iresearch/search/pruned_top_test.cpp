@@ -543,7 +543,7 @@ TEST(PrunedPhraseGate, bound_checks_pay_when_checked_docs_reach_the_bound) {
     0);
   EXPECT_GT(
     irs::detail::BoundCheckSaving(8.02, irs::detail::kLeafDocsReadCost,
-                                  irs::detail::kStepBaseCost, 0.03, 0.45),
+                                  irs::detail::kStepBaseCost, 0.03, 0.7),
     0);
 }
 
@@ -559,7 +559,7 @@ TEST(PrunedPhraseGate, bound_checks_cost_when_cold_leaves_are_read_anyway) {
 }
 
 TEST(PrunedPhraseGate, union_checks_pay_while_they_reject_term_probes) {
-  EXPECT_GT(irs::detail::BoundCheckSaving(0, 2.6, 30.1, 0.38, 0.54), 0);
+  EXPECT_GT(irs::detail::BoundCheckSaving(0, 2.6, 30.1, 0.25, 0.54), 0);
   EXPECT_LT(irs::detail::BoundCheckSaving(0, 2.6, 30.1, 0.9, 0.54), 0);
 }
 

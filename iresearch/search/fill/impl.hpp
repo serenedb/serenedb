@@ -84,11 +84,11 @@ class Impl : public Node {
     return Sift<false>(in, n, out);
   }
 
-  uint64_t FillCost(doc_id_t min, doc_id_t max) final {
-    if constexpr (requires { _leaf.FillCost(min, max); }) {
-      return _leaf.FillCost(min, max);
+  bool FillCostAbove(uint64_t cost, doc_id_t min, doc_id_t max) final {
+    if constexpr (requires { _leaf.FillCostAbove(cost, min, max); }) {
+      return _leaf.FillCostAbove(cost, min, max);
     } else {
-      return 0;
+      return false;
     }
   }
 
@@ -151,8 +151,9 @@ class Erased {
     return _node->Drop(in, n, out);
   }
 
-  IRS_FORCE_INLINE uint64_t FillCost(doc_id_t min, doc_id_t max) {
-    return _node->FillCost(min, max);
+  IRS_FORCE_INLINE bool FillCostAbove(uint64_t cost, doc_id_t min,
+                                      doc_id_t max) {
+    return _node->FillCostAbove(cost, min, max);
   }
 
   IRS_FORCE_INLINE bool Valid() const noexcept { return _node != nullptr; }

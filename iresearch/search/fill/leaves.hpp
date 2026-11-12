@@ -50,21 +50,26 @@ class AndLeaves {
     const auto words = detail::WindowWords(min, max);
     doc_id_t next = 0;
     auto card = detail::Cardinality(mask, words);
-    for (size_t i = 0; i != _leaves.size(); ++i) {
+    detail::Scratch own;
+    for (size_t i = 0, last = _leaves.size() - 1;; ++i) {
       if (card == 0) {
         return next;
       }
       if (Probes(card, _leaves[i], min, max)) {
-        auto n = detail::TakeDocs(min, mask, words, _docs.data());
-        n = Keep(_docs.data(), n, _docs.data(), i);
-        detail::PutDocs(min, _docs.data(), n, mask);
+        SlackBuf<doc_id_t, detail::kProbeWindow, doc_limits::kDocsSlack> docs;
+        auto n = detail::TakeDocs(min, mask, words, docs.data());
+        n = Keep(docs.data(), n, docs.data(), i);
+        detail::PutDocs(min, docs.data(), n, mask);
         return next;
       }
-      detail::Clear(_own.data(), words);
-      next = std::max(next, _leaves[i].FillOr(min, max, _own.data()));
-      card = detail::FoldAnd(mask, _own.data(), words);
+      detail::Clear(own.data(), words);
+      next = std::max(next, _leaves[i].FillOr(min, max, own.data()));
+      if (i == last) {
+        detail::And(mask, own.data(), words);
+        return next;
+      }
+      card = detail::FoldAnd(mask, own.data(), words);
     }
-    return next;
   }
 
   uint32_t Keep(const doc_id_t* in, uint32_t n, doc_id_t* out,
@@ -83,12 +88,10 @@ class AndLeaves {
  private:
   IRS_FORCE_INLINE static bool Probes(uint32_t card, Leaf& leaf, doc_id_t min,
                                       doc_id_t max) {
-    return card < detail::kSparseWindow &&
-           card * detail::kProbeSteps < leaf.FillCost(min, max);
+    return card < detail::kProbeWindow &&
+           leaf.FillCostAbove(card * detail::kProbeSteps, min, max);
   }
 
-  detail::Scratch _own;
-  SlackBuf<doc_id_t, detail::kSparseWindow, doc_limits::kDocsSlack> _docs;
   containers::Fixed<Leaf, N> _leaves;
 };
 

@@ -163,8 +163,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     _provider.freq.value = freqs;
     uint32_t out = 0;
     uint32_t hits = 0;
-    const auto flush = [&] {
-      FetchAndScore(*_score.fetcher, _score.score, docs, scores, hits);
+    const auto merge = [&] {
       detail::MergeHits(required, docs, slots, scores, hits, cand_docs,
                         cand_scores, out);
       hits = 0;
@@ -181,13 +180,16 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
                     slots[hits] = begin + i;
                     freqs[hits] = freq;
                     if (++hits == kScoreBlock) {
-                      flush();
+                      FetchAndScoreBlock(*_score.fetcher, _score.score, docs,
+                                         scores);
+                      merge();
                     }
                   }
                 });
     }
     if (hits != 0) {
-      flush();
+      FetchAndScore(*_score.fetcher, _score.score, docs, scores, hits);
+      merge();
     }
     _provider.freq.value = _freqs.data;
     if (required) {
@@ -207,7 +209,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     _leaf.Reset({.bitset = nullptr,
                  .words = 0,
                  .max = _last,
-                 .kind = block_io::FillLeaf::Kind::Docs},
+                 .kind = block_io::DocsKind(_len)},
                 nullptr, _len);
   }
 
@@ -227,7 +229,8 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     }
     const auto len = _leaf.Len();
     if (_last != _masked_max) {
-      _leaf.Materialize(_base, std::end(_docs) - len);
+      _leaf.template Materialize<!InputType::kVolatileAlways>(
+        _base, std::end(_docs) - len);
       DecodeLazyFreqs();
       _len = len;
       _scored = false;

@@ -76,12 +76,22 @@ IRS_FORCE_INLINE uint32_t Gather(Node& node, doc_id_t& doc, doc_id_t max,
 }
 
 template<Type Node>
-uint32_t GatherAll(Node& node, doc_id_t min, doc_id_t max, doc_id_t* out) {
-  uint32_t n = 0;
-  for (auto doc = SeekBelow(node, min, max); doc < max;) {
-    n += Gather(node, doc, max, out + n, max - min - n);
+IRS_FORCE_INLINE uint32_t GatherAll(Node& node, doc_id_t min, doc_id_t max,
+                                    doc_id_t* out) {
+  if constexpr (requires { node.GatherAll(min, max, out); }) {
+    return node.GatherAll(min, max, out);
+  } else {
+    uint32_t n = 0;
+    for (auto doc = SeekBelow(node, min, max); doc < max;) {
+      if constexpr (requires { node.Gather(doc, max, out, n); }) {
+        n += node.Gather(doc, max, out + n, max - min - n);
+      } else {
+        out[n++] = doc;
+        doc = NextBelow(node, max);
+      }
+    }
+    return n;
   }
-  return n;
 }
 
 template<typename Node>

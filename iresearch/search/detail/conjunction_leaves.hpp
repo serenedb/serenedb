@@ -50,29 +50,47 @@ inline IRS_FORCE_INLINE uint32_t CommonLanes(const doc_id_t* a,
       common,
       _mm256_cmpeq_epi32(lanes, _mm256_set1_epi32(static_cast<int32_t>(b[k]))));
   }
-  return static_cast<uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(common)));
+  return static_cast<uint32_t>(_mm256_movemask_epi8(common));
 #else
   uint32_t common = 0;
   for (size_t k = 0; k != kMergeBlock; ++k) {
     for (size_t l = 0; l != kMergeBlock; ++l) {
-      common |= static_cast<uint32_t>(a[l] == b[k]) << l;
+      common |= static_cast<uint32_t>(a[l] == b[k]) << (l * sizeof(doc_id_t));
     }
   }
   return common;
 #endif
 }
 
+inline IRS_FORCE_INLINE bool WithinBlock(std::span<const doc_id_t> docs,
+                                         doc_id_t doc) noexcept {
+  SDB_ASSERT(!docs.empty());
+  if (docs.size() < kMergeBlock) {
+    return docs.front() == doc;
+  }
+#ifdef __AVX2__
+  const auto lanes =
+    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs.data()));
+  return _mm256_movemask_epi8(_mm256_cmpeq_epi32(
+           lanes, _mm256_set1_epi32(static_cast<int32_t>(doc)))) != 0;
+#else
+  return absl::c_linear_search(docs.first(kMergeBlock), doc);
+#endif
+}
+
 inline doc_id_t FirstCommon(std::span<const doc_id_t> a,
                             std::span<const doc_id_t> b) noexcept {
   SDB_ASSERT(!b.empty());
+  const auto* a_scalar = a.data();
+  asm("" : "+r"(a_scalar));
   size_t i = 0;
   size_t j = 0;
   while (i + kMergeBlock <= a.size() && j + kMergeBlock <= b.size()) {
     if (const auto common = CommonLanes(a.data() + i, b.data() + j);
         common != 0) [[unlikely]] {
-      return a[i + std::countr_zero(common)];
+      return a[i + std::countr_zero(common) / sizeof(doc_id_t)];
     }
-    const auto a_last = a[i + kMergeBlock - 1];
+    const auto a_last = a_scalar[i + kMergeBlock - 1];
     const auto b_last = b[j + kMergeBlock - 1];
     i += kMergeBlock * static_cast<size_t>(a_last < b_last);
     j += kMergeBlock * static_cast<size_t>(b_last < a_last);
@@ -82,8 +100,6 @@ inline doc_id_t FirstCommon(std::span<const doc_id_t> a,
 
 template<typename Leaf, size_t N = 0>
 class ConjunctionLeaves {
-  static constexpr bool kDeferrable =
-    requires(Leaf& leaf) { leaf.ProbeDeferred(doc_id_t{}); };
   static constexpr bool kMergeable = requires(Leaf& leaf) { leaf.Onward(); };
 
  public:
@@ -123,37 +139,14 @@ class ConjunctionLeaves {
     return Agree(Lead().Next(), end, consult);
   }
 
+  template<bool Merging = true>
   IRS_FORCE_INLINE doc_id_t ProbeRest(doc_id_t target) {
-    if constexpr (kDeferrable && N != 0) {
-      return [&]<size_t... I>(std::index_sequence<I...>) IRS_FORCE_INLINE {
-        auto probe = target;
-        static_cast<void>((
-          ((probe = ProbeOf(_leaves[I + 1], target, I + 1)) == target) && ...));
+    for (auto it = _leaves.begin() + 1, end = _leaves.end(); it != end; ++it) {
+      if (const auto probe = ProbeLeaf<Merging>(*it, target); probe != target) {
         return probe;
-      }(std::make_index_sequence<N - 1>{});
-    } else {
-      auto* const leaves = _leaves.begin();
-      for (size_t i = 1, size = _leaves.size(); i != size; ++i) {
-        if (const auto probe = ProbeOf(leaves[i], target, i); probe != target) {
-          return probe;
-        }
       }
-      return target;
     }
-  }
-
-  void DeferFrom(size_t first)
-    requires kDeferrable
-  {
-    _deferred = static_cast<uint32_t>(first);
-  }
-
-  Leaf* Deferred() noexcept {
-    if constexpr (kDeferrable) {
-      return _leaves.begin() + _deferred;
-    } else {
-      return _leaves.end();
-    }
+    return target;
   }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
@@ -167,15 +160,6 @@ class ConjunctionLeaves {
 
  private:
   using Order = containers::Fixed<uint32_t, N>;
-
-  IRS_FORCE_INLINE doc_id_t ProbeOf(Leaf& leaf, doc_id_t doc, size_t i) {
-    if constexpr (kDeferrable) {
-      if (i >= _deferred && leaf.Deferred()) [[unlikely]] {
-        return leaf.ProbeDeferred(doc);
-      }
-    }
-    return leaf.Probe(doc);
-  }
 
   template<typename Estimate>
   static const Order& SortBy(Order&& order, Estimate& estimate) {
@@ -193,41 +177,79 @@ class ConjunctionLeaves {
     for (size_t i = 0; i != _leaves.size(); ++i) {
       emit(order[i], _leaves[i]);
     }
-    if constexpr (kDeferrable) {
-      _deferred = static_cast<uint32_t>(_leaves.size());
-    }
     if constexpr (kMergeable) {
-      _merges =
-        _leaves.size() > 1 &&
-        _leaves[1].Estimate() < kMergeBlock * uint64_t{Lead().Estimate()};
+      if (_leaves.size() > 1) {
+        const uint64_t lead = Lead().Estimate();
+        const auto second = _leaves[1].Estimate();
+        _merges = second < 4 * lead;
+        _near = second < 2 * lead;
+      }
     }
   }
 
+  IRS_FORCE_INLINE bool Merges() const noexcept {
+    if constexpr (kMergeable) {
+      return _merges;
+    } else {
+      return false;
+    }
+  }
+
+  template<bool Merging = true>
+  IRS_FORCE_INLINE doc_id_t ProbeLeaf(Leaf& leaf, doc_id_t target) {
+    if constexpr (Merging && kMergeable) {
+      if (const auto upcoming = leaf.Upcoming();
+          _near && leaf.Value() < target && !upcoming.empty() &&
+          target <= upcoming.front()) {
+        return leaf.Next();
+      }
+    }
+    return leaf.Probe(target);
+  }
+
   doc_id_t Agree(doc_id_t doc) {
+    return Merges() ? AgreeOf<true>(doc) : AgreeOf<false>(doc);
+  }
+
+  template<bool Merging>
+  doc_id_t AgreeOf(doc_id_t doc) {
     while (!doc_limits::eof(doc)) {
-      const auto probe = ProbeRest(doc);
+      const auto probe = ProbeRest<Merging>(doc);
       if (probe == doc) {
         return doc;
       }
-      doc = Pass(probe);
+      doc = Pass<Merging>(probe);
     }
     return doc;
   }
 
+  template<bool Merging>
   IRS_FORCE_INLINE doc_id_t Pass(doc_id_t probe) {
-    if constexpr (kMergeable) {
-      if (_merges) {
-        if (const auto& next = _leaves[1];
-            next.Value() == probe && !doc_limits::eof(probe)) {
-          return Lead().Probe(FirstCommon(Lead().Upcoming(), next.Onward()));
-        }
+    if constexpr (Merging && kMergeable) {
+      if (_leaves[1].Value() == probe && !doc_limits::eof(probe)) {
+        const auto upcoming = Lead().Upcoming();
+        return !upcoming.empty() &&
+                   WithinBlock(_leaves[1].Onward(), upcoming.front())
+                 ? Lead().Next()
+                 : Merge();
       }
     }
     return Lead().Seek(probe);
   }
 
+  IRS_NO_INLINE doc_id_t Merge() {
+    return ProbeLeaf(Lead(),
+                     FirstCommon(Lead().Upcoming(), _leaves[1].Onward()));
+  }
+
   template<typename Consult>
   doc_id_t Agree(doc_id_t doc, doc_id_t end, Consult& consult) {
+    return Merges() ? AgreeOf<true>(doc, end, consult)
+                    : AgreeOf<false>(doc, end, consult);
+  }
+
+  template<bool Merging, typename Consult>
+  doc_id_t AgreeOf(doc_id_t doc, doc_id_t end, Consult& consult) {
     const auto size = _leaves.size();
     while (doc < end) {
       size_t i = 1;
@@ -238,12 +260,12 @@ class ConjunctionLeaves {
           doc = Lead().Next();
           break;
         }
-        const auto probe = ProbeOf(leaf, doc, i);
+        const auto probe = ProbeLeaf<Merging>(leaf, doc);
         if (consulted) {
           consult.Probed(i, probe == doc);
         }
         if (probe != doc) {
-          doc = Pass(probe);
+          doc = Pass<Merging>(probe);
           break;
         }
       }
@@ -255,8 +277,8 @@ class ConjunctionLeaves {
   }
 
   containers::Fixed<Leaf, N> _leaves;
-  [[no_unique_address]] utils::Need<kDeferrable, uint32_t> _deferred{};
   [[no_unique_address]] utils::Need<kMergeable, bool> _merges{};
+  [[no_unique_address]] utils::Need<kMergeable, bool> _near{};
 };
 
 }  // namespace irs::detail

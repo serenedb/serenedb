@@ -57,7 +57,9 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   PostingFill() = default;
 
   PostingFill(const PostingMeta& meta, const IndexInput& doc_in,
-              IndexFeatures layout, bool has_score_bounds, bool has_freq) {
+              IndexFeatures layout, bool has_score_bounds, bool has_freq,
+              bool batches = true)
+    : _batches{batches} {
     Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
@@ -129,7 +131,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
     if (!Reach(target)) [[unlikely]] {
       return doc_limits::eof();
     }
-    if (_kind == Kind::Docs) [[likely]] {
+    if (block_io::IsDocs(_kind)) [[likely]] {
       _at = SeekIn(_at, target);
       return _docs[_at];
     }
@@ -139,24 +141,26 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
     return NextBit(target);
   }
 
-  IRS_FORCE_INLINE uint64_t FillCost(doc_id_t min, doc_id_t max) {
+  IRS_FORCE_INLINE bool FillCostAbove(uint64_t cost, doc_id_t min,
+                                      doc_id_t max) {
     if (!Reach(min)) {
-      return 0;
+      return false;
     }
-    if (_kind == Kind::Docs) {
-      return uint64_t{_len} * (max - min) / (_last - _cursor.base);
+    if (block_io::IsDocs(_kind)) {
+      return (cost + 1) * (_last - _cursor.base) <=
+             uint64_t{_len} * (max - min);
     }
-    return (max - min + kBits - 1) / kBits;
+    return cost < (max - min + kBits - 1) / kBits;
   }
 
-  IRS_FORCE_INLINE bool Sparse() const noexcept {
-    return _kind == Kind::Docs &&
+  IRS_FORCE_INLINE bool Batches() const noexcept {
+    return _batches && block_io::IsDocs(_kind) &&
            (_len < kSparseWindow ||
-            uint64_t{_len} * kSparseInverse < _last - _cursor.base);
+            uint64_t{_len} * kBatchInverse < _last - _cursor.base);
   }
 
   IRS_FORCE_INLINE std::span<const doc_id_t> Rest(doc_id_t end) const noexcept {
-    SDB_ASSERT(_kind == Kind::Docs);
+    SDB_ASSERT(block_io::IsDocs(_kind));
     SDB_ASSERT(_at < kBlock);
     const auto stop = _last < end ? kBlock : SeekIn(_at, end);
     return {_docs.data() + _at, _docs.data() + stop};
@@ -184,7 +188,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
                                    doc_id_t target) const noexcept {
     SDB_ASSERT(at < kBlock);
     SDB_ASSERT(_docs[kBlock - 1] >= target);
-    if (_len == kBlock) [[likely]] {
+    if (_kind == Kind::DocsBlock) [[likely]] {
       return static_cast<uint32_t>(
         BranchlessLowerBound<kBlock>(_docs.data(), target) - _docs.data());
     }
@@ -235,7 +239,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   IRS_FORCE_INLINE doc_id_t Walk(doc_id_t min, doc_id_t max, Mark&& mark,
                                  OnRun&& on_run, OnBits&& on_bits) {
     SDB_ASSERT(min < max);
-    if (_kind == Kind::Docs && max <= _last && _docs[_at] >= min) {
+    if (block_io::IsDocs(_kind) && max <= _last && _docs[_at] >= min) {
       _at = MarkUntil(_at, min, max, mark);
       return _docs[_at];
     }
@@ -253,7 +257,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
       if (base + 1 >= max) {
         return Seek(max);
       }
-      if (_kind == Kind::Docs) {
+      if (block_io::IsDocs(_kind)) {
         const auto first = _docs[_at] >= min ? _at : SeekIn(_at, min);
         if (_last >= max) {
           _at = MarkUntil(first, min, max, mark);
@@ -311,11 +315,6 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   template<typename Mark>
   IRS_FORCE_INLINE uint32_t MarkUntil(uint32_t at, doc_id_t min, doc_id_t max,
                                       Mark& mark) const noexcept {
-    if (uint64_t{_len} * kBits > _last - _cursor.base) {
-      const auto stop = ScanIn(at, max);
-      Scatter(_docs.data() + at, stop - at, min, mark);
-      return stop;
-    }
     for (auto doc = _docs[at]; doc < max; doc = _docs[++at]) {
       mark(size_t{doc - min});
     }
@@ -326,14 +325,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   IRS_FORCE_INLINE static void Scatter(const doc_id_t* IRS_RESTRICT docs,
                                        uint32_t n, doc_id_t min,
                                        Mark& mark) noexcept {
-    const auto quarter = n / 4;
-    for (uint32_t i = 0; i != quarter; ++i) {
-      mark(size_t{docs[i] - min});
-      mark(size_t{docs[quarter + i] - min});
-      mark(size_t{docs[2 * quarter + i] - min});
-      mark(size_t{docs[3 * quarter + i] - min});
-    }
-    for (auto i = 4 * quarter; i != n; ++i) {
+    for (uint32_t i = 0; i != n; ++i) {
       mark(size_t{docs[i] - min});
     }
   }
@@ -413,10 +405,23 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
           kept += static_cast<uint32_t>(contains(doc) == Keep);
         } while (++i != n && in[i] <= last);
       };
-      if (_kind == Kind::Docs) [[likely]] {
+      if (_kind == Kind::DocsBlock) [[likely]] {
+        auto at = _at;
+        SDB_ASSERT(at < kBlock);
+        auto group = at / kLowerBoundGroup;
+        sweep([&](doc_id_t doc) IRS_FORCE_INLINE {
+          if (_docs[(group + 1) * kLowerBoundGroup - 1] < doc) {
+            group = LowerBoundGroup<kBlock>(_docs.data(), doc);
+          }
+          const auto base = static_cast<uint32_t>(group * kLowerBoundGroup);
+          at = base + CountLess<kLowerBoundGroup>(_docs.data() + base, doc);
+          return _docs[at] == doc;
+        });
+        _at = at;
+      } else if (_kind == Kind::DocsTail) {
         auto at = _at;
         sweep([&](doc_id_t doc) IRS_FORCE_INLINE {
-          at = SeekIn(at, doc);
+          at = ScanIn(at, doc);
           return _docs[at] == doc;
         });
         _at = at;
@@ -434,7 +439,8 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   uint32_t _words = 0;
   uint32_t _len = 0;
   uint32_t _at = kBlock;
-  Kind _kind = Kind::Docs;
+  Kind _kind = Kind::DocsTail;
+  bool _batches = true;
 };
 
 }  // namespace irs::detail

@@ -78,7 +78,7 @@ class BooleanWindow : public Root,
         if (min >= end) {
           return total;
         }
-        if (_lead.Sparse()) {
+        if (_lead.Batches()) {
           const auto rest = _lead.Rest(end);
           total += Sift(rest.data(), static_cast<uint32_t>(rest.size()));
           min = rest.back() + 1;

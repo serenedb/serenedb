@@ -691,12 +691,11 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanDeserialize(
 }  // namespace
 
 duckdb::TableFunction CreateIResearchScanFunction() {
+  duckdb::FunctionSignature signature;
+  signature.AddArgs("path", duckdb::LogicalType::VARCHAR);
   duckdb::TableFunction func{
-    "iresearch_scan",
-    {duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
-    IResearchScanFunction,
-    ScanBind,
-    IResearchScanInitGlobal,
+    "iresearch_scan", std::move(signature),    IResearchScanFunction,
+    ScanBind,         IResearchScanInitGlobal,
   };
   func.init_local = IResearchScanInitLocal;
   func.cardinality = ScanCardinality;

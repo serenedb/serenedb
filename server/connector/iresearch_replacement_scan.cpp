@@ -50,19 +50,16 @@ duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(
   if (!index || !catalog::IsInvertedIndex(*index)) {
     return nullptr;
   }
-  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> path;
-  path.emplace_back(duckdb::ConstantExpression::String(
+  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> arguments;
+  arguments.emplace_back(duckdb::ConstantExpression::String(
     index->ParentCatalog().GetName().GetIdentifierName()));
   for (const auto& schema :
        index->ParentSchemaPath(index->catalog.GetCatalogTransaction(context))) {
-    path.emplace_back(
+    arguments.emplace_back(
       duckdb::ConstantExpression::String(schema.GetIdentifierName()));
   }
-  path.emplace_back(
+  arguments.emplace_back(
     duckdb::ConstantExpression::String(index->name.GetIdentifierName()));
-  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> arguments;
-  arguments.emplace_back(duckdb::make_uniq<duckdb::FunctionExpression>(
-    "list_value", std::move(path)));
 
   auto ref = duckdb::make_uniq<duckdb::TableFunctionRef>();
   ref->function = duckdb::make_uniq<duckdb::FunctionExpression>(

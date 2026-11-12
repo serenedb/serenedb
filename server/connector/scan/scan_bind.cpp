@@ -584,7 +584,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   duckdb::vector<duckdb::Identifier> path;
-  for (const auto& part : duckdb::ListValue::GetChildren(input.inputs[0])) {
+  for (const auto& part : input.inputs) {
     path.emplace_back(part.GetValue<std::string>());
   }
   const auto qualified = duckdb::QualifiedName::FromPath(std::move(path));

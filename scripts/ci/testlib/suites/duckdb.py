@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import time
 import urllib.request
+import uuid
 from contextlib import closing
 from pathlib import Path
 
@@ -64,6 +65,10 @@ def unittest_binary(ctx):
     return ctx.build.dir / "third_party" / "duckdb" / "test" / "unittest"
 
 
+def unittest_argv(ctx, *args):
+    return [str(unittest_binary(ctx)), "--test-dir", str(core_dir(ctx)), "--run-id", uuid.uuid4().hex, *args]
+
+
 def core_dir(ctx):
     return ctx.root / SUITE_DIRS["core"]
 
@@ -89,8 +94,7 @@ def suite_filter(ctx, suite):
 
 def list_tests(ctx, suite, spec=None):
     binary = unittest_binary(ctx)
-    res = subprocess.run([str(binary), "--test-dir", str(core_dir(ctx)),
-                          "--list-test-names-only", spec or suite_filter(ctx, suite)],
+    res = subprocess.run(unittest_argv(ctx, "--list-test-names-only", spec or suite_filter(ctx, suite)),
                          capture_output=True, text=True, timeout=600, env=ctx.base_env)
     names = [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
     if res.returncode != min(255, len(names)):
@@ -297,7 +301,7 @@ def _batch_run(ctx, suite, members, cpp, jobs, may_fail=frozenset()):
 
     def run(r):
         names = [name for name, _ in members]
-        argv = [unittest_binary(ctx), "--test-dir", core_dir(ctx), *config_args(ctx, suite)]
+        argv = unittest_argv(ctx, *config_args(ctx, suite))
         if cpp:
             argv += ["--jobs", str(max(2, jobs)), ",".join(_escape(n) for n in names)]
         else:
@@ -415,8 +419,8 @@ def _ordered_run(ctx, steps):
             local_env = dict(THREADS, **env)
             if env.get("CATALOG_TEST_CONFIG_SETUP") and r.env.get("ICEBERG_HTTP_PROXY"):
                 local_env["HTTP_PROXY_PUBLIC"] = r.env["ICEBERG_HTTP_PROXY"]
-            argv = [unittest_binary(ctx), "--test-dir", core_dir(ctx), *config_args(ctx, "iceberg"),
-                    "--order", "lex", *extra, "--emit-test-events", "-f", str(listing)]
+            argv = unittest_argv(ctx, *config_args(ctx, "iceberg"), "--order", "lex", *extra,
+                                 "--emit-test-events", "-f", str(listing))
             res = r.exec(argv, env=local_env, cwd=core_dir(ctx))
             text = r.log.read_text(errors="replace") if r.log.exists() else ""
             results, _, _ = _parse_events(text, members, label)
@@ -476,9 +480,8 @@ class _DockerFixture(Fixture):
         log = self.ctx.out_dir / "services" / f"{self.name.replace(':', '-')}-provision.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         with open(log, "ab") as fh:
-            res = subprocess.run([str(unittest_binary(self.ctx)), "--test-dir", str(core_dir(self.ctx)),
-                                  "--stdin"], input=script.encode(), stdout=fh, stderr=subprocess.STDOUT,
-                                 env=merged, cwd=core_dir(self.ctx), timeout=1800)
+            res = subprocess.run(unittest_argv(self.ctx, "--stdin"), input=script.encode(), stdout=fh,
+                                 stderr=subprocess.STDOUT, env=merged, cwd=core_dir(self.ctx), timeout=1800)
         if res.returncode != 0:
             raise RuntimeError(f"{self.name}: provisioning through unittest failed, see {log}")
 

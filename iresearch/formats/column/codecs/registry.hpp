@@ -69,8 +69,6 @@ bool CompressRoaringValidity(ColumnDataCheckpointData& checkpoint_data,
 const CompressionFunction* GetCodec(CodecType type,
                                     duckdb::PhysicalType physical);
 
-const Codec* FindCodec(std::string_view name) noexcept;
-
 std::string_view NameOf(CodecType type) noexcept;
 
 const StringChoice* ChoiceOf(CodecType type) noexcept;

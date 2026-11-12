@@ -24,7 +24,6 @@
 
 #include <absl/container/inlined_vector.h>
 
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
 #include <memory>
@@ -32,6 +31,7 @@
 #include <span>
 #include <string_view>
 
+#include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -180,8 +180,7 @@ struct AnnInfo {
 
 struct ColumnOptions {
   bool skip_validity = false;
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
+  codecs::CodecType compression = codecs::CodecType::Auto;
   std::optional<AnnInfo> ann_info;
   bool hyperloglog = false;
   uint8_t compression_level = 0;

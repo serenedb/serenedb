@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/col_writer.hpp"
 
 #include <cstddef>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
@@ -134,7 +133,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
     SDB_ASSERT(existing._type == type &&
                existing._row_group_size == options.row_group_size &&
                existing._skip_validity == options.skip_validity &&
-               existing._forced == options.compression &&
+               existing._named == options.compression &&
                existing._codec_params == options.codec_params &&
                (existing._meta.hyperloglog != nullptr) == options.hyperloglog);
     return existing;

@@ -243,11 +243,10 @@ class ColNumericCodecTest : public TestBase {
     return Cast(*v, type);
   }
 
-  void Write(irs::Directory& dir, const duckdb::LogicalType& type,
-             irs::ColCodecParams params, uint64_t rows, uint32_t rg_size,
-             const Gen& gen,
-             duckdb::CompressionType compression =
-               duckdb::CompressionType::COMPRESSION_AUTO) {
+  void Write(
+    irs::Directory& dir, const duckdb::LogicalType& type,
+    irs::ColCodecParams params, uint64_t rows, uint32_t rg_size, const Gen& gen,
+    irs::codecs::CodecType compression = irs::codecs::CodecType::Auto) {
     irs::ColWriter w{dir, kSeg, Db(), params.tier};
     auto& cw = w.OpenColumn(kField, type,
                             {.row_group_size = rg_size,
@@ -348,7 +347,7 @@ class ColNumericCodecTest : public TestBase {
     }
     for (const uint64_t stride : {uint64_t{2}, uint64_t{41}, uint64_t{5003}}) {
       irs::ColumnReader::PointReader cursor{r, *col};
-      std::vector<uint64_t> picked;
+      std::vector<uint32_t> picked;
       for (uint64_t g = stride / 2; g < rows; g += stride) {
         picked.push_back(g);
         if (g % 7 == 0 && g + 1 < rows) {
@@ -359,7 +358,8 @@ class ColNumericCodecTest : public TestBase {
         const auto take =
           std::min<size_t>(picked.size() - i, STANDARD_VECTOR_SIZE);
         duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
-        cursor.FetchRows(std::span<const uint64_t>{&picked[i], take}, out, 0);
+        cursor.FetchRows(std::span<const uint32_t>{&picked[i], take}, 0, out,
+                         0);
         for (size_t k = 0; k < take; ++k) {
           ExpectRow(out, k, picked[i + k], gen, type);
         }
@@ -883,7 +883,7 @@ TEST_F(ColNumericCodecTest, ForcedRleLeavesRowGroupsWithoutRepeatsPlain) {
   const auto codecs = [&](const Gen& gen, irs::WriteTier tier) {
     irs::MemoryDirectory dir{};
     Write(dir, duckdb::LogicalType::BIGINT, {.tier = tier}, kRows, kRowGroup,
-          gen, duckdb::CompressionType::COMPRESSION_RLE);
+          gen, irs::codecs::CodecType::Rle);
     Verify(dir, duckdb::LogicalType::BIGINT, kRows, gen);
     irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
@@ -921,7 +921,7 @@ TEST_F(ColNumericCodecTest, ForcedBitpackingLeavesAnOverflowingRangePlain) {
   const auto codecs = [&](const duckdb::LogicalType& type, const Gen& gen) {
     irs::MemoryDirectory dir{};
     Write(dir, type, {}, kRows, kRowGroup, gen,
-          duckdb::CompressionType::COMPRESSION_BITPACKING);
+          irs::codecs::CodecType::Bitpacking);
     Verify(dir, type, kRows, gen);
     irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);

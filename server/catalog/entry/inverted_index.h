@@ -141,7 +141,7 @@ InvertedIndexSettings ResolveSettings(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
 struct DeclaredCodec {
-  duckdb::CompressionType type = duckdb::CompressionType::COMPRESSION_AUTO;
+  irs::codecs::CodecType type = irs::codecs::CodecType::Auto;
   uint8_t compression_level = 0;
   bool hyperloglog = false;
 };

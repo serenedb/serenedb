@@ -365,9 +365,8 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
   if (!whole && hits * column_internal::kPointDensity < span &&
       !c.out_type.IsNested()) {
     column_internal::FetchPoints(
-      c.point, *_col_reader, *c.reader, _rows, hits,
-      [&](duckdb::idx_t i) -> uint64_t { return anchor + _sel.get_index(i); },
-      out, at);
+      c.point, *_col_reader, *c.reader,
+      std::span<const irs::doc_id_t>{&_docs[first], hits}, out, at);
     return;
   }
   column_internal::GatherSelected(*c.reader, *c.state, anchor, _sel, hits, span,

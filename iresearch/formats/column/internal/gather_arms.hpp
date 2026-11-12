@@ -23,28 +23,26 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::column_internal {
 
 inline constexpr duckdb::idx_t kPointDensity = 64;
 
-void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
-                 const ColReader& col_reader, const ColumnReader& column,
-                 std::vector<uint64_t>& rows, duckdb::idx_t count,
-                 const auto& row, duckdb::Vector& out, duckdb::idx_t at) {
+inline void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
+                        const ColReader& col_reader, const ColumnReader& column,
+                        std::span<const doc_id_t> docs, duckdb::Vector& out,
+                        duckdb::idx_t at) {
   if (!point) {
     point = std::make_unique<ColumnReader::PointReader>(col_reader, column);
   }
-  rows.clear();
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    rows.emplace_back(row(i));
-  }
-  point->FetchRows(rows, out, at);
+  point->FetchRows(docs, doc_limits::min(), out, at);
 }
 
 template<typename Kind>

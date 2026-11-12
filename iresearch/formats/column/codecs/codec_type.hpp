@@ -27,6 +27,7 @@
 namespace irs::codecs {
 
 enum class CodecType : uint8_t {
+  Auto,
   Uncompressed,
   Rle,
   Bitpacking,

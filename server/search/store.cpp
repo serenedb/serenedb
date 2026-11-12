@@ -36,6 +36,7 @@
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/formats/column/codecs/duckdb_compression.hpp>
 #include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
@@ -70,10 +71,11 @@ catalog::CompressionByColumn DeclaredCompression(
   const duckdb::ColumnList& columns) {
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
-    if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
+    const auto codec = irs::codecs::FromDuckDB(column.CompressionType());
+    if (codec != irs::codecs::CodecType::Auto) {
       compression.emplace(
         connector::TableColumnId(column),
-        catalog::DeclaredCodec{.type = column.CompressionType(),
+        catalog::DeclaredCodec{.type = codec,
                                .compression_level = column.CompressionLevel()});
     }
   }
@@ -678,7 +680,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
       }
       const auto& options = field->column_options;
       const bool own_codec =
-        options.compression != duckdb::CompressionType::COMPRESSION_AUTO;
+        options.compression != irs::codecs::CodecType::Auto;
       if (!own_codec && !options.hyperloglog) {
         continue;
       }

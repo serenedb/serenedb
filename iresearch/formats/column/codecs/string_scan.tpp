@@ -405,9 +405,9 @@ void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
             duckdb::Vector& result, idx_t result_offset,
             const duckdb::SelectionVector& sel, idx_t sel_count,
             duckdb::ScanVectorType scan_type) {
-  state.scan_state->Cast<Scan>().Select(result, result_offset,
-                                        state.GetPositionInSegment(),
-                                        vector_count, sel, sel_count, scan_type);
+  state.scan_state->Cast<Scan>().Select(
+    result, result_offset, state.GetPositionInSegment(), vector_count, sel,
+    sel_count, scan_type);
 }
 
 template<typename Scan>

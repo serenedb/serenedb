@@ -97,41 +97,41 @@ duckdb::LogicalType TypeOf(Codec c) {
   }
 }
 
-duckdb::CompressionType CompressionOf(Codec c) {
+irs::codecs::CodecType CompressionOf(Codec c) {
   switch (c) {
     case Codec::BitpackingFor:
     case Codec::BitpackingDeltaFor:
     case Codec::BitpackingConstantDelta:
     case Codec::NullsSparse:
     case Codec::NullsDense:
-      return duckdb::CompressionType::COMPRESSION_BITPACKING;
+      return irs::codecs::CodecType::Bitpacking;
     case Codec::Rle:
-      return duckdb::CompressionType::COMPRESSION_RLE;
+      return irs::codecs::CodecType::Rle;
     case Codec::Alp:
-      return duckdb::CompressionType::COMPRESSION_ALP;
+      return irs::codecs::CodecType::Alp;
     case Codec::AlpRd:
-      return duckdb::CompressionType::COMPRESSION_ALPRD;
+      return irs::codecs::CodecType::AlpRd;
     case Codec::DictFsst:
-      return duckdb::CompressionType::COMPRESSION_DICT_FSST;
+      return irs::codecs::CodecType::DictFsst;
     case Codec::Zstd:
-      return duckdb::CompressionType::COMPRESSION_ZSTD;
+      return irs::codecs::CodecType::Zstd;
     case Codec::Lz4:
-      return duckdb::CompressionType::COMPRESSION_LZ4;
+      return irs::codecs::CodecType::Lz4;
     case Codec::Zxc:
-      return duckdb::CompressionType::COMPRESSION_ZXC;
+      return irs::codecs::CodecType::Zxc;
     case Codec::Fsst:
-      return duckdb::CompressionType::COMPRESSION_FSST;
+      return irs::codecs::CodecType::Fsst;
     case Codec::DictLz4:
-      return duckdb::CompressionType::COMPRESSION_DICT_LZ4;
+      return irs::codecs::CodecType::DictLz4;
     case Codec::DictZstd:
-      return duckdb::CompressionType::COMPRESSION_DICT_ZSTD;
+      return irs::codecs::CodecType::DictZstd;
     case Codec::AutoText:
-      return duckdb::CompressionType::COMPRESSION_AUTO;
+      return irs::codecs::CodecType::Auto;
     case Codec::Uncompressed:
     case Codec::kCount:
-      return duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+      return irs::codecs::CodecType::Uncompressed;
   }
-  return duckdb::CompressionType::COMPRESSION_AUTO;
+  return irs::codecs::CodecType::Auto;
 }
 
 uint64_t Mix(uint64_t x) {

@@ -23,7 +23,6 @@
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/enums/scan_vector_type.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/types.hpp>

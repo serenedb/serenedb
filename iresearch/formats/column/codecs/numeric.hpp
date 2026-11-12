@@ -49,12 +49,12 @@ struct NumericSegment {
   std::string bytes;
 };
 
-inline constexpr uint64_t kNoRival = std::numeric_limits<uint64_t>::max();
+inline constexpr uint64_t kNotAnalyzed = std::numeric_limits<uint64_t>::max();
 
 struct NumericTuning {
   ReusePolicy<NumericChoice> reuse;
   double codes_ratio = 1;
-  const CompressionFunction* rival = nullptr;
+  const CompressionFunction* analyzed = nullptr;
 };
 
 uint64_t Packed(uint64_t count, uint64_t max_value) noexcept;
@@ -77,7 +77,7 @@ class NumericSealer {
   virtual void Add(const duckdb::Vector& input) = 0;
 
   virtual NumericSegment Seal(const ColCodecParams& params,
-                              uint64_t rival_bytes, NumericTuning& tuning,
+                              uint64_t analyzed_bytes, NumericTuning& tuning,
                               bool due) = 0;
 };
 

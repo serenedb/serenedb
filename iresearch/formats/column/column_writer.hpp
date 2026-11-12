@@ -48,8 +48,7 @@ void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink);
 struct ColumnWriterOptions {
   bool skip_validity = false;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
+  codecs::CodecType compression = codecs::CodecType::Auto;
   bool hyperloglog = false;
   ColCodecParams codec_params;
 };
@@ -116,7 +115,7 @@ class ColumnWriter final {
 
   void CompressData(const duckdb::LogicalType& type,
                     std::span<const WriteChunk> chunks,
-                    const codecs::Codec* method,
+                    codecs::CodecType method,
                     std::vector<ColumnBlockMeta>& sink);
 
   void CompressStrings(const duckdb::LogicalType& type,
@@ -173,9 +172,9 @@ class ColumnWriter final {
   bool _skip_validity = false;
   bool _ingest_lists = false;
   uint32_t _row_group_size = 0;
-  duckdb::CompressionType _forced = duckdb::CompressionType::COMPRESSION_AUTO;
-  const codecs::Codec* _method = nullptr;
-  const codecs::Codec* _global_method = nullptr;
+  codecs::CodecType _named = codecs::CodecType::Auto;
+  codecs::CodecType _method = codecs::CodecType::Auto;
+  codecs::CodecType _global_method = codecs::CodecType::Auto;
   codecs::CodecSet _disabled;
 
   ColCodecParams _codec_params;

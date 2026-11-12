@@ -328,8 +328,8 @@ class ColumnReader {
 
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
 
-    void FetchRows(std::span<const uint64_t> rows, duckdb::Vector& out,
-                   duckdb::idx_t out_offset);
+    void FetchRows(std::span<const uint32_t> ids, uint32_t first_id,
+                   duckdb::Vector& out, duckdb::idx_t out_offset);
 
     bool ValidRow(uint64_t row, duckdb::Vector& scratch);
 
@@ -385,11 +385,7 @@ class ColumnReader {
 
     void FetchDocs(std::span<const doc_id_t> docs) {
       SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
-      _rows.clear();
-      for (const auto doc : docs) {
-        _rows.push_back(static_cast<uint64_t>(doc) - doc_limits::min());
-      }
-      PointReader::FetchRows(_rows, _batch.Reset(), 0);
+      PointReader::FetchRows(docs, doc_limits::min(), _batch.Reset(), 0);
     }
     bytes_view Fetched(size_t i) const {
       if (!duckdb::FlatVector::Validity(_batch.vector).RowIsValid(i)) {
@@ -406,7 +402,6 @@ class ColumnReader {
 
     VectorScratch _buf{duckdb::LogicalType::BLOB, 1};
     VectorScratch _batch{duckdb::LogicalType::BLOB};
-    std::vector<uint64_t> _rows;
   };
 
  protected:
@@ -436,6 +431,7 @@ class ColumnReader {
   std::vector<ColumnBlockMeta> _segments;
   std::vector<uint64_t> _offsets;
   uint64_t _row_count = 0;
+  bool _selects = false;
   std::unique_ptr<ColumnReader> _validity;
   std::vector<std::unique_ptr<ColumnReader>> _children;
   std::vector<SubColumn> _row_group_columns;

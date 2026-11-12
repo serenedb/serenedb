@@ -182,66 +182,65 @@ struct Rows2 {
 
 struct ColArm {
   const char* name;
-  duckdb::CompressionType codec;
+  irs::codecs::CodecType codec;
   uint8_t level;
 };
 
 constexpr ColArm kNumArms[] = {
-  {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"bitpacking", duckdb::CompressionType::COMPRESSION_BITPACKING, 0},
-  {"rle", duckdb::CompressionType::COMPRESSION_RLE, 0},
-  {"alp", duckdb::CompressionType::COMPRESSION_ALP, 0},
-  {"alprd", duckdb::CompressionType::COMPRESSION_ALPRD, 0},
-  {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},
+  {"auto", irs::codecs::CodecType::Auto, 0},
+  {"bitpacking", irs::codecs::CodecType::Bitpacking, 0},
+  {"rle", irs::codecs::CodecType::Rle, 0},
+  {"alp", irs::codecs::CodecType::Alp, 0},
+  {"alprd", irs::codecs::CodecType::AlpRd, 0},
+  {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
 };
 
 constexpr ColArm kColArms[] = {
-  {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST, 0},
-  {"fsst", duckdb::CompressionType::COMPRESSION_FSST, 0},
-  {"dict_fsst_plus", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST_PLUS,
-   0},
-  {"fsst_plus", duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS, 0},
-  {"dict_onpair", duckdb::CompressionType::COMPRESSION_COL_DICT_ONPAIR, 0},
-  {"onpair", duckdb::CompressionType::COMPRESSION_COL_ONPAIR, 0},
-  {"dict_fsst12", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, 0},
-  {"fsst12", duckdb::CompressionType::COMPRESSION_COL_FSST12, 0},
-  {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 0},
-  {"dict_lz4_hc2", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 2},
-  {"dict_lz4_hc4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 4},
-  {"dict_lz4_hc6", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 6},
-  {"dict_lz4_hc9", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 9},
-  {"dict_lz4_hc12", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 12},
-  {"lz4", duckdb::CompressionType::COMPRESSION_LZ4, 0},
-  {"lz4_hc4", duckdb::CompressionType::COMPRESSION_LZ4, 4},
-  {"lz4_hc9", duckdb::CompressionType::COMPRESSION_LZ4, 9},
-  {"lz4_hc12", duckdb::CompressionType::COMPRESSION_LZ4, 12},
-  {"dict_zstd1", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 1},
-  {"dict_zstd2", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 2},
-  {"dict_zstd3", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 3},
-  {"dict_zstd6", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 6},
-  {"dict_zstd9", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 9},
-  {"dict_zstd12", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 12},
-  {"dict_zstd15", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 15},
-  {"dict_zstd19", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 19},
-  {"zstd1", duckdb::CompressionType::COMPRESSION_ZSTD, 1},
-  {"zstd3", duckdb::CompressionType::COMPRESSION_ZSTD, 3},
-  {"zstd6", duckdb::CompressionType::COMPRESSION_ZSTD, 6},
-  {"zstd9", duckdb::CompressionType::COMPRESSION_ZSTD, 9},
-  {"zstd12", duckdb::CompressionType::COMPRESSION_ZSTD, 12},
-  {"zstd19", duckdb::CompressionType::COMPRESSION_ZSTD, 19},
-  {"dict_zxc1", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 1},
-  {"dict_zxc2", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 2},
-  {"dict_zxc3", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 3},
-  {"dict_zxc4", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 4},
-  {"dict_zxc5", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 5},
-  {"dict_zxc6", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 6},
-  {"dict_zxc7", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 7},
-  {"zxc1", duckdb::CompressionType::COMPRESSION_ZXC, 1},
-  {"zxc3", duckdb::CompressionType::COMPRESSION_ZXC, 3},
-  {"zxc5", duckdb::CompressionType::COMPRESSION_ZXC, 5},
-  {"zxc7", duckdb::CompressionType::COMPRESSION_ZXC, 7},
-  {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},
+  {"auto", irs::codecs::CodecType::Auto, 0},
+  {"dict_fsst", irs::codecs::CodecType::DictFsst, 0},
+  {"fsst", irs::codecs::CodecType::Fsst, 0},
+  {"dict_fsst_plus", irs::codecs::CodecType::DictFsstPlus, 0},
+  {"fsst_plus", irs::codecs::CodecType::FsstPlus, 0},
+  {"dict_onpair", irs::codecs::CodecType::DictOnPair, 0},
+  {"onpair", irs::codecs::CodecType::OnPair, 0},
+  {"dict_fsst12", irs::codecs::CodecType::DictFsst12, 0},
+  {"fsst12", irs::codecs::CodecType::Fsst12, 0},
+  {"dict_lz4", irs::codecs::CodecType::DictLz4, 0},
+  {"dict_lz4_hc2", irs::codecs::CodecType::DictLz4, 2},
+  {"dict_lz4_hc4", irs::codecs::CodecType::DictLz4, 4},
+  {"dict_lz4_hc6", irs::codecs::CodecType::DictLz4, 6},
+  {"dict_lz4_hc9", irs::codecs::CodecType::DictLz4, 9},
+  {"dict_lz4_hc12", irs::codecs::CodecType::DictLz4, 12},
+  {"lz4", irs::codecs::CodecType::Lz4, 0},
+  {"lz4_hc4", irs::codecs::CodecType::Lz4, 4},
+  {"lz4_hc9", irs::codecs::CodecType::Lz4, 9},
+  {"lz4_hc12", irs::codecs::CodecType::Lz4, 12},
+  {"dict_zstd1", irs::codecs::CodecType::DictZstd, 1},
+  {"dict_zstd2", irs::codecs::CodecType::DictZstd, 2},
+  {"dict_zstd3", irs::codecs::CodecType::DictZstd, 3},
+  {"dict_zstd6", irs::codecs::CodecType::DictZstd, 6},
+  {"dict_zstd9", irs::codecs::CodecType::DictZstd, 9},
+  {"dict_zstd12", irs::codecs::CodecType::DictZstd, 12},
+  {"dict_zstd15", irs::codecs::CodecType::DictZstd, 15},
+  {"dict_zstd19", irs::codecs::CodecType::DictZstd, 19},
+  {"zstd1", irs::codecs::CodecType::Zstd, 1},
+  {"zstd3", irs::codecs::CodecType::Zstd, 3},
+  {"zstd6", irs::codecs::CodecType::Zstd, 6},
+  {"zstd9", irs::codecs::CodecType::Zstd, 9},
+  {"zstd12", irs::codecs::CodecType::Zstd, 12},
+  {"zstd19", irs::codecs::CodecType::Zstd, 19},
+  {"dict_zxc1", irs::codecs::CodecType::DictZxc, 1},
+  {"dict_zxc2", irs::codecs::CodecType::DictZxc, 2},
+  {"dict_zxc3", irs::codecs::CodecType::DictZxc, 3},
+  {"dict_zxc4", irs::codecs::CodecType::DictZxc, 4},
+  {"dict_zxc5", irs::codecs::CodecType::DictZxc, 5},
+  {"dict_zxc6", irs::codecs::CodecType::DictZxc, 6},
+  {"dict_zxc7", irs::codecs::CodecType::DictZxc, 7},
+  {"zxc1", irs::codecs::CodecType::Zxc, 1},
+  {"zxc3", irs::codecs::CodecType::Zxc, 3},
+  {"zxc5", irs::codecs::CodecType::Zxc, 5},
+  {"zxc7", irs::codecs::CodecType::Zxc, 7},
+  {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
 };
 
 uint32_t SegmentTarget() {
@@ -493,7 +492,8 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
     }
   }
   {
-    const auto& rows = ScatteredRows();
+    const std::vector<uint32_t> rows{ScatteredRows().begin(),
+                                     ScatteredRows().end()};
     irs::ColumnReader::PointReader fetch{*seg.reader, *seg.col};
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(), data.type,
                               STANDARD_VECTOR_SIZE};
@@ -501,7 +501,7 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
     for (size_t i = 0; i < rows.size(); i += STANDARD_VECTOR_SIZE) {
       const auto take = std::min<size_t>(rows.size() - i, STANDARD_VECTOR_SIZE);
       batch.ResetFromCache(cache);
-      fetch.FetchRows(std::span<const uint64_t>{&rows[i], take}, batch, 0);
+      fetch.FetchRows(std::span<const uint32_t>{&rows[i], take}, 0, batch, 0);
       for (size_t k = 0; k < take; ++k) {
         const auto got = batch.GetValue(k);
         if (!Same(got, SourceAt(rows[i + k]))) {
@@ -868,7 +868,8 @@ void ColPoint(benchmark::State& state, const ColArm* arm) {
 
 void ColFetch(benchmark::State& state, const ColArm* arm) {
   auto& seg = GetColSeg(arm);
-  const auto& rows = ScatteredRows();
+  const std::vector<uint32_t> rows{ScatteredRows().begin(),
+                                   ScatteredRows().end()};
   for (auto _ : state) {
     state.PauseTiming();
     Evict(seg);
@@ -880,7 +881,7 @@ void ColFetch(benchmark::State& state, const ColArm* arm) {
     for (size_t i = 0; i < rows.size(); i += STANDARD_VECTOR_SIZE) {
       const auto take = std::min<size_t>(rows.size() - i, STANDARD_VECTOR_SIZE);
       out.ResetFromCache(cache);
-      cursor.FetchRows(std::span<const uint64_t>{&rows[i], take}, out, 0);
+      cursor.FetchRows(std::span<const uint32_t>{&rows[i], take}, 0, out, 0);
       benchmark::DoNotOptimize(out);
     }
   }

@@ -162,7 +162,6 @@ class HitBatcher {
   std::unique_ptr<irs::ReadContext> _ctx;
   const irs::ColReader* _col_reader = nullptr;
   std::vector<Column> _columns;
-  std::vector<uint64_t> _rows;
   std::vector<duckdb::idx_t> _absent;
   uint32_t _seg_idx = 0;
   const irs::ColumnReader* _rg_col = nullptr;

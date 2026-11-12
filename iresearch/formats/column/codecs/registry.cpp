@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/match.h>
 
 #include <cstddef>
 #include <iterator>
@@ -48,7 +47,10 @@ const CompressionFunction* EmptyFunction(PhysicalType physical) {
   return physical == PhysicalType::BIT ? &EmptyValidityFunction() : nullptr;
 }
 
+const CompressionFunction* NoFunction(PhysicalType) { return nullptr; }
+
 constexpr Codec kCodecs[] = {
+  {CodecType::Auto, "Auto", NoFunction},
   {CodecType::Uncompressed, "Uncompressed", UncompressedFunction},
   {CodecType::Rle, "RLE", RleFunction},
   {CodecType::Bitpacking, "BitPacking", BitpackingFunction},
@@ -120,11 +122,12 @@ static_assert([] {
   return true;
 }());
 
+constexpr size_t kAnalyzedBegin = std::to_underlying(CodecType::Uncompressed);
 constexpr size_t kInternalBegin = std::to_underlying(CodecType::Constant);
 constexpr size_t kTextBegin = std::to_underlying(CodecType::DictLz4);
 
 constexpr std::span<const Codec> kAnalyzed =
-  std::span{kCodecs}.first(kInternalBegin);
+  std::span{kCodecs}.subspan(kAnalyzedBegin, kInternalBegin - kAnalyzedBegin);
 constexpr std::span<const Codec> kText = std::span{kCodecs}.subspan(kTextBegin);
 
 }  // namespace
@@ -135,13 +138,6 @@ const CompressionFunction* GetCodec(CodecType type, PhysicalType physical) {
   const auto index = std::to_underlying(type);
   return index < std::size(kCodecs) ? kCodecs[index].function(physical)
                                     : nullptr;
-}
-
-const Codec* FindCodec(std::string_view name) noexcept {
-  const auto* it = absl::c_find_if(kCodecs, [&](const Codec& codec) {
-    return absl::EqualsIgnoreCase(codec.name, name);
-  });
-  return it == std::end(kCodecs) ? nullptr : it;
 }
 
 std::string_view NameOf(CodecType type) noexcept {

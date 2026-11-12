@@ -332,10 +332,9 @@ struct FsstScan {
         std::memcpy(at, prev, lcp[i]);
       }
       const auto room = capacity - (written + lcp[i]);
-      const auto dec =
-        enc[i] == 0
-          ? 0
-          : decoder.Decode(s.Data() + off[i], enc[i], at + lcp[i], room);
+      const auto dec = enc[i] == 0 ? 0
+                                   : decoder.Decode(s.Data() + off[i], enc[i],
+                                                    at + lcp[i], room);
       SDB_ENSURE(dec <= room, "col codec: corrupted entry");
       prev = at;
       prev_len = lcp[i] + dec;

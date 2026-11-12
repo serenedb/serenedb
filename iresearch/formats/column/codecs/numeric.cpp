@@ -297,19 +297,19 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
-  NumericSegment Seal(const ColCodecParams& params, uint64_t rival_bytes,
+  NumericSegment Seal(const ColCodecParams& params, uint64_t analyzed_bytes,
                       NumericTuning& tuning, bool due) final {
     if (std::is_floating_point_v<T>) {
-      return SealWith(kLeaflessPlan, rival_bytes, tuning, due);
+      return SealWith(kLeaflessPlan, analyzed_bytes, tuning, due);
     }
     if (params.tier == WriteTier::Flush) {
-      return SealWith(kRefreshPlan, rival_bytes, tuning, due);
+      return SealWith(kRefreshPlan, analyzed_bytes, tuning, due);
     }
-    return SealWith(kCompactionPlan, rival_bytes, tuning, due);
+    return SealWith(kCompactionPlan, analyzed_bytes, tuning, due);
   }
 
   NumericSegment SealWith(std::span<const LeafOption> plan,
-                          uint64_t rival_bytes, NumericTuning& tuning,
+                          uint64_t analyzed_bytes, NumericTuning& tuning,
                           bool due) {
     if (!_codes_only) {
       _values = _owned;
@@ -333,9 +333,9 @@ class TypedSealer final : public NumericSealer {
         const auto bytes = out.bytes.size();
         const bool drift = reuse.Grew(static_cast<double>(bytes), rows);
         const bool keep =
-          rival_bytes == kNoRival
+          analyzed_bytes == kNotAnalyzed
             ? !drift
-            : option->Price(bytes) < static_cast<double>(rival_bytes);
+            : option->Price(bytes) < static_cast<double>(analyzed_bytes);
         if (keep) {
           if (drift) {
             reuse.clock.Restart();
@@ -343,14 +343,14 @@ class TypedSealer final : public NumericSealer {
           return out;
         }
       }
-      if (rival_bytes == kNoRival) {
+      if (analyzed_bytes == kNotAnalyzed) {
         reuse.clock.Restart();
         return NoSegment();
       }
     }
 
     BuildCandidates(nullptr);
-    double best_price = static_cast<double>(rival_bytes);
+    double best_price = static_cast<double>(analyzed_bytes);
     const Candidate* best = nullptr;
     LeafOption best_leaf{NumericLeaf::None, 0};
     for (const auto& option : plan) {
@@ -380,14 +380,14 @@ class TypedSealer final : public NumericSealer {
     if (best) {
       auto out = Emit(*best, best_leaf, &_best_samples);
       if (const auto bytes = out.bytes.size();
-          best_leaf.Price(bytes) < static_cast<double>(rival_bytes)) {
+          best_leaf.Price(bytes) < static_cast<double>(analyzed_bytes)) {
         calibrate(
           NumericChoice{best->transform, best_leaf.leaf, best->shuffled},
           bytes);
         return out;
       }
     }
-    calibrate(std::nullopt, rival_bytes);
+    calibrate(std::nullopt, analyzed_bytes);
     return NoSegment();
   }
 
@@ -1203,12 +1203,12 @@ std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
   TypedSealer<uint32_t> sealer{duckdb::LogicalType::UINTEGER, codes};
   const auto bound = CodesBound(codes.size(), entries, runs);
   bool due = tuning.reuse.Due();
-  auto bytes = sealer.SealWith(kLeaflessPlan, kNoRival, tuning, due).bytes;
+  auto bytes = sealer.SealWith(kLeaflessPlan, kNotAnalyzed, tuning, due).bytes;
   if (bytes.empty() ||
       (!due && static_cast<double>(bytes.size()) >
                  static_cast<double>(bound) * tuning.codes_ratio * kDrift)) {
     due = true;
-    bytes = sealer.SealWith(kLeaflessPlan, kNoRival, tuning, true).bytes;
+    bytes = sealer.SealWith(kLeaflessPlan, kNotAnalyzed, tuning, true).bytes;
   }
   if (due && bound != 0) {
     tuning.codes_ratio =

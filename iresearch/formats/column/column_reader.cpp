@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -309,6 +308,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _row_count += m.tuple_count;
     _offsets.push_back(_row_count);
     stats.Merge(m.statistics);
+    _selects |= m.codec->select && BandsFor(m.codec->type, _type).native != 0;
   }
   FinishStats(std::move(stats));
 }
@@ -698,6 +698,10 @@ void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
   if (FetchSparse(s, anchor, sel, hits, out, at)) {
     return;
   }
+  if (!_selects) {
+    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
+    return;
+  }
   for (duckdb::idx_t i = 0; i < hits;) {
     const auto first = sel.get_index(i);
     auto end = i + 1;
@@ -847,8 +851,7 @@ bool ColumnReader::SelectNative(ScanState& s,
   }
   if (within) {
     const auto& segment = *s.segments.back();
-    segment.function.select(segment, s.st, span, out, at, sel, hits,
-                            scan_type);
+    segment.function.select(segment, s.st, span, out, at, sel, hits, scan_type);
     s.st.offset_in_column += span;
     s.st.internal_index = s.st.offset_in_column;
   } else {
@@ -1110,27 +1113,30 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   return FetchOne(_blocks, *_reader, _window, row, out, out_offset);
 }
 
-void ColumnReader::PointReader::FetchRows(std::span<const uint64_t> rows,
+void ColumnReader::PointReader::FetchRows(std::span<const uint32_t> ids,
+                                          uint32_t first_id,
                                           duckdb::Vector& out,
                                           duckdb::idx_t out_offset) {
-  SDB_ASSERT(out_offset + rows.size() <= STANDARD_VECTOR_SIZE);
-  SDB_ASSERT(absl::c_adjacent_find(rows, std::greater_equal<>{}) == rows.end());
+  SDB_ASSERT(out_offset + ids.size() <= STANDARD_VECTOR_SIZE);
+  SDB_ASSERT(ids.empty() || ids.front() >= first_id);
+  SDB_ASSERT(absl::c_adjacent_find(ids, std::greater_equal<>{}) == ids.end());
+  const auto row = [&](size_t i) -> uint64_t { return ids[i] - first_id; };
   auto& mask = duckdb::FlatVector::ValidityMutable(out);
-  auto count = rows.size();
+  auto count = ids.size();
   for (size_t i = 0; i < count; ++i) {
     mask.SetValid(out_offset + i);
   }
-  while (count != 0 && rows[count - 1] >= _reader->RowCount()) {
+  while (count != 0 && row(count - 1) >= _reader->RowCount()) {
     mask.SetInvalid(out_offset + --count);
   }
   if (const auto* validity = _reader->_validity.get()) {
     for (size_t i = 0; i < count;) {
       auto& block =
-        Block(_validity_blocks, *validity, _validity_window, rows[i]);
+        Block(_validity_blocks, *validity, _validity_window, row(i));
       _local.clear();
       size_t j = i;
-      for (; j < count && rows[j] < _validity_window.end; ++j) {
-        _local.push_back(rows[j] - _validity_window.begin);
+      for (; j < count && row(j) < _validity_window.end; ++j) {
+        _local.push_back(row(j) - _validity_window.begin);
       }
       FetchSegmentRows(
         *block.segment, block.state, _local.data(), _local.size(), out,
@@ -1146,13 +1152,13 @@ void ColumnReader::PointReader::FetchRows(std::span<const uint64_t> rows,
   }
   for (size_t i = 0; i < _fetched.size();) {
     auto& block =
-      Block(_blocks, *_reader, _window, rows[_fetched[i] - out_offset]);
+      Block(_blocks, *_reader, _window, row(_fetched[i] - out_offset));
     _local.clear();
     size_t j = i;
-    for (; j < _fetched.size() && rows[_fetched[j] - out_offset] < _window.end;
+    for (; j < _fetched.size() && row(_fetched[j] - out_offset) < _window.end;
          ++j) {
       _sel.set_index(_local.size(), _fetched[j]);
-      _local.push_back(rows[_fetched[j] - out_offset] - _window.begin);
+      _local.push_back(row(_fetched[j] - out_offset) - _window.begin);
     }
     FetchSegmentRows(*block.segment, block.state, _local.data(), _local.size(),
                      out, _sel, 0);

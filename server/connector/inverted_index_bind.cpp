@@ -41,6 +41,7 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/column/codecs/duckdb_compression.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -602,12 +603,13 @@ void ApplyIncludedOpclass(
     return;
   }
   uint32_t level = 0;
+  auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
-      entry.column_options.compression =
-        duckdb::EnumUtil::FromString<duckdb::CompressionType>(
-          GetIndexStringOption(catalog::kIncludedKind, owner_label, key,
-                               raw_val));
+      declared = duckdb::EnumUtil::FromString<duckdb::CompressionType>(
+        GetIndexStringOption(catalog::kIncludedKind, owner_label, key,
+                             raw_val));
+      entry.column_options.compression = irs::codecs::FromDuckDB(declared);
     } else if (key == kCompressionLevelField) {
       level = ParsePositiveUintOption(catalog::kIncludedKind, owner_label, key,
                                       raw_val);
@@ -627,9 +629,8 @@ void ApplyIncludedOpclass(
     duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog())
       .GetAttached()
       .GetStorageManager();
-  catalog::CheckColumnCodec(context, &storage, owner_label,
-                            entry.column_options.compression, level, value_type,
-                            catalog::TableEngine::Search);
+  catalog::CheckColumnCodec(context, &storage, owner_label, declared, level,
+                            value_type, catalog::TableEngine::Search);
   entry.column_options.compression_level = static_cast<uint8_t>(level);
 }
 
@@ -648,9 +649,9 @@ uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
 void FinishAnnOpclass(const irs::AnnInfo& cfg, bool compression,
                       catalog::InvertedIndexField& entry) {
   entry.column_options.ann_info = cfg;
-  entry.column_options.compression =
-    compression ? duckdb::CompressionType::COMPRESSION_AUTO
-                : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+  entry.column_options.compression = compression
+                                       ? irs::codecs::CodecType::Auto
+                                       : irs::codecs::CodecType::Uncompressed;
   entry.store_values = true;
 }
 

@@ -61,6 +61,7 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
+#include <iresearch/formats/column/codecs/duckdb_compression.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -266,11 +267,9 @@ void CheckCompressionLevel(std::string_view column_name,
   if (level == 0) {
     return;
   }
-  const auto* codec =
-    irs::codecs::FindCodec(duckdb::CompressionTypeToString(type));
   const uint32_t max_level =
-    codec && (columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD)
-      ? irs::codecs::MaxLevel(codec->type)
+    columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD
+      ? irs::codecs::MaxLevel(irs::codecs::FromDuckDB(type))
       : 0;
   const auto name =
     duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type));
@@ -385,17 +384,13 @@ void CheckColumnCodec(duckdb::ClientContext& context,
                 ? "deprecated and only has decompress support"
                 : "not available yet"));
   }
-  const auto* codec =
-    irs::codecs::FindCodec(duckdb::CompressionTypeToString(type));
+  const auto codec = irs::codecs::FromDuckDB(type);
   const auto compresses = [&](duckdb::PhysicalType physical) {
-    if (!codec) {
-      return false;
-    }
     if (physical == duckdb::PhysicalType::VARCHAR &&
-        irs::codecs::ChoiceOf(codec->type)) {
+        irs::codecs::ChoiceOf(codec)) {
       return true;
     }
-    const auto* function = codec->function(physical);
+    const auto* function = irs::codecs::GetCodec(codec, physical);
     return function && function->compress;
   };
   const auto physical = column_type.InternalType();

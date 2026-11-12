@@ -264,7 +264,7 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   }
   if (const auto* entry = FindEntry(id)) {
     auto options = entry->column_options;
-    if (options.compression == duckdb::CompressionType::COMPRESSION_AUTO) {
+    if (options.compression == irs::codecs::CodecType::Auto) {
       options.compression = declared.type;
       options.compression_level = declared.compression_level;
     }
@@ -272,10 +272,10 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
-    if (declared.type == duckdb::CompressionType::COMPRESSION_AUTO) {
+    if (declared.type == irs::codecs::CodecType::Auto) {
       for (const auto ann : AnnFields(id)) {
         if (const auto& options = FindEntry(ann)->column_options;
-            options.compression != duckdb::CompressionType::COMPRESSION_AUTO) {
+            options.compression != irs::codecs::CodecType::Auto) {
           declared.type = options.compression;
           declared.compression_level = options.compression_level;
         }

@@ -81,23 +81,23 @@ duckdb::DatabaseInstance& CsDb() {
 
 struct Arm {
   const char* name;
-  duckdb::CompressionType codec;
+  irs::codecs::CodecType codec;
   uint8_t level;
 };
 
 constexpr Arm kArms[] = {
-  {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST, 0},
-  {"dict_lz4", duckdb::CompressionType::COMPRESSION_DICT_LZ4, 0},
-  {"dict_zstd1", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 1},
-  {"dict_zstd3", duckdb::CompressionType::COMPRESSION_DICT_ZSTD, 3},
-  {"lz4", duckdb::CompressionType::COMPRESSION_LZ4, 0},
-  {"dict_zxc3", duckdb::CompressionType::COMPRESSION_DICT_ZXC, 3},
-  {"zxc3", duckdb::CompressionType::COMPRESSION_ZXC, 3},
-  {"fsst", duckdb::CompressionType::COMPRESSION_FSST, 0},
-  {"auto", duckdb::CompressionType::COMPRESSION_AUTO, 0},
-  {"zstd1", duckdb::CompressionType::COMPRESSION_ZSTD, 1},
-  {"zstd3", duckdb::CompressionType::COMPRESSION_ZSTD, 3},
-  {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, 0},
+  {"dict_fsst", irs::codecs::CodecType::DictFsst, 0},
+  {"dict_lz4", irs::codecs::CodecType::DictLz4, 0},
+  {"dict_zstd1", irs::codecs::CodecType::DictZstd, 1},
+  {"dict_zstd3", irs::codecs::CodecType::DictZstd, 3},
+  {"lz4", irs::codecs::CodecType::Lz4, 0},
+  {"dict_zxc3", irs::codecs::CodecType::DictZxc, 3},
+  {"zxc3", irs::codecs::CodecType::Zxc, 3},
+  {"fsst", irs::codecs::CodecType::Fsst, 0},
+  {"auto", irs::codecs::CodecType::Auto, 0},
+  {"zstd1", irs::codecs::CodecType::Zstd, 1},
+  {"zstd3", irs::codecs::CodecType::Zstd, 3},
+  {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
 };
 
 std::string Value(Corpus corpus, uint64_t g) {

@@ -635,9 +635,7 @@ void Transactions::CommitStorage(
   }
   if (range.end != 0) {
     _log->Write(range, record);
-  }
-  if (end != 0) {
-    _log->Sync(end);
+    _log->Sync(range.end);
   }
   Publish(commit, false, false);
   AfterCommit();

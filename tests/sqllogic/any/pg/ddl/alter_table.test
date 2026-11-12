@@ -231,3 +231,58 @@ DROP TABLE fkdrop_twice_c;
 
 statement ok
 DROP TABLE fkdrop_twice_p;
+
+
+statement ok
+CREATE TABLE fkcol_p (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fkcol_c (x INT REFERENCES fkcol_p (id), y INT, z INT);
+
+
+statement ok
+ALTER TABLE fkcol_c DROP COLUMN y;
+
+
+statement ok
+INSERT INTO fkcol_p VALUES (1);
+
+
+statement ok
+INSERT INTO fkcol_c VALUES (1, 3);
+
+
+statement error (?i)violates foreign key constraint
+INSERT INTO fkcol_c VALUES (2, 3);
+
+
+statement ok
+ALTER TABLE fkcol_c DROP COLUMN x;
+
+
+statement ok
+INSERT INTO fkcol_c VALUES (4);
+
+
+query
+SELECT count(*) AS fks FROM pg_constraint WHERE conrelid = 'fkcol_c'::regclass AND contype = 'f';
+----
+fks
+0
+
+
+statement ok
+DROP TABLE fkcol_p;
+
+
+query
+SELECT z FROM fkcol_c ORDER BY z;
+----
+z
+3
+4
+
+
+statement ok
+DROP TABLE fkcol_c;

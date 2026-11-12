@@ -62,6 +62,36 @@ ALTER TABLE sfa_docs ADD COLUMN extra INTEGER DEFAULT 7;
 statement ok
 INSERT INTO sfa_docs VALUES (3, 'gamma', 8);
 
+statement ok
+CREATE TABLE sfa_empty (a INTEGER);
+
+statement ok
+CREATE PERSISTENT SECRET sfa_secret (TYPE s3, KEY_ID 'k');
+
+statement ok
+SELECT pg_replication_origin_create('sfa_origin');
+
+statement ok
+SELECT pg_replication_origin_advance('sfa_origin', '0/10');
+
+statement ok
+CREATE ROLE sfa_role;
+
+statement ok
+ALTER ROLE sfa_role CREATEDB;
+
+statement ok
+CREATE DATABASE fdw_side;
+
+statement ok
+CREATE SEQUENCE fdw_side.public.s;
+
+query
+SELECT nextval('fdw_side.public.s') AS n;
+----
+n
+1
+
 connection holder
 query
 SELECT pg_backup_start('sfa_new') IS NOT NULL AS started;
@@ -87,6 +117,12 @@ id	body	extra
 1	alpha	7
 2	beta	7
 3	gamma	8
+
+query
+SELECT count(*) AS n FROM sfa_new.public.sfa_empty;
+----
+n
+0
 
 statement ok
 CREATE SERVER sfa_twice FOREIGN DATA WRAPPER serenedb_fdw

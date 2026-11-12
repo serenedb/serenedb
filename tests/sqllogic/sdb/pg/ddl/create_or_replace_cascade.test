@@ -334,3 +334,40 @@ DROP TABLE clickclack_or;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY mop_dict;
+
+
+statement ok
+CREATE FUNCTION babsky_pos(x INT) AS x > 0;
+
+
+statement ok
+CREATE TABLE clickclack_chk (a INT CHECK (babsky_pos(a)), b INT CHECK (babsky_pos(b)));
+
+
+statement ok
+CREATE OR REPLACE FUNCTION babsky_pos(x INT) AS x > 10;
+
+
+statement ok
+INSERT INTO clickclack_chk VALUES (11, 12);
+
+
+statement error
+INSERT INTO clickclack_chk VALUES (5, 12);
+----
+db error: ERROR: CHECK constraint failed on table "clickclack_chk" with expression CHECK(babsky_pos(a))
+
+
+query
+SELECT a, b FROM clickclack_chk;
+----
+a	b
+11	12
+
+
+statement ok
+DROP TABLE clickclack_chk;
+
+
+statement ok
+DROP FUNCTION babsky_pos(INT);

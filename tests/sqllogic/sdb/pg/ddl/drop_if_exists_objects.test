@@ -201,6 +201,14 @@ statement ok
 DROP PERSISTENT SECRET IF EXISTS die_psec_${__DATABASE__};
 
 
+statement ok
+DROP SECRET IF EXISTS die_sec_${__DATABASE__} FROM memory;
+
+
+statement ok
+DROP PERSISTENT SECRET IF EXISTS die_psec_${__DATABASE__} FROM local_file;
+
+
 query
 SELECT count(*) AS n FROM duckdb_secrets()
 WHERE name IN ('die_sec_${__DATABASE__}', 'die_psec_${__DATABASE__}');

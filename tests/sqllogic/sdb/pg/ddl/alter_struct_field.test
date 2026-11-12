@@ -108,6 +108,9 @@ ALTER TABLE t ADD COLUMN IF NOT EXISTS s.k INTEGER;
 statement ok
 ALTER TABLE t DROP COLUMN IF EXISTS s.absent;
 
+statement ok
+ALTER TABLE t DROP COLUMN IF EXISTS absent.k;
+
 query
 SELECT typeof(s) FROM t LIMIT 1;
 ----

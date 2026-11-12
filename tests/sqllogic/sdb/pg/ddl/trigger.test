@@ -80,6 +80,10 @@ ALTER TABLE trg_t ALTER COLUMN b TYPE VARCHAR;
 
 
 statement ok
+ALTER TABLE trg_t RENAME COLUMN c TO c2;
+
+
+statement ok
 DELETE FROM trg_audit;
 
 
@@ -107,6 +111,13 @@ SELECT trigger_name FROM duckdb_triggers() WHERE table_name = 'trg_t'
 trigger_name
 trg_del
 trg_ins
+
+
+statement error
+CREATE TRIGGER trg_ins AFTER INSERT ON trg_t FOR EACH STATEMENT
+  INSERT INTO trg_audit VALUES ('stmt_insert_again', 0);
+----
+db error: ERROR: trigger "trg_ins" for relation "trg_t" already exists
 
 
 statement ok
@@ -209,6 +220,36 @@ DROP TRIGGER IF EXISTS trg_srow ON trg_s;
 
 statement ok
 DROP TABLE trg_s;
+
+
+statement ok
+CREATE TEMP TABLE trg_oids AS SELECT oid FROM pg_trigger WHERE tgname = 'trg_del';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TABLE trg_t;
+
+
+query
+SELECT pg_describe_object('pg_trigger'::regclass, (SELECT oid FROM trg_oids), 0) AS described;
+----
+described
+NULL
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT pg_describe_object('pg_trigger'::regclass, (SELECT oid FROM trg_oids), 0) AS described;
+----
+described
+trigger trg_del on table trg_t
 
 
 # Dropping the relation takes its triggers with it.

@@ -124,6 +124,33 @@ zeus_trg_log	f
 
 
 statement ok
+CREATE TABLE zeus_fk_parent (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE zeus_fk_child (id INTEGER PRIMARY KEY, up INTEGER REFERENCES zeus_fk_child (id), parent INTEGER REFERENCES zeus_fk_parent (id));
+
+
+query
+SELECT c.relname, c.relhastriggers
+FROM pg_class c
+WHERE c.relname IN ('zeus_fk_parent', 'zeus_fk_child')
+ORDER BY 1;
+----
+relname	relhastriggers
+zeus_fk_child	t
+zeus_fk_parent	t
+
+
+statement ok
+DROP TABLE zeus_fk_child;
+
+
+statement ok
+DROP TABLE zeus_fk_parent;
+
+
+statement ok
 DROP TRIGGER zeus_trg_ins ON zeus_trg_bolt;
 
 

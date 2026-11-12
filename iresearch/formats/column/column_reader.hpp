@@ -170,8 +170,8 @@ class ColumnReader {
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint64_t RowCount() const noexcept { return _row_count; }
-  virtual bool InMemory() const noexcept { return false; }
-  virtual bool Patched() const noexcept { return false; }
+  bool InMemory() const noexcept { return _in_memory; }
+  bool Patched() const noexcept { return _patched; }
   size_t DataRgCount() const noexcept { return _segments.size(); }
   bool HasValidity() const noexcept { return _validity_view != nullptr; }
   const ColumnReader* Validity() const noexcept { return _validity_view; }
@@ -387,6 +387,8 @@ class ColumnReader {
   uint64_t _array_size = 0;
   duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
+  bool _in_memory = false;
+  bool _patched = false;
 
  private:
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;

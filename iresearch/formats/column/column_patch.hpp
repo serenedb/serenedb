@@ -149,7 +149,6 @@ class NullColumnReader final : public ColumnReader {
   NullColumnReader(duckdb::DatabaseInstance& db, field_id id,
                    const duckdb::LogicalType& type, uint64_t rows);
 
-  bool InMemory() const noexcept final { return true; }
   uint64_t RowGroupEnd(uint64_t) const noexcept final { return _row_count; }
   uint64_t GatherCursor(const ScanState& s) const noexcept final {
     return s.st.offset_in_column;
@@ -195,8 +194,6 @@ class PatchedColumnReader final : public ColumnReader {
     return _patch;
   }
 
-  bool InMemory() const noexcept final { return _base.InMemory(); }
-  bool Patched() const noexcept final { return true; }
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
     return _base.RowGroupEnd(row);
   }

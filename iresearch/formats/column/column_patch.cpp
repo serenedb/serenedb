@@ -369,7 +369,9 @@ void ColumnPatch::MergeStats(uint64_t first, uint64_t last,
 NullColumnReader::NullColumnReader(duckdb::DatabaseInstance& db, field_id id,
                                    const duckdb::LogicalType& type,
                                    uint64_t rows)
-  : ColumnReader{id, type, NullBlocks(db, type, rows), nullptr, {}} {}
+  : ColumnReader{id, type, NullBlocks(db, type, rows), nullptr, {}} {
+  _in_memory = true;
+}
 
 duckdb::idx_t NullColumnReader::Scan(ScanState& s, duckdb::Vector& result,
                                      duckdb::idx_t count) const {
@@ -436,6 +438,8 @@ PatchedColumnReader::PatchedColumnReader(
   _stats = stats.ToUnique();
   _distinct = SharedDistinct(base);
   _array_size = base.ArraySize();
+  _in_memory = base.InMemory();
+  _patched = true;
 }
 
 duckdb::idx_t PatchedColumnReader::Scan(ScanState& s, duckdb::Vector& result,

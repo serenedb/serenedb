@@ -412,6 +412,7 @@ HotColumnReader::HotColumnReader(
   : ColumnReader{id, std::move(type), std::move(blocks), nullptr,
                  std::move(children)},
     _chunks{std::move(chunks)} {
+  _in_memory = true;
   _starts.reserve(_chunks.size() + 1);
   uint64_t rows = 0;
   _starts.push_back(rows);

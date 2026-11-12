@@ -51,7 +51,8 @@ struct Candidate {
 
 struct TierCandidates {
   std::span<const Candidate> candidates;
-  double fsst_preference = 0;
+  double dedup_fsst_preference = 0;
+  double plain_fsst_preference = 0;
 };
 
 constexpr uint8_t kLz4FlushLevels[] = {1};
@@ -77,10 +78,14 @@ constexpr Candidate kMergeCandidates[] = {
 
 constexpr TierCandidates kFlush{
   .candidates = kFlushCandidates,
-  .fsst_preference = 0.05,
+  .dedup_fsst_preference = 0.05,
+  .plain_fsst_preference = 0.05,
 };
 
-constexpr TierCandidates kMerge{.candidates = kMergeCandidates};
+constexpr TierCandidates kMerge{
+  .candidates = kMergeCandidates,
+  .plain_fsst_preference = 0.05,
+};
 
 constexpr size_t kMaxCandidates =
   std::max(std::size(kFlushCandidates), std::size(kMergeCandidates));
@@ -184,6 +189,9 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
   auto& tuned = _tuning.tuned;
   const bool tune = entries >= kTuneMinEntries && !tuned.done;
   const auto& tier = CandidatesOf(_params.tier);
+  const double fsst_preference = shape == Shape::Plain
+                                   ? tier.plain_fsst_preference
+                                   : tier.dedup_fsst_preference;
   std::array<Scored, kMaxCandidates> scored;
   size_t count = 0;
   size_t best = 0;
@@ -197,7 +205,7 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
     });
     auto score = static_cast<double>(analysis.score);
     if (candidate.leaf != ByteCodec::Fsst) {
-      score *= 1.0 + tier.fsst_preference;
+      score *= 1.0 + fsst_preference;
     }
     scored[count] = {
       .config = analysis.config,
@@ -224,11 +232,10 @@ PooledSegment StringPicker::DetectBestCompressionMethod(PooledSegment first,
       picked = seg;
     }
   }
-  if (tier.fsst_preference > 0 &&
-      picked->config.choice.leaf != ByteCodec::Fsst) {
+  if (fsst_preference > 0 && picked->config.choice.leaf != ByteCodec::Fsst) {
     auto& fsst = window.TrialCompress({.choice = {shape, ByteCodec::Fsst}});
     if (static_cast<double>(fsst.Size()) <=
-        static_cast<double>(picked->Size()) * (1.0 + tier.fsst_preference)) {
+        static_cast<double>(picked->Size()) * (1.0 + fsst_preference)) {
       picked = &fsst;
     }
   }

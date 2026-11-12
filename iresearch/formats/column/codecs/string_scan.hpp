@@ -52,8 +52,10 @@ namespace irs::codecs::text {
 
 inline constexpr uint32_t kNoFrame = std::numeric_limits<uint32_t>::max();
 inline constexpr duckdb::idx_t kSparseEntries = 64;
-inline constexpr uint64_t kSparseGroupCost = 64;
+inline constexpr uint64_t kSingleRowCost = 100;
+inline constexpr uint64_t kFrameRowCost = 25;
 inline constexpr uint64_t kChainGroupCost = 180;
+inline constexpr uint64_t kChainMinRowBytes = 8;
 inline constexpr uint32_t kLazyFilterEntries = 4096;
 inline constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
 inline constexpr duckdb::idx_t kFetchAhead = 16;

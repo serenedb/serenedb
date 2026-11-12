@@ -211,10 +211,10 @@ struct EntryFrames {
         const uint64_t total = (end - first + kUnit - 1) / kUnit;
         bool sparse = range < total;
         if constexpr (kUnit == 1) {
-          const uint64_t group_bytes = frames[f].raw_len / (end - first);
+          const uint64_t entry_bytes = frames[f].raw_len / (end - first);
           sparse = (groups <= kSparseEntries && sparse) ||
-                   groups * (group_bytes + kSparseGroupCost) * 4 <=
-                     range * group_bytes * 3;
+                   groups * (entry_bytes + entry_bytes / 8 + kSingleRowCost) <=
+                     range * (entry_bytes + kFrameRowCost);
         }
         if (sparse) {
           if constexpr (kUnit > 1) {
@@ -279,7 +279,8 @@ struct EntryFrames {
         SDB_ASSERT(lo < hi);
         const uint64_t range =
           (hi - 1 - first) / kUnit - (lo - first) / kUnit + 1;
-        const uint64_t entry_bytes = frames[f].raw_len / (end - first);
+        const uint64_t entry_bytes = std::max<uint64_t>(
+          frames[f].raw_len / (end - first), kChainMinRowBytes);
         const uint64_t total = (end - first + kUnit - 1) / kUnit;
         if ((groups * kUnit <= kSparseEntries && range < total) ||
             (j - i) * entry_bytes + groups * kChainGroupCost <=

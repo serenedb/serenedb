@@ -854,6 +854,46 @@ TEST_F(ColumnReaderTest, FrontCodedRowsGatherForEverySmallSelectionOfAGroup) {
   con.Query("SET force_compression = 'auto'");
 }
 
+TEST_F(ColumnReaderTest, AppendingGathersStopAtTheLastStoredRow) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 3 * STANDARD_VECTOR_SIZE;
+  constexpr duckdb::idx_t kStored = 100;
+  const ValueOf value_of = [](uint64_t g) {
+    return duckdb::Value::BIGINT(static_cast<int64_t>(g / 100));
+  };
+  duckdb::Connection con{Db()};
+  for (const std::string codec : {"rle", "bitpacking"}) {
+    SCOPED_TRACE(codec);
+    auto set = con.Query("SET force_compression = '" + codec + "'");
+    ASSERT_FALSE(set->HasError()) << set->GetError();
+    irs::MemoryDirectory dir{};
+    WriteColumn(Db(), dir, kId, duckdb::LogicalType::BIGINT, kRows, 4096,
+                value_of);
+    irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kId);
+    ASSERT_NE(col, nullptr);
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{col->Type(), STANDARD_VECTOR_SIZE};
+    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+    duckdb::idx_t hits = 0;
+    for (; hits < kStored; ++hits) {
+      sel.set_index(hits, hits * 3);
+    }
+    for (duckdb::idx_t i = 0; i < 5; ++i) {
+      sel.set_index(hits++, 3 * STANDARD_VECTOR_SIZE + i);
+    }
+    const uint64_t anchor = kRows - 3 * kStored;
+    col->GatherScatter(state, anchor, sel, hits, out, 0);
+    for (duckdb::idx_t i = 0; i < kStored; ++i) {
+      const auto row = anchor + sel.get_index(i);
+      ASSERT_TRUE(
+        duckdb::Value::NotDistinctFrom(out.GetValue(i), value_of(row)))
+        << "row " << row << " got " << out.GetValue(i).ToString();
+    }
+  }
+  con.Query("SET force_compression = 'auto'");
+}
+
 TEST_F(ColumnReaderTest, FrontCodedRunsOfEveryLengthScanRunByRun) {
   constexpr irs::field_id kId = 1;
   constexpr uint64_t kRows = 6 * STANDARD_VECTOR_SIZE;

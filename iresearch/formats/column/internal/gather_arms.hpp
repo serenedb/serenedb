@@ -47,15 +47,14 @@ inline void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
 
 template<typename Kind>
 void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
-                 const duckdb::SelectionVector& sel, duckdb::idx_t hits,
-                 duckdb::Vector& out, duckdb::idx_t at) {
+                 const duckdb::SelectionVector& sel, duckdb::idx_t i,
+                 duckdb::idx_t end, duckdb::Vector& out, duckdb::idx_t at) {
   uint64_t pos = self.Kind::GatherCursor(s);
-  duckdb::idx_t i = 0;
-  while (i < hits) {
+  while (i < end) {
     const uint64_t target = anchor + sel.get_index(i);
     SDB_ASSERT(target >= pos, "GatherScatter requires ascending rows");
     duckdb::idx_t run = 1;
-    while (i + run < hits &&
+    while (i + run < end &&
            sel.get_index(i + run) == sel.get_index(i + run - 1) + 1) {
       ++run;
     }
@@ -138,7 +137,7 @@ void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
     if (at == 0) {                                                           \
       NewOutputVector(s);                                                    \
     }                                                                        \
-    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);      \
+    column_internal::ScatterRuns(*this, s, anchor, sel, 0, hits, out, at);   \
   }
 
 #define IRS_COLUMN_READER_GATHER_DENSE                                     \

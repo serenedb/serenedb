@@ -207,6 +207,13 @@ bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
   return !block.codec->select && FewStringRuns(type, sel, hits, span);
 }
 
+bool SelectsNatively(const ColumnBlockMeta& block,
+                     const duckdb::LogicalType& type, duckdb::idx_t hits,
+                     duckdb::idx_t span) noexcept {
+  return block.codec->select &&
+         hits * 1000 <= BandsFor(block.codec->type, type).native * span;
+}
+
 duckdb::ValidityMask& ResetAllValid(duckdb::Vector& v, duckdb::idx_t count) {
   v.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   auto& mask = duckdb::FlatVector::ValidityMutable(v);
@@ -308,7 +315,6 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _row_count += m.tuple_count;
     _offsets.push_back(_row_count);
     stats.Merge(m.statistics);
-    _selects |= m.codec->select && BandsFor(m.codec->type, _type).native != 0;
   }
   FinishStats(std::move(stats));
 }
@@ -698,13 +704,26 @@ void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
   if (FetchSparse(s, anchor, sel, hits, out, at)) {
     return;
   }
-  if (!_selects) {
-    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
-    return;
-  }
+  const auto span = sel.get_index(hits - 1) - sel.get_index(0) + 1;
   for (duckdb::idx_t i = 0; i < hits;) {
     const auto first = sel.get_index(i);
+    if (anchor + first >= _row_count) {
+      column_internal::ScatterRuns(*this, s, anchor, sel, i, hits, out, at);
+      return;
+    }
     auto end = i + 1;
+    if (const auto block = Locate(anchor + first, s.window);
+        !SelectsNatively(_segments[block.block], _type, hits, span)) {
+      if (anchor + sel.get_index(hits - 1) < block.end) {
+        end = hits;
+      }
+      while (end < hits && anchor + sel.get_index(end) < block.end) {
+        ++end;
+      }
+      column_internal::ScatterRuns(*this, s, anchor, sel, i, end, out, at);
+      i = end;
+      continue;
+    }
     while (end < hits && sel.get_index(end) - first < STANDARD_VECTOR_SIZE) {
       ++end;
     }
@@ -741,7 +760,7 @@ void ColumnReader::GatherWindow(ScanState& s, uint64_t anchor,
       return;
     }
   }
-  column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
+  column_internal::ScatterRuns(*this, s, anchor, sel, 0, hits, out, at);
 }
 
 void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
@@ -761,7 +780,7 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
   if (anchor < _row_count &&
       ScatterWins(_segments[Locate(anchor, s.window).block], _type, sel, hits,
                   span)) {
-    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
+    column_internal::ScatterRuns(*this, s, anchor, sel, 0, hits, out, 0);
     return;
   }
   if (SelectNative(s, sel, hits, span, out, 0,
@@ -769,7 +788,7 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
     return;
   }
   if (FewStringRuns(_type, sel, hits, span)) {
-    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
+    column_internal::ScatterRuns(*this, s, anchor, sel, 0, hits, out, 0);
     return;
   }
   ColumnReader::ScanCount(s, out, span, 0);
@@ -1120,23 +1139,29 @@ void ColumnReader::PointReader::FetchRows(std::span<const uint32_t> ids,
   SDB_ASSERT(out_offset + ids.size() <= STANDARD_VECTOR_SIZE);
   SDB_ASSERT(ids.empty() || ids.front() >= first_id);
   SDB_ASSERT(absl::c_adjacent_find(ids, std::greater_equal<>{}) == ids.end());
-  const auto row = [&](size_t i) -> uint64_t { return ids[i] - first_id; };
   auto& mask = duckdb::FlatVector::ValidityMutable(out);
   auto count = ids.size();
   for (size_t i = 0; i < count; ++i) {
     mask.SetValid(out_offset + i);
   }
-  while (count != 0 && row(count - 1) >= _reader->RowCount()) {
+  const uint64_t stored = _reader->RowCount() + first_id;
+  while (count != 0 && ids[count - 1] >= stored) {
     mask.SetInvalid(out_offset + --count);
   }
   if (const auto* validity = _reader->_validity.get()) {
     for (size_t i = 0; i < count;) {
       auto& block =
-        Block(_validity_blocks, *validity, _validity_window, row(i));
+        Block(_validity_blocks, *validity, _validity_window, ids[i] - first_id);
+      const uint64_t begin = _validity_window.begin + first_id;
+      const uint64_t end = _validity_window.end + first_id;
       _local.clear();
       size_t j = i;
-      for (; j < count && row(j) < _validity_window.end; ++j) {
-        _local.push_back(row(j) - _validity_window.begin);
+      for (; j < count; ++j) {
+        const uint64_t id = ids[j];
+        if (id >= end) {
+          break;
+        }
+        _local.push_back(id - begin);
       }
       FetchSegmentRows(
         *block.segment, block.state, _local.data(), _local.size(), out,
@@ -1151,14 +1176,20 @@ void ColumnReader::PointReader::FetchRows(std::span<const uint32_t> ids,
     }
   }
   for (size_t i = 0; i < _fetched.size();) {
-    auto& block =
-      Block(_blocks, *_reader, _window, row(_fetched[i] - out_offset));
+    auto& block = Block(_blocks, *_reader, _window,
+                        ids[_fetched[i] - out_offset] - first_id);
+    const uint64_t begin = _window.begin + first_id;
+    const uint64_t end = _window.end + first_id;
     _local.clear();
     size_t j = i;
-    for (; j < _fetched.size() && row(_fetched[j] - out_offset) < _window.end;
-         ++j) {
-      _sel.set_index(_local.size(), _fetched[j]);
-      _local.push_back(row(_fetched[j] - out_offset) - _window.begin);
+    for (; j < _fetched.size(); ++j) {
+      const auto at = _fetched[j];
+      const uint64_t id = ids[at - out_offset];
+      if (id >= end) {
+        break;
+      }
+      _sel.set_index(_local.size(), at);
+      _local.push_back(id - begin);
     }
     FetchSegmentRows(*block.segment, block.state, _local.data(), _local.size(),
                      out, _sel, 0);

@@ -431,7 +431,6 @@ class ColumnReader {
   std::vector<ColumnBlockMeta> _segments;
   std::vector<uint64_t> _offsets;
   uint64_t _row_count = 0;
-  bool _selects = false;
   std::unique_ptr<ColumnReader> _validity;
   std::vector<std::unique_ptr<ColumnReader>> _children;
   std::vector<SubColumn> _row_group_columns;

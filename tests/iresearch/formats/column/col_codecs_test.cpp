@@ -3728,6 +3728,33 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
   Verify(dir, irs::codecs::CodecType::Auto, kRows, value);
 }
 
+TEST_F(ColCodecsTest, CompactionsPreferFsstForTextThatSeldomRepeats) {
+  constexpr uint64_t kRows = 600000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    auto h = g;
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccdULL;
+    h ^= h >> 33;
+    h *= 0xc4ceb9fe1a85ec53ULL;
+    h ^= h >> 33;
+    return "document title " + std::to_string(h % 1000) + " about topic " +
+           std::to_string((h >> 20) % 5000) + " in section " +
+           std::to_string((h >> 40) % 300);
+  };
+  irs::MemoryDirectory dir{};
+  Write(dir, irs::codecs::CodecType::Auto, {.tier = irs::WriteTier::Merge},
+        kRows, DEFAULT_ROW_GROUP_SIZE, value);
+  const auto codecs = SegmentInfo(dir, "codec");
+  const auto shapes = SegmentInfo(dir, "shape");
+  ASSERT_GT(codecs.size(), 4u);
+  ASSERT_EQ(codecs.size(), shapes.size());
+  for (size_t i = 0; i < codecs.size(); ++i) {
+    EXPECT_EQ(shapes[i], "plain") << i;
+    EXPECT_EQ(codecs[i], "fsst") << i;
+  }
+  Verify(dir, irs::codecs::CodecType::Auto, kRows, value);
+}
+
 TEST_F(ColCodecsTest, SealedRowGroupsReleaseTheirInputs) {
   constexpr duckdb::idx_t kHalf = 512;
   const Value value = [](uint64_t g) -> std::optional<std::string> {

@@ -1,7 +1,7 @@
 {
     "name": "serene-docs-search",
     "private": true,
-    "version": "0.9.1",
+    "version": "0.10.0",
     "description": "SereneDocsSearch - documentation search powered by SereneDB",
     "repository": {
         "type": "git",

@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import picomatch from "picomatch";
-import type { SiteSource } from "@serenedb/docs-search-core";
+import { VERSION, type SiteSource } from "@serenedb/docs-search-core";
 import type { FetchContext, FetchResult, SourceFile } from "./sources.types";
 
 const MAX_PAGES = 2000;
@@ -94,7 +94,7 @@ async function fetchPage(url: string): Promise<string | null> {
     try {
         const res = await fetch(url, {
             signal: AbortSignal.timeout(FETCH_TIMEOUT),
-            headers: { "User-Agent": "SereneDocsSearch/0.6 (+https://serenedb.com)" },
+            headers: { "User-Agent": `SereneDocsSearch/${VERSION} (+https://serenedb.com)` },
             redirect: "follow",
         });
         if (!res.ok) return null;

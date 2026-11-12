@@ -24,9 +24,9 @@
 #include <cstring>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/detail/term_iterator.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
-#include <iresearch/search/detail/term_iterator.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
 #include <limits>
 #include <utility>

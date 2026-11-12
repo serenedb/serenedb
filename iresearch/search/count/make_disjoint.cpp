@@ -58,15 +58,16 @@ TermKey KeyOf(const detail::PostingClause& clause) noexcept {
   const auto& cookie = clause.state.cookie;
   const auto member = clause.state.reader->meta().dict.member;
   if (cookie.docs_count == 1) {
-    return {.member = member, .kind = TermKey::Kind::Single,
-            .at = cookie.doc_delta};
+    return {
+      .member = member, .kind = TermKey::Kind::Single, .at = cookie.doc_delta};
   }
   if (cookie.inline_size != 0) {
-    return {.member = member, .kind = TermKey::Kind::Inline,
+    return {.member = member,
+            .kind = TermKey::Kind::Inline,
             .at = reinterpret_cast<uintptr_t>(cookie.inline_data)};
   }
-  return {.member = member, .kind = TermKey::Kind::Stored,
-          .at = cookie.doc_start};
+  return {
+    .member = member, .kind = TermKey::Kind::Stored, .at = cookie.doc_start};
 }
 
 bool DistinctTerms(std::span<const detail::PostingClause> clauses) {

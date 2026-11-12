@@ -398,6 +398,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool starts_exhausted = false;
   uint64_t rg_units = 0;
   uint64_t produced_rows = 0;
+  bool* empty_filled = nullptr;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 };
@@ -409,6 +410,7 @@ struct FetchLocalState {
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
   std::shared_ptr<irs::IndexSource> index_source;
   duckdb::Vector* pk_column = nullptr;
+  bool* empty_filled = nullptr;
 
   void EnsureHitBatcher(const ScanGlobalState& g);
   void BindOffsets(const ScanGlobalState& g);
@@ -509,8 +511,9 @@ irs::detail::TableFilter* BeginColumnVerify(const irs::SubReader& seg,
                                             ScanGlobalState& g,
                                             AnnLocalState& l);
 
-void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
-                         duckdb::Vector* scores, duckdb::DataChunk& output);
+void WriteVirtualColumns(ScanGlobalState& g, bool*& empty_filled,
+                         duckdb::idx_t num_rows, duckdb::Vector* scores,
+                         duckdb::DataChunk& output);
 void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
                        std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);

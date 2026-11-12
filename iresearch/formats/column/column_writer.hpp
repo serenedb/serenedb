@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
@@ -87,7 +89,8 @@ class ColumnWriter final {
   void PadNullsTo(uint64_t target_row);
 
   bool CopyableFrom(const ColumnReader& column) const;
-  void CopyBlocks(const ColumnReader& column, ReadContext& source);
+  [[nodiscard]] bool CopyBlocks(const ColumnReader& column, ReadContext& source,
+                                absl::FunctionRef<bool()> progress);
   void CopyRows(uint64_t start_row, const ColumnReader& column,
                 ReadContext& source, uint64_t first, uint64_t count);
 

@@ -123,7 +123,7 @@ std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
 
 bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress) {
+               absl::FunctionRef<bool()> progress) {
   const auto ordered_cols = OrderedColumns(sources, field_options);
   if (ordered_cols.empty()) {
     return true;
@@ -209,7 +209,9 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       if (!has_mask && !annotated && (!distinct || stored_distinct) &&
           cw.CopyableFrom(*col)) {
         cw.PadNullsTo(out_doc);
-        cw.CopyBlocks(*col, *source_ctxs[si]);
+        if (!cw.CopyBlocks(*col, *source_ctxs[si], progress)) {
+          return false;
+        }
         out_doc += col->RowCount();
         if (out_doc < source_target) {
           cw.PadNullsTo(source_target);
@@ -223,7 +225,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       const auto total = col->RowCount();
       uint64_t pos = 0;
       while (pos < total) {
-        if (progress && !progress()) {
+        if (!progress()) {
           return false;
         }
         const auto take =

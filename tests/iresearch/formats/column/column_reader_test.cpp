@@ -45,10 +45,12 @@
 #include <iresearch/formats/column/column_patch.hpp>
 #include <iresearch/formats/column/hot_column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
+#include <iresearch/formats/column/merge.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -288,7 +290,7 @@ TEST_F(ColumnReaderTest, CopiedBlocksReadBackBetweenAppendedRows) {
                             /*skip_validity=*/false, kRgSize);
     append(cw, kBefore, always, before_value);
     ASSERT_TRUE(cw.CopyableFrom(*source));
-    cw.CopyBlocks(*source, src.Ctx());
+    ASSERT_TRUE(cw.CopyBlocks(*source, src.Ctx(), [] { return true; }));
     append(cw, kAfter, always, after_value);
     w.Commit(0);
   }
@@ -318,6 +320,69 @@ TEST_F(ColumnReaderTest, CopiedBlocksReadBackBetweenAppendedRows) {
     EXPECT_EQ(copied_blocks[i + 1].tuple_count, source_blocks[i].tuple_count);
     EXPECT_EQ(copied_blocks[i + 1].byte_size, source_blocks[i].byte_size);
   }
+}
+
+class MergedSegment final : public irs::SubReader {
+ public:
+  explicit MergedSegment(uint64_t docs) {
+    _meta.docs_count = docs;
+    _meta.live_docs_count = docs;
+  }
+
+  uint64_t CountMappedMemory() const final { return 0; }
+  const irs::SegmentInfo& Meta() const final { return _meta; }
+  const irs::DocumentMask* docs_mask() const final { return nullptr; }
+  irs::lead::Node::ptr docs_iterator() const final { return nullptr; }
+  std::span<const irs::field_id> field_ids() const final { return {}; }
+  std::span<const irs::TermReader* const> fields(irs::field_id) const final {
+    return {};
+  }
+  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+
+ private:
+  irs::SegmentInfo _meta;
+};
+
+TEST_F(ColumnReaderTest, MergeStopsCopyingBlocksOnceProgressFails) {
+  constexpr uint64_t kRows = 2 * DEFAULT_ROW_GROUP_SIZE;
+  constexpr irs::field_id kA = 1;
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "src", Db()};
+    auto& cw = w.OpenColumn(kA, duckdb::LogicalType::BIGINT,
+                            /*skip_validity=*/false, DEFAULT_ROW_GROUP_SIZE);
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(v);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        data[k] = static_cast<int64_t>(pos + k);
+      }
+      duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+      cw.Append(v, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(kRows);
+  }
+  irs::ColReader src{dir, "src", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* column = src.Column(kA);
+  ASSERT_NE(column, nullptr);
+  ASSERT_GE(column->DataBlocks().size(), 2);
+  const MergedSegment segment{kRows};
+  const std::array sources{
+    irs::MergeSource{
+      .reader = &segment, .col_reader = &src, .alive_count = kRows},
+    irs::MergeSource{
+      .reader = &segment, .col_reader = &src, .alive_count = kRows},
+  };
+  irs::ColWriter probe{dir, "probe", Db()};
+  ASSERT_TRUE(probe
+                .OpenColumn(kA, duckdb::LogicalType::BIGINT,
+                            /*skip_validity=*/false, DEFAULT_ROW_GROUP_SIZE)
+                .CopyableFrom(*column));
+  irs::ColWriter out{dir, "dst", Db()};
+  uint64_t checks = 0;
+  EXPECT_FALSE(
+    irs::MergeInto(sources, out, nullptr, [&checks] { return ++checks == 1; }));
+  EXPECT_EQ(checks, 2);
 }
 
 TEST_F(ColumnReaderTest, UncompressedOverflowStringsAreNotCopied) {

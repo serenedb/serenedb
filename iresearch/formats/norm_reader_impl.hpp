@@ -128,8 +128,9 @@ class NormReaderBase : public NormReader {
     ((kMaxProbe << kNormWindowShift) * sizeof(uint32_t)) / file_utils::kPage +
     1;
   static constexpr uint64_t kMaxSpanPerPage = 2;
-  static constexpr uint64_t kAheadBytes = 16 * 1024;
   static constexpr uint64_t kMaxGapPages = 2;
+  static constexpr uint64_t kDenseBytes =
+    uint64_t{kPostingBlock} * ABSL_CACHELINE_SIZE;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
   static constexpr uint32_t kPageShift =
     static_cast<uint32_t>(std::countr_zero(file_utils::kPage));
@@ -412,16 +413,15 @@ class NormReaderBase : public NormReader {
     }
   }
 
-  IRS_FORCE_INLINE void PrefetchNext(const doc_id_t* docs,
-                                     size_t n) const noexcept {
-    const auto* const last = At(docs[n - 1]);
-    const auto span = static_cast<uint64_t>(last - At(docs[0]));
-    if (span > kAheadBytes) {
+  IRS_FORCE_INLINE void Prefetch(doc_id_t doc, doc_id_t last) const noexcept {
+    const auto* const at = At(doc);
+    const auto span = static_cast<uint64_t>(At(last) - at);
+    if (span > kDenseBytes) {
       return;
     }
     for (uint64_t offset = ABSL_CACHELINE_SIZE; offset <= span;
          offset += ABSL_CACHELINE_SIZE) {
-      __builtin_prefetch(last + offset);
+      __builtin_prefetch(at + offset);
     }
   }
 
@@ -493,9 +493,18 @@ class PersistedNormReader : public NormReaderBase {
   }
 
   void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
-                       std::span<uint32_t, kPostingBlock> values) final {
+                       std::span<uint32_t, kPostingBlock> values,
+                       doc_id_t next_last) final {
     Fetch(docs.data(), values.data(), docs.size());
-    PrefetchNext(docs.data(), docs.size());
+    if (!doc_limits::valid(next_last)) {
+      next_last = docs.back() + (docs.back() - docs.front());
+    }
+    if constexpr (Multi) {
+      if (next_last >= _region->end_doc) {
+        return;
+      }
+    }
+    Prefetch(docs.back(), next_last);
   }
 
  private:

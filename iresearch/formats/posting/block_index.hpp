@@ -227,11 +227,20 @@ class BlockIndex {
     return PairAt(_run_bound, r);
   }
 
-  uint32_t Find(uint32_t from, doc_id_t target) const noexcept {
-    const auto n = _blocks;
-    if (from >= n || Last(from) >= target) {
+  IRS_FORCE_INLINE uint32_t Find(uint32_t from,
+                                 doc_id_t target) const noexcept {
+    if (from >= _blocks || Last(from) >= target) {
       return from;
     }
+    return FindAfter(from, target);
+  }
+
+ private:
+  static constexpr uint32_t kWindow = 64;
+
+  IRS_NO_INLINE uint32_t FindAfter(uint32_t from,
+                                   doc_id_t target) const noexcept {
+    const auto n = _blocks;
     if (_narrow) {
       return FindNarrow(from, target);
     }
@@ -271,9 +280,6 @@ class BlockIndex {
     }
     return b;
   }
-
- private:
-  static constexpr uint32_t kWindow = 64;
 
   doc_id_t RunBase(uint32_t r) const noexcept {
     return r == 0 ? _base : _run_last[r - 1];

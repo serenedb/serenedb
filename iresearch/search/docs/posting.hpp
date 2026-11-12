@@ -21,11 +21,13 @@
 #pragma once
 
 #include <algorithm>
+#include <cstring>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_batch.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
@@ -61,6 +63,9 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
     if (_at + 16 <= _len) [[likely]] {
       n = detail::CopyBelow16(begin + _at, max, out);
       if (n == 16) [[unlikely]] {
+        if (_len - _at > kBulk && begin[_len - 1] < max) {
+          return CopyRest(out, min, max);
+        }
         n += detail::CopyBelow(begin + _at + 16, begin + _len, max, out + 16);
       }
     } else {
@@ -77,6 +82,25 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
   }
 
  private:
+  static constexpr uint32_t kBulk = 64;
+
+  IRS_NO_INLINE uint32_t CopyRest(doc_id_t* IRS_RESTRICT out, doc_id_t min,
+                                  doc_id_t max) {
+    const auto from = _at + 16;
+    const auto* const first = _block.data() + from;
+    const auto count = _len - from;
+    auto* const dest = out + 16;
+    SDB_ASSERT(count + 16 > kBulk);
+    if (count <= kBulk) {
+      std::memcpy(dest, first, kBulk * sizeof(doc_id_t));
+    } else {
+      std::memcpy(dest, first, count * sizeof(doc_id_t));
+    }
+    _at = _len;
+    _next = doc_limits::invalid();
+    return Refill(out, 16 + count, min, max);
+  }
+
   IRS_NO_INLINE uint32_t Slow(doc_id_t* IRS_RESTRICT out, doc_id_t min,
                               doc_id_t max) {
     const uint32_t emitted = Drain(out, min, max);
@@ -122,10 +146,8 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
         emitted += keep;
         continue;
       }
-      uint32_t stop = 0;
-      while (stop != keep && dest[stop] < max) {
-        ++stop;
-      }
+      const auto stop = static_cast<uint32_t>(
+        LeafLowerBound<kBlock>(dest, keep, dest, max) - dest);
       _len = keep - stop;
       _at = 0;
       std::copy_n(dest + stop, _len, _block.data());

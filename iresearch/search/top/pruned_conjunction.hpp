@@ -218,14 +218,14 @@ class PrunedConjunction : public Root {
       [&](doc_id_t* docs, uint32_t len, score_t* scores, uint32_t block) {
         dropped += block - len;
         seen += block - len;
-        if (const auto required = threshold - others_max; required > 0) {
-          const auto kept =
-            irs::detail::FilterScores(docs, scores, len, required);
-          dropped += len - kept;
-          seen += len - kept;
-          len = kept;
-        }
         if constexpr (kExcludes) {
+          if (const auto required = threshold - others_max; required > 0) {
+            const auto kept =
+              irs::detail::FilterScores(docs, scores, len, required);
+            dropped += len - kept;
+            seen += len - kept;
+            len = kept;
+          }
           len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
         }
         seen += len;
@@ -312,15 +312,15 @@ class PrunedConjunction : public Root {
     if (uint64_t{n} * irs::detail::kSparseInverse < max - min) {
       return kExcludes ? keep(included) : n;
     }
-    irs::detail::PutDocs(min, _window_docs, n, _mask);
-    _joined.Restrict(min, max, _mask);
+    irs::detail::PutDocs(min, _window_docs, n, _mask.data());
+    _joined.Restrict(min, max, _mask.data());
     const auto members = keep([&](doc_id_t member) IRS_FORCE_INLINE {
       const auto offset = member - min;
       return CheckBit(_mask[offset / irs::detail::kWindowBits],
                       offset % irs::detail::kWindowBits) &&
              included(member);
     });
-    irs::detail::Clear(_mask, irs::detail::WindowWords(min, max));
+    irs::detail::Clear(_mask.data(), irs::detail::WindowWords(min, max));
     return members;
   }
 
@@ -369,12 +369,11 @@ class PrunedConjunction : public Root {
       _admit, collector);
   }
 
-  ABSL_CACHELINE_ALIGNED
-  utils::Need<kJoined, uint64_t[irs::detail::kWindowWords]> _mask{};
-  ABSL_CACHELINE_ALIGNED
-  utils::Need<kJoined, doc_id_t[irs::detail::kWindowDocs]> _window_docs;
-  ABSL_CACHELINE_ALIGNED
-  utils::Need<kJoined, uint32_t[irs::detail::kWindowDocs]> _window_freqs;
+  [[no_unique_address]] utils::Need<kJoined, irs::detail::Scratch> _mask{};
+  [[no_unique_address]] utils::Need<kJoined, irs::detail::WindowBuf<doc_id_t>>
+    _window_docs;
+  [[no_unique_address]] utils::Need<kJoined, irs::detail::WindowBuf<uint32_t>>
+    _window_freqs;
   Lead _lead;
   Others _others;
   [[no_unique_address]] Joined _joined;

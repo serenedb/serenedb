@@ -29,6 +29,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -675,7 +676,7 @@ class PhraseMatcher {
       }
     } else if constexpr (N == 2) {
       if (kByDocFreq(_pos.back(), _pos.front())) {
-        absl::c_reverse(_pos);
+        std::swap(_pos.front(), _pos.back());
       }
     } else {
       absl::c_sort(_pos, kByDocFreq);

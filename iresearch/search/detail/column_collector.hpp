@@ -25,6 +25,7 @@
 
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
@@ -63,23 +64,28 @@ class ColumnArgsFetcher {
     _index.clear();
   }
 
-  void FetchScoreBlock(std::span<const doc_id_t, kScoreBlock> docs) {
+  void Fetch(const doc_id_t* docs, scores_size_t n) {
+    SDB_ASSERT(n <= kPostingBlock);
+    for (auto& entry : _columns) {
+      entry.reader->Get(std::span<const doc_id_t>{docs, n},
+                        std::span<uint32_t>{entry.norms, kPostingBlock});
+    }
+  }
+
+  void FetchBlock(const doc_id_t* docs) {
     for (auto& entry : _columns) {
       entry.reader->GetScoreBlock(
-        docs, std::span<uint32_t, kScoreBlock>{entry.norms, kScoreBlock});
+        std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock},
+        std::span<uint32_t, kScoreBlock>{entry.norms, kScoreBlock});
     }
   }
 
-  void FetchPostingBlock(std::span<const doc_id_t, kPostingBlock> docs) {
+  void FetchPostingBlock(const doc_id_t* docs, doc_id_t next_last) {
     for (auto& entry : _columns) {
       entry.reader->GetPostingBlock(
-        docs, std::span<uint32_t, kPostingBlock>{entry.norms, kPostingBlock});
-    }
-  }
-
-  void Fetch(std::span<const doc_id_t> docs) {
-    for (auto& entry : _columns) {
-      entry.reader->Get(docs, std::span<uint32_t>{entry.norms, kPostingBlock});
+        std::span<const doc_id_t, kPostingBlock>{docs, kPostingBlock},
+        std::span<uint32_t, kPostingBlock>{entry.norms, kPostingBlock},
+        next_last);
     }
   }
 
@@ -108,15 +114,24 @@ class ColumnArgsFetcher {
 inline IRS_FORCE_INLINE void FetchAndScore(ColumnArgsFetcher& fetcher,
                                            const ScoreFunction& score,
                                            const doc_id_t* docs,
-                                           score_t* scores, uint32_t n) {
-  if (n == kScoreBlock) {
-    fetcher.FetchScoreBlock(
-      std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
-    score.ScoreBlock(scores);
-  } else {
-    fetcher.Fetch(std::span<const doc_id_t>{docs, n});
-    score.Score(scores, static_cast<scores_size_t>(n));
-  }
+                                           score_t* scores, auto n) {
+  fetcher.Fetch(docs, static_cast<scores_size_t>(n));
+  score.Score(scores, static_cast<scores_size_t>(n));
+}
+
+inline IRS_FORCE_INLINE void FetchAndScoreBlock(ColumnArgsFetcher& fetcher,
+                                                const ScoreFunction& score,
+                                                const doc_id_t* docs,
+                                                score_t* scores) {
+  fetcher.FetchBlock(docs);
+  score.ScoreBlock(scores);
+}
+
+inline IRS_FORCE_INLINE void FetchAndScorePostingBlock(
+  ColumnArgsFetcher& fetcher, const ScoreFunction& score, const doc_id_t* docs,
+  score_t* scores, doc_id_t next_last) {
+  fetcher.FetchPostingBlock(docs, next_last);
+  score.ScorePostingBlock(scores);
 }
 
 }  // namespace irs

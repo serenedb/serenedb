@@ -45,6 +45,26 @@
 namespace irs::detail {
 
 inline IRS_FORCE_INLINE uint32_t
+CopyBelow8(const doc_id_t* IRS_RESTRICT first, doc_id_t max,
+           doc_id_t* IRS_RESTRICT out) noexcept {
+#ifdef __AVX2__
+  const auto ids = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(first));
+  _mm256_storeu_si256(reinterpret_cast<__m256i*>(out), ids);
+  const auto below =
+    static_cast<uint32_t>(_mm256_movemask_ps(_mm256_castsi256_ps(
+      _mm256_cmpgt_epi32(_mm256_set1_epi32(static_cast<int32_t>(max)), ids))));
+  return static_cast<uint32_t>(std::countr_one(below));
+#else
+  uint32_t n = 0;
+  while (n != 8 && first[n] < max) {
+    out[n] = first[n];
+    ++n;
+  }
+  return n;
+#endif
+}
+
+inline IRS_FORCE_INLINE uint32_t
 CopyBelow16(const doc_id_t* IRS_RESTRICT first, doc_id_t max,
             doc_id_t* IRS_RESTRICT out) noexcept {
 #ifdef __AVX2__
@@ -186,20 +206,18 @@ class PostingBatch
     _left_in_list -= len;
   }
 
-  void ScoreBlock(const doc_id_t* docs, score_t* scores) {
+  IRS_FORCE_INLINE void ScoreBlock(const doc_id_t* docs, score_t* scores) {
     static_assert(Scored);
     block_io::ReadBlock<block_io::kFreqBias>(In(), Enc(), _freqs.data);
-    _score.fetcher->FetchPostingBlock(
-      std::span<const doc_id_t, kBlock>{docs, kBlock});
-    _score.score.ScorePostingBlock(scores);
+    FetchAndScorePostingBlock(*_score.fetcher, _score.score, docs, scores,
+                              this->NextLast());
   }
 
   void ScoreTail(const doc_id_t* docs, score_t* scores, uint32_t len) {
     static_assert(Scored);
     block_io::ReadTail<block_io::kFreqBias>(len, In(), Enc(), _freqs.data);
     _provider.freq.value = _freqs.data + (kBlock - len);
-    _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-    _score.score.Score(scores, static_cast<scores_size_t>(len));
+    FetchAndScore(*_score.fetcher, _score.score, docs, scores, len);
     _provider.freq.value = _freqs.data;
   }
 };

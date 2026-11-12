@@ -66,11 +66,12 @@ class PrunedPhrase : public Root {
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    Batch batch;
     auto doc = _slots.Seek(min);
     while (doc < max) {
       const auto threshold = collector.ScoreThreshold();
       if (threshold == std::numeric_limits<score_t>::lowest()) {
-        doc = MatchFirst(doc, max, collector);
+        doc = MatchFirst(doc, max, collector, batch);
         continue;
       }
       if (doc > _block_last) {
@@ -80,16 +81,22 @@ class PrunedPhrase : public Root {
       const auto end = _block_last < max ? _block_last + 1 : max;
       if (_skip != 0) {
         --_skip;
-        doc = MatchFirst(doc, end, collector);
+        doc = MatchFirst(doc, end, collector, batch);
       } else {
-        doc = BoundFirst(doc, end, collector);
+        doc = BoundFirst(doc, end, collector, batch);
       }
     }
-    FlushBatch(collector);
+    FlushBatch(collector, batch);
     _admit.Flush(collector);
   }
 
  private:
+  struct Batch {
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
+    uint32_t size = 0;
+  };
+
   score_t RunScore(const BlockIndex& index, uint32_t r) {
     if (_run != r) {
       _run = r;
@@ -119,26 +126,26 @@ class PrunedPhrase : public Root {
   }
 
   doc_id_t MatchFirst(doc_id_t doc, doc_id_t end,
-                      LoserScoreCollector& collector) {
+                      LoserScoreCollector& collector, Batch& batch) {
     for (uint32_t seen = 0; doc < end && seen != kWindow;
          doc = _slots.Next(doc), ++seen) {
       if (!_slots.Match(doc)) {
         continue;
       }
-      _docs[_batch] = doc;
-      _freqs[_batch] = _slots.Freq();
-      if (++_batch == kScoreBlock) {
-        FetchAndScore(_fetcher, _score, _docs, _scores, kScoreBlock);
-        _admit.AddDocs(collector, _docs, kScoreBlock, _scores);
-        _batch = 0;
+      batch.docs[batch.size] = doc;
+      _freqs[batch.size] = _slots.Freq();
+      if (++batch.size == kScoreBlock) {
+        FetchAndScoreBlock(_fetcher, _score, batch.docs, batch.scores);
+        _admit.AddDocs(collector, batch.docs, kScoreBlock, batch.scores);
+        batch.size = 0;
       }
     }
     return doc;
   }
 
   doc_id_t BoundFirst(doc_id_t doc, doc_id_t end,
-                      LoserScoreCollector& collector) {
-    FlushBatch(collector);
+                      LoserScoreCollector& collector, Batch& batch) {
+    FlushBatch(collector, batch);
     doc = _slots.Gating() ? Bound<true>(doc, end, collector)
                           : Bound<false>(doc, end, collector);
     if (_seen >= kWindow) {
@@ -180,10 +187,12 @@ class PrunedPhrase : public Root {
         return _slots.Next(doc);
       }
     };
+    auto threshold = collector.ScoreThreshold();
+    auto least = LeastFreq(threshold);
     for (; doc < end && _seen < kWindow; doc = next()) {
       ++_seen;
       const auto bound = _slots.FreqBound();
-      if (bound < LeastFreq(collector.ScoreThreshold())) {
+      if (bound < least) {
         continue;
       }
       _freqs[0] = bound;
@@ -191,7 +200,7 @@ class PrunedPhrase : public Root {
         _fetcher.Fetch(doc);
       }
       auto score = _score.Score();
-      if (score <= collector.ScoreThreshold()) {
+      if (score <= threshold) {
         continue;
       }
       ++_passed;
@@ -204,6 +213,8 @@ class PrunedPhrase : public Root {
         score = _score.Score();
       }
       _admit.Add(collector, score, doc);
+      threshold = collector.ScoreThreshold();
+      least = LeastFreq(threshold);
     }
     if constexpr (Gated) {
       return _slots.Seek(doc);
@@ -232,16 +243,14 @@ class PrunedPhrase : public Root {
     _least_score = std::numeric_limits<score_t>::max();
   }
 
-  void FlushBatch(LoserScoreCollector& collector) {
-    if (_batch != 0) {
-      FetchAndScore(_fetcher, _score, _docs, _scores, _batch);
-      _admit.AddDocs(collector, _docs, _batch, _scores);
-      _batch = 0;
+  void FlushBatch(LoserScoreCollector& collector, Batch& batch) {
+    if (batch.size != 0) {
+      FetchAndScore(_fetcher, _score, batch.docs, batch.scores, batch.size);
+      _admit.AddDocs(collector, batch.docs, batch.size, batch.scores);
+      batch.size = 0;
     }
   }
 
-  ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
-  ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
   ABSL_CACHELINE_ALIGNED uint32_t _freqs[kScoreBlock];
   Slots _slots;
   irs::detail::LeafProvider _provider;
@@ -251,7 +260,6 @@ class PrunedPhrase : public Root {
   doc_id_t _block_last = doc_limits::invalid();
   uint32_t _run = std::numeric_limits<uint32_t>::max();
   score_t _run_score = 0;
-  scores_size_t _batch = 0;
   uint32_t _seen = 0;
   uint32_t _passed = 0;
   uint32_t _interval = 1;

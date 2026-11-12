@@ -88,14 +88,14 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
     const auto emit = [&](doc_id_t* IRS_RESTRICT docs, uint32_t len,
                           score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
       if constexpr (kExcludes) {
-        len = irs::detail::FilterScores(docs, scores, len,
-                                        collector.ScoreThreshold());
-        len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
+        len = FilterBlock(docs, scores, len, collector.ScoreThreshold());
       }
       if (len != 0) {
         _admit.AddDocs(collector, docs, len, scores);
       }
-      _threshold = collector.ScoreThreshold();
+      const auto threshold = collector.ScoreThreshold();
+      _threshold = threshold;
+      return _least_score <= threshold;
     };
 
     if (_left_in_list == 0 && _left_in_leaf == 0) {
@@ -114,6 +114,13 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   }
 
  private:
+  IRS_NO_INLINE uint32_t FilterBlock(doc_id_t* IRS_RESTRICT docs,
+                                     score_t* IRS_RESTRICT scores, uint32_t len,
+                                     score_t threshold) {
+    len = irs::detail::FilterScores(docs, scores, len, threshold);
+    return irs::detail::ExcludeBlock(_excludes, docs, scores, len);
+  }
+
   template<typename Visitor>
   IRS_NO_INLINE void FilteredBlocks(doc_id_t min, doc_id_t max, Visitor& emit) {
     Blocks<true>(min, max, emit);
@@ -122,9 +129,10 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   template<bool Filter, typename Visitor>
   IRS_FORCE_INLINE bool Blocks(doc_id_t min, doc_id_t max, Visitor& emit) {
     auto* const end = std::end(_docs);
+    [[maybe_unused]] bool raised = !Filter && _least_score <= _threshold;
     for (;;) {
       if constexpr (!Filter) {
-        if (_least_score <= _threshold) {
+        if (raised) {
           return true;
         }
       }
@@ -166,7 +174,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
         if constexpr (Filter) {
           EmitKept(first, static_cast<uint32_t>(stop - first), emit);
         } else {
-          Emit(first, static_cast<uint32_t>(stop - first), emit);
+          raised = Emit(first, static_cast<uint32_t>(stop - first), emit);
         }
       }
       if (straddles) {

@@ -32,6 +32,8 @@
 namespace irs::detail {
 
 class MaskedLeaf {
+  using Kind = block_io::FillLeaf::Kind;
+
  public:
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
 
@@ -39,7 +41,7 @@ class MaskedLeaf {
     _len = 1;
     _at = kBlock - 1;
     _index = kBlock - 1;
-    _packed = true;
+    _kind = Kind::DocsTail;
   }
 
   void Reset(const block_io::FillLeaf& leaf, const UnalignedWord* bitset,
@@ -48,8 +50,7 @@ class MaskedLeaf {
     _len = len;
     _at = kBlock - len;
     _words = leaf.words;
-    _run = leaf.IsRun();
-    _packed = !leaf.Maskable();
+    _kind = leaf.kind;
     auto rank = kBlock - len;
     for (uint32_t w = 0; w != _words; ++w) {
       _ranks[w] = static_cast<uint8_t>(rank);
@@ -61,24 +62,37 @@ class MaskedLeaf {
 
   uint32_t Len() const noexcept { return _len; }
 
+  template<bool Parked>
   void Materialize(doc_id_t base, doc_id_t* out) const noexcept {
-    if (_packed) {
+    if (block_io::IsDocs(_kind)) {
       return;
     }
-    if (_run) {
+    if (_kind == Kind::Run) {
       block_codec::FillProgression(out, _len, base, 1);
       return;
     }
-    uint64_t words[block_codec::kMaxBitsetWords];
-    std::memcpy(words, _bitset, size_t{_words} * sizeof(uint64_t));
-    block_io::MaterializeBitset(base, words, _words, out);
+    if constexpr (Parked) {
+      uint64_t words[block_codec::kMaxBitsetWords];
+      std::memcpy(words, _bitset, size_t{_words} * sizeof(uint64_t));
+      block_io::MaterializeBitset(base, words, _words, out);
+    } else {
+      block_io::MaterializeBitset(base, _bitset, _words, out);
+    }
   }
 
   IRS_FORCE_INLINE doc_id_t Find(const doc_id_t* docs, doc_id_t base,
                                  doc_id_t target) noexcept {
-    if (_packed) [[likely]] {
-      _at = _index = LowerBound(docs, _at, target);
-      return docs[_index];
+    if (_kind == Kind::DocsBlock) [[likely]] {
+      const auto* const it = BranchlessLowerBound<kBlock>(docs, target);
+      const auto doc = *it;
+      _index = static_cast<uint32_t>(it - docs);
+      return doc;
+    }
+    if (_kind == Kind::DocsTail) {
+      const auto* const it = ScanNotBelow(docs + _at, target);
+      const auto doc = *it;
+      _at = _index = static_cast<uint32_t>(it - docs);
+      return doc;
     }
     return FindMasked(base, target);
   }
@@ -88,7 +102,7 @@ class MaskedLeaf {
                                   const doc_id_t* targets, uint32_t first,
                                   uint32_t end, Mask& hits,
                                   uint32_t* index) noexcept {
-    if (!_packed) [[unlikely]] {
+    if (!block_io::IsDocs(_kind)) [[unlikely]] {
       doc_id_t doc = 0;
       for (auto i = first; i != end; ++i) {
         doc = FindMasked(base, targets[i]);
@@ -129,7 +143,7 @@ class MaskedLeaf {
   IRS_NO_INLINE doc_id_t FindMasked(doc_id_t base, doc_id_t target) noexcept {
     const auto first = base + 1;
     const auto bit = std::max(target, first) - first;
-    if (_run) {
+    if (_kind == Kind::Run) {
       _index = kBlock - _len + bit;
       return first + bit;
     }
@@ -155,8 +169,7 @@ class MaskedLeaf {
   uint32_t _len = 0;
   uint32_t _at = kBlock;
   uint32_t _index = kBlock - 1;
-  bool _run = false;
-  bool _packed = true;
+  Kind _kind = Kind::DocsTail;
   uint8_t _ranks[block_codec::kMaxBitsetWords];
 };
 

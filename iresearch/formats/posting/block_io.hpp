@@ -158,7 +158,8 @@ IRS_FORCE_INLINE void WriteTail(
 
 struct FillLeaf {
   enum class Kind : uint32_t {
-    Docs = 0,
+    DocsBlock = 0,
+    DocsTail,
     Bitset,
     Run,
   };
@@ -168,10 +169,17 @@ struct FillLeaf {
   doc_id_t max;
   Kind kind;
 
-  bool Maskable() const noexcept { return kind != Kind::Docs; }
   bool IsRun() const noexcept { return kind == Kind::Run; }
   bool IsBitset() const noexcept { return kind == Kind::Bitset; }
 };
+
+inline IRS_FORCE_INLINE bool IsDocs(FillLeaf::Kind kind) noexcept {
+  return kind <= FillLeaf::Kind::DocsTail;
+}
+
+inline IRS_FORCE_INLINE FillLeaf::Kind DocsKind(uint32_t len) noexcept {
+  return len == kBlock ? FillLeaf::Kind::DocsBlock : FillLeaf::Kind::DocsTail;
+}
 
 template<typename Input>
 IRS_FORCE_INLINE const UnalignedWord* StableBitset(const FillLeaf& leaf,
@@ -300,7 +308,7 @@ IRS_FORCE_INLINE inline FillLeaf FillAt(uint32_t len, const byte_type* begin,
   auto* const at = out + (kBlock - len);
   end = full ? Codec::DecodeDeltaBlock(begin, prev, at)
              : Codec::DecodeDeltaTail(begin, len, prev, at);
-  return {nullptr, 0, out[kBlock - 1], FillLeaf::Kind::Docs};
+  return {nullptr, 0, out[kBlock - 1], DocsKind(len)};
 }
 
 template<typename InputType>

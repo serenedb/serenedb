@@ -88,7 +88,11 @@ class Walk : public Root {
     if (batch == 0) {
       return;
     }
-    FetchAndScore(_fetcher, _score, _batch, _batch_scores, batch);
+    if (batch == kBatch) {
+      FetchAndScoreBlock(_fetcher, _score, _batch, _batch_scores);
+    } else {
+      FetchAndScore(_fetcher, _score, _batch, _batch_scores, batch);
+    }
     _batched = batch;
   }
 

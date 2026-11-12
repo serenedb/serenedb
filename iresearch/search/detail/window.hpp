@@ -40,8 +40,10 @@ inline constexpr doc_id_t kWindowBits = BitsRequired<uint64_t>();
 inline constexpr doc_id_t kWindowDocs = kWindowWords * kWindowBits;
 inline constexpr uint32_t kSparseInverse = BitsRequired<doc_id_t>();
 inline constexpr uint32_t kSparseWindow = kWindowDocs / kSparseInverse;
+inline constexpr uint32_t kBatchInverse = 8;
 inline constexpr uint64_t kProbeSteps =
   std::countr_zero(doc_limits::kBlockSize) + 2;
+inline constexpr uint32_t kProbeWindow = kWindowDocs / kProbeSteps;
 
 static_assert(kWindowDocs < doc_limits::eof());
 
@@ -57,6 +59,9 @@ struct ABSL_CACHELINE_ALIGNED Scratch {
     return words[i];
   }
 };
+
+template<typename T>
+using WindowBuf = SlackBuf<T, kWindowDocs, 0>;
 
 IRS_FORCE_INLINE constexpr size_t WindowWords(doc_id_t min,
                                               doc_id_t max) noexcept {
@@ -205,6 +210,14 @@ uint32_t SiftByFill(Leaf& leaf, const doc_id_t* in, uint32_t n, doc_id_t* out) {
     } while (++i != n && in[i] < max);
   }
   return kept;
+}
+
+inline IRS_FORCE_INLINE void And(uint64_t* IRS_RESTRICT dst,
+                                 const uint64_t* IRS_RESTRICT src,
+                                 size_t words) noexcept {
+  for (size_t w = 0; w != words; ++w) {
+    dst[w] &= src[w];
+  }
 }
 
 inline IRS_FORCE_INLINE uint32_t FoldAnd(uint64_t* IRS_RESTRICT dst,

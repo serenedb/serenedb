@@ -147,10 +147,9 @@ class PrunedLeaves {
 
   void Fetch(const doc_id_t* docs, uint32_t len) {
     if (len == kScoreBlock) {
-      _fetcher.FetchScoreBlock(
-        std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
+      _fetcher.FetchBlock(docs);
     } else {
-      _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
+      _fetcher.Fetch(docs, static_cast<scores_size_t>(len));
     }
   }
 
@@ -186,7 +185,7 @@ class PrunedLeaves {
         break;
       }
       if (fetched != len) {
-        _fetcher.Fetch(std::span<const doc_id_t>{docs, len});
+        _fetcher.Fetch(docs, static_cast<scores_size_t>(len));
         fetched = len;
       }
       _scorers[_order[i]].template Score<ScoreMergeType::Sum>(
@@ -315,7 +314,7 @@ class PrunedLeaves {
       if (hits == 0) {
         continue;
       }
-      _fetcher.Fetch(std::span<const doc_id_t>{matched.docs, hits});
+      _fetcher.Fetch(matched.docs, static_cast<scores_size_t>(hits));
       leaf.ScoreWith(_scorers[c], matched.freqs, matched.scores, hits);
       for (uint32_t h = 0; h != hits; ++h) {
         scores[matched.slots[h]] += matched.scores[h];

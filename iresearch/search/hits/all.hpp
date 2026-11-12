@@ -47,9 +47,15 @@ class All : public Root {
     for (uint32_t i = 0; i != n; ++i) {
       out[i] = min + i;
     }
-    for (uint32_t offset = 0; offset < n; offset += kScoreBlock) {
+    static_assert(kPostingBlock > kScoreBlock);
+    uint32_t offset = 0;
+    for (; offset + kPostingBlock <= n; offset += kPostingBlock) {
+      FetchAndScorePostingBlock(_fetcher, _score, out + offset, scores + offset,
+                                doc_limits::invalid());
+    }
+    if (offset != n) {
       FetchAndScore(_fetcher, _score, out + offset, scores + offset,
-                    std::min<uint32_t>(n - offset, kScoreBlock));
+                    n - offset);
     }
     return n;
   }

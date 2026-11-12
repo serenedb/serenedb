@@ -67,7 +67,7 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
               std::forward<ExcludesArgs>(excludes)},
       _score{score} {
     if constexpr (kRetracts) {
-      std::fill_n(_scores, detail::kWindowDocs, _score.absorbed);
+      std::fill_n(_scores.data(), detail::kWindowDocs, _score.absorbed);
     }
   }
 
@@ -78,9 +78,10 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
       return _optional.Fill(min, max, mask);
     } else {
       const auto words = detail::WindowWords(min, max);
-      const auto next = Compute(min, max, words);
+      detail::Scratch own;
+      const auto next = Compute(min, max, words, own);
       for (size_t w = 0; w != words; ++w) {
-        mask[w] |= _own[w];
+        mask[w] |= own[w];
       }
       return next;
     }
@@ -90,8 +91,9 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
     requires(!kScored)
   {
     const auto words = detail::WindowWords(min, max);
-    const auto next = Compute(min, max, words);
-    detail::FoldAndNot(mask, _own.data(), words);
+    detail::Scratch own;
+    const auto next = Compute(min, max, words, own);
+    detail::FoldAndNot(mask, own.data(), words);
     return next;
   }
 
@@ -120,10 +122,10 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
   }
 
  private:
-  doc_id_t Compute(doc_id_t min, doc_id_t max, size_t words) {
-    auto* const own = _own.data();
-    detail::Clear(own, words);
-    return FillClauses(min, max, own);
+  doc_id_t Compute(doc_id_t min, doc_id_t max, size_t words,
+                   detail::Scratch& own) {
+    detail::Clear(own.data(), words);
+    return FillClauses(min, max, own.data());
   }
 
   template<ScoreMergeType Inner>
@@ -165,9 +167,9 @@ class BooleanWindow : detail::WindowClauses<Lead, Others, Optional, Excludes> {
     }
   }
 
-  detail::Scratch _own{};
-  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<kRetracts, score_t[detail::kWindowDocs]> _scores{};
+  [[no_unique_address]] utils::Need<kScored, detail::Scratch> _own{};
+  [[no_unique_address]] utils::Need<kRetracts, detail::WindowBuf<score_t>>
+    _scores{};
   [[no_unique_address]] Score _score;
 };
 

@@ -59,7 +59,7 @@ struct Node : memory::Managed {
     SDB_UNREACHABLE();
   }
 
-  virtual uint64_t FillCost(doc_id_t, doc_id_t) { return 0; }
+  virtual bool FillCostAbove(uint64_t, doc_id_t, doc_id_t) { return false; }
 
   virtual detail::BitsetStorage* Folded() noexcept { return nullptr; }
 };

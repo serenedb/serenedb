@@ -79,8 +79,8 @@ Result<Family> MakeBitset(const BooleanGroups& groups, const SubReader& segment,
 template<typename Family, typename Excludes, typename ExcludesArgs,
          typename Ctx>
 Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
-                                 const IndexInput& doc, ExcludesArgs&& excludes,
-                                 const Ctx& ctx) {
+                                 const IndexInput& doc, bool batches,
+                                 ExcludesArgs&& excludes, const Ctx& ctx) {
   SDB_ASSERT(terms.size() >= 2);
   return ResolveInput(doc, [&]<typename Input> -> Result<Family> {
     using Leaf = PostingFill<Input>;
@@ -91,7 +91,7 @@ Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
       ctx, ScoreMergeType::Noop, utils::Empty{},
       std::forward_as_tuple(front, doc, LayoutOf(own),
                             front.docs_count != 1 && BoundsOf(own),
-                            front.docs_count != 1 && FreqOf(own)),
+                            front.docs_count != 1 && FreqOf(own), batches),
       std::forward_as_tuple(
         terms.size() - 1,
         [&](Leaf& leaf, size_t i) {
@@ -312,11 +312,13 @@ Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!kWindowBatches<Family> && !DenseConjunction(terms, docs_count)) {
+  if (kWindowBatches<Family> ? !BatchedConjunction(terms, docs_count)
+                             : !DenseConjunction(terms, docs_count)) {
     return {};
   }
-  return MakeWindowOfTerms<Family, utils::Empty>(terms, *doc,
-                                                 std::forward_as_tuple(), ctx);
+  return MakeWindowOfTerms<Family, utils::Empty>(
+    terms, *doc, !DenseConjunction(terms, docs_count), std::forward_as_tuple(),
+    ctx);
 }
 
 template<typename Result, typename Term, typename Make>
@@ -429,14 +431,16 @@ Result<Family> MakeWindowExclusion(
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!kWindowBatches<Family> && !DenseConjunction(terms, docs_count)) {
+  if (kWindowBatches<Family> ? !BatchedConjunction(terms, docs_count)
+                             : !DenseConjunction(terms, docs_count)) {
     return {};
   }
   return BuildWindowExcludes<Result<Family>>(
     exclude_terms, exclude_filters, nullptr, segment, candidates,
     [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
       return MakeWindowOfTerms<Family, Excludes>(
-        terms, *doc, std::forward<decltype(excludes)>(excludes), ctx);
+        terms, *doc, !DenseConjunction(terms, docs_count),
+        std::forward<decltype(excludes)>(excludes), ctx);
     });
 }
 

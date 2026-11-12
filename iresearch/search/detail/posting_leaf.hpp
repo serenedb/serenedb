@@ -119,6 +119,7 @@ struct FreqLen {
 struct LeafScore {
   ColumnArgsFetcher* fetcher = nullptr;
   ScoreFunction score;
+  doc_id_t next_last = doc_limits::invalid();
 };
 
 struct LeafCursor {
@@ -165,10 +166,10 @@ IRS_FORCE_INLINE const doc_id_t* AddUntil(
   const score_t* IRS_RESTRICT scores, doc_id_t min, doc_id_t max,
   uint32_t* IRS_RESTRICT counts, uint64_t* IRS_RESTRICT mask,
   score_t* IRS_RESTRICT window) noexcept {
-  for (; begin != end && *begin < max; ++begin, ++scores) {
+  SDB_ASSERT(begin != end && *(end - 1) >= max);
+  for (; *begin < max; ++begin, ++scores) {
     AddDoc<MergeType, Counts>(*begin, *scores, min, counts, mask, window);
   }
-  SDB_ASSERT(begin != end);
   return begin;
 }
 
@@ -410,6 +411,9 @@ class PostingLeaf {
       _left_in_leaf = kBlock;
       _left_in_list -= kBlock;
       TakeFreqs(kBlock);
+      if constexpr (Shape.scored) {
+        _score.next_last = NextLast();
+      }
     } else {
       const auto tail = _left_in_list;
       block_io::ReadTailDelta(tail, in, Enc(), _docs, prev);
@@ -432,23 +436,29 @@ class PostingLeaf {
     }
     block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
     if constexpr (Score) {
+      _score.next_last = NextLast();
       ScoreLeaf(kBlock - len, len);
     }
     return true;
   }
 
-  void ScoreLeaf(uint32_t offset, uint32_t len) {
+  IRS_FORCE_INLINE doc_id_t NextLast() const noexcept {
+    if (_left_in_list == 0 || !_walk.Armed() || _walk.Pending()) {
+      return doc_limits::invalid();
+    }
+    return _walk.Index().Last(_walk.NextBlock(_left_in_list));
+  }
+
+  IRS_FORCE_INLINE void ScoreLeaf(uint32_t offset, uint32_t len) {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     const auto* const docs = _docs + offset;
     if (len == kBlock) {
-      _score.fetcher->FetchPostingBlock(
-        std::span<const doc_id_t, kBlock>{docs, kBlock});
-      _score.score.ScorePostingBlock(Scores());
+      FetchAndScorePostingBlock(*_score.fetcher, _score.score, docs, Scores(),
+                                _score.next_last);
       return;
     }
     _provider.freq.value = _freqs.data + offset;
-    _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
-    _score.score.Score(Scores() + offset, static_cast<scores_size_t>(len));
+    FetchAndScore(*_score.fetcher, _score.score, docs, Scores() + offset, len);
     _provider.freq.value = _freqs.data;
   }
 
@@ -485,10 +495,16 @@ class PostingLeaf {
 
   doc_id_t Scan(doc_id_t target) {
     const auto* const end = std::cend(_docs);
-    const auto* const it = ScanNotBelow(end - _left_in_leaf, end, target);
-    SDB_ASSERT(it != end);
-    _left_in_leaf = static_cast<uint32_t>(end - it) - 1;
-    return _doc = *it;
+    SDB_ASSERT(_left_in_leaf != 0 && _last >= target);
+    auto left = _left_in_leaf;
+    auto doc = *(end - left);
+    if (doc < target) [[unlikely]] {
+      do {
+        doc = *(end - --left);
+      } while (doc < target);
+    }
+    _left_in_leaf = left - 1;
+    return _doc = doc;
   }
 
   template<typename Read>
@@ -498,13 +514,13 @@ class PostingLeaf {
       if (_left_in_list == 0) [[unlikely]] {
         return false;
       }
-      const auto& index = _walk.Index();
       const auto next = _walk.NextBlock(_left_in_list);
-      if (index.Last(next) >= target) {
+      const auto block = _walk.Index().Find(next, target);
+      if (block == next) {
         read(_last);
         return true;
       }
-      _left_in_list = _walk.MoveTo(index.Find(next + 1, target));
+      _left_in_list = _walk.MoveTo(block);
       if (_left_in_list == 0) [[unlikely]] {
         return false;
       }
@@ -599,9 +615,6 @@ class PostingLeaf {
     return {.leaf = leaf, .bitset = bitset, .len = len};
   }
 
-  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
-                                    GrowingHint> _hint;
-  BlockCursor _walk;
   [[no_unique_address]] utils::Need<kEnc, EncBuf> _enc;
   [[no_unique_address]] utils::Need<Shape.holes, HoleBuf> _holes;
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
@@ -618,6 +631,9 @@ class PostingLeaf {
     _provider;
   [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
+  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
+                                    GrowingHint> _hint;
+  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

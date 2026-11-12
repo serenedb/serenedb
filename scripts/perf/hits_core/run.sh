@@ -120,11 +120,11 @@ fi
 if has bulk; then
 	explain ctas "CREATE TABLE hits$WITH AS SELECT $SEL FROM $SRC$LIMIT"
 	run_timed bulk.ctas "CREATE TABLE hits$WITH AS SELECT $SEL FROM $SRC$LIMIT"
-	run_timed bulk.index "CREATE INDEX hits_idx ON hits USING inverted (searchphrase hb_dict, title hb_dict)"
+	index_timed bulk.index "CREATE INDEX hits_idx ON hits USING inverted (searchphrase hb_dict, title hb_dict)" hits_idx hits
 	q "CREATE TABLE hits_pk ($DDL, PRIMARY KEY (watchid))$WITH"
 	explain load_pk "INSERT INTO hits_pk SELECT $SEL FROM $SRC$LIMIT"
 	run_timed bulk.load_pk "INSERT INTO hits_pk SELECT $SEL FROM $SRC$LIMIT"
-	run_timed bulk.index_pk "CREATE INDEX hits_pk_idx ON hits_pk USING inverted (searchphrase hb_dict, title hb_dict)"
+	index_timed bulk.index_pk "CREATE INDEX hits_pk_idx ON hits_pk USING inverted (searchphrase hb_dict, title hb_dict)" hits_pk_idx hits_pk
 	counts load
 fi
 

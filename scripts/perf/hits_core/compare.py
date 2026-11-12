@@ -55,7 +55,7 @@ def main():
         value = row[index] if index < len(row) else ""
         return number(value), value or "-"
 
-    print("time-like rows: ms (bulk/dml: wall, cpu s, background cpu s), lower is better; ratio = best main / branch")
+    print("time-like rows: ms (bulk/dml: wall, for an index until it has every row; cpu s; background cpu s), lower is better; ratio = best main / branch")
     print(f"{'case':44} " + " ".join(f"{s:>24}" for s in SIDES) + "  branch vs best main")
     for name in names:
         if name.startswith("small."):

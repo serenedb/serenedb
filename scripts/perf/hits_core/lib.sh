@@ -137,6 +137,33 @@ run_timed() {
 	echo "$name: ${ms} ms, cpu ${cpu} s, background ${BG_CPU_S} s over ${SETTLE_S} s"
 }
 
+index_timed() {
+	local name=$1 sql=$2 index=$3 table=$4 out want got t0 ready c0 cpu
+	want=$(qa "SELECT count(*) FROM $table")
+	c0=$(server_ticks)
+	t0=$(date +%s%N)
+	if ! out=$("${PSQL[@]}" -c "$sql" 2>&1); then
+		record "$name" FAIL "$(printf '%s' "$out" | tr '\n\t' '  ' | cut -c1-300)"
+		echo "FAIL $name: $out" >&2
+		return 0
+	fi
+	for _ in $(seq 1 36000); do
+		got=$(qa "SELECT count(*) FROM $index")
+		[ "$got" = "$want" ] && break
+		timeout 0.1 tail -f /dev/null || true
+	done
+	ready=$(echo "scale=1; ($(date +%s%N) - $t0) / 1000000" | bc)
+	cpu=$(echo "scale=2; ($(server_ticks) - $c0) / $CLK_TCK" | bc)
+	if [ "$got" != "$want" ]; then
+		record "$name" FAIL "index has $got of $want rows after ${ready} ms"
+		echo "FAIL $name: index has $got of $want rows after ${ready} ms" >&2
+		return 0
+	fi
+	settle
+	record "$name" "$ready" "$cpu" "$BG_CPU_S" "$SETTLE_S"
+	echo "$name: ${ready} ms until the index has all $want rows, cpu ${cpu} s, background ${BG_CPU_S} s over ${SETTLE_S} s"
+}
+
 q() {
 	"${PSQL[@]}" -c "$1"
 }

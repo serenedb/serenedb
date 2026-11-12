@@ -3148,6 +3148,21 @@ SELECT a FROM tsq_idx WHERE b @@ 'my_fn(1)'::tsquery ORDER BY a;
 ----
 a
 
+statement ok
+CREATE TABLE tsq_typed (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX tsq_typed_idx ON tsq_typed USING inverted(a, b tsq_english);
+
+statement ok
+INSERT INTO tsq_typed VALUES (1, 'quick fox'), (2, 'tsquery cat');
+
+query
+SELECT a FROM tsq_typed WHERE b @@ 'tsquery ''fox''' ORDER BY a;
+----
+a
+1
+
 # Over the structured-text size cap the value falls back to leaf tokens.
 query
 SELECT a FROM tsq_idx WHERE b @@ ('ts_like(''qui%'')' || repeat(' ', 70000))::tsquery ORDER BY a;

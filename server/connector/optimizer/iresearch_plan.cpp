@@ -503,8 +503,7 @@ irs::field_id SingleColumnKey(const connector::ScanBindData& scan,
     return irs::field_limits::invalid();
   }
   for (const auto& key : scan.relation.ScannedIndex().constraint_keys) {
-    if (key.columns.size() == 1 && key.columns.front() == col_id &&
-        (key.expressions.empty() || key.expressions.front().empty())) {
+    if (catalog::IsSingleColumnKey(key) && key.columns.front() == col_id) {
       return key.field;
     }
   }

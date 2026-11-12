@@ -759,7 +759,7 @@ absl::Status Transactions::TruncateLog(LogCycle cycle,
 }
 
 Lsn Transactions::ReservedEnd() const {
-  return _log && !_replaying ? _log->Reserved() : 0;
+  return _log && !_replaying ? _log->End() : 0;
 }
 
 void Transactions::Open(std::unique_ptr<Log> log) {

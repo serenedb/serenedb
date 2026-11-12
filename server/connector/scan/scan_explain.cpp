@@ -90,8 +90,7 @@ const catalog::ConstraintKey* KeyOfField(const ScanBindData& bind_data,
     return nullptr;
   }
   for (const auto& key : bind_data.relation.ScannedIndex().constraint_keys) {
-    if (key.field == field && key.columns.size() == 1 &&
-        (key.expressions.empty() || key.expressions.front().empty())) {
+    if (key.field == field && catalog::IsSingleColumnKey(key)) {
       return &key;
     }
   }

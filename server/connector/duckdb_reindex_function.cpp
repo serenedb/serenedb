@@ -974,17 +974,15 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
   catalog::ThrowIfReadOnly(target.index->catalog, "REINDEX");
-  auto* progress = &conn_ctx.Progress();
-  progress->SetCommand(pg::ProgressCommand::Reindex);
-  progress->SetPhase(pg::progress_phase::Reindex::WaitingForReindex);
-  pg::ProgressMetrics::Set(progress->relid,
+  auto& progress = conn_ctx.Progress();
+  progress.SetCommand(pg::ProgressCommand::Reindex);
+  progress.SetPhase(pg::progress_phase::Reindex::WaitingForReindex);
+  pg::ProgressMetrics::Set(progress.relid,
                            static_cast<int64_t>(target.relation_id));
-  pg::ProgressMetrics::Set(progress->current_relid,
+  pg::ProgressMetrics::Set(progress.current_relid,
                            static_cast<int64_t>(target.index->oid));
   const auto claim = storage->ClaimReindex(context);
-  if (progress) {
-    progress->SetPhase(pg::progress_phase::Reindex::Refreshing);
-  }
+  progress.SetPhase(pg::progress_phase::Reindex::Refreshing);
   for (uint64_t attempt = 1;; ++attempt) {
     context.InterruptCheck();
     ReindexSession session{conn_ctx.user(),          conn_ctx.GetRoleId(),

@@ -453,8 +453,6 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   std::optional<ColumnPlan> plan;
   for (size_t k = 0; k < slice_count; ++k) {
     auto slice = std::make_unique<Slice>();
-    // Exclusive: FlushAndFsync hands back exactly this slice's segments, and
-    // they must not share one with a concurrent writer.
     slice->trx = shard.GetTransaction();
     slice->sink =
       MakeSearchTableInsertSink(slice->trx, shard, *target.catalog, context);

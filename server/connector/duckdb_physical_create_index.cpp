@@ -99,6 +99,9 @@ enum class PkShape : uint8_t {
 };
 
 struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
+  explicit CreateIndexGlobalState(pg::ProgressMetrics& progress)
+    : progress{progress} {}
+
   duckdb::idx_t database_id;
   duckdb::idx_t index_id;
   std::string index_name;
@@ -126,7 +129,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   search::Store::BuildClaim build_claim;
   std::optional<search::KeySpec> unique_key;
 
-  pg::ProgressMetrics* progress = nullptr;
+  pg::ProgressMetrics& progress;
 };
 
 struct CreateIndexLocalState final : public duckdb::LocalSinkState {
@@ -157,11 +160,11 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
-  auto state = duckdb::make_uniq<CreateIndexGlobalState>();
+  auto& metrics = ConnectionContext::Get(context).Progress();
+  auto state = duckdb::make_uniq<CreateIndexGlobalState>(metrics);
   state->database_id = _database_id;
   state->index_name = _info->GetIndexName().GetIdentifierName();
 
-  auto& metrics = ConnectionContext::Get(context).Progress();
   metrics.SetCommand(pg::ProgressCommand::CreateIndex);
   metrics.SetPhase(pg::progress_phase::CreateIndex::Initializing);
   pg::ProgressMetrics::Set(metrics.relid, static_cast<int64_t>(_relation.oid));
@@ -169,7 +172,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     pg::ProgressMetrics::Set(metrics.tuples_total,
                              static_cast<int64_t>(estimated_cardinality));
   }
-  state->progress = &metrics;
 
   auto resolve_column = [&](std::string_view col_name) {
     for (const auto& name : _info->names) {
@@ -330,9 +332,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
 
   state->index_id = created_id;
-  if (state->progress) {
-    state->progress->SetPhase(pg::progress_phase::CreateIndex::BuildingIndex);
-  }
+  state->progress.SetPhase(pg::progress_phase::CreateIndex::BuildingIndex);
 
   // Off the entry, which owns the definition the store merely points at.
   state->pk_column = created->Cast<catalog::InvertedIndexEntry>().Config()->pk;
@@ -488,10 +488,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots);
 
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
-  if (gstate.progress) {
-    pg::ProgressMetrics::Add(gstate.progress->tuples_processed, num_rows);
-    SDB_WAIT_ON_FAILURE("pause_create_index_mid_build");
-  }
+  pg::ProgressMetrics::Add(gstate.progress.tuples_processed, num_rows);
+  SDB_WAIT_ON_FAILURE("pause_create_index_mid_build");
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
@@ -533,7 +531,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
   if (gstate.search_backfill) {
     SDB_ASSERT(gstate.search_backfill->shard->BuildInFlight());
-    RunSearchTableBackfill(context, *gstate.search_backfill, gstate.progress);
+    RunSearchTableBackfill(context, *gstate.search_backfill, &gstate.progress);
     const auto& table = _relation.Cast<catalog::SearchTableEntry>();
     if (gstate.unique_key) {
       search::VerifyUniqueKey(context, table.RowsWithOwn(context).Reader(),
@@ -542,18 +540,14 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     table.AdoptAsWritten(context);
     gstate.build_claim.Finish();
   }
-  if (gstate.progress) {
-    gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
-  }
+  gstate.progress.SetPhase(pg::progress_phase::CreateIndex::Committing);
   if (gstate.index_storage && gstate.file_manifest) {
     ConnectionContext::Get(context).Transaction().SearchTxn().SetManifest(
       gstate.index_storage, gstate.file_manifest);
   }
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
 
-  if (gstate.progress) {
-    gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
-  }
+  gstate.progress.SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   SDB_WAIT_ON_FAILURE("pause_create_index_before_commit");
   if (!IsReindexPass()) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }

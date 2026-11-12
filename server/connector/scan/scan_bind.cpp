@@ -80,9 +80,8 @@ FieldSet UniqueTermFields(const ScanBindData& bind) {
   for (const auto& spec :
        bind.relation.table_entry->Cast<catalog::SearchTableEntry>()
          .KeySpecs()) {
-    if (spec.kind != search::KeyKind::Unique || spec.key.columns.size() != 1 ||
-        (!spec.key.expressions.empty() &&
-         !spec.key.expressions.front().empty())) {
+    if (spec.kind != search::KeyKind::Unique ||
+        !catalog::IsSingleColumnKey(spec.key)) {
       continue;
     }
     fields.insert(spec.key.field);
@@ -681,10 +680,8 @@ std::optional<uint64_t> UniqueColumnBound(const ScanBindData& scan,
         scan.relation.table_entry->Cast<catalog::SearchTableEntry>().KeySpecs(),
         [&](const auto& spec) {
           return spec.kind == search::KeyKind::Unique &&
-                 spec.key.columns.size() == 1 &&
-                 spec.key.columns.front() == column &&
-                 (spec.key.expressions.empty() ||
-                  spec.key.expressions.front().empty());
+                 catalog::IsSingleColumnKey(spec.key) &&
+                 spec.key.columns.front() == column;
         })) {
     return std::nullopt;
   }

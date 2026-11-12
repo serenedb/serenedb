@@ -90,7 +90,7 @@ class Log {
     return _history_bytes.load(std::memory_order_relaxed);
   }
 
-  Lsn Reserved() const {
+  Lsn End() const {
     absl::MutexLock lock{&_mutex};
     return _reserved;
   }
@@ -98,8 +98,6 @@ class Log {
   Lsn Durable() const noexcept {
     return _durable.load(std::memory_order_acquire);
   }
-
-  Lsn End() const { return Reserved(); }
 
   Lsn Appended() const {
     absl::MutexLock lock{&_mutex};
@@ -112,7 +110,7 @@ class Log {
   Lsn NewestChunk() const noexcept {
     return _newest.load(std::memory_order_relaxed);
   }
-  uint64_t Size() const { return Reserved() - Oldest(); }
+  uint64_t Size() const { return End() - Oldest(); }
 
   bool HasNext() const noexcept {
     return _has_next.load(std::memory_order_relaxed);

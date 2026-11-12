@@ -118,6 +118,11 @@ struct ConstraintKey {
   std::vector<std::string> expressions;
 };
 
+inline bool IsSingleColumnKey(const ConstraintKey& key) noexcept {
+  return key.columns.size() == 1 &&
+         (key.expressions.empty() || key.expressions.front().empty());
+}
+
 struct ExpressionKeys {
   const InvertedIndexKey* term = nullptr;
   const InvertedIndexKey* stored = nullptr;

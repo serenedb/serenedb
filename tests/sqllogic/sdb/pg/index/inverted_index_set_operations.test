@@ -1,0 +1,112 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY so_dict AS split_text(case := 'lower') WITH (frequency, position, offset)
+
+
+statement ok
+CREATE TABLE so (id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+INSERT INTO so VALUES (1, 'alpha beta'), (2, 'alpha'), (3, 'beta')
+
+
+statement ok
+CREATE INDEX so_idx ON so USING inverted(id, body so_dict)
+
+
+statement ok
+VACUUM (FLUSH_TABLE) so
+
+
+statement ok
+CREATE TABLE so_plain (id INTEGER, body VARCHAR)
+
+
+statement ok
+INSERT INTO so_plain VALUES (1, 'alpha beta'), (2, 'alpha'), (3, 'beta')
+
+
+query
+SELECT id, body FROM so_idx WHERE body @@ 'alpha' EXCEPT SELECT id, body FROM so_plain
+----
+id	body
+
+
+query
+SELECT id, body FROM so_idx WHERE body @@ 'alpha' INTERSECT SELECT id, body FROM so_plain ORDER BY id
+----
+id	body
+1	alpha beta
+2	alpha
+
+
+query
+SELECT id, body FROM so_idx WHERE body @@ 'alpha' EXCEPT ALL SELECT * FROM (VALUES (1, 'alpha beta')) v(id, body) ORDER BY id
+----
+id	body
+2	alpha
+
+
+query
+SELECT id, body FROM so_plain INTERSECT ALL SELECT id, body FROM so_idx WHERE body @@ 'beta' ORDER BY id
+----
+id	body
+1	alpha beta
+3	beta
+
+
+query
+SELECT id, body FROM so WHERE body @@ 'alpha' EXCEPT SELECT id, body FROM so_plain WHERE id = 1 ORDER BY id
+----
+id	body
+2	alpha
+
+
+query
+SELECT id, body FROM so_idx WHERE body @@ 'alpha' INTERSECT SELECT id, body FROM so_plain WHERE id > 1 ORDER BY id
+----
+id	body
+2	alpha
+
+
+query
+SELECT id, body FROM (SELECT id, body FROM so_idx) s WHERE body @@ 'alpha' INTERSECT SELECT id, body FROM so_plain ORDER BY id
+----
+id	body
+1	alpha beta
+2	alpha
+
+
+statement ok
+CREATE VIEW so_view AS SELECT id, body FROM so_idx
+
+
+query
+SELECT id, body FROM so_view WHERE body @@ 'beta' EXCEPT SELECT id, body FROM so_plain WHERE id = 3 ORDER BY id
+----
+id	body
+1	alpha beta
+
+
+query
+SELECT id, body FROM so_idx WHERE body @@ 'alpha' EXCEPT SELECT id, body FROM so
+----
+id	body
+
+
+statement ok
+DROP VIEW so_view
+
+
+statement ok
+DROP TABLE so_plain
+
+
+statement ok
+DROP TABLE so
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY so_dict

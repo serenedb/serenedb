@@ -358,7 +358,7 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
       const auto& unit = units[u];
       const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,
                                                 unit.count};
-      auto fetched = FetchHits(ctx, g, l, unit.seg, part,
+      auto fetched = FetchHits(ctx, g, l, l.fetch_tmp, unit.seg, part,
                                u == 0 || units[u - 1].seg != unit.seg);
       MaterializeHits(ctx, g, l, *fetched.chunk, *fetched.pk, part, batch,
                       row_hits);
@@ -371,7 +371,6 @@ void InitAnnGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
   auto& a = g.ann;
   t.limit = *g.top_k;
   t.offset = g.top_offset;
-  t.shared_fetch = g.has_lookup_filter || t.limit > STANDARD_VECTOR_SIZE;
   const auto* vs = g.vector_scorer;
   SDB_ASSERT(vs);
   const auto k = static_cast<double>(*g.top_k);
@@ -413,22 +412,14 @@ void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l,
   BuildOffsetsEntries(l, input, g.Bind());
 }
 
-void RunAnnScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
+void RunAnnScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput&,
                 ScanGlobalState& g, AnnLocalState& l,
                 duckdb::DataChunk& output) {
-  if (!RunPrepareStage(input, g, l)) {
+  if (!RunPrepareStage(g, l)) {
     return;
   }
-  if (!l.published) {
-    while (NextLiveUnit(g, l)) {
-      CollectUnit(g, l);
-      FinishUnit(g, l);
-    }
-    PublishHits(g, l);
-    l.published = true;
-    g.topk.published.fetch_add(1, std::memory_order_acq_rel);
-  }
-  RunAnswerStages(ctx, input, g, l, output, [&] {
+  CollectRanked(g, l, [&] { CollectUnit(g, l); }, [&] { PublishHits(g, l); });
+  RunAnswerStages(ctx, g, l, output, [&] {
     Merge(g);
     FillShortAnswer(g, l);
   });

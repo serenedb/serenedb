@@ -138,23 +138,25 @@ class ScanBarrier {
     return _arrived.fetch_add(1, std::memory_order_acq_rel) + 1 == _total;
   }
 
-  bool Released() const noexcept {
-    return _released.load(std::memory_order_acquire);
+  bool Released() const noexcept { return _notification.HasBeenNotified(); }
+
+  bool Failed() const noexcept {
+    return _failed.load(std::memory_order_acquire);
   }
 
-  void Release(duckdb::TableFunctionInput& input);
+  void Release() noexcept { Finish(false); }
 
-  bool Park(duckdb::TableFunctionInput& input, duckdb::ClientContext& context);
-
-  void Resume() const noexcept;
+  void Abandon() noexcept { Finish(true); }
 
   void Wait();
 
  private:
+  void Finish(bool failed) noexcept;
+
   std::atomic_uint32_t _arrived{0};
   uint32_t _total = 0;
-  std::atomic_bool _released{false};
-  std::atomic_int64_t _released_at{0};
+  std::atomic_bool _finished{false};
+  std::atomic_bool _failed{false};
   absl::Notification _notification;
 };
 
@@ -289,10 +291,9 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     uint32_t pool = 0;
     std::vector<irs::ScoreDoc> hits;
     std::unique_ptr<std::atomic_uint32_t[]> accepted;
+    std::atomic_uint32_t claimers{0};
     std::atomic_uint32_t published{0};
-    ScanBarrier merge_barrier;
     std::atomic_bool merge_taken{false};
-    bool shared_fetch = false;
 
     struct FetchUnit {
       uint32_t seg;
@@ -304,10 +305,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     uint32_t verify_first = std::numeric_limits<uint32_t>::max();
     std::vector<FetchUnit> fetch_units;
     std::atomic_uint32_t next_fetch_unit{0};
-    std::atomic_uint32_t fetch_done{0};
     std::vector<std::unique_ptr<duckdb::DataChunk>> fetched;
     std::vector<std::unique_ptr<duckdb::Vector>> fetched_pk;
-    std::atomic_bool emit_taken{false};
     duckdb::idx_t offset = 0;
     duckdb::idx_t limit = 0;
   };
@@ -364,7 +363,6 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t batch_next = 0;
   uint32_t batch_end = 0;
   uint32_t finished_segments = 0;
-  const ScanBarrier* parked_on = nullptr;
   bool has_unit = false;
   ScanUnit unit;
   bool units_exhausted = false;
@@ -425,6 +423,7 @@ struct RankedLocalState : public ScanLocalState, FetchLocalState {
   irs::memory::managed_ptr<irs::memory::Managed> root;
   uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   irs::doc_id_t root_end = 0;
+  bool claimed = false;
   bool published = false;
   bool emitter = false;
   duckdb::idx_t emitted = 0;
@@ -459,8 +458,7 @@ struct TsDictLocalState;
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState* l,
                                             uint32_t seg_idx);
-bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
-                     ScanLocalState& l);
+bool RunPrepareStage(ScanGlobalState& g, ScanLocalState& l);
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
@@ -544,7 +542,7 @@ std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
   std::span<const irs::ScoreDoc> hits, uint64_t rg_size);
 void PlanFetch(ScanGlobalState& g);
 FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                      RankedLocalState& l, uint32_t seg,
+                      FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
                       std::span<const irs::ScoreDoc> hits, bool rebind);
 void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      RankedLocalState& l, const duckdb::DataChunk& fetched,
@@ -553,8 +551,10 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      std::vector<irs::ScoreDoc>& row_hits);
 void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
                 RankedLocalState& l, std::vector<irs::ScoreDoc>& row_hits);
-void RunAnswerStages(duckdb::ClientContext& ctx,
-                     duckdb::TableFunctionInput& input, ScanGlobalState& g,
+void CollectRanked(ScanGlobalState& g, RankedLocalState& l,
+                   absl::FunctionRef<void()> collect,
+                   absl::FunctionRef<void()> publish);
+void RunAnswerStages(duckdb::ClientContext& ctx, ScanGlobalState& g,
                      RankedLocalState& l, duckdb::DataChunk& output,
                      absl::FunctionRef<void()> merge);
 

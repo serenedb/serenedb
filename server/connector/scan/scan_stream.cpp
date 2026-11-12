@@ -157,10 +157,10 @@ bool Deliver(duckdb::ClientContext& ctx, ScanGlobalState& g,
 
 }  // namespace
 
-void RunStreamScan(duckdb::ClientContext& ctx,
-                   duckdb::TableFunctionInput& input, ScanGlobalState& g,
-                   StreamLocalState& l, duckdb::DataChunk& output) {
-  if (!RunPrepareStage(input, g, l)) {
+void RunStreamScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput&,
+                   ScanGlobalState& g, StreamLocalState& l,
+                   duckdb::DataChunk& output) {
+  if (!RunPrepareStage(g, l)) {
     return;
   }
   l.EnsureHitBatcher(g);

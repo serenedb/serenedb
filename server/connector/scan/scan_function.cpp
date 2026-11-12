@@ -435,10 +435,6 @@ void IResearchScanFunction(duckdb::ClientContext& context,
   }
   const bool reorder = !g.output_projection_ids.empty();
   auto& base = data.local_state->Cast<ScanLocalState>();
-  if (base.parked_on) {
-    base.parked_on->Resume();
-    base.parked_on = nullptr;
-  }
   if (reorder) {
     if (base.scan_chunk.ColumnCount() == 0) {
       base.scan_chunk.Initialize(context, g.projected_types);

@@ -213,18 +213,22 @@ std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
                                    const irs::Filter& filter,
                                    const std::vector<std::string>& names) {
   // Nothing here scores, so there is no collector and no statistics.
+  irs::QueryMemory query_memory;
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(filter.PrepareSegment(segment, {}));
+    queries.emplace_back(
+      filter.PrepareSegment(segment, {.memory = query_memory}));
   }
+  irs::PlanMemory plan_memory;
   std::vector<std::string> hits;
   for (size_t seg = 0; seg != queries.size(); ++seg) {
+    plan_memory.Rewind();
     auto& query = queries[seg];
     if (!query) {
       continue;
     }
-    auto plan = query->PlanDocs({});
+    auto plan = query->PlanDocs({.memory = plan_memory});
     if (!plan) {
       continue;
     }

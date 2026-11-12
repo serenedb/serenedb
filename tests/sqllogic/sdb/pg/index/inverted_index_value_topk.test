@@ -1,0 +1,523 @@
+# ORDER BY one indexed numeric column with a constant LIMIT is answered by the
+# scan: it reads the column's terms in value order and stops after LIMIT +
+# OFFSET live rows, instead of a TOP_N over every row. A filter on another
+# column, a second key, a computed key or a parameter keep the TOP_N. v holds
+# every value once, so ids are unique except among NULLs.
+
+statement ok
+CREATE TABLE vt (id INTEGER PRIMARY KEY, v BIGINT, w INTEGER, s INTEGER,
+                 ts TIMESTAMP)
+
+
+statement ok
+CREATE INDEX vt_idx ON vt USING inverted (id, v, w, ts) INCLUDE (s)
+  WITH (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO vt
+SELECT i, CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 37) % 401 END, i % 7, i,
+       TIMESTAMP '2024-01-01' + i * INTERVAL '5 hours'
+FROM range(1, 201) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vt
+
+
+statement ok
+INSERT INTO vt
+SELECT i, CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 37) % 401 END, i % 7, i,
+       TIMESTAMP '2024-01-01' + i * INTERVAL '5 hours'
+FROM range(201, 401) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vt
+
+
+statement ok
+DELETE FROM vt WHERE id % 13 = 0
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vt
+
+
+# --- The scan takes the TOP_N.
+
+query
+EXPLAIN SELECT id, v FROM vt_idx ORDER BY v LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ───────╮
+│ Key: rowid          │
+│ ~3 rows             │
+╰──────────┬──────────╯
+           ├──────────────────────╮
+╭─ IRESEARCH_SCAN ────╮  ╭─ INDEX_SOURCE ──╮
+│ Index: vt_idx       │  │ Lookup: table   │
+│ Lookup: table       │  │ Projections: id │
+│ Top: 3              │  │ ~3 rows         │
+│ Order: v NULLS LAST │  ╰─────────────────╯
+│ Projections: v, pk  │
+│ ~370 rows           │
+╰─────────────────────╯
+
+
+query
+SELECT id, v FROM vt_idx ORDER BY v LIMIT 3;
+----
+id	v
+336	1
+271	2
+206	3
+
+
+query
+EXPLAIN SELECT v FROM vt_idx ORDER BY v DESC LIMIT 4 OFFSET 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: vt_idx            │
+│ Lookup: table            │
+│ Top: 4, offset 2         │
+│ Order: v DESC NULLS LAST │
+│ Projections: v           │
+│ ~370 rows                │
+╰──────────────────────────╯
+
+
+query
+SELECT v FROM vt_idx ORDER BY v DESC LIMIT 4 OFFSET 2;
+----
+v
+392
+391
+390
+389
+
+
+# 37 live rows hold NULL: the offset skips 35 of them.
+
+query
+SELECT v FROM vt_idx ORDER BY v NULLS FIRST LIMIT 3 OFFSET 35;
+----
+v
+NULL
+NULL
+1
+
+
+query
+SELECT v FROM vt_idx ORDER BY v DESC NULLS FIRST LIMIT 2;
+----
+v
+NULL
+NULL
+
+
+query
+EXPLAIN SELECT id, v FROM vt_idx WHERE v > 390 ORDER BY v LIMIT 5;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────╮
+│ Key: rowid            │
+│ ~5 rows               │
+╰───────────┬───────────╯
+            ├───────────────────────╮
+╭─ IRESEARCH_SCAN ──────╮  ╭─ INDEX_SOURCE ──╮
+│ Index: vt_idx         │  │ Lookup: table   │
+│ Lookup: table         │  │ Projections: id │
+│ Index Filter:         │  │ ~5 rows         │
+│ ╭─ Granular Range ──╮ │  ╰─────────────────╯
+│ │ Field: v(numeric) │ │
+│ │ Range: >390       │ │
+│ ╰───────────────────╯ │
+│ Top: 5                │
+│ Order: v NULLS LAST   │
+│ Projections: v, pk    │
+│ ~74 rows              │
+╰───────────────────────╯
+
+
+query
+SELECT id, v FROM vt_idx WHERE v > 390 ORDER BY v LIMIT 5;
+----
+id	v
+249	391
+184	392
+119	393
+54	394
+
+
+query
+SELECT id, v FROM vt_idx WHERE v >= 100 AND v < 110 ORDER BY v DESC LIMIT 20;
+----
+id	v
+133	109
+198	108
+263	107
+328	106
+393	105
+57	104
+122	103
+187	102
+252	101
+317	100
+
+
+query
+SELECT id, v FROM vt_idx WHERE v = 37 ORDER BY v LIMIT 2;
+----
+id	v
+1	37
+
+
+query
+EXPLAIN SELECT v FROM vt_idx WHERE v IS NOT NULL
+        ORDER BY v DESC NULLS FIRST LIMIT 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: vt_idx             │
+│ Lookup: table             │
+│ Index Filter:             │
+│ ╭─ Not ──────────╮        │
+│ ╰────────┬───────╯        │
+│ ╭─ Terms ┴───────╮        │
+│ │ Field: v(null) │        │
+│ ╰────────────────╯        │
+│ Top: 2                    │
+│ Order: v DESC NULLS FIRST │
+│ Projections: v            │
+│ ~74 rows                  │
+╰───────────────────────────╯
+
+
+query
+SELECT v FROM vt_idx WHERE v IS NOT NULL ORDER BY v DESC NULLS FIRST LIMIT 2;
+----
+v
+394
+393
+
+
+query
+SELECT id FROM vt_idx ORDER BY id DESC LIMIT 3;
+----
+id
+400
+399
+398
+
+
+query
+SELECT count(*) FROM (SELECT v FROM vt_idx ORDER BY v LIMIT 7);
+----
+count
+7
+
+
+query
+SELECT v FROM vt_idx ORDER BY v LIMIT 3 OFFSET 400;
+----
+v
+
+
+query
+SELECT id, v FROM vt_idx WHERE v > 5 AND v IS NOT NULL
+ORDER BY v NULLS FIRST LIMIT 3;
+----
+id	v
+11	6
+347	7
+282	8
+
+
+# One worker reads both segments, one after the other.
+
+statement ok
+SET threads = 1;
+
+
+query
+SELECT id, v FROM vt_idx ORDER BY v DESC LIMIT 3;
+----
+id	v
+54	394
+119	393
+184	392
+
+
+query
+SELECT v FROM vt_idx ORDER BY v DESC NULLS FIRST LIMIT 2 OFFSET 36;
+----
+v
+NULL
+394
+
+
+statement ok
+RESET threads;
+
+
+# --- The TOP_N stays.
+
+query
+EXPLAIN SELECT id, v FROM vt_idx WHERE v BETWEEN 10 AND 20 AND v <> 15
+        ORDER BY v LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ────────────────────────────────╮
+│ Key: rowid                                   │
+│ ~3 rows                                      │
+╰───────────────────────┬──────────────────────╯
+                        ├──────────────────────────────────╮
+╭─ TOP_N ───────────────┴──────────────────────╮  ╭─ INDEX_SOURCE ──╮
+│ Top: 3                                       │  │ Lookup: table   │
+│ Order By: v ASC                              │  │ Projections: id │
+│ ~3 rows                                      │  │ ~3 rows         │
+╰───────────────────────┬──────────────────────╯  ╰─────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: vt_idx                                │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Bool ────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Must ──┴─────────╮  ╭─ Must Not ────────╮ │
+│ ╰─────────┬─────────╯  ╰─────────┬─────────╯ │
+│ ╭─ Granular Range ──╮  ╭─ Terms ─┴─────────╮ │
+│ │ Field: v(numeric) │  │ Field: v(numeric) │ │
+│ │ Range: >=10, <=20 │  │ Values: 15        │ │
+│ ╰───────────────────╯  ╰───────────────────╯ │
+│ Column Filter:                               │
+│ optional: Dynamic Filter (v < ?)             │
+│ Projections: v, pk                           │
+│ ~74 rows                                     │
+╰──────────────────────────────────────────────╯
+
+
+query
+SELECT id, v FROM vt_idx WHERE v BETWEEN 10 AND 20 AND v <> 15
+ORDER BY v LIMIT 3;
+----
+id	v
+152	10
+87	11
+22	12
+
+query
+EXPLAIN SELECT id, v FROM vt_idx WHERE w = 3 ORDER BY v LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ────────────────────╮
+│ Key: rowid                       │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+                  ├────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ INDEX_SOURCE ──╮
+│ Top: 3                           │  │ Lookup: table   │
+│ Order By: v ASC                  │  │ Projections: id │
+│ ~3 rows                          │  │ ~3 rows         │
+╰─────────────────┬────────────────╯  ╰─────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: vt_idx                    │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Term ────────────╮            │
+│ │ Field: w(numeric) │            │
+│ │ Value: 3          │            │
+│ ╰───────────────────╯            │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (v < ?) │
+│ Projections: v, pk               │
+│ ~74 rows                         │
+╰──────────────────────────────────╯
+
+
+query
+SELECT id, v FROM vt_idx WHERE w = 3 ORDER BY v LIMIT 3;
+----
+id	v
+206	3
+87	11
+304	20
+
+
+query
+EXPLAIN SELECT id, v FROM vt_idx WHERE s > 100 ORDER BY v LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: rowid                        │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├─────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ──╮
+│ Top: 3                            │  │ Lookup: table   │
+│ Order By: v ASC                   │  │ Projections: id │
+│ ~3 rows                           │  │ ~3 rows         │
+╰─────────────────┬─────────────────╯  ╰─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: vt_idx                     │
+│ Lookup: table                     │
+│ Projections: v, pk                │
+│ Column Filter:                    │
+│ s > 100,                          │
+│ optional: Dynamic Filter (v < ?)  │
+│ ~74 rows                          │
+╰───────────────────────────────────╯
+
+
+query
+SELECT id, v FROM vt_idx WHERE s > 100 ORDER BY v LIMIT 3;
+----
+id	v
+336	1
+271	2
+206	3
+
+
+query
+EXPLAIN SELECT id, v FROM vt_idx WHERE v IN (37, 74, 111) ORDER BY v LIMIT 2;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ────────────────────╮
+│ Key: rowid                       │
+│ ~2 rows                          │
+╰─────────────────┬────────────────╯
+                  ├────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ INDEX_SOURCE ──╮
+│ Top: 2                           │  │ Lookup: table   │
+│ Order By: v ASC                  │  │ Projections: id │
+│ ~2 rows                          │  │ ~2 rows         │
+╰─────────────────┬────────────────╯  ╰─────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: vt_idx                    │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Or ────────────────╮          │
+│ ╰──────────┬──────────╯          │
+│ ╭─ Terms ──┴──────────╮          │
+│ │ Field: v(numeric)   │          │
+│ │ Values: 37, 74, 111 │          │
+│ ╰─────────────────────╯          │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (v < ?) │
+│ Projections: v, pk               │
+│ ~74 rows                         │
+╰──────────────────────────────────╯
+
+
+query
+SELECT id, v FROM vt_idx WHERE v IN (37, 74, 111) ORDER BY v LIMIT 2;
+----
+id	v
+1	37
+2	74
+
+
+query
+EXPLAIN SELECT id, v FROM vt_idx ORDER BY v, id LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────╮
+│ Top: 3                            │
+│ Order By: v ASC, id ASC           │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: vt_idx                     │
+│ Lookup: table                     │
+│ Projections: id, v                │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (v <= ?) │
+│ ~370 rows                         │
+╰───────────────────────────────────╯
+
+
+# The key is computed from ts, and ts's order is not the key's order: the
+# earliest times of day come from the 24th, 48th and 72nd rows.
+
+query
+EXPLAIN SELECT ts::TIME AS t FROM vt_idx ORDER BY ts::TIME LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ──────────╮
+│ Top: 3           │
+│ Order By: t ASC  │
+│ ~3 rows          │
+╰─────────┬────────╯
+╭─ PROJECTION ─────╮
+│ Projections: t   │
+│ ~370 rows        │
+╰─────────┬────────╯
+╭─ IRESEARCH_SCAN ─╮
+│ Index: vt_idx    │
+│ Lookup: table    │
+│ Projections: ts  │
+│ ~370 rows        │
+╰──────────────────╯
+
+
+query
+SELECT ts::TIME AS t FROM vt_idx ORDER BY ts::TIME LIMIT 3;
+----
+t
+00:00:00
+00:00:00
+00:00:00
+
+
+query
+EXPLAIN SELECT s FROM vt_idx ORDER BY s LIMIT 3;
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 3                           │
+│ Order By: s ASC                  │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: vt_idx                    │
+│ Projections: s                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (s < ?) │
+│ ~370 rows                        │
+╰──────────────────────────────────╯
+
+
+statement ok
+PREPARE vt_limit(INTEGER) AS SELECT id, v FROM vt_idx ORDER BY v LIMIT $1;
+
+
+query
+EXPLAIN EXECUTE vt_limit(2);
+----
+QUERY PLAN
+╭─ EXECUTE ─────────╮
+╰─────────┬─────────╯
+╭─ STREAMING_LIMIT ─╮
+│ ~370 rows         │
+╰─────────┬─────────╯
+╭─ ORDER_BY ────────╮
+│ Order By: v ASC   │
+│ ~370 rows         │
+╰─────────┬─────────╯
+╭─ IRESEARCH_SCAN ──╮
+│ Index: vt_idx     │
+│ Lookup: table     │
+│ Projections: id,  │
+│              v    │
+│ ~370 rows         │
+╰───────────────────╯
+
+
+query
+EXECUTE vt_limit(2);
+----
+id	v
+336	1
+271	2

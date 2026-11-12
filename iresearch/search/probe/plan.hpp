@@ -133,7 +133,7 @@ Node::ptr MakeDisjunction(std::span<const Term> terms,
       detail::DocOf(detail::FieldOf(terms.front(), field));
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
     if (doc != nullptr &&
-        detail::TakeProbeBitset(terms, *doc, docs_count, interrogations)) {
+        detail::TakeProbeBitset(terms, docs_count, interrogations)) {
       if constexpr (detail::kScores<Scoring>) {
         if (auto windowed = MakeWindowDisjunction(terms, filters, field,
                                                   scoring, ctx, absorbed)) {

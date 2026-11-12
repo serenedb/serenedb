@@ -62,6 +62,9 @@ bool IResearchConsumeTopN(duckdb::ClientContext& context,
                           const duckdb::BoundLimitNode& limit,
                           const duckdb::BoundLimitNode& offset);
 
+bool IResearchConsumeCount(duckdb::ClientContext& context,
+                           duckdb::FunctionData& bind_data);
+
 duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   duckdb::TableFunctionToStringInput& input);
 

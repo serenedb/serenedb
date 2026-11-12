@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
@@ -38,6 +39,8 @@
 namespace irs {
 
 struct TermReader;
+
+inline constexpr uint64_t kAllDocsWordPostings = 4;
 
 class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
  public:
@@ -76,7 +79,11 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     _estimate_matches = estimate_matches;
     _postings = 0;
     _leaves = 0;
+    const uint64_t words =
+      (segment.docs_count() + (detail::BitsetStorage::kBits - 1)) /
+      detail::BitsetStorage::kBits;
     for (const auto& bucket : _clauses) {
+      _postings += bucket.all_docs.size() * kAllDocsWordPostings * words;
       for (const auto& posting : bucket.postings) {
         _postings += posting.state.cookie.docs_count;
       }
@@ -172,7 +179,8 @@ class BooleanBuilder {
 
  private:
   void Push(BooleanQuery::PreparedBucket& bucket, const TermReader* reader,
-            const PostingMeta& meta, score_t boost, detail::StatsRecord stats);
+            const PostingMeta& meta, score_t boost, detail::StatsRecord stats,
+            uint32_t group);
 
   bool Absorb(QueryKind kind, Occur occur);
 
@@ -213,6 +221,7 @@ class BooleanBuilder {
   uint32_t _msm;
   score_t _boost;
   ScoreMergeType _merge_type;
+  uint32_t _groups = 0;
   bool _collects = false;
   bool _needs_terms = false;
   bool _empty = false;

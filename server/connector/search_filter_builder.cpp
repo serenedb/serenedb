@@ -27,6 +27,7 @@
 #include <re2/regexp.h>
 
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/common/value_operations/value_operations.hpp>
 #include <duckdb/function/scalar/regexp.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -37,7 +38,6 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -175,64 +175,32 @@ irs::bytes_view AsRawBytes(const duckdb::Value& value) {
     std::string_view{duckdb::StringValue::Get(value)});
 }
 
+duckdb::Value CastConstant(const duckdb::Value& value,
+                           const duckdb::LogicalType& type) {
+  std::string error;
+  auto cast = value.DefaultTryCastAs(type, &error);
+  if (!cast) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                    ERR_MSG(error));
+  }
+  return std::move(*cast);
+}
+
 bool BoolConstant(const duckdb::Value& value) {
   if (value.type().id() != duckdb::LogicalTypeId::BOOLEAN) {
-    return CastConstant(value, duckdb::LogicalTypeId::BOOLEAN).GetValue<bool>();
+    return CastConstant(value, duckdb::LogicalType::BOOLEAN).GetValue<bool>();
   }
   return value.GetValue<bool>();
 }
 
-bool TryEncodeTerm(irs::DictLayout layout, duckdb::LogicalTypeId type_id,
-                   const duckdb::Value& value, irs::TermClause& out) {
-  if (type_id == duckdb::LogicalTypeId::VARCHAR ||
-      type_id == duckdb::LogicalTypeId::BLOB) {
-    out.dict = {.layout = layout, .member = irs::DictMember::Strings};
-    out.term.assign(AsRawBytes(value));
-    return true;
-  }
-  if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.dict = {.layout = layout,
-                .member = irs::BoolMember(BoolConstant(value))};
-    out.term.clear();
-    return true;
-  }
-  if (term_dict::IsNumeric(type_id)) {
-    out.dict = {.layout = layout, .member = irs::DictMember::Numbers};
-    WithNumericValue(type_id, value, [&](auto v) {
-      irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
-      out.term.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
-    });
-    return true;
-  }
-  return false;
-}
+enum class Encoded : uint8_t {
+  Term,
+  NoValue,
+  Unsupported,
+};
 
-}  // namespace
-
-absl::Status SetupTermClause(irs::TermClause& clause,
-                             const SearchColumnInfo& column_info,
-                             const duckdb::Value& value) {
-  SDB_ASSERT(!value.IsNull(),
-             "UNKNOWN and Nulls should be handled as part of IS NULL operator. "
-             "For regular filter it should be just irs::Empty!");
-
-  auto type_id = column_info.logical_type.id();
-
-  if (!term_dict::IsIndexable(type_id)) {
-    return absl::UnimplementedError(absl::StrCat(
-      "Unsupported type id ", static_cast<int>(type_id), " for filter"));
-  }
-
-  if (!TryEncodeTerm(column_info.layout, type_id, value, clause)) {
-    return absl::UnimplementedError(absl::StrCat(
-      "Unsupported type for term filter: ", static_cast<int>(type_id)));
-  }
-
-  clause.field = column_info.field_id;
-  return absl::OkStatus();
-}
-
-namespace {
+Encoded TryEncodeTerm(irs::DictLayout layout, const duckdb::LogicalType& type,
+                      const duckdb::Value& value, irs::TermClause& out);
 
 ComparisonOp GetComparisonOp(duckdb::ExpressionType type) {
   switch (type) {
@@ -890,125 +858,18 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
 
   irs::TermClause clause{.scorer = LeafScorer(*column_info),
                          .boost = ctx.boost};
-  if (auto s = SetupTermClause(clause, *column_info, *const_val); !s.ok()) {
-    return s;
+  const auto set = SetupTermClause(clause, *column_info, *const_val);
+  if (!set.ok()) {
+    return set.status();
   }
   const auto target =
     (ctx.negated != not_equal) ? NegateScoped(filter, *column_info) : filter;
-  target.Add(std::move(clause));
+  if (*set) {
+    target.Add(std::move(clause));
+  } else {
+    AddFilter<irs::Empty>(target);
+  }
   return absl::OkStatus();
-}
-
-inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
-
-std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
-                                 double hi) {
-  if (!info.stats || !duckdb::NumericStats::HasMinMax(*info.stats)) {
-    return std::nullopt;
-  }
-  const auto number = [&](const duckdb::Value& value) {
-    double out = 0;
-    WithNumericValue(info.logical_type.id(), value,
-                     [&](auto v) { out = static_cast<double>(v); });
-    return out;
-  };
-  const auto min = number(duckdb::NumericStats::Min(*info.stats));
-  const auto max = number(duckdb::NumericStats::Max(*info.stats));
-  if (!(max > min)) {
-    return std::nullopt;
-  }
-  const auto from = std::max(lo, min);
-  const auto to = std::min(hi, max);
-  const double one = info.logical_type.IsIntegral() ? 1 : 0;
-  return to < from ? 0.0 : (to - from + one) / (max - min + one);
-}
-
-}  // namespace
-
-std::optional<bool> RangeFitsIndex(const SearchColumnInfo& info, double lo,
-                                   double hi) {
-  if (!info.column_stored || !info.logical_type.IsIntegral()) {
-    return std::nullopt;
-  }
-  if (const auto share = RangeShare(info, lo, hi)) {
-    return *share <= kMaxIndexRangeShare;
-  }
-  return std::nullopt;
-}
-
-std::optional<ColumnRange> ColumnRangeOf(const duckdb::Expression& expr) {
-  using duckdb::ExpressionType;
-  const auto integer =
-    [](const duckdb::Expression& e) -> std::optional<double> {
-    if (e.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
-      return std::nullopt;
-    }
-    const auto& value = e.Cast<duckdb::BoundConstantExpression>().GetValue();
-    if (value.IsNull() || !value.type().IsIntegral()) {
-      return std::nullopt;
-    }
-    return value.GetValue<double>();
-  };
-  constexpr auto kInf = std::numeric_limits<double>::infinity();
-  if (expr.GetExpressionType() == ExpressionType::COMPARE_BETWEEN &&
-      expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& between = expr.Cast<duckdb::BoundFunctionExpression>();
-    const auto& input = duckdb::BoundBetweenExpression::Input(between);
-    const auto lo =
-      integer(duckdb::BoundBetweenExpression::LowerBound(between));
-    const auto hi =
-      integer(duckdb::BoundBetweenExpression::UpperBound(between));
-    if (input.GetExpressionClass() !=
-          duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-        !lo || !hi) {
-      return std::nullopt;
-    }
-    return ColumnRange{&input.Cast<duckdb::BoundColumnRefExpression>(), *lo,
-                       *hi};
-  }
-  if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
-    return std::nullopt;
-  }
-  const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
-  const auto* left = &duckdb::BoundComparisonExpression::Left(cmp);
-  const auto* right = &duckdb::BoundComparisonExpression::Right(cmp);
-  auto op = expr.GetExpressionType();
-  if (left->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    std::swap(left, right);
-    op = duckdb::FlipComparisonExpression(op);
-  }
-  const auto value = integer(*right);
-  if (left->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-      !value) {
-    return std::nullopt;
-  }
-  const auto* column = &left->Cast<duckdb::BoundColumnRefExpression>();
-  switch (op) {
-    case ExpressionType::COMPARE_GREATERTHAN:
-    case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-      return ColumnRange{column, *value, kInf};
-    case ExpressionType::COMPARE_LESSTHAN:
-    case ExpressionType::COMPARE_LESSTHANOREQUALTO:
-      return ColumnRange{column, -kInf, *value};
-    default:
-      return std::nullopt;
-  }
-}
-
-namespace {
-
-bool RangeTooWide(const SearchColumnInfo& info, double value, ComparisonOp op) {
-  constexpr auto kInf = std::numeric_limits<double>::infinity();
-  const bool lower = op == ComparisonOp::Ge || op == ComparisonOp::Gt;
-  const auto share =
-    RangeShare(info, lower ? value : -kInf, lower ? kInf : value);
-  return share && *share > kMaxIndexRangeShare;
-}
-
-absl::Status DeclineWideRange() {
-  return absl::UnimplementedError(
-    "wide numeric range on a stored column: the vector search checks it on "
-    "the rows it reaches");
 }
 
 template<bool GenericVersion>
@@ -1119,21 +980,10 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
         SDB_UNREACHABLE();
     }
   } else if (term_dict::IsNumeric(type_id)) {
-    if (column_info->column_stored && ctx.wide_ranges != WideRanges::Build) {
-      bool wide = ctx.wide_ranges == WideRanges::DeclineAll;
-      if (!wide) {
-        WithNumericValue(type_id, *const_val, [&](auto v) {
-          wide = RangeTooWide(*column_info, static_cast<double>(v), op);
-        });
-      }
-      if (wide) {
-        return DeclineWideRange();
-      }
-    }
-    auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
-    WithNumericValue(type_id, *const_val, [&](auto v) {
-      irs::SetGranularNumericTerm(setup_base_filter(range_filter), v);
-    });
+    const bool upper = op == ComparisonOp::Lt || op == ComparisonOp::Le;
+    const bool strict = op == ComparisonOp::Lt || op == ComparisonOp::Gt;
+    AddNumericRange(filter, ctx, *column_info, upper ? nullptr : const_val,
+                    strict, upper ? const_val : nullptr, strict);
   } else {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for range comparison: ", static_cast<int>(type_id)));
@@ -1176,21 +1026,6 @@ absl::Status FromBetween(BoolTarget filter, const FilterContext& ctx,
   FilterContext sub_ctx = ctx;
   sub_ctx.negated = false;
   sub_ctx.boost = irs::kNoBoost;
-  if (ctx.wide_ranges == WideRanges::DeclineWide && !ctx.negated &&
-      !lower_val->IsNull() && !upper_val->IsNull()) {
-    const auto* column_info = FindColumnInfoForExpr(ctx, between_input);
-    if (column_info && column_info->column_stored &&
-        column_info->logical_type.IsNumeric()) {
-      if (const auto share =
-            RangeShare(*column_info, lower_val->GetValue<double>(),
-                       upper_val->GetValue<double>())) {
-        if (*share > kMaxIndexRangeShare) {
-          return DeclineWideRange();
-        }
-        sub_ctx.wide_ranges = WideRanges::Build;
-      }
-    }
-  }
 
   const auto group =
     AddGroup(filter, ctx.negated ? irs::Occur::Should : irs::Occur::Must);
@@ -1296,11 +1131,20 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   terms.reserve(values.size());
   irs::TermClause clause;
   for (const auto* value : values) {
-    if (!TryEncodeTerm(layout, type_id, *value, clause)) {
-      return absl::UnimplementedError(absl::StrCat(
-        "Unsupported type for IN filter: ", static_cast<int>(type_id)));
+    switch (TryEncodeTerm(layout, column_info->logical_type, *value, clause)) {
+      case Encoded::Term:
+        terms.push_back(std::move(clause.term));
+        break;
+      case Encoded::NoValue:
+        break;
+      case Encoded::Unsupported:
+        return absl::UnimplementedError(absl::StrCat(
+          "Unsupported type for IN filter: ", static_cast<int>(type_id)));
     }
-    terms.push_back(std::move(clause.term));
+  }
+  if (terms.empty()) {
+    AddFilter<irs::Empty>(target);
+    return absl::OkStatus();
   }
   auto& node = AddTermSet(target, column_info->field_id,
                           ValuesOf(*column_info, type_id), terms,
@@ -1870,8 +1714,7 @@ bool TryDispatchSqlBoostCast(BoolTarget filter, const FilterContext& ctx,
   // ::boost is only meaningful inside an inverted-index match, so a child
   // predicate the index cannot claim is a user error even when building
   // speculatively.
-  if (auto s = FromExpression(filter, ctx.WithBoost(factor).Claimed(), *child);
-      !s.ok()) {
+  if (auto s = FromExpression(filter, ctx.WithBoost(factor), *child); !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("::boost(K) used on a predicate the inverted index could not "
@@ -2091,8 +1934,7 @@ std::unique_ptr<irs::BooleanFilter> BuildSqlModifierScope(
   const FilterContext& ctx, const duckdb::Expression& child,
   std::string_view modifier, std::string_view hint) {
   auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx.Claimed(), child);
-      !s.ok()) {
+  if (auto s = FromExpression(ScopeTarget(scope), ctx, child); !s.ok()) {
     ThrowUnclaimedModifier(modifier, s, hint);
   }
   return scope;
@@ -2502,6 +2344,89 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
   return {&duckdb::BoundCastExpression::Child(c), c.GetReturnType()};
 }
 
+namespace {
+
+struct IntegerKind {
+  uint8_t bits;
+  bool is_signed;
+  uint8_t digits;
+};
+
+std::optional<IntegerKind> IntegerKindOf(duckdb::LogicalTypeId id) {
+  using enum duckdb::LogicalTypeId;
+  switch (id) {
+    case TINYINT:
+      return IntegerKind{.bits = 8, .is_signed = true, .digits = 3};
+    case SMALLINT:
+      return IntegerKind{.bits = 16, .is_signed = true, .digits = 5};
+    case INTEGER:
+      return IntegerKind{.bits = 32, .is_signed = true, .digits = 10};
+    case BIGINT:
+      return IntegerKind{.bits = 64, .is_signed = true, .digits = 19};
+    case HUGEINT:
+      return IntegerKind{.bits = 128, .is_signed = true, .digits = 39};
+    case UTINYINT:
+      return IntegerKind{.bits = 8, .is_signed = false, .digits = 3};
+    case USMALLINT:
+      return IntegerKind{.bits = 16, .is_signed = false, .digits = 5};
+    case UINTEGER:
+      return IntegerKind{.bits = 32, .is_signed = false, .digits = 10};
+    case UBIGINT:
+      return IntegerKind{.bits = 64, .is_signed = false, .digits = 20};
+    case UHUGEINT:
+      return IntegerKind{.bits = 128, .is_signed = false, .digits = 39};
+    default:
+      return std::nullopt;
+  }
+}
+
+bool IsLosslessWidening(const duckdb::LogicalType& from,
+                        const duckdb::LogicalType& to) {
+  using enum duckdb::LogicalTypeId;
+  if (from == to) {
+    return true;
+  }
+  if (from.id() == FLOAT) {
+    return to.id() == DOUBLE;
+  }
+  uint8_t to_width = 0;
+  uint8_t to_scale = 0;
+  if (to.id() == DECIMAL) {
+    to.GetDecimalProperties(to_width, to_scale);
+  }
+  if (from.id() == DECIMAL) {
+    uint8_t width = 0;
+    uint8_t scale = 0;
+    from.GetDecimalProperties(width, scale);
+    return to.id() == DECIMAL && to_scale >= scale &&
+           to_width - to_scale >= width - scale;
+  }
+  const auto source = IntegerKindOf(from.id());
+  if (!source) {
+    return false;
+  }
+  if (to.id() == DECIMAL) {
+    return to_width - to_scale >= source->digits;
+  }
+  if (to.id() == DOUBLE) {
+    return source->bits <= 32;
+  }
+  if (to.id() == FLOAT) {
+    return source->bits <= 16;
+  }
+  const auto target = IntegerKindOf(to.id());
+  if (!target) {
+    return false;
+  }
+  if (source->is_signed) {
+    return target->is_signed && target->bits >= source->bits;
+  }
+  return target->bits > source->bits ||
+         (!target->is_signed && target->bits == source->bits);
+}
+
+}  // namespace
+
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr) {
   if (!ComputedFromRowAlone(expr)) {
@@ -2542,6 +2467,11 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
       if (cast_type != info->logical_type) {
         return nullptr;
       }
+    } else if (!irs::IsJson(info->layout) &&
+               term_dict::IsNumeric(info->logical_type.id())) {
+      if (!IsLosslessWidening(info->logical_type, cast_type)) {
+        return nullptr;
+      }
     } else if (cast_type.id() != info->logical_type.id()) {
       if (!irs::IsJson(info->layout)) {
         if (term_dict::IsNumeric(cast_type.id())) {
@@ -2574,19 +2504,261 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
   }
 }
 
-bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
-  return term_dict::IsNumeric(id) || id == duckdb::LogicalTypeId::DECIMAL;
+namespace {
+
+bool IsTextConstant(const duckdb::Value& value) {
+  const auto id = value.type().id();
+  return id == duckdb::LogicalTypeId::VARCHAR ||
+         id == duckdb::LogicalTypeId::STRING_LITERAL ||
+         id == duckdb::LogicalTypeId::BLOB;
 }
 
-duckdb::Value CastConstant(const duckdb::Value& value,
-                           duckdb::LogicalTypeId type_id) {
-  std::string error;
-  auto cast = value.DefaultTryCastAs(duckdb::LogicalType{type_id}, &error);
-  if (!cast) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                    ERR_MSG(error));
+bool IsExactNumber(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::DECIMAL ||
+         IntegerKindOf(type.id()).has_value();
+}
+
+struct DecimalText {
+  bool negative;
+  std::string_view whole;
+  std::string_view fraction;
+};
+
+DecimalText SplitDecimal(std::string_view text) {
+  const bool negative = text.starts_with('-');
+  if (negative) {
+    text.remove_prefix(1);
   }
-  return std::move(*cast);
+  const auto dot = text.find('.');
+  auto whole = text.substr(0, dot);
+  auto fraction =
+    dot == std::string_view::npos ? std::string_view{} : text.substr(dot + 1);
+  while (whole.starts_with('0')) {
+    whole.remove_prefix(1);
+  }
+  while (fraction.ends_with('0')) {
+    fraction.remove_suffix(1);
+  }
+  return {.negative = negative && !(whole.empty() && fraction.empty()),
+          .whole = whole,
+          .fraction = fraction};
+}
+
+int CompareDecimalText(std::string_view lhs, std::string_view rhs) {
+  const auto a = SplitDecimal(lhs);
+  const auto b = SplitDecimal(rhs);
+  if (a.negative != b.negative) {
+    return a.negative ? -1 : 1;
+  }
+  int order = 0;
+  if (a.whole.size() != b.whole.size()) {
+    order = a.whole.size() < b.whole.size() ? -1 : 1;
+  } else if (const int whole = a.whole.compare(b.whole); whole != 0) {
+    order = whole < 0 ? -1 : 1;
+  } else if (const int fraction = a.fraction.compare(b.fraction);
+             fraction != 0) {
+    order = fraction < 0 ? -1 : 1;
+  }
+  return a.negative ? -order : order;
+}
+
+struct ColumnCast {
+  duckdb::Value value;
+  int outside = 0;
+};
+
+ColumnCast CastToColumn(const duckdb::Value& value,
+                        const duckdb::LogicalType& type) {
+  if (value.type() == type) {
+    return {.value = value};
+  }
+  std::string error;
+  if (auto cast = value.DefaultTryCastAs(type, &error)) {
+    return {.value = std::move(*cast)};
+  }
+  if (!IsTextConstant(value)) {
+    if (value.type().IsNumeric() && type.IsNumeric()) {
+      return {
+        .value = duckdb::Value{},
+        .outside =
+          duckdb::ValueOperations::GreaterThan(value, duckdb::Value::INTEGER(0))
+            ? 1
+            : -1,
+      };
+    }
+    if (duckdb::ValueOperations::GreaterThan(
+          value, duckdb::Value::MaximumValue(type))) {
+      return {.value = duckdb::Value{}, .outside = 1};
+    }
+    if (duckdb::ValueOperations::GreaterThan(duckdb::Value::MinimumValue(type),
+                                             value)) {
+      return {.value = duckdb::Value{}, .outside = -1};
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                  ERR_MSG(error));
+}
+
+int CastOrder(const duckdb::Value& cast, const duckdb::Value& value) {
+  if (cast.type() == value.type() || IsTextConstant(value) ||
+      (IntegerKindOf(value.type().id()) && IsExactNumber(cast.type()))) {
+    return 0;
+  }
+  if (IsExactNumber(cast.type()) && IsExactNumber(value.type())) {
+    return CompareDecimalText(cast.ToString(), value.ToString());
+  }
+  if (duckdb::ValueOperations::GreaterThan(cast, value)) {
+    return 1;
+  }
+  return duckdb::ValueOperations::GreaterThan(value, cast) ? -1 : 0;
+}
+
+template<typename F>
+void WithNumericValue(const duckdb::LogicalType& type,
+                      const duckdb::Value& value, F&& f) {
+  SDB_ASSERT(value.type() == type);
+  const bool numeric = term_dict::DispatchNumericKind(
+    term_dict::IndexedKind(type), [&]<duckdb::LogicalTypeId Kind>() {
+      f(term_dict::PromoteNumericValue(term_dict::NumericValueOf<Kind>(
+        [&]<typename T>() { return value.GetValueUnsafe<T>(); })));
+    });
+  SDB_ASSERT(numeric);
+}
+
+template<typename F>
+bool WithExactNumericValue(const duckdb::LogicalType& type,
+                           const duckdb::Value& value, F&& f) {
+  auto cast = CastToColumn(value, type);
+  if (cast.outside != 0 || CastOrder(cast.value, value) != 0) {
+    return false;
+  }
+  WithNumericValue(type, cast.value, std::forward<F>(f));
+  return true;
+}
+
+struct NumericBound {
+  enum class Kind : uint8_t {
+    Unbounded,
+    Term,
+    Empty,
+  };
+
+  Kind kind = Kind::Unbounded;
+  irs::bstring term;
+  bool strict = false;
+};
+
+NumericBound ResolveNumericBound(const duckdb::LogicalType& type,
+                                 const duckdb::Value& value, bool upper,
+                                 bool strict) {
+  auto cast = CastToColumn(value, type);
+  if (cast.outside != 0) {
+    if ((cast.outside > 0) != upper) {
+      return {.kind = NumericBound::Kind::Empty};
+    }
+    cast = CastToColumn(upper ? duckdb::Value::MaximumValue(type)
+                              : duckdb::Value::MinimumValue(type),
+                        type);
+    strict = false;
+  } else if (const int order = CastOrder(cast.value, value); order != 0) {
+    strict = upper ? order > 0 : order < 0;
+  }
+  NumericBound bound{.kind = NumericBound::Kind::Term, .strict = strict};
+  WithNumericValue(type, cast.value,
+                   [&](auto v) { irs::SetGranularNumericTerm(bound.term, v); });
+  return bound;
+}
+
+void SetNumericBound(irs::ByGranularRangeOptions::range_type& range, bool upper,
+                     NumericBound&& bound) {
+  SDB_ASSERT(bound.kind != NumericBound::Kind::Empty);
+  auto& term = upper ? range.max : range.min;
+  auto& type = upper ? range.max_type : range.min_type;
+  if (bound.kind == NumericBound::Kind::Unbounded) {
+    term.clear();
+    type = irs::BoundType::Unbounded;
+    return;
+  }
+  term = std::move(bound.term);
+  type = bound.strict ? irs::BoundType::Exclusive : irs::BoundType::Inclusive;
+}
+
+Encoded TryEncodeTerm(irs::DictLayout layout, const duckdb::LogicalType& type,
+                      const duckdb::Value& value, irs::TermClause& out) {
+  const auto type_id = type.id();
+  if (type_id == duckdb::LogicalTypeId::VARCHAR ||
+      type_id == duckdb::LogicalTypeId::BLOB) {
+    out.dict = {.layout = layout, .member = irs::DictMember::Strings};
+    out.term.assign(AsRawBytes(value));
+    return Encoded::Term;
+  }
+  if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
+    out.dict = {.layout = layout,
+                .member = irs::BoolMember(BoolConstant(value))};
+    out.term.clear();
+    return Encoded::Term;
+  }
+  if (term_dict::IsNumeric(type_id)) {
+    out.dict = {.layout = layout, .member = irs::DictMember::Numbers};
+    const bool exact = WithExactNumericValue(
+      type, value, [&](auto v) { irs::SetGranularNumericTerm(out.term, v); });
+    return exact ? Encoded::Term : Encoded::NoValue;
+  }
+  return Encoded::Unsupported;
+}
+
+}  // namespace
+
+void AddNumericRange(BoolTarget target, const FilterContext& ctx,
+                     const SearchColumnInfo& info, const duckdb::Value* min,
+                     bool min_strict, const duckdb::Value* max,
+                     bool max_strict) {
+  const auto& type = info.logical_type;
+  NumericBound lower;
+  NumericBound upper;
+  if (min) {
+    lower = ResolveNumericBound(type, *min, false, min_strict);
+  }
+  if (max) {
+    upper = ResolveNumericBound(type, *max, true, max_strict);
+  }
+  if (lower.kind == NumericBound::Kind::Empty ||
+      upper.kind == NumericBound::Kind::Empty) {
+    AddFilter<irs::Empty>(target);
+    return;
+  }
+  auto& range = AddFilter<irs::ByGranularRange>(target);
+  SetField(range, info, RefOf(info, irs::DictMember::Numbers));
+  range.SetBoost(ctx.boost);
+  SetLeafScorer(range, info);
+  auto& bounds = range.mutable_options()->range;
+  SetNumericBound(bounds, false, std::move(lower));
+  SetNumericBound(bounds, true, std::move(upper));
+}
+
+absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
+                                     const SearchColumnInfo& column_info,
+                                     const duckdb::Value& value) {
+  SDB_ASSERT(!value.IsNull(),
+             "UNKNOWN and Nulls should be handled as part of IS NULL operator. "
+             "For regular filter it should be just irs::Empty!");
+
+  auto type_id = column_info.logical_type.id();
+
+  if (!term_dict::IsIndexable(type_id)) {
+    return absl::UnimplementedError(absl::StrCat(
+      "Unsupported type id ", static_cast<int>(type_id), " for filter"));
+  }
+
+  const auto encoded =
+    TryEncodeTerm(column_info.layout, column_info.logical_type, value, clause);
+  if (encoded == Encoded::Unsupported) {
+    return absl::UnimplementedError(absl::StrCat(
+      "Unsupported type for term filter: ", static_cast<int>(type_id)));
+  }
+
+  clause.field = column_info.field_id;
+  return encoded == Encoded::Term;
 }
 
 // Sees through the transit casts
@@ -3058,8 +3230,7 @@ absl::Status MakeSearchFilter(
   irs::BooleanFilter& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers,
-  WideRanges wide_ranges) {
+  const ExpressionGetter& expr_getter, FilterScorers* scorers) {
   irs::KeywordTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   ExprCache expr_cache;
@@ -3078,7 +3249,6 @@ absl::Status MakeSearchFilter(
     .client_context = context,
     .levenshtein_max_terms = levenshtein_max_terms,
     .scorer_sink = scorers,
-    .wide_ranges = wide_ranges,
   };
 
   for (const auto& expr : conjuncts) {
@@ -3095,12 +3265,10 @@ absl::Status MakeSearchFilter(
 std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers,
-  WideRanges wide_ranges) {
+  const ExpressionGetter& expr_getter, FilterScorers* scorers) {
   auto node = std::make_unique<irs::BooleanFilter>();
-  const auto status =
-    MakeSearchFilter(*node, {&conjunct, 1}, column_getter, context, expr_getter,
-                     scorers, wide_ranges);
+  const auto status = MakeSearchFilter(*node, {&conjunct, 1}, column_getter,
+                                       context, expr_getter, scorers);
   if (!status.ok() || node->Empty()) {
     return nullptr;
   }

@@ -25,9 +25,9 @@
 #include <optional>
 #include <type_traits>
 
+#include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/math_utils.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {

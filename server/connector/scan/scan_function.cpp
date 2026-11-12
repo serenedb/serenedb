@@ -242,6 +242,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);
+  SDB_ENSURE(state->shape != ScanShape::ValueTopK ||
+               (state->col_filters.empty() && !state->has_lookup_filter),
+             "a scan that orders by an indexed value takes no column filters");
 
   if (state->shape == ScanShape::TsDict) {
     const auto& out = state->output_projection_ids;
@@ -312,7 +315,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifySegments(*state);
 
-  state->splittable = !(where && HasNested(*where)) && !ss.score.vector;
+  state->splittable = !(where && HasNested(*where)) && !ss.score.vector &&
+                      state->shape != ScanShape::ValueTopK;
 
   if (state->shape == ScanShape::Count) {
     BuildClaimPlan(*state, context);
@@ -374,6 +378,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->shape == ScanShape::TopK) {
     InitTopKGlobal(*state, context);
+  } else if (state->shape == ScanShape::ValueTopK) {
+    InitValueTopKGlobal(*state);
   } else if (state->shape == ScanShape::Ann) {
     InitAnnGlobal(*state, context);
   }
@@ -402,6 +408,10 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       result = std::move(l);
       break;
     }
+    case ScanShape::ValueTopK: {
+      result = duckdb::make_uniq<ValueTopKLocalState>();
+      break;
+    }
     case ScanShape::Ann: {
       auto l = duckdb::make_uniq<AnnLocalState>();
       l->worker = worker;
@@ -424,26 +434,10 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   return result;
 }
 
-void IResearchScanFunction(duckdb::ClientContext& context,
-                           duckdb::TableFunctionInput& data,
-                           duckdb::DataChunk& output) {
-  auto& g = data.global_state->Cast<ScanGlobalState>();
-  if (g.empty_answer) {
-    return;
-  }
-  const bool reorder = !g.output_projection_ids.empty();
-  auto& base = data.local_state->Cast<ScanLocalState>();
-  if (base.parked_on) {
-    base.parked_on->Resume();
-    base.parked_on = nullptr;
-  }
-  if (reorder) {
-    if (base.scan_chunk.ColumnCount() == 0) {
-      base.scan_chunk.Initialize(context, g.projected_types);
-    }
-    base.scan_chunk.Reset();
-  }
-  auto& out = reorder ? base.scan_chunk : output;
+namespace {
+
+void RunShape(duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
+              ScanGlobalState& g, duckdb::DataChunk& out) {
   switch (g.shape) {
     case ScanShape::TsDict:
       RunTsDictScan(context, g, *data.local_state, out);
@@ -454,6 +448,10 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     case ScanShape::TopK:
       RunTopKScan(context, data, g, data.local_state->Cast<TopKLocalState>(),
                   out);
+      break;
+    case ScanShape::ValueTopK:
+      RunValueTopKScan(context, data, g,
+                       data.local_state->Cast<ValueTopKLocalState>(), out);
       break;
     case ScanShape::Ann:
       RunAnnScan(context, data, g, data.local_state->Cast<AnnLocalState>(),
@@ -468,10 +466,69 @@ void IResearchScanFunction(duckdb::ClientContext& context,
                     data.local_state->Cast<StreamLocalState>(), out);
       break;
   }
+}
+
+duckdb::DataChunk& ScanChunk(duckdb::ClientContext& context,
+                             const ScanGlobalState& g, ScanLocalState& base) {
+  if (base.scan_chunk.ColumnCount() == 0) {
+    base.scan_chunk.Initialize(context, g.projected_types);
+  }
+  base.scan_chunk.Reset();
+  return base.scan_chunk;
+}
+
+void EmitRowCount(duckdb::ClientContext& context,
+                  duckdb::TableFunctionInput& data, ScanGlobalState& g,
+                  ScanLocalState& base, duckdb::DataChunk& output) {
+  uint64_t rows = 0;
+  if (g.shape == ScanShape::Count) {
+    rows = TakeCount(g, data.local_state->Cast<CountLocalState>());
+  } else {
+    auto& out = ScanChunk(context, g, base);
+    RunShape(context, data, g, out);
+    rows = out.size();
+  }
+  base.produced_rows += rows;
+  if (rows == 0) {
+    output.SetChildCardinality(0);
+    return;
+  }
+  duckdb::FlatVector::GetDataMutable<int64_t>(output.data[0])[0] =
+    static_cast<int64_t>(rows);
+  output.SetChildCardinality(1);
+}
+
+}  // namespace
+
+void IResearchScanFunction(duckdb::ClientContext& context,
+                           duckdb::TableFunctionInput& data,
+                           duckdb::DataChunk& output) {
+  auto& g = data.global_state->Cast<ScanGlobalState>();
+  if (g.empty_answer) {
+    return;
+  }
+  auto& base = data.local_state->Cast<ScanLocalState>();
+  if (base.parked_on) {
+    base.parked_on->Resume();
+    base.parked_on = nullptr;
+  }
+  if (g.Bind().emits_counts) {
+    EmitRowCount(context, data, g, base, output);
+    return;
+  }
+  const bool reorder = !g.output_projection_ids.empty();
+  auto& out = reorder ? ScanChunk(context, g, base) : output;
+  RunShape(context, data, g, out);
   base.produced_rows += out.size();
   if (reorder) {
     output.ReferenceColumns(out, g.output_projection_ids);
   }
+}
+
+bool IResearchConsumeCount(duckdb::ClientContext&,
+                           duckdb::FunctionData& bind_data) {
+  bind_data.Cast<ScanBindData>().emits_counts = true;
+  return true;
 }
 
 void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
@@ -510,9 +567,8 @@ void IResearchSetScanOrder(
       (!options->row_limit.IsValid() && !options->row_limit_expression)) {
     return;
   }
-  if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
-    return;
-  }
+  const bool disabled =
+    GetBoolSetting(context, "sdb_disable_top_k_optimization");
   const auto order_col =
     ScanColumnOfStorage(bd, options->column_idx.GetPrimaryIndex());
   if (order_col >= bd.columns.ids.size()) {
@@ -520,11 +576,17 @@ void IResearchSetScanOrder(
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
-    if (bd.relation.Stores(col_id) && !bd.scan_order) {
+    if (!disabled && bd.relation.Stores(col_id) && !bd.scan_order) {
       bd.scan_order =
         ScanOrderSpec{col_id, options->order_type, options->null_order,
                       options->order_by, options->column_type};
     }
+    if (!bd.value_order) {
+      bd.value_order = ValueOrderOf(context, bd, col_id, *options);
+    }
+    return;
+  }
+  if (disabled) {
     return;
   }
   if (bd.score.HasTopK()) {
@@ -571,9 +633,13 @@ bool IResearchConsumeTopN(duckdb::ClientContext&,
     const auto skip = offset.Type() == duckdb::LimitNodeType::CONSTANT_VALUE
                         ? offset.GetConstantValue()
                         : duckdb::idx_t{0};
-    if (!bd.score.top_k || *bd.score.top_k != limit.GetConstantValue() + skip) {
+    const auto taken = bd.value_order
+                         ? std::optional<size_t>{bd.value_order->limit}
+                         : bd.score.top_k;
+    if (!taken || *taken != limit.GetConstantValue() + skip) {
       return false;
     }
+    bd.score.top_k = taken;
     bd.score.top_offset = skip;
   }
   bd.score.top_n_consumed = true;
@@ -671,6 +737,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;
   func.consume_top_n = &IResearchConsumeTopN;
+  func.consume_count = &IResearchConsumeCount;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
   func.statistics_extended = &IResearchScanStatistics;

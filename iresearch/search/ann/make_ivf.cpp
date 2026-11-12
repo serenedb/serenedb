@@ -18,13 +18,83 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
+#include <cmath>
+#include <duckdb/common/fault_points.hpp>
+
 #include "iresearch/search/ann/family.hpp"
+#include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::ann {
 namespace {
+
+inline constexpr double kColumnCheckCost = 400;
+inline constexpr double kProbeCandidateCost = 5;
+
+double ProbeCost(const QueryBuilder* query, double candidates,
+                 doc_id_t docs_count) noexcept {
+  if (query == nullptr) {
+    return 0;
+  }
+  const auto fold = static_cast<double>(query->Postings() +
+                                        irs::detail::SegmentWords(docs_count));
+  return std::min(fold, candidates * static_cast<double>(query->Leaves())) +
+         candidates * kProbeCandidateCost;
+}
+
+double ShareOf(const QueryBuilder* query, double docs) noexcept {
+  return query == nullptr || docs == 0
+           ? 1.0
+           : std::min(1.0,
+                      static_cast<double>(query->EstimateMatches()) / docs);
+}
+
+double ColumnChecks(double k, double share, double candidates) noexcept {
+  const auto admitted = candidates * share;
+  if (k == 0 || admitted <= k) {
+    return candidates;
+  }
+  return std::min(candidates, k / share * (1.0 + std::log(admitted / k)));
+}
+
+struct Route {
+  const QueryBuilder* prefilter;
+  Context ctx;
+};
+
+Route RouteOf(const VectorQueryBase& query, const SubReader& segment,
+              const Context& ctx) {
+  const auto* inner = query.Inner();
+  if (inner == nullptr || !query.Dual() || ctx.columns == nullptr) {
+    return {inner, ctx};
+  }
+  const auto candidates = static_cast<double>(query.State().estimation);
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  const auto docs = static_cast<double>(docs_count);
+  const auto* index_only = query.IndexOnly();
+  const auto index_share = ShareOf(index_only, docs);
+  const auto column_share =
+    index_share > 0 ? std::min(1.0, ShareOf(inner, docs) / index_share) : 0.0;
+  const auto checks = ColumnChecks(static_cast<double>(ctx.k), column_share,
+                                   candidates * index_share);
+  if (ProbeCost(inner, candidates, docs_count) <=
+      ProbeCost(index_only, candidates, docs_count) +
+        checks * kColumnCheckCost) {
+    return {inner, ctx};
+  }
+  SDB_IF_FAILURE("irs::IvfReadsColumns") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
+  return {query.IndexOnly(),
+          {.scorer = ctx.scorer,
+           .fetcher = ctx.fetcher,
+           .table = ctx.columns,
+           .k = ctx.k}};
+}
 
 template<typename Cluster>
 class VectorChain : public Root {
@@ -161,13 +231,14 @@ class VectorChain : public Root {
 namespace irs {
 
 ann::Root::ptr KnnVectorQuery::PlanAnn(const ann::Context& ctx) const {
-  if (Inner() != nullptr) {
-    return detail::MakeKnnVector<ann::Family>(*this, ctx);
+  const auto [prefilter, routed] = ann::RouteOf(*this, Segment(), ctx);
+  if (prefilter != nullptr) {
+    return detail::MakeKnnVector<ann::Family>(*this, routed, prefilter);
   }
-  const auto record = Stats(ann::ScoredOf(ctx));
+  const auto record = Stats(ann::ScoredOf(routed));
   const detail::ScoreArgs score{.scorer = record.scorer,
                                 .stats = record.stats,
-                                .fetcher = &ctx.fetcher,
+                                .fetcher = &routed.fetcher,
                                 .boost = Boost()};
   const auto& field = *State().reader;
   return detail::ResolveClusters<detail::AcceptAll>(
@@ -175,14 +246,16 @@ ann::Root::ptr KnnVectorQuery::PlanAnn(const ann::Context& ctx) const {
     [&]<typename Cluster>(size_t count,
                           const detail::ClusterFeed& feed) -> ann::Root::ptr {
       return memory::make_managed<ann::VectorChain<Cluster>>(
-        ctx.fetcher, Segment(), field, score, ctx.table, count, State(), feed);
+        routed.fetcher, Segment(), field, score, routed.table, count, State(),
+        feed);
     });
 }
 
 ann::Root::ptr RangeVectorQuery::PlanAnn(const ann::Context& ctx) const {
+  const auto [prefilter, routed] = ann::RouteOf(*this, Segment(), ctx);
   return detail::ResolveBool(Inclusive(), [&]<bool Inclusive>() {
     return detail::MakeVectorScored<ann::Family, detail::RadiusGate<Inclusive>>(
-      *this, ctx, Threshold());
+      *this, routed, Threshold(), prefilter);
   });
 }
 

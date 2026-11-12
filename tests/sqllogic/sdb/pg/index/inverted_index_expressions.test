@@ -915,17 +915,12 @@ CREATE TABLE bad_scalars(
     ts TIMESTAMP);
 
 
-statement error
-CREATE INDEX bad_decimal ON bad_scalars USING inverted(id, (dc + 1));
-----
-db error: ERROR: Column '(dc + 1)' has unsupported type DECIMAL(13,2) and can not be indexed
+# DECIMAL, HUGEINT and UUID expressions are indexed as numbers.
+statement ok
+CREATE INDEX decimal_expr ON bad_scalars USING inverted(id, (dc + 1));
 
-
-statement error
-CREATE INDEX bad_hugeint ON bad_scalars USING inverted(id, (hi + 1));
-----
-db error: ERROR: Column '(hi + 1)' has unsupported type HUGEINT and can not be indexed
-
+statement ok
+CREATE INDEX hugeint_expr ON bad_scalars USING inverted(id, (hi + 1));
 
 statement error
 CREATE INDEX bad_interval ON bad_scalars USING inverted(id, (iv));
@@ -933,11 +928,8 @@ CREATE INDEX bad_interval ON bad_scalars USING inverted(id, (iv));
 db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexed
 
 
-statement error
-CREATE INDEX bad_uuid ON bad_scalars USING inverted(id, (uu));
-----
-db error: ERROR: Column 'uu' has unsupported type UUID and can not be indexed
-
+statement ok
+CREATE INDEX uuid_expr ON bad_scalars USING inverted(id, (uu));
 
 statement error
 CREATE INDEX bad_union ON bad_scalars

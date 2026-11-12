@@ -23,12 +23,14 @@
 #include <algorithm>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/docs/boolean_sparse.hpp"
 #include "iresearch/search/docs/boolean_window.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/docs/sorted_docs.hpp"
 #include "iresearch/search/docs/walk.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/lead/two_phase.hpp"
@@ -83,6 +85,10 @@ struct Family {
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,
                         ScoreMergeType, score_t score);
+
+  static Result MakeSorted(const Context&, std::vector<doc_id_t>&& docs) {
+    return memory::make_managed<SortedDocs>(std::move(docs));
+  }
 
   static detail::TableFilter* BitsetTable(const Context&) noexcept {
     return nullptr;

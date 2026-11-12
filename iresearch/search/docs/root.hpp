@@ -33,6 +33,8 @@ struct Root : memory::Managed {
   using ptr = memory::managed_ptr<Root>;
 
   virtual uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* out) = 0;
+
+  virtual doc_id_t NextDoc() const noexcept { return doc_limits::invalid(); }
 };
 
 }  // namespace irs::docs

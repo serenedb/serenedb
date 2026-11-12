@@ -87,14 +87,18 @@ class BooleanSparse : public Root {
     }
 
     _spent = doc_limits::eof(doc);
+    _next = doc;
     return n;
   }
+
+  doc_id_t NextDoc() const noexcept final { return _next; }
 
  private:
   Lead _lead;
   [[no_unique_address]] Probes _probes;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
+  doc_id_t _next = doc_limits::invalid();
   bool _spent = false;
 };
 

@@ -195,11 +195,12 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   const auto corrupted = [&] { Corrupted("record", head.id); };
   SDB_ASSERT(head.term_count > 1);
   if (head.width > kMaxStride ||
-      (!head.text.prefixes.empty() && head.width != 0)) {
+      (!head.text.prefix_trie.empty() && head.width != 0)) {
     corrupted();
   }
   _prefix_size = static_cast<uint32_t>(prefix.size());
   key_width = head.width;
+  single_valued = head.single_valued;
   uint64_t bytes = 0;
   _min_key.assign(prefix);
   _min_key.append(ViewCast<byte_type>(std::string_view{head.min}));
@@ -219,12 +220,12 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   if (_blocks > 1) {
     _root = Root{Slice(separators, _first_block, _blocks - 1), key_width != 0};
     bytes += _root.MemoryBytes();
-    if (!head.text.prefixes.empty()) {
-      _prefixes = std::make_unique<PrefixIndex>(DecodePrefixes(
-        ViewCast<byte_type>(std::string_view{head.text.prefixes}), head.id));
-      bytes += _prefixes->MemoryBytes();
+    if (!head.text.prefix_trie.empty()) {
+      _trie = std::make_unique<PrefixTrie>(
+        ViewCast<byte_type>(std::string_view{head.text.prefix_trie}), head.id);
+      bytes += _trie->MemoryBytes();
     }
-  } else if (!head.text.prefixes.empty()) {
+  } else if (!head.text.prefix_trie.empty()) {
     corrupted();
   } else {
     _inline_base = head.inline_base;
@@ -238,6 +239,16 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     bytes += ReadRanges(owner, in, head.ranges);
   } else if (head.ranges.size != 0) {
     corrupted();
+  }
+  if (const auto& table = head.fsst_table; !table.empty()) {
+    _fsst = std::make_unique<duckdb_fsst_decoder_t>();
+    const auto consumed = duckdb_fsst_import(
+      _fsst.get(), reinterpret_cast<const unsigned char*>(table.data()),
+      table.size());
+    if (consumed != table.size()) {
+      Corrupted("FSST table", head.id);
+    }
+    bytes += sizeof(duckdb_fsst_decoder_t);
   }
   if (_blocks == 1) {
     _small = owner.CopyBlock(_first_block, in.Length());
@@ -318,12 +329,7 @@ void TermReaderImpl::SampleTerms(
   std::array<bytes_view, kRun> run;
   uint64_t taken = 0;
   for (uint32_t block = 0; block < _blocks && taken < bytes; block += step) {
-    if (block == 0) {
-      cursor.First();
-    } else {
-      cursor.Load(block);
-      cursor.Next();
-    }
+    cursor.Start(block);
     size_t n = 0;
     for (;;) {
       keys[n].assign(cursor.Term());
@@ -445,7 +451,8 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
     uint32_t block = 0;
     if (!Small()) {
       const Probe probe{key, size};
-      block = last == kNoBlock ? BlockOf(probe) : BlockFrom(last, probe);
+      block = static_cast<uint32_t>(
+        _root.FindFrom(last == kNoBlock ? 0 : last, probe));
       if (block != last) {
         ++visited;
         AppendRange(blocks, BlockOffset(block), BlockOffset(block + 1));

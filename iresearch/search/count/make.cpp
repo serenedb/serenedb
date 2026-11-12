@@ -22,7 +22,9 @@
 
 #include <span>
 
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/disjoint.hpp"
 #include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
@@ -30,16 +32,9 @@
 #include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs::count {
+namespace {
 
-Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
-  if (query.Kind() == QueryKind::Empty) {
-    return MakeConstant(0);
-  }
-  const detail::FoldReachScope reach{ctx.span};
-  return query.PlanCount(ctx);
-}
-
-Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
+Root::ptr PlanTerms(const MultiTermQuery& query, const Context& ctx) {
   const auto& state = query.State();
   const auto* const field = state.Reader();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
@@ -53,6 +48,27 @@ Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
     }
   }
   return detail::MakeQuery<Family>(query, ctx);
+}
+
+}  // namespace
+
+Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
+  if (query.Kind() == QueryKind::Empty) {
+    return MakeConstant(0);
+  }
+  const detail::FoldReachScope reach{ctx.span};
+  return query.PlanCount(ctx);
+}
+
+Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
+  const auto* const field = query.State().Reader();
+  const auto& segment = query.Segment();
+  if (ctx.table == nullptr && field != nullptr && field->single_valued &&
+      segment.live_docs_count() == segment.docs_count()) {
+    return MakeWholeCount(query.Postings(), ctx,
+                          [&query, ctx] { return PlanTerms(query, ctx); });
+  }
+  return PlanTerms(query, ctx);
 }
 
 }  // namespace irs::count

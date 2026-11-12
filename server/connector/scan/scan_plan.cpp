@@ -304,37 +304,6 @@ void BuildDualFilters(ScanGlobalState& state,
   }
 }
 
-void AddDeferredColumnFilter(ScanGlobalState& state,
-                             DeferredColumnFilter&& deferred) {
-  using ColFilter = ScanGlobalState::ColFilter;
-  auto existing = absl::c_find_if(state.col_filters, [&](const ColFilter& cf) {
-    return cf.field == deferred.column && !cf.is_score && !cf.is_dynamic &&
-           !cf.zonemap_only && !cf.row_gather && cf.extract_path.empty() &&
-           cf.row_fields.empty();
-  });
-  if (existing != state.col_filters.end()) {
-    auto conjunction = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
-      duckdb::ExpressionType::CONJUNCTION_AND);
-    conjunction->GetChildrenMutable().push_back(
-      duckdb::ExpressionFilter::GetExpressionFilter(*existing->filter,
-                                                    "AddDeferredColumnFilter")
-        .expr->Copy());
-    conjunction->GetChildrenMutable().push_back(
-      std::move(duckdb::ExpressionFilter::GetExpressionFilter(
-                  *deferred.filter, "AddDeferredColumnFilter")
-                  .expr));
-    deferred.filter =
-      duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(conjunction));
-  }
-  const auto& owned =
-    state.deferred_filters.emplace_back(std::move(deferred.filter));
-  auto& cf = existing != state.col_filters.end()
-               ? *existing
-               : state.col_filters.emplace_back();
-  cf.field = deferred.column;
-  BindExpressionFilter(cf, *owned, std::move(deferred.type));
-}
-
 std::optional<ColumnId> FetchableColumn(
   const ScanBindData& bind, const duckdb::ColumnIndex& column_index) {
   const auto bind_col = column_index.GetPrimaryIndex();
@@ -443,9 +412,6 @@ void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
   state.owned_where = std::move(built.filter);
   state.owned_index_only = std::move(built.index_only);
   state.owned_where_scorers = std::move(built.scorers);
-  for (auto& column_filter : built.column_filters) {
-    AddDeferredColumnFilter(state, std::move(column_filter));
-  }
   for (auto& dual : built.dual_filters) {
     const auto& owned =
       state.deferred_filters.emplace_back(std::move(dual.filter));
@@ -685,6 +651,9 @@ bool IsStoreServed(const ScanBindData& bind,
 ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
   if (ss.ts_dict.Active()) {
     return ScanShape::TsDict;
+  }
+  if (ss.OrdersByValue()) {
+    return ScanShape::ValueTopK;
   }
   const bool score_filter = absl::c_any_of(
     g.col_filters,

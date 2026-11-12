@@ -1,0 +1,148 @@
+control substitution on
+
+# An inverted index over DECIMAL, UUID, UBIGINT, HUGEINT and UHUGEINT columns
+# answers the same after a restart, from the segments it wrote.
+
+statement ok
+CREATE TABLE wnr (id INTEGER PRIMARY KEY, d4 DECIMAL(9,2), d16 DECIMAL(38,5),
+  u UUID, ub UBIGINT, h HUGEINT, uh UHUGEINT) WITH (storage = 'search');
+
+statement ok
+CREATE INDEX wnr_idx ON wnr USING inverted (id, d4, d16, u, ub, h, uh);
+
+statement ok
+INSERT INTO wnr VALUES
+  (1, 5.12, 0.00000, '7fffffff-ffff-ffff-ffff-ffffffffffff', 9223372036854775808,
+   -1, 170141183460469231731687303715884105728),
+  (2, -5.12, -0.00001, '80000000-0000-0000-0000-000000000000',
+   18446744073709551615, 170141183460469231731687303715884105727, 0),
+  (3, 1.25, 12345678901234567890.12345, '00000000-0000-0000-0000-000000000001',
+   0, -170141183460469231731687303715884105728,
+   340282366920938463463374607431768211455);
+
+statement ok
+VACUUM (REFRESH_TABLE) wnr;
+
+statement ok
+INSERT INTO wnr VALUES
+  (4, 5.13, 0.00000, 'ffffffff-ffff-ffff-ffff-ffffffffffff', 1, 0, 1),
+  (5, NULL, NULL, NULL, NULL, NULL, NULL);
+
+statement ok
+VACUUM (REFRESH_TABLE) wnr;
+
+query
+SELECT id FROM wnr WHERE d4 @@ ts_lt(5.125) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM wnr WHERE d16 @@ ts_lt(-0.000005) ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM wnr WHERE u > '7fffffff-ffff-ffff-ffff-ffffffffffff' ORDER BY id;
+----
+id
+2
+4
+
+query
+SELECT id FROM wnr WHERE ub >= 9223372036854775808 ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM wnr WHERE h < 0 ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM wnr WHERE uh = 170141183460469231731687303715884105728 ORDER BY id;
+----
+id
+1
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM wnr;
+----
+n
+5
+
+connection after_restart
+query
+SELECT id FROM wnr WHERE d4 @@ ts_lt(5.125) ORDER BY id;
+----
+id
+1
+2
+3
+
+connection after_restart
+query
+SELECT id FROM wnr WHERE d16 @@ ts_lt(-0.000005) ORDER BY id;
+----
+id
+2
+
+connection after_restart
+query
+SELECT id FROM wnr WHERE u > '7fffffff-ffff-ffff-ffff-ffffffffffff' ORDER BY id;
+----
+id
+2
+4
+
+connection after_restart
+query
+SELECT id FROM wnr WHERE ub >= 9223372036854775808 ORDER BY id;
+----
+id
+1
+2
+
+connection after_restart
+query
+SELECT id FROM wnr WHERE h < 0 ORDER BY id;
+----
+id
+1
+3
+
+connection after_restart
+query
+SELECT id FROM wnr WHERE uh = 170141183460469231731687303715884105728 ORDER BY id;
+----
+id
+1
+
+connection after_restart
+query
+SELECT id FROM wnr WHERE d4 IS NULL ORDER BY id;
+----
+id
+5
+
+connection after_restart
+query
+SELECT count(*) AS n FROM wnr WHERE ub > 1;
+----
+n
+2

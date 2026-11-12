@@ -102,13 +102,19 @@ void PushHits(StreamLocalState& l) {
       static_cast<irs::doc_id_t>(std::min<uint64_t>(span, l.stop_row - row));
     const auto min = irs::doc_limits::min() + static_cast<irs::doc_id_t>(row);
     const auto max = min + width;
-    const auto n =
-      l.scored ? irs::utils::downCast<irs::hits::Root>(l.root.get())
-                   ->Run(min, max, batcher.WindowHead(), batcher.ScoreHead())
-               : irs::utils::downCast<irs::docs::Root>(l.root.get())
-                   ->Run(min, max, batcher.WindowHead());
-    batcher.CommitWindow(n);
     l.next_row = row + width;
+    if (l.scored) {
+      batcher.CommitWindow(
+        irs::utils::downCast<irs::hits::Root>(l.root.get())
+          ->Run(min, max, batcher.WindowHead(), batcher.ScoreHead()));
+      continue;
+    }
+    auto& root = irs::utils::downCast<irs::docs::Root>(*l.root);
+    batcher.CommitWindow(root.Run(min, max, batcher.WindowHead()));
+    if (const auto next = root.NextDoc(); next > max) {
+      l.next_row =
+        std::min<uint64_t>(l.stop_row, next - irs::doc_limits::min());
+    }
   }
 }
 

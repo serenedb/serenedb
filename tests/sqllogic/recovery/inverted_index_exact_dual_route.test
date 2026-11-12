@@ -1,0 +1,113 @@
+# An exact vector search under a range on an indexed column of a search table
+# scans every vector and checks the range on the columns when the range admits
+# so many rows that walking them would decode most vectors anyway, and walks
+# the rows the index admits when it admits few. The fault point fails the
+# query the moment a segment picks the columns.
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE MACRO exact_route_vec(i) AS
+  list_transform(range(16), lambda j: ((hash(i * 16 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[16];
+
+
+statement ok
+CREATE TABLE exact_route (id INTEGER PRIMARY KEY, n INTEGER, emb FLOAT[16])
+  WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX exact_route_l2 ON exact_route
+  USING inverted(id, n, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO exact_route
+SELECT i, (hash(i) % 100000)::INTEGER, exact_route_vec(i)
+FROM range(100000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) exact_route;
+
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+
+statement ok
+SET sdb_faults = 'irs::ExactReadsColumns';
+
+
+statement error
+SELECT id FROM exact_route WHERE n BETWEEN 0 AND 49999
+  ORDER BY emb <-> exact_route_vec(123456) LIMIT 5;
+----
+db error: ERROR: intentional debug error
+
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM exact_route WHERE n BETWEEN 5000 AND 5099
+    ORDER BY emb <-> exact_route_vec(123456) LIMIT 5) t;
+----
+count
+5
+
+
+statement ok
+SET sdb_faults = '-irs::ExactReadsColumns';
+
+
+statement ok
+DELETE FROM exact_route WHERE id % 3 = 0;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) exact_route;
+
+
+# Either way the rows returned are the nearest ones that pass the range and
+# none of them is deleted.
+query
+SELECT count(*) AS rows,
+  count(*) FILTER (WHERE n BETWEEN 0 AND 49999 AND id % 3 <> 0) AS kept
+FROM (
+  SELECT id, n FROM exact_route WHERE n BETWEEN 0 AND 49999
+    ORDER BY emb <-> exact_route_vec(123456) LIMIT 50) t;
+----
+rows	kept
+50	50
+
+
+query
+SELECT count(*) AS rows,
+  count(*) FILTER (WHERE n BETWEEN 5000 AND 5099 AND id % 3 <> 0) AS kept
+FROM (
+  SELECT id, n FROM exact_route WHERE n BETWEEN 5000 AND 5099
+    ORDER BY emb <-> exact_route_vec(123456) LIMIT 50) t;
+----
+rows	kept
+50	50
+
+
+query
+SELECT count(*) AS same FROM (
+  SELECT id FROM exact_route WHERE n BETWEEN 0 AND 49999
+    ORDER BY emb <-> exact_route_vec(123456) LIMIT 50) a
+JOIN (
+  SELECT id FROM exact_route WHERE n + 0 BETWEEN 0 AND 49999
+    ORDER BY emb <-> exact_route_vec(123456), id LIMIT 50) b USING (id);
+----
+same
+50
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+RESET sdb_ann_force_exact;

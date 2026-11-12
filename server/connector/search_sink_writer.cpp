@@ -818,10 +818,10 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
   }
 
   if (is_list_or_array) {
-    const auto child_kind = (kind == duckdb::LogicalTypeId::LIST
+    const auto child_kind =
+      term_dict::IndexedKind(kind == duckdb::LogicalTypeId::LIST
                                ? duckdb::ListType::GetChildType(type)
-                               : duckdb::ArrayType::GetChildType(type))
-                              .id();
+                               : duckdb::ArrayType::GetChildType(type));
     const duckdb::idx_t array_size =
       (kind == duckdb::LogicalTypeId::ARRAY ? duckdb::ArrayType::GetSize(type)
                                             : 0);
@@ -894,8 +894,8 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       }
       _field.PrepareForNumericValue(irs::NumericLayout::kNumbers);
       append_stored();
-      [[maybe_unused]] const bool matched =
-        term_dict::DispatchNumericKind(kind, [&]<duckdb::LogicalTypeId K>() {
+      [[maybe_unused]] const bool matched = term_dict::DispatchNumericKind(
+        term_dict::IndexedKind(type), [&]<duckdb::LogicalTypeId K>() {
           WriteNumericColumn<K>(_field, count);
         });
       SDB_ASSERT(matched);

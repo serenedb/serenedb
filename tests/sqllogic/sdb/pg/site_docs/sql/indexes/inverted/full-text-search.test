@@ -547,3 +547,89 @@ QUERY PLAN
 │ Projections: id                                          │
 │ ~1 row                                                   │
 ╰──────────────────────────────────────────────────────────╯
+
+# DOCS_TEST: range_bounds_by_column_type
+
+statement ok
+CREATE TABLE prices (id INTEGER PRIMARY KEY, amount DECIMAL(9,2), stock INTEGER, sku UUID);
+
+statement ok
+CREATE INDEX prices_idx ON prices USING inverted (id, amount, stock, sku);
+
+statement ok
+INSERT INTO prices VALUES
+    (1, 4.99, 5, '00000000-0000-0000-0000-000000000001'),
+    (2, 5.12, 6, '7fffffff-ffff-ffff-ffff-ffffffffffff'),
+    (3, 5.13, 7, '80000000-0000-0000-0000-000000000000');
+
+statement ok
+VACUUM (REFRESH_TABLE) prices;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id
+FROM prices_idx
+WHERE amount @@ ts_lt(5.125)
+  AND stock @@ ts_le(6.5)
+  AND sku @@ ts_lt('80000000-0000-0000-0000-000000000000'::UUID)
+ORDER BY id;
+----
+id
+1
+2
+
+
+# DOCS_TEST: numeric_top_k
+
+statement ok
+CREATE TABLE readings (id INTEGER PRIMARY KEY, sensor INTEGER, reading DOUBLE);
+
+statement ok
+CREATE INDEX readings_idx ON readings USING inverted (id, sensor, reading);
+
+statement ok
+INSERT INTO readings VALUES
+    (1, 7, 21.5),
+    (2, 7, 19.0),
+    (3, 8, NULL),
+    (4, 8, 23.25),
+    (5, 9, 18.75);
+
+statement ok
+VACUUM (REFRESH_TABLE) readings;
+
+# DOCS_TEST_BODY
+
+query
+SELECT reading
+FROM readings_idx
+WHERE reading >= 19
+ORDER BY reading DESC
+LIMIT 2;
+----
+reading
+23.25
+21.5
+
+query
+EXPLAIN SELECT reading
+FROM readings_idx
+WHERE reading >= 19
+ORDER BY reading DESC
+LIMIT 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: readings_idx            │
+│ Lookup: table                  │
+│ Index Filter:                  │
+│ ╭─ Granular Range ────────╮    │
+│ │ Field: reading(numeric) │    │
+│ │ Range: >=19             │    │
+│ ╰─────────────────────────╯    │
+│ Top: 2                         │
+│ Order: reading DESC NULLS LAST │
+│ Projections: reading           │
+│ ~1 row                         │
+╰────────────────────────────────╯

@@ -25,6 +25,7 @@
 
 #include <array>
 #include <deque>
+#include <new>
 #include <span>
 #include <string>
 
@@ -598,16 +599,23 @@ class FieldInverter : util::Noncopyable {
 
   template<typename P, typename ValueAt, typename DocAt>
   bool InvertNumericImpl(size_t n, ValueAt&& value_at, DocAt doc_at) {
-    constexpr size_t kMaxValues = TokenBatch::kCapacity;
+    constexpr size_t kBufferBytes = 4096;
+    constexpr size_t kKeyBytes =
+      kInlineNumericTerm<P> ? 0 : numeric_utils::kNumericTermSize<P>;
+    constexpr size_t kMaxValues =
+      kBufferBytes / (sizeof(duckdb::string_t) + kKeyBytes);
     SDB_ASSERT(!_state.value_open);
     SDB_ASSERT(Layout() == TokenLayout::Terms);
     auto& log = *std::get_if<PostingLog<TokenLayout::Terms>>(&_log);
-    duckdb::string_t terms[kMaxValues];
+    alignas(duckdb::string_t) std::array<byte_type, kBufferBytes> buffer;
+    auto* const terms =
+      std::launder(reinterpret_cast<duckdb::string_t*>(buffer.data()));
+    auto* const keys = buffer.data() + kMaxValues * sizeof(duckdb::string_t);
     for (size_t base = 0; base < n;) {
       const auto m =
         static_cast<uint32_t>(std::min<size_t>(kMaxValues, n - base));
-      AppendNumericTermsBlock<P>(terms, m,
-                                 [&](size_t j) { return value_at(base + j); });
+      AppendNumericTermsBlock<P>(
+        terms, m, [&](size_t j) { return value_at(base + j); }, keys);
       auto* const ids = ResolveTerms(terms, m);
       for (uint32_t k = 0; k < m; ++k) {
         if (!PushDocTerms(log, doc_at(base + k), ids + k, 1)) [[unlikely]] {

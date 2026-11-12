@@ -25,6 +25,25 @@
 #include "connector/scan/scan_state.h"
 
 namespace sdb::connector {
+namespace {
+
+irs::QueryBuilder::ptr PrepareSegmentQuery(const ScanGlobalState& g,
+                                           uint32_t seg_idx,
+                                           const irs::PrepareContext& ctx) {
+  const auto& segment = (*g.reader)[seg_idx];
+  return g.vector_scorer == nullptr
+           ? irs::PrepareMasked(*g.filter, segment, ctx)
+           : g.filter->PrepareSegment(segment, ctx);
+}
+
+}  // namespace
+
+void PrepareSegmentNow(ScanGlobalState& g, uint32_t seg_idx) {
+  g.queries[seg_idx] = PrepareSegmentQuery(
+    g, seg_idx, {.needs_terms = g.needs_terms, .prefetch = false});
+  g.Segment(seg_idx).prepare.store(SegmentWork::kReady,
+                                   std::memory_order_relaxed);
+}
 
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState& l,
@@ -45,14 +64,11 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
       }
       collector = g.collector->Get();
     }
-    const auto& segment = (*g.reader)[seg_idx];
-    const irs::PrepareContext ctx{
-      .collector = collector,
-      .thread = collector != nullptr ? l.thread_slot : 0,
-      .needs_terms = g.needs_terms};
-    g.queries[seg_idx] = g.vector_scorer == nullptr
-                           ? irs::PrepareMasked(*g.filter, segment, ctx)
-                           : g.filter->PrepareSegment(segment, ctx);
+    g.queries[seg_idx] =
+      PrepareSegmentQuery(g, seg_idx,
+                          {.collector = collector,
+                           .thread = collector != nullptr ? l.thread_slot : 0,
+                           .needs_terms = g.needs_terms});
     work.prepare.store(SegmentWork::kReady, std::memory_order_release);
     work.prepare.notify_all();
     return *g.queries[seg_idx];

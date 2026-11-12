@@ -26,7 +26,6 @@
 #include <memory>
 
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
 

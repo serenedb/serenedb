@@ -22,10 +22,12 @@
 
 #include <absl/algorithm/container.h>
 
-#include <array>
 #include <bit>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_format.hpp"
@@ -34,106 +36,207 @@
 
 namespace irs::term_dict {
 
-std::vector<uint32_t> DecodePrefixes(bytes_view encoded, field_id id);
+inline constexpr uint32_t kTrieExactBytes = 4;
+inline constexpr uint64_t kTrieLeafTerms = 1;
+inline constexpr uint64_t kTrieTermsPerByte = 2;
+inline constexpr uint64_t kTrieMinBudget = 16384;
 
-class PrefixIndex {
+struct TrieCursor {
+  uint32_t node;
+  uint32_t labels;
+  uint32_t matched;
+};
+
+inline constexpr uint32_t kTrieBelow = std::numeric_limits<uint32_t>::max();
+inline constexpr uint32_t kTrieMissing = kTrieBelow - 1;
+inline constexpr uint32_t kTrieEnd = kTrieMissing - 1;
+
+class PrefixTrie {
  public:
-  explicit PrefixIndex(std::vector<uint32_t> prefixes);
-
-  size_t MemoryBytes() const noexcept {
-    return sizeof(*this) +
-           (_prefixes.capacity() + _pair_starts.capacity()) * sizeof(uint32_t);
+  static constexpr size_t NodeBytes(uint32_t fanout,
+                                    uint32_t edge_size) noexcept {
+    return fanout + (3 * fanout + 7) / 8 + 2 +
+           (edge_size == 0 ? 0 : edge_size + sizeof(uint32_t));
   }
 
-  uint32_t NextLabel(bytes_view head, uint32_t from,
-                     const uint32_t*& at) const noexcept {
-    if (head.empty()) {
-      from = NextBit(_firsts.data(), from);
-      if (from != kNoLabel) {
-        at = _prefixes.data() + _buckets[from];
-      }
-      return from;
+  PrefixTrie(bytes_view encoded, field_id id);
+
+  size_t MemoryBytes() const noexcept {
+    return sizeof(*this) + _labels.capacity() + _fanouts.capacity() +
+           _edges.capacity() +
+           (_inner.capacity() + _ends.capacity() + _terminal.capacity() +
+            _edged.capacity()) *
+             sizeof(uint64_t) +
+           (_start_samples.capacity() + _inner_ranks.capacity() +
+            _edged_ranks.capacity() + _edge_starts.capacity()) *
+             sizeof(uint32_t);
+  }
+
+  static TrieCursor Root() noexcept {
+    return {.node = 0, .labels = 0, .matched = 0};
+  }
+
+  bytes_view Edge(TrieCursor cursor) const noexcept {
+    return EdgeOf(cursor.node).substr(cursor.matched);
+  }
+
+  bool Terminal(TrieCursor cursor) const noexcept {
+    return cursor.node == kTrieEnd ||
+           (Bit(_terminal, cursor.node) &&
+            cursor.matched == EdgeOf(cursor.node).size());
+  }
+
+  bytes_view Labels(TrieCursor cursor) const noexcept {
+    if (cursor.node == kTrieEnd) {
+      return {};
     }
-    const auto first = head[0];
-    if (head.size() == 1) {
-      from = NextBit(_pairs.data() + first * kRowWords, from);
-      if (from != kNoLabel) {
-        at = _prefixes.data() + _pair_starts[Rank(first, from)];
-      }
-      return from;
+    const auto edge = EdgeOf(cursor.node);
+    if (cursor.matched != edge.size()) {
+      return edge.substr(cursor.matched, 1);
     }
-    const auto second = head[1];
-    if (!HasBit(_pairs.data() + first * kRowWords, second)) {
-      return kNoLabel;
+    return {_labels.data() + cursor.labels, _fanouts[cursor.node] + size_t{1}};
+  }
+
+  uint32_t NextLabel(TrieCursor cursor, uint32_t from) const noexcept {
+    const auto labels = Labels(cursor);
+    const auto it = absl::c_lower_bound(labels, from);
+    return it == labels.end() ? kNoLabel : *it;
+  }
+
+  TrieCursor ChildAt(TrieCursor cursor, uint32_t slot) const noexcept {
+    if (cursor.matched != EdgeOf(cursor.node).size()) {
+      return {.node = cursor.node,
+              .labels = cursor.labels,
+              .matched = cursor.matched + 1};
     }
-    const auto pair = Rank(first, second);
-    const auto* begin = _prefixes.data() + _pair_starts[pair];
-    const auto* end = _prefixes.data() + _pair_starts[pair + 1];
-    const uint32_t shift = 8 * (kTermPrefix - 1 - head.size());
-    const uint32_t base = TermPrefix(head);
-    const uint32_t key = base | from << shift;
-    if (!at || at < begin || at > end || (at != begin && at[-1] >= key)) {
-      at = begin;
+    const auto at = cursor.labels + slot;
+    if (!Bit(_inner, at)) {
+      return {.node = Bit(_ends, at) ? kTrieEnd : kTrieBelow,
+              .labels = 0,
+              .matched = 0};
     }
-    at = Gallop(at, end, key);
-    if (at == end || ((*at ^ base) >> shift >> 8) != 0) {
-      return kNoLabel;
+    const auto child = Rank(_inner, _inner_ranks, at) + 1;
+    return {.node = child, .labels = Start(child), .matched = 0};
+  }
+
+  TrieCursor Child(TrieCursor cursor, byte_type label) const noexcept {
+    const auto labels = Labels(cursor);
+    const auto it = absl::c_lower_bound(labels, label);
+    if (it == labels.end() || *it != label) {
+      return {.node = kTrieMissing, .labels = 0, .matched = 0};
     }
-    return *at >> shift & 0xFF;
+    return ChildAt(cursor, static_cast<uint32_t>(it - labels.begin()));
   }
 
  private:
-  static constexpr size_t kRowWords = kNoLabel / 64;
-
-  static bool HasBit(const uint64_t* row, uint32_t bit) noexcept {
-    return (row[bit / 64] >> (bit % 64) & 1) != 0;
+  static bool Bit(std::span<const uint64_t> bits, uint32_t at) noexcept {
+    return (bits[at / 64] >> (at % 64) & 1) != 0;
   }
 
-  static uint32_t NextBit(const uint64_t* row, uint32_t from) noexcept {
-    for (uint32_t word = from / 64; word < kRowWords; ++word) {
-      uint64_t bits = row[word];
-      if (word == from / 64) {
-        bits &= ~uint64_t{0} << (from % 64);
-      }
-      if (bits != 0) {
-        return word * 64 + static_cast<uint32_t>(std::countr_zero(bits));
-      }
-    }
-    return kNoLabel;
+  static uint32_t Rank(std::span<const uint64_t> bits,
+                       std::span<const uint32_t> ranks, uint32_t at) noexcept {
+    const uint64_t below = (uint64_t{1} << (at % 64)) - 1;
+    return ranks[at / 64] +
+           static_cast<uint32_t>(std::popcount(bits[at / 64] & below));
   }
 
-  uint32_t Rank(uint32_t first, uint32_t second) const noexcept {
-    const auto* row = _pairs.data() + first * kRowWords;
-    uint32_t rank = _pair_rows[first];
-    for (uint32_t word = 0; word != second / 64; ++word) {
-      rank += static_cast<uint32_t>(std::popcount(row[word]));
+  bytes_view EdgeOf(uint32_t node) const noexcept {
+    if (node == kTrieEnd || !Bit(_edged, node)) {
+      return {};
     }
-    const uint64_t below = (uint64_t{1} << (second % 64)) - 1;
-    return rank +
-           static_cast<uint32_t>(std::popcount(row[second / 64] & below));
+    const auto i = Rank(_edged, _edged_ranks, node);
+    return bytes_view{_edges}.substr(_edge_starts[i],
+                                     _edge_starts[i + 1] - _edge_starts[i]);
   }
 
-  static const uint32_t* Gallop(const uint32_t* at, const uint32_t* end,
-                                uint32_t key) noexcept {
-    if (at == end || *at >= key) {
-      return at;
-    }
-    size_t step = 1;
-    while (step < static_cast<size_t>(end - at) && at[step] < key) {
-      at += step;
-      step <<= 1;
-    }
-    const std::span rest{
-      at + 1, step < static_cast<size_t>(end - at) ? at + step + 1 : end};
-    return rest.data() + (absl::c_lower_bound(rest, key) - rest.begin());
+  static constexpr uint32_t kStartStride = 8;
+
+  uint32_t Start(uint32_t node) const noexcept {
+    static_assert(std::endian::native == std::endian::little);
+    const uint32_t group = node / kStartStride;
+    const uint32_t skip = node % kStartStride;
+    uint64_t fanouts = 0;
+    std::memcpy(&fanouts, _fanouts.data() + group * kStartStride,
+                sizeof(fanouts));
+    fanouts &= (uint64_t{1} << (8 * skip)) - 1;
+    fanouts =
+      (fanouts & 0x00FF00FF00FF00FF) + (fanouts >> 8 & 0x00FF00FF00FF00FF);
+    return _start_samples[group] + skip +
+           static_cast<uint32_t>(fanouts * 0x0001000100010001 >> 48);
   }
 
-  std::vector<uint32_t> _prefixes;
-  std::vector<uint32_t> _pair_starts;
-  std::array<uint64_t, kRowWords * kNoLabel> _pairs{};
-  std::array<uint64_t, kRowWords> _firsts{};
-  std::array<uint32_t, kNoLabel + 1> _buckets{};
-  std::array<uint32_t, kNoLabel + 1> _pair_rows{};
+  bstring _labels;
+  bstring _fanouts;
+  std::vector<uint32_t> _start_samples;
+  std::vector<uint64_t> _inner;
+  std::vector<uint32_t> _inner_ranks;
+  std::vector<uint64_t> _ends;
+  std::vector<uint64_t> _terminal;
+  std::vector<uint64_t> _edged;
+  std::vector<uint32_t> _edged_ranks;
+  std::vector<uint32_t> _edge_starts;
+  bstring _edges;
+};
+
+class PrefixTrieBuilder {
+ public:
+  void Add(bytes_view term);
+  std::string Finish();
+  void Clear() noexcept;
+
+ private:
+  static constexpr uint32_t kLeaf = std::numeric_limits<uint32_t>::max();
+  static constexpr uint32_t kEnd = kLeaf - 1;
+
+  struct Child {
+    uint32_t node;
+    byte_type label;
+  };
+
+  struct Built {
+    uint32_t count;
+    uint32_t depth;
+    uint32_t edge_start;
+    uint16_t fanout;
+    bool terminal;
+  };
+
+  struct Frame {
+    uint64_t count;
+    uint32_t begin;
+    bool terminal;
+  };
+
+  static bool Adaptive(const Built& node) noexcept {
+    return node.depth >= kTrieExactBytes;
+  }
+
+  static uint32_t EdgeSize(const Built& node) noexcept {
+    return node.depth - node.edge_start;
+  }
+
+  static byte_type KindOf(uint32_t node) noexcept;
+
+  void Deepen(size_t depth);
+  void CloseTo(size_t depth);
+  uint32_t MakeNode(size_t depth, const Frame& frame);
+  void Materialize();
+  void Shrink(uint64_t budget);
+  void Prune();
+  void Encode(uint32_t root, std::string& out) const;
+
+  bstring _prev;
+  std::vector<Frame> _frames;
+  std::vector<Child> _pending;
+  std::vector<Built> _built;
+  bstring _labels;
+  bstring _kinds;
+  std::vector<uint32_t> _inner;
+  bstring _edges;
+  uint64_t _terms = 0;
+  uint64_t _limit = kTrieLeafTerms;
+  uint64_t _bytes = 0;
+  uint32_t _carry = kLeaf;
 };
 
 }  // namespace irs::term_dict

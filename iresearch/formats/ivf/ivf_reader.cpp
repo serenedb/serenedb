@@ -130,7 +130,8 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
 
   auto query = memory::make_tracked<KnnVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, ctx.boost, std::move(inner));
+    opts.metric, ctx.boost,
+    PrefilterOf(std::move(inner), opts.index_only, opts.dual, segment, ctx));
   query->SetStats(ctx.Record());
   return query;
 }
@@ -151,7 +152,8 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
 
   auto query = memory::make_tracked<RangeVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, radius, inclusive, ctx.boost, std::move(inner));
+    opts.metric, radius, inclusive, ctx.boost,
+    PrefilterOf(std::move(inner), opts.index_only, opts.dual, segment, ctx));
   query->SetStats(ctx.Record());
   return query;
 }

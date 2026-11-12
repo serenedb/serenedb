@@ -24,7 +24,6 @@
 #include <new>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
 
 namespace irs {
 namespace {
@@ -145,7 +144,7 @@ RegexpConjunction::RegexpConjunction(
   _unknown->unknown = true;
   _unknown->lo = 0;
   _unknown->hi = RegexpAcceptor::kMaxLabel;
-  _unknown->loop.fill(~bitset::word_t{0});
+  _unknown->loop.words.fill(~uint64_t{0});
   Loop(_unknown, _classes);
   _unknown->built.store(true, std::memory_order_relaxed);
   _start = InternLocked(start);
@@ -201,7 +200,7 @@ void RegexpConjunction::BuildLocked(Row* row) const {
     }
     hi = static_cast<uint8_t>(label);
     if (target == row) {
-      row->loop[bitset::word(label)] |= bitset::word_t{1} << bitset::bit(label);
+      row->loop.Add(static_cast<byte_type>(label));
     }
   }
   row->lo = lo;

@@ -51,8 +51,9 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   }
   auto built = memory::make_tracked<ExactVectorQuery>(
     ctx.memory, segment, *column, *columns, opts.query, opts.metric,
-    ctx.boost * GetBoost(), std::move(inner), std::move(codes), threshold,
-    opts.inclusive);
+    ctx.boost * GetBoost(),
+    PrefilterOf(std::move(inner), opts.index_only, opts.dual, segment, ctx),
+    std::move(codes), threshold, opts.inclusive);
   built->SetStats(ctx.Record());
   return built;
 }

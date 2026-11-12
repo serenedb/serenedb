@@ -79,7 +79,7 @@ db error: ERROR: Column 'ts' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/
 statement error
 CREATE INDEX m_reject_kw_u ON m_reject USING inverted(pk, u kw_dict);
 ----
-db error: ERROR: Column 'u' has unsupported type UUID and can not be indexed
+db error: ERROR: Column 'u' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UUID)
 
 
 statement error
@@ -175,10 +175,10 @@ CREATE INDEX m_reject_imp ON m_reject USING inverted(pk, i, bi, bo, dt, ts);
 #   (d) ivf on ARRAY<DOUBLE,3>                         -> ivf validator
 #   (e) ivf on ARRAY<INTEGER,3>                        -> ivf validator
 #   (f) ivf on scalar VARCHAR                          -> ivf validator
-#   (g) implicit (no opclass) on UUID                   -> term_dict Unsupported
-#   (h) implicit (no opclass) on DECIMAL(10,2)          -> term_dict Unsupported
+#   (g) implicit (no opclass) on UUID                   -> accepted
+#   (h) implicit (no opclass) on DECIMAL(10,2)          -> accepted
 #   (i) implicit (no opclass) on INTERVAL               -> term_dict Unsupported
-#   (j) implicit (no opclass) on HUGEINT                -> term_dict Unsupported
+#   (j) implicit (no opclass) on HUGEINT                -> accepted
 # ============================================================================
 
 statement ok
@@ -236,19 +236,13 @@ CREATE INDEX g5_reject_ivf_v ON g5_reject USING inverted(pk, v ivf (metric = 'l2
 db error: ERROR: Column 'v' must be FLOAT[N] to use the 'ivf' opclass, not VARCHAR
 
 
-# (g) implicit (no opclass) on UUID: term_dict has no codec for UUID.
-statement error
+# (g) implicit (no opclass) on UUID: indexed as its 128-bit value.
+statement ok
 CREATE INDEX g5_reject_imp_u ON g5_reject USING inverted(pk, u);
-----
-db error: ERROR: Column 'u' has unsupported type UUID and can not be indexed
 
-
-# (h) implicit (no opclass) on DECIMAL(10,2): term_dict has no codec for DECIMAL.
-statement error
+# (h) implicit (no opclass) on DECIMAL(10,2): indexed as its stored integer.
+statement ok
 CREATE INDEX g5_reject_imp_d ON g5_reject USING inverted(pk, d);
-----
-db error: ERROR: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
-
 
 # (i) implicit (no opclass) on INTERVAL: term_dict has no codec for INTERVAL.
 statement error
@@ -257,12 +251,9 @@ CREATE INDEX g5_reject_imp_iv ON g5_reject USING inverted(pk, iv);
 db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexed
 
 
-# (j) implicit (no opclass) on HUGEINT: term_dict has no codec for HUGEINT.
-statement error
+# (j) implicit (no opclass) on HUGEINT: indexed as a 128-bit integer.
+statement ok
 CREATE INDEX g5_reject_imp_h ON g5_reject USING inverted(pk, h);
-----
-db error: ERROR: Column 'h' has unsupported type HUGEINT and can not be indexed
-
 
 statement ok
 CREATE TABLE g6_t(pk INTEGER PRIMARY KEY,

@@ -42,6 +42,11 @@ Result<Family> MakeNegation(std::span<const PostingClause> excludes,
     return MakeSparseNegation<Family>(excludes, exclude_filters, segment,
                                       candidates, ctx);
   } else {
+    if (auto folded = MakeBitset<Family>(
+          {.must_not = excludes, .must_not_filters = exclude_filters}, segment,
+          ctx)) {
+      return folded;
+    }
     return MakeWindowNegation<Family>(excludes, exclude_filters, segment, ctx);
   }
 }

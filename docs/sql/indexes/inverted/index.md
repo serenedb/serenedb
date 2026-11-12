@@ -59,7 +59,7 @@ Each indexed column carries its **own operator class** — the `column [dictiona
 
 - a column with a **dictionary** is analyzed into tokens (full-text);
 - a column with **no dictionary** is indexed verbatim — one token per value — giving exact, case-sensitive matching, ideal for ids, tags and enum-like categories;
-- a numeric or temporal column is indexed for [exact and range queries](./full-text-search.md#range-queries);
+- a numeric, `UUID` or temporal column is indexed for [exact and range queries](./full-text-search.md#range-queries);
 - an `INET` or `CIDR` column, indexed with no dictionary, serves equality, range and network-containment predicates (see [`INET` indexing](../../data_types/inet.md#indexing));
 - a `FLOAT[N]` column with `ivf (...)` or `hnsw (...)` is indexed for [vector search](./vector-search.md), and a `JSON`/`GEOMETRY` column with a geo dictionary for [geospatial search](./geospatial-search.md).
 
@@ -134,7 +134,7 @@ An inverted index is **eventually consistent**: after a write, the new rows beco
 ## Limitations
 
 - Indexed expressions cannot contain aggregates, window functions, subqueries, volatile functions (e.g. `random()`) or functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`).
-- Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be searchable keys, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays. A `GEOMETRY` column is a key only with a [geo dictionary](./geospatial-search.md). `INCLUDE` stores values of every one of these types.
+- Columns of type `BIGNUM`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be searchable keys, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays. A `GEOMETRY` column is a key only with a [geo dictionary](./geospatial-search.md). `INCLUDE` stores values of every one of these types.
 - A column or expression is listed once as a searchable key, with one dictionary or none; besides that, only `included()` can list it again.
 
 ## See also

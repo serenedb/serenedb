@@ -82,7 +82,8 @@ void EncodeColumn(duckdb::Vector& column, const primary_key::KeySlot& slot,
       }
     }
   };
-  if (!term_dict::DispatchValueKind(slot.type.id(), encode)) {
+  if (!term_dict::DispatchValueKind(term_dict::IndexedKind(slot.type),
+                                    encode)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("primary key column \"", slot.name, "\" of type ",

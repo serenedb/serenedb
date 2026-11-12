@@ -93,6 +93,13 @@ class BooleanWindow : public Root {
     }
   }
 
+  doc_id_t NextDoc() const noexcept final {
+    if (_emit.Pending()) {
+      return doc_limits::invalid();
+    }
+    return _spent ? doc_limits::eof() : _min;
+  }
+
  private:
   Emit _emit;
   detail::Scratch _mask{};

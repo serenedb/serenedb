@@ -21,11 +21,11 @@
 #pragma once
 
 #include <absl/status/status.h>
+#include <absl/status/statusor.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <duckdb/storage/statistics/base_statistics.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -39,12 +39,6 @@
 #include "connector/term_dict.h"
 
 namespace sdb::connector {
-
-enum class WideRanges : uint8_t {
-  Build,
-  DeclineWide,
-  DeclineAll,
-};
 
 struct SearchColumnInfo;
 
@@ -70,7 +64,6 @@ struct SearchColumnInfo {
   catalog::ColumnTokenizer tokenizer;
   std::optional<uint32_t> levenshtein_max_terms;
   bool column_stored = false;
-  const duckdb::BaseStatistics* stats = nullptr;
   const FieldSetGetter* index_fields = nullptr;
 };
 
@@ -85,53 +78,6 @@ using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 
 using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::Expression&) const>;
-
-struct ColumnRange {
-  const duckdb::BoundColumnRefExpression* column = nullptr;
-  double lo = 0;
-  double hi = 0;
-};
-
-std::optional<ColumnRange> ColumnRangeOf(const duckdb::Expression& expr);
-
-std::optional<bool> RangeFitsIndex(const SearchColumnInfo& info, double lo,
-                                   double hi);
-
-template<typename Member>
-struct ColumnInterval {
-  std::optional<SearchColumnInfo> info;
-  double lo = 0;
-  double hi = 0;
-  std::vector<Member> members;
-};
-
-template<typename Member>
-using ColumnIntervals = std::map<BindingKey, ColumnInterval<Member>>;
-
-template<typename Member>
-void AddColumnRange(ColumnIntervals<Member>& intervals,
-                    const ColumnRange& range, const ColumnGetter& getter,
-                    std::type_identity_t<Member> member) {
-  auto [it, inserted] =
-    intervals.try_emplace(MakeBindingKey(range.column->Binding()));
-  auto& interval = it->second;
-  if (inserted) {
-    interval.info = getter(*range.column);
-    interval.lo = range.lo;
-    interval.hi = range.hi;
-  } else {
-    interval.lo = std::max(interval.lo, range.lo);
-    interval.hi = std::min(interval.hi, range.hi);
-  }
-  interval.members.push_back(std::move(member));
-}
-
-template<typename Member>
-std::optional<bool> IntervalFitsIndex(const ColumnInterval<Member>& interval) {
-  return interval.info
-           ? RangeFitsIndex(*interval.info, interval.lo, interval.hi)
-           : std::nullopt;
-}
 
 // Builds iresearch filters into `root`'s `Must` bucket from an implicit-AND
 // list of DuckDB bound filter expressions (as found in a LogicalFilter). Each
@@ -314,14 +260,12 @@ absl::Status MakeSearchFilter(
   irs::BooleanFilter& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers,
-  WideRanges wide_ranges = WideRanges::Build);
+  const ExpressionGetter& expr_getter, FilterScorers* scorers);
 
 std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers,
-  WideRanges wide_ranges);
+  const ExpressionGetter& expr_getter, FilterScorers* scorers);
 
 // True when the expression tree contains an optimizer-claimed index-only
 // predicate (`@@` or the match sugar) that cannot run as a scalar.
@@ -333,8 +277,8 @@ bool IsStrictComparisonShape(const duckdb::Expression& expr);
 
 // The term a query for `value` on this column would look up. Declines a type
 // the term dictionary does not carry.
-absl::Status SetupTermClause(irs::TermClause& clause,
-                             const SearchColumnInfo& column_info,
-                             const duckdb::Value& value);
+absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
+                                     const SearchColumnInfo& column_info,
+                                     const duckdb::Value& value);
 
 }  // namespace sdb::connector

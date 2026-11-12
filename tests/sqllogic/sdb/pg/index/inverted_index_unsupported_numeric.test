@@ -1,60 +1,33 @@
-# --- HUGEINT / DECIMAL: must surface a proper error, never silent zero-match
+# --- Numeric column types an inverted index rejects or accepts
 #
-# HUGEINT (128-bit) and DECIMAL (parameterized) are not on the inverted
-# index's supported-type list -- the iresearch NumericTokenizer only encodes
-# int32/int64/float/double. The user-visible contract is "we don't support
-# these yet"; the regression risk is the runtime silently dropping the column
-# (SwitchColumnImpl default: returns false without an error) or asserting in
-# debug (ResetNumericStream's default: SDB_ASSERT(false)).
-#
-# Every CREATE INDEX path that involves a HUGEINT / DECIMAL value-type column
-# (direct column OR cast in an indexed expression) must return a catalogable
-# error message, not succeed-then-misbehave.
+# A type the index can't encode must fail CREATE INDEX with a catalogable
+# error, never succeed and then drop the column or match nothing.
 
-# --- Direct columns: HUGEINT/DECIMAL value types are rejected at CREATE INDEX
+# --- 128-bit, unsigned 64/128-bit and DECIMAL columns are accepted
 
 statement ok
-CREATE TABLE unsup_hugeint (id INTEGER PRIMARY KEY, big HUGEINT);
-
-statement error
-CREATE INDEX unsup_hugeint_idx ON unsup_hugeint USING inverted(id, big);
-----
-db error: ERROR: Column 'big' has unsupported type HUGEINT and can not be indexed
-
+CREATE TABLE wide_hugeint (id INTEGER PRIMARY KEY, big HUGEINT);
 
 statement ok
-CREATE TABLE unsup_decimal (id INTEGER PRIMARY KEY, amount DECIMAL(20, 4));
-
-
-statement error
-CREATE INDEX unsup_decimal_idx ON unsup_decimal USING inverted(id, amount);
-----
-db error: ERROR: Column 'amount' has unsupported type DECIMAL(20,4) and can not be indexed
-
-
-# 64-bit unsigned ints and 128-bit unsigneds do not fit the NumericTokenizer
-# overload set (int32/int64/float/double) -- rejected at CREATE INDEX.
-# UTINYINT/USMALLINT/UINTEGER do fit and are accepted (see end of file).
+CREATE INDEX wide_hugeint_idx ON wide_hugeint USING inverted(id, big);
 
 statement ok
-CREATE TABLE unsup_ubigint (id INTEGER PRIMARY KEY, n UBIGINT);
-
-
-statement error
-CREATE INDEX unsup_ubigint_idx ON unsup_ubigint USING inverted(id, n);
-----
-db error: ERROR: Column 'n' has unsupported type UBIGINT and can not be indexed
-
+CREATE TABLE wide_decimal (id INTEGER PRIMARY KEY, amount DECIMAL(20, 4));
 
 statement ok
-CREATE TABLE unsup_uhugeint (id INTEGER PRIMARY KEY, n UHUGEINT);
+CREATE INDEX wide_decimal_idx ON wide_decimal USING inverted(id, amount);
 
+statement ok
+CREATE TABLE wide_ubigint (id INTEGER PRIMARY KEY, n UBIGINT);
 
-statement error
-CREATE INDEX unsup_uhugeint_idx ON unsup_uhugeint USING inverted(id, n);
-----
-db error: ERROR: Column 'n' has unsupported type UHUGEINT and can not be indexed
+statement ok
+CREATE INDEX wide_ubigint_idx ON wide_ubigint USING inverted(id, n);
 
+statement ok
+CREATE TABLE wide_uhugeint (id INTEGER PRIMARY KEY, n UHUGEINT);
+
+statement ok
+CREATE INDEX wide_uhugeint_idx ON wide_uhugeint USING inverted(id, n);
 
 # INTERVAL is a composite (months/days/micros): rejected.
 
@@ -68,8 +41,7 @@ CREATE INDEX unsup_interval_idx ON unsup_interval USING inverted(id, iv);
 db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexed
 
 
-# UTINYINT/USMALLINT/UINTEGER + TIME + TIMETZ now fit the NumericTokenizer
-# overload set -- CREATE INDEX accepts them.
+# UTINYINT/USMALLINT/UINTEGER + TIME + TIMETZ are accepted.
 
 statement ok
 CREATE TABLE sup_unsigned (
@@ -97,22 +69,16 @@ CREATE INDEX sup_time_idx ON sup_time USING inverted(id, t, tz);
 
 
 
-# --- Indexed expressions returning HUGEINT / DECIMAL are rejected too
+# --- Indexed expressions returning HUGEINT / DECIMAL are accepted too
 
 statement ok
-CREATE TABLE unsup_jsondoc (id INTEGER PRIMARY KEY, content JSON);
+CREATE TABLE wide_jsondoc (id INTEGER PRIMARY KEY, content JSON);
 
-statement error
-CREATE INDEX unsup_jsondoc_huge ON unsup_jsondoc USING inverted(id, ((content->'v')::HUGEINT));
-----
-db error: ERROR: Column 'CAST(("content" -> 'v') AS hugeint)' has unsupported type HUGEINT and can not be indexed
+statement ok
+CREATE INDEX wide_jsondoc_huge ON wide_jsondoc USING inverted(id, ((content->'v')::HUGEINT));
 
-
-statement error
-CREATE INDEX unsup_jsondoc_dec ON unsup_jsondoc USING inverted(id, ((content->'v')::DECIMAL(20,4)));
-----
-db error: ERROR: Column 'CAST(("content" -> 'v') AS DECIMAL(20, 4))' has unsupported type DECIMAL(20,4) and can not be indexed
-
+statement ok
+CREATE INDEX wide_jsondoc_dec ON wide_jsondoc USING inverted(id, ((content->'v')::DECIMAL(20,4)));
 
 
 # --- Filter-side: BIGINT-indexed column, HUGEINT/DECIMAL bound in the predicate
@@ -155,3 +121,95 @@ SELECT id FROM filter_bigint_idx WHERE n = 200::DECIMAL(20,4);
 ----
 id
 2
+
+# A DOUBLE bound just past the column's range, where the type's limit rounds
+# to the bound itself, keeps every value on its side.
+query
+SELECT id FROM filter_bigint_idx
+  WHERE n @@ ts_le(9223372036854775808::DOUBLE) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM filter_bigint_idx
+  WHERE n @@ ts_lt(9223372036854775808::DOUBLE) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM filter_bigint_idx
+  WHERE n @@ ts_ge(9223372036854775808::DOUBLE);
+----
+id
+
+query
+SELECT id FROM filter_bigint_idx
+  WHERE n @@ ts_between(-9223372036854775808::DOUBLE,
+                        9223372036854775808::DOUBLE, true, false)
+  ORDER BY id;
+----
+id
+1
+2
+3
+
+statement ok
+INSERT INTO wide_ubigint VALUES (1, 0), (2, 18446744073709551615);
+
+statement ok
+VACUUM (REFRESH_TABLE) wide_ubigint;
+
+query
+SELECT id FROM wide_ubigint_idx
+  WHERE n @@ ts_lt(18446744073709551616::DOUBLE) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM wide_ubigint_idx
+  WHERE n @@ ts_gt(18446744073709551616::DOUBLE);
+----
+id
+
+# A thousand 16-byte keys are inverted in several batches: values of the first,
+# a middle and the last batch are all found, and ranges count every one.
+statement ok
+INSERT INTO wide_hugeint
+SELECT i, (i * 3)::HUGEINT * 1000000000000000000000 FROM range(1000) r(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) wide_hugeint;
+
+query
+SELECT id FROM wide_hugeint_idx
+  WHERE big IN (15000000000000000000000, 390000000000000000000000,
+                2997000000000000000000000)
+  ORDER BY id;
+----
+id
+5
+130
+999
+
+query
+SELECT count(*) AS n FROM wide_hugeint_idx
+  WHERE big @@ ts_lt(1500000000000000000000000::HUGEINT);
+----
+n
+500
+
+query
+SELECT id FROM wide_hugeint_idx ORDER BY big DESC LIMIT 3;
+----
+id
+999
+998
+997

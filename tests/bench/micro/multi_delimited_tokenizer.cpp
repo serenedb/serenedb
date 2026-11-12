@@ -44,6 +44,7 @@
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/text/classify/block_masks.hpp>
 #include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/utils/byte_set.hpp>
 #include <iresearch/utils/string.hpp>
 #include <string>
 #include <vector>
@@ -215,7 +216,7 @@ void BmClassifyEq(benchmark::State& state) {
 
 void BmClassifyNibble(benchmark::State& state) {
   const auto n = static_cast<size_t>(state.range(0));
-  irs::analysis::classify::ByteSet set;
+  irs::ByteSet set;
   for (const char c : kDelimChars.substr(0, n)) {
     set.Add(static_cast<irs::byte_type>(c));
   }

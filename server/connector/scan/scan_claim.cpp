@@ -34,7 +34,11 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
+#include <iresearch/search/count/make.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/bit_utils.hpp>
@@ -308,6 +312,29 @@ bool ConstantCount(const irs::Filter& filter) {
     }
   }
   return terms == 1 && others == 0;
+}
+
+bool CheapToPrepare(const irs::Filter& filter) {
+  const auto type = filter.type();
+  if (type == irs::Type<irs::ByTerm>::id() ||
+      type == irs::Type<irs::ByGranularRange>::id() ||
+      type == irs::Type<irs::All>::id() ||
+      type == irs::Type<irs::Empty>::id()) {
+    return true;
+  }
+  if (type != irs::Type<irs::BooleanFilter>::id()) {
+    return false;
+  }
+  const auto& boolean = irs::utils::downCast<irs::BooleanFilter>(filter);
+  for (const auto occur :
+       {irs::Occur::Must, irs::Occur::Should, irs::Occur::MustNot}) {
+    for (const auto& child : boolean.Filters(occur)) {
+      if (!child || !CheapToPrepare(*child)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 void TakeUnit(ScanLocalState& l, ScanUnit unit) {
@@ -603,6 +630,19 @@ void MarkLiveRowGroups(std::span<LivePass> passes,
   executor.WorkOnTasks();
 }
 
+bool SegmentStaysWhole(ScanShape shape, const irs::QueryBuilder& query,
+                       bool exact_counts, uint64_t rg_size) {
+  if (query.Kind() == irs::QueryKind::Empty) {
+    return true;
+  }
+  if (shape == ScanShape::Count) {
+    return (exact_counts && irs::count::IsConstant(query)) ||
+           query.Postings() < rg_size;
+  }
+  return std::max<uint64_t>(query.Postings(), query.EstimateMax()) <
+         STANDARD_VECTOR_SIZE;
+}
+
 }  // namespace
 
 std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads) {
@@ -670,7 +710,12 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
 
   const auto where = g.ClaimedWhere();
-  const bool constant_count = g.shape == ScanShape::Count &&
+  const bool eager =
+    (g.shape == ScanShape::Count || g.shape == ScanShape::Stream) &&
+    !g.scorer_obj && g.vector_scorer == nullptr &&
+    g.split != SplitMode::Never && g.live_segments < threads &&
+    CheapToPrepare(*g.filter);
+  const bool constant_count = !eager && g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
   irs::ColFilterStateCache states;
@@ -686,9 +731,16 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     const uint64_t docs = sub.Meta().docs_count;
     work.rg_count = static_cast<uint32_t>(
       std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
-    const bool split =
-      g.split != SplitMode::Never && work.rg_count > g.no_split_rgs &&
-      !(constant_count && sub.live_docs_count() == sub.docs_count());
+    const bool exact_counts =
+      g.col_filters.empty() && sub.live_docs_count() == sub.docs_count();
+    bool split = g.split != SplitMode::Never &&
+                 work.rg_count > g.no_split_rgs &&
+                 !(constant_count && exact_counts);
+    if (split && eager) {
+      PrepareSegmentNow(g, seg);
+      const auto& query = *g.queries[seg];
+      split = !SegmentStaysWhole(g.shape, query, exact_counts, g.rg_size);
+    }
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
     if (split) {
@@ -721,7 +773,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
   uint32_t skipped = 0;
   for (uint32_t i = 0; i != g.live_segments; ++i) {
-    const auto& work = g.Segment(g.segment_order[i]);
+    const auto seg = g.segment_order[i];
+    const auto& work = g.Segment(seg);
     const auto live =
       work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit
         ? work.LiveCount()
@@ -730,7 +783,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       ++skipped;
       continue;
     }
-    parallel += live;
+    const auto& query = g.queries[seg];
+    parallel += query && query->Kind() == irs::QueryKind::Empty ? 0 : live;
     rgs += work.rg_count;
   }
   g.done_segments.store(skipped, std::memory_order_relaxed);

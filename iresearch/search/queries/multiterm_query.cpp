@@ -78,7 +78,7 @@ QueryBuilder::ptr MultiTermQuery::Finish(
   query->_estimate_matches = query->_estimate_max;
   query->_postings = sum;
   query->_leaves = static_cast<uint32_t>(terms.size());
-  if (terms.size() > 1 && ctx.Record().scorer == nullptr &&
+  if (terms.size() > 1 && ctx.prefetch && ctx.Record().scorer == nullptr &&
       query->_state.Reader() != nullptr) {
     PrefetchPostings(*query->_state.Reader(), terms);
   }
@@ -92,7 +92,8 @@ QueryBuilder::ptr MultiTermQuery::Finish(
     }
     return MakeTermQuery(ctx.memory, query->_segment, query->_state.Reader(),
                          entry.cookie, entry.boost * query->_boost,
-                         detail::StatsRecord{entry.stats, ctx.Record().scorer});
+                         detail::StatsRecord{entry.stats, ctx.Record().scorer},
+                         query->_state.HasPieces());
   }
   query->SetStats(ctx.Record());
   return query;

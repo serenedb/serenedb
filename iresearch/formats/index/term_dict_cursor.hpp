@@ -34,6 +34,7 @@
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -277,7 +278,6 @@ CompareCoded(const duckdb_fsst_decoder_t& decoder, bytes_view codes, Probe rest,
 
 inline bytes_view RestartKey(const BlockView& view, uint32_t restart) noexcept {
   const auto header = HeaderAt(view, restart * kRestartInterval);
-  SDB_ASSERT(header.lcp == 0);
   return {view.suffixes + SuffixOffset(view, restart), header.len};
 }
 
@@ -372,9 +372,10 @@ inline Bound VarLowerBound(const BlockView& view, Probe probe,
     const auto header = HeaderAt(view, entry);
     const auto* suffix = sp;
     sp += header.len;
+    const bool restart = entry == first;
     const auto order =
-      Locate(suffix, header.len, header.lcp, probe,
-             view.coded && entry != first ? fsst : nullptr, matched);
+      Locate(suffix, header.len, restart ? 0 : header.lcp, probe,
+             view.coded && !restart ? fsst : nullptr, matched);
     if (order != Order::Less) {
       return {.entry = entry, .equal = order == Order::Equal};
     }
@@ -454,6 +455,7 @@ struct PendingSuffix {
   const byte_type* data;
   uint32_t lcp;
   uint32_t size;
+  bool restart = false;
 };
 
 inline const byte_type* GroupStart(const BlockView& view,
@@ -552,6 +554,36 @@ class Cursor {
   bool AtBlockEnd() const noexcept {
     return _entry != kNoEntry && _entry + 1 == _stop;
   }
+  uint32_t Stop() const noexcept { return _stop; }
+  bool AtGroupEnd() const noexcept {
+    return !_view.fixed && _entry != kNoEntry && _entry + 1 == _restart &&
+           _restart < _stop;
+  }
+  uint32_t NextGroup() const noexcept { return _restart / kRestartInterval; }
+
+  void Group(uint32_t group) {
+    _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
+    _restart = group * kRestartInterval;
+    _sp = _view.suffixes + SuffixOffset(_view, group);
+    _jumped = true;
+    Next();
+  }
+
+  void SkipGroups(uint32_t group) noexcept {
+    SDB_ASSERT(AtGroupEnd() && group > NextGroup());
+    _pendings = 0;
+    _partial = true;
+    _jumped = true;
+    _size = _mat;
+    const uint32_t restart = group * kRestartInterval;
+    if (restart >= _stop) {
+      _entry = _stop - 1;
+      return;
+    }
+    _entry = restart - 1;
+    _restart = restart;
+    _sp = _view.suffixes + SuffixOffset(_view, group);
+  }
 
   int ByteAt(size_t depth) {
     if (depth < _mat) {
@@ -560,7 +592,7 @@ class Cursor {
     if (const auto* last = Pending(); last && depth == last->lcp) {
       const auto* data = last->data;
       SDB_ASSERT(last->size != 0);
-      if (!_view.coded) {
+      if (!_view.coded || last->restart) {
         return data[0];
       }
       if (data[0] == FSST_ESC) {
@@ -578,7 +610,10 @@ class Cursor {
     }
     const auto entry = _entry == kNoEntry ? 0 : _entry + 1;
     if (entry == _restart) {
-      return Next();
+      if (entry == 0) {
+        return Next();
+      }
+      return SkipRestart(entry);
     }
     _entry = entry;
     SDB_ASSERT(_entry < _stop);
@@ -587,6 +622,22 @@ class Cursor {
     _mat = std::min<size_t>(_mat, header.lcp);
     _sp += header.len;
     return header.lcp;
+  }
+
+  IRS_FORCE_INLINE uint32_t SkipRestart(uint32_t entry) {
+    _entry = entry;
+    SDB_ASSERT(_entry < _stop);
+    _restart += kRestartInterval;
+    const auto header = HeaderAt(_view, entry);
+    uint32_t shared = header.lcp;
+    if (std::exchange(_jumped, false)) {
+      shared = static_cast<uint32_t>(
+        PaddedMismatch(_key.data(), _sp, std::min<size_t>(_mat, header.len)));
+    }
+    PushRestart(_sp, header);
+    _mat = std::min<size_t>(_mat, shared);
+    _sp += header.len;
+    return shared;
   }
 
   template<typename Reject>
@@ -600,7 +651,7 @@ class Cursor {
     uint32_t lcp = kNoSkip;
     for (; entry < end; ++entry) {
       const auto header = HeaderAt(_view, entry);
-      if (!reject(sp, header, _view.befores[entry])) {
+      if (!Rejects(reject, entry, sp, header)) {
         break;
       }
       lcp = std::min(lcp, header.lcp);
@@ -610,54 +661,72 @@ class Cursor {
   }
 
   template<typename Reject>
-  IRS_FORCE_INLINE uint32_t SkipTails(size_t prefix,
-                                      const analysis::classify::ByteSet& tails,
+  IRS_FORCE_INLINE bool Rejects(Reject& reject, uint32_t entry,
+                                const byte_type* sp, Header header) const {
+    if (entry % kRestartInterval != 0) [[likely]] {
+      return reject(sp, header, _view.befores[entry], false);
+    }
+    return reject(sp + header.lcp,
+                  Header{.lcp = header.lcp, .len = header.len - header.lcp},
+                  _view.befores[entry], true);
+  }
+
+  template<typename Reject>
+  IRS_FORCE_INLINE uint32_t SkipTails(size_t prefix, const ByteSet& tails,
                                       Reject&& reject) {
     const auto [first, end] = SkipSpan();
     if (first >= end) {
       return kNoSkip;
     }
-    SDB_ASSERT(end - first <= kRestartInterval);
-    uint32_t candidates =
-      analysis::classify::ClassifyByteSet16(_view.tails + first, tails) &
-      analysis::classify::LowBits(end - first);
+    static_assert(kRestartInterval == 16);
     const auto* sp = _sp;
     uint32_t entry = first;
     uint32_t lcp = kNoSkip;
-    for (;;) {
-      const uint32_t next =
-        candidates == 0 ? end : first + std::countr_zero(candidates);
-      for (; entry != next; ++entry) {
+    for (uint32_t chunk = first; chunk < end; chunk += kRestartInterval) {
+      const uint32_t chunk_end = std::min(chunk + kRestartInterval, end);
+      uint32_t candidates = ClassifyByteSet16(_view.tails + chunk, tails) &
+                            analysis::classify::LowBits(chunk_end - chunk);
+      for (;;) {
+        const uint32_t next =
+          candidates == 0 ? chunk_end : chunk + std::countr_zero(candidates);
+        for (; entry != next; ++entry) {
+          const auto header = HeaderAt(_view, entry);
+          if (header.lcp < prefix) {
+            return Skipped(first, entry, end, sp, lcp);
+          }
+          lcp = std::min(lcp, header.lcp);
+          sp += header.len;
+        }
+        if (entry == chunk_end) {
+          break;
+        }
+        candidates &= candidates - 1;
         const auto header = HeaderAt(_view, entry);
-        if (header.lcp < prefix) {
+        if (header.lcp < prefix || !Rejects(reject, entry, sp, header)) {
           return Skipped(first, entry, end, sp, lcp);
         }
         lcp = std::min(lcp, header.lcp);
         sp += header.len;
+        ++entry;
       }
-      if (entry == end) {
-        break;
-      }
-      candidates &= candidates - 1;
-      const auto header = HeaderAt(_view, entry);
-      if (header.lcp < prefix || !reject(sp, header, _view.befores[entry])) {
-        break;
-      }
-      lcp = std::min(lcp, header.lcp);
-      sp += header.len;
-      ++entry;
     }
     return Skipped(first, entry, end, sp, lcp);
   }
 
   bytes_view PeekNext() {
     SDB_ASSERT(!_view.fixed);
-    SDB_ASSERT(_entry != kNoEntry && _entry + 1 < std::min(_restart, _stop));
+    SDB_ASSERT(_entry != kNoEntry && _entry + 1 < _stop);
     Materialize();
     const auto header = HeaderAt(_view, _entry + 1);
+    const bool restart = _entry + 1 == _restart;
     const size_t bound =
       header.lcp + size_t{header.len} * (_view.coded ? sizeof(uint64_t) : 1);
     auto* out = Grow(_peek, bound + kKeyPad);
+    if (restart) {
+      std::memcpy(out, _sp, header.len);
+      _peeked = header.len;
+      return {out, _peeked};
+    }
     std::memcpy(out, _key.data(), header.lcp);
     if (_view.coded) {
       _peeked = header.lcp + DecodeInto(*_field->Fsst(), {_sp, header.len},
@@ -672,6 +741,9 @@ class Cursor {
 
   uint32_t TakePeeked() noexcept {
     const auto header = HeaderAt(_view, ++_entry);
+    if (_entry == _restart) {
+      _restart += kRestartInterval;
+    }
     _sp += header.len;
     std::swap(_key, _peek);
     _size = _peeked;
@@ -692,7 +764,13 @@ class Cursor {
     }
     for (uint32_t i = 0; i != _pendings; ++i) {
       const auto& pending = _pending[i];
-      if (needs[i] != 0) {
+      if (pending.restart) {
+        SDB_ASSERT(i == 0 && _mat <= pending.lcp);
+        const size_t end = pending.lcp + std::min(pending.size, needs[i]);
+        std::memcpy(Reserve(end) + _mat, pending.data - pending.lcp + _mat,
+                    end - _mat);
+        _size = end;
+      } else if (needs[i] != 0) {
         _size = pending.lcp +
                 Expand({pending.data, pending.size}, pending.lcp, needs[i]);
       }
@@ -748,6 +826,15 @@ class Cursor {
     SDB_ASSERT(_entry == _field->FirstEntry());
   }
 
+  void Start(uint32_t block) {
+    if (block == 0) {
+      First();
+      return;
+    }
+    Load(block);
+    Next();
+  }
+
   uint32_t Next() {
     _partial = false;
     _entry = _entry == kNoEntry ? 0 : _entry + 1;
@@ -758,9 +845,10 @@ class Cursor {
     const auto header = HeaderAt(_view, _entry);
     const bytes_view suffix{_sp, header.len};
     _sp += header.len;
+    const bool jumped = std::exchange(_jumped, false);
     if (_entry == _restart) {
       _restart += kRestartInterval;
-      return Restart(suffix);
+      return Restart(suffix, jumped || _entry == 0 ? kNoSkip : header.lcp);
     }
     Materialize();
     _size = header.lcp +
@@ -897,10 +985,10 @@ class Cursor {
   };
 
   Span SkipSpan() const noexcept {
-    if (_view.fixed || _entry == kNoEntry) {
+    if (_view.fixed || _entry == kNoEntry || _jumped) {
       return {.first = 0, .end = 0};
     }
-    return {.first = _entry + 1, .end = std::min(_restart, _stop)};
+    return {.first = _entry + 1, .end = _stop};
   }
 
   uint32_t Skipped(uint32_t first, uint32_t entry, uint32_t end,
@@ -909,21 +997,44 @@ class Cursor {
       return kNoSkip;
     }
     _mat = std::min<size_t>(_mat, lcp);
+    const uint32_t group = (entry - 1) / kRestartInterval;
     if (entry == end) {
       _size = _mat;
       _pendings = 0;
       _partial = true;
     } else {
+      uint32_t skipped = first;
       const auto* pending = _sp;
-      for (uint32_t skipped = first; skipped != entry; ++skipped) {
+      if (group * kRestartInterval > first) {
+        skipped = group * kRestartInterval;
+        pending = _view.suffixes + SuffixOffset(_view, group);
+      }
+      for (; skipped != entry; ++skipped) {
         const auto header = HeaderAt(_view, skipped);
-        PushPending(pending, header);
+        if (skipped % kRestartInterval == 0) {
+          PushRestart(pending, header);
+        } else {
+          PushPending(pending, header);
+        }
         pending += header.len;
       }
     }
     _entry = entry - 1;
+    _restart = (group + 1) * kRestartInterval;
     _sp = sp;
     return lcp;
+  }
+
+  void PushRestart(const byte_type* key, Header header) noexcept {
+    SDB_ASSERT(header.lcp < header.len);
+    _partial = false;
+    _pendings = 0;
+    _pending[_pendings++] = {
+      .data = key + header.lcp,
+      .lcp = header.lcp,
+      .size = header.len - header.lcp,
+      .restart = true,
+    };
   }
 
   void PushPending(const byte_type* data, Header header) noexcept {
@@ -933,13 +1044,6 @@ class Cursor {
       .lcp = header.lcp,
       .size = header.len,
     };
-  }
-
-  void Group(uint32_t group) {
-    _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
-    _restart = group * kRestartInterval;
-    _sp = _view.suffixes + SuffixOffset(_view, group);
-    Next();
   }
 
   bool ScanTo(Probe probe, size_t matched) {
@@ -1012,9 +1116,12 @@ class Cursor {
 
   byte_type* Reserve(size_t size) { return Grow(_key, size + kKeyPad); }
 
-  uint32_t Restart(bytes_view key) {
-    const auto shared = static_cast<uint32_t>(PaddedMismatch(
-      _key.data(), key.data(), std::min<size_t>(_mat, key.size())));
+  uint32_t Restart(bytes_view key, uint32_t lcp) {
+    const auto shared =
+      lcp != kNoSkip
+        ? lcp
+        : static_cast<uint32_t>(PaddedMismatch(
+            _key.data(), key.data(), std::min<size_t>(_mat, key.size())));
     _pendings = 0;
     std::memcpy(Reserve(key.size()), key.data(), key.size());
     _size = key.size();
@@ -1058,14 +1165,29 @@ class Cursor {
     }
     const uint64_t end = _field->BlockOffset(block + 1);
     for (uint64_t at = _field->BlockOffset(block); at < end; at += kLine) {
-      __builtin_prefetch(base + at);
+      __builtin_prefetch(base + at, 0, 2);
     }
   }
 
   void Watch(uint32_t block) {
-    const auto& in = _field->Owner().Input();
     const uint64_t offset = _field->BlockOffset(block);
     const uint64_t size = _field->BlockOffset(block + 1) - offset;
+    if (block >= _warm_from && block < _warm_to &&
+        file_utils::ResidencyEpoch() == _warm_epoch) {
+      _warm_read += size;
+      return;
+    }
+    const auto& in = _field->Owner().Input();
+    const uint32_t last = std::min(block + kWarmBlocks, _field->Blocks());
+    const uint64_t window = _field->BlockOffset(last) - offset;
+    const uint64_t read = std::exchange(_warm_read, 0) + size;
+    _warm_to = _warm_from;
+    if (in.Warm(offset, window) == window && !file_utils::PollResidency(read)) {
+      _warm_from = block;
+      _warm_to = last;
+      _warm_epoch = file_utils::ResidencyEpoch();
+      return;
+    }
     if (file_utils::Evicted(in, offset, size, _epoch)) {
       _blocks_ahead.ahead = uint64_t{block} + 1;
       _blocks_ahead.issued = 0;
@@ -1108,6 +1230,7 @@ class Cursor {
     Running,
   };
 
+  static constexpr uint32_t kWarmBlocks = 32;
   static constexpr uint32_t kFirstWindow = 4;
   static constexpr uint32_t kLastWindow =
     file_utils::kMaxReadahead / file_utils::kPage;
@@ -1125,6 +1248,7 @@ class Cursor {
   uint32_t _block = kNoEntry;
   uint32_t _record = kNoEntry;
   bool _partial = false;
+  bool _jumped = false;
   KeyBuffer _key;
   const byte_type* _records = nullptr;
   std::array<PendingSuffix, kRestartInterval> _pending;
@@ -1142,6 +1266,10 @@ class Cursor {
   };
   uint32_t _end;
   uint32_t _epoch = 0;
+  uint32_t _warm_from = 0;
+  uint32_t _warm_to = 0;
+  uint32_t _warm_epoch = 0;
+  uint64_t _warm_read = 0;
   ColdBlocks* _cold = nullptr;
   InlineState _inline_state = InlineState::Off;
   bool _eager = false;

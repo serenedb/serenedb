@@ -472,6 +472,13 @@ void ScanBindData::AppendSummary(
     if (pruning && score.prune != score.text) {
       out.insert("Bounds", search::MakeScorer(*score.prune)->ToString());
     }
+    if (OrdersByValue()) {
+      out.insert("Order",
+                 absl::StrCat(
+                   DisplayColumnName(value_order->column),
+                   value_order->descending ? " DESC" : "",
+                   value_order->nulls_first ? " NULLS FIRST" : " NULLS LAST"));
+    }
   }
   if (offsets.Active()) {
     auto cols = absl::StrJoin(

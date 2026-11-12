@@ -1,0 +1,180 @@
+a4635b643e643df6
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ─────────╮
+	│ Index: vtm_idx           │
+	│ Lookup: table            │
+	│ Top: 5                   │
+	│ Order: i DESC NULLS LAST │
+	│ Projections: i           │
+	│ ~65 rows                 │
+	╰──────────────────────────╯
+5aa8f782e44d2c03
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ─────────╮
+	│ Index: vtm_idx           │
+	│ Lookup: table            │
+	│ Top: 5                   │
+	│ Order: b DESC NULLS LAST │
+	│ Projections: b           │
+	│ ~65 rows                 │
+	╰──────────────────────────╯
+25623d77057137bc
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ──────────╮
+	│ Index: vtm_idx            │
+	│ Lookup: table             │
+	│ Top: 5                    │
+	│ Order: ub DESC NULLS LAST │
+	│ Projections: ub           │
+	│ ~65 rows                  │
+	╰───────────────────────────╯
+8ab3722a8b1868c0
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ─────────╮
+	│ Index: vtm_idx           │
+	│ Lookup: table            │
+	│ Top: 5                   │
+	│ Order: h DESC NULLS LAST │
+	│ Projections: h           │
+	│ ~65 rows                 │
+	╰──────────────────────────╯
+55ff328282d8b975
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ──────────╮
+	│ Index: vtm_idx            │
+	│ Lookup: table             │
+	│ Top: 5                    │
+	│ Order: uh DESC NULLS LAST │
+	│ Projections: uh           │
+	│ ~65 rows                  │
+	╰───────────────────────────╯
+add91ec9048fff13
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ─────────╮
+	│ Index: vtm_idx           │
+	│ Lookup: table            │
+	│ Top: 5                   │
+	│ Order: f DESC NULLS LAST │
+	│ Projections: f           │
+	│ ~65 rows                 │
+	╰──────────────────────────╯
+0b7b3a30cb65da46
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ─────────╮
+	│ Index: vtm_idx           │
+	│ Lookup: table            │
+	│ Top: 5                   │
+	│ Order: d DESC NULLS LAST │
+	│ Projections: d           │
+	│ ~65 rows                 │
+	╰──────────────────────────╯
+ba25b3526c95cd45
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ──────────╮
+	│ Index: vtm_idx            │
+	│ Lookup: table             │
+	│ Top: 5                    │
+	│ Order: dt DESC NULLS LAST │
+	│ Projections: dt           │
+	│ ~65 rows                  │
+	╰───────────────────────────╯
+01d1205bbfbc21c8
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ──────────╮
+	│ Index: vtm_idx            │
+	│ Lookup: table             │
+	│ Top: 5                    │
+	│ Order: ts DESC NULLS LAST │
+	│ Projections: ts           │
+	│ ~65 rows                  │
+	╰───────────────────────────╯
+37d5919fd70b57fa
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ──────────╮
+	│ Index: vtm_idx            │
+	│ Lookup: table             │
+	│ Top: 5                    │
+	│ Order: tm DESC NULLS LAST │
+	│ Projections: tm           │
+	│ ~65 rows                  │
+	╰───────────────────────────╯
+f970107808df5cba
+	QUERY PLAN
+	╭─ TOP_N ─────────────────────────╮
+	│ Top: 5                          │
+	│ Order By:                       │
+	│ timetz_byte_comparable(tz) DESC │
+	│ ~5 rows                         │
+	╰────────────────┬────────────────╯
+	╭─ IRESEARCH_SCAN ────────────────╮
+	│ Index: vtm_idx                  │
+	│ Lookup: table                   │
+	│ Projections: tz                 │
+	│ ~65 rows                        │
+	╰─────────────────────────────────╯
+508ca8bc82a7fd29
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ──────────╮
+	│ Index: vtm_idx            │
+	│ Lookup: table             │
+	│ Top: 5                    │
+	│ Order: d4 DESC NULLS LAST │
+	│ Projections: d4           │
+	│ ~65 rows                  │
+	╰───────────────────────────╯
+3fac1d33b25c72c3
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ───────────╮
+	│ Index: vtm_idx             │
+	│ Lookup: table              │
+	│ Top: 5                     │
+	│ Order: d18 DESC NULLS LAST │
+	│ Projections: d18           │
+	│ ~65 rows                   │
+	╰────────────────────────────╯
+46c2bbe5dba68c0b
+	QUERY PLAN
+	╭─ IRESEARCH_SCAN ───────────╮
+	│ Index: vtm_idx             │
+	│ Lookup: table              │
+	│ Top: 5                     │
+	│ Order: d38 DESC NULLS LAST │
+	│ Projections: d38           │
+	│ ~65 rows                   │
+	╰────────────────────────────╯
+4f9b1ff073dccf7a
+	QUERY PLAN
+	╭─ TOP_N ──────────────────────────╮
+	│ Top: 5                           │
+	│ Order By: u DESC                 │
+	│ ~5 rows                          │
+	╰─────────────────┬────────────────╯
+	╭─ IRESEARCH_SCAN ┴────────────────╮
+	│ Index: vtm_idx                   │
+	│ Lookup: table                    │
+	│ Projections: u                   │
+	│ Column Filter:                   │
+	│ optional: Dynamic Filter (u > ?) │
+	│ ~65 rows                         │
+	╰──────────────────────────────────╯
+d3da17e639ff16bf
+	QUERY PLAN
+	╭─ TOP_N ───────────────────────────────────╮
+	│ Top: 5                                    │
+	│ Order By: u ASC                           │
+	│ ~5 rows                                   │
+	╰─────────────────────┬─────────────────────╯
+	╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+	│ Index: vtm_s                              │
+	│ Lookup: search                            │
+	│ Index Filter:                             │
+	│ ╭─ Granular Range ──────────────────────╮ │
+	│ │ Field: u                              │ │
+	│ │ Range:                                │ │
+	│ │ >7fffffff-ffff-ffff-ffff-ffffffffffff │ │
+	│ ╰───────────────────────────────────────╯ │
+	│ Column Filter:                            │
+	│ optional: Dynamic Filter (u < ?)          │
+	│ Projections: u                            │
+	│ ~13 rows                                  │
+	╰───────────────────────────────────────────╯

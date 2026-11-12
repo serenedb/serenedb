@@ -21,7 +21,6 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
-#include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -156,7 +155,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
       type_mismatch();
     }
   } else if (term_dict::IsNumeric(col_type)) {
-    if (!IsRangeNumericValueType(val_type)) {
+    if (!term_dict::IsNumeric(val_type)) {
       type_mismatch();
     }
   } else {
@@ -207,21 +206,9 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
     return;
   }
 
-  auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-  SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
-  range.SetBoost(ctx.boost);
-  SetLeafScorer(range, column_info);
-  auto* options = range.mutable_options();
-  auto& rng = options->range;
-  WithNumericValue(col_type, *bound_val, [&](auto v) {
-    if (is_lower) {
-      irs::SetGranularNumericTerm(rng.min, v);
-      rng.min_type = bound_type;
-    } else {
-      irs::SetGranularNumericTerm(rng.max, v);
-      rng.max_type = bound_type;
-    }
-  });
+  AddNumericRange(MaybeNegated(parent, ctx, column_info), ctx, column_info,
+                  is_lower ? bound_val : nullptr, !inclusive,
+                  is_lower ? nullptr : bound_val, !inclusive);
 }
 
 void FromBetween(BoolTarget parent, const FilterContext& ctx,
@@ -261,7 +248,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
       type_mismatch();
     }
   } else if (term_dict::IsNumeric(col_type)) {
-    if (!IsRangeNumericValueType(val_type)) {
+    if (!term_dict::IsNumeric(val_type)) {
       type_mismatch();
     }
   } else {
@@ -319,26 +306,8 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     AddBools(MaybeNegated(parent, ctx, column_info), column_info,
              accepts(false), accepts(true), ctx.boost);
   } else {
-    auto& range =
-      AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-    SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
-    range.SetBoost(ctx.boost);
-    SetLeafScorer(range, column_info);
-    auto* range_opts = range.mutable_options();
-    auto& rng = range_opts->range;
-    auto emit_bound = [&](const duckdb::Value& v, irs::bstring& boundary,
-                          irs::BoundType& bt, bool incl) {
-      WithNumericValue(col_type, v, [&](auto val) {
-        irs::SetGranularNumericTerm(boundary, val);
-      });
-      bt = incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-    };
-    if (args.min) {
-      emit_bound(*args.min, rng.min, rng.min_type, args.min_incl);
-    }
-    if (args.max) {
-      emit_bound(*args.max, rng.max, rng.max_type, args.max_incl);
-    }
+    AddNumericRange(MaybeNegated(parent, ctx, column_info), ctx, column_info,
+                    args.min, !args.min_incl, args.max, !args.max_incl);
   }
 }
 

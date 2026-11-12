@@ -57,7 +57,8 @@ struct RangeLevel {
 
 template<typename Field>
 void ReadPostingDocs(const Field& field, const PostingMeta& meta,
-                     TermReader::Acceptor acceptor) {
+                     TermReader::Acceptor acceptor,
+                     TermPostings::ptr& docs_it) {
   if (meta.docs_count == 0) {
     return;
   }
@@ -65,7 +66,7 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
     acceptor(doc_limits::min() + meta.doc_delta);
     return;
   }
-  auto docs_it = field.PostingsOf(IndexFeatures::None, meta, {});
+  docs_it = field.PostingsOf(IndexFeatures::None, meta, std::move(docs_it));
   doc_id_t docs[doc_limits::kBlockSize];
   while (const auto n = docs_it->NextDocs(docs, nullptr)) {
     for (uint32_t i = 0; i != n; ++i) {
@@ -75,6 +76,13 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
       }
     }
   }
+}
+
+template<typename Field>
+void ReadPostingDocs(const Field& field, const PostingMeta& meta,
+                     TermReader::Acceptor acceptor) {
+  TermPostings::ptr docs_it;
+  ReadPostingDocs(field, meta, acceptor, docs_it);
 }
 
 class TermReaderImpl final : public TermReader {
@@ -96,6 +104,8 @@ class TermReaderImpl final : public TermReader {
   }
   void VisitRange(bytes_view from, bytes_view to,
                   RangeVisitor visit) const final;
+  void VisitDocsInOrder(bytes_view from, bytes_view to, bool descending,
+                        TermDoc visit) const final;
 
   std::unique_ptr<IndexInput> ReopenPayload() const final;
   PostingsHandles Handles() const noexcept final;
@@ -120,15 +130,10 @@ class TermReaderImpl final : public TermReader {
                                TermPostings::ptr reuse) const;
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _blocks == 1; }
-  const duckdb_fsst_decoder_t* Fsst() const noexcept;
+  const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   const Root& GetRoot() const noexcept { return _root; }
   uint32_t BlockOf(Probe key) const noexcept {
     return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
-  }
-  uint32_t BlockFrom(uint32_t block, Probe key) const noexcept {
-    return block + 1 < _blocks && _root.NotAfter(block + 1, key)
-             ? static_cast<uint32_t>(_root.FindFrom(block + 1, key))
-             : block;
   }
   uint32_t BlockEnd(bytes_view upper) const;
   bytes_view KeyPrefix() const noexcept {
@@ -139,10 +144,16 @@ class TermReaderImpl final : public TermReader {
   uint32_t FirstEntry() const noexcept { return _first_entry; }
   uint32_t FirstRecord() const noexcept { return _first_record; }
   uint32_t LastEntry() const noexcept { return _last_entry; }
-  bytes_view BlockPrefix(size_t block) const noexcept {
-    const bytes_view lower = block == 0 ? MinKey() : _root.Separator(block);
+  bytes_view BlockPrefix(size_t block, SeparatorBuffer& lower_key,
+                         SeparatorBuffer& upper_key) const {
+    if (block != 0 && block + 1 != _blocks) {
+      const bytes_view lower = _root.Separator(block, lower_key);
+      return lower.substr(0, _root.SharedWithNext(block, lower_key, lower));
+    }
+    const bytes_view lower =
+      block == 0 ? MinKey() : _root.Separator(block, lower_key);
     const bytes_view upper =
-      block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1);
+      block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1, upper_key);
     return lower.substr(0, CommonPrefixLength(lower, upper));
   }
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;
@@ -150,15 +161,29 @@ class TermReaderImpl final : public TermReader {
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
   InlinePages::Span InlineSpan(uint32_t block) const noexcept;
   void PrefetchLookup(uint32_t block) const;
-  bool Gates(bytes_view head) const noexcept {
-    return _prefixes && head.size() < kTermPrefix;
+  TrieCursor TrieRoot() const noexcept {
+    return _trie ? PrefixTrie::Root()
+                 : TrieCursor{.node = kTrieBelow, .labels = 0, .matched = 0};
   }
-  uint32_t NextLabel(bytes_view head, uint32_t from,
-                     const uint32_t*& at) const noexcept {
-    if (!Gates(head) || from >= kNoLabel) {
-      return from;
-    }
-    return _prefixes->NextLabel(head, from, at);
+  static bool Gates(TrieCursor head) noexcept {
+    return head.node < kTrieMissing;
+  }
+  bytes_view Labels(TrieCursor head) const noexcept {
+    SDB_ASSERT(Gates(head));
+    return _trie->Labels(head);
+  }
+  TrieCursor ChildAt(TrieCursor head, uint32_t slot) const noexcept {
+    SDB_ASSERT(Gates(head));
+    return _trie->ChildAt(head, slot);
+  }
+  TrieCursor Child(TrieCursor head, byte_type label) const noexcept {
+    return Gates(head) ? _trie->Child(head, label) : head;
+  }
+  bytes_view Edge(TrieCursor head) const noexcept {
+    return Gates(head) ? _trie->Edge(head) : bytes_view{};
+  }
+  bool MayEnd(TrieCursor head) const noexcept {
+    return !Gates(head) || _trie->Terminal(head);
   }
   std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
   uint32_t RangePrefix() const noexcept { return _range_prefix; }
@@ -190,7 +215,8 @@ class TermReaderImpl final : public TermReader {
   FreqAttr _freq;
   Root _root;
   std::vector<RangeLevel> _levels;
-  std::unique_ptr<PrefixIndex> _prefixes;
+  std::unique_ptr<PrefixTrie> _trie;
+  std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   uint32_t _range_prefix = 0;
 };
 

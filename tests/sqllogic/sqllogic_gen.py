@@ -102,6 +102,13 @@ class Test:
             f"({expected} EXCEPT {actual}))) AS mismatches",
             "----", "matches\tmismatches", f"{RECORDED}\t0", ""]
 
+    def same_list(self, actual, expected):
+        self._lines += [
+            "query",
+            f"SELECT (SELECT list(a) FROM ({actual}) t(a)) IS NOT DISTINCT "
+            f"FROM (SELECT list(e) FROM ({expected}) t(e)) AS same",
+            "----", "same", "t", ""]
+
     def same_scores(self, actual, expected):
         self._lines += [
             "query",

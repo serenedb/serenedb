@@ -443,7 +443,8 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
       for (; next != run.size(); ++next) {
         add(next, kNoPosting);
       }
-      if (const auto* doc = reader->Handles().doc; doc && run.size() > 1) {
+      if (const auto* doc = reader->Handles().doc;
+          doc && run.size() > 1 && ctx.prefetch) {
         HintRanges(*doc, docs);
       }
     },

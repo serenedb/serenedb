@@ -69,7 +69,6 @@ class FieldReader final {
       _bytes += bytes;
     }
   }
-  const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   uint32_t BlockCount() const noexcept { return _block_count; }
   uint64_t PageOffset(size_t block) const noexcept {
     uint64_t page = _first_page + block;
@@ -109,7 +108,7 @@ class FieldReader final {
     uint32_t count = 0;
   };
 
-  void Bind(const TermsMeta& terms);
+  Separators Bind(const TermsMeta& terms);
   void FillCopies();
 
   std::deque<TermReaderImpl> _keyed;
@@ -122,11 +121,9 @@ class FieldReader final {
   const byte_type* _base = nullptr;
   IResourceManager* _rm;
   std::vector<SpanningBlock> _spans;
-  Separators _separators;
   InlinePages _inline_pages;
   containers::NodeHashMap<uint64_t, bstring> _copies;
   std::vector<byte_type> _single_inline;
-  std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   const byte_type* _inline_region = nullptr;
   uint64_t _first_page = 0;
   uint64_t _inline_offset = 0;
@@ -136,10 +133,6 @@ class FieldReader final {
   std::vector<PendingCopy> _pending;
   uint64_t _bytes = 0;
 };
-
-inline const duckdb_fsst_decoder_t* TermReaderImpl::Fsst() const noexcept {
-  return _owner->Fsst();
-}
 
 inline TermPostings::ptr TermReaderImpl::PostingsOf(
   IndexFeatures features, const PostingMeta& meta,

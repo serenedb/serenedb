@@ -42,6 +42,7 @@ target_sources(
         scan/scan_stream.cpp
         scan/scan_topk.cpp
         scan/scan_tsdict.cpp
+        scan/scan_value_topk.cpp
         full_scanner.cpp
         index_source_factory.cpp
         index_source_view.cpp

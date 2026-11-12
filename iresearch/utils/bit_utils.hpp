@@ -22,9 +22,11 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 #ifdef __AVX2__
 #include <immintrin.h>
@@ -69,7 +71,6 @@ IRS_FORCE_INLINE constexpr uint64_t SelectInWord(uint64_t bits,
   return at;
 }
 
-#ifdef __AVX2__
 using BitsetByteEntry = std::array<uint8_t, 8>;
 
 inline constexpr std::array<BitsetByteEntry, 256> kBitsetByteTable = [] {
@@ -85,6 +86,7 @@ inline constexpr std::array<BitsetByteEntry, 256> kBitsetByteTable = [] {
   return t;
 }();
 
+#ifdef __AVX2__
 inline IRS_FORCE_INLINE __m256i LeftPackControl(uint32_t mask) noexcept {
   SDB_ASSERT(mask < 256);
   return _mm256_cvtepi8_epi32(_mm_loadl_epi64(
@@ -98,38 +100,18 @@ inline IRS_FORCE_INLINE uint32_t* MaterializeWord(uint32_t offset,
   if (word == 0) {
     return out;
   }
-#ifdef __AVX2__
-  uint64_t counts = word - ((word >> 1) & 0x5555555555555555ULL);
-  counts =
-    (counts & 0x3333333333333333ULL) + ((counts >> 2) & 0x3333333333333333ULL);
-  counts = (counts + (counts >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
-  const uint64_t prefix = (counts * 0x0101010101010101ULL) << 8;
-  const auto* word_bytes = reinterpret_cast<const uint8_t*>(&word);
-  for (uint32_t b = 0; b != 8; ++b) {
-    const auto& positions = kBitsetByteTable[word_bytes[b]];
-    const __m256i base = _mm256_set1_epi32(offset + b * 8);
-    const __m128i pos8 =
-      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(positions.data()));
-    _mm256_storeu_si256(
-      reinterpret_cast<__m256i*>(out + ((prefix >> (b * 8)) & 0xFF)),
-      _mm256_add_epi32(base, _mm256_cvtepi8_epi32(pos8)));
+  constexpr uint32_t kLanes = std::tuple_size_v<BitsetByteEntry>;
+  for (uint32_t b = 0; b != sizeof(uint64_t); ++b) {
+    const auto byte = static_cast<uint8_t>(word >> (kLanes * b));
+    const auto& positions = kBitsetByteTable[byte];
+    const uint32_t base = offset + kLanes * b;
+    for (uint32_t i = 0; i != kLanes; ++i) {
+      out[i] = base + positions[i];
+    }
+    out += std::popcount(byte);
   }
-  const auto count = static_cast<uint32_t>(std::popcount(word));
-  _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + count),
-                      _mm256_set1_epi32(static_cast<int>(offset)));
-  return out + count;
-#else
-  auto* const begin = out;
-  do {
-    *out++ = offset + std::countr_zero(word);
-    word = PopBit(word);
-  } while (word != 0);
-  for (auto* pad = out; pad != begin + ((out - begin + 7) & ~ptrdiff_t{7});
-       ++pad) {
-    *pad = offset;
-  }
+  std::fill_n(out, kLanes, offset);
   return out;
-#endif
 }
 
 template<typename T>

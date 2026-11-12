@@ -216,17 +216,15 @@ void Open(Data& data) {
   data.field = data.fields->fields(1).front();
   const auto& impl =
     static_cast<const irs::term_dict::TermReaderImpl&>(*data.field);
-  std::vector<bytes_view> separators;
   if (!impl.Small()) {
+    irs::term_dict::SeparatorBuffer buffer;
     for (size_t block = 1; block < impl.GetRoot().Blocks(); ++block) {
-      separators.push_back(
-        impl.GetRoot().Separator(block).substr(impl.KeyPrefix().size()));
+      data.decoded.arena.append(impl.GetRoot()
+                                  .Separator(block, buffer)
+                                  .substr(impl.KeyPrefix().size()));
+      data.decoded.offsets.push_back(
+        static_cast<uint32_t>(data.decoded.arena.size()));
     }
-  }
-  for (const auto separator : separators) {
-    data.decoded.arena.append(separator);
-    data.decoded.offsets.push_back(
-      static_cast<uint32_t>(data.decoded.arena.size()));
   }
   const auto decoded = irs::term_dict::Slice(data.decoded);
   data.separators.clear();
@@ -281,10 +279,6 @@ std::string Validate(const Data& data, const Candidate& candidate) {
         for (size_t i = 0; i < probes.size(); i += batch) {
           const auto chunk =
             std::span{probes}.subspan(i, std::min(batch, probes.size() - i));
-          const bool sorted = absl::c_is_sorted(chunk, [](Probe a, Probe b) {
-            return irs::term_dict::KeyOf(a) < irs::term_dict::KeyOf(b);
-          });
-          size_t from = 0;
           for (size_t j = 0; j != chunk.size(); ++j) {
             const auto expected =
               Reference(data, irs::term_dict::KeyOf(chunk[j]));
@@ -292,12 +286,6 @@ std::string Validate(const Data& data, const Candidate& candidate) {
             if (found != expected) {
               return absl::StrCat("probe ", i + j, " gives ", found,
                                   ", expected ", expected);
-            }
-            if (sorted) {
-              if (root.FindFrom(from, chunk[j]) != expected) {
-                return absl::StrCat("probe ", i + j, " gallops wrong");
-              }
-              from = expected;
             }
           }
         }
@@ -443,33 +431,6 @@ void FindCold(benchmark::State& state, const std::string& base,
   }
   Report(state, prepared, probes.size());
   state.counters["copies"] = static_cast<double>(copies);
-}
-
-void FindFrom(benchmark::State& state, const std::string& base,
-              std::string_view name) {
-  const auto& prepared = Prepare(base, name);
-  if (Skip(state, prepared)) {
-    return;
-  }
-  const auto padded = Pad(prepared.data->batches[0][1]);
-  const auto& probes = padded.probes;
-  const size_t batch = kBatchSizes[1];
-  std::visit(
-    [&](const auto& root) {
-      for (auto _ : state) {
-        size_t sum = 0;
-        for (size_t i = 0; i < probes.size(); i += batch) {
-          size_t from = 0;
-          for (size_t j = i; j != std::min(i + batch, probes.size()); ++j) {
-            from = root.FindFrom(from, probes[j]);
-            sum += from;
-          }
-        }
-        benchmark::DoNotOptimize(sum);
-      }
-    },
-    prepared.candidate);
-  Report(state, prepared, probes.size());
 }
 
 void Lookup(benchmark::State& state, const std::string& base, bool hit) {
@@ -644,9 +605,6 @@ int Main(int argc, char** argv) {
       benchmark::RegisterBenchmark(
         absl::StrCat("find_hit_cold/", suffix),
         [base, name](benchmark::State& state) { FindCold(state, base, name); });
-      benchmark::RegisterBenchmark(
-        absl::StrCat("find_from/", suffix),
-        [base, name](benchmark::State& state) { FindFrom(state, base, name); });
     }
   }
   benchmark::Initialize(&argc, argv);

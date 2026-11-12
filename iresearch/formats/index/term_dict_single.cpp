@@ -127,6 +127,7 @@ SingleTermReader::SingleTermReader(FieldReader& owner, const FieldHead& head)
   _meta.norm = head.text.norm;
   _meta.dict = {.layout = head.layout, .member = head.member};
   key_width = head.width;
+  single_valued = true;
   SDB_ENSURE(head.text.total_freq <= std::numeric_limits<uint32_t>::max(),
              "term dictionary: total frequency ", head.text.total_freq,
              " exceeds uint32_t::max");
@@ -186,7 +187,7 @@ void SingleTermReader::LookupBatch(size_t count, TermAt term,
 void SingleTermReader::VisitRange(bytes_view from, bytes_view to,
                                   RangeVisitor visit) const {
   if ((from.empty() || from <= min()) && (to.empty() || min() < to)) {
-    visit(min(), _single);
+    visit(min(), _single, false);
   }
 }
 

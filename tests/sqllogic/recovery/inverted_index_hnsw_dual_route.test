@@ -60,8 +60,27 @@ count
 5
 
 
+# A range over 15/16 of the rows runs as all rows but the ones it leaves out;
+# folding that writes every word of the segment's doc set, so the walk reads
+# the columns.
+statement error
+SELECT id FROM route_docs WHERE id BETWEEN 0 AND 18749
+  ORDER BY emb <-> route_vec(123456) LIMIT 5;
+----
+db error: ERROR: intentional debug error
+
+
 statement ok
 SET sdb_faults = '-irs::HnswReadsColumns';
+
+
+query
+SELECT count(*) AS rows, count(*) FILTER (WHERE id <= 18749) AS kept FROM (
+  SELECT id FROM route_docs WHERE id BETWEEN 0 AND 18749
+    ORDER BY emb <-> route_vec(123456) LIMIT 5) t;
+----
+rows	kept
+5	5
 
 
 statement ok

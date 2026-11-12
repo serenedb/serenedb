@@ -297,3 +297,84 @@ SELECT i, t FROM pk_none ORDER BY t;
 i	t
 1	a
 1	b
+
+
+statement ok
+CREATE TABLE pk_decimal(d DECIMAL(10, 2) PRIMARY KEY, w DECIMAL(30, 3), t TEXT)
+  WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+INSERT INTO pk_decimal VALUES (1.5, 1.5, 'a'), (-2.25, 2, 'b');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_decimal;
+
+
+statement error
+INSERT INTO pk_decimal VALUES (1.50, 3, 'again');
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_decimal"
+
+
+statement ok
+INSERT INTO pk_decimal VALUES (1.51, 4, 'c');
+
+
+statement error
+INSERT INTO pk_decimal VALUES (1.51, 5, 'unpublished');
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_decimal"
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_decimal;
+
+
+query
+SELECT d, w, t FROM pk_decimal ORDER BY d;
+----
+d	w	t
+-2.25	2.000	b
+1.50	1.500	a
+1.51	4.000	c
+
+
+statement ok
+CREATE TABLE pk_wide(u UUID, h HUGEINT, b UBIGINT, x UHUGEINT, t TEXT,
+                     PRIMARY KEY (u, h, b, x))
+  WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO pk_wide VALUES
+  ('00000000-0000-0000-0000-000000000001', -170141183460469231731687303715884105728, 18446744073709551615, 340282366920938463463374607431768211455, 'max'),
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff', 1, 0, 0, 'one');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_wide;
+
+
+statement error
+INSERT INTO pk_wide VALUES ('00000000-0000-0000-0000-000000000001', -170141183460469231731687303715884105728, 18446744073709551615, 340282366920938463463374607431768211455, 'again');
+----
+db error: ERROR: duplicate key value violates the primary key of table "pk_wide"
+
+
+statement ok
+INSERT INTO pk_wide VALUES ('ffffffff-ffff-ffff-ffff-ffffffffffff', 1, 0, 1, 'fits');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pk_wide;
+
+
+query
+SELECT u, h, b, x, t FROM pk_wide ORDER BY u, x;
+----
+u	h	b	x	t
+00000000-0000-0000-0000-000000000001	-170141183460469231731687303715884105728	18446744073709551615	340282366920938463463374607431768211455	max
+ffffffff-ffff-ffff-ffff-ffffffffffff	1	0	0	one
+ffffffff-ffff-ffff-ffff-ffffffffffff	1	0	1	fits

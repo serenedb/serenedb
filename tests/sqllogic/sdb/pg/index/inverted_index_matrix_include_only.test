@@ -308,14 +308,13 @@ count
 
 
 # ============================================================================
-# g16: implicit-rejection (no opclass) for the unsupported-leaf types g5
-#      didn't cover -- UBIGINT, UHUGEINT, BIT, ENUM, VARIANT -- plus LIST
-#      and ARRAY whose child is itself an unsupported leaf (HUGEINT, DECIMAL,
-#      INTERVAL, UUID). All paths land on term_dict::Validate's unsupported()
-#      branch (server/catalog/inverted_index.cpp:251-255 / 264-265 / 270-271),
-#      which produces the verbatim "has unsupported type X and can not be
-#      indexed" message. BIGNUM is omitted: the inventory provides no
-#      reachability recipe, so we don't gamble on CREATE TABLE accepting it.
+# g16: implicit (no opclass) indexes on the leaf types g5 didn't cover.
+#      UBIGINT and UHUGEINT are numbers, and LIST/ARRAY of HUGEINT, DECIMAL
+#      and UUID index their elements. BIT, ENUM, VARIANT and LIST<INTERVAL>
+#      land on term_dict::Validate's unsupported() branch, which produces the
+#      verbatim "has unsupported type X and can not be indexed" message.
+#      BIGNUM is omitted: the inventory provides no reachability recipe, so
+#      we don't gamble on CREATE TABLE accepting it.
 # ============================================================================
 
 statement ok
@@ -337,20 +336,13 @@ CREATE TABLE g16_t(pk INTEGER PRIMARY KEY,
                    ad DECIMAL(10,2)[2]);
 
 
-# (a) implicit (no opclass) on UBIGINT: term_dict classifies UBIGINT as
-#     Unsupported (Classify default arm), so Validate rejects.
-statement error
+# (a) implicit (no opclass) on UBIGINT: indexed as an unsigned 64-bit number.
+statement ok
 CREATE INDEX g16_imp_ub ON g16_t USING inverted(pk, ub);
-----
-db error: ERROR: Column 'ub' has unsupported type UBIGINT and can not be indexed
 
-
-# (b) implicit (no opclass) on UHUGEINT: 128-bit unsigned, Unsupported.
-statement error
+# (b) implicit (no opclass) on UHUGEINT: indexed as an unsigned 128-bit number.
+statement ok
 CREATE INDEX g16_imp_uh ON g16_t USING inverted(pk, uh);
-----
-db error: ERROR: Column 'uh' has unsupported type UHUGEINT and can not be indexed
-
 
 # (c) implicit (no opclass) on BIT: bitstring is Unsupported.
 statement error
@@ -375,20 +367,13 @@ db error: ERROR: Column 'vr' has unsupported type VARIANT and can not be indexed
 
 
 # (f) implicit (no opclass) on LIST<HUGEINT>: container path in Validate
-#     inspects the child kind; HUGEINT is Unsupported, so the list is rejected
-#     with the rendered "<child>[]" type string.
-statement error
+#     inspects the child kind; HUGEINT is numeric, so the list is accepted.
+statement ok
 CREATE INDEX g16_imp_lh ON g16_t USING inverted(pk, lh);
-----
-db error: ERROR: Column 'lh' has unsupported type HUGEINT[] and can not be indexed
-
 
 # (g) implicit (no opclass) on LIST<DECIMAL(10,2)>: same container path.
-statement error
+statement ok
 CREATE INDEX g16_imp_ld ON g16_t USING inverted(pk, ld);
-----
-db error: ERROR: Column 'ld' has unsupported type DECIMAL(10,2)[] and can not be indexed
-
 
 # (h) implicit (no opclass) on LIST<INTERVAL>.
 statement error
@@ -398,26 +383,17 @@ db error: ERROR: Column 'li' has unsupported type INTERVAL[] and can not be inde
 
 
 # (i) implicit (no opclass) on LIST<UUID>.
-statement error
+statement ok
 CREATE INDEX g16_imp_lu ON g16_t USING inverted(pk, lu);
-----
-db error: ERROR: Column 'lu' has unsupported type UUID[] and can not be indexed
 
-
-# (j) implicit (no opclass) on ARRAY<HUGEINT,2>: the container branch renders
-#     fixed-size arrays as "<child>[N]" (types.cpp:474).
-statement error
+# (j) implicit (no opclass) on ARRAY<HUGEINT,2>: fixed-size arrays take the
+#     same container path.
+statement ok
 CREATE INDEX g16_imp_ah ON g16_t USING inverted(pk, ah);
-----
-db error: ERROR: Column 'ah' has unsupported type HUGEINT[2] and can not be indexed
-
 
 # (k) implicit (no opclass) on ARRAY<DECIMAL(10,2),2>: same array path.
-statement error
+statement ok
 CREATE INDEX g16_imp_ad ON g16_t USING inverted(pk, ad);
-----
-db error: ERROR: Column 'ad' has unsupported type DECIMAL(10,2)[2] and can not be indexed
-
 
 # --- teardown ---------------------------------------------------------------
 

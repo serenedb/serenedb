@@ -67,13 +67,14 @@ void AssertNumericTerm(T value, std::string_view expected) {
 }
 
 TEST(numeric_terms_test, golden_terms) {
-  AssertNumericTerm(int64_t{0}, "\x60\x80\x00\x00\x00\x00\x00\x00\x00"sv);
-  AssertNumericTerm(int64_t{42}, "\x60\x80\x00\x00\x00\x00\x00\x00\x2A"sv);
-  AssertNumericTerm(int64_t{-1}, "\x60\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF"sv);
-  AssertNumericTerm(int32_t{7}, "\x00\x80\x00\x00\x07"sv);
-  AssertNumericTerm(double_t{2.5}, "\xA0\xC0\x04\x00\x00\x00\x00\x00\x00"sv);
+  AssertNumericTerm(int64_t{0}, "\x80\x00\x00\x00\x00\x00\x00\x00"sv);
+  AssertNumericTerm(int64_t{42}, "\x80\x00\x00\x00\x00\x00\x00\x2A"sv);
+  AssertNumericTerm(int64_t{-1}, "\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF"sv);
+  AssertNumericTerm(uint64_t{42}, "\x00\x00\x00\x00\x00\x00\x00\x2A"sv);
+  AssertNumericTerm(int32_t{7}, "\x80\x00\x00\x07"sv);
+  AssertNumericTerm(double_t{2.5}, "\xC0\x04\x00\x00\x00\x00\x00\x00"sv);
 #ifndef FLOAT_T_IS_DOUBLE_T
-  AssertNumericTerm(float_t{1.5f}, "\x20\xBF\xC0\x00\x00"sv);
+  AssertNumericTerm(float_t{1.5f}, "\xBF\xC0\x00\x00"sv);
 #endif
 }
 

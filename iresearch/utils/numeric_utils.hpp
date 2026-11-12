@@ -22,201 +22,23 @@
 
 #pragma once
 
-#include <absl/base/internal/endian.h>
-
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <type_traits>
 
-#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::numeric_utils {
 
-template<typename T>
-struct encode_traits;
-
-template<>
-struct encode_traits<uint64_t> {
-  typedef uint64_t type;
-  static constexpr byte_type TYPE_MAGIC = 0x60;
-};
-
-template<>
-struct encode_traits<uint32_t> {
-  typedef uint32_t type;
-  static constexpr byte_type TYPE_MAGIC = 0;
-};
-
-#ifndef FLOAT_T_IS_DOUBLE_T
-template<>
-struct encode_traits<float_t> : encode_traits<uint32_t> {
-  static constexpr byte_type TYPE_MAGIC = 0x20;
-};
-#endif
-
-template<>
-struct encode_traits<double_t> : encode_traits<uint64_t> {
-  static constexpr byte_type TYPE_MAGIC = 0xA0;
-};
-
-// returns number of bytes required to store
-// value of type T with the specified offset
-template<typename T>
-constexpr size_t EncodedSize(size_t shift) noexcept {
-  const size_t bits = BitsRequired<T>();
-  return bits > shift ? 1 + (bits - 1 - shift) / 8 : 0;
-}
-
-template<typename T, typename EncodeTraits = encode_traits<T>>
-size_t Encode(typename EncodeTraits::type value, byte_type* out, size_t shift) {
-  typedef typename EncodeTraits::type Type;
-
-  SDB_ASSERT(shift < BitsRequired<Type>());
-  value ^= Type(1) << (BitsRequired<Type>() - 1);
-  value &= std::numeric_limits<Type>::max() ^ ((Type(1) << shift) - 1);
-  value = absl::big_endian::FromHost(value);
-
-  const size_t size = EncodedSize<Type>(shift);
-  *out = static_cast<byte_type>(shift) + EncodeTraits::TYPE_MAGIC;
-  std::memcpy(out + 1, reinterpret_cast<const void*>(&value), size);
-  return size + 1;
-}
-
-bytes_view Mini64();
-bytes_view Maxi64();
-
-uint64_t Decode64(const byte_type* out);
-size_t Encode64(uint64_t value, byte_type* out, size_t shift = 0);
-bytes_view Minu64();
-bytes_view Maxu64();
-
-bytes_view Mini32();
-bytes_view Maxi32();
-
-uint32_t Decode32(const byte_type* out);
-size_t Encode32(uint32_t value, byte_type* out, size_t shift = 0);
-bytes_view Minu32();
-bytes_view Maxu32();
-
-size_t Encodef32(uint32_t value, byte_type* out, size_t shift = 0);
-uint32_t Decodef32(const byte_type* out);
 int32_t Ftoi32(float_t value);
 float_t I32tof(int32_t value);
-bytes_view Minf32();
-bytes_view Maxf32();
-bytes_view Finf32();
-bytes_view Nfinf32();
-
-size_t Encoded64(uint64_t value, byte_type* out, size_t shift = 0);
-uint64_t Decoded64(const byte_type* out);
 int64_t Dtoi64(double_t value);
 double_t I64tod(int64_t value);
-bytes_view Mind64();
-bytes_view Maxd64();
-bytes_view Dinf64();
-bytes_view Ndinf64();
-
-template<typename T>
-struct numeric_traits;
-
-template<>
-struct numeric_traits<int32_t> {
-  typedef int32_t integral_t;
-  static bytes_view min() { return Mini32(); }
-  static bytes_view max() { return Maxi32(); }
-  inline static integral_t integral(integral_t value) { return value; }
-  constexpr static size_t size() { return sizeof(integral_t) + 1; }
-  static size_t encode(integral_t value, byte_type* out, size_t offset = 0) {
-    return Encode32(value, out, offset);
-  }
-  static integral_t decode(const byte_type* in) { return Decode32(in); }
-};
-
-template<>
-struct numeric_traits<uint32_t> {
-  typedef uint32_t integral_t;
-  static integral_t decode(const byte_type* in) { return Decode32(in); }
-  static size_t encode(integral_t value, byte_type* out, size_t offset = 0) {
-    return Encode32(value, out, offset);
-  }
-  inline static integral_t integral(integral_t value) { return value; }
-  static bytes_view min() { return Minu32(); }
-  static bytes_view max() { return Maxu32(); }
-  static bytes_view raw_ref(const integral_t& value) {
-    return bytes_view(reinterpret_cast<const byte_type*>(&value),
-                      sizeof(value));
-  }
-  constexpr static size_t size() { return sizeof(integral_t) + 1; }
-};
-
-template<>
-struct numeric_traits<int64_t> {
-  typedef int64_t integral_t;
-  static bytes_view min() { return Mini64(); }
-  static bytes_view max() { return Maxi64(); }
-  inline static integral_t integral(integral_t value) { return value; }
-  constexpr static size_t size() { return sizeof(integral_t) + 1; }
-  static size_t encode(integral_t value, byte_type* out, size_t offset = 0) {
-    return Encode64(value, out, offset);
-  }
-  static integral_t decode(const byte_type* in) { return Decode64(in); }
-};
-
-template<>
-struct numeric_traits<uint64_t> {
-  typedef uint64_t integral_t;
-  static integral_t decode(const byte_type* in) { return Decode64(in); }
-  static size_t encode(integral_t value, byte_type* out, size_t offset = 0) {
-    return Encode64(value, out, offset);
-  }
-  inline static integral_t integral(integral_t value) { return value; }
-  static bytes_view max() { return Maxu64(); }
-  static bytes_view min() { return Minu64(); }
-  static bytes_view raw_ref(const integral_t& value) {
-    return bytes_view(reinterpret_cast<const byte_type*>(&value),
-                      sizeof(value));
-  }
-  constexpr static size_t size() { return sizeof(integral_t) + 1; }
-};
-
-template<>
-struct numeric_traits<float> {
-  typedef int32_t integral_t;
-  static bytes_view ninf() { return Nfinf32(); }
-  static bytes_view min() { return Minf32(); }
-  static bytes_view max() { return Maxf32(); }
-  static bytes_view inf() { return Finf32(); }
-  static float_t floating(integral_t value) { return I32tof(value); }
-  static integral_t integral(float_t value) { return Ftoi32(value); }
-  constexpr static size_t size() { return sizeof(integral_t) + 1; }
-  static size_t encode(integral_t value, byte_type* out, size_t offset = 0) {
-    return Encodef32(value, out, offset);
-  }
-  static float_t decode(const byte_type* in) { return floating(Decodef32(in)); }
-};
-
-template<>
-struct numeric_traits<double> {
-  typedef int64_t integral_t;
-  static bytes_view ninf() { return Ndinf64(); }
-  static bytes_view min() { return Mind64(); }
-  static bytes_view max() { return Maxd64(); }
-  static bytes_view inf() { return Dinf64(); }
-  static double_t floating(integral_t value) { return I64tod(value); }
-  static integral_t integral(double_t value) { return Dtoi64(value); }
-  constexpr static size_t size() { return sizeof(integral_t) + 1; }
-  static size_t encode(integral_t value, byte_type* out, size_t offset = 0) {
-    return Encoded64(value, out, offset);
-  }
-  static double_t decode(const byte_type* in) {
-    return floating(Decoded64(in));
-  }
-};
-
-template<>
-struct numeric_traits<long double> {};  // numeric_traits
 
 template<typename T>
 T CanonicalFloat(T value) noexcept {
@@ -227,52 +49,92 @@ T CanonicalFloat(T value) noexcept {
   return std::isnan(value) ? std::numeric_limits<T>::quiet_NaN() : value;
 }
 
+template<typename Key>
+inline constexpr Key kSignBit = Key{1} << (sizeof(Key) * 8 - 1);
+
 template<typename T>
 struct NumericEncodeOf;
 
-template<>
-struct NumericEncodeOf<int32_t> {
-  using Traits = encode_traits<uint32_t>;
-  static constexpr uint32_t Integral(int32_t value) noexcept {
-    return static_cast<uint32_t>(value);
+template<typename Signed>
+struct SignedKeyOf {
+  using Key = std::make_unsigned_t<Signed>;
+  static constexpr Key ToKey(Signed value) noexcept {
+    return static_cast<Key>(value) ^ kSignBit<Key>;
+  }
+  static constexpr Signed FromKey(Key key) noexcept {
+    return static_cast<Signed>(key ^ kSignBit<Key>);
   }
 };
 
-template<>
-struct NumericEncodeOf<int64_t> {
-  using Traits = encode_traits<uint64_t>;
-  static constexpr uint64_t Integral(int64_t value) noexcept {
-    return static_cast<uint64_t>(value);
-  }
+template<typename Unsigned>
+struct UnsignedKeyOf {
+  using Key = Unsigned;
+  static constexpr Key ToKey(Unsigned value) noexcept { return value; }
+  static constexpr Unsigned FromKey(Key key) noexcept { return key; }
 };
+
+template<>
+struct NumericEncodeOf<int32_t> : SignedKeyOf<int32_t> {};
+
+template<>
+struct NumericEncodeOf<int64_t> : SignedKeyOf<int64_t> {};
+
+template<>
+struct NumericEncodeOf<__int128> : SignedKeyOf<__int128> {};
+
+template<>
+struct NumericEncodeOf<uint64_t> : UnsignedKeyOf<uint64_t> {};
+
+template<>
+struct NumericEncodeOf<unsigned __int128> : UnsignedKeyOf<unsigned __int128> {};
 
 #ifndef FLOAT_T_IS_DOUBLE_T
 template<>
 struct NumericEncodeOf<float_t> {
-  using Traits = encode_traits<float_t>;
-  static uint32_t Integral(float_t value) noexcept {
-    return static_cast<uint32_t>(
-      numeric_traits<float_t>::integral(CanonicalFloat(value)));
+  using Key = uint32_t;
+  static Key ToKey(float_t value) noexcept {
+    return static_cast<Key>(Ftoi32(CanonicalFloat(value))) ^ kSignBit<Key>;
+  }
+  static float_t FromKey(Key key) noexcept {
+    return I32tof(static_cast<int32_t>(key ^ kSignBit<Key>));
   }
 };
 #endif
 
 template<>
 struct NumericEncodeOf<double_t> {
-  using Traits = encode_traits<double_t>;
-  static uint64_t Integral(double_t value) noexcept {
-    return static_cast<uint64_t>(
-      numeric_traits<double_t>::integral(CanonicalFloat(value)));
+  using Key = uint64_t;
+  static Key ToKey(double_t value) noexcept {
+    return static_cast<Key>(Dtoi64(CanonicalFloat(value))) ^ kSignBit<Key>;
+  }
+  static double_t FromKey(Key key) noexcept {
+    return I64tod(static_cast<int64_t>(key ^ kSignBit<Key>));
   }
 };
 
-inline constexpr size_t kNumericTermMaxSize = 1 + sizeof(uint64_t);
+template<typename T>
+using NumericKey = typename NumericEncodeOf<T>::Key;
+
+template<typename T>
+inline constexpr size_t kNumericTermSize = sizeof(NumericKey<T>);
+
+inline constexpr size_t kNumericTermMaxSize = sizeof(unsigned __int128);
 
 template<typename T>
 bytes_view EncodeNumericTerm(byte_type* buf, T value) {
-  using Enc = typename NumericEncodeOf<T>::Traits;
-  using U = typename Enc::type;
-  return {buf, Encode<U, Enc>(NumericEncodeOf<T>::Integral(value), buf, 0)};
+  static_assert(std::endian::native == std::endian::little);
+  const auto key = std::byteswap(NumericEncodeOf<T>::ToKey(value));
+  std::memcpy(buf, &key, sizeof(key));
+  return {buf, sizeof(key)};
+}
+
+template<typename T>
+T DecodeNumericTerm(bytes_view term) {
+  static_assert(std::endian::native == std::endian::little);
+  NumericKey<T> key;
+  SDB_ASSERT(term.size() == sizeof(key));
+  std::memcpy(&key, term.data(), sizeof(key));
+  return NumericEncodeOf<T>::FromKey(std::byteswap(key));
 }
 
 }  // namespace irs::numeric_utils

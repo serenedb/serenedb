@@ -763,6 +763,11 @@ void Transactions::Open(std::unique_ptr<Log> log) {
   _log = std::move(log);
 }
 
+void Transactions::Close() {
+  absl::MutexLock sequence{&_sequence_mutex};
+  _log.reset();
+}
+
 std::optional<Lsn> Transactions::CommitEnd(duckdb::transaction_t commit) {
   absl::MutexLock sequence{&_sequence_mutex};
   if (commit <= _opened_commit) {

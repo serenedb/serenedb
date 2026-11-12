@@ -128,7 +128,8 @@ TableKeys ResolveTableKeys(const catalog::SearchTableEntry& table,
       const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
       KeySpec spec{.kind = KeyKind::Unique,
                    .key = {.field = constraint->oid},
-                   .constraint = constraint->constraint_name};
+                   .constraint = constraint->constraint_name,
+                   .deferred = unique.IsDeferred()};
       for (const auto index : unique.GetLogicalIndexes(columns)) {
         add_column(spec, columns.GetColumn(index));
       }

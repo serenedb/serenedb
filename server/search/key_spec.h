@@ -47,6 +47,7 @@ struct KeySpec {
   std::vector<std::string> names;
   // The types the key's values are encoded as.
   std::vector<duckdb::LogicalType> types;
+  bool deferred = false;
   // Reference only: the referenced table and the field of its unique key the
   // values must be held in. The key's columns follow that unique key's order.
   duckdb::idx_t referenced_table = 0;

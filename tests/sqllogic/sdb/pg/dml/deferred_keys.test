@@ -1,0 +1,140 @@
+statement ok
+CREATE TABLE dk_pk (id INTEGER PRIMARY KEY DEFERRED, v INTEGER)
+
+statement ok
+CREATE TABLE dk_uq (id INTEGER, code VARCHAR UNIQUE DEFERRED)
+
+statement ok
+CREATE TABLE dk_big (id BIGINT PRIMARY KEY DEFERRED, pad VARCHAR)
+
+statement ok
+INSERT INTO dk_pk VALUES (1, 10), (2, 20)
+
+query
+SELECT conname, condeferrable, condeferred FROM pg_constraint WHERE conrelid IN ('dk_pk'::regclass, 'dk_uq'::regclass) AND contype IN ('p', 'u') ORDER BY conname
+----
+conname	condeferrable	condeferred
+dk_pk_pkey	t	t
+dk_uq_code_key	t	t
+
+statement ok
+BEGIN
+
+statement ok
+UPDATE dk_pk SET id = 2 WHERE v = 10
+
+statement ok
+UPDATE dk_pk SET id = 1 WHERE v = 20
+
+statement ok
+COMMIT
+
+query
+SELECT id, v FROM dk_pk ORDER BY id
+----
+id	v
+1	20
+2	10
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO dk_uq VALUES (1, 'x')
+
+statement ok
+INSERT INTO dk_uq VALUES (2, 'x')
+
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "dk_uq_code_key"
+DETAIL: Key (code)=(x) already exists.
+
+
+query
+SELECT count(*) AS n FROM dk_uq
+----
+n
+0
+
+statement error
+INSERT INTO dk_pk VALUES (5, 50), (5, 51)
+----
+db error: ERROR: duplicate key value violates unique constraint "dk_pk_pkey"
+DETAIL: Key (id)=(5) already exists.
+
+
+statement error
+INSERT INTO dk_pk VALUES (1, 99)
+----
+db error: ERROR: duplicate key value violates unique constraint "dk_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
+
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO dk_big SELECT g, repeat('p', 40) FROM generate_series(1, 100000) g
+
+statement ok
+INSERT INTO dk_big SELECT g, repeat('q', 40) FROM generate_series(50000, 60000) g
+
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "dk_big_pkey"
+DETAIL: Key (id)=(50000) already exists.
+
+
+query
+SELECT count(*) AS n FROM dk_big
+----
+n
+0
+
+connection c1
+statement ok
+BEGIN
+
+connection c1
+statement ok
+INSERT INTO dk_pk VALUES (7, 70)
+
+connection c2
+statement ok
+BEGIN
+
+connection c2
+statement ok
+INSERT INTO dk_pk VALUES (7, 71)
+
+connection c1
+statement ok
+COMMIT
+
+connection c2
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "dk_pk_pkey"
+DETAIL: Key (id)=(7) already exists.
+
+
+query
+SELECT id, v FROM dk_pk ORDER BY id
+----
+id	v
+1	20
+2	10
+7	70
+
+statement ok
+DROP TABLE dk_pk
+
+statement ok
+DROP TABLE dk_uq
+
+statement ok
+DROP TABLE dk_big

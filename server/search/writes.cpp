@@ -1186,7 +1186,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
   }
   for (size_t spec = 0; spec != w.keys.size(); ++spec) {
     const auto& key_spec = w.keys[spec];
-    if (key_spec.kind != KeyKind::Unique) {
+    if (key_spec.kind != KeyKind::Unique || key_spec.deferred) {
       continue;
     }
     auto& keys = fresh[spec];
@@ -1308,8 +1308,8 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         continue;
       }
       KeyProbe fresh{spec.key.field};
-      fresh.AddLive(now, w.checked ? &*w.checked : nullptr);
-      if (fresh.Empty()) {
+      fresh.AddLive(now, w.checked && !spec.deferred ? &*w.checked : nullptr);
+      if (fresh.Empty() && !spec.deferred) {
         continue;
       }
       if (auto duplicate = FindDuplicate(context, spec, segments, {}, fresh)) {

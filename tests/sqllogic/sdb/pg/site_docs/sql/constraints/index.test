@@ -196,14 +196,10 @@ INSERT INTO accounts VALUES (1, 'a'), (2, 'b');
 statement ok
 BEGIN;
 
-statement error
+statement ok
 INSERT INTO accounts VALUES (2, 'c');
-----
-db error: ERROR: duplicate key value violates unique constraint "accounts_pkey"
-DETAIL: Key (id)=(2) already exists.
 
-
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+statement ok
 UPDATE accounts SET id = 3 WHERE name = 'c';
 
 statement ok
@@ -215,8 +211,12 @@ BEGIN;
 statement ok
 INSERT INTO accounts VALUES (3, 'd');
 
-statement ok
+statement error
 COMMIT;
+----
+db error: ERROR: duplicate key value violates unique constraint "accounts_pkey"
+DETAIL: Key (id)=(3) already exists.
+
 
 query
 SELECT id, name FROM accounts ORDER BY id;
@@ -224,7 +224,7 @@ SELECT id, name FROM accounts ORDER BY id;
 id	name
 1	a
 2	b
-3	d
+3	c
 
 # DOCS_TEST: example_010
 

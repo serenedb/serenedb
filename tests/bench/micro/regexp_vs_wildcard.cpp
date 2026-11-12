@@ -41,6 +41,7 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
 #include <string>
@@ -423,9 +424,8 @@ irs::ByRegexp MakeRegexp(std::string_view pattern) {
 //                    items_per_second column.
 //
 // Both helpers pass only the required field of PrepareContext /
-// ExecutionContext (index / segment) and rely on defaults for memory,
-// scorer, ctx, boost. Default memory tracking is IResourceManager::
-// gNoop
+// ExecutionContext (index / segment) and rely on defaults for scorer, ctx,
+// boost.
 
 template<typename MakeFn>
 void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
@@ -434,11 +434,12 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
   // filter means an invalid pattern slipped through. The timed loop
   // would still run but would measure an empty fast-fail path, not
   // the real prepare pipeline.
+  irs::QueryMemory memory;
   {
     auto q = make();
     irs::QueryBuilder::ptr check;
     for (const auto& sub : rdr) {
-      check = q.PrepareSegment(sub, {});
+      check = q.PrepareSegment(sub, {.memory = memory});
     }
     if (!check) {
       state.SkipWithError("prepare returned null");
@@ -447,10 +448,11 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
   }
 
   for (auto _ : state) {
+    memory.Rewind();
     auto q = make();
     irs::QueryBuilder::ptr prepared;
     for (const auto& sub : rdr) {
-      prepared = q.PrepareSegment(sub, {});
+      prepared = q.PrepareSegment(sub, {.memory = memory});
     }
     benchmark::DoNotOptimize(prepared);
   }
@@ -459,10 +461,12 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
 template<typename MakeFn>
 void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
                       MakeFn make) {
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
   auto q = make();
   std::vector<irs::QueryBuilder::ptr> prepared;
   for (const auto& sub : rdr) {
-    prepared.emplace_back(q.PrepareSegment(sub, {}));
+    prepared.emplace_back(q.PrepareSegment(sub, {.memory = query_memory}));
   }
   if (prepared.empty() || !prepared.front()) {
     state.SkipWithError("prepare returned null");
@@ -478,7 +482,8 @@ void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
       if (!p) {
         continue;
       }
-      auto plan = irs::count::MakeRoot(*p);
+      plan_memory.Rewind();
+      auto plan = irs::count::MakeRoot(*p, {.memory = plan_memory});
       if (!plan) {
         continue;
       }

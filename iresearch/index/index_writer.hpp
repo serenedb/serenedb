@@ -33,6 +33,7 @@
 #include <deque>
 #include <functional>
 #include <limits>
+#include <list>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -68,6 +69,7 @@ class DatabaseInstance;
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -310,11 +312,13 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return;
       }
-      try {
-        segment->Flush();
-      } catch (...) {
-        segment->Reset(true);
-        throw;
+      segment->writer->ReserveFlush();
+      FlushReserved(*segment);
+    }
+
+    void ReserveFlush() {
+      if (auto* segment = _active.Segment()) {
+        segment->writer->ReserveFlush();
       }
     }
 
@@ -344,6 +348,7 @@ class IndexWriter : private util::Noncopyable {
    private:
     bool CommitImpl(const SourcePosition& position) noexcept;
     void UpdateSegment(bool disable_flush);
+    void FlushReserved(SegmentContext& segment);
 
     template<typename Op>
     void Queue(Op op) {
@@ -406,6 +411,12 @@ class IndexWriter : private util::Noncopyable {
 
   bool HasActiveSegments() const noexcept {
     return _segments_active.load(std::memory_order_acquire) != 0;
+  }
+
+  bool FailedBatchKept() const noexcept { return _failed_batch_kept; }
+
+  bool LostDocs() const noexcept {
+    return _lost_docs.load(std::memory_order_relaxed);
   }
 
   void Clear(const SourcePosition& position = {});
@@ -575,8 +586,8 @@ class IndexWriter : private util::Noncopyable {
     std::atomic_size_t buffered_docs{0};
     RefTrackingDirectory dir;
 
-    ManagedVector<Queued> queries;
-    ManagedVector<FlushedSegment> flushed;
+    TrackedVector<Queued> queries;
+    TrackedVector<FlushedSegment> flushed;
 
     segment_meta_generator_t meta_generator;
 
@@ -684,9 +695,9 @@ class IndexWriter : private util::Noncopyable {
 
     CompactingSegments segment_mask;
     // Backing store for segment_mask entries whose name is not kept alive by a
-    // pinned reader in `incoming`. A deque so an append never invalidates the
+    // pinned reader in `incoming`. A list so an append never invalidates the
     // views already handed to segment_mask.
-    std::deque<std::string> masked_names;
+    std::list<std::string> masked_names;
 
     FlushContext() = default;
 
@@ -709,6 +720,7 @@ class IndexWriter : private util::Noncopyable {
 
   void Cleanup(FlushContext& curr) noexcept;
   void SwapDocMaps(FlushContext& flushed) noexcept;
+  bool Requeue(FlushContext& failed) noexcept;
 
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
@@ -798,6 +810,8 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_uint64_t _seg_counter;
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
   uint64_t _last_gen;
+  bool _failed_batch_kept = false;
+  std::atomic_bool _lost_docs{false};
   IndexMetaWriter _writer;
   IndexLock::ptr _write_lock;
   IndexFileRefs::ref_t _write_lock_file_ref;

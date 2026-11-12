@@ -114,6 +114,14 @@ Memory held while writing to a search table depends on `segment_memory_max`, set
 
 Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server, and also decides how often the database checkpoints.
 
+[`memory_limit`](../../../configuration/overview.md) caps the memory of all writes, index builds and merges together, on top of the buffer manager. A write, `CREATE INDEX` or `VACUUM` that needs more fails with an out-of-memory error and leaves the index as it was. A merge reserves the memory it needs before it reads its segments, so a background compaction that doesn't fit fails without merging anything and counts in `num_failed_consolidations`; it is retried after its interval plus a delay that doubles with each failure in a row, up to 30 seconds.
+
+A write to an indexed table also reserves, as its rows enter the index, the memory the refresh needs to write them into the index's files; that memory counts against `memory_limit` until the refresh. An `INSERT` or `UPDATE` whose rows and reservation don't fit fails with an out-of-memory error before it commits and leaves the table and its index as they were. A text field with positions reserves the most, up to 16 bytes per token against the one or two bytes per token the write itself holds; a vector field reserves about the size of its vectors plus the graph or centroids the refresh builds.
+
+When writing a segment into the index's files fails anyway, for example on a disk error, the index is out of sync with its table: searches see the rows it held before, `CHECKPOINT` fails with `cannot checkpoint database "<name>": inverted index <id> is out of sync with its store table`, and a restart replays the missing rows from the write-ahead log.
+
+Replaying the write-ahead log at startup is not limited by `memory_limit`. When the replay needs more, the server starts and logs a warning, and statements that need memory fail until a refresh writes the replayed rows into the index.
+
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
   WITH (storage = 'search', segment_memory_max = 134217728);  -- 128 MB

@@ -40,6 +40,7 @@
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -53,26 +54,31 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   auto& allocator = duckdb::Allocator::DefaultAllocator();
   StatsArena stats_arena{allocator};
   PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
-  std::vector<QueryBuilder::ptr> queries;
+  QueryMemory query_memory;
+  memory::ArenaVector<QueryBuilder::ptr> queries{query_memory.Arena()};
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(
-      PrepareMasked(filter, segment, {.collector = collector_tree.Get()}));
+    queries.emplace_back(PrepareMasked(
+      filter, segment,
+      {.memory = query_memory, .collector = collector_tree.Get()}));
   }
   collector_tree.Finish();
 
   std::atomic<score_t> score_threshold{std::numeric_limits<score_t>::lowest()};
   LoserScoreCollector collector{score_threshold, hits};
+  PlanMemory plan_memory;
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
   for ([[maybe_unused]] auto& segment : reader) {
     fetcher.Clear();
+    plan_memory.Rewind();
     auto& query = queries[seg_idx];
     collector.SetSegment(seg_idx++);
     if (!query) {
       continue;
     }
     auto plan = top::MakeRoot(*query, {
+                                        .memory = plan_memory,
                                         .scorer = scorer,
                                         .fetcher = fetcher,
                                         .prune = score_prune,

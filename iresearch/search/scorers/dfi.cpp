@@ -106,8 +106,8 @@ ScoreFunction MakeScoreMeasure(const ScoreContext& ctx, const DFIStats& stats,
                                const FreqBlockAttr* freq, const uint32_t* norm,
                                const score_t* scale) {
   return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<DFIScore<M, HasScale>>(ctx.boost, stats, freq,
-                                                      norm, scale);
+    return ScoreFunction::Make<DFIScore<M, HasScale>>(ctx.memory, ctx.boost,
+                                                      stats, freq, norm, scale);
   });
 }
 
@@ -181,8 +181,8 @@ ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter() const {
   return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>();
 }
 
-ScoreBoundSource::ptr DFI::PrepareScoreBoundSource() const {
-  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
+ScoreBoundSource::ptr DFI::PrepareScoreBoundSource(PlanMemory& memory) const {
+  return memory.Make<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
 bool DFI::Compatible(const ScorerOptions& persisted) const noexcept {

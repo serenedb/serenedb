@@ -29,8 +29,8 @@
 
 namespace irs::count {
 
-TermCounts::ptr MakeTermCounts(detail::LazyBitset& set, const TermReader& field,
-                               size_t terms) {
+TermCounts::ptr MakeTermCounts(PlanMemory& memory, detail::LazyBitset& set,
+                               const TermReader& field, size_t terms) {
   SDB_ASSERT(detail::DocOf(field) != nullptr);
   if (terms < 2) {
     return {};
@@ -38,9 +38,9 @@ TermCounts::ptr MakeTermCounts(detail::LazyBitset& set, const TermReader& field,
   return detail::ResolveInput(
     *detail::DocOf(field), [&]<typename Input> -> TermCounts::ptr {
       using Shape = TermCountsOf<Input>;
-      return memory::make_managed<TermCounts, Shape>(set, *detail::DocOf(field),
-                                                     detail::LayoutOf(field),
-                                                     detail::BoundsOf(field));
+      return memory.Make<TermCounts, Shape>(memory, set, *detail::DocOf(field),
+                                            detail::LayoutOf(field),
+                                            detail::BoundsOf(field));
     });
 }
 

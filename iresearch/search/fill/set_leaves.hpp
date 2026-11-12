@@ -34,12 +34,13 @@ template<typename Leaf, size_t N = 0>
 class SetLeaves {
  public:
   template<typename Init>
-  SetLeaves(size_t size, Init&& init)
-    : _leaves{size, std::forward<Init>(init)},
-      _live{size,
+  SetLeaves(PlanMemory& memory, size_t size, Init&& init)
+    : _leaves{memory.Arena(), size, std::forward<Init>(init)},
+      _live{memory.Arena(), size,
             [this](Leaf*& slot, size_t i) noexcept { slot = &_leaves[i]; }},
-      _next{size, [](doc_id_t& slot,
-                     size_t) noexcept { slot = doc_limits::invalid(); }},
+      _next{
+        memory.Arena(), size,
+        [](doc_id_t& slot, size_t) noexcept { slot = doc_limits::invalid(); }},
       _live_count{size} {}
 
   SetLeaves(SetLeaves&&) = delete;

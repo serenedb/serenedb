@@ -1,0 +1,56 @@
+# While an inverted index on a table is out of sync, checkpoints are refused
+# before they start, so once the index is gone the database checkpoints again.
+
+control substitution on
+
+statement ok
+CREATE TABLE oos (id BIGINT, msg TEXT);
+
+statement ok
+CREATE INDEX oos_idx ON oos USING inverted (msg)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO oos SELECT i, 'm' || (i % 7) FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) oos;
+
+statement ok
+SET sdb_faults = 'IndexWriter::Transaction::Commit';
+
+statement ok
+INSERT INTO oos SELECT i, 'late' FROM range(100, 110) t(i);
+
+statement ok
+SET sdb_faults = '-IndexWriter::Transaction::Commit';
+
+statement error
+CHECKPOINT;
+----
+db error: ERROR: cannot checkpoint database "<slt:ignore>": inverted index <slt:ignore> is out of sync with its store table
+
+
+statement ok
+SET GLOBAL checkpoint_threshold = '1KB';
+
+statement ok
+INSERT INTO oos SELECT i, 'auto' FROM range(110, 1110) t(i);
+
+statement ok
+DROP INDEX oos_idx;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM oos;
+----
+count
+1110

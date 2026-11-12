@@ -41,8 +41,8 @@ class DisjunctionLead {
   using Leaf = PostingPrunedDisj<Input>;
 
   template<typename Init>
-  DisjunctionLead(size_t size, Init&& init)
-    : _leaves{size, std::forward<Init>(init)} {
+  DisjunctionLead(PlanMemory& memory, size_t size, Init&& init)
+    : _leaves{memory.Arena(), size, std::forward<Init>(init)} {
     SDB_ASSERT(!_leaves.empty());
   }
 

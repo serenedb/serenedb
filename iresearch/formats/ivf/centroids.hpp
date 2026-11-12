@@ -32,6 +32,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -55,13 +56,13 @@ struct CentroidsNodeView {
 };
 
 struct LayerBuffers {
-  std::vector<std::vector<float>> centroids;
-  std::vector<std::vector<size_t>> child_offsets;
+  TrackedVector<TrackedVector<float>> centroids;
+  TrackedVector<TrackedVector<size_t>> child_offsets;
 };
 
 struct CentroidsNode {
-  std::vector<float> centroids;
-  std::vector<size_t> child_offsets;
+  TrackedVector<float> centroids;
+  TrackedVector<size_t> child_offsets;
   size_t size;
   size_t level;
   size_t d;
@@ -157,8 +158,8 @@ class CentroidsTree {
   static CentroidsTree Deserialize(IndexInput& in, uint64_t root_byte_size);
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
-              std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
-              uint32_t beam = 0) const;
+              TrackedVector<uint32_t>& out_ids,
+              TrackedVector<float>* out_centroids, uint32_t beam = 0) const;
 
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }
@@ -192,13 +193,20 @@ struct CentroidsBuildParams {
   size_t max_fanout = 0;
   double sample_factor = 0;
   uint64_t min_train_sample = 0;
+  MemoryBudget* budget = nullptr;
+};
+
+struct CentroidsBound {
+  size_t sample_rows = 0;
+  size_t cluster_rows = 0;
+  size_t train_bytes = 0;
 };
 
 class CentroidsBuilder {
  public:
   struct Node {
-    std::vector<float> centroids;
-    std::vector<size_t> children;
+    TrackedVector<float> centroids;
+    TrackedVector<size_t> children;
     size_t leafs = 0;
 
     size_t Rows(size_t d) const noexcept { return centroids.size() / d; }
@@ -212,8 +220,11 @@ class CentroidsBuilder {
                                  const CentroidsBuildParams& params = {});
 
   static CentroidsBuilder CreateFromSample(
-    std::vector<float> sample, uint32_t d, VectorMetric metric,
+    TrackedVector<float> sample, uint32_t d, VectorMetric metric,
     const CentroidsBuildParams& params = {});
+
+  static CentroidsBound Bound(size_t rows, uint32_t d, VectorMetric metric,
+                              const CentroidsBuildParams& params) noexcept;
 
   CentroidsSpan Serialize(IndexOutput& out) const;
 
@@ -224,20 +235,21 @@ class CentroidsBuilder {
   size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
 
  private:
-  static CentroidsBuilder BuildFromSample(std::vector<float> sample, uint32_t d,
-                                          VectorMetric metric, size_t leaf_size,
-                                          size_t max_fanout);
+  static CentroidsBuilder BuildFromSample(TrackedVector<float> sample,
+                                          uint32_t d, VectorMetric metric,
+                                          size_t leaf_size, size_t max_fanout,
+                                          MemoryBudget* budget);
 
-  void BuildTree(std::vector<float> sample, size_t leaf_size,
-                 size_t max_fanout);
+  void BuildTree(TrackedVector<float> sample, size_t leaf_size,
+                 size_t max_fanout, MemoryBudget* budget);
 
   void AssignCentroidsImpl(
     size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,
     std::span<size_t> perm,
     std::span<std::span<const float>> centroids_out) const;
 
-  std::vector<Node> _nodes;
-  std::vector<size_t> _row_bases;
+  TrackedVector<Node> _nodes;
+  TrackedVector<size_t> _row_bases;
   VectorMetric _metric = VectorMetric::L2Sqr;
   uint32_t _d = 0;
   size_t _n_rows = 0;

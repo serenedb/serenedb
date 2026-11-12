@@ -9,6 +9,7 @@ target_sources(
         crash_handler.cpp
         directory_utils.cpp
         duckdb_engine.cpp
+        fault_hits.cpp
         file_utils_ext.cpp
         huge_page_allocator.cpp
         index_utils.cpp
@@ -25,6 +26,7 @@ target_sources(
         remap_executable.cpp
         string_utils.cpp
         timer_utils.cpp
+        tracked.cpp
         wildcard_utils.cpp
 )
 

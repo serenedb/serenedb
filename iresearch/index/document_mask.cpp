@@ -31,6 +31,7 @@
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
@@ -40,8 +41,10 @@ using roaring::api::roaring_bitmap_t;
 constexpr std::align_val_t kFrozenAlignment{32};
 
 struct FrozenFree {
+  uint64_t size = 0;
+
   void operator()(byte_type* p) const noexcept {
-    ::operator delete(p, kFrozenAlignment);
+    Tracked::operator delete(p, size, kFrozenAlignment);
   }
 };
 
@@ -184,8 +187,8 @@ bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
 
 DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
   std::shared_ptr<byte_type> frozen{
-    static_cast<byte_type*>(::operator new(size, kFrozenAlignment)),
-    FrozenFree{}};
+    static_cast<byte_type*>(Tracked::operator new(size, kFrozenAlignment)),
+    FrozenFree{size}, TrackedAllocator<byte_type>{}};
   in.ReadData(0, frozen.get(), size);
   return DocumentMask{std::move(frozen), size};
 }

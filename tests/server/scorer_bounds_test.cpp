@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <iresearch/utils/query_memory.hpp>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -48,8 +49,10 @@ void CheckAlternative() {
 
   const bool bounded = irs::BoundTypeOf(own) != BoundType::None;
 
+  irs::PlanMemory memory;
   EXPECT_EQ(bounded, static_cast<bool>(scorer->PrepareScoreBoundWriter()));
-  EXPECT_EQ(bounded, static_cast<bool>(scorer->PrepareScoreBoundSource()));
+  EXPECT_EQ(bounded,
+            static_cast<bool>(scorer->PrepareScoreBoundSource(memory)));
   EXPECT_EQ(bounded, scorer->Compatible(own));
 
   // bm25 with 0 < b < 1 stores the argmax for that b under that avg_dl mode,

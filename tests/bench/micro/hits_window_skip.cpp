@@ -37,6 +37,7 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <map>
@@ -154,8 +155,10 @@ void BmScan(benchmark::State& state, std::string_view lhs, std::string_view rhs,
   const auto filter = Either(lhs, rhs);
   irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
   irs::PreparedCollector collector{*filter, kScorer, stats, 1};
-  const auto query =
-    filter->PrepareSegment(segment, {.collector = collector.Get()});
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
+  const auto query = filter->PrepareSegment(
+    segment, {.memory = query_memory, .collector = collector.Get()});
   collector.Finish();
 
   constexpr uint32_t kCapacity = irs::doc_limits::kMinCapacity;
@@ -165,8 +168,10 @@ void BmScan(benchmark::State& state, std::string_view lhs, std::string_view rhs,
     irs::doc_limits::min() + static_cast<irs::doc_id_t>(segment.docs_count());
   uint64_t hits = 0;
   for (auto _ : state) {
+    plan_memory.Rewind();
     irs::ColumnArgsFetcher fetcher;
-    auto plan = query->PlanScored({.scorer = kScorer, .fetcher = fetcher});
+    auto plan = query->PlanScored(
+      {.memory = plan_memory, .scorer = kScorer, .fetcher = fetcher});
     for (auto window = irs::doc_limits::min(); window < end;
          window += irs::detail::kWindowDocs) {
       const auto stop = std::min<irs::doc_id_t>(window + take, end);

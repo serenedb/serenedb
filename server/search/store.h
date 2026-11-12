@@ -40,6 +40,7 @@
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/resource_manager.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -199,7 +200,9 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _durability.Position();
   }
   void MarkOutOfSync() noexcept { _durability.MarkOutOfSync(); }
-  bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
+  bool IsOutOfSync() const noexcept {
+    return _durability.IsOutOfSync() || (_writer && _writer->LostDocs());
+  }
 
   void PrepareCheckpoint(uint64_t iteration);
   void FinishCheckpoint();
@@ -346,7 +349,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   // forever. AppendDeleteLog hands back the rows it does not log, all of them
   // once latched; the caller removes those natively (a delete racing publish
   // is an ordinary post-publish remove).
-  std::vector<int64_t> AppendDeleteLog(std::vector<int64_t> rows);
+  irs::TrackedVector<int64_t> AppendDeleteLog(irs::TrackedVector<int64_t> rows);
   std::vector<irs::KeyRemoval> TakeDeleteLog();
   void SetDeleteLogRowidEnd(int64_t end) noexcept {
     _delete_log_rowid_end.store(end, std::memory_order_relaxed);

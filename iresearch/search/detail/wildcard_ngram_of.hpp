@@ -53,8 +53,8 @@ inline const MultiTermState& AsTerms(const QueryBuilder& query) noexcept {
 }
 
 template<typename Result, bool Scored, typename F>
-Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
-             uint64_t interrogations, F&& f) {
+Result Build(PlanMemory& memory, WildcardNGramKind,
+             const WildcardNGramQuery& query, uint64_t interrogations, F&& f) {
   static_assert(!Scored);
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
@@ -76,13 +76,13 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
 
   const auto erased = [&]() -> Result {
     if constexpr (kProbed) {
-      auto node = ngrams.PlanProbe({}, interrogations);
+      auto node = ngrams.PlanProbe({.memory = memory}, interrogations);
       if (!node) {
         return {};
       }
       return make.template operator()<probe::Erased>(std::move(node));
     } else {
-      auto node = ngrams.PlanLead({});
+      auto node = ngrams.PlanLead({.memory = memory});
       if (!node) {
         return {};
       }
@@ -122,7 +122,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
     return ResolveInput(*DocOf(*field), [&]<typename Input> -> Result {
       using Leaf = PostingProbe<Input>;
       return make.template operator()<probe::OrLeaves<Leaf>>(
-        terms.size(), [&](Leaf& leaf, size_t i) {
+        memory, terms.size(), [&](Leaf& leaf, size_t i) {
           leaf.Prepare(terms[i].cookie, *DocOf(*field), LayoutOf(*field),
                        BoundsOf(*field));
         });
@@ -136,7 +136,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
       return make.template operator()<Node>(
         std::piecewise_construct, std::forward_as_tuple(),
         std::forward_as_tuple(),
-        std::forward_as_tuple(terms.size(),
+        std::forward_as_tuple(memory, terms.size(),
                               [&](Leaf& leaf, size_t i) {
                                 leaf.Prepare(terms[i].cookie, *DocOf(*field),
                                              LayoutOf(*field), BoundsOf(*field),

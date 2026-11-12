@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,23 +30,38 @@
 #include <yaclib/coro/task.hpp>
 
 #include "iresearch/formats/ann_build_env.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
-struct BasicTermReader;
 class ColReader;
 class ColumnReader;
 class IdxWriter;
 struct MergeSource;
+
+struct AnnFlushBound {
+  size_t compute = 0;
+  size_t kept = 0;
+  uint64_t terms = 0;
+};
+
+inline void Accumulate(AnnFlushBound& total,
+                       const AnnFlushBound& next) noexcept {
+  total.compute = std::max(total.compute, total.kept + next.compute);
+  total.kept += next.kept;
+  total.terms += next.terms;
+}
 
 class AnnWriter {
  public:
   virtual ~AnnWriter() = default;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
+  void SetBudget(MemoryBudget& budget) noexcept { _budget = &budget; }
 
   virtual AnnKind Kind() const noexcept = 0;
 
@@ -62,6 +80,7 @@ class AnnWriter {
 
  protected:
   IdxWriter* _idx = nullptr;
+  MemoryBudget* _budget = nullptr;
 };
 
 inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
@@ -81,6 +100,9 @@ inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
       out.push_back(r);
     }
   }
+  absl::c_sort(out, [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
+    return lhs->id() < rhs->id();
+  });
   return out;
 }
 

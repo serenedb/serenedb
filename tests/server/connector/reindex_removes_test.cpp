@@ -154,7 +154,7 @@ class ReindexRemovesTest : public ::testing::Test {
   std::vector<Doc> Resolve(
     const std::vector<uint64_t>& deleted_files,
     const std::vector<IcebergObserve::DeleteMask>& masks = {},
-    std::vector<Row> eq_rows = {}) const {
+    irs::TrackedVector<Row> eq_rows = {}) const {
     return test::RemovedDocs(*ResolveRemoves(
       _writer->GetSnapshot(), deleted_files, masks, std::move(eq_rows)));
   }

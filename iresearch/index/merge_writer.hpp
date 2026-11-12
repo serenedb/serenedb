@@ -35,6 +35,7 @@
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace duckdb {
 
@@ -46,10 +47,8 @@ namespace irs {
 struct TrackingDirectory;
 
 struct DocRemap {
-  explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
-
   doc_id_t base_id = doc_limits::invalid();
-  ManagedVector<doc_id_t> id_map;
+  TrackedVector<doc_id_t> id_map;
 
   bool IsMasked(doc_id_t src) const noexcept {
     SDB_ASSERT(id_map.empty() || src < id_map.size());
@@ -70,18 +69,18 @@ class MergeWriter : public util::Noncopyable {
   using FlushProgress = std::function<bool()>;
 
   struct ReaderCtx {
-    ReaderCtx(const SubReader* reader, IResourceManager& rm) noexcept;
-    ReaderCtx(const SubReader& reader, IResourceManager& rm) noexcept
-      : ReaderCtx{&reader, rm} {}
+    explicit ReaderCtx(const SubReader* reader) noexcept;
+    explicit ReaderCtx(const SubReader& reader) noexcept : ReaderCtx{&reader} {}
 
     const SubReader* reader;
     DocRemap remap;
   };
 
-  explicit MergeWriter(Directory& dir,
-                       const SegmentWriterOptions& options) noexcept
+  MergeWriter(Directory& dir, const SegmentWriterOptions& options,
+              MemoryBudget& budget) noexcept
     : _dir{dir},
-      _readers{{options.resource_manager}},
+      _budget{budget},
+      _readers{TrackedAllocator<ReaderCtx>{&budget}},
       _scorer{options.scorer},
       _db{[db = options.db] -> duckdb::DatabaseInstance& {
         SDB_ASSERT(db);
@@ -96,9 +95,13 @@ class MergeWriter : public util::Noncopyable {
   void Reset(Iterator begin, Iterator end) {
     _readers.reserve(_readers.size() + std::distance(begin, end));
     while (begin != end) {
-      _readers.emplace_back(*begin++, _readers.get_allocator().Manager());
+      _readers.emplace_back(*begin++);
     }
   }
+
+  size_t Bound() const;
+
+  void Reserve();
 
   // Flush all added readers into a single segment.
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
@@ -111,7 +114,8 @@ class MergeWriter : public util::Noncopyable {
 
  private:
   Directory& _dir;
-  ManagedVector<ReaderCtx> _readers;
+  MemoryBudget& _budget;
+  TrackedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.

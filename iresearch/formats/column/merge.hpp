@@ -24,6 +24,7 @@
 #include <functional>
 #include <span>
 
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_meta.hpp"
 
@@ -39,6 +40,12 @@ struct MergeSource {
   const ColReader* col_reader;
   uint64_t alive_count;
 };
+
+uint64_t MergeIntoBound(std::span<const MergeSource> sources);
+
+AnnFlushBound MergeAnnBound(std::span<const MergeSource> sources,
+                            const IndexFieldOptions* field_options,
+                            uint64_t rows);
 
 bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                const IndexFieldOptions* field_options,

@@ -1,0 +1,58 @@
+# A refresh that runs out of memory while it applies deletes keeps them: the
+# index serves its last refreshed rows, the next refresh applies the deletes,
+# and checkpoints keep working.
+
+statement ok
+CREATE TABLE docs (id BIGINT, body TEXT);
+
+statement ok
+INSERT INTO docs SELECT i, 'w' || (i % 100) FROM range(3000000) t(i);
+
+statement ok
+CREATE INDEX docs_txt ON docs USING inverted (body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+VACUUM (REFRESH_INDEX) docs_txt;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+DELETE FROM docs WHERE id % 2 = 0;
+
+statement ok
+SET GLOBAL memory_limit = '64MB';
+
+statement error
+VACUUM (REFRESH_INDEX) docs_txt;
+----
+db error: ERROR: failed to refresh index 'docs_txt': caught exception while refreshing inverted index <slt:ignore>: failed to reserve memory data of size <slt:ignore>
+
+
+statement ok
+RESET GLOBAL memory_limit;
+
+query
+SELECT count(*) FROM docs_txt WHERE body @@ 'w2';
+----
+count
+30000
+
+statement ok
+VACUUM (REFRESH_INDEX) docs_txt;
+
+query
+SELECT count(*) FROM docs_txt WHERE body @@ 'w2';
+----
+count
+0
+
+query
+SELECT count(*) FROM docs_txt WHERE body @@ 'w1';
+----
+count
+30000
+
+statement ok
+CHECKPOINT;

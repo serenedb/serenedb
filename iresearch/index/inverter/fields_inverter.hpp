@@ -40,6 +40,7 @@
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -54,7 +55,6 @@ class FieldWriter;
 
 struct InverterMemory {
   duckdb::Allocator& allocator;
-  IResourceManager& rm;
 };
 
 class FieldInverter : util::Noncopyable {
@@ -62,11 +62,11 @@ class FieldInverter : util::Noncopyable {
   using TermIds = std::span<uint32_t, TokenBatch::kCapacity>;
 
   FieldInverter(field_id id, duckdb::ArenaAllocator& arena, TermIds term_ids,
-                IResourceManager& rm, IndexFeatures index_features,
-                ColWriter* col_writer, const IndexFieldOptions* field_options)
+                IndexFeatures index_features, ColWriter* col_writer,
+                const IndexFieldOptions* field_options)
     : _term_ids{term_ids},
-      _dict{arena, rm},
-      _log{MakePostingLog(arena, rm, LayoutFromFeatures(index_features))},
+      _dict{arena},
+      _log{MakePostingLog(arena, LayoutFromFeatures(index_features))},
       _meta{id, index_features} {
     if (!col_writer || !IsSubsetOf(IndexFeatures::Norm, index_features)) {
       return;
@@ -753,9 +753,9 @@ struct TermMember {
   uint32_t last_terms = 0;
 };
 
-using TermMembers = std::deque<TermMember, ManagedTypedAllocator<TermMember>>;
-using DocMembers = std::deque<ManagedVector<doc_id_t>,
-                              ManagedTypedAllocator<ManagedVector<doc_id_t>>>;
+using TermMembers = std::deque<TermMember, TrackedAllocator<TermMember>>;
+using DocMembers = std::deque<TrackedVector<doc_id_t>,
+                              TrackedAllocator<TrackedVector<doc_id_t>>>;
 
 inline constexpr size_t kTermMembers = 2;
 inline constexpr size_t kDocMembers = kDictMembers - kTermMembers;
@@ -814,14 +814,14 @@ class MemberDocs {
   }
 
  private:
-  static void PushTo(ManagedVector<doc_id_t>& docs, doc_id_t doc) {
+  static void PushTo(TrackedVector<doc_id_t>& docs, doc_id_t doc) {
     SDB_ASSERT(docs.empty() || docs.back() <= doc);
     if (docs.empty() || docs.back() != doc) {
       docs.push_back(doc);
     }
   }
 
-  ManagedVector<doc_id_t>& Docs(DictMember member) const noexcept {
+  TrackedVector<doc_id_t>& Docs(DictMember member) const noexcept {
     SDB_ASSERT(Contains({.layout = _layout, .member = member}));
     return (*_docs)[_first + DocIndex(member)];
   }
@@ -834,11 +834,7 @@ class MemberDocs {
 class FieldsInverter : util::Noncopyable {
  public:
   explicit FieldsInverter(InverterMemory mem)
-    : _mem{mem},
-      _arena{mem.allocator},
-      _fields{ManagedTypedAllocator<FieldInverter>{mem.rm}},
-      _terms{ManagedTypedAllocator<TermMember>{mem.rm}},
-      _docs{ManagedTypedAllocator<ManagedVector<doc_id_t>>{mem.rm}} {}
+    : _mem{mem}, _arena{mem.allocator} {}
 
   void SetColWriter(ColWriter* w) noexcept { _col_writer = w; }
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept {
@@ -854,9 +850,8 @@ class FieldsInverter : util::Noncopyable {
       return member.field;
     }
 
-    auto& field =
-      _fields.emplace_back(id, _arena, _term_ids, _mem.rm, index_features,
-                           _col_writer, _field_options);
+    auto& field = _fields.emplace_back(id, _arena, _term_ids, index_features,
+                                       _col_writer, _field_options);
     member.field = &field;
     if (member.last_terms) {
       field.ReserveTerms(member.last_terms);
@@ -877,6 +872,8 @@ class FieldsInverter : util::Noncopyable {
   void Flush(term_dict::FieldWriter& fw, FlushState& state,
              std::span<const BasicTermReader* const> extra);
 
+  size_t FlushBound(size_t docs) const;
+
   size_t MemoryActive() const noexcept {
     return _arena.SizeInBytes() + FieldsMemory();
   }
@@ -895,7 +892,7 @@ class FieldsInverter : util::Noncopyable {
       }
     }
     for (auto& docs : _docs) {
-      docs = ManagedVector<doc_id_t>{docs.get_allocator()};
+      docs = TrackedVector<doc_id_t>{};
     }
     _fields.clear();
     _arena.Reset();
@@ -907,7 +904,18 @@ class FieldsInverter : util::Noncopyable {
     size_t docs = 0;
     DictLayout layout = DictLayout::String;
   };
-  using FieldsMap = irs::containers::FlatHashMap<field_id, Entry>;
+  using FieldsMap = irs::containers::FlatHashMap<
+    field_id, Entry, absl::Hash<field_id>, std::equal_to<field_id>,
+    TrackedAllocator<std::pair<const field_id, Entry>>>;
+
+  struct FlushNeeds {
+    size_t max_terms = 0;
+    size_t terms = 0;
+    size_t blocks = 0;
+    bool ranges = false;
+  };
+
+  FlushNeeds Needs(size_t docs) const;
 
   Entry Find(field_id id, DictLayout layout) {
     const auto [it, emplaced] = _fields_map.try_emplace(id);
@@ -916,7 +924,7 @@ class FieldsInverter : util::Noncopyable {
       entry = {.terms = _terms.size(), .docs = _docs.size(), .layout = layout};
       _terms.resize(_terms.size() + kTermMembers);
       for (size_t n = kDocMembers; n != 0; --n) {
-        _docs.emplace_back(ManagedTypedAllocator<doc_id_t>{_mem.rm});
+        _docs.emplace_back();
       }
     }
     SDB_ENSURE(entry.layout == layout, "term dictionary: field ", id,
@@ -939,7 +947,7 @@ class FieldsInverter : util::Noncopyable {
   InverterMemory _mem;
   duckdb::ArenaAllocator _arena;
   std::array<uint32_t, TokenBatch::kCapacity> _term_ids;
-  std::deque<FieldInverter, ManagedTypedAllocator<FieldInverter>> _fields;
+  std::deque<FieldInverter, TrackedAllocator<FieldInverter>> _fields;
   TermMembers _terms;
   DocMembers _docs;
   FieldsMap _fields_map;

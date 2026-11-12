@@ -25,6 +25,7 @@
 #include <iresearch/formats/empty_term_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/detail/top_terms_selector.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 
 namespace {
@@ -90,14 +91,18 @@ struct SubReader final : irs::SubReader {
 
   const irs::SegmentInfo& Meta() const noexcept final { return info; }
   const irs::DocumentMask* docs_mask() const noexcept final { return nullptr; }
-  irs::lead::Node::ptr docs_iterator() const final {
-    return irs::SubReader::empty().docs_iterator();
+  irs::lead::Node::ptr docs_iterator(irs::PlanMemory& memory) const final {
+    return irs::SubReader::empty().docs_iterator(memory);
   }
   std::span<const irs::TermReader* const> fields(irs::field_id) const final {
     return {};
   }
   std::span<const irs::field_id> field_ids() const noexcept final { return {}; }
   irs::NormReader::ptr norms(irs::field_id field) const final {
+    return nullptr;
+  }
+  irs::NormReader::ptr norms(irs::PlanMemory& /*memory*/,
+                             irs::field_id /*field*/) const final {
     return nullptr;
   }
 

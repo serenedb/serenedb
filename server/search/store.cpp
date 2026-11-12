@@ -49,6 +49,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -594,14 +595,15 @@ void Store::CommitRemoveAll() {
   CommitRemovalWith([](auto& trx) { trx.RemoveAll(); });
 }
 
-std::vector<int64_t> Store::AppendDeleteLog(std::vector<int64_t> rows) {
+irs::TrackedVector<int64_t> Store::AppendDeleteLog(
+  irs::TrackedVector<int64_t> rows) {
   absl::MutexLock lock{&_delete_log_mutex};
   if (!_delete_log_open.load(std::memory_order_relaxed)) {
     return rows;
   }
   const auto end = _delete_log_rowid_end.load(std::memory_order_relaxed);
-  std::vector<int64_t> logged;
-  std::vector<int64_t> native;
+  irs::TrackedVector<int64_t> logged;
+  irs::TrackedVector<int64_t> native;
   for (const auto row : rows) {
     (row >= end ? native : logged).push_back(row);
   }

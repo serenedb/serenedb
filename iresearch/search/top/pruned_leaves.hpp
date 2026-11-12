@@ -48,25 +48,35 @@ class PrunedLeaves {
   using LeafType = Leaf;
 
   template<typename Init>
-  PrunedLeaves(ColumnArgsFetcher& fetcher, size_t size, Init&& init)
+  PrunedLeaves(PlanMemory& memory, ColumnArgsFetcher& fetcher, size_t size,
+               Init&& init)
     : _fetcher{fetcher},
-      _leaves{size, std::forward<Init>(init)},
-      _scorers{size, [this](ScoreFunction& scorer,
-                            size_t i) { scorer = Scorer(_leaves[i]); }},
-      _remaining{size},
-      _suffix{size},
-      _order{size} {}
+      _leaves{memory.Arena(), size, std::forward<Init>(init)},
+      _scorers{memory.Arena(), size,
+               [&](ScoreFunction& scorer, size_t i) {
+                 scorer = Scorer(memory, _leaves[i]);
+               }},
+      _remaining{memory.Arena(), size},
+      _suffix{memory.Arena(), size},
+      _order{memory.Arena(), size},
+      _held{memory.Arena(), size},
+      _rows{memory.Arena(), size} {}
 
   template<typename Args>
-  PrunedLeaves(ColumnArgsFetcher& fetcher, size_t size,
+  PrunedLeaves(PlanMemory& memory, ColumnArgsFetcher& fetcher, size_t size,
                std::piecewise_construct_t, Args&& args)
     : _fetcher{fetcher},
-      _leaves{size, std::piecewise_construct, std::forward<Args>(args)},
-      _scorers{size, [this](ScoreFunction& scorer,
-                            size_t i) { scorer = Scorer(_leaves[i]); }},
-      _remaining{size},
-      _suffix{size},
-      _order{size} {}
+      _leaves{memory.Arena(), size, std::piecewise_construct,
+              std::forward<Args>(args)},
+      _scorers{memory.Arena(), size,
+               [&](ScoreFunction& scorer, size_t i) {
+                 scorer = Scorer(memory, _leaves[i]);
+               }},
+      _remaining{memory.Arena(), size},
+      _suffix{memory.Arena(), size},
+      _order{memory.Arena(), size},
+      _held{memory.Arena(), size},
+      _rows{memory.Arena(), size} {}
 
   PrunedLeaves(PrunedLeaves&&) = delete;
   PrunedLeaves& operator=(PrunedLeaves&&) = delete;
@@ -284,11 +294,13 @@ class PrunedLeaves {
   }
 
  private:
-  static ScoreFunction Scorer(Leaf& leaf) {
+  static ScoreFunction Scorer(PlanMemory& memory, Leaf& leaf) {
     if constexpr (requires { leaf.PrepareScore(); }) {
       return leaf.PrepareScore();
+    } else if constexpr (requires { leaf.PrepareScore(memory); }) {
+      return leaf.PrepareScore(memory);
     } else {
-      return leaf.PrepareScore(ScoreMergeType::Sum, score_t{0});
+      return leaf.PrepareScore(memory, ScoreMergeType::Sum, score_t{0});
     }
   }
 
@@ -311,9 +323,8 @@ class PrunedLeaves {
   irs::containers::Fixed<score_t, N> _remaining;
   irs::containers::Fixed<score_t, N> _suffix;
   irs::containers::Fixed<uint32_t, N> _order;
-  irs::containers::Fixed<ScoreMask, N> _held{_leaves.size()};
-  irs::containers::Fixed<std::array<score_t, kScoreBlock>, N> _rows{
-    _leaves.size()};
+  irs::containers::Fixed<ScoreMask, N> _held;
+  irs::containers::Fixed<std::array<score_t, kScoreBlock>, N> _rows;
   ABSL_CACHELINE_ALIGNED score_t _running[kScoreBlock];
   uint32_t _dropped = 0;
 };

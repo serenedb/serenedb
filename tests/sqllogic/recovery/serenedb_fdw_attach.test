@@ -227,7 +227,7 @@ SET debug_checkpoint_abort = 'before_header';
 statement error
 CHECKPOINT postgres;
 ----
-db error: ERROR: Checkpoint failed for database "postgres". The database has been invalidated. Original error: Checkpoint aborted before header write because of PRAGMA checkpoint_abort flag
+db error: ERROR: Checkpoint failed for database "postgres": Checkpoint aborted before header write because of PRAGMA checkpoint_abort flag
 
 
 system ok

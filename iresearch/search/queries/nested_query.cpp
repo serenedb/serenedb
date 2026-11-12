@@ -37,8 +37,8 @@ struct EmptyParentsNode : ParentDocs {
   doc_id_t Prev() const noexcept final { return doc_limits::invalid(); }
 };
 
-ParentDocs::ptr EmptyParentDocs() {
-  return memory::make_managed<ParentDocs, EmptyParentsNode>();
+ParentDocs::ptr EmptyParentDocs(PlanMemory& memory) {
+  return memory.Make<ParentDocs, EmptyParentsNode>();
 }
 
 }  // namespace
@@ -69,10 +69,10 @@ void ByNestedQuery::Visit(PreparedStateVisitor& visitor, score_t boost) const {
   _child->Visit(visitor, boost);
 }
 
-ParentDocs::ptr ByNestedQuery::Parents() const {
-  auto parent = _parent(_segment);
+ParentDocs::ptr ByNestedQuery::Parents(PlanMemory& memory) const {
+  auto parent = _parent(memory, _segment);
   if (!parent) {
-    return EmptyParentDocs();
+    return EmptyParentDocs(memory);
   }
   return parent;
 }

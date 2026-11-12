@@ -19,12 +19,17 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
+#include <iresearch/utils/query_memory.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <iterator>
+#include <limits>
+#include <optional>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -208,13 +213,16 @@ void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
   }
   if (l.root_seg != unit.seg) {
     const auto& seg = (*g.reader)[unit.seg];
+    l.root.reset();
     l.score_fetcher.Clear();
+    l.plan_memory.Rewind();
     const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
     auto* table = BeginVerify(l.col_verify, seg, g, l);
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that ranks by score has a scorer to rank with");
     auto plan =
-      irs::ann::MakeRoot(seg_query, {.scorer = *g.scorer_obj,
+      irs::ann::MakeRoot(seg_query, {.memory = l.plan_memory,
+                                     .scorer = *g.scorer_obj,
                                      .fetcher = l.score_fetcher,
                                      .table = table,
                                      .columns = BeginColumnVerify(seg, g, l),
@@ -261,35 +269,51 @@ void Merge(ScanGlobalState& g) {
   PlanFetch(g);
 }
 
-std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, RankedLocalState& l,
-                                       uint64_t per_segment) {
+irs::TrackedVector<irs::ScoreDoc> RankExactly(ScanGlobalState& g,
+                                              RankedLocalState& l,
+                                              uint64_t per_segment) {
   auto vs = *g.vector_scorer;
   vs.exact = true;
   const auto filter =
     MakeVectorFilter(vs, g.ClaimedWhere(), vs.EffectiveRadius());
-  std::vector<irs::ScoreDoc> ranked;
+  irs::TrackedVector<irs::ScoreDoc> ranked;
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
+  l.score_fetcher.Clear();
+  absl::Cleanup clear_fetcher = [&] { l.score_fetcher.Clear(); };
+  irs::ann::SharedFloor floor{1};
+  std::optional<irs::ann::Collector> collector;
   for (const auto seg : g.segment_order) {
     l.Classify(g, seg);
     if (l.seg_cls.segment_dead) {
       continue;
     }
     const auto& segment = (*g.reader)[seg];
-    const auto slots = std::min<uint64_t>(segment.docs_count(), per_segment);
+    const auto slots = static_cast<uint32_t>(
+      std::min<uint64_t>(segment.docs_count(), per_segment));
     if (slots == 0) {
       continue;
     }
-    const auto query = filter->PrepareSegment(segment, {});
-    irs::ann::SharedFloor floor{static_cast<uint32_t>(slots)};
-    irs::ann::Collector collector{floor, static_cast<uint32_t>(slots)};
+    floor.Reset(slots, std::numeric_limits<irs::score_t>::lowest());
+    if (collector) {
+      collector->Reset(slots);
+    } else {
+      collector.emplace(floor, slots);
+    }
     l.score_fetcher.Clear();
+    query_memory.Rewind();
+    plan_memory.Rewind();
+    const auto query =
+      filter->PrepareSegment(segment, {.memory = query_memory});
     auto root = irs::ann::MakeRoot(
-      *query, {.scorer = *g.scorer_obj,
+      *query, {.memory = plan_memory,
+               .scorer = *g.scorer_obj,
                .fetcher = l.score_fetcher,
                .table = BeginVerify(l.col_verify, segment, g, l),
-               .k = static_cast<uint32_t>(slots)});
+               .k = slots});
     EnsurePlanned(static_cast<bool>(root));
-    root->Run(collector);
-    auto hits = collector.Flush();
+    root->Run(*collector);
+    auto hits = collector->Flush();
     if (hits.size() > slots) {
       std::nth_element(hits.begin(), hits.begin() + slots, hits.end(),
                        BetterScore{});
@@ -322,7 +346,8 @@ void FillShortAnswer(ScanGlobalState& g, RankedLocalState& l) {
 }  // namespace
 
 void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                RankedLocalState& l, std::vector<irs::ScoreDoc>& row_hits) {
+                RankedLocalState& l,
+                irs::TrackedVector<irs::ScoreDoc>& row_hits) {
   const auto& t = g.topk;
   const size_t want = t.limit;
   auto ranked = t.ranked;
@@ -330,8 +355,8 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
   size_t step = std::max<size_t>(verified, want);
   bool widened =
     g.vector_scorer->exact || ranked.size() >= g.reader->live_docs_count();
-  std::vector<irs::ScoreDoc> exact;
-  std::vector<irs::ScoreDoc> hits;
+  irs::TrackedVector<irs::ScoreDoc> exact;
+  irs::TrackedVector<irs::ScoreDoc> hits;
   duckdb::DataChunk batch;
   batch.Initialize(ctx, g.projected_types);
   while (row_hits.size() < want) {

@@ -104,8 +104,9 @@ std::vector<OffsetMatch> CollectOffsets(const tests::PreparedFilter& prepared,
     if (!phrase_query) {
       continue;
     }
-    auto docs = phrase_query->PlanLead({});
-    auto offsets = irs::offsets::Make(*phrase_query);
+    irs::PlanMemory plan_memory;
+    auto docs = phrase_query->PlanLead({.memory = plan_memory});
+    auto offsets = irs::offsets::Make(plan_memory, *phrase_query);
     if (!docs || !offsets) {
       continue;
     }
@@ -468,8 +469,7 @@ TEST_P(PhraseSlopMatcherTestCase, set_slot_stats_keep_terms_apart) {
     set.terms.emplace(Term("ref"));
     set.terms.emplace(Term("reo"));
 
-    tests::PreparedFilter prepared{
-      q, rdr, &sort, irs::IResourceManager::gNoop, nullptr, mode};
+    tests::PreparedFilter prepared{q, rdr, &sort, nullptr, mode};
 
     EXPECT_EQ(expected, collected)
       << "mode " << static_cast<int>(mode)
@@ -548,8 +548,7 @@ TEST_P(PhraseSlopMatcherTestCase, variadic_slot_stats_merge_by_term) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term = Term("aa");
     q.mutable_options()->push_back<irs::ByPrefixOptions>().term = Term("re");
 
-    tests::PreparedFilter prepared{
-      q, rdr, &sort, irs::IResourceManager::gNoop, nullptr, mode};
+    tests::PreparedFilter prepared{q, rdr, &sort, nullptr, mode};
 
     EXPECT_EQ(expected, collected)
       << "mode " << static_cast<int>(mode)

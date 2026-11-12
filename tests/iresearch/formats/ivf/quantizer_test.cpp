@@ -36,7 +36,9 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/misc.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -158,7 +160,7 @@ class ClusterScorer {
   ClusterScorer(const std::shared_ptr<const QuantizerCodebook>& codebook,
                 MemoryFile& file, uint64_t pay_start, size_t total,
                 const float* centroid, uint32_t lane0 = 0)
-    : _qr{MakeQuantizerReader(codebook)},
+    : _qr{MakeQuantizerReader(nullptr, codebook)},
       _setting{_qr->BlockSetting()},
       _in{std::make_unique<MemoryIndexInput>(file)},
       _base{pay_start},
@@ -216,7 +218,7 @@ class ClusterScorer {
     return _buf;
   }
 
-  std::unique_ptr<QuantizerReader> _qr;
+  QuantizerReader::ptr _qr;
   PayloadBlockSetting _setting;
   IndexInput::ptr _in;
   std::vector<byte_type> _buf;
@@ -1407,7 +1409,7 @@ TEST(pq_quantizer_test, subspace_errors_survive_the_stats_roundtrip) {
       auto stats = MakeQuantizerStats(VectorQuantization::PQ, d, stats_blob,
                                       VectorMetric::L2Sqr, row_major);
       EXPECT_NE(stats, nullptr);
-      auto reader = MakeQuantizerReader(stats->MakeCodebook(query));
+      auto reader = MakeQuantizerReader(nullptr, stats->MakeCodebook(query));
       EXPECT_NE(reader, nullptr);
       reader->StartCluster(cen.data());
       std::vector<score_t> scores{-40.f, -30.f, -20.f};
@@ -1425,6 +1427,33 @@ TEST(pq_quantizer_test, subspace_errors_survive_the_stats_roundtrip) {
       EXPECT_EQ(e, std::numeric_limits<score_t>::infinity())
         << "row_major " << row_major;
     }
+  }
+}
+
+TEST(pq_quantizer_test, stats_charge_the_faiss_centroids) {
+  constexpr uint32_t d = 32;
+  constexpr uint32_t pq_m = 4;
+  constexpr size_t n = 512;
+  const auto pts = MakeSpread(d, n, 41);
+  for (const bool row_major : {false, true}) {
+    auto writer =
+      MakeQuantizerWriter({.kind = VectorQuantization::PQ, .pq_m = pq_m}, d,
+                          VectorMetric::L2Sqr, 0, row_major);
+    ASSERT_NE(writer, nullptr);
+    writer->Train(pts.data(), n);
+    const bstring blob = SerializeStats(*writer);
+    const size_t centroids = size_t{d} * (row_major ? 256 : 16) * sizeof(float);
+    const size_t transposed = row_major ? centroids : 0;
+    const auto base = TrackedMemory();
+    {
+      auto stats = MakeQuantizerStats(VectorQuantization::PQ, d, blob,
+                                      VectorMetric::L2Sqr, row_major);
+      ASSERT_NE(stats, nullptr);
+      EXPECT_LE(base + static_cast<int64_t>(centroids + transposed),
+                TrackedMemory())
+        << "row_major " << row_major;
+    }
+    EXPECT_EQ(base, TrackedMemory()) << "row_major " << row_major;
   }
 }
 
@@ -1447,7 +1476,7 @@ TEST(pq_quantizer_test, l2_error_is_twice_the_inner_product_error) {
       auto stats =
         MakeQuantizerStats(VectorQuantization::PQ, d, blob, metric, row_major);
       EXPECT_NE(stats, nullptr);
-      auto reader = MakeQuantizerReader(stats->MakeCodebook(query));
+      auto reader = MakeQuantizerReader(nullptr, stats->MakeCodebook(query));
       EXPECT_NE(reader, nullptr);
       reader->StartCluster(cen.data());
       std::vector<score_t> scores{-40.f, -30.f, -20.f};
@@ -1626,12 +1655,12 @@ CodeFixture BuildCodes(VectorQuantization quant, uint32_t d, uint32_t nb_bits,
   return f;
 }
 
-std::unique_ptr<QuantizerReader> MakeKeyedReader(const CodeFixture& f,
-                                                 std::span<const float> query,
-                                                 const float* centroid) {
+QuantizerReader::ptr MakeKeyedReader(const CodeFixture& f,
+                                     std::span<const float> query,
+                                     const float* centroid) {
   auto codebook = f.stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
-  auto reader = MakeQuantizerReader(codebook);
+  auto reader = MakeQuantizerReader(nullptr, codebook);
   EXPECT_NE(reader, nullptr);
   reader->StartCluster(centroid);
   return reader;
@@ -1851,7 +1880,7 @@ TEST_P(code_rekey_test, pair_scores_track_the_keyed_reader) {
       GTEST_SKIP() << "quantizer has no symmetric estimator";
     }
 
-    std::vector<float> terms;
+    irs::TrackedVector<float> terms;
     ASSERT_TRUE(
       reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
     ASSERT_FALSE(terms.empty());
@@ -2505,7 +2534,7 @@ TEST(tq_quantizer_test, segments_of_an_index_share_one_codebook_per_query) {
             cache.Codebook(*sq8.stats, query));
 
   auto own = MakeKeyedReader(second, query, centroid.data());
-  auto via_cache = MakeQuantizerReader(shared);
+  auto via_cache = MakeQuantizerReader(nullptr, shared);
   via_cache->StartCluster(centroid.data());
   std::vector<score_t> want(n);
   std::vector<score_t> got(n);
@@ -2584,7 +2613,7 @@ TEST(hnsw_pq_quantizer_test, pair_scores_are_decoded_distances) {
       const std::vector<float> scratch(d, 0.f);
       auto reader = MakeKeyedReader(f, scratch, centroid.data());
       ASSERT_TRUE(reader->SupportsPairScores());
-      std::vector<float> terms;
+      irs::TrackedVector<float> terms;
       ASSERT_TRUE(
         reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
 
@@ -3098,7 +3127,7 @@ TEST(bq_quantizer_test, binary_pair_scores_match_the_keyed_reader) {
     const std::vector<float> scratch(d, 0.f);
     auto reader = MakeKeyedReader(f, scratch, nullptr);
     ASSERT_TRUE(reader->SupportsPairScores());
-    std::vector<float> terms;
+    irs::TrackedVector<float> terms;
     ASSERT_TRUE(
       reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
     std::vector<float> decoded(d);
@@ -3146,14 +3175,14 @@ TEST(bq_quantizer_test, build_codebook_is_binary_for_every_query_width) {
                             BqMode{1, true, 8, 0}, BqMode{1, false, 1, 0}}) {
     for (const VectorMetric metric : kBqMetrics) {
       const auto f = BuildBqCodes(d, mode, metric, points, n);
-      auto build =
-        MakeQuantizerReader(f.stats->MakeBuildCodebook({points.data(), d}));
+      auto build = MakeQuantizerReader(
+        nullptr, f.stats->MakeBuildCodebook({points.data(), d}));
       build->StartCluster(nullptr);
       ASSERT_TRUE(build->SupportsPairScores()) << BqModeName(mode);
       std::vector<score_t> keyed(n);
       build->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
                              keyed.data());
-      std::vector<float> terms;
+      irs::TrackedVector<float> terms;
       ASSERT_TRUE(
         build->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
       std::vector<score_t> pair(n);
@@ -3312,7 +3341,7 @@ TEST(osq_quantizer_test, pair_scores_match_a_reader_keyed_on_the_row) {
       BuildOsqCodes(d, mode, VectorMetric::InnerProduct, points, n, zero);
     auto reader = MakeKeyedReader(f, zero, zero.data());
     ASSERT_TRUE(reader->SupportsPairScores());
-    std::vector<float> terms;
+    irs::TrackedVector<float> terms;
     ASSERT_TRUE(
       reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
     std::vector<float> decoded(d);
@@ -3457,7 +3486,7 @@ TEST(osq_quantizer_test, decode_needs_a_centroid) {
   const auto f =
     BuildOsqCodes(d, kOsqModes[0], VectorMetric::L2Sqr, points, n, centroid);
   auto codebook = f.stats->MakeCodebook({points.data(), d});
-  auto bare = MakeQuantizerReader(codebook);
+  auto bare = MakeQuantizerReader(nullptr, codebook);
   std::vector<float> decoded(d);
   EXPECT_FALSE(bare->Decode(f.codes.data(), decoded.data()));
   EXPECT_FALSE(bare->SupportsPairScores());
@@ -3566,5 +3595,85 @@ TEST(quantizer_kernel_test, fwht_matches_the_scalar_butterflies) {
     }
     quantizers::Fwht(got.data(), len);
     EXPECT_EQ(got, want) << len;
+  }
+}
+
+TEST(quantizer_sizes_test, quantized_kinds_match_their_writers) {
+  constexpr size_t kRows[] = {0, 1, 1000, 50000, 1000000};
+  for (const uint32_t d : {16U, 64U, 100U, 128U}) {
+    std::vector<AnnInfo::Quantizer> quants;
+    for (const auto kind :
+         {VectorQuantization::SQ8, VectorQuantization::SQ4,
+          VectorQuantization::USQ8, VectorQuantization::USQ4,
+          VectorQuantization::FP16, VectorQuantization::BF16}) {
+      quants.push_back({.kind = kind});
+    }
+    if (d % 8 == 0) {
+      quants.push_back({.kind = VectorQuantization::PQ, .pq_m = 8});
+    }
+    for (const uint32_t bits : {1U, 2U, 3U, 4U, 5U}) {
+      quants.push_back({.kind = VectorQuantization::TQ, .nb_bits = bits});
+    }
+    quants.push_back(
+      {.kind = VectorQuantization::TQ, .nb_bits = 1, .half_bit = true});
+    for (const uint32_t bits : {1U, 2U, 4U, 8U}) {
+      quants.push_back({.kind = VectorQuantization::RaBitQ, .nb_bits = bits});
+    }
+    for (const uint32_t bits : {1U, 2U}) {
+      quants.push_back({.kind = VectorQuantization::BQ, .nb_bits = bits});
+    }
+    quants.push_back(
+      {.kind = VectorQuantization::BQ, .nb_bits = 1, .half_bit = true});
+    for (const uint32_t bits : {0U, 1U, 2U, 4U, 8U}) {
+      quants.push_back({.kind = VectorQuantization::OSQ, .nb_bits = bits});
+    }
+    for (const auto& quant : quants) {
+      for (const auto metric :
+           {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
+        for (const bool row_major : {false, true}) {
+          auto writer = MakeQuantizerWriter(quant, d, metric, 0, row_major);
+          ASSERT_NE(nullptr, writer);
+          EXPECT_EQ(writer->BlockSetting().record_size,
+                    QuantizerRecordSize(quant, d, metric, row_major))
+            << magic_enum::enum_name(quant.kind) << " bits=" << quant.nb_bits
+            << " d=" << d << " row_major=" << row_major;
+          for (const auto rows : kRows) {
+            EXPECT_EQ(writer->TrainSamples(rows),
+                      QuantizerTrainSamples(quant, d, metric, rows, row_major))
+              << magic_enum::enum_name(quant.kind) << " d=" << d
+              << " rows=" << rows;
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST(quantizer_sizes_test, none_matches_its_trained_writer) {
+  constexpr AnnInfo::Quantizer kNone{.kind = VectorQuantization::None};
+  std::mt19937 rng{7};
+  std::normal_distribution<float> nd;
+  for (const uint32_t d : {16U, 64U}) {
+    for (const auto metric :
+         {VectorMetric::L2Sqr, VectorMetric::InnerProduct, VectorMetric::L1}) {
+      auto writer = MakeQuantizerWriter(kNone, d, metric);
+      ASSERT_NE(nullptr, writer);
+      for (const size_t rows : {0UL, 100UL, 1023UL, 1024UL, 1000000UL}) {
+        EXPECT_EQ(writer->TrainSamples(rows),
+                  QuantizerTrainSamples(kNone, d, metric, rows, false))
+          << "d=" << d << " rows=" << rows;
+      }
+      const auto train = writer->TrainSamples(1000000);
+      if (train != 0) {
+        std::vector<float> vecs(train * d);
+        for (auto& v : vecs) {
+          v = nd(rng);
+        }
+        writer->Train(vecs.data(), train);
+      }
+      EXPECT_EQ(writer->BlockSetting().record_size,
+                QuantizerRecordSize(kNone, d, metric, false))
+        << "d=" << d;
+    }
   }
 }

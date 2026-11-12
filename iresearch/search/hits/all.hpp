@@ -35,9 +35,9 @@ namespace irs::hits {
 
 class All : public Root {
  public:
-  All(ColumnArgsFetcher& fetcher, doc_id_t count, score_t score = 0) noexcept
+  All(ColumnArgsFetcher& fetcher, doc_id_t count, ScoreFunction score) noexcept
     : _end{doc_limits::min() + count},
-      _score{ScoreFunction::Constant(score)},
+      _score{std::move(score)},
       _fetcher{fetcher} {}
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,

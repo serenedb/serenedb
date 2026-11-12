@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -43,8 +44,8 @@ class PhraseVariadicPositions {
   static constexpr bool kOffsets = Leaf::kOffsets;
   static constexpr bool kHasBoost = HasBoost;
 
-  explicit PhraseVariadicPositions(uint32_t count)
-    : _live{count}, _boosts{count} {}
+  PhraseVariadicPositions(PlanMemory& memory, uint32_t count)
+    : _live{memory.Arena(), count}, _boosts{memory.Arena(), count} {}
 
   void On(doc_id_t) noexcept {
     _value = pos_limits::invalid();
@@ -164,14 +165,14 @@ class PhraseVariadicPos {
  public:
   using Position = PhraseVariadicPositions<Leaf, HasBoost>;
 
-  PhraseVariadicPos(Leaf* begin, uint32_t count,
+  PhraseVariadicPos(PlanMemory& memory, Leaf* begin, uint32_t count,
                     [[maybe_unused]] const score_t* boosts)
-    : _positions{count},
+    : _positions{memory, count},
       _begin{begin},
       _boosts{boosts},
-      _heap{count == 1 ? 0 : count,
+      _heap{memory.Arena(), count == 1 ? 0 : count,
             [begin](Leaf*& slot, size_t i) noexcept { slot = begin + i; }},
-      _stack{count == 1 ? 0 : 2 * size_t{count} + 1},
+      _stack{memory.Arena(), count == 1 ? 0 : 2 * size_t{count} + 1},
       _live_count{_heap.size()},
       _count{count} {
     SDB_ASSERT(_count != 0);

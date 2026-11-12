@@ -73,6 +73,8 @@ class ColumnWriter final {
 
   void PadNullsTo(uint64_t target_row);
 
+  void Finish();
+
   void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
 
   field_id Id() const noexcept { return _id; }

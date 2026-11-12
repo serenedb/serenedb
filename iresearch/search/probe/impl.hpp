@@ -80,7 +80,7 @@ class Erased {
     return _node->PrepareScore();
   }
 
-  IRS_FORCE_INLINE void CollectScorers(std::vector<ScoreFunction>& out) {
+  IRS_FORCE_INLINE void CollectScorers(auto& out) {
     detail::AppendScorer(out, PrepareScore());
   }
 

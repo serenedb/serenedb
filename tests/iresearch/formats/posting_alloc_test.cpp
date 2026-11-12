@@ -22,10 +22,8 @@
 //
 // Building a posting iterator is the per-term cost of every scored query, so it
 // is the place where an extra allocation is paid once per term per segment
-// rather than once per query. `memory::make_managed` is plain `new`, so
-// `IResourceManager` cannot see any of it -- a counting resource manager reads
-// zero here. jemalloc's own per-thread accounting can, and it needs no
-// production change to read.
+// rather than once per query. jemalloc's own per-thread accounting counts the
+// allocations themselves, and it needs no production change to read.
 //
 // This reports a NUMBER rather than asserting a bound: the useful comparison is
 // against the same number on another build, so the test prints bytes and count
@@ -125,14 +123,17 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
 
   // Warm up so first-touch growth of any pooled structure is not attributed to
   // the measured rounds.
+  irs::PlanMemory memory;
   for (size_t i = 0; i != kWarmup; ++i) {
-    auto docs = irs::lead::MakePostingDocs(posting, *found_segment);
+    memory.Rewind();
+    auto docs = irs::lead::MakePostingDocs(memory, posting, *found_segment);
     ASSERT_NE(nullptr, docs);
   }
 
   const auto before = ThreadAllocatedBytes();
   for (size_t i = 0; i != kRounds; ++i) {
-    auto docs = irs::lead::MakePostingDocs(posting, *found_segment);
+    memory.Rewind();
+    auto docs = irs::lead::MakePostingDocs(memory, posting, *found_segment);
     ASSERT_NE(nullptr, docs);
   }
   const auto after = ThreadAllocatedBytes();

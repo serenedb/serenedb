@@ -69,7 +69,7 @@ auto ResolveMatcherOf(const Query& query, F&& f) {
 
 template<PhraseMatch M, bool HasFreq = false, bool Offs = false,
          bool Boosts = HasFreq, typename F>
-auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
+auto BuildPhrase(PlanMemory& memory, const FixedPhraseQuery& query, F&& f) {
   const auto& state = query.state;
   const auto& h = state.handles;
   const std::span<const PostingMeta> metas{state.metas.data(),
@@ -82,7 +82,7 @@ auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
         return ResolveMatcherOf<M, N, HasFreq, Offs>(
           query, [&]<typename Matcher>(auto&&... args) {
             return f.template operator()<PhraseSlots<Matcher, Leaf, N>>(
-              metas, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
+              memory, metas, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
               std::forward<decltype(args)>(args)...);
           });
       };
@@ -97,7 +97,7 @@ auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
 
 template<PhraseMatch M, bool HasFreq = false, bool Offs = false,
          bool Boosts = HasFreq, typename F>
-auto BuildPhrase(const VariadicPhraseQuery& query, F&& f) {
+auto BuildPhrase(PlanMemory& memory, const VariadicPhraseQuery& query, F&& f) {
   const auto& state = query.state;
   const auto& h = state.handles;
   const std::span<const PostingMeta> metas{state.metas.data(),
@@ -115,8 +115,8 @@ auto BuildPhrase(const VariadicPhraseQuery& query, F&& f) {
                        : std::span<const score_t>{};
             return f.template operator()<
               PhraseSlots<Matcher, Leaf, 0, PhraseVariadicPos<Leaf, HasBoost>>>(
-              metas, offsets, boosts, intervals, *h.doc, h.Layout(), *h.pos,
-              h.pay, std::forward<decltype(args)>(args)...);
+              memory, metas, offsets, boosts, intervals, *h.doc, h.Layout(),
+              *h.pos, h.pay, std::forward<decltype(args)>(args)...);
           });
       };
       if constexpr (Boosts) {
@@ -130,8 +130,9 @@ auto BuildPhrase(const VariadicPhraseQuery& query, F&& f) {
 
 template<typename Result, bool Scored, PhraseMatch M, typename Query,
          typename F>
-Result Build(PhraseKind<M>, const Query& query, uint64_t, F&& f) {
-  return BuildPhrase<M, Scored>(query, std::forward<F>(f));
+Result Build(PlanMemory& memory, PhraseKind<M>, const Query& query, uint64_t,
+             F&& f) {
+  return BuildPhrase<M, Scored>(memory, query, std::forward<F>(f));
 }
 
 template<PhraseMatch M>

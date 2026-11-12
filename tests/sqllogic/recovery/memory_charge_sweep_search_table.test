@@ -1,0 +1,16 @@
+# INSERT, UPDATE, DELETE and TRUNCATE on a search table without an extra
+# index, each run once for every memory charge it makes with that charge
+# failing: a statement either succeeds or fails with out-of-memory and leaves
+# nothing behind, the row counts match, CHECKPOINT works, and a restart keeps
+# them.
+
+control substitution on
+
+system ok
+port=$(tr '\0' '\n' < /proc/$PPID/cmdline | grep -A1 -x -- --port | tail -1); python3 recovery/memory_pressure.py "$port" '$__DATABASE__' '$__TEST_DIR__' charges search
+----
+search insert: ok
+search update: ok
+search delete: ok
+search truncate: ok
+restart: ok

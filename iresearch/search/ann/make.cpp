@@ -30,11 +30,11 @@ class Empty : public Root {
 
 }  // namespace
 
-Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
+Root::ptr MakeEmpty(PlanMemory& memory) { return memory.Make<Empty>(); }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
-    return MakeEmpty();
+    return MakeEmpty(ctx.memory);
   }
   return query.PlanAnn(ctx);
 }

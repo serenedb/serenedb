@@ -33,8 +33,8 @@
 
 namespace irs::count {
 
-Root::ptr MakeConstant(uint64_t count) {
-  return memory::make_managed<Constant>(count);
+Root::ptr MakeConstant(PlanMemory& memory, uint64_t count) {
+  return memory.Make<Constant>(count);
 }
 
 namespace {
@@ -167,13 +167,12 @@ class TermCount : public Root {
     return _rank;
   }
 
-  struct RankSource {
-    virtual ~RankSource() = default;
+  struct RankSource : memory::Managed, memory::ArenaOnly {
     virtual uint64_t AtLeast(doc_id_t doc) = 0;
   };
 
   template<typename InputType>
-  struct RankSourceOf final : RankSource {
+  struct RankSourceOf : RankSource {
     uint64_t AtLeast(doc_id_t doc) final { return impl.AtLeast(doc); }
     TermRange<InputType> impl;
   };
@@ -183,8 +182,8 @@ class TermCount : public Root {
       const auto& own = *_posting.state.reader;
       const auto& doc = *detail::DocOf(own);
       _ranks = detail::ResolveInput(
-        doc, [&]<typename Input> -> std::unique_ptr<RankSource> {
-          auto out = std::make_unique<RankSourceOf<Input>>();
+        doc, [&]<typename Input> -> memory::managed_ptr<RankSource> {
+          auto out = _ctx.memory.Make<RankSourceOf<Input>>();
           out->impl.Prepare(_posting.state.cookie, doc, detail::LayoutOf(own),
                             detail::BoundsOf(own), detail::FreqOf(own));
           return out;
@@ -196,7 +195,7 @@ class TermCount : public Root {
   detail::PostingClause _posting;
   Context _ctx;
   Root::ptr _exact;
-  std::unique_ptr<RankSource> _ranks;
+  memory::managed_ptr<RankSource> _ranks;
   doc_id_t _rank_doc = doc_limits::invalid();
   uint64_t _rank = 0;
   doc_id_t _pending_begin = doc_limits::invalid();
@@ -235,24 +234,24 @@ class Sum : public Root {
 
 }  // namespace
 
-Root::ptr MakeAllCount(doc_id_t count) {
-  return memory::make_managed<AllCount>(count);
+Root::ptr MakeAllCount(PlanMemory& memory, doc_id_t count) {
+  return memory.Make<AllCount>(count);
 }
 
 Root::ptr MakeTermCount(const detail::PostingClause& posting,
                         const Context& ctx) {
-  return memory::make_managed<TermCount>(posting, ctx);
+  return ctx.memory.Make<TermCount>(posting, ctx);
 }
 
-Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
-  return memory::make_managed<Sum>(std::move(lhs), std::move(rhs));
+Root::ptr MakeSum(PlanMemory& memory, Root::ptr lhs, Root::ptr rhs) {
+  return memory.Make<Sum>(std::move(lhs), std::move(rhs));
 }
 
 Root::ptr Family::MakePosting(const detail::PostingClause& posting,
                               const SubReader&, const Context& ctx,
                               ScoreMergeType) {
   if (ctx.table == nullptr) {
-    return memory::make_managed<TermCount>(posting, ctx);
+    return ctx.memory.Make<TermCount>(posting, ctx);
   }
   return MakeTermWalk(posting, ctx);
 }
@@ -261,7 +260,7 @@ Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
                           ScoreMergeType, score_t) {
   if (ctx.table == nullptr &&
       segment.live_docs_count() == segment.docs_count()) {
-    return memory::make_managed<AllCount>(
+    return ctx.memory.Make<AllCount>(
       static_cast<doc_id_t>(segment.docs_count()));
   }
   return MakeShape<Walk, lead::AllDocs>(ctx, segment);

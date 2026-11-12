@@ -46,6 +46,7 @@
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace duckdb {
 
@@ -56,13 +57,14 @@ namespace irs {
 
 class ColFilterLeaf {
  public:
-  ColFilterLeaf(const Filter& filter, const SubReader& segment);
+  ColFilterLeaf(QueryMemory& query_memory, PlanMemory& plan_memory,
+                const Filter& filter, const SubReader& segment);
 
   bool Contains(doc_id_t doc);
 
  private:
   QueryBuilder::ptr _query;
-  std::unique_ptr<detail::LazyBitset> _set;
+  std::optional<detail::LazyBitset> _set;
 };
 
 struct ColFilterSpec {
@@ -125,6 +127,8 @@ class ColFilterStateCache {
     duckdb::unique_ptr<duckdb::TableFilterState> state;
     std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
     std::unique_ptr<duckdb::DataChunk> chunk;
+    std::unique_ptr<QueryMemory> query_memory;
+    std::unique_ptr<PlanMemory> plan_memory;
     std::vector<ColFilterLeaf> leaves;
   };
 

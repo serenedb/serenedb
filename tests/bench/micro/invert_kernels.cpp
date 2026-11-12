@@ -48,7 +48,7 @@ namespace {
 using namespace irs;
 
 InverterMemory DefaultMemory() {
-  return {duckdb::Allocator::DefaultAllocator(), IResourceManager::gNoop};
+  return {duckdb::Allocator::DefaultAllocator()};
 }
 
 bool InvertTokens(FieldInverter& inverter, doc_id_t doc, TokenBatch& batch,
@@ -234,16 +234,6 @@ void DrainBatches(FieldInverter& field, std::vector<FilledBatch>& batches,
   }
 }
 
-struct CountingRM final : IResourceManager {
-  void Increase(size_t v) final {
-    current += v;
-    peak = std::max(peak, current);
-  }
-  void Decrease(size_t v) noexcept final { current -= v; }
-  size_t current = 0;
-  size_t peak = 0;
-};
-
 void BM_ColumnarInvert(benchmark::State& state) {
   const auto& corpus = GetCorpus();
   std::vector<FilledBatch> batches;
@@ -355,7 +345,7 @@ void BM_ColumnarScatter(benchmark::State& state) {
   DrainBatches(*field, batches, [](bool) {});
 
   for (auto _ : state) {
-    ScatterScratch scratch{mem.rm};
+    ScatterScratch scratch;
     ScatteredField scattered{mem, scratch};
     scattered.Reset(*field);
     benchmark::DoNotOptimize(scattered.TermCount());
@@ -373,7 +363,7 @@ void RunScatterShape(benchmark::State& state, IndexFeatures features,
   FieldsInverter inv{mem};
   auto* field = inv.Emplace(1, StringLayout::kStrings, features);
   fill(*field);
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   for (auto _ : state) {
     if (release) {
@@ -456,7 +446,7 @@ void RunScatterDrain(benchmark::State& state, IndexFeatures features,
   FieldsInverter inv{mem};
   auto* field = inv.Emplace(1, StringLayout::kStrings, features);
   fill(*field);
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   ColumnarTermReader reader;
   std::vector<bytes_view> terms(TokenBatch::kCapacity);
@@ -511,12 +501,11 @@ void BM_ColumnarKeyword(benchmark::State& state) {
 template<bool Batch, typename C>
 void RunDictResolve(benchmark::State& state, const C& corpus) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  auto& rm = IResourceManager::gNoop;
   duckdb::string_t terms[TokenBatch::kCapacity];
   uint32_t ids[TokenBatch::kCapacity];
   for (auto _ : state) {
     arena.Reset();
-    TermDictionary dict{arena, rm};
+    TermDictionary dict{arena};
     for (size_t i = 0; i < kTokens;) {
       const size_t n = std::min<size_t>(TokenBatch::kCapacity, kTokens - i);
       for (size_t j = 0; j < n; ++j) {
@@ -816,10 +805,9 @@ size_t BenchTermHash(duckdb::string_t term) noexcept {
 template<typename C>
 void RunDictRef(benchmark::State& state, const C& corpus, size_t reserve = 0) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  auto& rm = IResourceManager::gNoop;
   for (auto _ : state) {
     arena.Reset();
-    TermDictionary dict{arena, rm};
+    TermDictionary dict{arena};
     if (reserve) {
       dict.Reserve(reserve);
       dict.ReserveMap(reserve);
@@ -1263,7 +1251,7 @@ void BM_FieldsMapNode(benchmark::State& state) {
   irs::containers::NodeHashMap<field_id, FieldInverter> map;
   for (size_t i = 0; i < nfields; ++i) {
     map.try_emplace(static_cast<field_id>(i), static_cast<field_id>(i), arena,
-                    term_ids, mem.rm, kTermsFeatures, nullptr, nullptr);
+                    term_ids, kTermsFeatures, nullptr, nullptr);
   }
   for (auto _ : state) {
     for (const auto id : ids) {
@@ -1282,12 +1270,11 @@ void BM_FieldsMapFlatDeque(benchmark::State& state) {
   auto mem = DefaultMemory();
   duckdb::ArenaAllocator arena{mem.allocator};
   std::array<uint32_t, TokenBatch::kCapacity> term_ids;
-  std::deque<FieldInverter, ManagedTypedAllocator<FieldInverter>> fields{
-    ManagedTypedAllocator<FieldInverter>{mem.rm}};
+  std::deque<FieldInverter> fields;
   absl::flat_hash_map<field_id, FieldInverter*> map;
   for (size_t i = 0; i < nfields; ++i) {
     auto& f = fields.emplace_back(static_cast<field_id>(i), arena, term_ids,
-                                  mem.rm, kTermsFeatures, nullptr, nullptr);
+                                  kTermsFeatures, nullptr, nullptr);
     map.emplace(static_cast<field_id>(i), &f);
   }
   for (auto _ : state) {
@@ -1579,7 +1566,7 @@ void RunTextDictionary(benchmark::State& state, bool by_entry) {
       }
       doc += kChunk;
     }
-    ScatterScratch scratch{mem.rm};
+    ScatterScratch scratch;
     ScatteredField scattered{mem, scratch};
     scattered.Reset(*field);
     benchmark::DoNotOptimize(scattered.TermCount());
@@ -1617,7 +1604,7 @@ void RunKeywordDictionary(benchmark::State& state, bool by_entry) {
       }
       doc += kChunk;
     }
-    ScatterScratch scratch{mem.rm};
+    ScatterScratch scratch;
     ScatteredField scattered{mem, scratch};
     scattered.Reset(*field);
     benchmark::DoNotOptimize(scattered.TermCount());
@@ -1710,8 +1697,7 @@ void BM_KeywordsStreamLowCard(benchmark::State& s) {
 void BM_TermsMemoryHighCard(benchmark::State& state) {
   const auto& corpus = GetCorpus();
   for (auto _ : state) {
-    CountingRM rm;
-    InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
+    InverterMemory mem{duckdb::Allocator::DefaultAllocator()};
     FieldsInverter inv{mem};
     auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     doc_id_t doc = doc_limits::min();
@@ -1735,8 +1721,7 @@ void BM_TermsMemoryHighCard(benchmark::State& state) {
 void BM_TermsMemoryUnique(benchmark::State& state) {
   const auto& corpus = GetUniqueCorpus();
   for (auto _ : state) {
-    CountingRM rm;
-    InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
+    InverterMemory mem{duckdb::Allocator::DefaultAllocator()};
     FieldsInverter inv{mem};
     auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     doc_id_t doc = doc_limits::min();
@@ -1806,8 +1791,7 @@ void BM_TermsMemorySparse(benchmark::State& state) {
   const auto null_pct = static_cast<uint32_t>(state.range(0));
   auto& chunks = GetSparseChunks(null_pct);
   for (auto _ : state) {
-    CountingRM rm;
-    InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
+    InverterMemory mem{duckdb::Allocator::DefaultAllocator()};
     FieldsInverter inv{mem};
     auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     duckdb::UnifiedVectorFormat fmt;
@@ -1854,8 +1838,7 @@ void RunColumnarMemory(benchmark::State& state, IndexFeatures features,
               explicit_pos);
 
   for (auto _ : state) {
-    CountingRM rm;
-    InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
+    InverterMemory mem{duckdb::Allocator::DefaultAllocator()};
     FieldsInverter inv{mem};
     auto* field = inv.Emplace(1, StringLayout::kStrings, features);
     field->Configure({.explicit_pos = explicit_pos});

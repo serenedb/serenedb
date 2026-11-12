@@ -59,7 +59,9 @@ class PrunedPhrase : public Root {
       _admit{table} {
     _provider.freq.value = _freqs;
     SDB_ASSERT(args.scorer != nullptr);
+    SDB_ASSERT(args.memory != nullptr);
     _score = args.scorer->PrepareScorer({
+      .memory = *args.memory,
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,
@@ -67,8 +69,9 @@ class PrunedPhrase : public Root {
       .stats = args.stats,
       .boost = args.boost,
     });
-    if (auto source = args.scorer->PrepareScoreBoundSource()) {
+    if (auto source = args.scorer->PrepareScoreBoundSource(*args.memory)) {
       _bound_func = args.scorer->PrepareScorer({
+        .memory = *args.memory,
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = *source,

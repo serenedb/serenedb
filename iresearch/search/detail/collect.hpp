@@ -43,44 +43,49 @@
 
 namespace irs::detail {
 
-inline LeadNode::ptr LeadOf(const PostingClause& posting,
+inline LeadNode::ptr LeadOf(PlanMemory& memory, const PostingClause& posting,
                             const QueryBuilder* child,
                             const SubReader& segment) {
-  return child == nullptr ? lead::MakePostingDocs(posting, segment)
-                          : child->PlanLead({});
+  return child == nullptr ? lead::MakePostingDocs(memory, posting, segment)
+                          : child->PlanLead({.memory = memory});
 }
 
-inline ProbeNode::ptr ProbeOf(const PostingClause& posting,
+inline ProbeNode::ptr ProbeOf(PlanMemory& memory, const PostingClause& posting,
                               const QueryBuilder* child,
                               const SubReader& segment,
                               uint64_t interrogations) {
-  return child == nullptr ? probe::MakePostingDocs(posting, segment)
-                          : child->PlanProbe({}, interrogations);
+  return child == nullptr
+           ? probe::MakePostingDocs(memory, posting, segment)
+           : child->PlanProbe({.memory = memory}, interrogations);
 }
 
-inline FillNode::ptr FillOf(const PostingClause& posting,
+inline FillNode::ptr FillOf(PlanMemory& memory, const PostingClause& posting,
                             const QueryBuilder* child,
                             const SubReader& segment) {
-  return child == nullptr ? fill::MakePostingDocs(posting, segment)
-                          : child->PlanFill({}, ScoreMergeType::Noop);
+  return child == nullptr
+           ? fill::MakePostingDocs(memory, posting, segment)
+           : child->PlanFill({.memory = memory}, ScoreMergeType::Noop);
 }
 
-inline auto ProbeClauseOf(const SubReader& segment) noexcept {
-  return [&segment](const PostingClause& posting, const QueryBuilder* child,
-                    uint64_t reach) {
-    return ProbeOf(posting, child, segment, reach);
+inline auto ProbeClauseOf(PlanMemory& memory,
+                          const SubReader& segment) noexcept {
+  return [&memory, &segment](const PostingClause& posting,
+                             const QueryBuilder* child, uint64_t reach) {
+    return ProbeOf(memory, posting, child, segment, reach);
   };
 }
 
-inline constexpr auto kPlanLeadDocs = [](const QueryBuilder& child) {
-  return child.PlanLead({});
-};
+inline auto PlanLeadDocs(PlanMemory& memory) noexcept {
+  return [&memory](const QueryBuilder& child) {
+    return child.PlanLead({.memory = memory});
+  };
+}
 
 template<typename Term>
-bool CollectFills(std::span<const Term> terms,
+bool CollectFills(PlanMemory& memory, std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
                   const TermReader* field, const SubReader& segment,
-                  std::vector<FillNode::ptr>& nodes) {
+                  memory::ArenaVector<FillNode::ptr>& nodes) {
   nodes.reserve(nodes.size() + terms.size() + filters.size());
   const auto take = [&](FillNode::ptr node) {
     if (!node) {
@@ -92,10 +97,10 @@ bool CollectFills(std::span<const Term> terms,
   return VisitOrderedOf(
     terms, filters, false, 0, std::numeric_limits<size_t>::max(),
     [&](const Term& term) {
-      return take(FillOf(ClauseOf(term, field), nullptr, segment));
+      return take(FillOf(memory, ClauseOf(term, field), nullptr, segment));
     },
     [&](const QueryBuilder& child) {
-      return take(child.PlanFill({}, ScoreMergeType::Noop));
+      return take(child.PlanFill({.memory = memory}, ScoreMergeType::Noop));
     });
 }
 

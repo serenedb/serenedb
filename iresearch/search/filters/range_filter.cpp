@@ -112,8 +112,8 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   if (!reader) {
     return QueryBuilder::Empty();
   }
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
+  auto query = ctx.memory.Make<MultiTermQuery>(ctx.memory, segment, ctx.boost,
+                                               ScoreMergeType::Sum);
   MultiTermVisitor mtv{ctx, query->State(), *reader};
   ByRangeIterator terms{*reader, rng};
   if (!terms.next()) {

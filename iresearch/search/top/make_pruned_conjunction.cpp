@@ -63,7 +63,8 @@ Root::ptr MakePrunedConjunction(
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
                    segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
+                   irs::detail::ScoreArgs{.memory = &ctx.memory,
+                                          .scorer = posting.stats.scorer,
                                           .stats = posting.stats.stats,
                                           .fetcher = &ctx.fetcher,
                                           .boost = posting.boost});
@@ -71,14 +72,14 @@ Root::ptr MakePrunedConjunction(
     const auto make = [&]<typename Others> -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
         return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
-          ctx, ctx.fetcher, size, init, std::forward_as_tuple());
+          ctx, ctx.memory, ctx.fetcher, size, init, std::forward_as_tuple());
       }
       const uint64_t lead = terms.front().state.cookie.docs_count;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
-        excludes, exclude_filters, nullptr, segment, lead, lead,
+        ctx.memory, excludes, exclude_filters, nullptr, segment, lead, lead,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
-            ctx, ctx.fetcher, size, init,
+            ctx, ctx.memory, ctx.fetcher, size, init,
             std::forward<decltype(negated)>(negated));
         });
     };

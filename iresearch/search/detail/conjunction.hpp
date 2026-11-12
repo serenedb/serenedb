@@ -45,7 +45,7 @@ namespace irs::detail {
 
 template<typename Result, typename Term, typename Scoring, typename ProbeClause,
          typename LeadClause, typename Make>
-Result BuildConjunction(std::span<const Term> terms,
+Result BuildConjunction(PlanMemory& memory, std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
                         const Scoring& scoring, ProbeClause&& probe_clause,
@@ -103,16 +103,17 @@ Result BuildConjunction(std::span<const Term> terms,
         } else {
           return make.template operator()<Head, probe::AndLeaves<Probe>>(
             std::forward<decltype(head)>(head),
-            std::forward_as_tuple(rest.size(), [&](Probe& probe, size_t i) {
-              std::apply([&](const auto&... args) { probe.Prepare(args...); },
-                         probe_args(rest[i]));
-            }));
+            std::forward_as_tuple(
+              memory, rest.size(), [&](Probe& probe, size_t i) {
+                std::apply([&](const auto&... args) { probe.Prepare(args...); },
+                           probe_args(rest[i]));
+              }));
         }
       });
   };
 
   const auto build_erased = [&]<typename Head>(auto&& head) -> Result {
-    std::vector<ProbeNode::ptr> probes;
+    memory::ArenaVector<ProbeNode::ptr> probes{memory.Scratch()};
     probes.reserve(rest_size);
     const auto take = [&](ProbeNode::ptr node) {
       if (!node) {
@@ -135,7 +136,7 @@ Result BuildConjunction(std::span<const Term> terms,
     const auto dynamic = [&] -> Result {
       return make.template operator()<Head, probe::AndLeaves<probe::Erased>>(
         std::forward<decltype(head)>(head),
-        std::forward_as_tuple(probes.size(),
+        std::forward_as_tuple(memory, probes.size(),
                               [&](probe::Erased& leaf, size_t i) {
                                 leaf = probe::Erased{std::move(probes[i])};
                               }));
@@ -211,7 +212,7 @@ Result BuildConjunction(std::span<const Term> terms,
     const auto posting = clause(terms.front());
     if (!FreqOf(own) || !ScoresPerDoc(posting.stats.scorer)) {
       return build_erased_lead(
-        lead::MakePostingScored(posting, segment, scoring.recipe));
+        lead::MakePostingScored(memory, posting, segment, scoring.recipe));
     }
     return ResolveInput(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLeadScored<Input>>(

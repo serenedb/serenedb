@@ -33,8 +33,9 @@ namespace irs::detail {
 
 template<typename Result, bool Scored, typename Parser, typename Acceptor,
          typename F>
-Result Build(GeoKind, const GeoQuery<Parser, Acceptor>& query,
-             uint64_t interrogations, F&& f) {
+Result Build(PlanMemory& memory, GeoKind,
+             const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
+             F&& f) {
   static_assert(!Scored);
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
@@ -42,9 +43,9 @@ Result Build(GeoKind, const GeoQuery<Parser, Acceptor>& query,
   SDB_ASSERT(cells.Kind() != QueryKind::Empty);
   auto node = [&] {
     if constexpr (kProbed) {
-      return cells.PlanProbe({}, interrogations);
+      return cells.PlanProbe({.memory = memory}, interrogations);
     } else {
-      return cells.PlanLead({});
+      return cells.PlanLead({.memory = memory});
     }
   }();
   if (!node) {

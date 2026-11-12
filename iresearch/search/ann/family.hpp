@@ -128,14 +128,18 @@ struct Family {
     return ScoredOf(ctx);
   }
 
+  static PlanMemory& MemoryOf(const Context& ctx) noexcept {
+    return ctx.memory;
+  }
+
   template<typename Node, typename... Args>
   static Result Scored(const Context& ctx, Args&&... args) {
-    return memory::make_managed<Walk<Node>>(ctx.table, ctx.fetcher,
-                                            std::forward<Args>(args)...);
+    return ctx.memory.Make<Walk<Node>>(ctx.table, ctx.fetcher,
+                                       std::forward<Args>(args)...);
   }
 };
 
-Root::ptr MakeEmpty();
+Root::ptr MakeEmpty(PlanMemory& memory);
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 

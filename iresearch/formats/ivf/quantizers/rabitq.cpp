@@ -386,7 +386,7 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
     _lut.Build(lut.data(), m, kFastScanKsub);
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const std::shared_ptr<const RaBitQuantizerStats<M>>& StatsPtr()
     const noexcept {
@@ -415,7 +415,7 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class RaBitQuantizerReader final : public QuantizerReader {
+class RaBitQuantizerReader : public QuantizerReader {
  public:
   explicit RaBitQuantizerReader(
     std::shared_ptr<const RaBitQuantizerCodebook<M>> cb)
@@ -717,8 +717,10 @@ class RaBitQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> RaBitQuantizerCodebook<M>::MakeReader() const {
-  return MakeReaderT<RaBitQuantizerCodebook<M>, RaBitQuantizerReader<M>>(this);
+QuantizerReader::ptr RaBitQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
+  return MakeReaderT<RaBitQuantizerCodebook<M>, RaBitQuantizerReader<M>>(this,
+                                                                         plan);
 }
 
 template<VectorMetric M>
@@ -735,6 +737,11 @@ std::unique_ptr<QuantizerWriter> MakeRaBitQWriter(VectorMetric metric,
                                                   bool row_major) {
   return MakeWriterWithMetric<RaBitQuantizerWriter>(metric, d, nb_bits,
                                                     row_major);
+}
+
+uint32_t RaBitQRecordSize(uint32_t d, uint32_t nb_bits,
+                          bool row_major) noexcept {
+  return MakeRaBitQLayout(d, nb_bits, row_major).record_size;
 }
 
 std::shared_ptr<const QuantizerStats> MakeRaBitQStats(

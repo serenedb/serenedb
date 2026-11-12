@@ -39,6 +39,7 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
@@ -319,7 +320,7 @@ class PhraseMatcher {
   static constexpr bool kRarestLead =
     HasIntervals && !Offs && (N == 0 || N >= kRarestLeadSlots);
 
-  explicit PhraseMatcher(size_t size) : _pos{size} {}
+  PhraseMatcher(PlanMemory& memory, size_t size) : _pos{memory.Arena(), size} {}
 
   TermPosition& Position(size_t i) noexcept {
     SDB_ASSERT(i < _pos.size());

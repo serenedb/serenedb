@@ -513,6 +513,12 @@ class EntriesReader final : public irs::BasicTermReader {
 
 class TermDictTest : public tests::DirectoryTestCaseBase<> {
  protected:
+  void TearDown() final {
+    _reader.reset();
+    _idx.reset();
+    DirectoryTestCaseBase::TearDown();
+  }
+
   void Write(std::span<const Field> fields, bool compaction = false,
              uint64_t keyed_bound = 0) {
     irs::doc_id_t docs = 0;
@@ -524,11 +530,13 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       }
     }
     _docs = docs;
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = kSegment,
       .doc_count = docs,
       .index_features = irs::IndexFeatures::None,
+      .budget = budget,
     };
     irs::IdxWriter idx{dir(), kSegment};
     irs::term_dict::FieldWriter writer{compaction};
@@ -566,8 +574,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     _reader.reset();
     _meta.name = kSegment;
     _idx = std::make_unique<irs::IdxReader>(from, kSegment, nullptr);
-    _reader = std::make_unique<irs::term_dict::FieldReader>(
-      irs::IResourceManager::gNoop);
+    _reader = std::make_unique<irs::term_dict::FieldReader>();
     _reader->prepare(
       irs::ReaderState{.dir = &from, .meta = &_meta, .idx = _idx.get()});
   }
@@ -2081,11 +2088,13 @@ TEST_P(TermDictTest, ordinal_limit_refuses_more_keyed_dictionaries) {
     irs::term_dict::OrdinalLimit(irs::term_dict::kMaxOrdinalBytes);
   ASSERT_EQ(irs::term_dict::kMaxOrdinalBytes,
             irs::term_dict::OrdinalBytes(kLimit));
+  auto budget = irs::EmptyBudget();
   const irs::FlushState state{
     .dir = &dir(),
     .name = kSegment,
     .doc_count = 10,
     .index_features = irs::IndexFeatures::None,
+    .budget = budget,
   };
   irs::IdxWriter idx{dir(), kSegment};
   irs::term_dict::FieldWriter writer{false};
@@ -3342,7 +3351,7 @@ TEST_P(TermDictTest, inline_postings_at_the_region_end) {
     counting.SetLength(std::numeric_limits<uint64_t>::max());
     irs::IdxReader idx{counting, kSegment, nullptr};
     counting.SetLength(length);
-    irs::term_dict::FieldReader reader{irs::IResourceManager::gNoop};
+    irs::term_dict::FieldReader reader;
     reader.prepare(
       irs::ReaderState{.dir = &counting, .meta = &_meta, .idx = &idx});
   };

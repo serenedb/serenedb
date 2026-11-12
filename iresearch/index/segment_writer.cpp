@@ -93,11 +93,9 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
                              const SegmentWriterOptions& options) noexcept
   : _dir{dir},
     _scorer{options.scorer},
-    _docs_context{options.resource_manager},
     _fields{InverterMemory{
       duckdb::BufferManager::GetBufferManager(DerefDb(options.db))
-        .GetBufferAllocator(),
-      options.resource_manager}},
+        .GetBufferAllocator()}},
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
@@ -115,6 +113,35 @@ void SegmentWriter::FlushFields(FlushState& state,
   }
 }
 
+size_t SegmentWriter::FlushBound() {
+  if (!_initialized) {
+    return 0;
+  }
+  const auto docs = buffered_docs();
+  AnnFlushBound ann;
+  if (_col_writer) {
+    ann = _col_writer->AnnBound(docs);
+  }
+  return std::max(
+    {ColWriter::kSealBound, ann.compute, ann.kept + _fields.FlushBound(docs)});
+}
+
+void SegmentWriter::ReserveFlush() {
+  const auto bound = FlushBound();
+  if (bound > _budget.size) {
+    _budget.Merge(ReserveMemory(kMemoryTag, bound - _budget.size));
+  }
+}
+
+bool SegmentWriter::TryReserveFlush() noexcept {
+  try {
+    ReserveFlush();
+    return true;
+  } catch (const duckdb::OutOfMemoryException&) {
+    return false;
+  }
+}
+
 void SegmentWriter::flush(IndexSegment& segment,
                           DocumentMaskBuilder& docs_mask) {
   auto& meta = segment.meta;
@@ -125,6 +152,7 @@ void SegmentWriter::flush(IndexSegment& segment,
     .name = _seg_name,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
+    .budget = _budget,
   };
 
   IdxWriter idx{_dir, _seg_name};
@@ -140,7 +168,6 @@ void SegmentWriter::flush(IndexSegment& segment,
       GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
     }
     ann_writers = _col_writer->TakeAnnWriters();
-    _col_writer.reset();
   }
 
   if (state.doc_count != 0) {
@@ -152,6 +179,8 @@ void SegmentWriter::flush(IndexSegment& segment,
       PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
     FlushFields(state, cluster_readers);
   }
+  _fields.SetColWriter(nullptr);
+  _col_writer.reset();
 
   for (const auto& w : ann_writers) {
     if (w) {
@@ -196,10 +225,12 @@ void SegmentWriter::ResetState() noexcept {
   _batch_first_doc_id = doc_limits::eof();
   _fields.Reset();
   _col_reader.reset();
+  _fields.SetColWriter(nullptr);
   if (_col_writer) {
     _col_writer->Rollback();
     _col_writer.reset();
   }
+  _budget.Resize(0);
 }
 
 void SegmentWriter::reset() noexcept {
@@ -224,6 +255,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
 
   const auto* active = ActiveFieldOptions();
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
+  _col_writer->SetBudget(_budget);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());

@@ -195,11 +195,13 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   irs::VectorSimilarityScorer scorer;
   irs::StatsArena stats_arena{duckdb::Allocator::DefaultAllocator()};
   irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
+  irs::QueryMemory query_memory;
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(
-      irs::PrepareMasked(filter, segment, {.collector = collector_tree.Get()}));
+    queries.emplace_back(irs::PrepareMasked(
+      filter, segment,
+      {.memory = query_memory, .collector = collector_tree.Get()}));
   }
   collector_tree.Finish();
 
@@ -207,6 +209,7 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   std::atomic<irs::score_t> score_threshold{
     std::numeric_limits<irs::score_t>::lowest()};
   irs::LoserScoreCollector collector{score_threshold, std::span{hits}};
+  irs::PlanMemory plan_memory;
   irs::ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
   for (auto& query : queries) {
@@ -216,6 +219,7 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
       continue;
     }
     auto ann = irs::ann::MakeRoot(*query, {
+                                            .memory = plan_memory,
                                             .scorer = scorer,
                                             .fetcher = fetcher,
                                             .k = static_cast<uint32_t>(k),
@@ -1088,6 +1092,18 @@ TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
   }
 }
 
+TEST(HnswRandomLevelTest, UpperLevelsBoundCoversTheBuildsDraws) {
+  for (const uint32_t m : {2U, 3U, 4U, 6U, 8U, 16U, 32U, 64U, 128U, 256U}) {
+    pcg32 rng{irs::kHnswBuildSeed};
+    uint64_t upper = 0;
+    for (uint64_t rows = 1; rows <= uint64_t{1} << 18; ++rows) {
+      upper += irs::HnswRandomLevel(rng, m) - 1;
+      ASSERT_LE(upper, irs::HnswUpperLevelsBound(rows, m))
+        << "m=" << m << " rows=" << rows;
+    }
+  }
+}
+
 TEST(HnswVisitedTest, MembershipSurvivesGrowthAndTheSwitchToTheBitset) {
   for (const uint32_t nodes : {1000U, 40000U, 30000000U}) {
     for (const size_t visits : {size_t{0}, size_t{6000}, size_t{300000}}) {
@@ -1186,7 +1202,8 @@ TEST(HnswSelectNeighborsTest, TransposedMatchesReference) {
       for (const bool cheap : {true, false}) {
         SelectRefDist form{.pts = &pts, .d = kD, .cheap_pair = cheap};
         irs::HnswSelectNeighbors(form, cands, limit, scratch);
-        ASSERT_EQ(want, scratch.selected)
+        ASSERT_EQ(want, std::vector<uint32_t>(scratch.selected.begin(),
+                                              scratch.selected.end()))
           << "trial " << trial << " limit " << limit << " n " << cands.size()
           << " cheap_pair " << cheap;
       }
@@ -1323,7 +1340,7 @@ void CheckWalkAsksPerHop() {
     std::partial_sort(truth.begin(), truth.begin() + kK, truth.end(),
                       std::greater<>{});
     truth.resize(kK);
-    const auto hits = [&](std::vector<irs::HnswCandidate> nearest) {
+    const auto hits = [&](irs::HnswScratchVector<irs::HnswCandidate> nearest) {
       std::ranges::sort(nearest, [](const auto& l, const auto& r) {
         return l.score > r.score;
       });
@@ -1508,7 +1525,7 @@ TEST(HnswInsertTest, NodesInsertedTowardsTheGraphStayReachable) {
   for (const float at : {1500.4f, 1499.6f, 1200.4f, 2200.4f, 10.4f}) {
     query[0] = at;
     irs::HnswSearchTopK(graph, dist, irs::kHnswDefaultEfSearch, s);
-    std::vector<irs::HnswCandidate> nearest = s.nearest;
+    auto nearest = s.nearest;
     std::ranges::sort(
       nearest, [](const auto& l, const auto& r) { return l.score > r.score; });
     nearest.resize(std::min(nearest.size(), kK));

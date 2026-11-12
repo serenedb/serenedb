@@ -1,0 +1,63 @@
+# A background compaction that fails waits out the compaction backoff before
+# it runs again. A merge that threw used to count as productive, so the loop
+# re-ran it at once, failing in a tight loop for as long as the failure lasted.
+#
+# MergeWriter::Reserve fails every merge's memory reservation for three
+# seconds. With the backoff doubling from the 100 ms interval, about five
+# compaction ticks run in that time, each failing one merge per compaction
+# slot; without it, merges fail thousands of times.
+
+statement ok
+CREATE TABLE cb (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO cb SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cb;
+
+statement ok
+INSERT INTO cb SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cb;
+
+statement ok
+INSERT INTO cb SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cb;
+
+statement ok
+INSERT INTO cb SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cb;
+
+statement ok
+SET sdb_faults = 'MergeWriter::Reserve';
+
+statement ok
+ALTER TABLE cb SET (compaction_interval = 100);
+
+statement ok
+SELECT pg_sleep(3);
+
+statement ok
+ALTER TABLE cb SET (compaction_interval = 0);
+
+statement ok
+SET sdb_faults = '-MergeWriter::Reserve';
+
+query
+SELECT value BETWEEN 1 AND 1000 AS backed_off FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'cb') AND metric = 'num_failed_consolidations';
+----
+backed_off
+t
+
+query
+SELECT count(*) FROM cb WHERE body = 'fox dog';
+----
+count
+400

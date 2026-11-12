@@ -24,6 +24,7 @@
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <memory>
 #include <span>
 #include <vector>
@@ -69,14 +70,14 @@ class RemovalLog {
   bool HasKeys() const noexcept { return !_keys.empty(); }
   bool HasPositions() const noexcept { return !_positions.groups.empty(); }
 
-  std::vector<int64_t> TakeKeys();
+  irs::TrackedVector<int64_t> TakeKeys();
   // Null when nothing was recorded, so a caller can hand the result straight
   // to a remover without asking twice.
   std::shared_ptr<const irs::DocRemoval> Resolve(
     const irs::DirectoryReader& reader) &&;
 
  private:
-  std::vector<int64_t> _keys;
+  irs::TrackedVector<int64_t> _keys;
   irs::DocRemoval _positions;
   irs::containers::FlatHashMap<uint64_t, std::vector<irs::DocMap>> _doc_maps;
 };

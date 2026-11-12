@@ -25,6 +25,8 @@
 #include <new>
 #include <vector>
 
+#include "iresearch/utils/tracked.hpp"
+
 namespace irs {
 
 #ifdef __linux__
@@ -66,6 +68,7 @@ using HugePageAllocator = std::allocator<T>;
 #endif
 
 template<typename T>
-using HugePageVector = std::vector<T, HugePageAllocator<T>>;
+using HugePageVector =
+  std::vector<T, TrackedAllocator<T, kMemoryTag, HugePageAllocator<T>>>;
 
 }  // namespace irs

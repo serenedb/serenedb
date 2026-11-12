@@ -158,7 +158,7 @@ void RemovalLog::Merge(RemovalLog&& other) {
   other.Clear();
 }
 
-std::vector<int64_t> RemovalLog::TakeKeys() {
+irs::TrackedVector<int64_t> RemovalLog::TakeKeys() {
   auto keys = std::move(_keys);
   _keys.clear();
   return keys;

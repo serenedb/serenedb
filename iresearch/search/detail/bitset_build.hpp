@@ -360,11 +360,19 @@ inline void ReadFill(FillNode& node, doc_id_t end,
   }
 }
 
+using Clauses = memory::ArenaVector<PostingClause>;
+
 struct BitsetBuckets {
-  std::vector<std::vector<PostingClause>> must;
-  std::vector<PostingClause> must_not;
-  std::vector<FillNode::ptr> fills;
-  std::vector<FillNode::ptr> exclude_fills;
+  explicit BitsetBuckets(PlanMemory& memory)
+    : must{memory.Scratch()},
+      must_not{memory.Scratch()},
+      fills{memory.Scratch()},
+      exclude_fills{memory.Scratch()} {}
+
+  memory::ArenaVector<Clauses> must;
+  Clauses must_not;
+  memory::ArenaVector<FillNode::ptr> fills;
+  memory::ArenaVector<FillNode::ptr> exclude_fills;
   const SubReader* masked = nullptr;
 
   size_t Seed(doc_id_t docs_count) const noexcept {
@@ -402,11 +410,12 @@ struct BitsetBuckets {
   }
 };
 
-inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
-                                 doc_id_t docs_count) {
+inline void FillBitset(PlanMemory& memory, BitsetStorage& bits,
+                       BitsetBuckets& buckets, const IndexInput& doc,
+                       doc_id_t docs_count) {
   SDB_ASSERT(!buckets.must.empty() || !buckets.fills.empty());
   SDB_ASSERT(buckets.fills.empty() || buckets.must.size() <= 1);
-  BitsetStorage bits{docs_count};
+  SDB_ASSERT(bits.End() == BitsetStorage::kMin + docs_count);
   auto* const words = bits.Words();
   const auto seed = buckets.Seed(docs_count);
 
@@ -425,7 +434,7 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
     std::optional<BitsetStorage> scratch;
     const auto open_scratch = [&]() -> uint64_t* {
       if (!scratch) {
-        scratch.emplace(docs_count);
+        scratch.emplace(memory.Scratch(), docs_count);
       } else {
         std::fill_n(scratch->Words(), scratch->Alloc(), uint64_t{0});
       }
@@ -475,6 +484,12 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
     });
   }
   bits.Trim();
+}
+
+inline BitsetStorage BuildBitset(PlanMemory& memory, BitsetBuckets& buckets,
+                                 const IndexInput& doc, doc_id_t docs_count) {
+  BitsetStorage bits{memory.Scratch(), docs_count};
+  FillBitset(memory, bits, buckets, doc, docs_count);
   return bits;
 }
 

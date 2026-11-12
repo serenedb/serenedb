@@ -36,9 +36,11 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/table/column_data_checkpointer.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/variant_column_data.hpp>
 #include <limits>
 #include <memory>
@@ -47,9 +49,16 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
+
+duckdb::TempBufferPoolReservation TakeMemoryCharge(duckdb::BlockHandle& block) {
+  auto& memory = block.GetMemory();
+  auto lock = memory.GetLock();
+  return memory.TakeMemoryCharge(lock);
+}
 
 void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
                     const uint8_t* bytes, IndexOutput& out,
@@ -252,6 +261,8 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
   auto& db = ctx.Database();
   auto& out = Out();
   auto& bm = db.GetBufferManager();
+  auto& budget = _owner->Budget();
+  SDB_ASSERT(&budget.pool == &bm.GetBufferPool());
 
   duckdb::optional_ptr<duckdb::OverflowStringWriter> overflow_writer;
   duckdb::optional_ptr<duckdb::ColumnStreamWriter> stream_writer;
@@ -260,9 +271,26 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     stream_writer = &ctx;
   }
 
+  duckdb::ColumnDataCheckpointData::CreateSegmentFn create_segment =
+    [&](const duckdb::CompressionFunction& function, duckdb::idx_t size,
+        duckdb::BlockManager& block_manager) {
+      return duckdb::ColumnSegment::CreateTransientSegment(
+        db, function, codec_type, size,
+        bm.RegisterTransientMemoryFrom(size, block_manager, budget));
+    };
+
   auto capture = [&](duckdb::ColumnSegment& seg, duckdb::idx_t size,
                      const uint8_t* bytes) {
     CaptureSegment(seg, size, bytes, out, sink);
+  };
+  auto free_segment = [&](duckdb::unique_ptr<duckdb::ColumnSegment> seg) {
+    if (!seg->GetBlockHandle()) {
+      return;
+    }
+    auto charge = TakeMemoryCharge(*seg->GetBlockHandle());
+    SDB_ASSERT(charge.tag == budget.tag);
+    seg.reset();
+    budget.Merge(std::move(charge));
   };
   auto capture_from_block = [&](duckdb::ColumnSegment& seg,
                                 duckdb::idx_t size) {
@@ -280,10 +308,13 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     } else {
       capture_from_block(*seg, size);
     }
+    handle.Destroy();
+    free_segment(std::move(seg));
   };
   auto flush_internal_fn = [&](duckdb::unique_ptr<duckdb::ColumnSegment> seg,
                                duckdb::idx_t size) {
     capture_from_block(*seg, size);
+    free_segment(std::move(seg));
   };
 
   duckdb::ColumnDataCheckpointData ckp{
@@ -295,6 +326,8 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     std::move(flush_fn),
     std::move(flush_internal_fn),
     ctx,
+    std::move(create_segment),
+    &duckdb::Allocator::DefaultAllocator(),
   };
   auto comp_state = picked.init_compression(ckp, std::move(state));
   for (auto& c : chunks) {
@@ -598,7 +631,7 @@ WriteChunk& ColumnWriter::OpenChunk() {
     return _staged[_staged_chunks - 1];
   }
   if (_staged_chunks == _staged.size()) {
-    auto& alloc = duckdb::Allocator::Get(WriteCtx().Database());
+    auto& alloc = TrackedDuckAllocator();
     auto& cache =
       _staged_caches.emplace_back(alloc, _type, STANDARD_VECTOR_SIZE);
     _staged.push_back(WriteChunk{duckdb::Vector{cache}, 0});
@@ -722,6 +755,12 @@ void ColumnWriter::SealRowGroup() {
   _row_start += _staged_rows;
   _staged_chunks = 0;
   _staged_rows = 0;
+}
+
+void ColumnWriter::Finish() {
+  SealRowGroup();
+  _staged.clear();
+  _staged_caches.clear();
 }
 
 void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {

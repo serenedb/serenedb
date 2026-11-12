@@ -51,10 +51,10 @@ template<template<typename...> typename Shape, typename... Parts,
          typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., irs::detail::TableFilter*>>(
+    return ctx.memory.Make<Shape<Parts..., irs::detail::TableFilter*>>(
       ctx.table, std::forward<Args>(args)...);
   }
-  return memory::make_managed<Shape<Parts..., utils::Empty>>(
+  return ctx.memory.Make<Shape<Parts..., utils::Empty>>(
     utils::Empty{}, std::forward<Args>(args)...);
 }
 
@@ -79,7 +79,7 @@ Root::ptr MakePrepared(const Context& ctx, Make&& make) {
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
-Root::ptr MakeEmpty();
+Root::ptr MakeEmpty(PlanMemory& memory);
 
 template<irs::detail::PhraseMatch M, typename Query>
 Root::ptr MakePhrasePruned(const Query& query, const Context& ctx);
@@ -154,7 +154,8 @@ Root::ptr MakePrunedDisjunction(
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
                    segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
+                   irs::detail::ScoreArgs{.memory = &ctx.memory,
+                                          .scorer = posting.stats.scorer,
                                           .stats = posting.stats.stats,
                                           .fetcher = &ctx.fetcher,
                                           .boost = posting.boost});
@@ -166,21 +167,21 @@ Root::ptr MakePrunedDisjunction(
         const auto candidates =
           std::min<uint64_t>(irs::detail::SumDocs(terms), segment.docs_count());
         return irs::detail::BuildBlockExcludes<Root::ptr>(
-          excludes, exclude_filters, nullptr, segment, candidates, candidates,
-          [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+          ctx.memory, excludes, exclude_filters, nullptr, segment, candidates,
+          candidates, [&]<typename Exclude>(auto&& negated) -> Root::ptr {
             return irs::detail::MakeRemovable(
               std::type_identity<Exclude>{},
               std::forward<decltype(negated)>(negated),
               [&]<typename Removable>(auto&& args) -> Root::ptr {
                 return MakeShape<PrunedDisjunction, Leaf, Removable>(
-                  ctx, terms.size(), docs_count, init,
+                  ctx, ctx.memory, terms.size(), docs_count, init,
                   std::forward<decltype(args)>(args));
               });
           });
       }
     }
     return MakeShape<PrunedDisjunction, Leaf, utils::Empty>(
-      ctx, terms.size(), docs_count, init, std::forward_as_tuple());
+      ctx, ctx.memory, terms.size(), docs_count, init, std::forward_as_tuple());
   });
 }
 

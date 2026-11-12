@@ -168,10 +168,12 @@ size_t Executor::ExecuteCount(std::string_view query) {
     return 0;
   }
   // Counting does not score, so no subtree collects statistics.
+  _query_memory.Rewind();
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(irs::PrepareMasked(*filter, segment, {}));
+    queries.emplace_back(
+      irs::PrepareMasked(*filter, segment, {.memory = _query_memory}));
   }
 
   size_t count = 0;
@@ -181,7 +183,8 @@ size_t Executor::ExecuteCount(std::string_view query) {
     if (!query) {
       continue;
     }
-    auto plan = irs::count::MakeRoot(*query);
+    _plan_memory.Rewind();
+    auto plan = irs::count::MakeRoot(*query, {.memory = _plan_memory});
     if (!plan) {
       throw std::runtime_error{"no count plan for this query"};
     }
@@ -196,10 +199,12 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
     return {};
   }
   // Emitting documents does not score, so no subtree collects statistics.
+  _query_memory.Rewind();
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(irs::PrepareMasked(*filter, segment, {}));
+    queries.emplace_back(
+      irs::PrepareMasked(*filter, segment, {.memory = _query_memory}));
   }
 
   EmitResult result;
@@ -209,7 +214,8 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
     if (!query) {
       continue;
     }
-    auto plan = irs::docs::MakeRoot(*query);
+    _plan_memory.Rewind();
+    auto plan = irs::docs::MakeRoot(*query, {.memory = _plan_memory});
     if (!plan) {
       throw std::runtime_error{"no docs plan for this query"};
     }
@@ -243,11 +249,13 @@ EmitResult Executor::ExecuteEmitHits(std::string_view query, Report report) {
   auto& allocator = duckdb::Allocator::DefaultAllocator();
   irs::StatsArena stats{allocator};
   irs::PreparedCollector collector{*filter, *_scorer_ptr, stats, 1};
+  _query_memory.Rewind();
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(
-      irs::PrepareMasked(*filter, segment, {.collector = collector.Get()}));
+    queries.emplace_back(irs::PrepareMasked(
+      *filter, segment,
+      {.memory = _query_memory, .collector = collector.Get()}));
   }
   collector.Finish();
 
@@ -256,12 +264,14 @@ EmitResult Executor::ExecuteEmitHits(std::string_view query, Report report) {
   uint32_t seg_idx = 0;
   for (auto& segment : _reader) {
     fetcher.Clear();
+    _plan_memory.Rewind();
     auto& query = queries[seg_idx++];
     if (!query) {
       continue;
     }
-    auto plan =
-      irs::hits::MakeRoot(*query, {.scorer = *_scorer_ptr, .fetcher = fetcher});
+    auto plan = irs::hits::MakeRoot(
+      *query,
+      {.memory = _plan_memory, .scorer = *_scorer_ptr, .fetcher = fetcher});
     if (!plan) {
       throw std::runtime_error{"no scored plan for this query"};
     }

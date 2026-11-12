@@ -18,12 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/btree_map.h>
 #include <absl/strings/str_format.h>
 
 #include <cstdio>
 #include <functional>
 #include <iresearch/utils/cpu_features.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
 #include <vector>
 
@@ -47,6 +49,9 @@ Modules& GetModules() {
 Module& GetModule(std::string_view name) { return GetModules()[name]; }
 
 int RunBenchmarks(int argc, char** argv) {
+  auto& engine = irs::DuckDBEngine::Instance();
+  engine.Initialize();
+  absl::Cleanup shutdown = [&] { engine.Shutdown(); };
   ::benchmark::Initialize(&argc, argv);
   if (::benchmark::ReportUnrecognizedArguments(argc, argv)) {
     return 1;

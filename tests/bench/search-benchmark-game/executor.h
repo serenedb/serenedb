@@ -29,6 +29,7 @@
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -127,6 +128,8 @@ class Executor {
   irs::analysis::Tokenizer::ptr _tokenizer;
   irs::MMapDirectory _dir;
   irs::DirectoryReader _reader;
+  irs::QueryMemory _query_memory;
+  irs::PlanMemory _plan_memory;
 };
 
 }  // namespace bench

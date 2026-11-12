@@ -174,21 +174,21 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
       return ScoreFunction::Default();
     }
 
-    return ScoreFunction::Constant(ctx.boost);
+    return ScoreFunction::Constant(ctx.memory, ctx.boost);
   }
 
   auto* stats = stats_cast(ctx.stats);
 
   return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
     if (IsBM15()) {
-      return ScoreFunction::Make<Bm15Score<HasScale>>(ctx.boost, *stats, freq,
-                                                      scale);
+      return ScoreFunction::Make<Bm15Score<HasScale>>(ctx.memory, ctx.boost,
+                                                      *stats, freq, scale);
     }
 
     const uint32_t* norm = NormsOf(ctx);
 
-    return ScoreFunction::Make<Bm25Score<HasScale>>(ctx.boost, *stats, freq,
-                                                    norm, scale);
+    return ScoreFunction::Make<Bm25Score<HasScale>>(ctx.memory, ctx.boost,
+                                                    *stats, freq, norm, scale);
   });
 }
 
@@ -212,17 +212,17 @@ ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter() const {
   return std::make_unique<FreqNormWriter<kScoreBoundBM25>>(_b);
 }
 
-ScoreBoundSource::ptr BM25::PrepareScoreBoundSource() const {
+ScoreBoundSource::ptr BM25::PrepareScoreBoundSource(PlanMemory& memory) const {
   if (IsBM1()) {
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::None);
     return {};
   }
   if (IsBM15()) {
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
-    return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
+    return memory.Make<FreqNormSource<kScoreBoundFreq>>();
   }
   SDB_ASSERT(BoundTypeOf(GetOptions()) != ScoreBoundType::None);
-  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
+  return memory.Make<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
 bool BM25::Compatible(const ScorerOptions& persisted) const noexcept {

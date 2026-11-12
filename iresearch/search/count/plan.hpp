@@ -38,10 +38,10 @@ template<template<typename...> typename Shape, typename... Parts,
          typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   if (ctx.table != nullptr) {
-    return memory::make_managed<Shape<Parts..., detail::TableFilter*>>(
+    return ctx.memory.Make<Shape<Parts..., detail::TableFilter*>>(
       ctx.table, std::forward<Args>(args)...);
   }
-  return memory::make_managed<Shape<Parts..., utils::Empty>>(
+  return ctx.memory.Make<Shape<Parts..., utils::Empty>>(
     utils::Empty{}, std::forward<Args>(args)...);
 }
 

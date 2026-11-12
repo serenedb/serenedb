@@ -123,7 +123,7 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
 
 extern template class QueryBuilderImpl<RangeVectorQuery>;
 
-void RerankExactDistances(const SubReader& segment,
+void RerankExactDistances(PlanMemory& memory, const SubReader& segment,
                           const ColumnReader& vector_column, uint32_t d,
                           std::span<const float> query, VectorMetric metric,
                           std::span<ScoreDoc> hits);

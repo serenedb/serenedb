@@ -33,6 +33,7 @@
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <exception>
 #include <new>
 #include <ranges>
 #include <shared_mutex>
@@ -62,8 +63,8 @@
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -99,8 +100,8 @@ struct FlushedSegmentContext {
     if (flushed.docs_mask.Count() == docs_count) {
       return true;
     }
-    document_mask = std::move(flushed.docs_mask);
-    index = std::move(flushed);
+    document_mask = flushed.docs_mask;
+    index = flushed;
     return false;
   }
 
@@ -210,7 +211,7 @@ struct PublishedSegment {
   Sync sync;
 };
 
-void SortUnique(std::vector<int64_t>& keys) {
+void SortUnique(TrackedVector<int64_t>& keys) {
   if (!absl::c_is_sorted(keys)) {
     absl::c_sort(keys);
   }
@@ -363,8 +364,9 @@ PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
       result.modified = true;
       continue;
     }
-    auto& meta = incoming.segment.meta;
-    auto& reader = incoming.reader;
+    auto segment = incoming.segment;
+    auto& meta = segment.meta;
+    auto reader = incoming.reader;
     auto docs_mask = std::move(removed[incoming_index]);
     const auto* published = reader->docs_mask();
     size_t masked = published != nullptr ? published->Count() : 0;
@@ -385,9 +387,9 @@ PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
         std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
     }
 
-    const bool unwritten = incoming.segment.filename.empty();
+    const bool unwritten = segment.filename.empty();
     if (docs_mask_modified || unwritten) {
-      index_utils::FlushIndexSegment(dir, incoming.segment, !unwritten);
+      index_utils::FlushIndexSegment(dir, segment, !unwritten);
     }
 
     if (docs_mask_modified) {
@@ -395,7 +397,7 @@ PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
     }
 
     result.segments.emplace_back(
-      std::move(incoming.segment), SegmentReader{std::move(reader)},
+      std::move(segment), SegmentReader{std::move(reader)},
       SyncOf(incoming.compaction_ctx.candidates.empty(), docs_mask_modified));
     result.modified = true;
   }
@@ -514,21 +516,21 @@ uint64_t ResolveRemovals(
   if (key_removals.empty()) {
     return all_tick;
   }
-  std::vector<int64_t> unsettled;
+  TrackedVector<int64_t> unsettled;
   if (key_removals.size() == 1) {
     const auto [removal, tick] = key_removals.front();
     unsettled = removal->keys;
     ResolveKeys(unsettled, key_column, flushed,
                 [tick](const int64_t&) { return tick; });
   } else {
-    std::vector<std::pair<int64_t, uint64_t>> removed;
+    TrackedVector<std::pair<int64_t, uint64_t>> removed;
     for (const auto& [removal, tick] : key_removals) {
       for (const auto key : removal->keys) {
         removed.emplace_back(key, tick);
       }
     }
     absl::c_sort(removed);
-    std::vector<uint64_t> ticks;
+    TrackedVector<uint64_t> ticks;
     unsettled.reserve(removed.size());
     ticks.reserve(removed.size());
     for (size_t i = 0; i != removed.size(); ++i) {
@@ -541,7 +543,7 @@ uint64_t ResolveRemovals(
       return ticks[&key - unsettled.data()];
     });
   }
-  std::vector<int64_t> settled;
+  TrackedVector<int64_t> settled;
   for (const auto& target : targets | std::views::values) {
     if (!target.removed) {
       continue;
@@ -818,19 +820,31 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
               ", memory limit=", _writer->_segment_limits.Memory(),
               ", options_match=", options_match);
 
-    try {
-      segment.Flush();
-    } catch (...) {
-      // TODO(mbkkt) What the goal are we want to achieve
-      //  with keeping already flushed data?
-      segment.Reset(true);
-      throw;
-    }
+    writer.ReserveFlush();
+    FlushReserved(segment);
   }
   // Hand the per-op options to the (pooled) writer before it materializes a
   // segment; a forced flush above reset it to the fallback, so set after it.
   writer.SetFieldOptions(_field_options);
   segment.Prepare();
+}
+
+void IndexWriter::Transaction::FlushReserved(SegmentContext& segment) {
+  const auto committed = segment.committed_buffered_docs;
+  Finally drop = [&, exceptions = std::uncaught_exceptions()]() noexcept {
+    if (std::uncaught_exceptions() <= exceptions) {
+      return;
+    }
+    segment.Reset(true);
+    if (committed != 0) {
+      _writer->_lost_docs.store(true, std::memory_order_relaxed);
+      SDB_WARN(IRESEARCH, "flushing a full segment failed and dropped ",
+               committed,
+               " committed documents from the index; the index is out of "
+               "sync until a restart replays them");
+    }
+  };
+  segment.Flush();
 }
 
 bool IndexWriter::FlushRequired(const SegmentWriter& segment) const noexcept {
@@ -949,6 +963,44 @@ void IndexWriter::SwapDocMaps(FlushContext& flushed) noexcept {
   }
 }
 
+bool IndexWriter::Requeue(FlushContext& failed) noexcept {
+  auto active = GetFlushContext();
+  std::lock_guard lock{active->pending_mutex};
+  try {
+    if (absl::c_any_of(failed.doc_maps, [&](const auto& entry) {
+          return active->doc_maps.contains(entry.first);
+        })) {
+      return false;
+    }
+    active->segments.reserve(active->segments.size() + failed.segments.size());
+    active->incoming.reserve(active->incoming.size() + failed.incoming.size());
+    active->segment_mask.reserve(active->segment_mask.size() +
+                                 failed.segment_mask.size());
+    active->doc_maps.reserve(active->doc_maps.size() + failed.doc_maps.size());
+  } catch (...) {
+    return false;
+  }
+  SwapDocMaps(failed);
+  for (auto& [source, maps] : failed.doc_maps) {
+    active->doc_maps.try_emplace(source, std::move(maps));
+  }
+  failed.doc_maps.clear();
+  for (auto& segment : failed.segments) {
+    active->segments.push_back(std::move(segment));
+  }
+  failed.segments.clear();
+  for (auto& incoming : failed.incoming) {
+    active->incoming.push_back(std::move(incoming));
+  }
+  failed.incoming.clear();
+  active->masked_names.splice(active->masked_names.end(), failed.masked_names);
+  active->segment_mask.insert(failed.segment_mask.begin(),
+                              failed.segment_mask.end());
+  failed.segment_mask.clear();
+  active->position = std::max(active->position, failed.position);
+  return true;
+}
+
 void IndexWriter::FlushContext::Absorb(std::vector<DocMap>&& maps) {
   containers::FlatHashMap<uint64_t, size_t> counts;
   for (const auto& map : maps) {
@@ -968,6 +1020,7 @@ void IndexWriter::FlushContext::FlushPending() {
   for (auto& entry : pending_segments) {
     auto& segment = entry.segment;
     SDB_ASSERT(segment != nullptr);
+    segment->writer->TryReserveFlush();
     segment->Flush();
     for (auto& queued : segment->queries) {
       if (auto* adopted = std::get_if<Queued::Adopted>(&queued.op)) {
@@ -985,8 +1038,6 @@ IndexWriter::SegmentContext::SegmentContext(
   Directory& dir, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& options)
   : dir{dir},
-    queries{{options.resource_manager}},
-    flushed{{options.resource_manager}},
     meta_generator{std::move(meta_generator)},
     writer{SegmentWriter::make(this->dir, options)} {
   SDB_ASSERT(this->meta_generator);
@@ -1458,8 +1509,10 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
   RefTrackingDirectory dir{_dir};  // Track references for new segment
 
-  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
+  auto budget = EmptyBudget();
+  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options), budget};
   merger.Reset(candidates.begin(), candidates.end());
+  merger.Reserve();
 
   // We do not persist segment meta since some removals may come later
   if (!(co_await merger.Flush(compaction_segment.meta, progress, env))) {
@@ -1769,8 +1822,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // later via SetFieldOptions, so non-owning here.
   return {
     .scorer = _topk_scorer,
-    .resource_manager = compaction ? *_dir.ResourceManager().compactions
-                                   : *_dir.ResourceManager().transactions,
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
@@ -1799,6 +1850,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       cleanup_lock.lock();
     }
     Cleanup(*ctx);
+  };
+  Finally requeue = [&, exceptions = std::uncaught_exceptions()]() noexcept {
+    if (ctx != nullptr && std::uncaught_exceptions() > exceptions) {
+      _failed_batch_kept = Requeue(*ctx);
+    }
   };
 
   const auto& progress =
@@ -1843,6 +1899,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     segment_ctx.RemoveAll(all_tick);
   }
   auto flushed = PublishFlushed(segment_ctxs, dir, progress);
+  SDB_IF_FAILURE("IndexWriter::PrepareFlush") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   segments.insert(segments.end(),
                   std::make_move_iterator(flushed.segments.begin()),
                   std::make_move_iterator(flushed.segments.end()));
@@ -1942,6 +2001,9 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   };
 
   context.files_to_sync.emplace_back(to_commit.filename);
+  SDB_IF_FAILURE("IndexWriter::ApplyFlush") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
 
   if (!dir.sync(context.files_to_sync)) {
     THROW_SQL_ERROR(
@@ -1961,6 +2023,7 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
 }
 
 bool IndexWriter::Start(const CommitInfo& info) {
+  _failed_batch_kept = false;
   if (_pending_state.Valid()) {
     // Begin has been already called without corresponding call to commit
     return false;
@@ -1975,6 +2038,11 @@ bool IndexWriter::Start(const CommitInfo& info) {
   Finally cleanup = [&]() noexcept {
     if (!to_commit.Empty()) {
       to_commit.StartReset(*this);
+    }
+  };
+  Finally requeue = [&, exceptions = std::uncaught_exceptions()]() noexcept {
+    if (!to_commit.Empty() && std::uncaught_exceptions() > exceptions) {
+      _failed_batch_kept = Requeue(*to_commit.ctx);
     }
   };
 

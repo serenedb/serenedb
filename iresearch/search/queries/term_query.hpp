@@ -48,8 +48,7 @@ class TermQuery : public QueryBuilderImpl<TermQuery> {
 
 extern template class QueryBuilderImpl<TermQuery>;
 
-QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
-                                const SubReader& segment,
+QueryBuilder::ptr MakeTermQuery(QueryMemory& memory, const SubReader& segment,
                                 const TermReader* reader,
                                 const PostingMeta& meta, score_t boost,
                                 detail::StatsRecord stats = {});

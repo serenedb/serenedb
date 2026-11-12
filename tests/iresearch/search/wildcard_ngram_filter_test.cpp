@@ -339,12 +339,9 @@ TEST(WildcardNGramFilterTest, query) {
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(std::size(kValues), reader->live_docs_count());
 
-  MaxMemoryCounter counter;
-
   // Execute a filter and return matched doc_ids across all segments.
   auto execute = [&](const irs::ByWildcardNGram& q) {
-    tests::PreparedFilter prepared{q, *reader, nullptr, counter};
-    counter.Reset();
+    tests::PreparedFilter prepared{q, *reader, nullptr};
 
     std::vector<irs::doc_id_t> result;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
@@ -406,8 +403,7 @@ TEST(WildcardNGramFilterTest, query) {
   {
     tests::sort::Boost sort;
     const auto scored = [&](const irs::ByWildcardNGram& q) {
-      tests::PreparedFilter prepared{q, *reader, &sort, counter};
-      counter.Reset();
+      tests::PreparedFilter prepared{q, *reader, &sort};
       std::vector<irs::doc_id_t> result;
       for (size_t i = 0, n = prepared.size(); i < n; ++i) {
         auto docs = prepared.Execute(i);
@@ -456,9 +452,8 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
   irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
   ASSERT_NE(nullptr, reader);
 
-  MaxMemoryCounter counter;
   const auto execute = [&](const irs::Filter& q) {
-    tests::PreparedFilter prepared{q, *reader, nullptr, counter};
+    tests::PreparedFilter prepared{q, *reader, nullptr};
     std::vector<irs::doc_id_t> result;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto docs = prepared.Execute(i);
@@ -722,10 +717,8 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
     ASSERT_EQ(2U, reader.size());
     ASSERT_EQ(std::size(kValues), reader->live_docs_count());
 
-    MaxMemoryCounter counter;
     const auto execute = [&](const irs::Filter& q, const irs::Scorer* sort) {
-      tests::PreparedFilter prepared{q, *reader, sort, counter};
-      counter.Reset();
+      tests::PreparedFilter prepared{q, *reader, sort};
       std::vector<irs::doc_id_t> result;
       irs::doc_id_t offset = 0;
       for (size_t i = 0, size = prepared.size(); i < size; ++i) {

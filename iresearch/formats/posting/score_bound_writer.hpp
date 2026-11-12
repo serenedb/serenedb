@@ -309,7 +309,7 @@ template<uint32_t Tag>
 using FreqNormWriter = ScoreBoundWriterImpl<FreqNormProducer<Tag>>;
 
 template<uint32_t Tag>
-class FreqNormSource final : public ScoreBoundSource {
+class FreqNormSource : public ScoreBoundSource {
   static_assert((Tag & kScoreBoundMaxFreq) == 0);
   static_assert((Tag & kScoreBoundMinNorm) == 0);
   static_assert((Tag & kScoreBoundDivNorm) == 0);

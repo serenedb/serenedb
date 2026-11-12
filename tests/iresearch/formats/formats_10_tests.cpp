@@ -53,6 +53,7 @@ class Format10TestCase : public tests::FormatTestCase {
  protected:
   void PostingsSeek(const std::vector<std::pair<irs::doc_id_t, uint32_t>>& docs,
                     irs::IndexFeatures features) {
+    irs::PlanMemory memory;
     irs::FieldMeta field;
     field.index_features = features;
     auto dir = get_directory(*this);
@@ -63,11 +64,13 @@ class Format10TestCase : public tests::FormatTestCase {
 
     // write postings for field
     {
+      auto budget = irs::EmptyBudget();
       irs::FlushState state{
         .dir = dir.get(),
         .name = "segment_name",
         .doc_count = docs.back().first + 1,
         .index_features = field.index_features,
+        .budget = budget,
       };
 
       auto out = dir->create("attributes");
@@ -136,7 +139,7 @@ class Format10TestCase : public tests::FormatTestCase {
         const auto handles = reader.Handles();
 
         auto assert_docs = [&](size_t seed, size_t inc) {
-          auto actual = tests::MakeSeekPostings(read_meta, handles,
+          auto actual = tests::MakeSeekPostings(memory, read_meta, handles,
                                                 field.index_features, features,
                                                 /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));
@@ -168,9 +171,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // next + seek to eof
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_TRUE(!irs::doc_limits::eof(it->Next()));
           ASSERT_EQ(docs.front().first, it->Value());
@@ -193,7 +197,7 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           for (auto doc = docs.rbegin(), end = docs.rend(); doc != end; ++doc) {
             TestPostings expected(docs, field.index_features);
-            auto it = tests::MakeSeekPostings(read_meta, handles,
+            auto it = tests::MakeSeekPostings(memory, read_meta, handles,
                                               field.index_features, features,
                                               /*has_score_bounds=*/false);
             ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
@@ -215,9 +219,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::invalid()
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_FALSE(
             irs::doc_limits::valid(it->Seek(irs::doc_limits::invalid())));
@@ -227,9 +232,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::eof()
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->Seek(irs::doc_limits::eof())));
           ASSERT_FALSE(!irs::doc_limits::eof(it->Next()));
@@ -255,11 +261,13 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // write postings
   {
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "segment_name",
       .doc_count = 100,
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create("attributes");
@@ -407,11 +415,13 @@ TEST_P(Format10TestCase, postings_read_write) {
 
   // write postings
   {
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "segment_name",
       .doc_count = 150,
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create("attributes");
@@ -548,12 +558,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "0",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -578,12 +590,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "1",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -607,12 +621,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "2",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -636,12 +652,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "3",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -664,12 +682,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "4",
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -692,10 +712,12 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
+    auto budget = irs::EmptyBudget();
     irs::FlushState state{
       .dir = &dir(),
       .name = "5",
       .doc_count = 10000,
+      .budget = budget,
     };
 
     auto out = dir().create(std::string("postings") + state.name.data());
@@ -732,10 +754,12 @@ TEST_P(Format10TestCase, ires336) {
   tests::FormatTestCase::Terms<decltype(terms.begin())> trms(
     terms.begin(), terms.end(), docs.begin(), docs.end());
 
+  auto budget = irs::EmptyBudget();
   irs::FlushState flush_state{
     .dir = dir.get(),
     .name = segment_name,
     .doc_count = 10000,
+    .budget = budget,
   };
 
   irs::FieldMeta field_meta;
@@ -755,7 +779,7 @@ TEST_P(Format10TestCase, ires336) {
   meta.name = segment_name;
 
   irs::IdxReader idx_reader{*dir, segment_name, nullptr};
-  irs::term_dict::FieldReader fr_obj{irs::IResourceManager::gNoop};
+  irs::term_dict::FieldReader fr_obj;
   auto* fr = &fr_obj;
   fr->prepare(
     irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
@@ -771,8 +795,9 @@ TEST_P(Format10TestCase, ires336) {
   const auto handles = field->Handles();
   const auto layout = field->meta().index_features;
   const bool bounds = field->HasScoreBounds();
+  irs::PlanMemory memory;
   auto make_docs = [&] {
-    return tests::MakeSeekPostings(term_meta, handles, layout,
+    return tests::MakeSeekPostings(memory, term_meta, handles, layout,
                                    irs::IndexFeatures::None, bounds);
   };
 
@@ -919,6 +944,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
   auto test_reset =
     [&](const std::vector<std::pair<irs::doc_id_t, uint32_t>>& docs,
         irs::IndexFeatures features) {
+      irs::PlanMemory memory;
       irs::FieldMeta field;
       field.index_features = features;
       auto dir = get_directory(*this);
@@ -928,11 +954,13 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
       // write postings
       {
+        auto budget = irs::EmptyBudget();
         irs::FlushState state{
           .dir = dir.get(),
           .name = "segment_name",
           .doc_count = docs.back().first + 1,
           .index_features = field.index_features,
+          .budget = budget,
         };
 
         auto out = dir->create("attributes");
@@ -978,7 +1006,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         for (size_t i = 0; i < docs.size();
              i += std::max<size_t>(1, docs.size() / 10)) {
-          auto actual = tests::MakeSeekPostings(read_meta, handles,
+          auto actual = tests::MakeSeekPostings(memory, read_meta, handles,
                                                 field.index_features, features,
                                                 /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));

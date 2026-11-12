@@ -128,8 +128,7 @@ std::map<irs::doc_id_t, irs::score_t> PerNodeScorerTest::Score(
   auto index = open_reader();
   EXPECT_EQ(1, index->size());
 
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, *index, &root, counter};
+  tests::PreparedFilter prepared{filter, *index, &root};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);

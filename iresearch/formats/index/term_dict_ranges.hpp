@@ -27,14 +27,17 @@
 
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/posting/writer.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
 class RangeWriter final {
  public:
+  static uint64_t Bound(uint64_t docs) noexcept;
+
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
-  void Begin(PostingsWriter& pw, uint64_t docs) noexcept;
+  void Begin(PostingsWriter& pw, uint64_t docs, MemoryBudget& budget);
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
   void Write(bstring& region, size_t prefix,
@@ -44,7 +47,7 @@ class RangeWriter final {
  private:
   struct Piece {
     bstring key;
-    std::vector<doc_id_t> docs;
+    TrackedVector<doc_id_t> docs;
     PostingMeta meta;
     std::array<byte_type, PostingMeta::kInlineBytes> inline_bytes{};
     uint64_t docs_count = 0;

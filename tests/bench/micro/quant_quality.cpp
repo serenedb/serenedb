@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_split.h>
 #include <faiss/impl/ProductQuantizer.h>
 #include <fast_float/fast_float.h>
@@ -33,6 +34,8 @@
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/ivf/quantizer.hpp>
 #include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <limits>
 #include <numbers>
 #include <random>
@@ -463,6 +466,9 @@ int Main(int argc, char** argv) {
   const bool l2 = std::string_view{argv[4]} == "l2";
   const auto n = ParseNumber<size_t>(argv[5]);
   const auto nq = ParseNumber<size_t>(argv[6]);
+  auto& engine = DuckDBEngine::Instance();
+  engine.Initialize();
+  absl::Cleanup shutdown = [&] { engine.Shutdown(); };
   const VectorMetric metric =
     l2 ? VectorMetric::L2Sqr : VectorMetric::InnerProduct;
 
@@ -646,7 +652,7 @@ int Main(int argc, char** argv) {
     ParallelFor(nq, [&](size_t qi) {
       const std::span<const float> q{queries.data() + qi * d, d};
       auto cb = stats->MakeCodebook(q);
-      auto reader = MakeQuantizerReader(cb);
+      auto reader = MakeQuantizerReader(nullptr, cb);
       reader->StartCluster(centroid.empty() ? nullptr : centroid.data());
       std::vector<float> s(n);
       const auto t0 = std::chrono::steady_clock::now();
@@ -666,11 +672,13 @@ int Main(int argc, char** argv) {
       const size_t kBatches = 256;
       uint64_t total = 0;
       uint64_t setup = 0;
+      PlanMemory plan;
       for (size_t qi = 0; qi < kQ; ++qi) {
         const std::span<const float> q{queries.data() + (qi % nq) * d, d};
         const auto s0 = std::chrono::steady_clock::now();
+        plan.Rewind();
         auto cb = stats->MakeCodebook(q);
-        auto reader = MakeQuantizerReader(cb);
+        auto reader = MakeQuantizerReader(&plan, cb);
         reader->StartCluster(centroid.empty() ? nullptr : centroid.data());
         setup += static_cast<uint64_t>(
           std::chrono::duration_cast<std::chrono::nanoseconds>(

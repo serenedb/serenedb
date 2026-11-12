@@ -40,6 +40,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -108,7 +109,7 @@ struct HnswCodeDist {
 
 struct HnswColumnDist {
   detail::RawVectorReader* reader;
-  std::vector<doc_id_t>* docs;
+  memory::ArenaVector<doc_id_t>* docs;
 
   void Batch(std::span<const uint32_t> ids, score_t* out,
              score_t = kHnswNoThreshold) {
@@ -121,12 +122,13 @@ struct HnswColumnDist {
 };
 
 template<typename Fn>
-void WithHnswDist(const HnswData& data, std::span<const float> query,
+void WithHnswDist(PlanMemory& memory, const HnswData& data,
+                  std::span<const float> query,
                   const std::shared_ptr<const QuantizerCodebook>& codebook,
                   const PanoramaQuery* panorama, VectorMetric metric,
                   uint32_t d, uint32_t record_size, Fn&& fn) {
   if (codebook) {
-    auto reader = MakeQuantizerReader(codebook);
+    auto reader = MakeQuantizerReader(&memory, codebook);
     reader->StartCluster(data.centroid.empty() ? nullptr
                                                : data.centroid.data());
     HnswCodeDist dist{.codes = data.codes.data(),
@@ -162,12 +164,13 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     });
 }
 
-std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const SubReader& segment) {
+memory::ArenaVector<ScoreDoc> CollectHits(MemoryArena& arena,
+                                          std::span<const HnswCandidate> found,
+                                          const SubReader& segment) {
   const auto it_mask = segment.MaskedDocs();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
-  std::vector<ScoreDoc> hits;
+  memory::ArenaVector<ScoreDoc> hits{arena};
   hits.reserve(found.size());
   for (const auto& c : found) {
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
@@ -183,12 +186,12 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   return hits;
 }
 
-std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const SubReader& segment,
-                                  std::span<const score_t> spreads,
-                                  std::vector<score_t>& spread_out) {
+memory::ArenaVector<ScoreDoc> CollectHits(
+  MemoryArena& arena, std::span<const HnswCandidate> found,
+  const SubReader& segment, std::span<const score_t> spreads,
+  memory::ArenaVector<score_t>& spread_out) {
   SDB_ASSERT(spreads.size() == found.size());
-  std::vector<uint32_t> order(found.size());
+  memory::ArenaVector<uint32_t> order(found.size(), arena);
   std::iota(order.begin(), order.end(), 0);
   absl::c_sort(order, [&](uint32_t l, uint32_t r) {
     return found[l].node < found[r].node;
@@ -196,7 +199,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   const auto it_mask = segment.MaskedDocs();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
-  std::vector<ScoreDoc> hits;
+  memory::ArenaVector<ScoreDoc> hits{arena};
   hits.reserve(found.size());
   spread_out.clear();
   spread_out.reserve(found.size());
@@ -214,10 +217,13 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
 }
 
 struct WalkFilterScratch {
+  explicit WalkFilterScratch(MemoryArena& arena)
+    : known{arena}, pass{arena}, ask{arena}, keep{arena} {}
+
   HnswVisited known;
   HnswVisited pass;
-  std::vector<doc_id_t> ask;
-  std::vector<uint32_t> keep;
+  memory::ArenaVector<doc_id_t> ask;
+  memory::ArenaVector<uint32_t> keep;
   uint64_t asked = 0;
   uint64_t admitted = 0;
 };
@@ -485,9 +491,12 @@ void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
   s.batch.clear();
 }
 
-std::vector<uint32_t> AdmittedSeeds(detail::LazyBitset& set,
-                                    const HnswGraph& graph, uint32_t want) {
-  std::vector<uint32_t> seeds;
+memory::ArenaVector<uint32_t> AdmittedSeeds(MemoryArena& arena,
+                                            detail::LazyBitset& set,
+                                            const HnswGraph& graph,
+                                            uint32_t want) {
+  memory::ArenaVector<uint32_t> seeds{arena};
+  seeds.reserve(want);
   const auto size = static_cast<uint64_t>(graph.Size());
   for (uint32_t k = 0; k < want; ++k) {
     const auto from =
@@ -518,10 +527,10 @@ auto SetDocs(detail::LazyBitset& set) {
   };
 }
 
-auto IndexDocs(const QueryBuilder& inner, detail::TableFilter* table,
-               doc_id_t docs_count) {
-  return [&inner, table, docs_count](auto&& visit) {
-    const auto root = docs::MakeRoot(inner, {});
+auto IndexDocs(PlanMemory& memory, const QueryBuilder& inner,
+               detail::TableFilter* table, doc_id_t docs_count) {
+  return [&memory, &inner, table, docs_count](auto&& visit) {
+    const auto root = docs::MakeRoot(inner, {.memory = memory});
     SlackBuf<doc_id_t, detail::kWindowDocs, doc_limits::kDocsSlack> docs;
     const auto end = doc_limits::min() + docs_count;
     for (auto min = doc_limits::min(); min < end; min += detail::kWindowDocs) {
@@ -537,12 +546,16 @@ auto IndexDocs(const QueryBuilder& inner, detail::TableFilter* table,
   };
 }
 
+inline constexpr size_t kHnswScanBatch = 256;
+
 template<typename Dist, typename Docs>
 void HnswScanTopK(Docs&& docs, const HnswGraph& graph, Dist& dist, uint32_t ef,
                   HnswSearchScratch& s) {
-  constexpr size_t kBatch = 256;
+  constexpr size_t kBatch = kHnswScanBatch;
   s.nearest.clear();
   s.batch.clear();
+  s.nearest.reserve(size_t{ef} + 1);
+  s.batch.reserve(kBatch);
   size_t limit = std::min<size_t>(kBatch, ef);
   docs([&](doc_id_t doc) {
     const auto node = static_cast<uint32_t>(doc - doc_limits::min());
@@ -562,7 +575,7 @@ void HnswScanTopK(Docs&& docs, const HnswGraph& graph, Dist& dist, uint32_t ef,
 
 }  // namespace
 
-HnswQuery::HnswQuery(const SubReader& segment,
+HnswQuery::HnswQuery(QueryMemory& memory, const SubReader& segment,
                      std::shared_ptr<const HnswData> data,
                      const VectorFilterOptions& opts, uint32_t record_size,
                      HnswSearchLimits limits, score_t boost,
@@ -578,7 +591,7 @@ HnswQuery::HnswQuery(const SubReader& segment,
                            ? _index_only->Postings()
                            : segment.docs_count() - segment.live_docs_count()},
     _exact{segment.Column(opts.column_id)},
-    _query{opts.query.size(),
+    _query{memory.Arena(), opts.query.size(),
            [&](float& slot, size_t i) noexcept { slot = opts.query[i]; }},
     _metric{opts.metric},
     _d{static_cast<uint32_t>(opts.query.size())},
@@ -596,10 +609,22 @@ HnswQuery::HnswQuery(const SubReader& segment,
   if (_metric == VectorMetric::Cosine) {
     duckdb::L2NormalizeOp::Operation(_query.data(), _query.data(), _d);
   }
+  std::span<const float> query = _query;
+  if (_data->rotation) {
+    _panorama =
+      RotateQuery(_cache, _data->rotation, _data->byte_rotation, _query);
+    query = _panorama->rotated;
+  }
+  if (_data->stats) {
+    _codebook = _ef == 0 ? _data->stats->MakeRangeCodebook(query)
+                         : QueryCodebook(_cache, *_data->stats, query);
+    SDB_ASSERT(_codebook);
+  }
 }
 
 template<typename Dist>
-void HnswQuery::RunRadius(Dist& dist, detail::TableFilter* table,
+void HnswQuery::RunRadius(PlanMemory& memory, Dist& dist,
+                          detail::TableFilter* table,
                           HnswSearchScratch& scratch) const {
   ResolveBool(_inclusive, [&]<bool Inclusive>() {
     if (!_inner && !table) {
@@ -607,15 +632,17 @@ void HnswQuery::RunRadius(Dist& dist, detail::TableFilter* table,
                                   scratch);
       return;
     }
-    auto set = detail::MakeDocSet(
-      _inner.get(), static_cast<doc_id_t>(_segment.docs_count()), table);
+    auto set =
+      detail::MakeDocSet(memory, _inner.get(),
+                         static_cast<doc_id_t>(_segment.docs_count()), table);
     HnswSearchRadius<Inclusive>(_data->graph, dist, _threshold, _max_results,
                                 scratch, AdmitIn(set));
   });
 }
 
 template<typename Dist>
-void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
+void HnswQuery::RunFiltered(PlanMemory& memory, Dist& dist,
+                            detail::TableFilter* table,
                             detail::TableFilter* columns,
                             HnswSearchScratch& scratch) const {
   SDB_ASSERT(_ef != 0 && (_inner || table));
@@ -658,7 +685,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
       matches = expected(docs_count);
     } else if (!table && inner->Kind() == QueryKind::Boolean &&
                inner->EstimateMin() != inner->EstimateMax()) {
-      probe.emplace(detail::MakeDocSet(inner, docs_count, nullptr));
+      probe.emplace(detail::MakeDocSet(memory, inner, docs_count, nullptr));
       matches = most = probe->Count();
     } else {
       matches = expected(inner->EstimateMatches());
@@ -671,7 +698,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     probe.reset();
   }
   auto set = probe ? std::move(*probe)
-                   : detail::MakeDocSet(inner, docs_count,
+                   : detail::MakeDocSet(memory, inner, docs_count,
                                         plan.ask_per_hop ? nullptr : table);
   const auto admit = AdmitIn(set);
   uint64_t budget = matches;
@@ -693,7 +720,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     return done;
   };
   if (plan.ask_per_hop) {
-    WalkFilterScratch walk_scratch;
+    WalkFilterScratch walk_scratch{memory.Scratch()};
     const WalkFilter walk_filter{
       *table, docs_count, HnswWalkVisits(_ef, graph.M0()),
       by_columns && _column_filter == HnswColumnFilter::Auto
@@ -710,18 +737,18 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
       SDB_IF_FAILURE("irs::HnswColumnsStalled") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
-      RunFiltered(dist, index_table, nullptr, scratch);
+      RunFiltered(memory, dist, index_table, nullptr, scratch);
       return;
     }
     table->Rewind();
-    set = detail::MakeDocSet(inner, docs_count, table);
+    set = detail::MakeDocSet(memory, inner, docs_count, table);
   } else if (run(admit)) {
     return;
   } else if (((plan.two_hop && plan.walk == HnswWalk::TwoHop) ||
               plan.walk == HnswWalk::Adaptive) &&
              scratch.scored < budget) {
     budget -= scratch.scored;
-    const auto seeds = AdmittedSeeds(set, graph, 2 * _ef);
+    const auto seeds = AdmittedSeeds(memory.Scratch(), set, graph, 2 * _ef);
     if (walked(HnswSearchTopKFrom<HnswWalk::TwoHop>(graph, dist, _ef, scratch,
                                                     seeds, admit, budget))) {
       return;
@@ -731,27 +758,11 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   if (inner && set.Filled() == doc_limits::min()) {
-    HnswScanTopK(IndexDocs(*inner, table, docs_count), graph, dist, _ef,
+    HnswScanTopK(IndexDocs(memory, *inner, table, docs_count), graph, dist, _ef,
                  scratch);
   } else {
     HnswScanTopK(SetDocs(set), graph, dist, _ef, scratch);
   }
-}
-
-void HnswQuery::PrepareDistance() const {
-  absl::call_once(_distance_prepared, [&] {
-    std::span<const float> query = _query;
-    if (_data->rotation) {
-      _panorama =
-        RotateQuery(_cache, _data->rotation, _data->byte_rotation, _query);
-      query = _panorama->rotated;
-    }
-    if (_data->stats) {
-      _codebook = _ef == 0 ? _data->stats->MakeRangeCodebook(query)
-                           : QueryCodebook(_cache, *_data->stats, query);
-      SDB_ASSERT(_codebook);
-    }
-  });
 }
 
 bool HnswQuery::ScansByColumn() const {
@@ -775,19 +786,20 @@ bool HnswQuery::ScansByColumn() const {
             .walks;
 }
 
-void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
+void HnswQuery::ScanColumn(PlanMemory& memory, HnswSearchScratch& s) const {
   SDB_ASSERT(_inner);
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
   detail::RawVectorReader reader{*_exact, *_segment.GetColReader(), _d};
   reader.SetQuery(_query, _metric);
-  std::vector<doc_id_t> docs;
+  memory::ArenaVector<doc_id_t> docs{memory.Scratch()};
+  docs.reserve(kHnswScanBatch);
   HnswColumnDist dist{.reader = &reader, .docs = &docs};
-  HnswScanTopK(IndexDocs(*_inner, nullptr, docs_count), _data->graph, dist, _ef,
-               s);
+  HnswScanTopK(IndexDocs(memory, *_inner, nullptr, docs_count), _data->graph,
+               dist, _ef, s);
 }
 
 void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
-                      std::vector<score_t>& spreads) const {
+                      memory::ArenaVector<score_t>& spreads) const {
   auto& nearest = scratch.nearest;
   const size_t n = nearest.size();
   if (n == 0) {
@@ -817,6 +829,7 @@ void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
   }
   size_t kept = 0;
   spreads.clear();
+  spreads.reserve(n);
   for (size_t i = 0; i < n; ++i) {
     const auto spread = z * errors[i];
     if (estimates[i] + spread < floor) {
@@ -828,11 +841,12 @@ void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
   nearest.resize(kept);
 }
 
-std::vector<ScoreDoc> HnswQuery::RunSearch(
-  detail::TableFilter* table, detail::TableFilter* columns,
-  std::vector<score_t>* spreads) const {
-  HnswSearchScratch scratch;
-  std::vector<score_t> widened;
+memory::ArenaVector<ScoreDoc> HnswQuery::RunSearch(
+  PlanMemory& memory, detail::TableFilter* table, detail::TableFilter* columns,
+  memory::ArenaVector<score_t>* spreads) const {
+  auto& scratch_arena = memory.Scratch();
+  HnswSearchScratch scratch{scratch_arena};
+  memory::ArenaVector<score_t> widened{scratch_arena};
   bool wide = false;
   if (table && !table->Foldable()) {
     table = nullptr;
@@ -841,16 +855,15 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
     columns = nullptr;
   }
   if (!table && ScansByColumn()) {
-    ScanColumn(scratch);
-    return CollectHits(scratch.nearest, _segment);
+    ScanColumn(memory, scratch);
+    return CollectHits(scratch_arena, scratch.nearest, _segment);
   }
-  PrepareDistance();
-  WithHnswDist(*_data, _query, _codebook, _panorama.get(), _metric, _d,
+  WithHnswDist(memory, *_data, _query, _codebook, _panorama.get(), _metric, _d,
                _record_size, [&](auto& dist) {
                  if (_ef == 0) {
-                   RunRadius(dist, table, scratch);
+                   RunRadius(memory, dist, table, scratch);
                  } else if (_inner || table) {
-                   RunFiltered(dist, table, columns, scratch);
+                   RunFiltered(memory, dist, table, columns, scratch);
                  } else {
                    HnswSearchTopK(_data->graph, dist, _ef, scratch);
                  }
@@ -861,10 +874,11 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
                    }
                  }
                });
-  auto hits = wide ? CollectHits(scratch.nearest, _segment, widened, *spreads)
-                   : CollectHits(scratch.nearest, _segment);
+  auto hits = wide ? CollectHits(scratch_arena, scratch.nearest, _segment,
+                                 widened, *spreads)
+                   : CollectHits(scratch_arena, scratch.nearest, _segment);
   if (_ef == 0 && _data->stats && _exact && !hits.empty()) {
-    RerankExactDistances(_segment, *_exact, _d, _query, _metric, hits);
+    RerankExactDistances(memory, _segment, *_exact, _d, _query, _metric, hits);
     std::erase_if(hits, [&](const ScoreDoc& hit) {
       return _inclusive ? hit.score < _threshold : hit.score <= _threshold;
     });

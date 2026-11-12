@@ -39,6 +39,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace duckdb {
 
@@ -56,7 +57,7 @@ class IvfTermIterator;
 struct BuiltIvf {
   bool empty = true;
   uint32_t d = 0;
-  std::vector<doc_id_t> cluster_docs;
+  TrackedVector<doc_id_t> cluster_docs;
   std::vector<uint64_t> cluster_offsets;
   irs::containers::FlatHashMap<uint32_t, std::span<const float>>
     cluster_centroids;
@@ -69,10 +70,14 @@ class IvfBuilder {
  public:
   explicit IvfBuilder(AnnInfo info) : _info{std::move(info)} {}
 
+  AnnFlushBound Bound(uint64_t rows) const;
+
   BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
-                   QuantizerWriter* qw) const;
+                   QuantizerWriter* qw, MemoryBudget* budget) const;
 
  private:
+  CentroidsBuildParams CentroidParams(MemoryBudget* budget) const noexcept;
+
   AnnInfo _info;
 };
 

@@ -13,7 +13,7 @@ This page contains SereneDB's built-in limit values. To check the value of a set
 | Array size | 100000 | - | The size `n` of a fixed-size array type `type[n]`; a list (`type[]`) has no such limit. |
 | BLOB size | 4 GB | - | |
 | Memory allocation for a vector | 128 GB | - | |
-| Memory use | 80% of RAM | [`memory_limit`](./pragmas.md#memory-limit) | Note: This limit only applies to the buffer manager. |
+| Memory use | 80% of RAM | [`memory_limit`](./pragmas.md#memory-limit) | Covers the buffer manager and SereneDB's memory that grows with the data: search index writes and the memory they reserve for their refresh, builds, merges and queries, ranked and vector search candidates and AI aggregates. A statement that needs more fails with an out-of-memory error; leave some headroom for what it doesn't count, such as connection buffers. |
 | Message from a client | 64 MiB | `--pg_max_message_bytes` server flag | One message, such as the text of a statement or a bound parameter value. A larger message closes the connection with `incoming message exceeds maximum size`. `COPY ... FROM STDIN` streams its data and is not limited. |
 | Nesting depth | Stack of the thread | - | A statement whose expressions, subqueries, joins, set operations or types nest deeper than the stack of the thread running it can hold fails with `stack depth limit exceeded` (SQLSTATE `54001`), as does nesting that builds up while it runs, such as a recursive macro's expansion or a nested JSON document. |
 | Row sent to a client | 2147483647 bytes | - | A larger row fails with `row exceeds maximum allowed message length (2147483647 bytes)`. In text format, a `BLOB` takes about twice its size, as `bytea_output` is `hex`. |

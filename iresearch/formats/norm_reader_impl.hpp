@@ -37,6 +37,7 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -537,6 +538,15 @@ inline memory::managed_ptr<NormReader> MakePersistedNormReader(
     return memory::make_managed<PersistedNormReader<false>>(column);
   }
   return memory::make_managed<PersistedNormReader<true>>(column);
+}
+
+inline memory::managed_ptr<NormReader> MakePersistedNormReader(
+  PlanMemory& memory, const NormColumnReader& column) {
+  SDB_ASSERT(column.RegionCount() > 0);
+  if (column.RegionCount() == 1) {
+    return memory.Make<NormReader, PersistedNormReader<false>>(column);
+  }
+  return memory.Make<NormReader, PersistedNormReader<true>>(column);
 }
 
 }  // namespace irs

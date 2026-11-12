@@ -32,10 +32,12 @@
 
 namespace irs::detail::builder {
 
-extern template lead::Node::ptr MakeRequired<lead::Family, utils::Empty>(
+extern template lead::Node::ptr
+MakeRequired<lead::Family, lead::Family::DocsContext>(
   std::span<const PostingClause>, std::span<const QueryBuilder::ptr>,
   std::span<const PostingClause>, std::span<const QueryBuilder::ptr>, Terms,
-  uint32_t, const SubReader&, const utils::Empty&, ScoreMergeType, score_t);
+  uint32_t, const SubReader&, const lead::Family::DocsContext&, ScoreMergeType,
+  score_t);
 
 extern template lead::Node::ptr MakeRequired<lead::Family, ScoredCtx>(
   std::span<const PostingClause>, std::span<const QueryBuilder::ptr>,
@@ -87,6 +89,7 @@ Result<Family> MakeExclusion(const BooleanQuery& query, const Ctx& ctx,
       const auto recipe = RecipeOf<Family>(segment, ctx);
       return ResolveInput(doc, [&]<typename Input> -> Result<Family> {
         return BuildExcludesOf<Result<Family>, Input>(
+          Family::MemoryOf(ctx),
           Family::kRoot ? ExcludeUse::PerBlock : ExcludeUse::PerDoc, excludes,
           exclude_filters, nullptr, segment, candidates, candidates,
           [&]<typename Exclude>(auto&& negated) -> Result<Family> {
@@ -115,9 +118,9 @@ Result<Family> MakeExclusion(const BooleanQuery& query, const Ctx& ctx,
       return {};
     }
     if constexpr (Family::kRoot) {
-      return MakeSparseExclusionOf<Family>(std::move(include), excludes,
-                                           exclude_filters, segment, candidates,
-                                           ctx, merge, Scored{merge, 0});
+      return MakeSparseExclusionOf<Family>(
+        std::move(include), excludes, exclude_filters, segment, candidates, ctx,
+        merge, Scored{&Family::MemoryOf(ctx), merge, 0});
     } else {
       return MakeSparseExclusionOf<Family>(std::move(include), excludes,
                                            exclude_filters, segment, candidates,
@@ -155,7 +158,8 @@ Result<Family> MakeExclusion(const BooleanQuery& query, const Ctx& ctx,
     }
     auto include = MakeRequired<lead::Family>(
       must, must_filters, should, should_filters, Terms::Mixed, min_match,
-      segment, utils::Empty{}, ScoreMergeType::Noop, score_t{0});
+      segment, lead::Family::DocsContext{Family::MemoryOf(ctx)},
+      ScoreMergeType::Noop, score_t{0});
     if (!include) {
       return {};
     }

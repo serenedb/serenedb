@@ -30,6 +30,7 @@
 #include <vector>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -41,12 +42,14 @@
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
-class AnnWriter;
 class IdxWriter;
 struct AnnBuildEnv;
+
+AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows);
 
 class ColWriter final {
  public:
@@ -60,6 +63,11 @@ class ColWriter final {
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
 
   void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
+
+  void SetBudget(MemoryBudget& budget) noexcept { _budget = &budget; }
+  MemoryBudget& Budget() const noexcept { return *_budget; }
+
+  static constexpr size_t kSealBound = 2 * DEFAULT_BLOCK_ALLOC_SIZE;
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
@@ -78,6 +86,8 @@ class ColWriter final {
   NormColumnWriter& StreamNormColumn(field_id id);
 
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
+
+  AnnFlushBound AnnBound(uint64_t rows) const;
 
   bool Commit(uint64_t target_row);
   bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);
@@ -112,6 +122,8 @@ class ColWriter final {
   duckdb::DatabaseInstance* _db;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
+  duckdb::TempBufferPoolReservation _own_budget{EmptyBudget()};
+  MemoryBudget* _budget = &_own_budget;
   IndexOutput::ptr _out;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;

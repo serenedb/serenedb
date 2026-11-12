@@ -1,0 +1,15 @@
+# Four connections insert, update and delete in a search table with an
+# inverted index and insert into another search table at once, under a
+# memory_limit 2 MB above the memory in use, so that some of them run out of
+# memory: every statement either succeeds or fails with out-of-memory and
+# leaves nothing behind, the index stays in sync with its table, a large DELETE
+# holds no memory once refreshed, CHECKPOINT works, and a restart keeps it.
+
+control substitution on
+
+system ok
+port=$(tr '\0' '\n' < /proc/$PPID/cmdline | grep -A1 -x -- --port | tail -1); python3 recovery/memory_pressure.py "$port" '$__DATABASE__' '$__TEST_DIR__' concurrent 2
+----
+concurrent: ok
+released: ok
+restart: ok

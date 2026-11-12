@@ -76,9 +76,61 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   return nullptr;
 }
 
+uint32_t QuantizerRecordSize(const AnnInfo::Quantizer& quant, uint32_t d,
+                             VectorMetric metric, bool row_major) {
+  switch (quant.kind) {
+    case VectorQuantization::None:
+      return quantizers::PanoramaTrainedRecordSize(metric, d);
+    case VectorQuantization::SQ8:
+    case VectorQuantization::SQ4:
+    case VectorQuantization::USQ8:
+    case VectorQuantization::USQ4:
+    case VectorQuantization::FP16:
+    case VectorQuantization::BF16:
+      return quantizers::ScalarRecordSize(d, quant.kind);
+    case VectorQuantization::PQ:
+      return quantizers::PqRecordSize(metric, quant.pq_m, row_major);
+    case VectorQuantization::TQ:
+      return quantizers::TurboQuantRecordSize(metric, d, quant.nb_bits,
+                                              quant.half_bit, row_major);
+    case VectorQuantization::RaBitQ:
+      return quantizers::RaBitQRecordSize(d, quant.nb_bits, row_major);
+    case VectorQuantization::BQ:
+      return quantizers::BinaryRecordSize(d, quant.nb_bits, quant.half_bit);
+    case VectorQuantization::OSQ:
+      return quantizers::OsqRecordSize(d, quant.nb_bits);
+  }
+  return 0;
+}
+
+size_t QuantizerTrainSamples(const AnnInfo::Quantizer& quant, uint32_t d,
+                             VectorMetric metric, size_t rows,
+                             bool row_major) noexcept {
+  switch (quant.kind) {
+    case VectorQuantization::None:
+      return quantizers::PanoramaTrainSamples(metric, d, rows);
+    case VectorQuantization::PQ:
+      return quantizers::PqTrainSamples(rows, row_major);
+    case VectorQuantization::SQ8:
+    case VectorQuantization::SQ4:
+    case VectorQuantization::USQ8:
+    case VectorQuantization::USQ4:
+    case VectorQuantization::FP16:
+    case VectorQuantization::BF16:
+      return quantizers::ScalarTrainSamples(quant.kind);
+    case VectorQuantization::BQ:
+      return QuantizerWriter::kTrainStreaming;
+    case VectorQuantization::TQ:
+    case VectorQuantization::RaBitQ:
+    case VectorQuantization::OSQ:
+      return 0;
+  }
+  return 0;
+}
+
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric, bool row_major) {
+  VectorMetric metric, bool row_major, MemoryBudget* budget) {
   switch (quant) {
     case VectorQuantization::None:
       return quantizers::MakePanoramaStats(metric, d, stats);
@@ -90,7 +142,7 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
     case VectorQuantization::BF16:
       return quantizers::MakeScalarStats(metric, d, quant, stats);
     case VectorQuantization::PQ:
-      return quantizers::MakePqStats(metric, d, stats, row_major);
+      return quantizers::MakePqStats(metric, d, stats, row_major, budget);
     case VectorQuantization::TQ:
       return quantizers::MakeTurboQuantStats(metric, d, stats, row_major);
     case VectorQuantization::RaBitQ:
@@ -115,9 +167,9 @@ void QuantizerReader::ComputeGathered(const byte_type* base,
   ComputeBlock(_gather, threshold, out);
 }
 
-std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  const std::shared_ptr<const QuantizerCodebook>& codebook) {
-  return codebook ? codebook->MakeReader() : nullptr;
+QuantizerReader::ptr MakeQuantizerReader(
+  PlanMemory* plan, const std::shared_ptr<const QuantizerCodebook>& codebook) {
+  return codebook ? codebook->MakeReader(plan) : nullptr;
 }
 
 }  // namespace irs

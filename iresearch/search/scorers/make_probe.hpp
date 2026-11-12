@@ -21,30 +21,30 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <utility>
-#include <vector>
 
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::detail {
 
-ScoreFunction MakeProbeScore(ScoreMergeType inner, ScoreFunction&& required,
-                             std::vector<ScoreFunction>&& probed,
-                             ScoreMask* held, score_t constant = 0);
+ScoreFunction MakeProbeScore(PlanMemory& memory, ScoreMergeType inner,
+                             ScoreFunction&& required,
+                             std::span<ScoreFunction> probed, ScoreMask* held,
+                             score_t constant = 0);
 
 template<typename Leaves, typename Held>
-ScoreFunction MakeProbeOf(ScoreMergeType inner, Leaves& leaves, Held& held,
-                          score_t constant = 0) {
+ScoreFunction MakeProbeOf(PlanMemory& memory, ScoreMergeType inner,
+                          Leaves& leaves, Held& held, score_t constant = 0) {
   const auto count = leaves.size();
   SDB_ASSERT(held.size() == count);
-  std::vector<ScoreFunction> probed;
-  probed.reserve(count);
-  for (size_t i = 0; i != count; ++i) {
-    probed.emplace_back(leaves[i].PrepareScore());
-  }
-  return MakeProbeScore(inner, ScoreFunction::Default(), std::move(probed),
-                        held.data(), constant);
+  containers::Fixed<ScoreFunction> probed{
+    memory.Scratch(), count,
+    [&](ScoreFunction& slot, size_t i) { slot = leaves[i].PrepareScore(); }};
+  return MakeProbeScore(memory, inner, ScoreFunction::Default(),
+                        {probed.data(), probed.size()}, held.data(), constant);
 }
 
 }  // namespace irs::detail

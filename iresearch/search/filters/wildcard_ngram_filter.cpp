@@ -69,8 +69,8 @@ QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
     return QueryBuilder::Empty();
   }
   if (!matcher || !field_limits::valid(store_field_id)) {
-    auto query = memory::make_tracked<ApproxQuery>(ctx.memory, segment,
-                                                   std::move(approx), boost);
+    auto query =
+      ctx.memory.Make<ApproxQuery>(segment, std::move(approx), boost);
     query->SetStats(ctx.Record());
     return query;
   }
@@ -78,8 +78,8 @@ QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
   if (!col_reader || !col_reader->Column(store_field_id)) {
     return QueryBuilder::Empty();
   }
-  auto query = memory::make_tracked<WildcardNGramQuery>(
-    ctx.memory, segment, matcher, std::move(approx), store_field_id, boost);
+  auto query = ctx.memory.Make<WildcardNGramQuery>(
+    segment, matcher, std::move(approx), store_field_id, boost);
   query->SetStats(ctx.Record());
   return query;
 }
@@ -221,9 +221,8 @@ class GramQueryPreparer {
 
   BooleanBuilder MakeBuilder(uint32_t min_should_match) const {
     return {
-      _segment,         _ctx.memory,         min_should_match,
-      _sub_ctx.boost,   ScoreMergeType::Sum, nullptr,
-      _ctx.needs_terms,
+      _ctx.memory,         _segment, min_should_match, _sub_ctx.boost,
+      ScoreMergeType::Sum, nullptr,  _ctx.needs_terms,
     };
   }
 

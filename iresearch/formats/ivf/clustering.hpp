@@ -30,6 +30,7 @@
 #include "faiss/VectorTransform.h"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -58,7 +59,11 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   uint32_t seed, uint32_t niter = 8,
                                   uint32_t nredo = 1,
                                   ClusteringAlgo algo = ClusteringAlgo::Auto,
-                                  const float* rotation = nullptr);
+                                  const float* rotation = nullptr,
+                                  MemoryBudget* budget = nullptr);
+
+size_t TrainCentroidsBound(VectorMetric metric, size_t n, uint32_t k,
+                           uint32_t d) noexcept;
 
 void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
                           size_t d, std::span<float> data,

@@ -41,14 +41,12 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/node_hash_map.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs::term_dict {
 
 class FieldReader final {
  public:
-  explicit FieldReader(IResourceManager& rm) noexcept : _rm{&rm} {}
-  ~FieldReader();
+  FieldReader() = default;
 
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
@@ -63,12 +61,6 @@ class FieldReader final {
   const PostingsReader& Postings() const noexcept { return _pr; }
   const IndexInput& Input() const noexcept { return *_in; }
   const byte_type* Base() const noexcept { return _base; }
-  void Account(uint64_t bytes) {
-    if (bytes != 0) {
-      _rm->Increase(bytes);
-      _bytes += bytes;
-    }
-  }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   uint32_t BlockCount() const noexcept { return _block_count; }
   uint64_t PageOffset(size_t block) const noexcept {
@@ -120,7 +112,6 @@ class FieldReader final {
   PostingsReader _pr;
   IndexInput::ptr _in;
   const byte_type* _base = nullptr;
-  IResourceManager* _rm;
   std::vector<SpanningBlock> _spans;
   Separators _separators;
   InlinePages _inline_pages;
@@ -134,7 +125,6 @@ class FieldReader final {
   uint64_t _ranges_size = 0;
   uint32_t _block_count = 0;
   std::vector<PendingCopy> _pending;
-  uint64_t _bytes = 0;
 };
 
 inline const duckdb_fsst_decoder_t* TermReaderImpl::Fsst() const noexcept {

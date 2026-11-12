@@ -52,6 +52,8 @@
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/query_memory.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -59,8 +61,8 @@ struct IndexReader;
 struct PreparedStateVisitor;
 
 struct PrepareContext {
+  QueryMemory& memory;
   PrepareCollector* collector = nullptr;
-  IResourceManager& memory = IResourceManager::gNoop;
   const AttributeProvider* ctx = nullptr;
   const DocumentMaskBuilder* pending_docs_mask = nullptr;
   score_t boost = kNoBoost;
@@ -90,7 +92,7 @@ enum class QueryKind : uint32_t {
   Ann,
 };
 
-class QueryBuilder : public memory::Managed {
+class QueryBuilder : public memory::Managed, public memory::ArenaOnly {
  public:
   using ptr = memory::managed_ptr<const QueryBuilder>;
 

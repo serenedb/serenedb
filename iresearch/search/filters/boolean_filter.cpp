@@ -383,7 +383,7 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
                      : nullptr;
   const auto composite_boost = ctx.boost * GetBoost();
 
-  BooleanBuilder builder{segment,         ctx.memory,  _min_should_match,
+  BooleanBuilder builder{ctx.memory,      segment,     _min_should_match,
                          composite_boost, _merge_type, compound,
                          ctx.needs_terms};
 

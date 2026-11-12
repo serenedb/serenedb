@@ -37,6 +37,7 @@
 #include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -72,7 +73,9 @@ struct TermEq {
 };
 
 template<typename T>
-using TermMap = irs::containers::NodeHashMap<bstring, T, TermHash, TermEq>;
+using TermMap =
+  irs::containers::NodeHashMap<bstring, T, TermHash, TermEq,
+                               TrackedAllocator<std::pair<const bstring, T>>>;
 
 struct TermCollector {
   void Collect(const PostingMeta& meta) noexcept {

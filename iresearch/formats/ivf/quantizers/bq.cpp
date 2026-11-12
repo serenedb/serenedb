@@ -24,6 +24,7 @@
 #include <pcg_random.hpp>
 
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -649,7 +650,7 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const std::shared_ptr<const BinaryQuantizerStats<M>>& StatsPtr()
     const noexcept {
@@ -713,7 +714,7 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class BinaryQuantizerReader final : public QuantizerReader {
+class BinaryQuantizerReader : public QuantizerReader {
  public:
   explicit BinaryQuantizerReader(
     std::shared_ptr<const BinaryQuantizerCodebook<M>> cb)
@@ -793,7 +794,7 @@ class BinaryQuantizerReader final : public QuantizerReader {
   bool SupportsPairScores() const noexcept final { return _cb->Binary(); }
 
   bool PreparePairTerms(const byte_type* /*base*/, uint32_t /*record_size*/,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     terms.assign(rows, 0.f);
     return rows != 0;
   }
@@ -879,10 +880,10 @@ class BinaryQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> BinaryQuantizerCodebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr BinaryQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<BinaryQuantizerCodebook<M>, BinaryQuantizerReader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>
@@ -916,6 +917,11 @@ std::unique_ptr<QuantizerWriter> MakeBinaryWriter(VectorMetric metric,
                                                   uint32_t query_bits) {
   return MakeWriterWithMetric<BinaryQuantizerWriter>(metric, d, nb_bits,
                                                      half_bit, query_bits);
+}
+
+uint32_t BinaryRecordSize(uint32_t d, uint32_t nb_bits,
+                          bool half_bit) noexcept {
+  return MakeBqLayout(d, nb_bits, half_bit).record_size;
 }
 
 std::shared_ptr<const QuantizerStats> MakeBinaryStats(

@@ -55,6 +55,7 @@ inline ScoreFunction PrepareBlockScorer(const ScoreArgs& args,
   SDB_ASSERT(args.scorer && args.fetcher);
   provider.attr.value = block;
   return args.scorer->PrepareScorer({
+    .memory = *args.memory,
     .segment = segment,
     .field = field,
     .doc_attrs = provider,

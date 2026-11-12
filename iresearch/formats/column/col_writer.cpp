@@ -240,6 +240,27 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   return out;
 }
 
+AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows) {
+  switch (info.kind) {
+#ifndef IRESEARCH_NO_VECTOR
+    case AnnKind::Ivf:
+      return IvfBuilder{info}.Bound(rows);
+    case AnnKind::Hnsw:
+      return HnswWriter::Bound(info, rows);
+#endif
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+AnnFlushBound ColWriter::AnnBound(uint64_t rows) const {
+  AnnFlushBound total;
+  for (const auto& entry : _ann_writers) {
+    Accumulate(total, irs::AnnBound(entry->info, rows));
+  }
+  return total;
+}
+
 void ColWriter::Rollback() noexcept { _out.reset(); }
 
 constexpr auto kNoCancel = [] { return true; };
@@ -279,8 +300,10 @@ bool ColWriter::Commit(uint64_t target_row,
     if (!progress()) {
       return false;
     }
-    cw->SealRowGroup();
+    cw->Finish();
   }
+  static constexpr byte_type kMappingSlack[duckdb::Storage::SECTOR_SIZE]{};
+  _out->WriteData(kMappingSlack, sizeof(kMappingSlack));
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
     if (!_columns.empty()) {
       footer.WriteList(
@@ -320,6 +343,7 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
     if (!col) {
       continue;
     }
+    entry->writer->SetBudget(*_budget);
     co_await entry->writer->Compute(*col, reader.Ctx(), env);
   }
   co_return true;

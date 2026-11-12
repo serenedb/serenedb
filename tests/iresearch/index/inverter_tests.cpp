@@ -47,7 +47,7 @@ namespace {
 using namespace irs;
 
 InverterMemory DefaultMemory() {
-  return {duckdb::Allocator::DefaultAllocator(), IResourceManager::gNoop};
+  return {duckdb::Allocator::DefaultAllocator()};
 }
 
 uint32_t BlockAt(uint32_t* const* blocks, uint64_t i) {
@@ -189,9 +189,8 @@ TEST(TermViewTest, CaseConvertTermViewAsciiMatchesAbsl) {
 }
 
 TEST(InverterTermDictionaryTest, ResolveDedupIntern) {
-  SimpleMemoryAccounter memory;
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  TermDictionary dict{arena, memory};
+  TermDictionary dict{arena};
 
   const auto id0 = dict.Insert(MakeTermView("quick"));
   const auto id1 = dict.Insert(MakeTermView("brown"));
@@ -211,9 +210,8 @@ TEST(InverterTermDictionaryTest, ResolveDedupIntern) {
 }
 
 TEST(InverterPostingLogTest, RunMerging) {
-  SimpleMemoryAccounter memory;
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  PostingLog<TokenLayout::TermsPos> log{arena, memory};
+  PostingLog<TokenLayout::TermsPos> log{arena};
 
   log.PushOne(1, 0, 1);
   log.PushOne(1, 1, 2);
@@ -248,9 +246,8 @@ TEST(InverterPostingLogTest, RunMerging) {
 }
 
 TEST(InverterPostingLogTest, RunBridgingKnee) {
-  SimpleMemoryAccounter memory;
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  PostingLog<TokenLayout::Terms> log{arena, memory};
+  PostingLog<TokenLayout::Terms> log{arena};
 
   log.PushOne(1, 0);
   log.PushOne(9, 0);
@@ -268,7 +265,7 @@ TEST(InverterPostingLogTest, RunBridgingKnee) {
 
 TEST(InverterPackedColumnTest, RoundtripAcrossSeals) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  PackedU32Column col{arena, IResourceManager::gNoop};
+  PackedU32Column col{arena};
   std::vector<uint32_t> expect;
   uint32_t state = 12345;
   auto next = [&] {
@@ -317,8 +314,8 @@ TEST(InverterPackedColumnTest, RoundtripAcrossSeals) {
 
 TEST(InverterPackedColumnTest, SequentialIdsSharedArena) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  PackedU32Column ids{arena, IResourceManager::gNoop};
-  PackedU32Column unused{arena, IResourceManager::gNoop};
+  PackedU32Column ids{arena};
+  PackedU32Column unused{arena};
   std::vector<uint32_t> expect;
   uint32_t buf[1024];
   uint32_t v = 0;
@@ -393,7 +390,7 @@ std::vector<ReadPosting> ReadTermPostings(const ScatteredField& scattered,
 void AssertField(const FieldInverter& field, InverterMemory& mem,
                  const std::vector<std::string>& expected_terms,
                  const std::vector<std::vector<ExpectedPosting>>& expected) {
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   scattered.Reset(field);
 
@@ -535,10 +532,10 @@ TEST(InverterPipelineTest, KeywordBlockUvfDictionary) {
 
 void AssertSameScatter(const FieldInverter& a, const FieldInverter& b,
                        InverterMemory& mem) {
-  ScatterScratch sca{mem.rm};
+  ScatterScratch sca;
   ScatteredField sa{mem, sca};
   sa.Reset(a);
-  ScatterScratch scb{mem.rm};
+  ScatterScratch scb;
   ScatteredField sb{mem, scb};
   sb.Reset(b);
 
@@ -674,7 +671,7 @@ TEST(InverterScatterTest, PresortedKeysTieBreak) {
     ASSERT_TRUE(InvertKeyword(*field, doc++, ToBytesView(v)));
   }
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(4, scattered.TermCount());
@@ -698,7 +695,7 @@ TEST(InverterScatterTest, SharedPrefixRekeyOrder) {
     ASSERT_TRUE(InvertKeyword(*field, doc++, ToBytesView(v)));
   }
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(6, scattered.TermCount());
@@ -725,7 +722,7 @@ TEST(InverterScatterTest, RekeyPrefixTermRanksFirst) {
     ASSERT_TRUE(InvertKeyword(*field, doc++, ToBytesView(v)));
   }
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(3, scattered.TermCount());
@@ -746,7 +743,7 @@ TEST(InverterScatterTest, SortedEqualKeyOutOfOrderResorts) {
     ASSERT_TRUE(InvertKeyword(*field, doc++, ToBytesView(v)));
   }
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(3, scattered.TermCount());
@@ -758,7 +755,7 @@ TEST(InverterScatterTest, SortedEqualKeyOutOfOrderResorts) {
 TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   ColumnarTermReader reader;
   const auto check = [&](const FieldInverter& field, uint32_t width,
@@ -1066,7 +1063,7 @@ TEST(InverterPipelineTest, MultiBatchLongValue) {
   ASSERT_EQ(kTokens, field->Dictionary().Size());
   ASSERT_EQ(kTokens, field->Log().Size());
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
   ASSERT_EQ(kTokens, scattered.TermCount());
@@ -1101,7 +1098,7 @@ TEST(InverterPipelineTest, MultiBatchOffsets) {
   } while (more);
   ASSERT_GT(rounds, 1);
 
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   scattered.Reset(*field);
 
@@ -1560,7 +1557,7 @@ struct DumpedTerm {
 
 std::vector<DumpedTerm> DumpField(const FieldInverter& field,
                                   InverterMemory& mem) {
-  ScatterScratch scratch{mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{mem, scratch};
   scattered.Reset(field);
 

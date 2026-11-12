@@ -326,20 +326,16 @@ TEST(by_prefix_test, equal) {
 
 TEST(by_prefix_test, boost) {
   constexpr irs::field_id kField = 1;
-  MaxMemoryCounter counter;
 
   // no boost
   {
     irs::ByPrefix q = MakeFilter(kField, "term");
     ASSERT_EQ(irs::kNoBoost, q.GetBoost());
 
-    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr};
     ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
-  EXPECT_EQ(counter.current, 0);
-  counter.Reset();
 
   // with boost
   {
@@ -350,13 +346,10 @@ TEST(by_prefix_test, boost) {
 
     // a segment without the field matches nothing, and nothing carries no
     // boost -- so the boost is only observable where the field exists
-    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr};
     ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
-  EXPECT_EQ(counter.current, 0);
-  counter.Reset();
 }
 
 TEST_P(PrefixFilterTestCase, by_prefix) {
@@ -604,8 +597,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
   const irs::ByPrefix q = MakeFilter(kPrefixId, "ab");
 
   const auto collect = [&](tests::PreparedFilter::CollectMode mode) {
-    tests::PreparedFilter prepared{
-      q, rdr, nullptr, irs::IResourceManager::gNoop, nullptr, mode};
+    tests::PreparedFilter prepared{q, rdr, nullptr, nullptr, mode};
     Docs docs;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto it = prepared.Execute(i);

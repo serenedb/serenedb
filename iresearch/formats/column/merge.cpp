@@ -40,6 +40,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
@@ -81,11 +82,22 @@ class HyperLogLogMerger {
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
 
-}  // namespace
+using KeptWindow = std::optional<TrackedVector<duckdb::sel_t>>;
 
-bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress) {
+constexpr size_t kKeptWindowRows =
+  STANDARD_VECTOR_SIZE + doc_limits::kDocsSlack;
+
+uint64_t KeptWindows(const MergeSource& source) {
+  if (!source.col_reader || !HasRemovals(source.reader->Meta())) {
+    return 0;
+  }
+  return (source.reader->docs_count() + STANDARD_VECTOR_SIZE - 1) /
+         STANDARD_VECTOR_SIZE;
+}
+
+std::vector<std::pair<field_id, const ColumnReader*>> MergedColumns(
+  std::span<const MergeSource> sources,
+  const IndexFieldOptions* field_options) {
   std::vector<std::pair<field_id, const ColumnReader*>> ordered_cols;
   absl::flat_hash_set<field_id> seen_ids;
   for (const auto& s : sources) {
@@ -102,11 +114,49 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       }
     }
   }
+  return ordered_cols;
+}
+
+}  // namespace
+
+uint64_t MergeIntoBound(std::span<const MergeSource> sources) {
+  uint64_t bytes =
+    (sizeof(std::optional<ReadContext>) + sizeof(TrackedVector<KeptWindow>)) *
+    sources.size();
+  for (const auto& s : sources) {
+    bytes += KeptWindows(s) *
+             (sizeof(KeptWindow) + sizeof(duckdb::sel_t) * kKeptWindowRows);
+  }
+  return bytes + ColWriter::kSealBound;
+}
+
+AnnFlushBound MergeAnnBound(std::span<const MergeSource> sources,
+                            const IndexFieldOptions* field_options,
+                            uint64_t rows) {
+  AnnFlushBound total;
+  if (!field_options) {
+    return total;
+  }
+  for (const auto& [id, col] : MergedColumns(sources, field_options)) {
+    for (const auto ann : field_options->AnnFields(id)) {
+      Accumulate(
+        total, AnnBound(*field_options->GetColumnOptions(ann).ann_info, rows));
+    }
+  }
+  return total;
+}
+
+bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
+               const IndexFieldOptions* field_options,
+               const std::function<bool()>& progress) {
+  const auto ordered_cols = MergedColumns(sources, field_options);
   if (ordered_cols.empty()) {
     return true;
   }
 
-  std::vector<std::optional<ReadContext>> source_ctxs(sources.size());
+  auto& budget = output.Budget();
+  TrackedVector<std::optional<ReadContext>> source_ctxs(
+    sources.size(), TrackedAllocator<std::optional<ReadContext>>{&budget});
   for (size_t i = 0; i < sources.size(); ++i) {
     if (sources[i].col_reader) {
       source_ctxs[i].emplace(*sources[i].col_reader);
@@ -115,18 +165,21 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
   HyperLogLogMerger hyperloglog;
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-  std::vector<std::vector<std::optional<std::vector<duckdb::sel_t>>>>
-    kept_cache(sources.size());
+  TrackedVector<TrackedVector<KeptWindow>> kept_cache{
+    TrackedAllocator<TrackedVector<KeptWindow>>{&budget}};
+  kept_cache.reserve(sources.size());
+  for (const auto& s : sources) {
+    kept_cache.emplace_back(KeptWindows(s),
+                            TrackedAllocator<KeptWindow>{&budget});
+  }
   auto kept_for = [&](size_t si, const SubReader& reader,
-                      uint64_t pos) -> const std::vector<duckdb::sel_t>& {
+                      uint64_t pos) -> const TrackedVector<duckdb::sel_t>& {
     auto& windows = kept_cache[si];
     const size_t w = pos / STANDARD_VECTOR_SIZE;
-    if (windows.size() <= w) {
-      windows.resize(w + 1);
-    }
+    SDB_ASSERT(w < windows.size());
     auto& slot = windows[w];
     if (!slot) {
-      slot.emplace(STANDARD_VECTOR_SIZE + doc_limits::kDocsSlack);
+      slot.emplace(kKeptWindowRows, TrackedAllocator<duckdb::sel_t>{&budget});
       const auto first_doc = static_cast<doc_id_t>(pos + doc_limits::min());
       slot->resize(MakeGenericDocsMask(reader.docs_mask())
                      .FillLive(first_doc, STANDARD_VECTOR_SIZE, slot->data()));
@@ -234,6 +287,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     if (opts.hyperloglog) {
       cw.SetHyperLogLog(hyperloglog.Take());
     }
+    cw.Finish();
   }
   return true;
 }

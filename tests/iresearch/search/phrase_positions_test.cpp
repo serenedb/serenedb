@@ -194,9 +194,9 @@ struct ScaleScore : public irs::ScorerBase<ScaleScore, tests::sort::StatsT> {
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     const auto* scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
     if (scale == nullptr) {
-      return irs::ScoreFunction::Constant(irs::kNoBoost);
+      return irs::ScoreFunction::Constant(ctx.memory, irs::kNoBoost);
     }
-    return irs::ScoreFunction::Make<Scorer>(scale);
+    return irs::ScoreFunction::Make<Scorer>(ctx.memory, scale);
   }
 };
 
@@ -204,8 +204,7 @@ template<typename ScorerT>
 std::vector<irs::score_t> Scores(const irs::Filter& filter,
                                  const irs::IndexReader& reader) {
   ScorerT scorer;
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, reader, &scorer, counter};
+  tests::PreparedFilter prepared{filter, reader, &scorer};
   std::vector<irs::score_t> out;
   for (size_t i = 0; i != prepared.size(); ++i) {
     irs::ColumnArgsFetcher fetcher;

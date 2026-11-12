@@ -44,8 +44,9 @@ Root::ptr MakeSubtractDisjunction(const detail::PostingClause& first,
   if (!conjunction) {
     return {};
   }
-  return memory::make_managed<Subtract>(
-    MakeSum(MakeTermCount(*rarest, ctx), MakeTermCount(*densest, ctx)),
+  return ctx.memory.Make<Subtract>(
+    MakeSum(ctx.memory, MakeTermCount(*rarest, ctx),
+            MakeTermCount(*densest, ctx)),
     std::move(conjunction), ctx.partial);
 }
 

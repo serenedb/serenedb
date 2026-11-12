@@ -525,7 +525,8 @@ void AssertDocs(irs::IndexFeatures features,
   ASSERT_TRUE(irs::doc_limits::eof(actual_docs->Value()));
 }
 
-irs::lead::Node::ptr MakeLeadDocs(const irs::SubReader& segment,
+irs::lead::Node::ptr MakeLeadDocs(irs::PlanMemory& memory,
+                                  const irs::SubReader& segment,
                                   const irs::TermReader& actual_terms,
                                   const irs::PostingMeta& actual_cookie) {
   const irs::detail::PostingClause posting{
@@ -533,7 +534,7 @@ irs::lead::Node::ptr MakeLeadDocs(const irs::SubReader& segment,
   if (irs::detail::DocOf(actual_terms) == nullptr) {
     return {};
   }
-  return irs::lead::MakePostingDocs(posting, segment);
+  return irs::lead::MakePostingDocs(memory, posting, segment);
 }
 
 // A `lead::Node` answers documents and nothing else, so the frequencies and
@@ -548,10 +549,11 @@ void AssertSeek(const irs::SubReader& segment,
   ASSERT_NE(nullptr, expected_postings);
   auto expected_docs = Docs(std::move(expected_postings));
 
-  auto seq_docs = MakeLeadDocs(segment, actual_terms, actual_cookie);
+  irs::PlanMemory memory;
+  auto seq_docs = MakeLeadDocs(memory, segment, actual_terms, actual_cookie);
   ASSERT_NE(nullptr, seq_docs);
 
-  auto seek_docs = MakeLeadDocs(segment, actual_terms, actual_cookie);
+  auto seek_docs = MakeLeadDocs(memory, segment, actual_terms, actual_cookie);
   ASSERT_NE(nullptr, seek_docs);
 
   ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->Value()));

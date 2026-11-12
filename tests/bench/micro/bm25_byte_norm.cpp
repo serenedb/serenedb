@@ -72,6 +72,7 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/shared.hpp>
 #include <random>
 
@@ -393,7 +394,7 @@ struct Harness {
 
 // Seeded off the benchmark state so no per-query value reaches a kernel as a
 // compile-time constant.
-Harness MakeHarness(Variant v, int64_t seed) {
+Harness MakeHarness(irs::PlanMemory& memory, Variant v, int64_t seed) {
   const auto jitter = 0.f * static_cast<score_t>(seed);
   const auto k = 1.2f + jitter;
   const auto b = 0.75f + jitter;
@@ -414,30 +415,32 @@ Harness MakeHarness(Variant v, int64_t seed) {
 
   switch (v) {
     case Variant::FullNorm:
-      h.fn =
-        irs::ScoreFunction::Make<FullNormScore<int32_t, int32_t>>(p, h.block);
+      h.fn = irs::ScoreFunction::Make<FullNormScore<int32_t, int32_t>>(
+        memory, p, h.block);
       break;
     case Variant::FullNormU32:
-      h.fn =
-        irs::ScoreFunction::Make<FullNormScore<uint32_t, uint32_t>>(p, h.block);
+      h.fn = irs::ScoreFunction::Make<FullNormScore<uint32_t, uint32_t>>(
+        memory, p, h.block);
       break;
     case Variant::FullNormNorm:
-      h.fn =
-        irs::ScoreFunction::Make<FullNormScore<uint32_t, int32_t>>(p, h.block);
+      h.fn = irs::ScoreFunction::Make<FullNormScore<uint32_t, int32_t>>(
+        memory, p, h.block);
       break;
     case Variant::FullNormFreq:
-      h.fn =
-        irs::ScoreFunction::Make<FullNormScore<int32_t, uint32_t>>(p, h.block);
+      h.fn = irs::ScoreFunction::Make<FullNormScore<int32_t, uint32_t>>(
+        memory, p, h.block);
       break;
     case Variant::ByteC1:
-      h.fn = irs::ScoreFunction::Make<ByteC1Score>(p, h.block, h.c1s.data());
+      h.fn =
+        irs::ScoreFunction::Make<ByteC1Score>(memory, p, h.block, h.c1s.data());
       break;
     case Variant::ByteInv:
-      h.fn = irs::ScoreFunction::Make<ByteInvScore>(p, h.block, h.inv.data());
+      h.fn = irs::ScoreFunction::Make<ByteInvScore>(memory, p, h.block,
+                                                    h.inv.data());
       break;
     case Variant::ByteInvSplit:
-      h.fn =
-        irs::ScoreFunction::Make<ByteInvSplitScore>(p, h.block, h.inv.data());
+      h.fn = irs::ScoreFunction::Make<ByteInvSplitScore>(memory, p, h.block,
+                                                         h.inv.data());
       break;
   }
   return h;
@@ -447,7 +450,8 @@ Harness MakeHarness(Variant v, int64_t seed) {
 // time is directly comparable across shapes.
 template<Variant V, Shape S>
 void Bm(benchmark::State& state) {
-  auto h = MakeHarness(V, state.range(0));
+  irs::PlanMemory memory;
+  auto h = MakeHarness(memory, V, state.range(0));
   std::array<score_t, kPostingBlock> out{};
   // Opaque even to LTO: the runtime shape must not learn its trip count.
   auto n = static_cast<scores_size_t>(state.range(0));

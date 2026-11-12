@@ -112,8 +112,7 @@ class FamilyIndex {
 
   std::map<irs::doc_id_t, irs::score_t> ScoresBy(
     const irs::Scorer& scorer, const irs::Filter& filter) const {
-    MaxMemoryCounter counter;
-    PreparedFilter prepared{filter, *_reader, &scorer, counter};
+    PreparedFilter prepared{filter, *_reader, &scorer};
     std::map<irs::doc_id_t, irs::score_t> out;
     for (size_t i = 0; i != prepared.size(); ++i) {
       irs::ColumnArgsFetcher fetcher;
@@ -145,12 +144,15 @@ class FamilyIndex {
           continue;
         }
         const auto end = End(i);
-        out.count += query->PlanCount({})->Run(irs::doc_limits::min(), end);
+        irs::PlanMemory plan_memory;
+        out.count += query->PlanCount({.memory = plan_memory})
+                       ->Run(irs::doc_limits::min(), end);
 
-        auto docs = query->PlanDocs({});
+        auto docs = query->PlanDocs({.memory = plan_memory});
         std::vector<irs::doc_id_t> buf(irs::detail::kWindowDocs +
                                        irs::doc_limits::kDocsSlack);
-        auto fill = query->PlanFill({}, irs::ScoreMergeType::Noop);
+        auto fill =
+          query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
         std::vector<uint64_t> mask(irs::detail::kWindowWords);
         for (auto min = irs::doc_limits::min(); min < end;
              min += irs::detail::kWindowDocs) {
@@ -166,7 +168,8 @@ class FamilyIndex {
           });
         }
 
-        auto probe = query->PlanProbe({}, end - irs::doc_limits::min());
+        auto probe = query->PlanProbe({.memory = plan_memory},
+                                      end - irs::doc_limits::min());
         for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
           if (probe->Probe(doc) == doc) {
             out.probe.push_back(Global(i, doc));
@@ -175,17 +178,18 @@ class FamilyIndex {
       }
     }
 
-    MaxMemoryCounter counter;
-    PreparedFilter prepared{filter, *_reader, &scorer, counter};
+    PreparedFilter prepared{filter, *_reader, &scorer};
     for (size_t i = 0; i != prepared.size(); ++i) {
       const auto* query = prepared.Query(i);
       if (!query || irs::QueryBuilder::IsEmpty(*query)) {
         continue;
       }
       const auto end = End(i);
+      irs::PlanMemory plan_memory;
       {
         irs::ColumnArgsFetcher fetcher;
-        auto hits = query->PlanScored({.scorer = scorer, .fetcher = fetcher});
+        auto hits = query->PlanScored(
+          {.memory = plan_memory, .scorer = scorer, .fetcher = fetcher});
         std::vector<irs::doc_id_t> docs(irs::detail::kWindowDocs +
                                         irs::doc_limits::kDocsSlack);
         std::vector<irs::score_t> scores(irs::detail::kWindowDocs +
@@ -201,8 +205,9 @@ class FamilyIndex {
       }
       {
         irs::ColumnArgsFetcher fetcher;
-        auto fill = query->PlanFill({.scorer = &scorer, .fetcher = &fetcher},
-                                    irs::ScoreMergeType::Sum);
+        auto fill = query->PlanFill(
+          {.memory = plan_memory, .scorer = &scorer, .fetcher = &fetcher},
+          irs::ScoreMergeType::Sum);
         std::vector<uint64_t> mask(irs::detail::kWindowWords);
         std::vector<irs::score_t> scores(irs::detail::kWindowDocs);
         for (auto min = irs::doc_limits::min(); min < end;
@@ -218,8 +223,9 @@ class FamilyIndex {
       }
       {
         irs::ColumnArgsFetcher fetcher;
-        auto probe = query->PlanProbe({.scorer = &scorer, .fetcher = &fetcher},
-                                      end - irs::doc_limits::min());
+        auto probe = query->PlanProbe(
+          {.memory = plan_memory, .scorer = &scorer, .fetcher = &fetcher},
+          end - irs::doc_limits::min());
         auto score = probe->PrepareScore();
         for (auto doc = irs::doc_limits::min(); doc < end; ++doc) {
           if (probe->Probe(doc) != doc) {
@@ -234,8 +240,11 @@ class FamilyIndex {
       }
       {
         irs::ColumnArgsFetcher fetcher;
-        auto top = query->PlanTop(
-          {.scorer = scorer, .fetcher = fetcher, .prune = false, .k = kTop});
+        auto top = query->PlanTop({.memory = plan_memory,
+                                   .scorer = scorer,
+                                   .fetcher = fetcher,
+                                   .prune = false,
+                                   .k = kTop});
         std::vector<irs::ScoreDoc> hits(kTop);
         std::atomic<irs::score_t> threshold{
           std::numeric_limits<irs::score_t>::lowest()};

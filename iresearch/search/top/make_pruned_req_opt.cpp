@@ -50,17 +50,18 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
                    segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
+                   irs::detail::ScoreArgs{.memory = &ctx.memory,
+                                          .scorer = posting.stats.scorer,
                                           .stats = posting.stats.stats,
                                           .fetcher = &ctx.fetcher,
                                           .boost = posting.boost});
     };
     if (size == 2) {
       return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause, 1>>(
-        ctx, ctx.fetcher, size, init);
+        ctx, ctx.memory, ctx.fetcher, size, init);
     }
-    return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause>>(ctx, ctx.fetcher,
-                                                               size, init);
+    return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause>>(
+      ctx, ctx.memory, ctx.fetcher, size, init);
   });
 }
 

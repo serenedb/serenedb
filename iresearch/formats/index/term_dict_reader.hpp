@@ -168,8 +168,7 @@ class TermReaderImpl final : public TermReader {
 
  private:
   bool Excludes(bytes_view term) const noexcept;
-  uint64_t ReadRanges(FieldReader& owner, IndexInput& in,
-                      const RangesHead& ranges);
+  void ReadRanges(FieldReader& owner, IndexInput& in, const RangesHead& ranges);
 
   const FieldReader* _owner;
   FieldMeta _meta;

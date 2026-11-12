@@ -29,16 +29,17 @@
 
 namespace irs::lead {
 
-Node::ptr MakePostingDocs(const detail::PostingClause& posting,
+Node::ptr MakePostingDocs(PlanMemory& memory,
+                          const detail::PostingClause& posting,
                           const SubReader&) {
   return ResolvePostingDocs<Node::ptr>(
     posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
-      return memory::make_managed<Impl<Leaf>>(
-        std::forward<decltype(args)>(args)...);
+      return memory.Make<Impl<Leaf>>(std::forward<decltype(args)>(args)...);
     });
 }
 
-Node::ptr MakePostingScored(const detail::PostingClause& posting,
+Node::ptr MakePostingScored(PlanMemory& memory,
+                            const detail::PostingClause& posting,
                             const SubReader& segment,
                             const detail::ScoreRecipe& recipe) {
   const auto& meta = posting.state.cookie;
@@ -61,8 +62,8 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   if (constant) {
     return ResolvePostingDocs<Node::ptr>(
       posting, [&]<typename Leaf>(auto&&... leaf_args) -> Node::ptr {
-        return memory::make_managed<Impl<ConstantScored<Leaf>>>(
-          *constant, std::forward<decltype(leaf_args)>(leaf_args)...);
+        return memory.Make<Impl<ConstantScored<Leaf>>>(
+          memory, *constant, std::forward<decltype(leaf_args)>(leaf_args)...);
       });
   }
   SDB_ASSERT(posting.state.reader != nullptr);
@@ -70,14 +71,14 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   if (!detail::FreqOf(own)) {
     return ResolvePostingDocs<Node::ptr>(
       posting, [&]<typename Leaf>(auto&&... leaf_args) -> Node::ptr {
-        return memory::make_managed<Impl<RecipeScored<Leaf>>>(
+        return memory.Make<Impl<RecipeScored<Leaf>>>(
           segment, own, args, std::forward<decltype(leaf_args)>(leaf_args)...);
       });
   }
   const auto& doc = *detail::DocOf(own);
   return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
     using Leaf = detail::PostingLeadScored<Input>;
-    return memory::make_managed<Impl<Leaf>>(meta, doc, segment, own, args);
+    return memory.Make<Impl<Leaf>>(meta, doc, segment, own, args);
   });
 }
 

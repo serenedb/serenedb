@@ -32,7 +32,8 @@ template<typename Family>
 typename Family::Result MakeApprox(const ApproxQuery& query,
                                    const typename Family::ScoredContext& ctx) {
   using Result = typename Family::Result;
-  auto node = PlanApprox<Result>(query.Approx(), Family::Interrogations(ctx));
+  auto node = PlanApprox<Result>(Family::MemoryOf(ctx), query.Approx(),
+                                 Family::Interrogations(ctx));
   if (!node) {
     return {};
   }

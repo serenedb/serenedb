@@ -43,6 +43,7 @@ struct Family {
   using TwoPhaseScored = probe::TwoPhaseScored<Slots>;
 
   struct DocsContext {
+    PlanMemory& memory;
     uint64_t interrogations = 0;
   };
 
@@ -60,55 +61,67 @@ struct Family {
   }
 
   static DocsContext DocsOf(const ScoredContext& ctx) noexcept {
-    return {.interrogations = ctx.interrogations};
+    return {ctx.scored.memory, ctx.interrogations};
   }
 
   static const detail::ScoredCtx& Scoring(const ScoredContext& ctx) noexcept {
     return ctx.scored;
   }
 
+  static PlanMemory& MemoryOf(const DocsContext& ctx) noexcept {
+    return ctx.memory;
+  }
+
+  static PlanMemory& MemoryOf(const ScoredContext& ctx) noexcept {
+    return ctx.scored.memory;
+  }
+
   static Result PlanChild(const QueryBuilder& child, const DocsContext& ctx,
                           ScoreMergeType) {
-    return child.PlanProbe({}, ctx.interrogations);
+    return child.PlanProbe({.memory = ctx.memory}, ctx.interrogations);
   }
 
   template<typename Node, typename... Args>
-  static Result Docs(const DocsContext&, Args&&... args) {
-    return memory::make_managed<Impl<Node>>(std::forward<Args>(args)...);
+  static Result Docs(const DocsContext& ctx, Args&&... args) {
+    return ctx.memory.Make<Impl<Node>>(std::forward<Args>(args)...);
   }
 
   template<typename Node, typename... Args>
-  static Result Constant(const ScoredContext&, score_t value, Args&&... args) {
-    return memory::make_managed<ConstantScoredImpl<Node>>(
-      value, std::forward<Args>(args)...);
+  static Result Constant(const ScoredContext& ctx, score_t value,
+                         Args&&... args) {
+    auto& memory = MemoryOf(ctx);
+    return memory.Make<ConstantScoredImpl<Node>>(memory, value,
+                                                 std::forward<Args>(args)...);
   }
 
   template<typename Node, typename... Args>
-  static Result Scored(const ScoredContext&, Args&&... args) {
-    return memory::make_managed<Impl<Node>>(std::forward<Args>(args)...);
+  static Result Scored(const ScoredContext& ctx, Args&&... args) {
+    return MemoryOf(ctx).Make<Impl<Node>>(std::forward<Args>(args)...);
   }
 
-  static Result MakeAll(const SubReader& segment, const DocsContext&,
+  static Result MakeAll(const SubReader& segment, const DocsContext& ctx,
                         ScoreMergeType, score_t) {
-    return MakeAllDocs(segment);
+    return MakeAllDocs(ctx.memory, segment);
   }
 
-  static Result MakeAll(const SubReader& segment, const ScoredContext&,
+  static Result MakeAll(const SubReader& segment, const ScoredContext& ctx,
                         ScoreMergeType, score_t score) {
-    return MakeAllScored(segment, score);
+    return MakeAllScored(MemoryOf(ctx), segment, score);
   }
 
   static Result MakePosting(const detail::PostingClause& posting,
-                            const SubReader& segment, const DocsContext&,
+                            const SubReader& segment, const DocsContext& ctx,
                             ScoreMergeType) {
-    return MakePostingDocs(posting, segment);
+    return MakePostingDocs(ctx.memory, posting, segment);
   }
 
   static Result MakePosting(const detail::PostingClause& posting,
                             const SubReader& segment, const ScoredContext& ctx,
                             ScoreMergeType) {
-    return MakePostingScored(
-      posting, segment, {.segment = &segment, .fetcher = ctx.scored.fetcher});
+    return MakePostingScored(MemoryOf(ctx), posting, segment,
+                             {.memory = &MemoryOf(ctx),
+                              .segment = &segment,
+                              .fetcher = ctx.scored.fetcher});
   }
 };
 

@@ -42,6 +42,7 @@
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -113,7 +114,7 @@ struct LeafCursor {
 };
 
 template<typename InputType, LeafShape Shape>
-class PostingLeaf {
+class PostingLeaf : public memory::ArenaOnly {
  public:
   static constexpr bool kDefaultInit = true;
 
@@ -305,7 +306,9 @@ class PostingLeaf {
     _score.fetcher = args.fetcher;
     _provider.freq.value = _freqs.data;
     SDB_ASSERT(args.scorer != nullptr);
+    SDB_ASSERT(args.memory);
     _score.score = args.scorer->PrepareScorer({
+      .memory = *args.memory,
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,
@@ -329,7 +332,9 @@ class PostingLeaf {
     _provider.freq.value = _gather.data;
     SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
     SDB_ASSERT(_recipe.args.scorer != nullptr);
+    SDB_ASSERT(_recipe.args.memory);
     return _recipe.args.scorer->PrepareScorer({
+      .memory = *_recipe.args.memory,
       .segment = *_recipe.segment,
       .field = _recipe.field->meta(),
       .doc_attrs = _provider,

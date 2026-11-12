@@ -32,18 +32,17 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::hits {
 namespace {
 
 class HnswHits : public Root {
  public:
-  HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
+  HnswHits(memory::ArenaVector<ScoreDoc>&& hits, const SubReader& segment,
            ColumnArgsFetcher& fetcher, const irs::detail::ScoreArgs& args)
-    : _hits{hits.size(),
-            [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
-      _fetcher{fetcher} {
+    : _hits{std::move(hits)}, _fetcher{fetcher} {
     _score = irs::detail::PrepareBlockScorer(
       args, segment, irs::detail::NoField(), _provider, _block);
   }
@@ -75,7 +74,7 @@ class HnswHits : public Root {
   }
 
  private:
-  containers::Fixed<ScoreDoc> _hits;
+  memory::ArenaVector<ScoreDoc> _hits;
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
@@ -87,12 +86,13 @@ class HnswHits : public Root {
 
 Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
   const auto record = query.Stats(ScoredOf(ctx));
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.memory = &ctx.memory,
+                                    .scorer = record.scorer,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
-  return memory::make_managed<HnswHits>(query.RunSearch(), query.Segment(),
-                                        ctx.fetcher, args);
+  return ctx.memory.Make<HnswHits>(query.RunSearch(ctx.memory), query.Segment(),
+                                   ctx.fetcher, args);
 }
 
 }  // namespace irs::hits

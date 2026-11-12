@@ -37,6 +37,11 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
   if (state == SegmentWork::kUnprepared &&
       work.prepare.compare_exchange_strong(state, SegmentWork::kPreparing,
                                            std::memory_order_acq_rel)) {
+    if (!l.query_memory) {
+      absl::MutexLock lock{&g.query_memories_mutex};
+      l.query_memory = &g.query_memories.emplace_back();
+    }
+    l.query_memory->Scratch().Rewind();
     irs::PrepareCollector* collector = nullptr;
     if (g.collector) {
       if (l.thread_slot == std::numeric_limits<uint32_t>::max()) {
@@ -47,6 +52,7 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     }
     const auto& segment = (*g.reader)[seg_idx];
     const irs::PrepareContext ctx{
+      .memory = *l.query_memory,
       .collector = collector,
       .thread = collector != nullptr ? l.thread_slot : 0,
       .needs_terms = g.needs_terms};

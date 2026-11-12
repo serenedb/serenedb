@@ -71,7 +71,9 @@ class RecipeScored {
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t) noexcept {}
 
   ScoreFunction PrepareScore() {
+    SDB_ASSERT(_args.memory);
     return _args.scorer->PrepareScorer({
+      .memory = *_args.memory,
       .segment = *_segment,
       .field = _field != nullptr ? _field->meta() : detail::NoField(),
       .doc_attrs = detail::NoAttributes(),
@@ -81,9 +83,7 @@ class RecipeScored {
     });
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out) {
-    detail::AppendScorer(out, PrepareScore());
-  }
+  void CollectScorers(auto& out) { detail::AppendScorer(out, PrepareScore()); }
 
  private:
   Leaf _leaf;

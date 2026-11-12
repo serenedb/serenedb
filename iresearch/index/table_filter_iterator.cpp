@@ -205,13 +205,14 @@ const ColumnReader* FilteredColumn(const ColumnReader& column,
   return DirectExtractLeaf(column, spec.extract_path, *spec.extract_type);
 }
 
-ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
-  : _query{filter.PrepareSegment(segment, {})} {
+ColFilterLeaf::ColFilterLeaf(QueryMemory& query_memory, PlanMemory& plan_memory,
+                             const Filter& filter, const SubReader& segment)
+  : _query{filter.PrepareSegment(segment, {.memory = query_memory})} {
   if (QueryBuilder::IsEmpty(*_query)) {
     return;
   }
-  _set = std::make_unique<detail::LazyBitset>(detail::MakeDocSet(
-    _query.get(), static_cast<doc_id_t>(segment.docs_count())));
+  _set.emplace(detail::MakeDocSet(plan_memory, _query.get(),
+                                  static_cast<doc_id_t>(segment.docs_count())));
 }
 
 bool ColFilterLeaf::Contains(doc_id_t doc) {
@@ -255,9 +256,16 @@ std::span<ColFilterLeaf> ColFilterStateCache::Leaves(
   std::span<const std::shared_ptr<const Filter>> leaves) {
   auto& e = Find(filter);
   e.leaves.clear();
+  if (e.query_memory) {
+    e.query_memory->Rewind();
+    e.plan_memory->Rewind();
+  } else {
+    e.query_memory = std::make_unique<QueryMemory>();
+    e.plan_memory = std::make_unique<PlanMemory>();
+  }
   e.leaves.reserve(leaves.size());
   for (const auto& leaf : leaves) {
-    e.leaves.emplace_back(*leaf, segment);
+    e.leaves.emplace_back(*e.query_memory, *e.plan_memory, *leaf, segment);
   }
   return e.leaves;
 }

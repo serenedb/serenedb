@@ -135,9 +135,13 @@ H ReadPodHeader(std::span<const byte_type> in) noexcept {
 inline constexpr uint32_t kTurboQuantLutChunk = 256;
 
 template<typename Codebook, typename Reader>
-std::unique_ptr<QuantizerReader> MakeReaderT(const Codebook* self) {
-  return std::make_unique<Reader>(
-    std::static_pointer_cast<const Codebook>(self->shared_from_this()));
+QuantizerReader::ptr MakeReaderT(const Codebook* self, PlanMemory* plan) {
+  auto book =
+    std::static_pointer_cast<const Codebook>(self->shared_from_this());
+  if (plan) {
+    return plan->Make<QuantizerReader, Reader>(std::move(book));
+  }
+  return memory::make_managed<QuantizerReader, Reader>(std::move(book));
 }
 
 template<typename Stats, typename Codebook>
@@ -513,19 +517,27 @@ std::unique_ptr<QuantizerWriter> MakePanoramaWriter(uint32_t d,
                                                     VectorMetric metric);
 std::shared_ptr<const QuantizerStats> MakePanoramaStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> blob);
+size_t PanoramaTrainSamples(VectorMetric metric, uint32_t d,
+                            size_t rows) noexcept;
+uint32_t PanoramaTrainedRecordSize(VectorMetric metric, uint32_t d) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeScalarWriter(uint32_t d,
                                                   VectorQuantization quant);
 std::shared_ptr<const QuantizerStats> MakeScalarStats(
   VectorMetric metric, uint32_t d, VectorQuantization quant,
   std::span<const byte_type> stats);
+size_t ScalarTrainSamples(VectorQuantization quant) noexcept;
+uint32_t ScalarRecordSize(uint32_t d, VectorQuantization quant);
 
 std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
                                               uint32_t pq_m, uint32_t pq_niter,
                                               bool row_major);
 std::shared_ptr<const QuantizerStats> MakePqStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
-  bool row_major);
+  bool row_major, MemoryBudget* budget);
+size_t PqTrainSamples(size_t rows, bool row_major) noexcept;
+uint32_t PqRecordSize(VectorMetric metric, uint32_t pq_m,
+                      bool row_major) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeTurboQuantWriter(VectorMetric metric,
                                                       uint32_t d,
@@ -535,6 +547,8 @@ std::unique_ptr<QuantizerWriter> MakeTurboQuantWriter(VectorMetric metric,
 std::shared_ptr<const QuantizerStats> MakeTurboQuantStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
   bool row_major);
+uint32_t TurboQuantRecordSize(VectorMetric metric, uint32_t d, uint32_t nb_bits,
+                              bool half_bit, bool row_major) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeRaBitQWriter(VectorMetric metric,
                                                   uint32_t d, uint32_t nb_bits,
@@ -542,6 +556,8 @@ std::unique_ptr<QuantizerWriter> MakeRaBitQWriter(VectorMetric metric,
 std::shared_ptr<const QuantizerStats> MakeRaBitQStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
   bool row_major);
+uint32_t RaBitQRecordSize(uint32_t d, uint32_t nb_bits,
+                          bool row_major) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeBinaryWriter(VectorMetric metric,
                                                   uint32_t d, uint32_t nb_bits,
@@ -549,11 +565,13 @@ std::unique_ptr<QuantizerWriter> MakeBinaryWriter(VectorMetric metric,
                                                   uint32_t query_bits);
 std::shared_ptr<const QuantizerStats> MakeBinaryStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats);
+uint32_t BinaryRecordSize(uint32_t d, uint32_t nb_bits, bool half_bit) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeOsqWriter(VectorMetric metric, uint32_t d,
                                                uint32_t nb_bits,
                                                uint32_t query_bits);
 std::shared_ptr<const QuantizerStats> MakeOsqStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats);
+uint32_t OsqRecordSize(uint32_t d, uint32_t nb_bits) noexcept;
 
 }  // namespace irs::quantizers

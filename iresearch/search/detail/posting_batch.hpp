@@ -198,7 +198,9 @@ class PostingBatch {
     _provider.freq.value = _freqs.data;
     _score.fetcher = args.fetcher;
     SDB_ASSERT(args.scorer != nullptr);
+    SDB_ASSERT(args.memory);
     _score.score = args.scorer->PrepareScorer({
+      .memory = *args.memory,
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,

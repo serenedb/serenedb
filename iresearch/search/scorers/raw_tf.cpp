@@ -76,7 +76,8 @@ ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
   const auto* scale = ScaleOf(ctx);
 
   return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<RawTfScore<HasScale>>(ctx.boost, freq, scale);
+    return ScoreFunction::Make<RawTfScore<HasScale>>(ctx.memory, ctx.boost,
+                                                     freq, scale);
   });
 }
 
@@ -84,8 +85,8 @@ ScoreBoundWriter::ptr RawTF::PrepareScoreBoundWriter() const {
   return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>();
 }
 
-ScoreBoundSource::ptr RawTF::PrepareScoreBoundSource() const {
-  return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
+ScoreBoundSource::ptr RawTF::PrepareScoreBoundSource(PlanMemory& memory) const {
+  return memory.Make<FreqNormSource<kScoreBoundFreq>>();
 }
 
 bool RawTF::Compatible(const ScorerOptions& persisted) const noexcept {

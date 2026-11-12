@@ -32,10 +32,9 @@
 
 namespace irs::fill {
 
-Node::ptr MakeAllScored(const SubReader& segment, ScoreMergeType merge,
-                        score_t score) {
-  return memory::make_managed<Impl<ConstantScored<AllDocs>>>(merge, score,
-                                                             segment);
+Node::ptr MakeAllScored(PlanMemory& memory, const SubReader& segment,
+                        ScoreMergeType merge, score_t score) {
+  return memory.Make<Impl<ConstantScored<AllDocs>>>(merge, score, segment);
 }
 
 }  // namespace irs::fill

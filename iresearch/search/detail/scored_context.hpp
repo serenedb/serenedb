@@ -24,6 +24,7 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -33,6 +34,7 @@ class ColumnArgsFetcher;
 namespace detail {
 
 struct ScoredCtx {
+  PlanMemory& memory;
   const Scorer* scorer = nullptr;
   ColumnArgsFetcher* fetcher = nullptr;
 };
@@ -41,6 +43,7 @@ struct ScoredCtx {
 namespace hits {
 
 struct Context {
+  PlanMemory& memory;
   const Scorer& scorer;
   ColumnArgsFetcher& fetcher;
   doc_id_t span = 0;
@@ -48,6 +51,7 @@ struct Context {
 
 inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
   return {
+    .memory = ctx.memory,
     .scorer = &ctx.scorer,
     .fetcher = &ctx.fetcher,
   };

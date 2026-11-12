@@ -62,6 +62,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
@@ -127,11 +128,12 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   auto& allocator = duckdb::Allocator::DefaultAllocator();
   irs::StatsArena stats_arena{allocator};
   irs::PreparedCollector prepare_collector{filter, scorer, stats_arena, 1};
+  irs::QueryMemory query_memory;
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(
-      filter.PrepareSegment(segment, {.collector = prepare_collector.Get()}));
+    queries.emplace_back(filter.PrepareSegment(
+      segment, {.memory = query_memory, .collector = prepare_collector.Get()}));
   }
   prepare_collector.Finish();
 
@@ -141,6 +143,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   std::atomic<irs::score_t> score_threshold{
     std::numeric_limits<irs::score_t>::lowest()};
   irs::LoserScoreCollector collector{score_threshold, hits};
+  irs::PlanMemory plan_memory;
   irs::ColumnArgsFetcher fetcher;
 
   constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
@@ -155,7 +158,8 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
     if (!query) {
       continue;
     }
-    auto plan = query->PlanScored({.scorer = scorer, .fetcher = fetcher});
+    auto plan = query->PlanScored(
+      {.memory = plan_memory, .scorer = scorer, .fetcher = fetcher});
     if (!plan) {
       continue;
     }
@@ -281,13 +285,14 @@ class RowRuns final : public irs::detail::TableFilter {
 };
 
 std::vector<irs::QueryBuilder::ptr> PrepareScored(
-  const irs::DirectoryReader& reader, const irs::Filter& filter,
-  const irs::Scorer& scorer, irs::StatsArena& stats) {
+  irs::QueryMemory& memory, const irs::DirectoryReader& reader,
+  const irs::Filter& filter, const irs::Scorer& scorer,
+  irs::StatsArena& stats) {
   irs::PreparedCollector collector{filter, scorer, stats, 1};
   std::vector<irs::QueryBuilder::ptr> queries;
   for (const auto& segment : reader) {
-    queries.emplace_back(
-      filter.PrepareSegment(segment, {.collector = collector.Get()}));
+    queries.emplace_back(filter.PrepareSegment(
+      segment, {.memory = memory, .collector = collector.Get()}));
   }
   collector.Finish();
   return queries;
@@ -299,7 +304,9 @@ std::vector<irs::score_t> FilteredRanking(const irs::DirectoryReader& reader,
                                           irs::doc_id_t run,
                                           const ScoreBound* bound, size_t k) {
   irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
-  const auto queries = PrepareScored(reader, filter, scorer, stats);
+  irs::QueryMemory query_memory;
+  const auto queries =
+    PrepareScored(query_memory, reader, filter, scorer, stats);
   const RowRuns rows{run, bound};
   constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
   irs::SlackBuf<irs::doc_id_t, kBatch, irs::doc_limits::kDocsSlack> docs;
@@ -309,8 +316,10 @@ std::vector<irs::score_t> FilteredRanking(const irs::DirectoryReader& reader,
     if (!queries[i] || irs::QueryBuilder::IsEmpty(*queries[i])) {
       continue;
     }
+    irs::PlanMemory plan_memory;
     irs::ColumnArgsFetcher fetcher;
-    auto plan = queries[i]->PlanScored({.scorer = scorer, .fetcher = fetcher});
+    auto plan = queries[i]->PlanScored(
+      {.memory = plan_memory, .scorer = scorer, .fetcher = fetcher});
     const auto end = irs::doc_limits::min() +
                      static_cast<irs::doc_id_t>(reader[i].docs_count());
     for (auto min = irs::doc_limits::min(); min < end; min += kBatch) {
@@ -337,8 +346,10 @@ std::vector<irs::score_t> ScoresOverRanges(const irs::QueryBuilder& query,
                                            const irs::Scorer& scorer,
                                            std::span<const DocRange> ranges,
                                            irs::doc_id_t end) {
+  irs::PlanMemory plan_memory;
   irs::ColumnArgsFetcher fetcher;
-  auto plan = query.PlanScored({.scorer = scorer, .fetcher = fetcher});
+  auto plan = query.PlanScored(
+    {.memory = plan_memory, .scorer = scorer, .fetcher = fetcher});
   constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
   irs::SlackBuf<irs::doc_id_t, kBatch, irs::doc_limits::kDocsSlack> docs;
   irs::SlackBuf<irs::score_t, kBatch, irs::doc_limits::kScoresSlack> scores;
@@ -365,7 +376,9 @@ TableTop TopThroughTable(const irs::DirectoryReader& reader,
                          irs::doc_id_t run, const ScoreBound* bound, size_t k,
                          bool prune) {
   irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
-  const auto queries = PrepareScored(reader, filter, scorer, stats);
+  irs::QueryMemory query_memory;
+  const auto queries =
+    PrepareScored(query_memory, reader, filter, scorer, stats);
   std::vector<irs::ScoreDoc> hits(k);
   std::atomic<irs::score_t> threshold{
     std::numeric_limits<irs::score_t>::lowest()};
@@ -376,9 +389,11 @@ TableTop TopThroughTable(const irs::DirectoryReader& reader,
       continue;
     }
     collector.SetSegment(static_cast<uint32_t>(i));
+    irs::PlanMemory plan_memory;
     irs::ColumnArgsFetcher fetcher;
     RowRuns rows{run, bound};
-    auto plan = queries[i]->PlanTop({.scorer = scorer,
+    auto plan = queries[i]->PlanTop({.memory = plan_memory,
+                                     .scorer = scorer,
                                      .fetcher = fetcher,
                                      .table = &rows,
                                      .prune = prune,
@@ -737,8 +752,9 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTakenForBoundedScorers) {
 // needs a fix for negative scores first.
 TEST_P(ScorePruneScoringTestCase, IndriDirichletClaimsNoBounds) {
   const irs::IndriDirichlet scorer{2000.f};
+  irs::PlanMemory memory;
   EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter());
-  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
+  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource(memory));
 
   auto reader = CreateLargeIndex(scorer, 10);
   auto filter = ParseQuery("topic:database");
@@ -774,12 +790,13 @@ TEST(score_prune_bound_type_test, reported_bound_types) {
     EXPECT_EQ(expected == BT::MinNorm && param_free,
               scorer.Compatible(min_norm));
     EXPECT_FALSE(scorer.Compatible(none));
+    irs::PlanMemory memory;
     if (expected == irs::Scorer::ScoreBoundType::None) {
       EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter());
-      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
+      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource(memory));
     } else {
       EXPECT_NE(nullptr, scorer.PrepareScoreBoundWriter());
-      EXPECT_NE(nullptr, scorer.PrepareScoreBoundSource());
+      EXPECT_NE(nullptr, scorer.PrepareScoreBoundSource(memory));
     }
   };
 
@@ -1114,7 +1131,9 @@ TEST_P(ScorePruneScoringTestCase, ScoredRunPastAGapMatchesAContiguousRun) {
       irs::Optimize(filter);
 
       irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
-      const auto queries = PrepareScored(reader, *filter, scorer, stats);
+      irs::QueryMemory query_memory;
+      const auto queries =
+        PrepareScored(query_memory, reader, *filter, scorer, stats);
       ASSERT_NE(nullptr, queries[0]);
       const auto expected = ScoresOverRanges(*queries[0], scorer, whole, end);
       const auto actual = ScoresOverRanges(*queries[0], scorer, gapped, end);
@@ -1384,6 +1403,9 @@ struct BoundAttrs final : irs::AttributeProvider {
 
 struct NoNorms final : irs::NormProvider {
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+  irs::NormReader::ptr norms(irs::PlanMemory&, irs::field_id) const final {
+    return nullptr;
+  }
 };
 
 struct Pair {
@@ -1417,8 +1439,10 @@ irs::score_t ScoreAt(const Scorer& scorer, const irs::byte_type* stats,
   attrs.freq = tf;
   attrs.norm.value = dl;
   const NoNorms segment;
+  irs::PlanMemory memory;
   irs::ColumnArgsFetcher fetcher;
-  auto fn = scorer.PrepareScorer({.segment = segment,
+  auto fn = scorer.PrepareScorer({.memory = memory,
+                                  .segment = segment,
                                   .field = {},
                                   .doc_attrs = attrs,
                                   .fetcher = fetcher,

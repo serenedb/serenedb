@@ -96,6 +96,7 @@ add_executable(
     index/doc_removal_tests.cpp
     index/field_meta_test.cpp
     index/index_acceptor_walk_tests.cpp
+    index/flush_budget_tests.cpp
     index/index_adopt_tests.cpp
     index/index_column_tests.cpp
     index/index_death_tests.cpp
@@ -194,6 +195,7 @@ add_executable(
     utils/simd_utils_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
+    utils/tracked_test.cpp
     utils/utf8_path_tests.cpp
     utils/utf8_utils_test.cpp
     utils/wildcard_utils_test.cpp

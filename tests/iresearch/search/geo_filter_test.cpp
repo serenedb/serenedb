@@ -105,7 +105,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
       _prepare_scorer(ctx);
     }
 
-    return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
+    return irs::ScoreFunction::Make<CustomSort::Scorer>(ctx.memory, *this, ctx);
   }
 
   std::function<void(irs::byte_type*, const irs::FieldCollector*,
@@ -127,8 +127,8 @@ struct WithoutColumns final : irs::SubReader {
   const irs::DocumentMask* docs_mask() const final {
     return segment.docs_mask();
   }
-  irs::lead::Node::ptr docs_iterator() const final {
-    return segment.docs_iterator();
+  irs::lead::Node::ptr docs_iterator(irs::PlanMemory& memory) const final {
+    return segment.docs_iterator(memory);
   }
   std::span<const irs::field_id> field_ids() const final {
     return segment.field_ids();
@@ -138,6 +138,10 @@ struct WithoutColumns final : irs::SubReader {
   }
   irs::NormReader::ptr norms(irs::field_id id) const final {
     return segment.norms(id);
+  }
+  irs::NormReader::ptr norms(irs::PlanMemory& memory,
+                             irs::field_id id) const final {
+    return segment.norms(memory, id);
   }
 
   const irs::SubReader& segment;
@@ -463,26 +467,8 @@ TEST(GeoFilterTest, query) {
                                  const std::vector<uint64_t>& costs) {
     std::set<std::string> actual_results;
 
-    struct MaxMemoryCounter final : irs::IResourceManager {
-      void Reset() noexcept {
-        current = 0;
-        max = 0;
-      }
-
-      void Increase(size_t value) final {
-        current += value;
-        max = std::max(max, current);
-      }
-
-      void Decrease(size_t value) noexcept final { current -= value; }
-
-      size_t current{0};
-      size_t max{0};
-    };
-
-    MaxMemoryCounter counter;
     std::optional<::tests::PreparedFilter> prepared{std::in_place, q, *reader,
-                                                    nullptr, counter};
+                                                    nullptr};
     auto expected_cost = costs.begin();
     for (size_t i = 0; auto& segment : *reader) {
       const auto* column = segment.Column(kName);
@@ -540,8 +526,6 @@ TEST(GeoFilterTest, query) {
     EXPECT_EQ(expected_cost, costs.end());
 
     prepared.reset();
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
 
     return actual_results;
   };

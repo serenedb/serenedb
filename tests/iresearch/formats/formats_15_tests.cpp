@@ -76,15 +76,16 @@ struct FreqScorer : irs::ScorerBase<void> {
     auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freq);
 
-    return irs::ScoreFunction::Make<FreqScorerContext>(freq);
+    return irs::ScoreFunction::Make<FreqScorerContext>(ctx.memory, freq);
   }
 
   irs::ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final {
     return std::make_unique<irs::FreqNormWriter<irs::kScoreBoundMaxFreq>>();
   }
 
-  irs::ScoreBoundSource::ptr PrepareScoreBoundSource() const final {
-    return std::make_unique<irs::FreqNormSource<irs::kScoreBoundFreq>>();
+  irs::ScoreBoundSource::ptr PrepareScoreBoundSource(
+    irs::PlanMemory& memory) const final {
+    return memory.Make<irs::FreqNormSource<irs::kScoreBoundFreq>>();
   }
 
   bool HasScoreBounds() const noexcept final { return true; }
@@ -305,11 +306,13 @@ class Format15TestCase : public tests::FormatTestCase {
                                        irs::IndexFeatures field_features,
                                        irs::IndexFeatures features,
                                        const irs::PostingMeta& meta) const {
-    return tests::MakeSeekPostings(meta, reader.Handles(), field_features,
-                                   features, HasScoreBounds(field_features));
+    return tests::MakeSeekPostings(_memory, meta, reader.Handles(),
+                                   field_features, features,
+                                   HasScoreBounds(field_features));
   }
 
-  static irs::top::Root::ptr MakePruned(const MockPostingsField& field,
+  static irs::top::Root::ptr MakePruned(irs::PlanMemory& memory,
+                                        const MockPostingsField& field,
                                         const irs::PostingMeta& meta,
                                         const irs::Scorer& scorer,
                                         irs::ColumnArgsFetcher& fetcher,
@@ -323,7 +326,8 @@ class Format15TestCase : public tests::FormatTestCase {
     const irs::detail::PostingClause posting{
       .state = irs::TermState{&field, meta},
       .stats = {.stats = kStats, .scorer = &scorer}};
-    const irs::top::Context ctx{.scorer = scorer, .fetcher = fetcher, .k = k};
+    const irs::top::Context ctx{
+      .memory = memory, .scorer = scorer, .fetcher = fetcher, .k = k};
 
     return irs::top::MakePrunedPosting(posting, irs::SubReader::empty(), ctx);
   }
@@ -331,6 +335,8 @@ class Format15TestCase : public tests::FormatTestCase {
   static bool HasScoreBounds(irs::IndexFeatures field_features) noexcept {
     return irs::IndexFeatures::None != (field_features & kFreq);
   }
+
+  mutable irs::PlanMemory _memory;
 };
 
 Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
@@ -341,6 +347,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   irs::PostingMeta posting_meta;
 
   {
+    auto budget = irs::EmptyBudget();
     const irs::FlushState state{
       .dir = &dir,
       .norms = &irs::SubReader::empty(),
@@ -348,6 +355,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       .scorer = scorer,
       .doc_count = docs.back().first + 1,
       .index_features = features,
+      .budget = budget,
     };
 
     auto out = dir.create("attributes");
@@ -608,9 +616,10 @@ void Format15TestCase::AssertPostings(DocsView docs,
                               HasScoreBounds(field_features), docs.size()};
       const bool expected_pruned =
         HasScoreBounds(field_features) && docs.size() > GetPostingsBlockSize();
+      irs::PlanMemory memory;
       irs::ColumnArgsFetcher fetcher;
       ASSERT_EQ(expected_pruned,
-                MakePruned(field, meta, scorer, fetcher, 1) != nullptr);
+                MakePruned(memory, field, meta, scorer, fetcher, 1) != nullptr);
     }
 
     AssertPostingsWalk(*reader, docs, field_features, features, meta);
@@ -650,8 +659,9 @@ void Format15TestCase::AssertPruned(DocsView docs, uint32_t threshold) {
   MockPostingsField field{field_meta, reader->Handles(), true, docs.size()};
 
   const auto k = static_cast<uint32_t>(docs.size() + 1);
+  irs::PlanMemory memory;
   irs::ColumnArgsFetcher fetcher;
-  auto root = MakePruned(field, meta, scorer, fetcher, k);
+  auto root = MakePruned(memory, field, meta, scorer, fetcher, k);
   ASSERT_NE(nullptr, root);
 
   std::atomic<irs::score_t> score_threshold{

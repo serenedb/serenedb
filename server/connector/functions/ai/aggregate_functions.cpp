@@ -31,6 +31,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -92,7 +93,7 @@ struct AggBindData final : public duckdb::FunctionData {
 };
 
 struct AggState {
-  std::vector<std::string>* values;
+  irs::TrackedVector<irs::TrackedString>* values;
 };
 
 struct AggOperation {
@@ -104,8 +105,8 @@ struct AggOperation {
   template<class INPUT_TYPE, class STATE, class OP>
   static void Operation(STATE& state, const INPUT_TYPE& input,
                         duckdb::AggregateUnaryInput&) {
-    if (state.values == nullptr) {
-      state.values = new std::vector<std::string>();
+    if (!state.values) {
+      state.values = new irs::TrackedVector<irs::TrackedString>();
     }
     state.values->emplace_back(input.GetData(), input.GetSize());
   }
@@ -125,8 +126,8 @@ struct AggOperation {
     if (source.values == nullptr) {
       return;
     }
-    if (target.values == nullptr) {
-      target.values = new std::vector<std::string>();
+    if (!target.values) {
+      target.values = new irs::TrackedVector<irs::TrackedString>();
     }
     auto& values = *source.values;
     if (input.combine_type == duckdb::AggregateCombineType::ALLOW_DESTRUCTIVE) {
@@ -200,7 +201,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> AggInitLocal(
   return duckdb::make_uniq<AILocalState>(bind.context, bind.endpoint);
 }
 
-using Part = std::vector<std::string_view>;
+using Part = irs::TrackedVector<std::string_view>;
 
 size_t Utf8Cut(std::string_view text, size_t limit) {
   auto continues = [&](size_t i) {
@@ -259,7 +260,7 @@ std::string Message(size_t group_size, const Part& values) {
 struct Group {
   size_t size = 0;
   std::vector<std::string> notes;
-  std::vector<std::string_view> values;
+  irs::TrackedVector<std::string_view> values;
   std::optional<std::string> answer;
 };
 

@@ -21,6 +21,7 @@
 #include <limits>
 
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -538,7 +539,7 @@ class OsqQuantizerCodebook final : public QuantizerCodebook {
     _query.assign(query.begin(), query.end());
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const std::shared_ptr<const OsqQuantizerStats<M>>& StatsPtr() const noexcept {
     return _stats;
@@ -552,7 +553,7 @@ class OsqQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class OsqQuantizerReader final : public QuantizerReader {
+class OsqQuantizerReader : public QuantizerReader {
  public:
   explicit OsqQuantizerReader(std::shared_ptr<const OsqQuantizerCodebook<M>> cb)
     : _cb{std::move(cb)},
@@ -651,7 +652,7 @@ class OsqQuantizerReader final : public QuantizerReader {
   bool SupportsPairScores() const noexcept final { return _cluster; }
 
   bool PreparePairTerms(const byte_type* /*base*/, uint32_t /*record_size*/,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     if (!SupportsPairScores()) {
       return false;
     }
@@ -781,8 +782,10 @@ class OsqQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> OsqQuantizerCodebook<M>::MakeReader() const {
-  return MakeReaderT<OsqQuantizerCodebook<M>, OsqQuantizerReader<M>>(this);
+QuantizerReader::ptr OsqQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
+  return MakeReaderT<OsqQuantizerCodebook<M>, OsqQuantizerReader<M>>(this,
+                                                                     plan);
 }
 
 template<VectorMetric M>
@@ -792,14 +795,23 @@ std::shared_ptr<const QuantizerCodebook> OsqQuantizerStats<M>::MakeCodebook(
                                                                       query);
 }
 
+uint32_t OsqBits(uint32_t nb_bits) noexcept {
+  return nb_bits == 0 ? kOSQDefaultBits : nb_bits;
+}
+
 }  // namespace
 
 std::unique_ptr<QuantizerWriter> MakeOsqWriter(VectorMetric metric, uint32_t d,
                                                uint32_t nb_bits,
                                                uint32_t query_bits) {
-  const uint32_t bits = nb_bits == 0 ? kOSQDefaultBits : nb_bits;
+  const uint32_t bits = OsqBits(nb_bits);
   return MakeWriterWithMetric<OsqQuantizerWriter>(
     metric, d, bits, query_bits == 0 ? OSQDefaultQueryBits(bits) : query_bits);
+}
+
+uint32_t OsqRecordSize(uint32_t d, uint32_t nb_bits) noexcept {
+  const uint32_t bits = OsqBits(nb_bits);
+  return MakeOsqLayout(d, bits, OSQDefaultQueryBits(bits)).record_size;
 }
 
 std::shared_ptr<const QuantizerStats> MakeOsqStats(

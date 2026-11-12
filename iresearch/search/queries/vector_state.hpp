@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
@@ -36,17 +37,17 @@ class ColumnReader;
 class QuantizerCodebook;
 
 struct VectorState {
-  explicit VectorState(IResourceManager& memory) noexcept
-    : cookies{{memory}},
-      pay_starts{{memory}},
-      pay_lanes{{memory}},
-      cluster_counts{{memory}},
-      cluster_centroids{{memory}} {}
+  explicit VectorState(MemoryArena& arena)
+    : cookies{arena},
+      pay_starts{arena},
+      pay_lanes{arena},
+      cluster_counts{arena},
+      cluster_centroids{arena} {}
 
   const TermReader* reader = nullptr;
   const ColumnReader* vector_column = nullptr;
   const ColReader* col_reader = nullptr;
-  ManagedVector<PostingMeta> cookies;
+  memory::ArenaVector<PostingMeta> cookies;
   std::unique_ptr<IndexInput> payload;
   uint64_t estimation = 0;
 
@@ -54,12 +55,12 @@ struct VectorState {
   uint32_t d = 0;
   uint32_t top_k = 0;
   float rescore_width = 0.f;
-  ManagedVector<uint64_t> pay_starts;
-  ManagedVector<uint32_t> pay_lanes;
-  ManagedVector<uint32_t> cluster_counts;
+  memory::ArenaVector<uint64_t> pay_starts;
+  memory::ArenaVector<uint32_t> pay_lanes;
+  memory::ArenaVector<uint32_t> cluster_counts;
 
   std::shared_ptr<const QuantizerCodebook> codebook;
-  ManagedVector<float> cluster_centroids;
+  memory::ArenaVector<float> cluster_centroids;
 };
 
 }  // namespace irs

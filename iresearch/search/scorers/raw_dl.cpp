@@ -81,7 +81,8 @@ ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
   const auto* scale = ScaleOf(ctx);
 
   return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<RawDLScore<HasScale>>(ctx.boost, norm, scale);
+    return ScoreFunction::Make<RawDLScore<HasScale>>(ctx.memory, ctx.boost,
+                                                     norm, scale);
   });
 }
 

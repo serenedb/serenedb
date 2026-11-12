@@ -28,8 +28,8 @@
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/utils/bit_packing.hpp"
 #include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -47,8 +47,8 @@ class PackedU32Column : util::Noncopyable {
 
   static_assert(kBlockValues % kSimdValues == 0);
 
-  PackedU32Column(duckdb::ArenaAllocator& arena, IResourceManager& rm) noexcept
-    : _arena{&arena}, _packed{ManagedTypedAllocator<PackedBlock>{rm}} {}
+  explicit PackedU32Column(duckdb::ArenaAllocator& arena) noexcept
+    : _arena{&arena} {}
 
   IRS_FORCE_INLINE void Push(uint32_t value) {
     if (_tail == _tail_end) [[unlikely]] {
@@ -227,7 +227,7 @@ class PackedU32Column : util::Noncopyable {
   }
 
   duckdb::ArenaAllocator* _arena;
-  ManagedVector<PackedBlock> _packed;
+  TrackedVector<PackedBlock> _packed;
   uint32_t* _staging = nullptr;
   uint32_t* _tail = nullptr;
   uint32_t* _tail_end = nullptr;

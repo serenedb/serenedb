@@ -56,11 +56,13 @@ Root::ptr Family::MakeBoosted(
       !irs::detail::FreqOf(own) || !irs::detail::FreqOf(boost_own)) {
     return {};
   }
-  const irs::detail::ScoreArgs args{.scorer = lead.stats.scorer,
+  const irs::detail::ScoreArgs args{.memory = &ctx.memory,
+                                    .scorer = lead.stats.scorer,
                                     .stats = lead.stats.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = lead.boost};
-  const irs::detail::ScoreArgs boost_args{.scorer = boost.stats.scorer,
+  const irs::detail::ScoreArgs boost_args{.memory = &ctx.memory,
+                                          .scorer = boost.stats.scorer,
                                           .stats = boost.stats.stats,
                                           .fetcher = &ctx.fetcher,
                                           .boost = boost.boost};
@@ -69,10 +71,9 @@ Root::ptr Family::MakeBoosted(
     return {};
   }
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-    auto root =
-      memory::make_managed<Posting<Input, BoostTerm<Input>, utils::Empty>>(
-        std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),
-        std::forward_as_tuple());
+    auto root = ctx.memory.Make<Posting<Input, BoostTerm<Input>, utils::Empty>>(
+      std::piecewise_construct, std::forward_as_tuple(ctx.fetcher),
+      std::forward_as_tuple());
     root->Prepare(meta, *doc, segment, own, args, irs::detail::LayoutOf(own),
                   irs::detail::BoundsOf(own));
     root->Optional().Prepare(boost_meta, *doc, segment, boost_own, boost_args);

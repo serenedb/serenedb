@@ -38,6 +38,7 @@
 #include <duckdb/main/settings.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
+#include <iresearch/utils/fault_hits.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
@@ -720,7 +721,8 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Fault injection control. SET sdb_faults = 'name' to add a failure "
-        "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
+        "point, 'name@N' to fire a point that counts its hits once, on the "
+        "Nth, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
         "clear all and release parked threads. Superuser only: the "
         "failure-point registry is "
         "process-global, so an armed point fires for every session.",
@@ -729,15 +731,21 @@ constexpr std::pair<std::string_view, VariableDescription>
           RequireFaultSuperuser(ctx);
           auto s = value.ToString();
           if (s.starts_with('-')) {
-            if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {
+            const auto fault =
+              irs::ParseFaultHit(std::string_view{s}.substr(1));
+            if (!duckdb::FaultPoints::Disarm(fault.name)) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' not set"));
             }
+            irs::SetFaultHit({.name = fault.name});
           } else {
-            if (!duckdb::FaultPoints::Arm(s)) {
+            const auto fault = irs::ParseFaultHit(s);
+            if (duckdb::FaultPoints::Armed(fault.name)) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' already set"));
             }
+            irs::SetFaultHit(fault);
+            duckdb::FaultPoints::Arm(fault.name);
             SDB_WARN(GENERAL, "activating intentional failure point '", s,
                      "'. the server will misbehave!");
           }
@@ -747,6 +755,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext& ctx, duckdb::SetScope) {
           RequireFaultSuperuser(ctx);
           duckdb::FaultPoints::Clear();
+          irs::ClearFaultHits();
         },
         // SESSION scope, though the registry behind it is process-global: it
         // is the only scope that works. GLOBAL is refused inside a

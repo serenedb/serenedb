@@ -27,6 +27,7 @@
 #include "iresearch/index/inverter/packed_column.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -49,8 +50,7 @@ class RunLog {
     uint32_t ndocs;
   };
 
-  RunLog(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
-    : _runs{ManagedTypedAllocator<Run>{rm}}, _doc_tokens{blocks, rm} {}
+  explicit RunLog(duckdb::ArenaAllocator& blocks) : _doc_tokens{blocks} {}
 
   IRS_FORCE_INLINE void BeginDoc(doc_id_t doc) {
     if (!_runs.empty()) {
@@ -90,7 +90,7 @@ class RunLog {
  private:
   static constexpr doc_id_t kMaxBridgedGap = 7;
 
-  ManagedVector<Run> _runs;
+  TrackedVector<Run> _runs;
   LogColumn _doc_tokens;
 };
 
@@ -157,13 +157,8 @@ class PostingLogBase : util::Noncopyable {
   }
 
  protected:
-  PostingLogBase(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
-    : _term_ids{blocks, rm},
-      _runlog{blocks, rm},
-      _refs{blocks, rm},
-      _ref_words{ManagedTypedAllocator<uint64_t>{rm}},
-      _entries{ManagedTypedAllocator<LogEntry>{rm}},
-      _entry_ids{ManagedTypedAllocator<uint32_t>{rm}} {}
+  explicit PostingLogBase(duckdb::ArenaAllocator& blocks)
+    : _term_ids{blocks}, _runlog{blocks}, _refs{blocks} {}
 
   void AppendEntryIds(uint32_t e, const uint32_t* ids, uint32_t n) {
     _entry_ids.insert(_entry_ids.end(), ids, ids + n);
@@ -173,9 +168,9 @@ class PostingLogBase : util::Noncopyable {
   LogColumn _term_ids;
   RunLog _runlog;
   LogColumn _refs;
-  ManagedVector<uint64_t> _ref_words;
-  ManagedVector<LogEntry> _entries;
-  ManagedVector<uint32_t> _entry_ids;
+  TrackedVector<uint64_t> _ref_words;
+  TrackedVector<LogEntry> _entries;
+  TrackedVector<uint32_t> _entry_ids;
   uint64_t _ref_tokens = 0;
 };
 
@@ -230,11 +225,8 @@ class PostingLogPosBase : public PostingLogBase {
   }
 
  protected:
-  PostingLogPosBase(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
-    : PostingLogBase{blocks, rm},
-      _pos{blocks, rm},
-      _explicit_words{ManagedTypedAllocator<uint64_t>{rm}},
-      _entry_pos{ManagedTypedAllocator<uint32_t>{rm}} {}
+  explicit PostingLogPosBase(duckdb::ArenaAllocator& blocks)
+    : PostingLogBase{blocks}, _pos{blocks} {}
 
   IRS_FORCE_INLINE void PushPos(uint32_t abs) {
     _pos.Push(abs - _pos_prev);
@@ -295,8 +287,8 @@ class PostingLogPosBase : public PostingLogBase {
   }
 
   LogColumn _pos;
-  ManagedVector<uint64_t> _explicit_words;
-  ManagedVector<uint32_t> _entry_pos;
+  TrackedVector<uint64_t> _explicit_words;
+  TrackedVector<uint32_t> _entry_pos;
   uint32_t _pos_prev = 0;
   bool _entry_pos_dense = true;
 };
@@ -309,8 +301,8 @@ class PostingLog<TokenLayout::Terms> final : public PostingLogBase {
  public:
   static constexpr TokenLayout kLayout = TokenLayout::Terms;
 
-  PostingLog(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
-    : PostingLogBase{blocks, rm} {}
+  explicit PostingLog(duckdb::ArenaAllocator& blocks)
+    : PostingLogBase{blocks} {}
 
   IRS_FORCE_INLINE void PushOne(doc_id_t doc, uint32_t term_id) {
     _runlog.BeginDoc(doc);
@@ -334,8 +326,8 @@ class PostingLog<TokenLayout::TermsPos> final : public PostingLogPosBase {
  public:
   static constexpr TokenLayout kLayout = TokenLayout::TermsPos;
 
-  PostingLog(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
-    : PostingLogPosBase{blocks, rm} {}
+  explicit PostingLog(duckdb::ArenaAllocator& blocks)
+    : PostingLogPosBase{blocks} {}
 
   using PostingLogPosBase::PushBatch;
   using PostingLogPosBase::PushOne;
@@ -346,12 +338,8 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
  public:
   static constexpr TokenLayout kLayout = TokenLayout::TermsPosOffs;
 
-  PostingLog(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
-    : PostingLogPosBase{blocks, rm},
-      _offs_delta{blocks, rm},
-      _offs_len{blocks, rm},
-      _entry_offs_start{ManagedTypedAllocator<uint32_t>{rm}},
-      _entry_offs_end{ManagedTypedAllocator<uint32_t>{rm}} {}
+  explicit PostingLog(duckdb::ArenaAllocator& blocks)
+    : PostingLogPosBase{blocks}, _offs_delta{blocks}, _offs_len{blocks} {}
 
   size_t BookkeepingMemory() const noexcept {
     return PostingLogPosBase::BookkeepingMemory() + _offs_delta.Memory() +
@@ -413,8 +401,8 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
 
   LogColumn _offs_delta;
   LogColumn _offs_len;
-  ManagedVector<uint32_t> _entry_offs_start;
-  ManagedVector<uint32_t> _entry_offs_end;
+  TrackedVector<uint32_t> _entry_offs_start;
+  TrackedVector<uint32_t> _entry_offs_end;
   doc_id_t _offs_doc{doc_limits::invalid()};
   uint32_t _offs_prev = 0;
 };
@@ -428,10 +416,9 @@ static_assert(static_cast<size_t>(TokenLayout::Terms) == 0 &&
               static_cast<size_t>(TokenLayout::TermsPosOffs) == 2);
 
 inline PostingLogVariant MakePostingLog(duckdb::ArenaAllocator& blocks,
-                                        IResourceManager& rm,
                                         TokenLayout layout) {
   return ResolveLayout(layout, [&]<TokenLayout L>() {
-    return PostingLogVariant{std::in_place_type<PostingLog<L>>, blocks, rm};
+    return PostingLogVariant{std::in_place_type<PostingLog<L>>, blocks};
   });
 }
 

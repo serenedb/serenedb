@@ -169,18 +169,22 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
 size_t CountMatches(const irs::DirectoryReader& reader,
                     const irs::Filter& filter) {
   // Counting does not score, so there is no collector and no statistics.
+  irs::QueryMemory query_memory;
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(filter.PrepareSegment(segment, {}));
+    queries.emplace_back(
+      filter.PrepareSegment(segment, {.memory = query_memory}));
   }
 
+  irs::PlanMemory plan_memory;
   size_t count = 0;
   for (auto& query : queries) {
+    plan_memory.Rewind();
     if (!query) {
       continue;
     }
-    auto plan = query->PlanCount({});
+    auto plan = query->PlanCount({.memory = plan_memory});
     if (!plan) {
       continue;
     }
@@ -193,12 +197,16 @@ size_t CountMatches(const irs::DirectoryReader& reader,
 std::shared_ptr<const irs::DocRemoval> MatchingDocs(
   const irs::DirectoryReader& reader, const irs::Filter& filter) {
   irs::DocRemovalBuilder removal;
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
   for (uint32_t index = 0; index != reader.size(); ++index) {
-    auto query = filter.PrepareSegment(reader[index], {});
+    query_memory.Rewind();
+    plan_memory.Rewind();
+    auto query = filter.PrepareSegment(reader[index], {.memory = query_memory});
     if (!query) {
       continue;
     }
-    auto plan = query->PlanLead({});
+    auto plan = query->PlanLead({.memory = plan_memory});
     if (!plan) {
       continue;
     }

@@ -37,9 +37,11 @@ namespace irs::count {
 template<typename Table>
 class BooleanBitset : public Root {
  public:
-  BooleanBitset(detail::BitsetBuckets&& buckets, const IndexInput& doc,
-                doc_id_t docs_count, Table table) noexcept
-    : _buckets{std::move(buckets)},
+  BooleanBitset(PlanMemory& memory, detail::BitsetBuckets&& buckets,
+                const IndexInput& doc, doc_id_t docs_count, Table table)
+    : _memory{memory},
+      _buckets{std::move(buckets)},
+      _set{memory.Scratch(), docs_count},
       _doc{&doc},
       _docs_count{docs_count},
       _table{table} {}
@@ -48,7 +50,7 @@ class BooleanBitset : public Root {
     constexpr auto kMin = detail::BitsetStorage::kMin;
     constexpr auto kBits = detail::BitsetStorage::kBits;
     if (!_built) {
-      _set = detail::BuildBitset(_buckets, *_doc, _docs_count);
+      detail::FillBitset(_memory, _set, _buckets, *_doc, _docs_count);
       _built = true;
     }
     const auto bits = uint64_t{_set.WordCount()} * kBits;
@@ -85,6 +87,7 @@ class BooleanBitset : public Root {
  private:
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
 
+  PlanMemory& _memory;
   detail::BitsetBuckets _buckets;
   detail::BitsetStorage _set;
   bool _built = false;
@@ -103,14 +106,14 @@ inline constexpr FoldEmit kFoldEmit<count::Root::ptr>{0.3, 1.0, false};
 
 template<>
 inline count::Root::ptr MakeBitsetNode<count::Root::ptr>(
-  BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
-  TableFilter* table) {
+  PlanMemory& memory, BitsetBuckets&& buckets, const IndexInput& doc,
+  doc_id_t docs_count, TableFilter* table) {
   if (table != nullptr) {
-    return memory::make_managed<count::BooleanBitset<TableFilter*>>(
-      std::move(buckets), doc, docs_count, table);
+    return memory.Make<count::BooleanBitset<TableFilter*>>(
+      memory, std::move(buckets), doc, docs_count, table);
   }
-  return memory::make_managed<count::BooleanBitset<utils::Empty>>(
-    std::move(buckets), doc, docs_count, utils::Empty{});
+  return memory.Make<count::BooleanBitset<utils::Empty>>(
+    memory, std::move(buckets), doc, docs_count, utils::Empty{});
 }
 
 }  // namespace irs::detail

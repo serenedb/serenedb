@@ -1,0 +1,88 @@
+# Building and merging a vector index charges its memory to memory_limit: work
+# that needs more than the limit leaves fails with an out-of-memory error
+# instead of growing past it, keeps the index as it was, and succeeds once the
+# limit allows it.
+
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE vecs AS
+SELECT i AS id,
+       list_transform(range(128), lambda j: ((hash(i * 128 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[128] AS emb
+FROM range(200000) t(i);
+
+statement ok
+SET GLOBAL memory_limit = '48MB';
+
+statement error
+CREATE INDEX vecs_hnsw ON vecs USING inverted (emb hnsw (metric = 'l2'))
+  WITH (compaction_interval = 0);
+----
+db error: ERROR: <slt:ignore>failed to reserve memory data of size <slt:ignore>
+
+
+statement error
+CREATE INDEX vecs_ivf ON vecs USING inverted (emb ivf (metric = 'l2'))
+  WITH (compaction_interval = 0);
+----
+db error: ERROR: <slt:ignore>failed to reserve memory data of size <slt:ignore>
+
+
+statement ok
+RESET GLOBAL memory_limit;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+CREATE INDEX vecs_ivf ON vecs USING inverted (emb ivf (metric = 'l2'))
+  WITH (compaction_interval = 0);
+
+query
+SELECT id FROM vecs_ivf ORDER BY emb <-> (SELECT emb FROM vecs WHERE id = 7) LIMIT 1;
+----
+id
+7
+
+statement ok
+DROP INDEX vecs_ivf;
+
+statement ok
+CREATE INDEX vecs_hnsw ON vecs USING inverted (emb hnsw (metric = 'l2'))
+  WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO vecs
+SELECT i AS id,
+       list_transform(range(128), lambda j: ((hash(i * 128 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[128] AS emb
+FROM range(200000, 400000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vecs;
+
+statement ok
+SET GLOBAL memory_limit = '48MB';
+
+statement error
+VACUUM (COMPACT_INDEX) vecs_hnsw;
+----
+db error: ERROR: compact_index: compaction failed: compaction of search store <slt:ignore> failed: failed to reserve memory data of size <slt:ignore>
+
+
+statement ok
+RESET GLOBAL memory_limit;
+
+query
+SELECT id FROM vecs_hnsw ORDER BY emb <-> (SELECT emb FROM vecs WHERE id = 300007) LIMIT 1;
+----
+id
+300007
+
+statement ok
+VACUUM (COMPACT_INDEX) vecs_hnsw;
+
+query
+SELECT id FROM vecs_hnsw ORDER BY emb <-> (SELECT emb FROM vecs WHERE id = 7) LIMIT 1;
+----
+id
+7

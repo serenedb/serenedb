@@ -61,16 +61,16 @@ auto ClauseFor(const SubReader& segment, const detail::ScoredCtx& ctx,
   if constexpr (detail::kScores<Scoring>) {
     return ScoredClauseOf(segment, ctx, scoring.recipe);
   } else {
-    return detail::ProbeClauseOf(segment);
+    return detail::ProbeClauseOf(ctx.memory, segment);
   }
 }
 
 template<typename Musts, typename Optional, typename Excludes, typename Score,
          typename... Args>
-Node::ptr MakeSparse(Score score, Args&&... args) {
+Node::ptr MakeSparse(PlanMemory& memory, Score score, Args&&... args) {
   using Node = BooleanSparse<Musts, Optional, Excludes, Score>;
-  return memory::make_managed<Impl<Node>>(std::piecewise_construct,
-                                          std::forward<Args>(args)..., score);
+  return memory.Make<Impl<Node>>(std::piecewise_construct,
+                                 std::forward<Args>(args)..., score);
 }
 
 template<typename Term, typename Scoring>
@@ -80,16 +80,18 @@ Node::ptr MakeSparseDisjunction(
   const Scoring& scoring, const detail::ScoredCtx& ctx, score_t absorbed) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   return detail::BuildProbeLeaves<Node::ptr>(
-    terms, filters, field, segment, interrogations, detail::ProbeOrder::Densest,
-    scoring, ClauseFor(segment, ctx, scoring),
+    ctx.memory, terms, filters, field, segment, interrogations,
+    detail::ProbeOrder::Densest, scoring, ClauseFor(segment, ctx, scoring),
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           return MakeSparse<utils::Empty,
                             OrLeaves<Leaf, N, detail::kScores<Scoring>>,
                             utils::Empty>(
-            detail::ScoreOf(scoring, absorbed), std::forward_as_tuple(),
-            std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
+            ctx.memory, detail::ScoreOf(scoring, absorbed),
+            std::forward_as_tuple(),
+            std::forward_as_tuple(ctx.memory, size,
+                                  std::forward<decltype(init)>(init)),
             std::forward_as_tuple());
         });
     });
@@ -102,8 +104,9 @@ Node::ptr MakeWindowDisjunction(std::span<const Term> terms,
                                 const detail::TermScoring& scoring,
                                 const detail::ScoredCtx& ctx,
                                 score_t absorbed) {
+  auto& memory = ctx.memory;
   const IndexInput* doc = nullptr;
-  std::vector<detail::FillNode::ptr> rest;
+  memory::ArenaVector<detail::FillNode::ptr> rest{memory.Scratch()};
   if (!detail::CollectDense(terms, filters, field, doc, rest,
                             [&](const QueryBuilder& child) {
                               return child.PlanFill(ctx, scoring.merge);
@@ -111,13 +114,13 @@ Node::ptr MakeWindowDisjunction(std::span<const Term> terms,
     return {};
   }
   return detail::BuildWindowSet<Node::ptr>(
-    terms, field, doc, rest, scoring,
+    memory, terms, field, doc, rest, scoring,
     [&]<typename Set>(auto&&... args) -> Node::ptr {
       using Node = BooleanWindow<detail::OrGroup<Set>, detail::Scored>;
-      return memory::make_managed<Impl<Node>>(
+      return memory.Make<Impl<Node>>(
         std::piecewise_construct,
         std::forward_as_tuple(std::forward<decltype(args)>(args)...),
-        detail::Scored{scoring.merge, absorbed});
+        detail::Scored{&memory, scoring.merge, absorbed});
     });
 }
 
@@ -141,7 +144,8 @@ Node::ptr MakeDisjunction(std::span<const Term> terms,
         }
       } else {
         return detail::MakeBitsetNode<Node::ptr>(
-          detail::DisjunctionBuckets(terms, field), *doc, docs_count, nullptr);
+          ctx.memory, detail::DisjunctionBuckets(ctx.memory, terms, field),
+          *doc, docs_count, nullptr);
       }
     }
   }
@@ -160,7 +164,7 @@ Node::ptr MakeSparseThreshold(std::span<const detail::PostingClause> terms,
     return {};
   }
   return detail::BuildProbeLeaves<Node::ptr>(
-    terms, filters, nullptr, segment, interrogations,
+    ctx.memory, terms, filters, nullptr, segment, interrogations,
     detail::ProbeOrder::Densest, scoring, ClauseFor(segment, ctx, scoring),
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
@@ -168,9 +172,10 @@ Node::ptr MakeSparseThreshold(std::span<const detail::PostingClause> terms,
           return MakeSparse<utils::Empty,
                             ThresholdLeaves<Leaf, N, detail::kScores<Scoring>>,
                             utils::Empty>(
-            detail::ScoreOf(scoring, absorbed), std::forward_as_tuple(),
-            std::forward_as_tuple(size, std::forward<decltype(init)>(init),
-                                  min_match),
+            ctx.memory, detail::ScoreOf(scoring, absorbed),
+            std::forward_as_tuple(),
+            std::forward_as_tuple(
+              ctx.memory, size, std::forward<decltype(init)>(init), min_match),
             std::forward_as_tuple());
         });
     });

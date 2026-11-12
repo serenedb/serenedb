@@ -26,8 +26,9 @@ namespace irs::hits {
 
 Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
                           ScoreMergeType, score_t score) {
-  return memory::make_managed<All>(
-    ctx.fetcher, static_cast<doc_id_t>(segment.docs_count()), score);
+  return ctx.memory.Make<All>(ctx.fetcher,
+                              static_cast<doc_id_t>(segment.docs_count()),
+                              ScoreFunction::Constant(ctx.memory, score));
 }
 
 }  // namespace irs::hits

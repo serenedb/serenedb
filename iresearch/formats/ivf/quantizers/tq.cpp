@@ -31,6 +31,7 @@
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/shuffle.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -966,7 +967,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const TurboQuantizerStats<M>& Stats() const noexcept { return *_stats; }
   const std::shared_ptr<const TurboQuantizerStats<M>>& StatsPtr()
@@ -1126,7 +1127,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class TurboQuantizerReader final : public QuantizerReader {
+class TurboQuantizerReader : public QuantizerReader {
  public:
   explicit TurboQuantizerReader(
     std::shared_ptr<const TurboQuantizerCodebook<M>> cb)
@@ -1298,7 +1299,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   }
 
   bool PreparePairTerms(const byte_type* base, uint32_t record_size,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     if (!SupportsPairScores()) {
       return false;
     }
@@ -1744,8 +1745,10 @@ class TurboQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> TurboQuantizerCodebook<M>::MakeReader() const {
-  return MakeReaderT<TurboQuantizerCodebook<M>, TurboQuantizerReader<M>>(this);
+QuantizerReader::ptr TurboQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
+  return MakeReaderT<TurboQuantizerCodebook<M>, TurboQuantizerReader<M>>(this,
+                                                                         plan);
 }
 
 template<VectorMetric M>
@@ -1766,6 +1769,16 @@ std::unique_ptr<QuantizerWriter> MakeTurboQuantWriter(VectorMetric metric,
   SDB_ASSERT(bits);
   return MakeWriterWithMetric<TurboQuantizerWriter>(metric, d, *bits,
                                                     row_major);
+}
+
+uint32_t TurboQuantRecordSize(VectorMetric metric, uint32_t d, uint32_t nb_bits,
+                              bool half_bit, bool row_major) noexcept {
+  const auto bits = MakeTurboQuantBits(nb_bits, half_bit);
+  SDB_ASSERT(bits);
+  return MakeTurboQuantLayout(
+           d, *bits, EffectiveQuantMetric(metric) == VectorMetric::L2Sqr,
+           row_major)
+    .record_size;
 }
 
 std::shared_ptr<const QuantizerStats> MakeTurboQuantStats(

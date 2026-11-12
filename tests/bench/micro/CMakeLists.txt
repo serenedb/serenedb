@@ -55,6 +55,7 @@ add_bench(term_enumeration)
 add_bench(term_dict_root)
 add_bench(numeric_ranges)
 add_bench(top_term_selector)
+add_bench(tracked_alloc)
 add_bench(random)
 set_property(
     SOURCE random.cpp

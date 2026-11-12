@@ -1,0 +1,16 @@
+# INSERT, UPDATE, DELETE and COPY on a search table with an inverted index,
+# each run once for every memory charge it makes with that charge failing, into
+# a segment that already holds committed rows: a statement either succeeds or
+# fails with out-of-memory and leaves nothing behind, the index stays in sync
+# with the table, CHECKPOINT works, and a restart keeps it.
+
+control substitution on
+
+system ok
+port=$(tr '\0' '\n' < /proc/$PPID/cmdline | grep -A1 -x -- --port | tail -1); python3 recovery/memory_pressure.py "$port" '$__DATABASE__' '$__TEST_DIR__' charges indexed
+----
+insert: ok
+update: ok
+delete: ok
+copy: ok
+restart: ok

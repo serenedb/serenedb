@@ -35,15 +35,16 @@ Result<Family> MakeScoredNegation(
   std::span<const PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   ScoreMergeType merge, score_t absorbed, const Ctx& ctx) {
+  auto& memory = Family::MemoryOf(ctx);
   return BuildNegationWindow<Result<Family>>(
-    excludes, exclude_filters, segment,
+    memory, excludes, exclude_filters, segment,
     [&]<typename Lead, typename Excludes>(auto&& lead,
                                           auto&& excluded) -> Result<Family> {
       return Family::template MakeWindow<Lead, utils::Empty, utils::Empty,
                                          Excludes>(
-        ctx, merge, Scored{merge, absorbed}, std::forward<decltype(lead)>(lead),
-        std::forward_as_tuple(), std::forward_as_tuple(),
-        std::forward<decltype(excluded)>(excluded));
+        ctx, merge, Scored{&memory, merge, absorbed},
+        std::forward<decltype(lead)>(lead), std::forward_as_tuple(),
+        std::forward_as_tuple(), std::forward<decltype(excluded)>(excluded));
     });
 }
 
@@ -78,8 +79,9 @@ Result<Family> MakeExclusionWindow(const BooleanQuery& query, const Ctx& ctx,
     } else {
       return {};
     }
+    auto& memory = Family::MemoryOf(ctx);
     const IndexInput* doc = nullptr;
-    std::vector<FillNode::ptr> rest;
+    memory::ArenaVector<FillNode::ptr> rest{memory.Scratch()};
     if (!CollectDense(terms, filters, nullptr, doc, rest,
                       [&](const QueryBuilder& filter) {
                         return filter.PlanFill(Family::Scoring(ctx), merge);
@@ -89,15 +91,15 @@ Result<Family> MakeExclusionWindow(const BooleanQuery& query, const Ctx& ctx,
     const auto scoring =
       ScoringOf<Family>(segment, ctx, merge, query.Uniformity(Occur::Should));
     return BuildWindowExcludes<Result<Family>>(
-      excludes, exclude_filters, nullptr, segment, candidates,
+      memory, excludes, exclude_filters, nullptr, segment, candidates,
       [&]<typename Excludes>(auto&& negated) -> Result<Family> {
         return BuildWindowSet<Result<Family>>(
-          terms, nullptr, doc, rest, scoring,
+          memory, terms, nullptr, doc, rest, scoring,
           [&]<typename Set>(auto&&... args) -> Result<Family> {
             return Family::template MakeWindow<utils::Empty, utils::Empty,
                                                OrGroup<Set>, Excludes>(
-              ctx, merge, Scored{merge, absorbed}, std::forward_as_tuple(),
-              std::forward_as_tuple(),
+              ctx, merge, Scored{&memory, merge, absorbed},
+              std::forward_as_tuple(), std::forward_as_tuple(),
               std::forward_as_tuple(std::forward<decltype(args)>(args)...),
               std::forward<decltype(negated)>(negated));
           });

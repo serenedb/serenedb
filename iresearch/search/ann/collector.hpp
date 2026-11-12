@@ -73,6 +73,19 @@ class Collector {
     _prune_at = kPruneAt;
   }
 
+  void Reset(uint32_t k) noexcept {
+    SDB_ASSERT(k != 0);
+    _k = k;
+    _hits.clear();
+    _lower.clear();
+    _prune_at = kPruneAt;
+  }
+
+  void Reserve(size_t candidates) {
+    _hits.reserve(_hits.size() + candidates);
+    _lower.reserve(std::min(candidates, size_t{_k}));
+  }
+
  private:
   static constexpr size_t kPruneAt = 1024;
 

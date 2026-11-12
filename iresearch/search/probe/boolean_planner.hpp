@@ -118,13 +118,14 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
       std::forward_as_tuple(std::move(node)));
   }
   return detail::BuildProbeLeaves<Node::ptr>(
-    terms, filters, nullptr, segment, interrogations,
+    ctx.memory, terms, filters, nullptr, segment, interrogations,
     detail::ProbeOrder::Narrowest, scoring, clause,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           return make.template operator()<AndLeaves<Leaf, N>>(
-            std::forward_as_tuple(size, std::forward<decltype(init)>(init)));
+            std::forward_as_tuple(ctx.memory, size,
+                                  std::forward<decltype(init)>(init)));
         });
     });
 }
@@ -135,12 +136,13 @@ Node::ptr MakeConjunction(std::span<const detail::PostingClause> terms,
                           const SubReader& segment, uint64_t interrogations,
                           const Scoring& scoring, const detail::ScoredCtx& ctx,
                           score_t absorbed) {
+  auto& memory = ctx.memory;
   const auto size = terms.size() + filters.size();
   if (size == 0) {
     if constexpr (detail::kScores<Scoring>) {
-      return MakeAllScored(segment, absorbed);
+      return MakeAllScored(memory, segment, absorbed);
     } else {
-      return MakeAllDocs(segment);
+      return MakeAllDocs(memory, segment);
     }
   }
   if (size == 1 && absorbed == 0) {
@@ -153,7 +155,7 @@ Node::ptr MakeConjunction(std::span<const detail::PostingClause> terms,
   return BuildMusts(terms, filters, segment, interrogations, scoring, ctx,
                     [&]<typename Musts>(auto&& musts) -> Node::ptr {
                       return MakeSparse<Musts, utils::Empty, utils::Empty>(
-                        detail::ScoreOf(scoring, absorbed),
+                        memory, detail::ScoreOf(scoring, absorbed),
                         std::forward<decltype(musts)>(musts),
                         std::forward_as_tuple(), std::forward_as_tuple());
                     });
@@ -192,7 +194,7 @@ Node::ptr MakeRequired(const BooleanQuery& query, uint64_t interrogations,
   return BuildMusts(must, must_filters, segment, interrogations, must_scoring,
                     ctx, [&]<typename Musts>(auto&& musts) -> Node::ptr {
                       return MakeSparse<Musts, Erased, utils::Empty>(
-                        detail::ScoreOf(scoring, absorbed),
+                        ctx.memory, detail::ScoreOf(scoring, absorbed),
                         std::forward<decltype(musts)>(musts),
                         std::forward_as_tuple(std::move(held)),
                         std::forward_as_tuple());
@@ -215,7 +217,7 @@ inline Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
     WithUniformity(scoring, query.Uniformity(Occur::Must));
   const auto build = [&]<typename Head>(auto&& head) -> Node::ptr {
     return detail::BuildProbeLeaves<Node::ptr>(
-      should, should_filters, nullptr, segment,
+      ctx.memory, should, should_filters, nullptr, segment,
       no_must ? interrogations
               : std::min(interrogations, detail::IncludeCandidates(
                                            must, must_filters, segment)),
@@ -225,9 +227,10 @@ inline Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
         return detail::ResolveArity<detail::kTailArity, detail::kTailFloor>(
           size, [&]<size_t N> -> Node::ptr {
             return MakeSparse<Head, BoostLeaves<Leaf, N>, utils::Empty>(
-              detail::Scored{scoring.merge, absorbed},
+              ctx.memory, detail::Scored{&ctx.memory, scoring.merge, absorbed},
               std::forward<decltype(head)>(head),
-              std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
+              std::forward_as_tuple(ctx.memory, size,
+                                    std::forward<decltype(init)>(init)),
               std::forward_as_tuple());
           });
       });
@@ -271,7 +274,7 @@ Node::ptr MakeBoolean(const BooleanQuery& query, uint64_t interrogations,
   score_t absorbed = 0;
   if constexpr (detail::kScores<Scoring>) {
     SDB_ASSERT(ctx.fetcher);
-    absorbed = query.Absorbed(*ctx.fetcher);
+    absorbed = query.Absorbed(ctx.memory, *ctx.fetcher);
   }
   if (!query.Terms(Occur::MustNot).empty() ||
       !query.Queries(Occur::MustNot).empty()) {

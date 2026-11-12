@@ -77,9 +77,7 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
 
   ScoreFunction PrepareScore() { return this->MakeDeferredScore(); }
 
-  void CollectScorers(std::vector<ScoreFunction>& out) {
-    AppendScorer(out, PrepareScore());
-  }
+  void CollectScorers(auto& out) { AppendScorer(out, PrepareScore()); }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {
     _gather.data[slot] = _freqs.data[_leaf.Index()];

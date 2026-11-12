@@ -53,14 +53,15 @@ class PrunedDisjunction : public Root {
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
 
   template<typename Init, typename ExcludesArgs>
-  PrunedDisjunction(Table table, size_t size, doc_id_t docs, Init&& init,
-                    ExcludesArgs&& excludes)
-    : _entries{size,
+  PrunedDisjunction(Table table, PlanMemory& memory, size_t size, doc_id_t docs,
+                    Init&& init, ExcludesArgs&& excludes)
+    : _entries{memory.Arena(), size,
                [&](Entry& entry, size_t i) {
                  entry.cost = std::max<uint32_t>(1, init(entry.leaf, i));
                }},
-      _sorted{size, [this](Entry*& entry,
-                           size_t i) noexcept { entry = &_entries[i]; }},
+      _sorted{
+        memory.Arena(), size,
+        [this](Entry*& entry, size_t i) noexcept { entry = &_entries[i]; }},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _admit{table},

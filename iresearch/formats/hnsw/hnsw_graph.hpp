@@ -34,12 +34,15 @@
 #include <new>
 #include <pcg_random.hpp>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
+#include "iresearch/utils/query_memory.hpp"
+#include "iresearch/utils/tracked.hpp"
 namespace irs {
 
 class DataOutput;
@@ -70,8 +73,73 @@ enum class HnswWalks : uint8_t {
   Many,
 };
 
+// NOLINTBEGIN
+template<typename T>
+class HnswScratchAllocator {
+ public:
+  using value_type = T;
+  using propagate_on_container_copy_assignment = std::false_type;
+  using propagate_on_container_move_assignment = std::true_type;
+  using propagate_on_container_swap = std::true_type;
+  using is_always_equal = std::false_type;
+
+  HnswScratchAllocator() = default;
+  explicit HnswScratchAllocator(MemoryBudget* budget) noexcept
+    : _budget{budget} {}
+  explicit HnswScratchAllocator(MemoryArena& arena) noexcept : _arena{&arena} {}
+
+  template<typename U>
+  HnswScratchAllocator(const HnswScratchAllocator<U>& other) noexcept
+    : _budget{other.Budget()}, _arena{other.Arena()} {}
+
+  HnswScratchAllocator select_on_container_copy_construction() const noexcept {
+    return _arena ? *this : HnswScratchAllocator{};
+  }
+
+  T* allocate(size_t n) {
+    if (_arena) {
+      return _arena->Allocate<T>(n);
+    }
+    return TrackedAllocator<T>{_budget}.allocate(n);
+  }
+
+  void deallocate(T* p, size_t n) noexcept {
+    if (!_arena) {
+      TrackedAllocator<T>{_budget}.deallocate(p, n);
+    }
+  }
+
+  MemoryBudget* Budget() const noexcept { return _budget; }
+  MemoryArena* Arena() const noexcept { return _arena; }
+
+  friend bool operator==(const HnswScratchAllocator& lhs,
+                         const HnswScratchAllocator& rhs) noexcept {
+    return lhs._budget == rhs._budget && lhs._arena == rhs._arena;
+  }
+
+ private:
+  MemoryBudget* _budget = nullptr;
+  MemoryArena* _arena = nullptr;
+};
+// NOLINTEND
+
+template<typename T>
+using HnswScratchVector = std::vector<T, HnswScratchAllocator<T>>;
+
 class HnswVisited {
  public:
+  explicit HnswVisited(MemoryBudget* budget = nullptr) noexcept
+    : _words{HnswScratchAllocator<uint64_t>{budget}},
+      _dirty{HnswScratchAllocator<uint32_t>{budget}},
+      _slots{HnswScratchAllocator<uint32_t>{budget}},
+      _used{HnswScratchAllocator<uint32_t>{budget}} {}
+
+  explicit HnswVisited(MemoryArena& arena) noexcept
+    : _words{HnswScratchAllocator<uint64_t>{arena}},
+      _dirty{HnswScratchAllocator<uint32_t>{arena}},
+      _slots{HnswScratchAllocator<uint32_t>{arena}},
+      _used{HnswScratchAllocator<uint32_t>{arena}} {}
+
   void Reset(size_t n, size_t visits, HnswWalks walks) {
     _n = n;
     Clear();
@@ -183,7 +251,7 @@ class HnswVisited {
       _dense = true;
       return;
     }
-    std::vector<uint32_t> slots(size, 0);
+    HnswScratchVector<uint32_t> slots(size, 0, _slots.get_allocator());
     _shift = 64 - std::countr_zero(size);
     const auto mask = size - 1;
     for (auto& used : _used) {
@@ -198,10 +266,10 @@ class HnswVisited {
     _slots = std::move(slots);
   }
 
-  std::vector<uint64_t> _words;
-  std::vector<uint32_t> _dirty;
-  std::vector<uint32_t> _slots;
-  std::vector<uint32_t> _used;
+  HnswScratchVector<uint64_t> _words;
+  HnswScratchVector<uint32_t> _dirty;
+  HnswScratchVector<uint32_t> _slots;
+  HnswScratchVector<uint32_t> _used;
   size_t _n = 0;
   int _shift = 0;
   bool _table = false;
@@ -228,15 +296,37 @@ struct HnswFrontierOrder {
 };
 
 struct HnswSearchScratch {
+  explicit HnswSearchScratch(MemoryBudget* budget = nullptr) noexcept
+    : visited{budget},
+      visited_hop2{budget},
+      nearest{HnswScratchAllocator<HnswCandidate>{budget}},
+      frontier{HnswScratchAllocator<HnswCandidate>{budget}},
+      batch{HnswScratchAllocator<uint32_t>{budget}},
+      hop{HnswScratchAllocator<uint32_t>{budget}},
+      bridges{HnswScratchAllocator<uint32_t>{budget}},
+      hop2{HnswScratchAllocator<uint32_t>{budget}},
+      scores{HnswScratchAllocator<score_t>{budget}} {}
+
+  explicit HnswSearchScratch(MemoryArena& arena) noexcept
+    : visited{arena},
+      visited_hop2{arena},
+      nearest{HnswScratchAllocator<HnswCandidate>{arena}},
+      frontier{HnswScratchAllocator<HnswCandidate>{arena}},
+      batch{HnswScratchAllocator<uint32_t>{arena}},
+      hop{HnswScratchAllocator<uint32_t>{arena}},
+      bridges{HnswScratchAllocator<uint32_t>{arena}},
+      hop2{HnswScratchAllocator<uint32_t>{arena}},
+      scores{HnswScratchAllocator<score_t>{arena}} {}
+
   HnswVisited visited;
   HnswVisited visited_hop2;
-  std::vector<HnswCandidate> nearest;
-  std::vector<HnswCandidate> frontier;
-  std::vector<uint32_t> batch;
-  std::vector<uint32_t> hop;
-  std::vector<uint32_t> bridges;
-  std::vector<uint32_t> hop2;
-  std::vector<score_t> scores;
+  HnswScratchVector<HnswCandidate> nearest;
+  HnswScratchVector<HnswCandidate> frontier;
+  HnswScratchVector<uint32_t> batch;
+  HnswScratchVector<uint32_t> hop;
+  HnswScratchVector<uint32_t> bridges;
+  HnswScratchVector<uint32_t> hop2;
+  HnswScratchVector<score_t> scores;
   uint64_t scored = 0;
   double admit_share = 1.0;
   uint64_t admitted = 0;
@@ -321,6 +411,9 @@ class HnswGraphWriter {
  public:
   HnswGraphWriter() = default;
 
+  void SetBudget(MemoryBudget& budget) noexcept { _budget = &budget; }
+  MemoryBudget* Budget() const noexcept { return _budget; }
+
   void Reset(size_t nodes, uint32_t m);
 
   void AllocateLinks();
@@ -375,11 +468,16 @@ class HnswGraphWriter {
 
  private:
   HnswGraph _graph;
-  std::vector<uint32_t> _proc_offsets;
-  std::vector<uint8_t> _processed;
+  TrackedVector<uint32_t> _proc_offsets;
+  TrackedVector<uint8_t> _processed;
+  MemoryBudget* _budget = nullptr;
 };
 
 uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept;
+
+uint64_t HnswUpperLevelsBound(uint64_t rows, uint32_t m) noexcept;
+
+uint64_t HnswScratchBound(uint64_t rows, uint32_t ef, uint32_t m0) noexcept;
 
 template<VectorMetric M>
 void HnswComputeDistances(const float* q, const float* base, uint32_t d,
@@ -610,7 +708,7 @@ IRS_FORCE_INLINE void HnswBatchUnvisited(std::span<const uint32_t> links,
 }
 
 inline IRS_FORCE_INLINE void HnswKeepNearest(
-  std::vector<HnswCandidate>& nearest, HnswCandidate cand, uint32_t ef) {
+  HnswScratchVector<HnswCandidate>& nearest, HnswCandidate cand, uint32_t ef) {
   nearest.push_back(cand);
   std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
   if (nearest.size() > ef) {
@@ -841,20 +939,36 @@ struct HnswReverseItem {
 };
 
 struct HnswBuildScratch {
+  explicit HnswBuildScratch(MemoryBudget* budget = nullptr) noexcept
+    : search{budget},
+      selected{TrackedAllocator<uint32_t>{budget}},
+      peer_candidates{TrackedAllocator<HnswCandidate>{budget}},
+      link_ids{TrackedAllocator<uint32_t>{budget}},
+      peer_scores{TrackedAllocator<score_t>{budget}},
+      node_scores{TrackedAllocator<score_t>{budget}},
+      pending{TrackedAllocator<HnswPendingLink>{budget}},
+      select_blocked{TrackedAllocator<uint8_t>{budget}},
+      select_ids{TrackedAllocator<uint32_t>{budget}},
+      select_scores{TrackedAllocator<score_t>{budget}},
+      rev_items{TrackedAllocator<HnswReverseItem>{budget}},
+      rev_kept{TrackedAllocator<uint32_t>{budget}},
+      rev_kept_scores{TrackedAllocator<score_t>{budget}},
+      rev_kept_processed{TrackedAllocator<uint8_t>{budget}} {}
+
   HnswSearchScratch search;
-  std::vector<uint32_t> selected;
-  std::vector<HnswCandidate> peer_candidates;
-  std::vector<uint32_t> link_ids;
-  std::vector<score_t> peer_scores;
-  std::vector<score_t> node_scores;
-  std::vector<HnswPendingLink> pending;
-  std::vector<uint8_t> select_blocked;
-  std::vector<uint32_t> select_ids;
-  std::vector<score_t> select_scores;
-  std::vector<HnswReverseItem> rev_items;
-  std::vector<uint32_t> rev_kept;
-  std::vector<score_t> rev_kept_scores;
-  std::vector<uint8_t> rev_kept_processed;
+  TrackedVector<uint32_t> selected;
+  TrackedVector<HnswCandidate> peer_candidates;
+  TrackedVector<uint32_t> link_ids;
+  TrackedVector<score_t> peer_scores;
+  TrackedVector<score_t> node_scores;
+  TrackedVector<HnswPendingLink> pending;
+  TrackedVector<uint8_t> select_blocked;
+  TrackedVector<uint32_t> select_ids;
+  TrackedVector<score_t> select_scores;
+  TrackedVector<HnswReverseItem> rev_items;
+  TrackedVector<uint32_t> rev_kept;
+  TrackedVector<score_t> rev_kept_scores;
+  TrackedVector<uint8_t> rev_kept_processed;
 };
 
 inline bool HnswRedundant(score_t to_selected, score_t candidate,

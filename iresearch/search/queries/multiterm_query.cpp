@@ -59,13 +59,14 @@ void PrefetchPostings(const TermReader& reader,
 
 QueryBuilder::ptr MultiTermQuery::Finish(
   memory::managed_ptr<MultiTermQuery> query, const PrepareContext& ctx) {
-  auto& terms = query->_state.Terms();
-  absl::c_sort(terms, [](const auto& l, const auto& r) {
+  absl::c_sort(query->_state.Walked(), [](const auto& l, const auto& r) {
     if (l.cookie.docs_count != r.cookie.docs_count) {
       return l.cookie.docs_count > r.cookie.docs_count;
     }
     return l.cookie.doc_start > r.cookie.doc_start;
   });
+  query->_state.Seal();
+  const auto& terms = query->_state.Terms();
   uint64_t sum = 0;
   for (const auto& entry : terms) {
     sum += entry.cookie.docs_count;
@@ -87,8 +88,8 @@ QueryBuilder::ptr MultiTermQuery::Finish(
     const auto& entry = terms.front();
     if (!ctx.KeepsTerms() &&
         entry.cookie.docs_count == query->_segment.docs_count()) {
-      return memory::make_tracked<AllQuery>(ctx.memory, query->_segment,
-                                            entry.boost * query->_boost);
+      return ctx.memory.Make<AllQuery>(query->_segment,
+                                       entry.boost * query->_boost);
     }
     return MakeTermQuery(ctx.memory, query->_segment, query->_state.Reader(),
                          entry.cookie, entry.boost * query->_boost,

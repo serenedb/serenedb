@@ -46,6 +46,7 @@
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <iterator>
 #include <span>
 #include <string>
@@ -303,7 +304,7 @@ std::unique_ptr<duckdb::DataChunk> InvertedStoreIndex::Batch(
   auto types = results.GetTypes();
   types.push_back(duckdb::LogicalType::ROW_TYPE);
   auto batch = std::make_unique<duckdb::DataChunk>();
-  batch->Initialize(duckdb::Allocator::DefaultAllocator(), types, count);
+  batch->Initialize(irs::TrackedDuckAllocator(), types, count);
   auto& batch_rows = batch->data.back();
   duckdb::VectorOperations::Copy(rows, batch_rows, count, 0, 0);
   duckdb::FlatVector::SetSize(batch_rows, count);
@@ -558,7 +559,7 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   duckdb::UnifiedVectorFormat fmt;
   row_ids.ToUnifiedFormat(count, fmt);
   const auto* data = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
-  std::vector<int64_t> rows;
+  irs::TrackedVector<int64_t> rows;
   rows.reserve(count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
     rows.push_back(data[fmt.sel->get_index(i)]);

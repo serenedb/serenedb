@@ -41,6 +41,7 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/tracked.hpp>
 
 #include "connector/column_id.h"
 #include "connector/optimizer/iresearch_plan.h"
@@ -362,7 +363,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   if (state->scorer_obj && (!ss.score.vector || !ss.score.text)) {
     state->collect_threads = std::max<uint32_t>(1, state->workers);
-    state->stats_arena.emplace(duckdb::Allocator::Get(context));
+    state->stats_arena.emplace(irs::TrackedDuckAllocator());
     state->collector.emplace(*state->filter, *state->scorer_obj,
                              *state->stats_arena, state->collect_threads);
     state->stats_scorer = state->collector->GetScorer();

@@ -29,7 +29,6 @@
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_utils.hpp"
 
@@ -102,24 +101,21 @@ struct OnHeap final : Base {
   void Destroy() const noexcept final { delete this; }
 };
 
+struct ArenaOnly {
+  static void* operator new(size_t) = delete;
+  static void* operator new(size_t, std::align_val_t) = delete;
+  static void* operator new(size_t, void* p) noexcept { return p; }
+};
+
 template<typename Base>
-struct Tracked final : Base {
+struct OnArena final : Base {
   static_assert(std::is_base_of_v<Managed, Base>);
 
   template<typename... Args>
-  Tracked(IResourceManager& rm, Args&&... args)
-    : Base{std::forward<Args>(args)...}, _rm{rm} {
-    rm.Increase(sizeof(*this));
-  }
+  OnArena(Args&&... args) : Base{std::forward<Args>(args)...} {}
 
  private:
-  void Destroy() const noexcept final {
-    auto& rm = _rm;
-    delete this;
-    rm.Decrease(sizeof(*this));
-  }
-
-  IResourceManager& _rm;
+  void Destroy() const noexcept final { this->~OnArena(); }
 };
 
 struct ManagedDeleter {
@@ -144,8 +140,9 @@ class [[clang::trivial_abi]] managed_ptr final
 
   template<typename Base, typename Derived, typename... Args>
   friend managed_ptr<Base> make_managed(Args&&... args);
+
   template<typename Base, typename Derived, typename... Args>
-  friend managed_ptr<Base> make_tracked(IResourceManager&, Args&&... args);
+  friend managed_ptr<Base> make_managed_at(void* storage, Args&&... args);
 
   constexpr explicit managed_ptr(T* p) noexcept : Ptr{p} {}
 
@@ -204,9 +201,9 @@ managed_ptr<Base> make_managed(Args&&... args) {
 }
 
 template<typename Base, typename Derived = Base, typename... Args>
-managed_ptr<Base> make_tracked(IResourceManager& rm, Args&&... args) {
-  return managed_ptr<Base>{
-    new Tracked<Derived>{rm, std::forward<Args>(args)...}};
+managed_ptr<Base> make_managed_at(void* storage, Args&&... args) {
+  return managed_ptr<Base>{::new (storage)
+                             OnArena<Derived>{std::forward<Args>(args)...}};
 }
 // NOLINTEND
 

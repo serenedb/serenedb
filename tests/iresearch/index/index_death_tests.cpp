@@ -355,7 +355,8 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
   ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
 
   // validate live docs
-  auto live_docs = segment.docs_iterator();
+  irs::PlanMemory memory;
+  auto live_docs = segment.docs_iterator(memory);
   ASSERT_EQ(1, live_docs->Next());
   ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
 }
@@ -404,12 +405,11 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    // ensure no data
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
-    ASSERT_EQ(0, reader->size());
-    ASSERT_EQ(0, reader->docs_count());
-    ASSERT_EQ(0, reader->live_docs_count());
+    ASSERT_EQ(1, reader->size());
+    ASSERT_EQ(1, reader->docs_count());
+    ASSERT_EQ(1, reader->live_docs_count());
   }
 
   {
@@ -448,12 +448,14 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
     ASSERT_TRUE(reader);
-    ASSERT_EQ(1, reader->size());
-    ASSERT_EQ(1, reader->docs_count());
-    ASSERT_EQ(1, reader->live_docs_count());
+    ASSERT_EQ(2, reader->size());
+    ASSERT_EQ(2, reader->docs_count());
+    ASSERT_EQ(2, reader->live_docs_count());
 
     // validate index
     tests::index_t expected_index;
+    expected_index.emplace_back();
+    expected_index.back().insert(*doc1);
     expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
@@ -524,13 +526,12 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_TRUE(writer->RefreshBegin());
     ASSERT_FALSE(writer->RefreshCommit());
 
-    // ensure no data
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
     ASSERT_TRUE(reader);
-    ASSERT_EQ(0, reader->size());
-    ASSERT_EQ(0, reader->docs_count());
-    ASSERT_EQ(0, reader->live_docs_count());
+    ASSERT_EQ(3, reader->size());
+    ASSERT_EQ(3, reader->docs_count());
+    ASSERT_EQ(3, reader->live_docs_count());
   }
 
   {
@@ -562,20 +563,23 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     ASSERT_SQL_ERROR(writer->RefreshBegin(),
-                     ERRCODE_IO_ERROR);    // synchronization failure
-    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
+                     ERRCODE_IO_ERROR);  // synchronization failure
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     ASSERT_SQL_ERROR(writer->RefreshBegin(),
-                     ERRCODE_IO_ERROR);    // synchronization failure
-    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
+                     ERRCODE_IO_ERROR);  // synchronization failure
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     ASSERT_SQL_ERROR(writer->RefreshBegin(),
-                     ERRCODE_IO_ERROR);    // synchronization failure
-    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
+                     ERRCODE_IO_ERROR);  // synchronization failure
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
@@ -587,14 +591,16 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     tests::AssertSnapshotEquality(writer->GetSnapshot(), reader);
     ASSERT_TRUE(reader);
-    ASSERT_EQ(1, reader->size());
-    ASSERT_EQ(1, reader->docs_count());
-    ASSERT_EQ(1, reader->live_docs_count());
+    ASSERT_EQ(4, reader->size());
+    ASSERT_EQ(4, reader->docs_count());
+    ASSERT_EQ(4, reader->live_docs_count());
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back();
-    expected_index.back().insert(*doc1);
+    for (size_t i = 0; i < 4; ++i) {
+      expected_index.emplace_back();
+      expected_index.back().insert(*doc1);
+    }
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
     // validate columnstore
@@ -773,12 +779,11 @@ TEST(index_death_test_formats_15,
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    // ensure no data
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
-    ASSERT_EQ(0, reader->size());
-    ASSERT_EQ(0, reader->docs_count());
-    ASSERT_EQ(0, reader->live_docs_count());
+    ASSERT_EQ(2, reader->size());
+    ASSERT_EQ(2, reader->docs_count());
+    ASSERT_EQ(2, reader->live_docs_count());
   }
 
   {
@@ -820,14 +825,16 @@ TEST(index_death_test_formats_15,
     // check data
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
-    ASSERT_EQ(1, reader->size());
-    ASSERT_EQ(1, reader->docs_count());
-    ASSERT_EQ(1, reader->live_docs_count());
+    ASSERT_EQ(3, reader->size());
+    ASSERT_EQ(3, reader->docs_count());
+    ASSERT_EQ(3, reader->live_docs_count());
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back();
-    expected_index.back().insert(*doc1);
+    for (size_t i = 0; i < 3; ++i) {
+      expected_index.emplace_back();
+      expected_index.back().insert(*doc1);
+    }
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
     // validate columnstore
@@ -909,12 +916,16 @@ TEST(index_death_test_formats_15,
     // segment meta synchronization failure
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
     ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
-    ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
+    tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // check data
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
-    ASSERT_EQ(2, reader->size());
+    ASSERT_EQ(1, reader->size());
     ASSERT_EQ(2, reader->docs_count());
     ASSERT_EQ(2, reader->live_docs_count());
 
@@ -922,47 +933,28 @@ TEST(index_death_test_formats_15,
     tests::index_t expected_index;
     expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
-    // validate columnstore (segment 0)
-    {
-      auto& segment = reader[0];  // assume 0 is id of first/only segment
-      const auto* column = segment.Column(kNameId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());
-      ASSERT_EQ(1, segment.live_docs_count());
-      auto terms = segment.field(kSameId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    // validate columnstore (segment 1)
-    {
-      auto& segment = reader[1];  // assume 0 is id of first/only segment
-      const auto* column = segment.Column(kNameId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());
-      ASSERT_EQ(1, segment.live_docs_count());
-      auto terms = segment.field(kSameId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
+    // validate columnstore
+    auto& segment = reader[0];
+    const auto* column = segment.Column(kNameId);
+    ASSERT_NE(nullptr, column);
+    irs::tests::BlobPointReader values{segment, *column};
+    ASSERT_EQ(2, segment.docs_count());
+    ASSERT_EQ(2, segment.live_docs_count());
+    auto terms = segment.field(kSameId);
+    ASSERT_NE(nullptr, terms);
+    auto term_itr = terms->iterator();
+    ASSERT_TRUE(term_itr->next());
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
+                     values, docs_itr->Value()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
+                     values, docs_itr->Value()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
   }
 }
 
@@ -981,6 +973,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
   const auto* doc2 = gen.next();
   const auto* doc3 = gen.next();
   const auto* doc4 = gen.next();
+  const auto* doc5 = gen.next();
 
   {
     constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
@@ -1015,7 +1008,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       "_4.0.sm");  // fail at segment meta creation on compaction
     dir.RegisterFailure(
       FailingDirectory::Failure::SYNC,
-      "_6.0.sm");  // fail at segment meta synchronization on compaction
+      "_7.0.sm");  // fail at segment meta synchronization on compaction
 
     const irs::index_utils::CompactionCount compact_all;
 
@@ -1032,8 +1025,15 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       writer->RefreshBegin(),
       ERRCODE_IO_ERROR);  // start transaction to commit pending compaction
 
-    // segment meta synchronization failure
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
+    tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+
+    // segment meta synchronization failure
+    ASSERT_TRUE(InsertWithName(*writer, *doc5));
     ASSERT_TRUE(writer->RefreshBegin());  // start transaction
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       compact_all)));                       // register pending compaction
@@ -1044,99 +1044,52 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
     ASSERT_SQL_ERROR(
       writer->RefreshBegin(),
       ERRCODE_IO_ERROR);  // start transaction to commit pending compaction
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
+    tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // check data
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
-    ASSERT_EQ(4, reader->size());
-    ASSERT_EQ(4, reader->docs_count());
-    ASSERT_EQ(4, reader->live_docs_count());
+    ASSERT_EQ(2, reader->size());
+    ASSERT_EQ(5, reader->docs_count());
+    ASSERT_EQ(5, reader->live_docs_count());
 
     // validate index
     tests::index_t expected_index;
     expected_index.emplace_back();
-    expected_index.back().insert(*doc1);
-    expected_index.emplace_back();
-    expected_index.back().insert(*doc2);
+    expected_index.back().insert(*doc5);
     expected_index.emplace_back();
     expected_index.back().insert(*doc3);
-    expected_index.emplace_back();
+    expected_index.back().insert(*doc1);
+    expected_index.back().insert(*doc2);
     expected_index.back().insert(*doc4);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
-    // validate columnstore (segment 0)
-    {
-      auto& segment = reader[0];  // assume 0 is id of first/only segment
+    // validate columnstore
+    const std::vector<std::vector<std::string_view>> expected_names{
+      {"E"},
+      {"C", "A", "B", "D"},
+    };
+    for (size_t i = 0; i < expected_names.size(); ++i) {
+      auto& segment = reader[i];
       const auto* column = segment.Column(kNameId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());
-      ASSERT_EQ(1, segment.live_docs_count());
+      ASSERT_EQ(expected_names[i].size(), segment.docs_count());
+      ASSERT_EQ(expected_names[i].size(), segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    // validate columnstore (segment 1)
-    {
-      auto& segment = reader[1];  // assume 0 is id of first/only segment
-      const auto* column = segment.Column(kNameId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());
-      ASSERT_EQ(1, segment.live_docs_count());
-      auto terms = segment.field(kSameId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    // validate columnstore (segment 2)
-    {
-      auto& segment = reader[2];  // assume 0 is id of first/only segment
-      const auto* column = segment.Column(kNameId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());
-      ASSERT_EQ(1, segment.live_docs_count());
-      auto terms = segment.field(kSameId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    // validate columnstore (segment 3)
-    {
-      auto& segment = reader[3];  // assume 0 is id of first/only segment
-      const auto* column = segment.Column(kNameId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());
-      ASSERT_EQ(1, segment.live_docs_count());
-      auto terms = segment.field(kSameId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));
+      for (const auto name : expected_names[i]) {
+        ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+        ASSERT_EQ(name, irs::tests::ReadStoredStr<std::string_view>(
+                          values, docs_itr->Value()));
+      }
       ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
     }
   }
@@ -1302,7 +1255,8 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
 
   // validate live docs
-  auto live_docs = segment.docs_iterator();
+  irs::PlanMemory memory;
+  auto live_docs = segment.docs_iterator(memory);
   ASSERT_EQ(1, live_docs->Next());
   ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
 }
@@ -1681,9 +1635,9 @@ TEST(index_death_test_formats_15,
 
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
-    ASSERT_EQ(0, reader->size());
-    ASSERT_EQ(0, reader->docs_count());
-    ASSERT_EQ(0, reader->live_docs_count());
+    ASSERT_EQ(6, reader->size());
+    ASSERT_EQ(6, reader->docs_count());
+    ASSERT_EQ(6, reader->live_docs_count());
   }
 
   // Same failures, then a successful insert + commit afterwards.
@@ -1717,13 +1671,15 @@ TEST(index_death_test_formats_15,
 
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
-    ASSERT_EQ(1, reader->size());
-    ASSERT_EQ(1, reader->docs_count());
-    ASSERT_EQ(1, reader->live_docs_count());
+    ASSERT_EQ(7, reader->size());
+    ASSERT_EQ(7, reader->docs_count());
+    ASSERT_EQ(7, reader->live_docs_count());
 
     tests::index_t expected_index;
-    expected_index.emplace_back();
-    expected_index.back().insert(*doc1);
+    for (size_t i = 0; i < 7; ++i) {
+      expected_index.emplace_back();
+      expected_index.back().insert(*doc1);
+    }
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
     auto& segment = reader[0];
@@ -2038,66 +1994,55 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // Sync failures fire at Begin() (after Compact succeeds in
-    // creating the files). Each iteration consumes one failure;
-    // segment id advances each retry.
+    // creating the files). Each iteration consumes one failure.
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_3.col");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_4.doc");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_5.idx");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_6.idx");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_7.pos");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_8.pay");
+    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_3.doc");
+    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_3.idx");
+    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_3.pos");
+    dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_3.pay");
 
     const irs::index_utils::CompactionCount compact_all;
 
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
     while (!dir.NoFailures()) {
-      ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+      const auto failures_before = dir.NumFailures();
       ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
-      ASSERT_FALSE(writer->RefreshBegin());
+      ASSERT_LT(dir.NumFailures(), failures_before);
     }
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
+    tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
-    ASSERT_EQ(2, reader->size());
+    ASSERT_EQ(1, reader->size());
     ASSERT_EQ(2, reader->docs_count());
     ASSERT_EQ(2, reader->live_docs_count());
 
     tests::index_t expected_index;
     expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
-    {
-      auto& segment = reader[0];
-      const auto* column = segment.Column(kNameId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field(kSameId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-    {
-      auto& segment = reader[1];
-      const auto* column = segment.Column(kNameId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field(kSameId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
+    auto& segment = reader[0];
+    const auto* column = segment.Column(kNameId);
+    ASSERT_NE(nullptr, column);
+    irs::tests::BlobPointReader values{segment, *column};
+    auto terms = segment.field(kSameId);
+    ASSERT_NE(nullptr, terms);
+    auto term_itr = terms->iterator();
+    ASSERT_TRUE(term_itr->next());
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
+                     values, docs_itr->Value()));
+    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
+                     values, docs_itr->Value()));
+    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
   }
 }
 
@@ -2369,8 +2314,10 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    // Nothing to commit after a failed first phase.
-    ASSERT_FALSE(writer->RefreshCommit());
+    ASSERT_TRUE(writer->RefreshCommit());
+    tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
     // NOW IT IS OK -- insert + commit succeeds.
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -2407,11 +2354,13 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     auto reader = irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()};
     ASSERT_TRUE(reader);
     ASSERT_EQ(1, reader->size());
-    ASSERT_EQ(2, reader->docs_count());
-    ASSERT_EQ(2, reader->live_docs_count());
+    ASSERT_EQ(4, reader->docs_count());
+    ASSERT_EQ(4, reader->live_docs_count());
 
     tests::index_t expected_index;
     expected_index.emplace_back();
+    expected_index.back().insert(*doc1);
+    expected_index.back().insert(*doc2);
     expected_index.back().insert(*doc1);
     expected_index.back().insert(*doc2);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
@@ -2425,12 +2374,11 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));
+    for (const std::string_view name : {"A", "B", "A", "B"}) {
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ(name, irs::tests::ReadStoredStr<std::string_view>(
+                        values, docs_itr->Value()));
+    }
     ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
   }
 }
@@ -2761,7 +2709,8 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
   ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
 
   // live docs
-  auto live_docs = segment.docs_iterator();
+  irs::PlanMemory memory;
+  auto live_docs = segment.docs_iterator(memory);
   ASSERT_EQ(1, live_docs->Next());
   ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
 }

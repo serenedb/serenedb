@@ -118,8 +118,8 @@ void DefaultScore::ScorePostingBlock(score_t* res) const noexcept {
   DefaultScoreImpl(res, kPostingBlock);
 }
 
-ScoreFunction ScoreFunction::Constant(score_t value) noexcept {
-  return ScoreFunction::Make<ConstantScore>(value);
+ScoreFunction ScoreFunction::Constant(PlanMemory& memory, score_t value) {
+  return ScoreFunction::Make<ConstantScore>(memory, value);
 }
 
 }  // namespace irs

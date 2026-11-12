@@ -21,14 +21,14 @@
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 
 #include <span>
-#include <vector>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
-void RerankExactDistances(const SubReader& segment,
+void RerankExactDistances(PlanMemory& memory, const SubReader& segment,
                           const ColumnReader& vector_column, uint32_t d,
                           std::span<const float> query, VectorMetric metric,
                           std::span<ScoreDoc> hits) {
@@ -38,8 +38,8 @@ void RerankExactDistances(const SubReader& segment,
   }
   detail::RawVectorReader reader{vector_column, *col_reader, d};
   reader.SetQuery(query, metric);
-  std::vector<doc_id_t> docs(hits.size());
-  std::vector<score_t> scores(hits.size());
+  memory::ArenaVector<doc_id_t> docs(hits.size(), memory.Scratch());
+  memory::ArenaVector<score_t> scores(hits.size(), memory.Scratch());
   for (size_t i = 0; i < hits.size(); ++i) {
     docs[i] = hits[i].doc;
   }

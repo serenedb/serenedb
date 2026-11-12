@@ -30,6 +30,7 @@
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -52,6 +53,10 @@ struct PqStatsHeader {
   uint32_t m;
   uint32_t ksub;
 };
+
+size_t CentroidBytes(const faiss::ProductQuantizer& pq) noexcept {
+  return pq.centroids.capacity() * sizeof(float);
+}
 
 std::vector<float> SubspaceErrors(const faiss::ProductQuantizer& pq,
                                   const float* vecs, size_t n) {
@@ -141,7 +146,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   }
 
   size_t TrainSamples(size_t rows) const noexcept final {
-    return std::min<size_t>(rows, kPqTrainResiduals);
+    return PqTrainSamples(rows, /*row_major=*/false);
   }
 
   void Train(const float* vecs, size_t n) final {
@@ -171,9 +176,8 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   PayloadBlockSetting BlockSetting() const noexcept final {
     return {
       .group_size = kFastScanBbs,
-      .record_size =
-        static_cast<uint32_t>(FastScanNsq(_pq.M) / 2 +
-                              (M == VectorMetric::L2Sqr ? sizeof(float) : 0)),
+      .record_size = PqRecordSize(M, static_cast<uint32_t>(_pq.M),
+                                  /*row_major=*/false),
       .alignment = M == VectorMetric::L2Sqr ? alignof(float) : 1U,
     };
   }
@@ -275,7 +279,9 @@ class ProductQuantizerWriter final : public QuantizerWriter {
 template<VectorMetric M>
 class ProductQuantizerStats final : public QuantizerStats {
  public:
-  ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats) {
+  ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats,
+                        MemoryBudget* budget)
+    : _charge{budget, 0} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
     SDB_ASSERT(hdr.m != 0);
@@ -291,6 +297,7 @@ class ProductQuantizerStats final : public QuantizerStats {
     std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
                 want);
     _errors = ReadSubspaceErrors(stats, sizeof(PqStatsHeader) + want, _pq.M);
+    _charge.Resize(CentroidBytes(_pq));
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -305,6 +312,7 @@ class ProductQuantizerStats final : public QuantizerStats {
 
  private:
   faiss::ProductQuantizer _pq;
+  MemoryCharge _charge;
   std::vector<float> _errors;
 };
 
@@ -329,7 +337,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
   const PqErrorTerms& ErrorTerms() const noexcept { return _error_terms; }
@@ -351,7 +359,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class ProductQuantizerReader final : public QuantizerReader {
+class ProductQuantizerReader : public QuantizerReader {
  public:
   explicit ProductQuantizerReader(
     std::shared_ptr<const ProductQuantizerCodebook<M>> cb)
@@ -425,10 +433,10 @@ class ProductQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> ProductQuantizerCodebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr ProductQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<ProductQuantizerCodebook<M>, ProductQuantizerReader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>
@@ -748,7 +756,7 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
   }
 
   size_t TrainSamples(size_t rows) const noexcept final {
-    return std::min<size_t>(rows, kPq8TrainRows);
+    return PqTrainSamples(rows, /*row_major=*/true);
   }
 
   void Train(const float* vecs, size_t n) final {
@@ -936,7 +944,11 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
 template<VectorMetric M>
 class ProductQuantizer8Stats final : public QuantizerStats {
  public:
-  ProductQuantizer8Stats(uint32_t d, std::span<const byte_type> stats) {
+  ProductQuantizer8Stats(uint32_t d, std::span<const byte_type> stats,
+                         MemoryBudget* budget)
+    : _charge{budget, 0},
+      _cent_t{TrackedAllocator<float>{budget}},
+      _cent_h{TrackedAllocator<uint16_t>{budget}} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
     SDB_ASSERT(hdr.m != 0);
@@ -972,6 +984,7 @@ class ProductQuantizer8Stats final : public QuantizerStats {
       }
     }
     _errors = ReadSubspaceErrors(stats, sizeof(PqStatsHeader) + want, _pq.M);
+    _charge.Resize(CentroidBytes(_pq));
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -989,9 +1002,10 @@ class ProductQuantizer8Stats final : public QuantizerStats {
 
  private:
   faiss::ProductQuantizer _pq;
+  MemoryCharge _charge;
   std::vector<float> _norms;
-  std::vector<float> _cent_t;
-  std::vector<uint16_t> _cent_h;
+  TrackedVector<float> _cent_t;
+  TrackedVector<uint16_t> _cent_h;
   std::vector<float> _errors;
 };
 
@@ -1047,7 +1061,7 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const std::shared_ptr<const ProductQuantizer8Stats<M>>& StatsPtr()
     const noexcept {
@@ -1069,7 +1083,7 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class ProductQuantizer8Reader final : public QuantizerReader {
+class ProductQuantizer8Reader : public QuantizerReader {
  public:
   explicit ProductQuantizer8Reader(
     std::shared_ptr<const ProductQuantizer8Codebook<M>> cb)
@@ -1161,7 +1175,7 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   bool SupportsPairScores() const noexcept final { return true; }
 
   bool PreparePairTerms(const byte_type* base, uint32_t record_size,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     const float* norms = _cb->StatsPtr()->CentroidNorms();
     terms.assign(rows, 0.f);
     for (uint64_t row = 0; row < rows; ++row) {
@@ -1479,10 +1493,10 @@ class ProductQuantizer8Reader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> ProductQuantizer8Codebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr ProductQuantizer8Codebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<ProductQuantizer8Codebook<M>, ProductQuantizer8Reader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>
@@ -1505,13 +1519,29 @@ std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
                                                       pq_niter);
 }
 
+size_t PqTrainSamples(size_t rows, bool row_major) noexcept {
+  return std::min<size_t>(rows, row_major ? kPq8TrainRows : kPqTrainResiduals);
+}
+
+uint32_t PqRecordSize(VectorMetric metric, uint32_t pq_m,
+                      bool row_major) noexcept {
+  const uint32_t m = pq_m == 0 ? 1 : pq_m;
+  if (row_major) {
+    return (m * kPq8Nbits + 7) / 8;
+  }
+  return static_cast<uint32_t>(
+    FastScanNsq(m) / 2 +
+    (EffectiveQuantMetric(metric) == VectorMetric::L2Sqr ? sizeof(float) : 0));
+}
+
 std::shared_ptr<const QuantizerStats> MakePqStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
-  bool row_major) {
+  bool row_major, MemoryBudget* budget) {
   if (row_major) {
-    return MakeStatsWithMetric<ProductQuantizer8Stats>(metric, d, stats);
+    return MakeStatsWithMetric<ProductQuantizer8Stats>(metric, d, stats,
+                                                       budget);
   }
-  return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats);
+  return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats, budget);
 }
 
 }  // namespace irs::quantizers

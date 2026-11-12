@@ -31,36 +31,40 @@ namespace irs::detail {
 
 template<typename Family, typename Ctx>
 typename Family::Result MakeQuery(const ByNestedQuery& query, const Ctx& ctx) {
+  auto& memory = Family::MemoryOf(ctx);
   if constexpr (!kScoredPlan<Family, Ctx>) {
     return PlanNestedDocs<Family>(
-      query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
+      memory, query,
+      [&]<typename Node>(auto&&... args) -> typename Family::Result {
         return Family::template Docs<Node>(
           ctx, std::forward<decltype(args)>(args)...);
       });
   } else {
     if (!query.ScoresChildren()) {
       return PlanNestedDocs<Family>(
-        query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
+        memory, query,
+        [&]<typename Node>(auto&&... args) -> typename Family::Result {
           return Family::template Constant<Node>(
             ctx, query.Constant(), std::forward<decltype(args)>(args)...);
         });
     }
-    auto fetcher = std::make_unique<ColumnArgsFetcher>();
+    auto fetcher = MakeArenaFetcher(memory);
     ScoredCtx scoring = Family::Scoring(ctx);
     scoring.fetcher = fetcher.get();
     auto child = query.Child().PlanLead(scoring);
     if (!child) {
       return {};
     }
-    auto parent = query.Parents();
+    auto parent = query.Parents(memory);
     const auto merge = query.Merge();
     return ResolveRule<false>(
-      query.Segment(), query.MatchKind(),
+      memory, query.Segment(), query.MatchKind(),
       [&]<typename Rule>(Rule rule) -> typename Family::Result {
         using Node = NestedScored<NestedSlots<ScoredChild, Rule>>;
         return Family::template Scored<Node>(
           ctx, std::piecewise_construct, std::move(parent),
-          std::forward_as_tuple(std::move(child), std::move(fetcher), merge),
+          std::forward_as_tuple(memory, std::move(child), std::move(fetcher),
+                                merge),
           std::move(rule));
       });
   }

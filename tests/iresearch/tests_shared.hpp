@@ -27,9 +27,12 @@
 
 #include <atomic>
 #include <cstdio>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <filesystem>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/resource_manager.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <memory>
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
@@ -106,22 +109,18 @@ struct SimpleMemoryAccounter : public irs::IResourceManager {
   std::atomic_size_t _counter{0};
 };
 
-struct MaxMemoryCounter final : irs::IResourceManager {
-  void Reset() noexcept {
-    current = 0;
-    max = 0;
+inline int64_t TrackedMemory() {
+  auto* manager = irs::DuckDBEngine::TrackingBufferManager();
+  if (!manager) {
+    return 0;
   }
-
-  void Increase(size_t value) final {
-    current += value;
-    max = std::max(max, current);
+  for (const auto& info : manager->GetMemoryUsageInfo()) {
+    if (info.tag == irs::kMemoryTag) {
+      return static_cast<int64_t>(info.size);
+    }
   }
-
-  void Decrease(size_t value) noexcept final { current -= value; }
-
-  size_t current{0};
-  size_t max{0};
-};
+  return 0;
+}
 
 struct TestResourceManager {
   SimpleMemoryAccounter cached_columns;

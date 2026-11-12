@@ -33,7 +33,7 @@ namespace {
 
 constexpr uint64_t kWordBits = 64;
 
-void SetBitOf(std::vector<uint64_t>& words, uint64_t bit) noexcept {
+void SetBitOf(TrackedVector<uint64_t>& words, uint64_t bit) noexcept {
   SetBit(words[bit / kWordBits], bit % kWordBits);
 }
 

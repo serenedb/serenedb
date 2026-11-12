@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/index/field_writer.hpp"
@@ -127,6 +129,10 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask);
 
+  size_t FlushBound();
+  void ReserveFlush();
+  bool TryReserveFlush() noexcept;
+
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
   bool initialized() const noexcept { return _initialized; }
@@ -158,6 +164,18 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     }
     return MakePersistedNormReader(*col);
   }
+
+  NormReader::ptr norms(PlanMemory& memory, field_id id) const final {
+    if (_col_reader == nullptr) {
+      return {};
+    }
+    const auto* col = _col_reader->NormColumn(id);
+    if (col == nullptr) {
+      return {};
+    }
+    return MakePersistedNormReader(memory, *col);
+  }
+
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
 
   // Owning per-op encoding config (the snapshot's InvertedIndex): flush encodes
@@ -259,6 +277,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // keeps.
   void ResetState() noexcept;
 
+  duckdb::TempBufferPoolReservation _budget{EmptyBudget()};
   TrackingDirectory _dir;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;

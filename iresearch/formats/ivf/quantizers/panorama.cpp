@@ -64,11 +64,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     : _d{d}, _metric{metric} {}
 
   size_t TrainSamples(size_t rows) const noexcept final {
-    if (!PanoramaApplies(_metric, _d) ||
-        rows < std::max<size_t>(kPcaMinRows, size_t{8} * _d)) {
-      return 0;
-    }
-    return std::max<size_t>(kPcaTrainRows, size_t{8} * _d);
+    return PanoramaTrainSamples(_metric, _d, rows);
   }
 
   void Train(const float* vecs, size_t n) final {
@@ -224,7 +220,7 @@ class PanoramaQuantizerCodebook final : public QuantizerCodebook {
     _pano->compute_query_cum_sums(_query.data(), _cums.data());
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   uint32_t Dim() const noexcept { return _stats->Dim(); }
   uint32_t Levels() const noexcept { return _levels; }
@@ -247,7 +243,7 @@ class PanoramaQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class PanoramaQuantizerReader final : public QuantizerReader {
+class PanoramaQuantizerReader : public QuantizerReader {
  public:
   explicit PanoramaQuantizerReader(
     std::shared_ptr<const PanoramaQuantizerCodebook<M>> cb)
@@ -355,10 +351,10 @@ class PanoramaQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> PanoramaQuantizerCodebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr PanoramaQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<PanoramaQuantizerCodebook<M>, PanoramaQuantizerReader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>
@@ -382,6 +378,20 @@ std::shared_ptr<const QuantizerStats> MakePanoramaStats(
 std::unique_ptr<QuantizerWriter> MakePanoramaWriter(uint32_t d,
                                                     VectorMetric metric) {
   return std::make_unique<PanoramaQuantizerWriter>(d, metric);
+}
+
+size_t PanoramaTrainSamples(VectorMetric metric, uint32_t d,
+                            size_t rows) noexcept {
+  if (!PanoramaApplies(metric, d) ||
+      rows < std::max<size_t>(kPcaMinRows, size_t{8} * d)) {
+    return 0;
+  }
+  return std::max<size_t>(kPcaTrainRows, size_t{8} * d);
+}
+
+uint32_t PanoramaTrainedRecordSize(VectorMetric metric, uint32_t d) noexcept {
+  return PanoramaRecordSize(d,
+                            PanoramaApplies(metric, d) ? PanoramaLevels(d) : 0);
 }
 
 }  // namespace irs::quantizers

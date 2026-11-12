@@ -52,8 +52,10 @@ inline ScoreFunction AllDocsScorer(const SubReader& segment,
                                    const ScoreArgs& args) {
   SDB_ASSERT(args.scorer != nullptr);
   SDB_ASSERT(args.stats != nullptr);
+  SDB_ASSERT(args.memory);
   SDB_ASSERT(args.fetcher);
   return args.scorer->PrepareScorer({
+    .memory = *args.memory,
     .segment = segment,
     .field = NoField(),
     .doc_attrs = NoAttributes(),
@@ -74,7 +76,8 @@ inline score_t AllDocsScore(const SubReader& segment, const ScoreArgs& args) {
 template<typename Query>
 score_t AllDocsScoreOf(const Query& query, const ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
-  return AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
+  return AllDocsScore(query.Segment(), ScoreArgs{.memory = &ctx.memory,
+                                                 .scorer = record.scorer,
                                                  .stats = record.stats,
                                                  .fetcher = ctx.fetcher,
                                                  .boost = query.Boost()});
@@ -88,6 +91,7 @@ inline score_t ConstantTermScore(const SubReader& segment,
   static constinit uint32_t gFreq = 1;
   provider.freq.value = &gFreq;
   auto score = args.scorer->PrepareScorer({
+    .memory = *args.memory,
     .segment = segment,
     .field = field.meta(),
     .doc_attrs = provider,
@@ -105,6 +109,7 @@ inline std::optional<score_t> ConstantOf(const SubReader& segment,
     return score_t{0};
   }
   if (const auto value = args.scorer->Constant({
+        .memory = *args.memory,
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = NoAttributes(),
@@ -140,6 +145,7 @@ inline score_t ConstantTermOf(const SubReader& segment, const TermReader& field,
     return 0;
   }
   if (const auto value = args.scorer->Constant({
+        .memory = *args.memory,
         .segment = segment,
         .field = field.meta(),
         .doc_attrs = NoAttributes(),
@@ -166,6 +172,7 @@ inline score_t SingleDocScore(const SubReader& segment, const TermReader& field,
   }
   provider.freq.value = &freq;
   auto score = args.scorer->PrepareScorer({
+    .memory = *args.memory,
     .segment = segment,
     .field = field.meta(),
     .doc_attrs = provider,

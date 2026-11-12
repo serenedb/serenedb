@@ -28,6 +28,8 @@
 #include <absl/strings/internal/resize_uninitialized.h>
 
 #include <bit>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <optional>
 #include <span>
 #include <vector>
@@ -57,12 +59,13 @@
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
 
-using DocIdMapT = ManagedVector<doc_id_t>;
+using DocIdMapT = TrackedVector<doc_id_t>;
 
 struct MergedMember {
   IndexFeatures features = IndexFeatures::None;
@@ -596,7 +599,7 @@ struct NormPiece {
 constexpr size_t kNormMergeChunk = 64 * 1024;
 
 void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
-                    std::vector<uint32_t>& values) {
+                    TrackedVector<uint32_t>& values) {
   if (piece.reader == nullptr) {
     for (auto left = piece.planned.rows; left != 0;) {
       const auto n = std::min<uint64_t>(left, kNormMergeChunk);
@@ -671,7 +674,9 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
              "mint a valid id for field ",
              id);
   auto& writer = col_writer.StreamNormColumn(out_id);
-  std::vector<uint32_t> values;
+  TrackedVector<uint32_t> values{
+    TrackedAllocator<uint32_t>{&col_writer.Budget()}};
+  values.reserve(kNormMergeChunk);
   for (size_t i = 0; i != pieces.size();) {
     auto planned = pieces[i].planned;
     const auto layout = PickNormLayout(planned);
@@ -730,6 +735,17 @@ struct MergedNormProvider final : public NormProvider {
     }
     return MakePersistedNormReader(*col);
   }
+
+  NormReader::ptr norms(PlanMemory& memory, field_id id) const final {
+    if (reader == nullptr) {
+      return {};
+    }
+    const auto* col = reader->NormColumn(id);
+    if (col == nullptr) {
+      return {};
+    }
+    return MakePersistedNormReader(memory, *col);
+  }
 };
 
 bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
@@ -737,17 +753,16 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  const MergedNormIdMap& merged_norm_ids,
                  const MergeWriter::FlushProgress& progress, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra,
-                 uint64_t keyed_dicts) {
+                 uint64_t keyed_dicts, uint64_t terms) {
   auto field_writer =
     std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
   field_writer->SetIdxWriter(idx);
-  field_writer->prepare(flush_state, keyed_dicts + extra.size());
+  field_writer->prepare(flush_state, keyed_dicts + extra.size(), terms);
 
-  std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
-  absl::c_sort(sorted_extra,
-               [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
-                 return lhs->id() < rhs->id();
-               });
+  SDB_ASSERT(absl::c_is_sorted(
+    extra, [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
+      return lhs->id() < rhs->id();
+    }));
   const auto extra_key = [](const BasicTermReader* reader) {
     return DictKey{
       .id = reader->id(),
@@ -758,19 +773,19 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     field_writer->write(StringLayout::kStrings, reader);
   };
   size_t ei = 0;
-  const size_t en = sorted_extra.size();
+  const size_t en = extra.size();
 
   while (field_itr.Next()) {
     const auto dict = field_itr.Dict();
     const DictKey key{.id = field_itr.Meta().id, .member = dict.member};
-    while (ei < en && extra_key(sorted_extra[ei]) < key) {
-      write_extra(*sorted_extra[ei]);
+    while (ei < en && extra_key(extra[ei]) < key) {
+      write_extra(*extra[ei]);
       ++ei;
     }
 
-    if (ei < en && extra_key(sorted_extra[ei]) == key) {
+    if (ei < en && extra_key(extra[ei]) == key) {
       SDB_ASSERT(dict.layout == DictLayout::String);
-      write_extra(*sorted_extra[ei]);
+      write_extra(*extra[ei]);
       ++ei;
       continue;
     }
@@ -799,7 +814,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   }
 
   while (ei < en) {
-    write_extra(*sorted_extra[ei]);
+    write_extra(*extra[ei]);
     ++ei;
   }
 
@@ -809,10 +824,13 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   return !field_itr.Aborted();
 }
 
-bool ComputeDocMappingsAndFieldMeta(
-  ManagedVector<MergeWriter::ReaderCtx>& readers, SegmentMeta& segment,
-  FieldMetaMapT& field_meta_map, CompoundFieldIterator& fields_itr,
-  IndexFeatures& index_features, const IndexFieldOptions* field_options) {
+bool ComputeDocMappingsAndFieldMeta(std::span<MergeWriter::ReaderCtx> readers,
+                                    SegmentMeta& segment,
+                                    FieldMetaMapT& field_meta_map,
+                                    CompoundFieldIterator& fields_itr,
+                                    IndexFeatures& index_features,
+                                    const IndexFieldOptions* field_options,
+                                    MemoryBudget& budget) {
   doc_id_t base_id = doc_limits::min();
   for (auto& reader_ctx : readers) {
     SDB_ASSERT(reader_ctx.reader);
@@ -824,6 +842,8 @@ bool ComputeDocMappingsAndFieldMeta(
                  std::numeric_limits<doc_id_t>::max());
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
+      reader_ctx.remap.id_map =
+        TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{&budget}};
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {
@@ -840,32 +860,92 @@ bool ComputeDocMappingsAndFieldMeta(
   return true;
 }
 
-void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
-                   std::string_view segment_name,
-                   ManagedVector<MergeWriter::ReaderCtx>& readers,
-                   std::vector<MergeSource>& sources,
-                   std::unique_ptr<ColWriter>& col_writer,
-                   const IndexFieldOptions* field_options,
-                   HnswBases* hnsw_bases) {
+TrackedVector<MergeSource> MakeSources(
+  std::span<const MergeWriter::ReaderCtx> readers, MemoryBudget& budget) {
+  TrackedVector<MergeSource> sources{TrackedAllocator<MergeSource>{&budget}};
   sources.reserve(readers.size());
-  for (auto& ctx : readers) {
+  for (const auto& ctx : readers) {
     sources.push_back(MergeSource{
       .reader = ctx.reader,
       .col_reader = ctx.reader->GetColReader(),
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
+  return sources;
+}
+
+struct TextNeeds {
+  uint64_t terms = 0;
+  bool ranges = false;
+};
+
+TextNeeds MergedTextNeeds(std::span<const MergeWriter::ReaderCtx> readers,
+                          const IndexFieldOptions* field_options) {
+  TextNeeds needs;
+  for (const auto& ctx : readers) {
+    for (auto id : ctx.reader->field_ids()) {
+      if (field_options &&
+          field_options->GetFieldKind(id) != FieldKind::Index) {
+        continue;
+      }
+      for (const auto* term_reader : ctx.reader->fields(id)) {
+        needs.terms += term_reader->size();
+        needs.ranges =
+          needs.ranges ||
+          IsSubsetOf(IndexFeatures::Ranges, term_reader->meta().index_features);
+      }
+    }
+  }
+  return needs;
+}
+
+void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
+                   std::string_view segment_name,
+                   std::unique_ptr<ColWriter>& col_writer,
+                   const IndexFieldOptions* field_options,
+                   HnswBases* hnsw_bases, MemoryBudget& budget) {
   col_writer = std::make_unique<ColWriter>(dir, segment_name, db);
+  col_writer->SetBudget(budget);
   col_writer->SetFieldOptions(field_options);
   col_writer->SetHnswBases(hnsw_bases);
 }
 
 }  // namespace
 
-MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader,
-                                  IResourceManager& rm) noexcept
-  : reader{reader}, remap{rm} {
+MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader) noexcept
+  : reader{reader} {
   SDB_ASSERT(this->reader);
+}
+
+size_t MergeWriter::Bound() const {
+  uint64_t docs = 0;
+  uint64_t remaps = 0;
+  for (const auto& ctx : _readers) {
+    const auto& reader = *ctx.reader;
+    docs += reader.live_docs_count();
+    if (reader.live_docs_count() != reader.docs_count()) {
+      remaps += sizeof(doc_id_t) * (reader.docs_count() + doc_limits::min());
+    }
+  }
+  const auto sources = MakeSources(_readers, _budget);
+  const auto ann = MergeAnnBound(sources, _field_options, docs);
+  const auto text = MergedTextNeeds(_readers, _field_options);
+  return remaps + sizeof(MergeSource) * sources.size() +
+         std::max({sizeof(uint32_t) * kNormMergeChunk, MergeIntoBound(sources),
+                   ann.compute,
+                   ann.kept + term_dict::FieldWriter::Bound(
+                                text.terms + ann.terms, docs, text.ranges)});
+}
+
+void MergeWriter::Reserve() {
+  SDB_IF_FAILURE("MergeWriter::Reserve") {
+    throw duckdb::OutOfMemoryException(
+      "failed to reserve memory for a merge (fault point)");
+  }
+  const auto bound = Bound();
+  if (bound > _budget.size) {
+    _budget.Merge(ReserveMemory(kMemoryTag, bound - _budget.size));
+  }
 }
 
 auto MergeWriter::Flush(SegmentMeta& segment,
@@ -889,7 +969,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   IndexFeatures index_features{IndexFeatures::None};
   if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
                                       fields_itr, index_features,
-                                      _field_options)) {
+                                      _field_options, _budget)) {
     co_return false;
   }
 
@@ -897,10 +977,10 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return false;
   }
 
-  std::vector<MergeSource> sources;
+  const auto sources = MakeSources(_readers, _budget);
   std::unique_ptr<ColWriter> col_writer;
-  OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
-                _field_options, _hnsw_bases);
+  OpenColWriter(_db, track_dir, segment.name, col_writer, _field_options,
+                _hnsw_bases, _budget);
   SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =
@@ -930,6 +1010,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   if (!co_await col_writer->ComputeAnn(env, progress_callback)) {
     co_return false;
   }
+  const auto cluster_terms = col_writer->AnnBound(segment.docs_count).terms;
   auto ann_writers = col_writer->TakeAnnWriters();
   if (segment.docs_count != 0) {
     col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db,
@@ -954,11 +1035,13 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     .scorer = _scorer,
     .doc_count = segment.docs_count,
     .index_features = index_features,
+    .budget = _budget,
   };
   if (segment.docs_count != 0 &&
-      !WriteFields(state, segment, fields_itr, merged_norm_ids,
-                   progress_callback, idx, cluster_readers,
-                   KeyedDicts(field_meta_map))) {
+      !WriteFields(
+        state, segment, fields_itr, merged_norm_ids, progress_callback, idx,
+        cluster_readers, KeyedDicts(field_meta_map),
+        MergedTextNeeds(_readers, _field_options).terms + cluster_terms)) {
     co_return false;
   }
 

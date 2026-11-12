@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/utils/query_memory.hpp>
 
 namespace {
 
@@ -66,6 +67,7 @@ class AlignedScorer final
 }  // namespace
 
 TEST(ScoreFunctionTest, Noop) {
+  irs::PlanMemory memory;
   irs::score_t value{42.f};
 
   {
@@ -76,7 +78,7 @@ TEST(ScoreFunctionTest, Noop) {
   }
 
   {
-    auto func = irs::ScoreFunction::Constant(0.f);
+    auto func = irs::ScoreFunction::Constant(memory, 0.f);
     ASSERT_FALSE(func.IsDefault());
     value = func.Score();
     ASSERT_EQ(0.f, value);
@@ -94,11 +96,12 @@ TEST(ScoreFunctionTest, Default) {
 }
 
 TEST(ScoreFunctionTest, Constant) {
+  irs::PlanMemory memory;
   std::array<irs::score_t, 7> values;
   std::fill_n(std::begin(values), values.size(), 42.f);
 
   {
-    auto func = irs::ScoreFunction::Constant(43.f);
+    auto func = irs::ScoreFunction::Constant(memory, 43.f);
     ASSERT_FALSE(func.IsDefault());
     func.Score(values.data(), values.size());
     ASSERT_TRUE(std::all_of(std::begin(values), std::end(values),
@@ -106,7 +109,7 @@ TEST(ScoreFunctionTest, Constant) {
   }
 
   {
-    auto func = irs::ScoreFunction::Constant(42.f);
+    auto func = irs::ScoreFunction::Constant(memory, 42.f);
     ASSERT_FALSE(func.IsDefault());
     func.Score(values.data(), 1);
     ASSERT_EQ(42.f, values.front());
@@ -115,7 +118,7 @@ TEST(ScoreFunctionTest, Constant) {
   }
 
   {
-    auto func = irs::ScoreFunction::Constant(43.f);
+    auto func = irs::ScoreFunction::Constant(memory, 43.f);
     ASSERT_FALSE(func.IsDefault());
     func.Score(values.data(), values.size());
     ASSERT_TRUE(std::all_of(std::begin(values), std::end(values),
@@ -146,6 +149,7 @@ struct Impl : irs::ScoreOperator {
 };
 
 TEST(ScoreFunctionTest, construct) {
+  irs::PlanMemory memory;
   {
     irs::ScoreFunction func;
     irs::score_t tmp{1};
@@ -154,14 +158,14 @@ TEST(ScoreFunctionTest, construct) {
   }
 
   {
-    auto func = irs::ScoreFunction::Make<Impl>();
+    auto func = irs::ScoreFunction::Make<Impl>(memory);
     irs::score_t tmp;
     func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
   }
 
   {
-    auto func = irs::ScoreFunction::Make<Impl>();
+    auto func = irs::ScoreFunction::Make<Impl>(memory);
     irs::score_t tmp;
     func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
@@ -169,6 +173,7 @@ TEST(ScoreFunctionTest, construct) {
 }
 
 TEST(ScoreFunctionTest, reset) {
+  irs::PlanMemory memory;
   irs::ScoreFunction func;
 
   {
@@ -178,14 +183,14 @@ TEST(ScoreFunctionTest, reset) {
   }
 
   {
-    func = irs::ScoreFunction::Make<Impl>();
+    func = irs::ScoreFunction::Make<Impl>(memory);
     irs::score_t tmp;
     func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
   }
 
   {
-    func = irs::ScoreFunction::Make<Impl>();
+    func = irs::ScoreFunction::Make<Impl>(memory);
     irs::score_t tmp;
     func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
@@ -193,11 +198,12 @@ TEST(ScoreFunctionTest, reset) {
 }
 
 TEST(ScoreFunctionTest, move) {
+  irs::PlanMemory memory;
   // move construction
   {
     float_t tmp{1};
 
-    auto func = irs::ScoreFunction::Make<Impl>();
+    auto func = irs::ScoreFunction::Make<Impl>(memory);
     func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
     irs::ScoreFunction moved(std::move(func));
@@ -216,7 +222,7 @@ TEST(ScoreFunctionTest, move) {
     irs::ScoreFunction moved;
     moved.Score(&tmp, 1);
     ASSERT_EQ(0, tmp);
-    auto func = irs::ScoreFunction::Make<Impl>();
+    auto func = irs::ScoreFunction::Make<Impl>(memory);
     func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
     moved = std::move(func);
@@ -230,9 +236,10 @@ TEST(ScoreFunctionTest, move) {
 }
 
 TEST(ScoreFunctionTest, equality) {
+  irs::PlanMemory memory;
   irs::ScoreFunction func0;
-  auto func1 = irs::ScoreFunction::Constant(42.f);
-  auto func2 = irs::ScoreFunction::Constant(43.f);
+  auto func1 = irs::ScoreFunction::Constant(memory, 42.f);
+  auto func2 = irs::ScoreFunction::Constant(memory, 43.f);
 
   ASSERT_EQ(func0, irs::ScoreFunction());
   ASSERT_NE(func0, func1);

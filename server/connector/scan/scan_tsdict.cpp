@@ -28,6 +28,8 @@
 #include <iresearch/search/queries/term_state.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/query_memory.hpp>
+#include <optional>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -85,7 +87,9 @@ struct TsDictLocalState final : public ScanLocalState {
   const irs::SubReader* _seg = nullptr;
   const irs::TermReader* _reader = nullptr;
   ColFilterVerify _col_verify;
-  std::unique_ptr<irs::detail::LazyBitset> _live;
+  irs::QueryMemory _query_memory;
+  irs::PlanMemory _term_memory;
+  std::optional<irs::detail::LazyBitset> _live;
   irs::count::TermCounts* _term_counts = nullptr;
   std::vector<irs::count::TermCounts::ptr> _term_counts_cache;
   irs::QueryBuilder::ptr _all_query;
@@ -275,6 +279,8 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
   _term_counts_cache.clear();
   _live.reset();
   _all_query = {};
+  plan_memory.Rewind();
+  _query_memory.Rewind();
   _segment_live = false;
   Classify(g, seg_idx);
   if (seg_cls.segment_dead) {
@@ -299,7 +305,8 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
     count_mode = CountMode::Masked;
   }
   if (count_mode != CountMode::Meta && !where_query) {
-    _all_query = MatchAllFilter().PrepareSegment(seg, {});
+    _all_query =
+      MatchAllFilter().PrepareSegment(seg, {.memory = _query_memory});
   }
 }
 
@@ -317,7 +324,8 @@ void TsDictLocalState::BindTermCounts(const irs::TermReader& reader) {
   }
   auto& slot = _term_counts_cache[field];
   if (!slot) {
-    slot = irs::count::MakeTermCounts(Live(), reader, reader.size());
+    slot =
+      irs::count::MakeTermCounts(plan_memory, Live(), reader, reader.size());
   }
   _term_counts = slot.get();
 }
@@ -326,15 +334,14 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
   if (!_live) {
     const auto& query = where_query ? *where_query : *_all_query;
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
-    auto node = query.PlanFill({}, irs::ScoreMergeType::Noop);
+    auto node =
+      query.PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
     EnsurePlanned(node != nullptr);
     if (auto* folded = node->Folded()) {
-      _live = std::make_unique<irs::detail::LazyBitset>(
-        std::move(*folded), irs::MakeGenericDocsMask(*_seg));
+      _live.emplace(std::move(*folded), irs::MakeGenericDocsMask(*_seg));
     } else {
-      _live = std::make_unique<irs::detail::LazyBitset>(
-        std::move(node), _seg->Meta().docs_count,
-        irs::MakeGenericDocsMask(*_seg));
+      _live.emplace(plan_memory, std::move(node), _seg->Meta().docs_count,
+                    irs::MakeGenericDocsMask(*_seg));
     }
   }
   return *_live;
@@ -342,9 +349,10 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
 
 uint32_t TsDictLocalState::WalkLive(const irs::TermReader& reader,
                                     irs::TermIterator& it, bool count_all) {
+  _term_memory.Rewind();
   auto postings = irs::docs::Family::MakePosting(
-    irs::detail::PostingClause{irs::TermState{&reader, it.cookie()}}, *_seg, {},
-    irs::ScoreMergeType::Noop);
+    irs::detail::PostingClause{irs::TermState{&reader, it.cookie()}}, *_seg,
+    {.memory = _term_memory}, irs::ScoreMergeType::Noop);
   SDB_ASSERT(postings);
   _col_verify.Rewind();
   auto& live = Live();
@@ -384,8 +392,9 @@ uint32_t TsDictLocalState::NullDocs(const irs::TermReader& reader,
     return 0;
   }
   if (_col_verify.Empty() && irs::detail::DocOf(reader)) {
-    if (auto counts =
-          irs::count::MakeTermCounts(Live(), reader, reader.size())) {
+    _term_memory.Rewind();
+    if (auto counts = irs::count::MakeTermCounts(_term_memory, Live(), reader,
+                                                 reader.size())) {
       const auto& term = it->cookie();
       if (count_all) {
         return static_cast<uint32_t>(
@@ -485,6 +494,7 @@ void TsDictLocalState::BeginEmit(ScanGlobalState& g) {
   _live.reset();
   _term_counts = nullptr;
   _term_counts_cache.clear();
+  plan_memory.Rewind();
   _cursor.reset();
   _field = nullptr;
   _next_field = _emit_fields;

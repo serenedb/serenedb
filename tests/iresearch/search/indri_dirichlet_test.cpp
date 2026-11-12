@@ -131,8 +131,7 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, *index, impl.get(), counter};
+  tests::PreparedFilter prepared{filter, *index, impl.get()};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);

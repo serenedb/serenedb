@@ -29,23 +29,26 @@
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::fill {
 
-Node::ptr MakePostingDocs(const detail::PostingClause& posting,
+Node::ptr MakePostingDocs(PlanMemory& memory,
+                          const detail::PostingClause& posting,
                           const SubReader& segment);
 Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const SubReader& segment,
                             const detail::ScoredCtx& ctx, ScoreMergeType merge);
 
-Node::ptr MakeSinglePostingDocs(const detail::PostingClause& posting);
+Node::ptr MakeSinglePostingDocs(PlanMemory& memory,
+                                const detail::PostingClause& posting);
 Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                   const SubReader& segment,
                                   const detail::ScoredCtx& ctx,
                                   ScoreMergeType merge);
 
-Node::ptr MakeAllDocs(const SubReader& segment);
-Node::ptr MakeAllScored(const SubReader& segment, ScoreMergeType merge,
-                        score_t score);
+Node::ptr MakeAllDocs(PlanMemory& memory, const SubReader& segment);
+Node::ptr MakeAllScored(PlanMemory& memory, const SubReader& segment,
+                        ScoreMergeType merge, score_t score);
 
 }  // namespace irs::fill

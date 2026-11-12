@@ -251,6 +251,9 @@ absl::Status IndexDurability::Refresh(
       FinishPendingSave(writer);
     }
 
+    if (writer.LostDocs()) {
+      MarkOutOfSync();
+    }
     if (!CanPersist()) {
       return absl::OkStatus();
     }
@@ -286,7 +289,9 @@ absl::Status IndexDurability::Refresh(
       }
     } catch (...) {
       _pending_checkpoint = 0;
-      MarkOutOfSync();
+      if (!writer.FailedBatchKept()) {
+        MarkOutOfSync();
+      }
       throw;
     }
     if (!were_changes) {
@@ -340,13 +345,18 @@ void IndexDurability::PrepareCheckpoint(irs::IndexWriter& writer,
   SDB_ASSERT(_pending_checkpoint == 0 || _pending_checkpoint == iteration);
   _checkpoint = iteration;
   absl::Cleanup reset = [&]() noexcept { _checkpoint = 0; };
+  if (writer.LostDocs()) {
+    MarkOutOfSync();
+  }
   try {
     if (writer.RefreshBegin({.payload_changed = PayloadChanged()})) {
       _directory_dirty.store(true, std::memory_order_relaxed);
     }
   } catch (...) {
     _pending_checkpoint = 0;
-    MarkOutOfSync();
+    if (!writer.FailedBatchKept()) {
+      MarkOutOfSync();
+    }
     throw;
   }
   SyncDirectory();
@@ -434,6 +444,10 @@ void IndexDurability::SyncDirectory() {
 
 absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
   try {
+    const auto lock = LockRefresh(_refresh_mutex);
+    if (IsOutOfSync()) {
+      return absl::OkStatus();
+    }
     SyncDirectory();
     irs::directory_utils::RemoveAllUnreferenced(dir);
   } catch (const std::exception& e) {

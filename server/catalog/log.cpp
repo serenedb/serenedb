@@ -331,22 +331,6 @@ bool Log::Exists(const std::filesystem::path& dir) {
   return exists(dir / kSnapshotFile) || exists(dir / ChunkName(0));
 }
 
-std::vector<duckdb::unique_ptr<duckdb::FileHandle>> Log::LockChunks(
-  duckdb::FileSystem& fs, const std::filesystem::path& dir) {
-  const auto snapshot = ReadSnapshot(fs, dir / kSnapshotFile);
-  std::vector<duckdb::unique_ptr<duckdb::FileHandle>> locks;
-  for (auto number = snapshot.header.number;; ++number) {
-    auto lock = fs.OpenFile((dir / ChunkName(number)).string(),
-                            duckdb::FileFlags::FILE_FLAGS_READ |
-                              duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS |
-                              duckdb::FileLockType::READ_LOCK);
-    if (!lock) {
-      return locks;
-    }
-    locks.push_back(std::move(lock));
-  }
-}
-
 void Log::Read(duckdb::FileSystem& fs, const std::filesystem::path& dir,
                Apply apply) {
   ScanLog(fs, dir, apply, apply);
@@ -436,7 +420,6 @@ duckdb::unique_ptr<duckdb::FileHandle> Log::OpenChunk(uint64_t number,
                                                       bool create) const {
   const auto flags = duckdb::FileFlags::FILE_FLAGS_READ |
                      duckdb::FileFlags::FILE_FLAGS_WRITE |
-                     duckdb::FileLockType::WRITE_LOCK |
                      (create ? duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW
                              : duckdb::FileOpenFlags{});
   return _fs.OpenFile(ChunkPath(number).string(), flags);

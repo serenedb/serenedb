@@ -156,8 +156,8 @@ def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
         try:
             assert second.proc.wait(timeout=60) != 0, second.output()
             assert (f"the data directory is in use: '{datadir}/PG_VERSION' "
-                    "is locked by another server" in second.output()), \
-                second.output()
+                    "is locked by a running server or a read-only attachment"
+                    in second.output()), second.output()
         finally:
             second.stop()
     finally:

@@ -35,6 +35,7 @@
 #include <system_error>
 #include <utility>
 
+#include "backup/pg_control.h"
 #include "catalog/boot.h"
 #include "catalog/database_directory.h"
 #include "catalog/log.h"
@@ -89,15 +90,25 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
                             "\": ", ec.message()));
   }
   const DataDirectory layout{root.string()};
-  if (!std::filesystem::is_directory(layout.LogDir(), ec)) {
+  auto lock = FileLock::Take((root / backup::kPgVersionFile).string(),
+                             FileLock::Mode::Shared);
+  if (!std::filesystem::is_directory(layout.LogDir(), ec) ||
+      absl::IsNotFound(lock.status())) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FILE),
       ERR_MSG("\"", info.path, "\" is not a SereneDB data directory"));
   }
+  if (!lock.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(absl::IsFailedPrecondition(lock.status()) ? ERRCODE_OBJECT_IN_USE
+                                                         : ERRCODE_IO_ERROR),
+      ERR_MSG("could not attach \"", info.path,
+              "\": ", lock.status().message()));
+  }
   auto& fs = duckdb::FileSystem::GetFileSystem(context);
   ForeignLog foreign{
     .dir = layout.LogDir(),
-    .locks = Log::LockChunks(fs, layout.LogDir()),
+    .lock = std::move(*lock),
   };
   LoggedDatabases databases;
   Log::Read(fs, foreign.dir, [&](std::span<uint8_t> payload) {

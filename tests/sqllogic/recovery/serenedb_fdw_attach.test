@@ -20,7 +20,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_dirty && mkdir -p $__TEST_DIR__/sfa_dirty/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_dirty/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_dirty/engine_v1/
+rm -rf $__TEST_DIR__/sfa_dirty && mkdir -p $__TEST_DIR__/sfa_dirty/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_dirty/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_dirty/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_dirty/
 
 connection holder
 statement ok
@@ -100,7 +100,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_new && mkdir -p $__TEST_DIR__/sfa_new/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_new/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_new/engine_v1/
+rm -rf $__TEST_DIR__/sfa_new && mkdir -p $__TEST_DIR__/sfa_new/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_new/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_new/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_new/
 
 connection holder
 statement ok
@@ -199,7 +199,7 @@ HINT: A SereneDB data directory takes the options path and database.
 statement error
 CREATE SERVER sfa_own FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}');
 ----
-db error: ERROR: Could not set lock on file "<slt:ignore>": Conflicting lock is held by another open of this file
+db error: ERROR: could not attach "<slt:ignore>": the data directory is in use: '<slt:ignore>' is locked by a running server; stop it first
 
 
 system ok
@@ -208,7 +208,7 @@ rm -f $__TEST_DIR__/sfa_own_link && ln -s ${SDB_DATADIR} $__TEST_DIR__/sfa_own_l
 statement error
 CREATE SERVER sfa_own_link FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_own_link');
 ----
-db error: ERROR: Could not set lock on file "<slt:ignore>": Conflicting lock is held by another open of this file
+db error: ERROR: could not attach "<slt:ignore>": the data directory is in use: '<slt:ignore>' is locked by a running server; stop it first
 
 
 statement error
@@ -248,7 +248,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfa_aborted && mkdir -p $__TEST_DIR__/sfa_aborted/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_aborted/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_aborted/engine_v1/
+rm -rf $__TEST_DIR__/sfa_aborted && mkdir -p $__TEST_DIR__/sfa_aborted/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfa_aborted/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfa_aborted/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfa_aborted/
 
 connection holder
 statement ok

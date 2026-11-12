@@ -24,6 +24,8 @@
 #include <string>
 #include <string_view>
 
+#include "server/utils/lockfile.h"
+
 namespace sdb {
 
 class DatabasePathFeature final {
@@ -41,6 +43,7 @@ class DatabasePathFeature final {
  private:
   std::string _directory;
   std::string _hba_config_file;
+  FileLock _lock;
 };
 
 }  // namespace sdb

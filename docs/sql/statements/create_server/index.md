@@ -166,19 +166,19 @@ A copy of the data directory is complete when it holds `engine_v1/wal` and, in `
 
 ### Many readers or one writer
 
-The files of the log are locked for reading by every read-only attachment and for writing by the server that owns the data directory, so the two exclude each other:
+The data directory's `PG_VERSION` file is locked shared by every read-only attachment and exclusively by the server that owns the directory, so the two exclude each other:
 
 - Any number of read-only attachments, in one server or in several, can read the same data directory at once.
 - `CREATE SERVER` fails while a server runs on the data directory.
 - A server does not start while its data directory is attached read-only, in this server or another.
 - A server never attaches its own data directory read-only, also through a symbolic link, a hard-linked copy or another mount of the same files.
 
-The lock is the file system's: on a file system without POSIX locks nothing detects a running server, so attach a copy, a disk snapshot or the directory of a stopped server there.
+The lock is the file system's: on a file system without file locks nothing detects a running server, so attach a copy, a disk snapshot or the directory of a stopped server there.
 
 `CREATE SERVER` refuses a data directory:
 
 - of a running server, the attaching server included,
-- without `engine_v1/wal`,
+- without `PG_VERSION` or `engine_v1/wal`,
 - without a database of the given name, or
 - missing the directory of one of the database's tables or inverted indexes.
 

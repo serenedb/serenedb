@@ -71,11 +71,13 @@ DatabasePathFeature::DatabasePathFeature()
   }
 
   backup::EnsurePgVersion(_directory);
-  if (const auto status = LockFile(
-        (std::filesystem::path{_directory} / backup::kPgVersionFile).string());
-      !status.ok()) {
-    SDB_FATAL(GENERAL, status.message());
+  auto lock = FileLock::Take(
+    (std::filesystem::path{_directory} / backup::kPgVersionFile).string(),
+    FileLock::Mode::Exclusive);
+  if (!lock.ok()) {
+    SDB_FATAL(GENERAL, lock.status().message());
   }
+  _lock = std::move(*lock);
 
   gInstance = this;
 }

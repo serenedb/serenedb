@@ -41,6 +41,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/subscription.h"
 #include "catalog/snapshot.h"
+#include "utils/lockfile.h"
 
 namespace duckdb {
 
@@ -56,7 +57,7 @@ namespace sdb::catalog {
 struct ForeignLog {
   std::filesystem::path dir;
   duckdb::idx_t database = 0;
-  std::vector<duckdb::unique_ptr<duckdb::FileHandle>> locks;
+  FileLock lock;
 };
 
 class SereneDBCatalog final : public BaseCatalog {

@@ -52,7 +52,7 @@ started
 t
 
 system ok
-rm -rf $__TEST_DIR__/sfx_snap && mkdir -p $__TEST_DIR__/sfx_snap/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfx_snap/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfx_snap/engine_v1/
+rm -rf $__TEST_DIR__/sfx_snap && mkdir -p $__TEST_DIR__/sfx_snap/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfx_snap/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfx_snap/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfx_snap/
 
 connection holder
 statement ok

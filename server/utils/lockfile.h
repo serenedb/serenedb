@@ -20,12 +20,35 @@
 
 #pragma once
 
-#include <absl/status/status.h>
+#include <absl/status/statusor.h>
 
+#include <cstdint>
 #include <string_view>
+#include <utility>
 
 namespace sdb {
 
-absl::Status LockFile(std::string_view path);
+class FileLock {
+ public:
+  enum class Mode : uint8_t {
+    Shared,
+    Exclusive,
+  };
+
+  static absl::StatusOr<FileLock> Take(std::string_view path, Mode mode);
+
+  FileLock() = default;
+  FileLock(FileLock&& other) noexcept : _fd{std::exchange(other._fd, -1)} {}
+  FileLock& operator=(FileLock&& other) noexcept {
+    std::swap(_fd, other._fd);
+    return *this;
+  }
+  ~FileLock();
+
+ private:
+  explicit FileLock(int fd) noexcept : _fd{fd} {}
+
+  int _fd = -1;
+};
 
 }  // namespace sdb

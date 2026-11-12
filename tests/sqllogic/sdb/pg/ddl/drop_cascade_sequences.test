@@ -84,9 +84,8 @@ id
 statement error
 DROP SEQUENCE vedernikoff_solid_master_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_master_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence vedernikoff_solid_master_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -180,9 +179,9 @@ order_id	ticket_id	ref_id
 statement error
 DROP SEQUENCE vedernikoff_clickclack_seq_a;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_seq_a" because there are entries that depend on it.
-table "vedernikoff_clickclack_orders" depends on sequence "vedernikoff_clickclack_seq_a".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence vedernikoff_clickclack_seq_a because other objects depend on it
+DETAIL: default value for column order_id of table vedernikoff_clickclack_orders depends on sequence vedernikoff_clickclack_seq_a
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -333,9 +332,8 @@ INSERT INTO vedernikoff_x_t2 (body) VALUES ('row2');
 statement error
 DROP SEQUENCE vedernikoff_x_seq_1;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_x_seq_1" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence vedernikoff_x_seq_1 because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 

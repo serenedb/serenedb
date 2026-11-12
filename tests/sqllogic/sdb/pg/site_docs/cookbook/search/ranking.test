@@ -32,9 +32,6 @@ statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
-statement ok
-VACUUM (REFRESH_TABLE) movies;
-
 # DOCS_TEST_BODY
 
 query
@@ -222,9 +219,6 @@ CREATE INDEX pages_idx ON pages
     USING inverted (id, body pages_dict);
 
 # DOCS_TEST: bm25_vs_tfidf
-
-statement ok
-VACUUM (REFRESH_TABLE) pages;
 
 # DOCS_TEST_BODY
 

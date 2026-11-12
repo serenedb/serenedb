@@ -3,13 +3,13 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE biv (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO biv SELECT i, 't' || (i % 5) FROM generate_series(1, 5000) g(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) biv;
+VACUUM (FLUSH_TABLE) biv;
 
 statement ok
 SET sdb_faults = 'pause_search_backfill_before_swap';
@@ -37,7 +37,7 @@ connection default
 statement error
 CREATE INDEX biv_id_idx ON biv USING inverted (tag, id);
 ----
-db error: ERROR: search table "biv" is being changed by another transaction
+db error: ERROR: table "biv" is being changed by another transaction
 HINT: Retry once that transaction commits or rolls back.
 
 
@@ -71,7 +71,7 @@ wait
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) biv;
+VACUUM (FLUSH_TABLE) biv;
 
 connection default
 query

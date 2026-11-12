@@ -72,7 +72,8 @@ CREATE UNIQUE INDEX dcrk_u_a ON dcrk_u (a);
 statement error
 INSERT INTO dcrk_u VALUES (1, 11);
 ----
-db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "dcrk_u_a"
+DETAIL: Key (a)=(1) already exists.
 
 
 statement ok

@@ -125,9 +125,7 @@ class PgTrigger final : public SystemTableScan<kPgTriggerSql> {
     }));
 
   void Row(const duckdb::TriggerCatalogEntry& trigger) {
-    Emit<kTrigger>(
-      {SiblingTable(Transaction(), trigger, trigger.base_table->Table()),
-       trigger});
+    Emit<kTrigger>({TriggerTable(Transaction(), trigger), trigger});
   }
 
   void Row(const duckdb::TableCatalogEntry& table) {

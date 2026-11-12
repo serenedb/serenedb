@@ -20,13 +20,12 @@ CREATE TEXT SEARCH DICTIONARY cfm_en AS
 
 
 statement ok
-CREATE TABLE cfm (id INT PRIMARY KEY, body VARCHAR, c INT, d INT);
+CREATE TABLE cfm (id INT PRIMARY KEY, body VARCHAR, c INT, d INT) WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE INDEX cfm_idx ON cfm USING inverted(id, body cfm_en)
-  INCLUDE (c)
-  WITH (compaction_interval = 0);
+  INCLUDE (c);
 
 
 statement ok
@@ -34,17 +33,13 @@ INSERT INTO cfm SELECT i, 'fox', NULL, i*10 FROM generate_series(1,100) g(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) cfm;
+VACUUM (FLUSH_TABLE) cfm;
 
 
 statement ok
 INSERT INTO cfm
   SELECT i, CASE WHEN i%2=0 THEN 'fox' ELSE 'dog' END, i, i*10
   FROM generate_series(101,200) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cfm;
 
 
 # Pure count: no predicate, no filters -- answered from reader metadata.
@@ -75,6 +70,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -105,6 +101,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -159,6 +156,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
+│ Lookup: search           │
 │ Output: row-count only   │
 │ Column Filter: c > 150   │
 │ ~40 rows                 │
@@ -217,7 +215,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -240,10 +238,6 @@ n
 # segments the statistics settle wholesale.
 statement ok
 DELETE FROM cfm WHERE id <= 50;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cfm;
 
 
 query
@@ -292,7 +286,7 @@ DROP TEXT SEARCH DICTIONARY cfm_en;
 # Search table: the same count shapes through the unified engine (every column
 # lives in `.col`, no lookup source).
 statement ok
-CREATE TABLE cfm_st (a INT, s TEXT) WITH (storage='search', compaction_interval=0);
+CREATE TABLE cfm_st (a INT, s TEXT) WITH (compaction_interval=0);
 
 
 statement ok
@@ -300,15 +294,11 @@ INSERT INTO cfm_st SELECT i, 'x'||i FROM generate_series(1,100) g(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) cfm_st;
+VACUUM (FLUSH_TABLE) cfm_st;
 
 
 statement ok
 INSERT INTO cfm_st SELECT i, 'x'||i FROM generate_series(101,200) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cfm_st;
 
 
 query
@@ -336,8 +326,7 @@ QUERY PLAN
 │ ~1 row                   │
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
-│ Index: cfm_st            │
-│ Lookup: search           │
+│ Table: cfm_st            │
 │ Output: row-count only   │
 │ Column Filter: a > 150   │
 │ ~40 rows                 │
@@ -368,10 +357,6 @@ n
 
 statement ok
 DELETE FROM cfm_st WHERE a <= 50;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cfm_st;
 
 
 query

@@ -16,9 +16,9 @@ iceberg_next_snapshot
 statement error
 DROP SEQUENCE iceberg_snapshot_seq;
 ----
-db error: ERROR: Cannot drop entry "iceberg_snapshot_seq" because there are entries that depend on it.
-macro function "iceberg_next_snapshot" depends on sequence "iceberg_snapshot_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence iceberg_snapshot_seq because other objects depend on it
+DETAIL: function iceberg_next_snapshot() depends on sequence iceberg_snapshot_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -48,9 +48,9 @@ clickclack_outer_plan
 statement error
 DROP FUNCTION clickclack_inner_plan(INT);
 ----
-db error: ERROR: Cannot drop entry "clickclack_inner_plan" because there are entries that depend on it.
-macro function "clickclack_outer_plan" depends on macro function "clickclack_inner_plan".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function clickclack_inner_plan(integer) because other objects depend on it
+DETAIL: function clickclack_outer_plan(integer) depends on function clickclack_inner_plan(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -88,18 +88,17 @@ iceberg_unmarshal_v3
 statement error
 DROP FUNCTION iceberg_unmarshal_v1(INT);
 ----
-db error: ERROR: Cannot drop entry "iceberg_unmarshal_v1" because there are entries that depend on it.
+db error: ERROR: cannot drop function iceberg_unmarshal_v1(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP FUNCTION iceberg_unmarshal_v2(INT);
 ----
-db error: ERROR: Cannot drop entry "iceberg_unmarshal_v2" because there are entries that depend on it.
-macro function "iceberg_unmarshal_v3" depends on macro function "iceberg_unmarshal_v2".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function iceberg_unmarshal_v2(integer) because other objects depend on it
+DETAIL: function iceberg_unmarshal_v3(integer) depends on function iceberg_unmarshal_v2(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -166,9 +165,8 @@ CREATE VIEW mop_listings_feed AS SELECT mop_use_listing() AS n FROM mop_listings
 statement error
 DROP SEQUENCE mop_listing_seq;
 ----
-db error: ERROR: Cannot drop entry "mop_listing_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence mop_listing_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -225,9 +223,9 @@ id	tag
 statement error
 DROP FUNCTION ml_paper_default_id();
 ----
-db error: ERROR: Cannot drop entry "ml_paper_default_id" because there are entries that depend on it.
-table "ml_paper_runs" depends on macro function "ml_paper_default_id".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function ml_paper_default_id() because other objects depend on it
+DETAIL: default value for column id of table ml_paper_runs depends on function ml_paper_default_id()
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

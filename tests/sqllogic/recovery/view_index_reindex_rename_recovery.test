@@ -21,7 +21,7 @@ ALTER VIEW vrr_v RENAME TO vrr_v2;
 
 
 statement ok
-CREATE INDEX vrr_idx ON vrr_v2 USING inverted (id, body) WITH (reindex_interval = 3600000);
+CREATE INDEX vrr_idx ON vrr_v2 USING inverted (id, body) INCLUDE (id, body) WITH (reindex_interval = 3600000);
 
 
 statement ok
@@ -33,7 +33,7 @@ CREATE VIEW vrr_w AS SELECT id, body FROM vrr_t;
 
 
 statement ok
-CREATE INDEX vrr_widx ON vrr_w USING inverted (id, body) WITH (reindex_interval = 0);
+CREATE INDEX vrr_widx ON vrr_w USING inverted (id, body) INCLUDE (id, body) WITH (reindex_interval = 0);
 
 
 statement ok

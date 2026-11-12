@@ -2,7 +2,7 @@ hash-threshold 100
 
 # Segment-level filter pruning: TableFilter::State::StartSegment returns
 # false when segment-wide zonemaps prove no row can pass the pushed column
-# filters, and the scan skips the segment. Each INSERT + VACUUM(REFRESH_TABLE)
+# filters, and the scan skips the segment. Each INSERT + VACUUM(FLUSH_TABLE)
 # round flushes its own segment, and the batches use disjoint `g` ranges, so
 # filters below kill 0, 1, 2, or all 3 segments. Results must be identical
 # either way (pruned segments contain no passing rows by construction) --
@@ -32,7 +32,7 @@ INSERT INTO segp SELECT n, n, 'fox dog' FROM generate_series(1, 10) AS s(n)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) segp
+VACUUM (FLUSH_TABLE) segp
 
 
 # Segment 2: g in [11, 20].
@@ -41,16 +41,12 @@ INSERT INTO segp SELECT n, n, 'fox dog' FROM generate_series(11, 20) AS s(n)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) segp
+VACUUM (FLUSH_TABLE) segp
 
 
 # Segment 3: g in [21, 30].
 statement ok
 INSERT INTO segp SELECT n, n, 'fox cat' FROM generate_series(21, 30) AS s(n)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) segp
 
 
 # Kills no segment.

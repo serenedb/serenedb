@@ -22,6 +22,9 @@ INSERT INTO zstat_tbl SELECT i, md5(i::VARCHAR) FROM generate_series(1, 5000) t(
 
 # Compress the appended rows into zstd segments.
 statement ok
+VACUUM (FLUSH_ALL);
+
+statement ok
 CHECKPOINT;
 
 # USING COMPRESSION reached the store table and pragma_storage_info resolves

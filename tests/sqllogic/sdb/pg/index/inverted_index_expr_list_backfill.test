@@ -23,9 +23,6 @@ statement ok
 CREATE INDEX docs_idx ON docs
   USING inverted(id, (string_to_array(body, ' ')) verbatim_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 
 # A token shared by two rows matches both -- each list element is indexed.
 query
@@ -60,9 +57,6 @@ id
 statement ok
 INSERT INTO docs VALUES (4, 'beta epsilon');
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 query
 SELECT id FROM docs_idx
 WHERE (string_to_array(body, ' ')) @@ ts_like('beta') ORDER BY id;
@@ -83,9 +77,6 @@ INSERT INTO edge VALUES (1, 'a b'), (2, NULL), (3, '');
 statement ok
 CREATE INDEX edge_idx ON edge
   USING inverted(id, (string_to_array(body, ' ')) verbatim_dict);
-
-statement ok
-VACUUM (REFRESH_TABLE) edge;
 
 # All three rows materialise; only id 1 has the token 'a'.
 query
@@ -113,9 +104,6 @@ INSERT INTO arr VALUES (1, 'alpha', 'beta'), (2, 'beta', 'gamma'), (3, 'delta', 
 statement ok
 CREATE INDEX arr_idx ON arr USING inverted(id, (array_value(a, b)) verbatim_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) arr;
-
 # A token appearing in either array slot matches.
 query
 SELECT id FROM arr_idx WHERE (array_value(a, b)) @@ ts_like('beta') ORDER BY id;
@@ -136,9 +124,6 @@ id
 statement ok
 INSERT INTO arr VALUES (4, 'beta', 'zeta');
 
-statement ok
-VACUUM (REFRESH_TABLE) arr;
-
 query
 SELECT id FROM arr_idx WHERE (array_value(a, b)) @@ ts_like('beta') ORDER BY id;
 ----
@@ -157,9 +142,6 @@ INSERT INTO arr_n VALUES (1, 'p', 'q'), (2, NULL, 'r');
 
 statement ok
 CREATE INDEX arr_n_idx ON arr_n USING inverted(id, (array_value(a, b)) verbatim_dict);
-
-statement ok
-VACUUM (REFRESH_TABLE) arr_n;
 
 query
 SELECT id FROM arr_n_idx WHERE (array_value(a, b)) @@ ts_like('r') ORDER BY id;

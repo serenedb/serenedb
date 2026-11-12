@@ -194,8 +194,7 @@ def test_roundtrip(conn: psycopg.Connection, case: tuple[TypeSpec, str, int, obj
     assert row is not None
     actual = row[0]
     assert actual == expected, (
-        f"{proto}: expected {expected!r}, got {actual!r} for sample {sample!r}"
-    )
+        f"{proto}: expected {expected!r}, got {actual!r} for sample {sample!r}")
 
 
 # ---- connection-property assertions ----------------------------------------
@@ -334,8 +333,7 @@ def test_returning_command_tags():
             cur.execute(
                 f'MERGE INTO "{table}" t USING "{table}_src" s ON t.id = s.id '
                 "WHEN MATCHED THEN UPDATE SET v = s.v "
-                "WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.v) RETURNING t.id"
-            )
+                "WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.v) RETURNING t.id")
             assert cur.statusmessage == "MERGE 2"
     finally:
         with c.cursor() as cur:
@@ -438,7 +436,7 @@ def test_binder_error_sqlstates():
         c.close()
 
 
-@pytest.mark.parametrize("storage", ["", " WITH (storage = 'search')"])
+@pytest.mark.parametrize("storage", [""])
 def test_commit_time_index_error_keeps_its_sqlstate(storage):
     table = f"rfq_commit_{os.getpid()}"
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
@@ -448,12 +446,10 @@ def test_commit_time_index_error_keeps_its_sqlstate(storage):
             cur.execute(f'CREATE TABLE "{table}" (id INT, content JSON){storage}')
             cur.execute(
                 f'CREATE INDEX "{table}_idx" ON "{table}" '
-                "USING inverted (id, (content->'val'))"
-            )
+                "USING inverted (id, (content->'val'))")
             with pytest.raises(psycopg.Error) as ei:
                 cur.execute(
-                    f'INSERT INTO "{table}" VALUES (1, \'{{"val": {{"x": 1}}}}\')'
-                )
+                    f'INSERT INTO "{table}" VALUES (1, \'{{"val": {{"x": 1}}}}\')')
             assert ei.value.sqlstate == "42804", ei.value.sqlstate
     finally:
         with c.cursor() as cur:
@@ -848,6 +844,41 @@ def test_engine_warning_reaches_the_client_as_a_notice():
         c.close()
 
 
+def test_distinct_statistics_on_a_boolean_or_bit_column_warn():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    try:
+        with c.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS distinct_warn")
+            cur.execute(
+                "CREATE TABLE distinct_warn "
+                "(id INT PRIMARY KEY, flag BOOLEAN, bits BIT, v BIGINT)"
+            )
+            cur.execute(
+                "CREATE INDEX distinct_warn_idx ON distinct_warn USING inverted(id) "
+                "INCLUDE (flag included (distinct = 'exact'), "
+                "bits included (distinct = 'sampled'), "
+                "v included (distinct = 'exact'))"
+            )
+        assert diags == [
+            (
+                "WARNING",
+                "Column 'flag': distinct statistics of a BOOLEAN column "
+                "do not help query planning",
+            ),
+            (
+                "WARNING",
+                "Column 'bits': distinct statistics of a BIT column "
+                "do not help query planning",
+            ),
+        ], diags
+    finally:
+        with c.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS distinct_warn")
+        c.close()
+
+
 def test_unenforced_setting_warns_when_its_value_changes():
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     notices: list[str] = []
@@ -960,8 +991,7 @@ def test_pg_cancel_backend_cancels_running_query():
         def run_long():
             try:
                 victim.execute(
-                    "select count(*) from generate_series(1, 200000000000) g(i)"
-                )
+                    "select count(*) from generate_series(1, 200000000000) g(i)")
                 outcome["sqlstate"] = "completed"
             except psycopg.Error as e:
                 outcome["sqlstate"] = e.sqlstate

@@ -20,7 +20,7 @@ statement count 1
 INSERT INTO ac_t VALUES (1, 'alpha bravo', 'keep');
 
 statement ok
-VACUUM (REFRESH_TABLE) ac_t;
+VACUUM (FLUSH_TABLE) ac_t;
 
 # Durable schema changes: add a backfilled column, drop a non-indexed column.
 statement ok
@@ -28,10 +28,6 @@ ALTER TABLE ac_t ADD COLUMN score INTEGER DEFAULT 7;
 
 statement ok
 ALTER TABLE ac_t DROP COLUMN tag;
-
-# Post-ALTER write with the index commit faulted -> store WAL only.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement count 1
 INSERT INTO ac_t VALUES (2, 'charlie delta', 9);
@@ -46,7 +42,7 @@ SELECT 1;
 
 connection ac_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) ac_t;
+SELECT 1;
 
 # The schema change persisted: `score` exists (backfilled row 1, inserted
 # row 2); `tag` is gone.

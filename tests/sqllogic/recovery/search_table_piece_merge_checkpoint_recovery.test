@@ -1,0 +1,113 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pmc (id BIGINT, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO pmc VALUES (1, 'one');
+
+
+statement ok
+INSERT INTO pmc VALUES (2, 'two');
+
+
+statement ok
+INSERT INTO pmc VALUES (3, 'three');
+
+
+statement ok
+INSERT INTO pmc VALUES (4, 'four');
+
+
+statement ok
+INSERT INTO pmc VALUES (5, 'five');
+
+
+statement ok
+INSERT INTO pmc VALUES (6, 'six');
+
+
+statement ok
+INSERT INTO pmc VALUES (7, 'seven');
+
+
+statement ok
+SET sdb_faults = 'pause_log_truncate_before_cover';
+
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_log_truncate_before_cover:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged';
+
+
+connection default
+statement ok
+INSERT INTO pmc VALUES (8, 'eight');
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_pieces_merged:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged:release';
+
+
+connection default
+statement ok
+DELETE FROM pmc WHERE id = 2;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_log_truncate_before_cover:release';
+
+
+wait
+
+
+connection default
+statement ok
+INSERT INTO pmc VALUES (9, 'nine');
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM pmc ORDER BY id;
+----
+id	body
+1	one
+3	three
+4	four
+5	five
+6	six
+7	seven
+8	eight
+9	nine

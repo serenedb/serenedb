@@ -11,9 +11,6 @@ CREATE INDEX products_idx ON products USING inverted (id, (lower(name)), price_w
 statement ok
 INSERT INTO products (id, name, price) VALUES (1, 'Widget', 100), (2, 'WIDGET', 200), (3, 'Gadget', 50);
 
-statement ok
-VACUUM (REFRESH_TABLE) products;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
@@ -67,9 +64,6 @@ CREATE INDEX people_idx ON people USING inverted (id, (first || ' ' || last));
 statement ok
 INSERT INTO people VALUES (1, 'Jane', 'Doe'), (2, 'John', 'Roe'), (3, 'Jane', 'Roe');
 
-statement ok
-VACUUM (REFRESH_TABLE) people;
-
 # DOCS_TEST_BODY
 
 query
@@ -88,9 +82,6 @@ CREATE INDEX orders_idx ON orders USING inverted (id, (CASE WHEN amount >= 100 T
 
 statement ok
 INSERT INTO orders VALUES (1, 150), (2, 50), (3, 200), (4, 90);
-
-statement ok
-VACUUM (REFRESH_TABLE) orders;
 
 # DOCS_TEST_BODY
 

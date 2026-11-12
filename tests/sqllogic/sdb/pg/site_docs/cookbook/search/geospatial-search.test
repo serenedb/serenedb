@@ -23,9 +23,6 @@ INSERT INTO shops VALUES
 (8, 'Highwire',       'POINT(-122.2700 37.9200)'::GEOMETRY('OGC:CRS84')),
 (9, 'Timeless',       'POINT(-122.2500 37.9500)'::GEOMETRY('OGC:CRS84'));
 
-statement ok
-VACUUM (REFRESH_TABLE) shops;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

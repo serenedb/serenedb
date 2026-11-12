@@ -196,7 +196,7 @@ CREATE JOB jri_clash AFTER 1 HOUR AS SELECT 1;
 statement error
 CREATE INDEX jri_clash ON jri_v USING inverted(id, body) WITH (reindex_interval=100);
 ----
-db error: ERROR: Job with name "jri_clash" already exists!<slt:ignore>
+db error: ERROR: job "jri_clash" already exists<slt:ignore>
 
 
 query

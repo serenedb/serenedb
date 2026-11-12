@@ -20,7 +20,7 @@ INSERT INTO hosts VALUES
 
 onlyif serenedb
 statement ok
-VACUUM (REFRESH_TABLE) hosts;
+VACUUM (FLUSH_TABLE) hosts;
 
 onlyif serenedb
 statement ok
@@ -74,7 +74,7 @@ INSERT INTO hosts VALUES (7, '10.200.0.1', '10.200.0.0/16');
 onlyif serenedb
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) hosts;
+VACUUM (FLUSH_TABLE) hosts;
 
 onlyif serenedb
 connection after_crash

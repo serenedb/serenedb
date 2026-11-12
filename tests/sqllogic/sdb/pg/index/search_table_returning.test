@@ -6,13 +6,10 @@
 #   referenced BIGINT)
 # The rows now come off the chunk each operator already has: the resolved new row
 # for INSERT and UPDATE, the scanned row for DELETE.
-#
-# A search table's writes reach a later statement only once the index refreshes,
-# so every read-back below refreshes first.
 
 
 statement ok
-CREATE TABLE ret_gen(a INT, b TEXT) WITH (storage = 'search');
+CREATE TABLE ret_gen(a INT, b TEXT);
 
 
 # Table without a PK: the rowid is not a column of the relation and must not
@@ -39,10 +36,6 @@ bumped
 104
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_gen;
-
-
 query
 UPDATE ret_gen SET b = 'z' WHERE a = 1 RETURNING *;
 ----
@@ -64,10 +57,6 @@ twice	b
 6	q
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_gen;
-
-
 query
 SELECT a, b FROM ret_gen ORDER BY a;
 ----
@@ -83,7 +72,7 @@ DROP TABLE ret_gen;
 # Declared-PK table: row identity is the key columns rather than the synthetic
 # one, and the same projections have to come back.
 statement ok
-CREATE TABLE ret_pk(a INT PRIMARY KEY, b TEXT) WITH (storage = 'search');
+CREATE TABLE ret_pk(a INT PRIMARY KEY, b TEXT);
 
 
 query
@@ -94,10 +83,6 @@ a	b
 11	k
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
-
-
 query
 UPDATE ret_pk SET b = b || '!' WHERE a >= 10 RETURNING *;
 ----
@@ -106,19 +91,11 @@ a	b
 11	k!
 
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
-
-
 query
 DELETE FROM ret_pk WHERE a = 11 RETURNING *;
 ----
 a	b
 11	k!
-
-
-statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
 
 
 query
@@ -134,7 +111,7 @@ INSERT INTO ret_pk VALUES (12, 'm');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
+VACUUM (FLUSH_TABLE) ret_pk;
 
 
 statement count 1
@@ -142,7 +119,7 @@ UPDATE ret_pk SET b = 'n' WHERE a = 12;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) ret_pk;
+VACUUM (FLUSH_TABLE) ret_pk;
 
 
 statement count 1

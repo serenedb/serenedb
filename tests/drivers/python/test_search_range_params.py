@@ -8,12 +8,11 @@ DRIVER_KEY = "python_search_range_params"
 
 DDL = [
     """CREATE TABLE {schema}.srp (pk INTEGER PRIMARY KEY, num INTEGER, tag VARCHAR, emb FLOAT[2])
-        WITH (storage = 'search', compaction_interval = 0)""",
+        WITH (compaction_interval = 0)""",
     """CREATE INDEX srp_idx ON {schema}.srp
         USING inverted(pk, num, tag, emb hnsw (metric = 'l2', quant = 'none'))""",
     """INSERT INTO {schema}.srp SELECT i, i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END,
         [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i)""",
-    "VACUUM (REFRESH_TABLE) {schema}.srp",
 ]
 
 KNN = "SELECT pk FROM {schema}.srp WHERE {where} ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3"
@@ -74,8 +73,7 @@ def test_between_params(conn, schema):
 def test_limit_offset_params(conn, schema):
     sql = (
         f"SELECT pk FROM {schema}.srp ORDER BY emb <-> [1600.4, 0]::FLOAT[2]"
-        " LIMIT %s OFFSET %s"
-    )
+        " LIMIT %s OFFSET %s")
     with conn.cursor() as cur:
         for _ in range(2):
             cur.execute(sql, (3, 1), prepare=True)
@@ -85,8 +83,7 @@ def test_limit_offset_params(conn, schema):
 def test_filter_and_limit_params(conn, schema):
     sql = (
         f"SELECT pk FROM {schema}.srp WHERE tag = %s"
-        " ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT %s"
-    )
+        " ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT %s")
     with conn.cursor() as cur:
         for _ in range(2):
             cur.execute(sql, ("odd", 2), prepare=True)

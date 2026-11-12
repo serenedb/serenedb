@@ -119,7 +119,7 @@ ORDER BY c.relname;
 ----
 relname	amname
 pudge_cls_comp	NULL
-pudge_cls_hook	heap
+pudge_cls_hook	iresearch
 pudge_cls_seq	NULL
 pudge_cls_view	NULL
 

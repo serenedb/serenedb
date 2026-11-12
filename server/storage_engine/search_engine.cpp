@@ -36,6 +36,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/transaction.h"
 #include "scheduler/background_scheduler.h"
 #include "search/store.h"
 #include "search/task.h"
@@ -89,8 +90,9 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
 }
 
 void SearchEngine::start() {
+  _loops.Consume(MaintenanceLoop(_loops));
   StartSearchStorageTasks();
-  SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
+  catalog::Transactions::Get().SettleLog();
 }
 
 void SearchEngine::stop() {
@@ -103,7 +105,7 @@ void SearchEngine::StartTasks(const std::shared_ptr<Store>& store) {
   if (_stopping.load(std::memory_order_acquire)) {
     return;
   }
-  _loops.Consume(RefreshLoop(store), CompactionCoordinator(store));
+  AddMaintenanceTarget(store);
 }
 
 }  // namespace sdb::search

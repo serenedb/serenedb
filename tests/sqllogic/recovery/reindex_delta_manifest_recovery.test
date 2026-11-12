@@ -27,19 +27,11 @@ statement ok
 COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DIR__}/rdmr_2.parquet' (FORMAT parquet);
 
 
-statement ok
-SET sdb_faults = 'refresh_before_manifest_publish';
-
-
 query
 SELECT action, files_added FROM serenedb_reindex('rdmr_idx');
 ----
 action	files_added
 delta	1
-
-
-statement ok
-SET sdb_faults = '-refresh_before_manifest_publish';
 
 
 query

@@ -5,6 +5,14 @@
 # the merge update fell onto the delete+insert path (bumping rowid) or fed index/
 # LIST columns to the in-place update.
 
+control substitution on
+
+statement ok
+ATTACH '${__TEST_DIR__}/merge_returning_rowid.duckdb' AS mrr_${__DATABASE__};
+
+statement ok
+USE mrr_${__DATABASE__};
+
 statement ok
 CREATE TABLE mr(a INTEGER PRIMARY KEY, b INTEGER);
 

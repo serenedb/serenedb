@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS otel_logs (
     resource_attributes JSON,
     scope_attributes    JSON,
     log_attributes      JSON
-) WITH (storage = 'search', optimize_top_k = 'bm25(1.2, 0.75)');
+) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 CREATE INDEX IF NOT EXISTS otel_logs_idx ON otel_logs USING inverted (
     "timestamp",
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS otel_traces (
     links               JSON,
     event_names         VARCHAR[],
     link_trace_ids      VARCHAR[]
-) WITH (storage = 'search');
+);
 
 CREATE INDEX IF NOT EXISTS otel_traces_idx ON otel_traces USING inverted (
     "timestamp",
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS otel_metrics_gauge (
     flags               INTEGER,
     value               DOUBLE PRECISION,
     exemplars           JSON
-) WITH (storage = 'search');
+);
 
 CREATE INDEX IF NOT EXISTS otel_metrics_gauge_idx ON otel_metrics_gauge
     USING inverted ("timestamp", metric_name, service_name);
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS otel_metrics_sum (
     aggregation_temporality VARCHAR,
     is_monotonic            BOOLEAN,
     exemplars               JSON
-) WITH (storage = 'search');
+);
 
 CREATE INDEX IF NOT EXISTS otel_metrics_sum_idx ON otel_metrics_sum
     USING inverted ("timestamp", metric_name, service_name);
@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS otel_metrics_histogram (
     max                     DOUBLE PRECISION,
     aggregation_temporality VARCHAR,
     exemplars               JSON
-) WITH (storage = 'search');
+);
 
 CREATE INDEX IF NOT EXISTS otel_metrics_histogram_idx ON otel_metrics_histogram
     USING inverted ("timestamp", metric_name, service_name);
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS otel_metrics_exponential_histogram (
     max                     DOUBLE PRECISION,
     aggregation_temporality VARCHAR,
     exemplars               JSON
-) WITH (storage = 'search');
+);
 
 CREATE INDEX IF NOT EXISTS otel_metrics_exponential_histogram_idx
     ON otel_metrics_exponential_histogram
@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS otel_metrics_summary (
     sum                 DOUBLE PRECISION,
     quantiles           DOUBLE PRECISION[],
     values              DOUBLE PRECISION[]
-) WITH (storage = 'search');
+);
 
 CREATE INDEX IF NOT EXISTS otel_metrics_summary_idx ON otel_metrics_summary
     USING inverted ("timestamp", metric_name, service_name);

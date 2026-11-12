@@ -4,9 +4,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY tl_words AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position)
@@ -26,7 +23,7 @@ SELECT i,
 FROM generate_series(1, 15) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) tl_docs
+VACUUM (FLUSH_TABLE) tl_docs
 
 statement ok
 INSERT INTO tl_docs
@@ -35,9 +32,6 @@ SELECT i,
        CASE WHEN i % 3 = 0 THEN 'red fox ' ELSE 'blue cat ' END ||
        CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END
 FROM generate_series(16, 30) t(i)
-
-statement ok
-VACUUM (REFRESH_TABLE) tl_docs
 
 query
 EXPLAIN SELECT id, title FROM tl_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3
@@ -48,14 +42,14 @@ QUERY PLAN
 │ ~3 rows                           │
 ╰─────────────────┬─────────────────╯
                   ├───────────────────────────────╮
-╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ─────╮
-│ Top: 3                            │  │ Lookup: table      │
-│ Order By: id DESC                 │  │ Projections: title │
-│ ~3 rows                           │  │ ~3 rows            │
-╰─────────────────┬─────────────────╯  ╰────────────────────╯
-╭─ IRESEARCH_SCAN ┴─────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ───╮
+│ Top: 3                            │  │ Index: tl_idx      │
+│ Order By: id DESC                 │  │ Lookup: search     │
+│ ~3 rows                           │  │ Projections: title │
+╰─────────────────┬─────────────────╯  │ ~3 rows            │
+╭─ IRESEARCH_SCAN ┴─────────────────╮  ╰────────────────────╯
 │ Index: tl_idx                     │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Term ──────────────╮           │
 │ │ Field: body(string) │           │
@@ -63,7 +57,7 @@ QUERY PLAN
 │ ╰─────────────────────╯           │
 │ Column Filter:                    │
 │ optional: Dynamic Filter (id > ?) │
-│ Projections: id, pk               │
+│ Projections: id, rowid            │
 │ ~6 rows                           │
 ╰───────────────────────────────────╯
 
@@ -98,6 +92,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: tl_idx                                        │
+│ Lookup: search                                       │
 │ TsDict: body                                         │
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
@@ -137,6 +132,7 @@ QUERY PLAN
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: tl_idx                                        │
+│ Lookup: search                                       │
 │ Index Filter:                                        │
 │ ╭─ Term ──────────────╮                              │
 │ │ Field: body(string) │                              │
@@ -283,24 +279,25 @@ QUERY PLAN
 │ ~2 rows                           │                          │ Order By: docs DESC, term ASC                        │
 ╰─────────────────┬─────────────────╯                          │ ~2 rows                                              │
                   ├───────────────────────────────╮            ╰───────────────────────────┬──────────────────────────╯
-╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ─────╮  ╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Top: 2                            │  │ Lookup: table      │  │ Projections:                                         │
-│ Order By: id DESC                 │  │ Projections: title │  │ sdb_inverted_index_term$body,                        │
-│ ~2 rows                           │  │ ~2 rows            │  │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
-╰─────────────────┬─────────────────╯  ╰────────────────────╯  │ ~6 rows                                              │
-╭─ IRESEARCH_SCAN ┴─────────────────╮                          ╰───────────────────────────┬──────────────────────────╯
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ───╮  ╭─ PROJECTION ──────────────┴──────────────────────────╮
+│ Top: 2                            │  │ Index: tl_idx      │  │ Projections:                                         │
+│ Order By: id DESC                 │  │ Lookup: search     │  │ sdb_inverted_index_term$body,                        │
+│ ~2 rows                           │  │ Projections: title │  │ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
+╰─────────────────┬─────────────────╯  │ ~2 rows            │  │ ~6 rows                                              │
+╭─ IRESEARCH_SCAN ┴─────────────────╮  ╰────────────────────╯  ╰───────────────────────────┬──────────────────────────╯
 │ Index: tl_idx                     │                          ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
-│ Lookup: table                     │                          │ Groups: #0                                           │
+│ Lookup: search                    │                          │ Groups: #0                                           │
 │ Index Filter:                     │                          │ Aggregates: sum(#1)                                  │
 │ ╭─ Term ──────────────╮           │                          │ ~6 rows                                              │
 │ │ Field: body(string) │           │                          ╰───────────────────────────┬──────────────────────────╯
 │ │ Value: fox          │           │                          ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ ╰─────────────────────╯           │                          │ Index: tl_idx                                        │
-│ Column Filter:                    │                          │ TsDict: body                                         │
-│ optional: Dynamic Filter (id > ?) │                          │ Projections:                                         │
-│ Projections: id, pk               │                          │ sdb_inverted_index_term$body,                        │
-│ ~6 rows                           │                          │ sdb_inverted_index_term_count$body                   │
-╰───────────────────────────────────╯                          │ ~12 rows                                             │
+│ Column Filter:                    │                          │ Lookup: search                                       │
+│ optional: Dynamic Filter (id > ?) │                          │ TsDict: body                                         │
+│ Projections: id, rowid            │                          │ Projections:                                         │
+│ ~6 rows                           │                          │ sdb_inverted_index_term$body,                        │
+╰───────────────────────────────────╯                          │ sdb_inverted_index_term_count$body                   │
+                                                               │ ~12 rows                                             │
                                                                ╰──────────────────────────────────────────────────────╯
 
 query

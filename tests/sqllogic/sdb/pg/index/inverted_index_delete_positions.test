@@ -3,17 +3,15 @@ CREATE TEXT SEARCH DICTIONARY dp_words AS split_text()
 
 
 statement ok
-CREATE TABLE dp (id BIGINT, body VARCHAR, keep BOOLEAN)
+CREATE TABLE dp (id BIGINT, body VARCHAR, keep BOOLEAN) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX dp_idx ON dp USING inverted(id, body dp_words)
-  WITH (refresh_interval = 0, compaction_interval = 0)
 
 
 statement ok
-CREATE INDEX dp_part ON dp USING inverted(id, body dp_words)
-  WITH (refresh_interval = 0, compaction_interval = 0) WHERE keep
+CREATE INDEX dp_part ON dp USING inverted(id, body dp_words) WHERE keep
 
 
 statement ok
@@ -28,23 +26,11 @@ query
 SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('beta')
 ----
 count
-0
+10
 
 
-# A delete of rows not searchable yet leaves them to the refresh that publishes them.
 statement ok
 DELETE FROM dp WHERE id < 3
-
-
-query
-SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('beta')
-----
-count
-0
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dp
 
 
 query
@@ -69,12 +55,10 @@ count
 
 
 query
-SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
-WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+SELECT (SELECT count(*) FROM dp_idx) AS dp_idx, (SELECT count(*) FROM dp_part) AS dp_part
 ----
-relname	value
-dp_idx	17
-dp_part	13
+dp_idx	dp_part
+17	13
 
 
 # Rows of a partial index's left-out rows and rows already removed remove nothing.
@@ -82,26 +66,16 @@ statement ok
 DELETE FROM dp WHERE id IN (3, 5, 7)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dp
-
-
 query
-SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
-WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+SELECT (SELECT count(*) FROM dp_idx) AS dp_idx, (SELECT count(*) FROM dp_part) AS dp_part
 ----
-relname	value
-dp_idx	14
-dp_part	13
+dp_idx	dp_part
+14	13
 
 
 # An update writes the row under a new row id: the old one leaves both indexes.
 statement ok
 UPDATE dp SET body = 'gamma' WHERE id IN (4, 101)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dp
 
 
 query
@@ -140,17 +114,11 @@ statement ok
 ROLLBACK
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dp
-
-
 query
-SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
-WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+SELECT (SELECT count(*) FROM dp_idx) AS dp_idx, (SELECT count(*) FROM dp_part) AS dp_part
 ----
-relname	value
-dp_idx	14
-dp_part	13
+dp_idx	dp_part
+14	13
 
 
 # Inserts and deletes of one transaction, the deletes naming rows of other
@@ -169,10 +137,6 @@ DELETE FROM dp WHERE id >= 210 OR id IN (6, 8)
 
 statement ok
 COMMIT
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dp
 
 
 query
@@ -195,7 +159,7 @@ INSERT INTO dp SELECT 300 + i, 'epsilon', true FROM range(30) r(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dp
+VACUUM (FLUSH_TABLE) dp
 
 
 statement ok
@@ -203,7 +167,7 @@ INSERT INTO dp SELECT 400 + i, 'epsilon', true FROM range(30) r(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dp
+VACUUM (FLUSH_TABLE) dp
 
 
 statement ok
@@ -214,10 +178,6 @@ statement ok
 DELETE FROM dp WHERE id % 2 = 1 AND id >= 300
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dp
-
-
 query
 SELECT count(*) FROM dp_idx WHERE body @@ ts_phrase('epsilon')
 ----
@@ -226,12 +186,10 @@ count
 
 
 query
-SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
-WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+SELECT (SELECT count(*) FROM dp_idx) AS dp_idx, (SELECT count(*) FROM dp_part) AS dp_part
 ----
-relname	value
-dp_idx	52
-dp_part	51
+dp_idx	dp_part
+52	51
 
 
 # A delete of every row.
@@ -239,27 +197,20 @@ statement ok
 DELETE FROM dp
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dp
-
-
 query
-SELECT relname, value FROM sdb_metrics m JOIN pg_class c ON m.relation_id = c.oid
-WHERE metric = 'num_live_docs' AND relname IN ('dp_idx', 'dp_part') ORDER BY relname
+SELECT (SELECT count(*) FROM dp_idx) AS dp_idx, (SELECT count(*) FROM dp_part) AS dp_part
 ----
-relname	value
-dp_idx	0
-dp_part	0
+dp_idx	dp_part
+0	0
 
 
 # One commit removing rows of two tables.
 statement ok
-CREATE TABLE dq (id BIGINT, body VARCHAR)
+CREATE TABLE dq (id BIGINT, body VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX dq_idx ON dq USING inverted(id, body dp_words)
-  WITH (refresh_interval = 0, compaction_interval = 0)
 
 
 statement ok
@@ -286,14 +237,6 @@ statement ok
 COMMIT
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dp
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dq
-
-
 query
 SELECT id FROM dp_idx WHERE body @@ ts_phrase('zeta') ORDER BY id
 ----
@@ -311,14 +254,12 @@ id
 1
 
 
-# Rows moving into and out of a partial index, before and after a refresh.
 statement ok
-CREATE TABLE dr (id BIGINT, body VARCHAR, keep BOOLEAN)
+CREATE TABLE dr (id BIGINT, body VARCHAR, keep BOOLEAN) WITH (compaction_interval = 0)
 
 
 statement ok
-CREATE INDEX dr_part ON dr USING inverted(id, body dp_words)
-  WITH (refresh_interval = 0, compaction_interval = 0) WHERE keep
+CREATE INDEX dr_part ON dr USING inverted(id, body dp_words) WHERE keep
 
 
 statement ok
@@ -327,10 +268,6 @@ INSERT INTO dr SELECT i, 'eta', i % 2 = 0 FROM range(10) r(i)
 
 statement ok
 UPDATE dr SET keep = NOT keep WHERE id IN (0, 3)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) dr
 
 
 query
@@ -356,10 +293,6 @@ statement ok
 DELETE FROM dr WHERE id IN (10, 11)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dr
-
-
 query
 SELECT id FROM dr_part WHERE body @@ ts_phrase('eta') ORDER BY id
 ----
@@ -372,12 +305,11 @@ id
 
 
 statement ok
-CREATE TABLE ds (id BIGINT PRIMARY KEY, body VARCHAR)
+CREATE TABLE ds (id BIGINT PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX ds_idx ON ds USING inverted(id, body dp_words)
-  WITH (refresh_interval = 0, compaction_interval = 0)
 
 
 statement ok
@@ -400,7 +332,7 @@ INSERT INTO ds VALUES (1500, 'winner')
 
 
 connection first
-statement error PRIMARY KEY or UNIQUE constraint violation
+statement error duplicate key value violates unique constraint "ds_pkey"
 COMMIT
 
 
@@ -411,17 +343,12 @@ INSERT INTO ds SELECT i, 'again' FROM range(5000, 6000) r(i)
 
 connection second
 statement ok
-VACUUM (REFRESH_TABLE) ds
+VACUUM (FLUSH_TABLE) ds
 
 
 connection second
 statement ok
 DELETE FROM ds WHERE body = 'again' AND id % 2 = 0
-
-
-connection second
-statement ok
-VACUUM (REFRESH_TABLE) ds
 
 
 connection second

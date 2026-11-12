@@ -1,4 +1,9 @@
+control substitution on
+
 hash-threshold 100
+
+statement ok
+SET SESSION preserve_insertion_order = true;
 
 query
 SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
@@ -61,16 +66,19 @@ c	s
 50000000	1249999975000000
 
 statement ok
-CREATE TABLE range_layout AS SELECT range AS v FROM range(300000)
+ATTACH '${__TEST_DIR__}/range_parallel.duckdb' AS rpl_${__DATABASE__};
+
+statement ok
+CREATE TABLE rpl_${__DATABASE__}.range_layout AS SELECT range AS v FROM range(300000)
 
 query
-SELECT count(*) AS misordered FROM range_layout WHERE rowid <> v
+SELECT count(*) AS misordered FROM rpl_${__DATABASE__}.range_layout WHERE rowid <> v
 ----
 misordered
 0
 
 query
-SELECT row_group_id, sum(count) AS row_count FROM pragma_storage_info('range_layout') WHERE column_path = '[0]' GROUP BY ALL ORDER BY ALL
+SELECT row_group_id, sum(count) AS row_count FROM pragma_storage_info('rpl_${__DATABASE__}.range_layout') WHERE column_path = '[0]' GROUP BY ALL ORDER BY ALL
 ----
 row_group_id	row_count
 0	122880
@@ -78,7 +86,7 @@ row_group_id	row_count
 2	54240
 
 statement ok
-DROP TABLE range_layout
+DETACH rpl_${__DATABASE__}
 
 query
 WITH d AS MATERIALIZED (SELECT i FROM range(1000000) r(i)) SELECT (SELECT sum(i) FROM d) AS s, (SELECT i FROM d LIMIT 1) AS f

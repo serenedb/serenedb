@@ -1,7 +1,7 @@
 control substitution on
 
 statement ok
-CREATE TABLE sc_nn (id INT, b TEXT NOT NULL) WITH (storage = 'search');
+CREATE TABLE sc_nn (id INT, b TEXT NOT NULL);
 
 
 statement ok
@@ -42,7 +42,7 @@ db error: ERROR: NOT NULL constraint failed: sc_nn.b
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_nn;
+VACUUM (FLUSH_TABLE) sc_nn;
 
 
 statement error
@@ -67,7 +67,7 @@ id
 
 
 statement ok
-CREATE TABLE sc_ck (a INT, CONSTRAINT sc_ck_pos CHECK (a > 0)) WITH (storage = 'search');
+CREATE TABLE sc_ck (a INT, CONSTRAINT sc_ck_pos CHECK (a > 0));
 
 
 statement ok
@@ -75,7 +75,7 @@ INSERT INTO sc_ck VALUES (1), (2);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_ck;
+VACUUM (FLUSH_TABLE) sc_ck;
 
 
 statement error
@@ -94,10 +94,6 @@ statement ok
 INSERT INTO sc_ck VALUES (NULL);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sc_ck;
-
-
 query
 SELECT a FROM sc_ck ORDER BY a;
 ----
@@ -108,8 +104,7 @@ NULL
 
 
 statement ok
-CREATE TABLE sc_alter (id INT PRIMARY KEY, b TEXT, n INT)
-WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sc_alter (id INT PRIMARY KEY, b TEXT, n INT);
 
 
 statement ok
@@ -119,13 +114,13 @@ INSERT INTO sc_alter (id, b, n) VALUES (1, 'x', 1), (2, NULL, -2);
 statement error
 ALTER TABLE sc_alter ALTER COLUMN b SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: sc_alter.b
+db error: ERROR: column "b" of relation "sc_alter" contains null values
 
 
 statement error
 ALTER TABLE sc_alter ADD CONSTRAINT sc_alter_n CHECK (n > 0);
 ----
-db error: ERROR: CHECK constraint failed on table "sc_alter" with expression CHECK((n > 0))
+db error: ERROR: check constraint "sc_alter_n" of relation "sc_alter" is violated by some row
 
 
 statement ok
@@ -133,7 +128,7 @@ INSERT INTO sc_alter (id, b, n) VALUES (3, NULL, -3);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sc_alter;
+VACUUM (FLUSH_TABLE) sc_alter;
 
 
 statement ok
@@ -174,10 +169,6 @@ statement ok
 INSERT INTO sc_alter (id, b, n) VALUES (4, 'z', 4);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sc_alter;
-
-
 query
 SELECT id, b, n FROM sc_alter ORDER BY id;
 ----
@@ -203,8 +194,7 @@ db error: ERROR: column "id" is in a primary key
 
 
 statement ok
-CREATE TABLE sc_gen (n INT, g INT GENERATED ALWAYS AS (n + 1) VIRTUAL)
-WITH (storage = 'search');
+CREATE TABLE sc_gen (n INT, g INT GENERATED ALWAYS AS (n + 1) VIRTUAL);
 
 
 statement error
@@ -229,10 +219,8 @@ statement ok
 INSERT INTO sc_alter (id, b, n) VALUES (6, 'w', 6);
 
 
-statement error
+statement ok
 ALTER TABLE sc_alter ALTER COLUMN n SET NOT NULL;
-----
-db error: ERROR: ALTER TABLE on a search-backed table cannot run in a transaction that has already written to "sc_alter"
 
 
 statement ok
@@ -261,10 +249,6 @@ statement ok
 INSERT INTO sc_alter (id, b) VALUES (6, 'w');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sc_alter;
-
-
 query
 SELECT id, b, n FROM sc_alter ORDER BY id;
 ----
@@ -276,7 +260,7 @@ id	b	n
 
 
 statement ok
-CREATE TABLE sc_rle (id INT, n INT) WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sc_rle (id INT, n INT);
 
 
 statement ok
@@ -286,11 +270,11 @@ INSERT INTO sc_rle VALUES (1, NULL), (2, 2), (3, 3);
 statement error
 ALTER TABLE sc_rle ALTER COLUMN n SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: sc_rle.n
+db error: ERROR: column "n" of relation "sc_rle" contains null values
 
 
 statement ok
-CREATE TABLE sc_race (id INT, b TEXT) WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sc_race (id INT, b TEXT);
 
 
 connection s1
@@ -307,7 +291,7 @@ connection s2
 statement async error
 ALTER TABLE sc_race ALTER COLUMN b SET NOT NULL;
 ----
-db error: ERROR: NOT NULL constraint failed: sc_race.b
+db error: ERROR: column "b" of relation "sc_race" contains null values
 
 
 connection s1
@@ -337,7 +321,7 @@ connection s1
 statement error
 INSERT INTO sc_race VALUES (2, 'x');
 ----
-db error: ERROR: search table "sc_race" was altered by a concurrent transaction
+db error: ERROR: table "sc_race" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 
@@ -386,11 +370,6 @@ db error: ERROR: CHECK constraint failed on table "sc_race" with expression CHEC
 connection s1
 statement ok
 INSERT INTO sc_race VALUES (5, NULL);
-
-
-connection s1
-statement ok
-VACUUM (REFRESH_TABLE) sc_race;
 
 
 connection s1

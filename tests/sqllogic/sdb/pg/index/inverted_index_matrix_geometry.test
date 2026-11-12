@@ -42,9 +42,6 @@ INSERT INTO m_g VALUES
     (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84')),
     (3, 'POINT(-5 47)'::GEOMETRY('OGC:CRS84'));
 
-statement ok
-VACUUM (REFRESH_TABLE) m_g;
-
 query
 SELECT count(*) FROM m_g_col_s2_st;
 ----
@@ -118,9 +115,6 @@ INSERT INTO m_gl VALUES
     (2, 'POINT(5 5)'::GEOMETRY('OGC:CRS84'),
         ARRAY[]::GEOMETRY('OGC:CRS84')[],
         ['POINT(6 6)', 'POINT(7 7)']::GEOMETRY('OGC:CRS84')[2]);
-
-statement ok
-VACUUM (REFRESH_TABLE) m_gl;
 
 query
 SELECT count(*) FROM m_gl_inc;

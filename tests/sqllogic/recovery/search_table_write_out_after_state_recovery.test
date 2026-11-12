@@ -1,0 +1,108 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE wos (id BIGINT, v TEXT) WITH (compaction_interval = 0);
+
+statement ok
+CREATE TABLE wos_fill (id BIGINT, v TEXT) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO wos VALUES (1, 'before');
+
+statement ok
+SET sdb_faults = 'pause_log_truncate_before_cover';
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_log_truncate_before_cover:parked';
+
+connection default
+statement ok
+INSERT INTO wos VALUES (2, 'during');
+
+connection default
+statement ok
+SET threads = 1;
+
+connection default
+statement ok
+INSERT INTO wos_fill SELECT i, (SELECT string_agg(md5((i * 128 + j)::TEXT), '') FROM range(128) r(j)) FROM range(0, 1000) t(i);
+
+connection default
+statement ok
+INSERT INTO wos_fill SELECT i, (SELECT string_agg(md5((i * 128 + j)::TEXT), '') FROM range(128) r(j)) FROM range(1000, 2000) t(i);
+
+connection default
+statement ok
+INSERT INTO wos_fill SELECT i, (SELECT string_agg(md5((i * 128 + j)::TEXT), '') FROM range(128) r(j)) FROM range(2000, 3000) t(i);
+
+connection default
+statement ok
+INSERT INTO wos_fill SELECT i, (SELECT string_agg(md5((i * 128 + j)::TEXT), '') FROM range(128) r(j)) FROM range(3000, 4000) t(i);
+
+connection default
+statement ok
+INSERT INTO wos_fill SELECT i, (SELECT string_agg(md5((i * 128 + j)::TEXT), '') FROM range(128) r(j)) FROM range(4000, 5000) t(i);
+
+connection default
+statement ok
+RESET threads;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_log_truncate_before_cover:release';
+
+wait
+
+connection default
+query
+SELECT count(*) AS files FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
+----
+files
+1
+
+connection default
+statement ok
+VACUUM (FLUSH_TABLE) wos;
+
+connection default
+statement ok
+CHECKPOINT;
+
+connection default
+statement ok
+CREATE TABLE wos_tail (id INT);
+
+connection default
+statement ok
+INSERT INTO wos_tail VALUES (1);
+
+connection default
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection default
+statement error connection closed
+INSERT INTO wos_tail VALUES (2);
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, v FROM wos ORDER BY id;
+----
+id	v
+1	before
+2	during
+
+connection after_crash
+query
+SELECT count(*) AS n FROM wos_fill;
+----
+n
+5000

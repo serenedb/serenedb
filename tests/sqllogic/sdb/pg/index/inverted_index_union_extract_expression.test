@@ -37,10 +37,6 @@ CREATE INDEX union_ext_num_idx ON union_ext_expr
   USING inverted(union_extract(u, 'num'));
 
 
-statement ok
-VACUUM (REFRESH_TABLE) union_ext_expr;
-
-
 # Phrase search on the string member -- only rows whose active member is `str`
 # and matches are returned (num-tagged rows have a NULL str, so they drop out).
 query
@@ -68,7 +64,7 @@ EXPLAIN SELECT id FROM union_ext_str_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: union_ext_str_idx                   │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Term ─────────────────────────────────╮ │
 │ │ Field: union_extract(u, 'str')(string) │ │

@@ -21,9 +21,13 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/main/database.hpp>
 #include <functional>
+#include <memory>
 #include <span>
+#include <vector>
 
+#include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_meta.hpp"
 
@@ -43,5 +47,9 @@ struct MergeSource {
 bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                const IndexFieldOptions* field_options,
                const std::function<bool()>& progress = {});
+
+std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
+  duckdb::DatabaseInstance& db, std::span<const MergeSource> sources,
+  const IndexFieldOptions* field_options);
 
 }  // namespace irs

@@ -21,16 +21,27 @@
 #pragma once
 
 #include <memory>
+#include <span>
+#include <vector>
+#include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
 #include "search/store.h"
 
 namespace sdb::search {
 
-// One coroutine per maintenance target drives background refresh (+ cleanup);
-// another coordinates compaction. Each holds a weak_ptr so a dropped target
-// ends the loop, and the returned Future lets SearchEngine::stop() join it.
-yaclib::Future<> RefreshLoop(std::weak_ptr<Store> weak);
-yaclib::Future<> CompactionCoordinator(std::weak_ptr<Store> weak);
+void AddMaintenanceTarget(const std::shared_ptr<Store>& store);
+yaclib::Future<> MaintenanceLoop(yaclib::WaitGroup<>& jobs);
+
+void DoCleanup(Store& idx);
+void QueueReleaseCleanup(const std::shared_ptr<Store>& store, Tick released);
+void CleanupReleased(Tick oldest, std::span<const StoreSnapshots> stores);
+void RequestCleanups() noexcept;
+bool ReleasedPending() noexcept;
+std::vector<std::shared_ptr<Store>> LiveStores();
+
+void PruneVersions(std::span<const Tick> running, Tick published,
+                   std::span<const StoreSnapshots> stores);
+bool FreeVersions();
 
 }  // namespace sdb::search

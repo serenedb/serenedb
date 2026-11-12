@@ -85,6 +85,11 @@ struct NormColumnMeta {
   std::vector<NormRegionMeta> regions;
 };
 
+struct NormColumnSpec {
+  field_id id = 0;
+  NormColumnMeta meta;
+};
+
 inline uint64_t NormSlotsSize(const NormRegionMeta& region) noexcept {
   return region.stats.rows * (region.bits / 8);
 }

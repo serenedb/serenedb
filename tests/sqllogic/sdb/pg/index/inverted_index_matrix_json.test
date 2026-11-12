@@ -47,9 +47,6 @@ CREATE INDEX m_j_prim_col_kw ON m_j_prim USING inverted(pk, j kw_dict);
 statement ok
 INSERT INTO m_j_prim VALUES (1, '"alpha"'), (2, '42'), (3, 'true'), (4, 'null');
 
-statement ok
-VACUUM (REFRESH_TABLE) m_j_prim;
-
 query
 SELECT pk FROM m_j_prim_col_kw WHERE j @@ ts_like('alpha') ORDER BY pk;
 ----
@@ -69,9 +66,6 @@ INSERT INTO m_j VALUES
     (1, '{"type":"Point","coordinates":[0.0, 0.0]}'),
     (2, '{"type":"Point","coordinates":[10.0, 20.0]}'),
     (3, '{"type":"Point","coordinates":[-5.0, 47.0]}');
-
-statement ok
-VACUUM (REFRESH_TABLE) m_j;
 
 query
 SELECT count(*) FROM m_j_col_s2_st;
@@ -112,9 +106,6 @@ INSERT INTO m_jv VALUES
     (2, '{"val":42}'),
     (3, '{"val":true}'),
     (4, '{"val":null}');
-
-statement ok
-VACUUM (REFRESH_TABLE) m_jv;
 
 # Expression source: string leaf via ->>
 query
@@ -184,9 +175,6 @@ INSERT INTO m_jl_leaf VALUES
     (1, ['"red"', '1']::JSON[], ['"blue"', 'true']::JSON[2]),
     (2, ['"green"']::JSON[], ['"red"', 'null']::JSON[2]);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_jl_leaf;
-
 query
 SELECT pk FROM m_jl_kw_list WHERE js @@ ts_like('red') ORDER BY pk;
 ----
@@ -221,9 +209,6 @@ INSERT INTO m_jl VALUES
         ARRAY[]::JSON[],
         ['{"e":5}'::JSON, '{"f":6}'::JSON]);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_jl;
-
 query
 SELECT count(*) FROM m_jl_inc;
 ----
@@ -248,9 +233,6 @@ statement ok
 INSERT INTO m_jg VALUES
     (1, '{"type":"Point","coordinates":[0.0, 0.0]}'),
     (2, '{"type":"Point","coordinates":[10.0, 20.0]}');
-
-statement ok
-VACUUM (REFRESH_TABLE) m_jg;
 
 query
 SELECT count(*) FROM m_jg_expr_s2;

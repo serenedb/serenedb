@@ -21,9 +21,6 @@ INSERT INTO products VALUES
     (1, 'cat'), (2, 'bat'), (3, 'car'),
     (4, 'dog'), (5, 'cats'), (6, 'act');
 
-statement ok
-VACUUM (REFRESH_TABLE) products;
-
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
@@ -117,9 +114,6 @@ statement ok
 INSERT INTO articles VALUES
     (1, 'hello'), (2, 'help'), (3, 'world'),
     (4, 'held'), (5, 'hero');
-
-statement ok
-VACUUM (REFRESH_TABLE) articles;
 
 # DOCS_TEST: example_006
 

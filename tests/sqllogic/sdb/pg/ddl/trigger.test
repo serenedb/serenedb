@@ -9,9 +9,7 @@
 # Search-backed tables take triggers too. Trigger expansion reads the affected
 # rows through RETURNING, which the search write operators now project, so both
 # granularities fire -- the row trigger reads OLD off the deleted row and the
-# statement trigger leaves the affected-row count alone. A search table's writes
-# only become visible to a later statement once the index refreshes, so the DML
-# below refreshes before reading back.
+# statement trigger leaves the affected-row count alone.
 
 
 statement ok
@@ -82,6 +80,10 @@ ALTER TABLE trg_t ALTER COLUMN b TYPE VARCHAR;
 
 
 statement ok
+ALTER TABLE trg_t RENAME COLUMN c TO c2;
+
+
+statement ok
 DELETE FROM trg_audit;
 
 
@@ -109,6 +111,13 @@ SELECT trigger_name FROM duckdb_triggers() WHERE table_name = 'trg_t'
 trigger_name
 trg_del
 trg_ins
+
+
+statement error
+CREATE TRIGGER trg_ins AFTER INSERT ON trg_t FOR EACH STATEMENT
+  INSERT INTO trg_audit VALUES ('stmt_insert_again', 0);
+----
+db error: ERROR: trigger "trg_ins" for relation "trg_t" already exists
 
 
 statement ok
@@ -145,7 +154,7 @@ db error: ERROR: FOR EACH ROW trigger "trg_norow" on table "trg_t" must referenc
 
 # Search-backed tables: both granularities, reached through RETURNING.
 statement ok
-CREATE TABLE trg_s(a INT, b TEXT) WITH (storage = 'search');
+CREATE TABLE trg_s(a INT, b TEXT);
 
 
 statement ok
@@ -177,15 +186,11 @@ INSERT INTO trg_s VALUES (1, 'x'), (2, 'y');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) trg_s;
+VACUUM (FLUSH_TABLE) trg_s;
 
 
 statement count 1
 DELETE FROM trg_s WHERE a = 1;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) trg_s;
 
 
 query
@@ -215,6 +220,36 @@ DROP TRIGGER IF EXISTS trg_srow ON trg_s;
 
 statement ok
 DROP TABLE trg_s;
+
+
+statement ok
+CREATE TEMP TABLE trg_oids AS SELECT oid FROM pg_trigger WHERE tgname = 'trg_del';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TABLE trg_t;
+
+
+query
+SELECT pg_describe_object('pg_trigger'::regclass, (SELECT oid FROM trg_oids), 0) AS described;
+----
+described
+NULL
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT pg_describe_object('pg_trigger'::regclass, (SELECT oid FROM trg_oids), 0) AS described;
+----
+described
+trigger trg_del on table trg_t
 
 
 # Dropping the relation takes its triggers with it.

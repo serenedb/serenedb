@@ -35,7 +35,6 @@
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/misc.hpp>
-#include <iresearch/utils/network_utils.hpp>
 #include <string>
 #include <thread>
 #include <vector>
@@ -150,71 +149,6 @@ TEST_P(DirectoryTestCase, rename) {
     ASSERT_NE(nullptr, stream1);
     ASSERT_EQ(4, stream1->Length());
     ASSERT_EQ(2, stream1->ReadI32());
-  }
-}
-
-TEST_P(DirectoryTestCase, lock_obtain_release) {
-  {
-    // single lock
-    auto lock0 = _dir->make_lock("lock0");
-    ASSERT_FALSE(!lock0);
-    bool locked;
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock0->lock());
-    ASSERT_TRUE(lock0->is_locked(locked) && locked);
-    ASSERT_FALSE(lock0->lock());  // lock is not recursive
-    ASSERT_TRUE(lock0->is_locked(locked) && locked);
-    ASSERT_TRUE(lock0->unlock());
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-
-    // another single lock
-    auto lock1 = _dir->make_lock("lock11");
-    ASSERT_FALSE(!lock1);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->try_lock(3000));
-    ASSERT_TRUE(lock1->is_locked(locked) && locked);
-    ASSERT_TRUE(lock1->unlock());
-    ASSERT_FALSE(lock1->unlock());  // double release
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-  }
-
-  // two different locks
-  {
-    auto lock0 = _dir->make_lock("lock0");
-    auto lock1 = _dir->make_lock("lock1");
-    ASSERT_FALSE(!lock0);
-    ASSERT_FALSE(!lock1);
-    bool locked;
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock0->lock());
-    ASSERT_TRUE(lock1->lock());
-    ASSERT_TRUE(lock0->is_locked(locked) && locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && locked);
-    ASSERT_TRUE(lock0->unlock());
-    ASSERT_TRUE(lock1->unlock());
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-  }
-
-  // two locks with the same identifier
-  {
-    auto lock0 = _dir->make_lock("lock");
-    auto lock1 = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock0);
-    ASSERT_FALSE(!lock1);
-    bool locked;
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock0->lock());
-    ASSERT_FALSE(lock1->lock());
-    ASSERT_FALSE(lock1->try_lock(3000));  // wait 5sec
-    ASSERT_TRUE(lock0->is_locked(locked) && locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && locked);
-    ASSERT_TRUE(lock0->unlock());
-    ASSERT_FALSE(lock1->unlock());  // unlocked by identifier lock0
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
   }
 }
 
@@ -4309,15 +4243,6 @@ TEST_P(DirectoryTestCase, smoke_store) {
       << what;
   }
 
-  // Check locking logic
-  auto l = dir.make_lock("sample_lock");
-  ASSERT_FALSE(!l);
-  ASSERT_TRUE(l->lock());
-  bool locked;
-  ASSERT_TRUE(l->is_locked(locked) && locked);
-  ASSERT_TRUE(l->unlock());
-  ASSERT_TRUE(l->is_locked(locked) && !locked);
-
   // empty file
   {
     byte_type buf[10];
@@ -4543,7 +4468,9 @@ TEST_P(DirectoryTestCase, hint_prefetches_the_cold_remainder) {
   };
   Recording recording{.in = in.get(), .prefetched = {}};
 
-  irs::file_utils::SyncResidency();
+  irs::file_utils::PollResidency(uint64_t{1} << 32);
+  irs::file_utils::InvalidateResidency();
+  irs::file_utils::PollResidency(std::numeric_limits<uint32_t>::max());
   irs::file_utils::Hint(recording, kPage, 10 * kPage);
   EXPECT_EQ((Ranges{{kPage, 11 * kPage}}), recording.prefetched);
 
@@ -4657,150 +4584,5 @@ class FsDirectoryTest : public TestBase {
   std::filesystem::path _path;
   std::shared_ptr<FSDirectory> _dir;
 };
-
-TEST_F(FsDirectoryTest, orphaned_lock) {
-  // orhpaned lock file with orphaned pid, same hostname
-  {
-    // create lock file
-    {
-      char hostname[256] = {};
-      ASSERT_EQ(0, GetHostName(hostname, sizeof hostname));
-
-      const std::string pid = std::to_string(std::numeric_limits<int>::max());
-      auto out = _dir->create("lock");
-      ASSERT_FALSE(!out);
-      out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                     strlen(hostname));
-      out->WriteByte(0);
-      out->WriteData(reinterpret_cast<const byte_type*>(pid.c_str()),
-                     pid.size());
-    }
-
-    // try to obtain lock
-    {
-      auto lock = _dir->make_lock("lock");
-      ASSERT_FALSE(!lock);
-      ASSERT_TRUE(lock->lock());
-    }
-
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && !exists);
-  }
-
-  // orphaned lock file with invalid pid (not a number), same hostname
-
-  // create lock file
-  {
-    char hostname[256] = {0};
-    ASSERT_EQ(0, GetHostName(hostname, sizeof hostname));
-
-    const std::string pid = "invalid_pid";
-    auto out = _dir->create("lock");
-    ASSERT_FALSE(!out);
-    out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                   strlen(hostname));
-    out->WriteByte(0);
-    out->WriteData(reinterpret_cast<const byte_type*>(pid.c_str()), pid.size());
-  }
-
-  // try to obtain lock
-  {
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_TRUE(lock->lock());
-    ASSERT_TRUE(lock->unlock());
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && !exists);
-  }
-
-  // orphaned empty lock file
-  // create lock file
-  {
-    auto out = _dir->create("lock");
-    ASSERT_FALSE(!out);
-    out->Flush();
-  }
-
-  // try to obtain lock
-  {
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_TRUE(lock->lock());
-    ASSERT_TRUE(lock->unlock());
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && !exists);
-  }
-
-  // orphaned lock file with hostname only
-  // create lock file
-  {
-    char hostname[256] = {};
-    ASSERT_EQ(0, GetHostName(hostname, sizeof hostname));
-    auto out = _dir->create("lock");
-    ASSERT_FALSE(!out);
-    out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                   strlen(hostname));
-  }
-
-  // try to obtain lock
-  {
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_TRUE(lock->lock());
-    ASSERT_TRUE(lock->unlock());
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && !exists);
-  }
-
-  // orphaned lock file with valid pid, same hostname
-  {
-    // create lock file
-    {
-      char hostname[256] = {};
-      ASSERT_EQ(0, GetHostName(hostname, sizeof hostname));
-      const std::string pid = std::to_string(irs::GetPid());
-      auto out = _dir->create("lock");
-      ASSERT_FALSE(!out);
-      out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                     strlen(hostname));
-      out->WriteByte(0);
-      out->WriteData(reinterpret_cast<const byte_type*>(pid.c_str()),
-                     pid.size());
-    }
-
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && exists);
-
-    // try to obtain lock, after closing stream
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_FALSE(lock->lock());  // still have different hostname
-  }
-
-  // orphaned lock file with valid pid, different hostname
-  {
-    // create lock file
-    {
-      char hostname[] = "not_a_valid_hostname_//+&*(%$#@! }";
-
-      const std::string pid = std::to_string(irs::GetPid());
-      auto out = _dir->create("lock");
-      ASSERT_FALSE(!out);
-      out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                     strlen(hostname));
-      out->WriteByte(0);
-      out->WriteData(reinterpret_cast<const byte_type*>(pid.c_str()),
-                     pid.size());
-    }
-
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && exists);
-
-    // try to obtain lock, after closing stream
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_FALSE(lock->lock());  // still have different hostname
-  }
-}
 
 }  // namespace

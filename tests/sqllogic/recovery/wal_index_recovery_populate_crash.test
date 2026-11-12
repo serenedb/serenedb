@@ -24,12 +24,8 @@ CREATE TABLE pop_t(c INTEGER PRIMARY KEY, a TEXT, b TEXT);
 statement ok
 CREATE INDEX pop_idx ON pop_t USING inverted(c, a pop_dict, b pop_dict);
 
-# Make sure index is fully caught up before we block commits.
 statement ok
-VACUUM (REFRESH_TABLE) pop_t;
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+VACUUM (FLUSH_TABLE) pop_t;
 
 # 10k rows. Every row's a/b carry a unique token so we can probe specific docs
 # after recovery without scanning everything.
@@ -50,7 +46,7 @@ SELECT 1;
 
 connection pop_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) pop_t;
+SELECT 1;
 
 # All 10001 rows must be retrievable through iresearch (count goes via
 # IRESEARCH_COUNT operator → reads iresearch reader directly).

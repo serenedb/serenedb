@@ -91,23 +91,9 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   return copy;
 }
 
-}  // namespace
-
-duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
-  std::string_view bytes, duckdb::ClientContext& context) {
-  duckdb::MemoryStream stream(
-    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(bytes.data())),
-    bytes.size());
-  duckdb::bound_parameter_map_t params;
-  return duckdb::BinaryDeserializer::Deserialize<duckdb::Expression>(
-    stream, context, params);
-}
-
-duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
-                                     duckdb::DataChunk& chunk,
-                                     duckdb::idx_t table_id,
-                                     std::span<const ColumnId> slot_to_col_id,
-                                     duckdb::ClientContext& context) {
+duckdb::unique_ptr<duckdb::Expression> ResolveOverChunk(
+  const duckdb::Expression& bound_expr, const duckdb::DataChunk& chunk,
+  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id) {
   SDB_ASSERT(chunk.ColumnCount() >= slot_to_col_id.size());
   duckdb::vector<duckdb::ColumnBinding> bindings;
   duckdb::vector<duckdb::LogicalType> types;
@@ -121,11 +107,29 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
   duckdb::ColumnBindingResolver resolver{std::move(bindings), std::move(types)};
   auto resolved = bound_expr.Copy();
   resolver.VisitExpression(&resolved);
-  const auto num_rows = chunk.size();
-  duckdb::Vector result(resolved->GetReturnType(), num_rows);
-  duckdb::ExpressionExecutor executor(context, *resolved);
-  executor.ExecuteExpression(chunk, result);
-  return result;
+  return resolved;
+}
+
+}  // namespace
+
+duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
+  std::string_view bytes, duckdb::ClientContext& context) {
+  duckdb::MemoryStream stream(
+    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(bytes.data())),
+    bytes.size());
+  duckdb::bound_parameter_map_t params;
+  return duckdb::BinaryDeserializer::Deserialize<duckdb::Expression>(
+    stream, context, params);
+}
+
+EvaluatedExpression::EvaluatedExpression(
+  const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
+  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id,
+  duckdb::ClientContext& context)
+  : _expression{ResolveOverChunk(bound_expr, chunk, table_id, slot_to_col_id)},
+    _executor{context, *_expression},
+    _result{_expression->GetReturnType(), chunk.size()} {
+  _executor.ExecuteExpression(chunk, _result);
 }
 
 namespace {

@@ -33,8 +33,6 @@
 
 namespace irs {
 
-class IndexWriter;
-
 struct SegmentInfo {
   bool operator==(const SegmentInfo&) const = default;
 
@@ -42,7 +40,6 @@ struct SegmentInfo {
   uint32_t docs_count = 0;       // Total number of documents in a segment
   uint32_t live_docs_count = 0;  // Total number of live documents in a segment
   uint64_t byte_size = 0;        // Size of a segment in bytes
-  uint64_t version = 0;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<SegmentInfo>);
@@ -50,15 +47,13 @@ static_assert(std::is_nothrow_move_assignable_v<SegmentInfo>);
 
 struct SegmentMeta : SegmentInfo {
   bool operator==(const SegmentMeta& rhs) const {
-    return SegmentInfo::operator==(rhs) && files == rhs.files &&
+    return SegmentInfo::operator==(rhs) && kinds == rhs.kinds &&
            (docs_mask == rhs.docs_mask ||
-            (docs_mask && rhs.docs_mask && *docs_mask == *rhs.docs_mask)) &&
-           docs_mask_size == rhs.docs_mask_size;
+            (docs_mask && rhs.docs_mask && *docs_mask == *rhs.docs_mask));
   }
 
-  std::vector<std::string> files;
+  uint8_t kinds = 0;
   std::shared_ptr<const DocumentMask> docs_mask;
-  uint64_t docs_mask_size = 0;
 };
 
 inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {
@@ -71,33 +66,5 @@ inline bool HasRemovals(const SegmentInfo& meta) noexcept {
 
 static_assert(std::is_nothrow_move_constructible_v<SegmentMeta>);
 static_assert(std::is_nothrow_move_assignable_v<SegmentMeta>);
-
-struct IndexSegment {
-  bool operator==(const IndexSegment&) const = default;
-
-  std::string filename;
-  SegmentMeta meta;
-};
-
-static_assert(std::is_nothrow_move_constructible_v<IndexSegment>);
-static_assert(std::is_nothrow_move_assignable_v<IndexSegment>);
-
-struct IndexMeta {
-  bool operator==(const IndexMeta&) const = default;
-
-  uint64_t gen{index_gen_limits::invalid()};
-  uint64_t seg_counter{0};
-  std::vector<IndexSegment> segments;
-};
-
-struct DirectoryMeta {
-  bool operator==(const DirectoryMeta&) const = default;
-
-  std::string filename;
-  IndexMeta index_meta;
-};
-
-static_assert(std::is_nothrow_move_constructible_v<DirectoryMeta>);
-static_assert(std::is_nothrow_move_assignable_v<DirectoryMeta>);
 
 }  // namespace irs

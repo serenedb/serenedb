@@ -38,9 +38,6 @@ INSERT INTO m_vec VALUES
     (2, [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], [4.0::FLOAT, 5.0::FLOAT]),
     (3, [0.0::FLOAT, 0.0::FLOAT, 1.0::FLOAT], [3.0::FLOAT, 3.0::FLOAT, 3.0::FLOAT]);
 
-statement ok
-VACUUM (REFRESH_TABLE) m_vec;
-
 query
 SELECT pk FROM m_vec_ivf_st
 ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
@@ -117,7 +114,7 @@ EXPLAIN SELECT pk FROM m_vec_ivf_st
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: m_vec_ivf_st               │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
 │ Projections: pk                   │
@@ -131,7 +128,7 @@ EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: m_vec_ivf_expr_ns          │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
 │ Projections: pk                   │
@@ -145,7 +142,7 @@ EXPLAIN SELECT pk FROM m_vec_ivf_st
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────╮
 │ Index: m_vec_ivf_st │
-│ Lookup: table       │
+│ Lookup: search      │
 │ Index Filter:       │
 │ ╭─ Vector Range ─╮  │
 │ │ Field: emb     │  │
@@ -163,7 +160,7 @@ EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: m_vec_ivf_expr_ns │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Vector Range ─╮       │
 │ │ Field: emb     │       │

@@ -26,7 +26,7 @@ statement ok
 CREATE INDEX babsky_idx ON babsky_t USING inverted(id, body babsky_dict);
 
 statement ok
-VACUUM (REFRESH_TABLE) babsky_t;
+VACUUM (FLUSH_TABLE) babsky_t;
 
 # Sanity: seed rows searchable before we touch anything.
 query
@@ -34,10 +34,6 @@ SELECT id FROM babsky_idx WHERE body @@ ts_phrase('alpha bravo');
 ----
 id
 1
-
-# Block search commits -- rocksdb keeps advancing, iresearch falls behind.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # These rows enter the WAL but iresearch never publishes them.
 statement ok

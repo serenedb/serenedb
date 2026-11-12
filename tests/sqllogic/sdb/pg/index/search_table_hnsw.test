@@ -6,7 +6,7 @@
 
 statement ok
 CREATE TABLE h (id BIGINT PRIMARY KEY, vec FLOAT[3], tag VARCHAR)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX h_idx ON h USING inverted (vec hnsw(metric='l2', quant='none'));
@@ -17,9 +17,6 @@ INSERT INTO h VALUES
   (2, array_value(10::FLOAT, 10::FLOAT, 10::FLOAT), 'b'),
   (3, array_value(5::FLOAT, 5::FLOAT, 5::FLOAT), 'b'),
   (4, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT), 'a');
-
-statement ok
-VACUUM (REFRESH_TABLE) h;
 
 # Through the index relation and through the table name.
 query
@@ -104,9 +101,6 @@ statement ok
 DELETE FROM h WHERE rowid IN (
   SELECT rowid FROM h
   ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2);
-
-statement ok
-VACUUM (REFRESH_TABLE) h;
 
 query
 SELECT id FROM h ORDER BY id;

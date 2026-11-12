@@ -23,11 +23,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <duckdb/common/allocator.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <limits>
@@ -109,7 +109,7 @@ struct ColumnMeta {
   std::vector<ColumnBlockMeta> validity;
   std::vector<ColumnMeta> children;
   std::vector<VariantRgMeta> variant_rgs;
-  duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
+  duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
   uint64_t write_list_running = 0;
 };
 
@@ -121,8 +121,10 @@ struct VariantScanState;
 class ColumnReader {
  public:
   struct VectorScratch {
-    explicit VectorScratch(const duckdb::LogicalType& type)
-      : cache{duckdb::Allocator::DefaultAllocator(), type}, vector{cache} {}
+    explicit VectorScratch(const duckdb::LogicalType& type,
+                           duckdb::idx_t capacity = STANDARD_VECTOR_SIZE)
+      : cache{duckdb::Allocator::DefaultAllocator(), type, capacity},
+        vector{cache} {}
     VectorScratch(const VectorScratch&) = delete;
     VectorScratch(VectorScratch&&) = delete;
 
@@ -168,9 +170,11 @@ class ColumnReader {
   field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint64_t RowCount() const noexcept { return _row_count; }
+  bool InMemory() const noexcept { return _in_memory; }
+  bool Patched() const noexcept { return _patched; }
   size_t DataRgCount() const noexcept { return _segments.size(); }
-  bool HasValidity() const noexcept { return _validity != nullptr; }
-  const ColumnReader* Validity() const noexcept { return _validity.get(); }
+  bool HasValidity() const noexcept { return _validity_view != nullptr; }
+  const ColumnReader* Validity() const noexcept { return _validity_view; }
   std::span<const ColumnBlockMeta> DataBlocks() const noexcept {
     return _segments;
   }
@@ -179,8 +183,8 @@ class ColumnReader {
     return _offsets[block];
   }
   bool NullsInData() const noexcept;
-  const duckdb::HyperLogLog* HyperLogLog() const noexcept {
-    return _hyperloglog.get();
+  const duckdb::DistinctStatistics* Distinct() const noexcept {
+    return _distinct.get();
   }
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
@@ -225,7 +229,7 @@ class ColumnReader {
     return Open(BlockWindow{rg, _offsets[rg], _offsets[rg + 1]}, ctx);
   }
 
-  ScanState InitScan(ReadContext& ctx) const;
+  virtual ScanState InitScan(ReadContext& ctx) const;
 
   virtual uint64_t GatherCursor(const ScanState& s) const noexcept {
     return s.window.begin + s.st.offset_in_column;
@@ -261,13 +265,19 @@ class ColumnReader {
   // (rows must ascend across calls). `scratch` is a caller-owned throwaway of
   // this column's type. Returns the survivor count; on return
   // `sel[0..survivors)` are the surviving span offsets.
-  duckdb::idx_t GatherFilter(ScanState& s, uint64_t anchor, duckdb::idx_t span,
-                             duckdb::SelectionVector& sel,
-                             duckdb::idx_t sel_count,
-                             const duckdb::TableFilter& filter,
-                             duckdb::TableFilterState& filter_state,
-                             NullCheckKind null_check,
-                             duckdb::Vector& scratch) const;
+  virtual duckdb::idx_t GatherFilter(
+    ScanState& s, uint64_t anchor, duckdb::idx_t span,
+    duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
+    const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
+    NullCheckKind null_check, duckdb::Vector& scratch) const;
+
+  class PointReader;
+
+  virtual bool FetchPoint(PointReader& reader, uint64_t row,
+                          duckdb::Vector& out, duckdb::idx_t out_offset) const;
+
+  virtual bool ValidPoint(PointReader& reader, uint64_t row,
+                          duckdb::Vector& scratch) const;
 
   class PointReader {
    public:
@@ -276,9 +286,18 @@ class ColumnReader {
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
 
-    bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
+    bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset) {
+      return _reader->FetchPoint(*this, row, out, out_offset);
+    }
 
-    bool ValidRow(uint64_t row, duckdb::Vector& scratch);
+    bool ValidRow(uint64_t row, duckdb::Vector& scratch) {
+      return _reader->ValidPoint(*this, row, scratch);
+    }
+
+    bool FetchStored(uint64_t row, duckdb::Vector& out,
+                     duckdb::idx_t out_offset);
+
+    bool ValidStored(uint64_t row, duckdb::Vector& scratch);
 
    protected:
     struct OpenBlock {
@@ -352,6 +371,10 @@ class ColumnReader {
   static void ResetOutput(const ColumnReader& reader, ScanState& s) {
     reader.NewOutputVector(s);
   }
+  static const duckdb::shared_ptr<duckdb::DistinctStatistics>& SharedDistinct(
+    const ColumnReader& reader) noexcept {
+    return reader._distinct;
+  }
 
   field_id _id;
   duckdb::LogicalType _type;
@@ -359,10 +382,13 @@ class ColumnReader {
   std::vector<uint64_t> _offsets;
   uint64_t _row_count = 0;
   std::unique_ptr<ColumnReader> _validity;
+  const ColumnReader* _validity_view = nullptr;
   std::vector<std::unique_ptr<ColumnReader>> _children;
   uint64_t _array_size = 0;
-  duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
+  duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
+  bool _in_memory = false;
+  bool _patched = false;
 
  private:
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;

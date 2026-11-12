@@ -143,9 +143,10 @@ const std::vector<BuiltinCollation>& Collations() {
   static const auto kAll = [] {
     auto& db = irs::DuckDBEngine::Instance().instance();
     std::vector<const duckdb::CollateCatalogEntry*> entries;
-    duckdb::Catalog::GetSystemCatalog(db)
+    auto& system = duckdb::Catalog::GetSystemCatalog(db);
+    system
       .GetSchema(duckdb::CatalogTransaction::GetSystemTransaction(db),
-                 duckdb::Identifier{DEFAULT_SCHEMA})
+                 *system.GetDefaultSchema())
       .Scan(duckdb::CatalogType::COLLATION_ENTRY,
             [&](duckdb::CatalogEntry& entry) {
               entries.emplace_back(&entry.Cast<duckdb::CollateCatalogEntry>());

@@ -36,10 +36,6 @@ statement ok
 CREATE INDEX dsc_idx ON dsc USING inverted(id, body dsc_en) INCLUDE (g, tag);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) dsc;
-
-
 # Streaming: filter-only tag through the HitBatcher windows.
 # i % 4 = 0 -> 1250 rows, sum(g) = 4 * (1 + ... + 1250) = 3127500.
 query

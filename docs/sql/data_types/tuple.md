@@ -23,8 +23,6 @@ Declare a column as `TUPLE(type, ...)` and fill it with `row(...)`. A field of a
 
 <SqlLogicTest id="sql/data_types/tuple/example_002" />
 
-Search tables (`CREATE TABLE … WITH (storage = 'search')`) take tuple columns too.
-
 [`CREATE TYPE`](../statements/create_type/index.md) gives a tuple type a name:
 
 <SqlLogicTest id="sql/data_types/tuple/example_003" />

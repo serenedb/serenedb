@@ -34,9 +34,8 @@ QUERY PLAN
 │ __internal_icu_date_trunc_bucket('quarter', tstz) │
 │ ~6,001 rows                                       │
 ╰─────────────────────────┬─────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴─────────────────────────╮
+╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Table: lab                                        │
-│ Type: Sequential Scan                             │
 │ Projections: tstz                                 │
 │ ~6,001 rows                                       │
 ╰───────────────────────────────────────────────────╯
@@ -59,9 +58,8 @@ QUERY PLAN
 │ __internal_date_trunc_bucket(ts, 86400000000, 0) │
 │ ~6,001 rows                                      │
 ╰─────────────────────────┬────────────────────────╯
-╭─ SEQ_SCAN ──────────────┴────────────────────────╮
+╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
 │ Table: lab                                       │
-│ Type: Sequential Scan                            │
 │ Projections: ts                                  │
 │ ~6,001 rows                                      │
 ╰──────────────────────────────────────────────────╯
@@ -84,9 +82,8 @@ QUERY PLAN
 │ __internal_date_trunc_bucket(CAST(d AS TIMESTAMP), 604800000000, -259200000000) │
 │ ~6,001 rows                                                                     │
 ╰────────────────────────────────────────┬────────────────────────────────────────╯
-╭─ SEQ_SCAN ─────────────────────────────┴────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────┴────────────────────────────────────────╮
 │ Table: lab                                                                      │
-│ Type: Sequential Scan                                                           │
 │ Projections: d                                                                  │
 │ ~6,001 rows                                                                     │
 ╰─────────────────────────────────────────────────────────────────────────────────╯
@@ -109,9 +106,8 @@ QUERY PLAN
 │ __internal_date_trunc_month_bucket(ts, 1, 0) │
 │ ~6,001 rows                                  │
 ╰───────────────────────┬──────────────────────╯
-╭─ SEQ_SCAN ────────────┴──────────────────────╮
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
 │ Table: lab                                   │
-│ Type: Sequential Scan                        │
 │ Projections: ts                              │
 │ ~6,001 rows                                  │
 ╰──────────────────────────────────────────────╯
@@ -129,9 +125,8 @@ QUERY PLAN
 │ Projections: q           │
 │ ~6,001 rows              │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: lab               │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~6,001 rows              │
 ╰──────────────────────────╯
@@ -149,9 +144,8 @@ QUERY PLAN
 │ Projections: q           │
 │ ~6,001 rows              │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: lab               │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~6,001 rows              │
 ╰──────────────────────────╯

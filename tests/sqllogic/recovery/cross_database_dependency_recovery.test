@@ -68,45 +68,44 @@ connection after_crash
 statement error
 DROP TABLE xdr_db.public.t;
 ----
-db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
-view "xdr_v" depends on table "t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table t because other objects depend on it
+DETAIL: view xdr_v depends on table t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_crash
 statement error
 DROP TABLE xdr_local;
 ----
-db error: ERROR: Cannot drop entry "xdr_local" because there are entries that depend on it.
-view "v_back" depends on table "xdr_local".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table xdr_local because other objects depend on it
+DETAIL: view v_back depends on table xdr_local
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_crash
 statement error
 DROP ROLE xdr_owner;
 ----
-db error: ERROR: Cannot drop entry "xdr_owner" because there are entries that depend on it.
-table "xdr_owned" depends on role "xdr_owner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: role "xdr_owner" cannot be dropped because some objects depend on it
+DETAIL: 1 object in database xdr_db
 
 
 connection after_crash
 statement error
 DROP SEQUENCE xdr_db.public.xdr_seq;
 ----
-db error: ERROR: Cannot drop entry "xdr_seq" because there are entries that depend on it.
-table "xdr_def" depends on sequence "xdr_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence xdr_seq because other objects depend on it
+DETAIL: default value for column id of table xdr_def depends on sequence xdr_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_crash
 statement error
 DROP TYPE xdr_db.public.xdr_mood;
 ----
-db error: ERROR: Cannot drop entry "xdr_mood" because there are entries that depend on it.
-table "xdr_typed" depends on type "xdr_mood".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type xdr_mood because other objects depend on it
+DETAIL: column m of table xdr_typed depends on type xdr_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_crash
@@ -141,45 +140,44 @@ connection after_compaction
 statement error
 DROP TABLE xdr_db.public.t;
 ----
-db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
-view "xdr_v" depends on table "t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table t because other objects depend on it
+DETAIL: view xdr_v depends on table t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_compaction
 statement error
 DROP TABLE xdr_local;
 ----
-db error: ERROR: Cannot drop entry "xdr_local" because there are entries that depend on it.
-view "v_back" depends on table "xdr_local".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table xdr_local because other objects depend on it
+DETAIL: view v_back depends on table xdr_local
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_compaction
 statement error
 DROP ROLE xdr_owner;
 ----
-db error: ERROR: Cannot drop entry "xdr_owner" because there are entries that depend on it.
-table "xdr_owned" depends on role "xdr_owner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: role "xdr_owner" cannot be dropped because some objects depend on it
+DETAIL: 1 object in database xdr_db
 
 
 connection after_compaction
 statement error
 DROP SEQUENCE xdr_db.public.xdr_seq;
 ----
-db error: ERROR: Cannot drop entry "xdr_seq" because there are entries that depend on it.
-table "xdr_def" depends on sequence "xdr_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence xdr_seq because other objects depend on it
+DETAIL: default value for column id of table xdr_def depends on sequence xdr_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_compaction
 statement error
 DROP TYPE xdr_db.public.xdr_mood;
 ----
-db error: ERROR: Cannot drop entry "xdr_mood" because there are entries that depend on it.
-table "xdr_typed" depends on type "xdr_mood".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type xdr_mood because other objects depend on it
+DETAIL: column m of table xdr_typed depends on type xdr_mood
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_compaction

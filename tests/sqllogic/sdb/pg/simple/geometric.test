@@ -106,10 +106,19 @@ statement ok
 CREATE TABLE geometric_keys (p point);
 
 
-statement error
+statement ok
 CREATE INDEX geometric_keys_p ON geometric_keys (p);
+
+
+statement ok
+INSERT INTO geometric_keys VALUES ('(1,2)'), ('(3,4)');
+
+
+query
+SELECT p FROM geometric_keys WHERE p ~= '(3,4)'::point;
 ----
-db error: ERROR: Invalid Type [point]: Invalid type for index key.
+p
+(3,4)
 
 
 statement ok

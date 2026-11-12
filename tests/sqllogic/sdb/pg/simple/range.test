@@ -34,16 +34,34 @@ statement ok
 CREATE TABLE range_keys (r int4range);
 
 
-statement error
+statement ok
 CREATE INDEX range_keys_r ON range_keys (r);
+
+
+statement ok
+INSERT INTO range_keys VALUES ('[1,5)'), ('[2,3)');
+
+
+query
+SELECT r FROM range_keys WHERE r = '[2,3)'::int4range;
 ----
-db error: ERROR: Invalid Type [int4range]: Invalid type for index key.
+r
+[2,3)
+
+
+statement ok
+CREATE TABLE range_unique (r tstzrange UNIQUE);
+
+
+statement ok
+INSERT INTO range_unique VALUES ('[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)');
 
 
 statement error
-CREATE TABLE range_unique (r tstzrange UNIQUE);
+INSERT INTO range_unique VALUES ('[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)');
 ----
-db error: ERROR: Invalid Type [tstzrange]: Invalid type for index key.
+db error: ERROR: duplicate key value violates unique constraint "range_unique_r_key"
+DETAIL: Key (r)=(["2020-01-01 00:00:00+00","2020-01-02 00:00:00+00")) already exists.
 
 
 statement ok

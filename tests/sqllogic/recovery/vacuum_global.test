@@ -1,6 +1,6 @@
 control substitution on
 
-# Instance-wide VACUUM scopes: REFRESH_ALL / COMPACT_ALL.
+# Instance-wide VACUUM scopes: COMPACT_ALL.
 # These walk every database, so they need their own serened instance -- under
 # the shared sqllogic runner they would touch other tests' per-test databases.
 # Per-scope variants and the error paths are covered in
@@ -38,24 +38,12 @@ statement ok
 CREATE INDEX notes_idx ON s1.notes USING inverted(id, body en);
 
 
-# REFRESH_ALL publishes pending writes across every database + schema at once.
 statement ok
 INSERT INTO public.docs VALUES (1, 'alpha across schemas');
 
 
 statement ok
 INSERT INTO s1.notes VALUES (1, 'alpha across schemas');
-
-
-query
-SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
-----
-count
-0
-
-
-statement ok
-VACUUM (REFRESH_ALL);
 
 
 query
@@ -78,7 +66,7 @@ INSERT INTO public.docs VALUES (2, 'beta one');
 
 
 statement ok
-VACUUM (REFRESH_ALL);
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -90,7 +78,7 @@ INSERT INTO s1.notes VALUES (2, 'beta two');
 
 
 statement ok
-VACUUM (REFRESH_ALL);
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -98,7 +86,7 @@ INSERT INTO public.docs VALUES (4, 'beta three');
 
 
 statement ok
-VACUUM (REFRESH_ALL);
+VACUUM (FLUSH_ALL);
 
 
 query
@@ -153,9 +141,35 @@ count
 3
 
 
-# RECOMPUTE_STATS_ALL runs VACUUM ANALYZE on every store table instance-wide.
 statement ok
-VACUUM (RECOMPUTE_STATS_ALL);
+CREATE TABLE public.vg (id INTEGER) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO public.vg VALUES (1), (2), (3);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_buffered_docs') AS buffered, max(value) FILTER (WHERE metric = 'num_segments') AS segments
+FROM sdb_metrics WHERE relation_id = 'public.vg'::regclass;
+----
+buffered	segments
+0	1
+
+
+query
+SELECT count(*) FROM s1.notes_idx WHERE body @@ ts_phrase('beta');
+----
+count
+1
+
+
+statement ok
+DROP TABLE public.vg;
 
 
 statement ok

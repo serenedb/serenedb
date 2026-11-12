@@ -11,27 +11,27 @@ SET GLOBAL debug_skip_checkpoint_on_commit = true;
 
 statement ok
 CREATE TABLE cwi (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE cwd (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE cwt (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE cwb (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE cw1 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE cw2 (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO cwi VALUES (1, 'a'), (2, 'b');
@@ -52,22 +52,22 @@ statement ok
 INSERT INTO cw2 VALUES (1, 'a'), (2, 'b');
 
 statement ok
-VACUUM (REFRESH_TABLE) cwi;
+VACUUM (FLUSH_TABLE) cwi;
 
 statement ok
-VACUUM (REFRESH_TABLE) cwd;
+VACUUM (FLUSH_TABLE) cwd;
 
 statement ok
-VACUUM (REFRESH_TABLE) cwt;
+VACUUM (FLUSH_TABLE) cwt;
 
 statement ok
-VACUUM (REFRESH_TABLE) cwb;
+VACUUM (FLUSH_TABLE) cwb;
 
 statement ok
-VACUUM (REFRESH_TABLE) cw1;
+VACUUM (FLUSH_TABLE) cw1;
 
 statement ok
-VACUUM (REFRESH_TABLE) cw2;
+VACUUM (FLUSH_TABLE) cw2;
 
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
@@ -200,27 +200,27 @@ wait
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) cwi;
+VACUUM (FLUSH_TABLE) cwi;
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) cwd;
+VACUUM (FLUSH_TABLE) cwd;
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) cwt;
+VACUUM (FLUSH_TABLE) cwt;
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) cwb;
+VACUUM (FLUSH_TABLE) cwb;
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) cw1;
+VACUUM (FLUSH_TABLE) cw1;
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) cw2;
+VACUUM (FLUSH_TABLE) cw2;
 
 connection default
 query

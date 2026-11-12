@@ -23,6 +23,8 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <array>
+#include <optional>
 #include <utility>
 
 #include "iresearch/index/directory_reader.hpp"
@@ -32,6 +34,48 @@
 #include "iresearch/utils/down_cast.hpp"
 
 namespace irs {
+namespace {
+
+class Runs {
+ public:
+  explicit Runs(const DocumentMask* mask) {
+    if (mask) {
+      _cursor.emplace(*mask);
+      Fill();
+    }
+  }
+
+  bool Empty() const noexcept { return _at == _size; }
+  const MaskRun& Front() const noexcept { return _buffer[_at]; }
+
+  void Pop() {
+    if (++_at == _size) {
+      Fill();
+    }
+  }
+
+  uint64_t SkipBefore(doc_id_t doc) {
+    uint64_t skipped = 0;
+    while (!Empty() && Front().max < doc) {
+      skipped += uint64_t{Front().max} - Front().min + 1;
+      Pop();
+    }
+    return skipped;
+  }
+
+ private:
+  void Fill() {
+    _size = _cursor->ReadRuns(_buffer);
+    _at = 0;
+  }
+
+  std::optional<DocumentMask::Cursor> _cursor;
+  std::array<MaskRun, 64> _buffer;
+  size_t _at = 0;
+  size_t _size = 0;
+};
+
+}  // namespace
 
 DocumentMaskBuilder& DocRemovalBuilder::Group(uint32_t index) {
   if (_last < _groups.size() && _groups[_last].first == index) {
@@ -69,60 +113,69 @@ std::shared_ptr<const DocRemoval> DocRemovalBuilder::Finish(
       *utils::downCast<SegmentReader>(reader[index]).GetImpl();
     removal->groups.push_back(
       {.segment = segment.Id(),
-       .docs = std::move(docs).Finish(DocumentMaskBuilder::kCanonical),
-       .maps = segment.DocMaps()});
+       .docs = std::move(docs).Finish(DocumentMaskBuilder::kCanonical)});
   }
   _groups = {};
   _last = 0;
   return removal;
 }
 
-void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets) {
-  const auto removed_of = [&](uint64_t id) -> DocumentMaskBuilder* {
-    const auto it = targets.find(id);
-    return it != targets.end() ? it->second.removed : nullptr;
-  };
-  const auto follow = [&](this const auto& self, const DocMapsSlot& slot,
-                          const DocumentMask& docs) -> void {
-    for (const auto& map : slot.maps) {
-      if (auto* removed = removed_of(map.target)) {
-        MapDocs(map, docs, *removed);
-      } else if (DocumentMaskBuilder moved; MapDocs(map, docs, moved)) {
-        SDB_ASSERT(map.next != nullptr);
-        self(*map.next, std::move(moved).Take());
-      }
-    }
-  };
-  for (const auto& group : removal.groups) {
-    if (auto* removed = removed_of(group.segment)) {
-      removed->Merge(group.docs);
-    } else if (group.maps != nullptr) {
-      follow(*group.maps, group.docs);
-    }
-  }
-}
-
 bool MapDocs(const DocMap& map, const DocumentMask& docs,
              DocumentMaskBuilder& out) {
   const auto* mask = map.mask.get();
-  const auto before = out.Count();
-  doc_id_t counted = doc_limits::min();
+  std::optional<DocumentMask> kept;
+  if (mask && docs.Intersects(*mask)) {
+    DocumentMaskBuilder live{docs};
+    live.Subtract(*mask);
+    kept.emplace(std::move(live).Take());
+  }
+  Runs holes{mask};
   uint64_t masked = 0;
-  docs.ForEachRun(mask, [&](doc_id_t first, doc_id_t last) {
-    if (mask) {
-      masked += mask->CountInRange(counted, first);
-      counted = last;
+  bool mapped = false;
+  DocumentMask::Cursor cursor{kept ? *kept : docs};
+  std::array<MaskRun, 64> runs;
+  while (const auto count = cursor.ReadRuns(runs)) {
+    for (const auto& run : std::span{runs}.first(count)) {
+      masked += holes.SkipBefore(run.min);
+      const uint64_t rank = run.min - doc_limits::min() - masked;
+      const uint64_t end = rank + (uint64_t{run.max} - run.min + 1);
+      const auto from = std::max<uint64_t>(rank, map.rank_begin);
+      const auto to = std::min<uint64_t>(end, map.rank_end);
+      if (from < to) {
+        out.AddRange(static_cast<doc_id_t>(map.base + (from - map.rank_begin)),
+                     static_cast<doc_id_t>(map.base + (to - map.rank_begin)));
+        mapped = true;
+      }
+      if (end >= map.rank_end) {
+        return mapped;
+      }
     }
-    const uint64_t rank = first - doc_limits::min() - masked;
-    const auto from = std::max<uint64_t>(rank, map.rank_begin);
-    const auto to = std::min<uint64_t>(rank + (last - first), map.rank_end);
-    if (from < to) {
-      out.AddRange(static_cast<doc_id_t>(map.base + (from - map.rank_begin)),
-                   static_cast<doc_id_t>(map.base + (to - map.rank_begin)));
+  }
+  return mapped;
+}
+
+void MapRows(const DocMap& map, std::span<const uint64_t> rows,
+             std::vector<MappedRow>& out) {
+  Runs holes{map.mask.get()};
+  uint64_t masked = 0;
+  for (size_t i = 0; i < rows.size(); ++i) {
+    SDB_ASSERT(i == 0 || rows[i - 1] <= rows[i]);
+    const auto doc = static_cast<doc_id_t>(rows[i] + doc_limits::min());
+    masked += holes.SkipBefore(doc);
+    if (!holes.Empty() && holes.Front().min <= doc) {
+      continue;
     }
-    return to < map.rank_end;
-  });
-  return out.Count() != before;
+    const uint64_t rank = rows[i] - masked;
+    if (rank < map.rank_begin) {
+      continue;
+    }
+    if (rank >= map.rank_end) {
+      return;
+    }
+    out.push_back(
+      {.index = i,
+       .row = map.base - doc_limits::min() + (rank - map.rank_begin)});
+  }
 }
 
 }  // namespace irs

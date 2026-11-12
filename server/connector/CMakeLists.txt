@@ -1,10 +1,9 @@
 target_sources(
     sereneserver
     PRIVATE
+        constraint_keys.cpp
         key_encoding.cpp
         primary_key.cpp
-        search_key_unique.cpp
-        search_unique_probe.cpp
         row_position_deduplicator.cpp
         offsets_collector.cpp
         search_sink_rows.cpp
@@ -18,7 +17,6 @@ target_sources(
         inet_filter_builder.cpp
         inet_terms.cpp
         search_filter_printer.cpp
-        duckdb_client_state.cpp
         duckdb_subscription.cpp
         scan/col_filter_share.cpp
         scan/col_filter_verify.cpp
@@ -45,7 +43,6 @@ target_sources(
         full_scanner.cpp
         index_source_factory.cpp
         index_source_view.cpp
-        inverted_store_index.cpp
         iresearch_replacement_scan.cpp
         index_source_native.cpp
         index_source_external_lookup.cpp

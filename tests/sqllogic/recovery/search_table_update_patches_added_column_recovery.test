@@ -1,0 +1,221 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pad (id BIGINT PRIMARY KEY, v INT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO pad SELECT i, i FROM generate_series(1, 3000) g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) pad;
+
+
+statement ok
+ALTER TABLE pad ADD COLUMN s TEXT;
+
+
+statement ok
+UPDATE pad SET s = 'patched flushed row number ' || id WHERE id % 1000 = 7;
+
+
+statement ok
+CREATE TABLE ppm (id BIGINT PRIMARY KEY, v INT) WITH (compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged';
+
+
+statement ok
+INSERT INTO ppm VALUES (1, 1);
+
+
+statement ok
+ALTER TABLE ppm ADD COLUMN s TEXT;
+
+
+statement ok
+UPDATE ppm SET v = 10, s = 'patched piece row number 1' WHERE id = 1;
+
+
+statement ok
+INSERT INTO ppm VALUES (2, 2, 'plain piece row number 2');
+
+
+statement ok
+INSERT INTO ppm VALUES (3, 3, NULL);
+
+
+statement ok
+UPDATE ppm SET v = 30, s = 'patched piece row number 3' WHERE id = 3;
+
+
+statement ok
+INSERT INTO ppm VALUES (4, 4, NULL);
+
+
+statement ok
+INSERT INTO ppm VALUES (5, 5, NULL);
+
+
+statement ok
+INSERT INTO ppm VALUES (6, 6, NULL);
+
+
+statement ok
+INSERT INTO ppm VALUES (7, 7, NULL);
+
+
+statement ok
+INSERT INTO ppm VALUES (8, 8, NULL);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_pieces_merged:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged:release';
+
+
+query
+SELECT count(DISTINCT rowid >> 32) AS units FROM ppm;
+----
+units
+1
+
+
+statement ok
+UPDATE ppm SET s = 'patched merged piece row 8' WHERE id = 8;
+
+
+query
+SELECT id, v, s FROM ppm ORDER BY id;
+----
+id	v	s
+1	10	patched piece row number 1
+2	2	plain piece row number 2
+3	30	patched piece row number 3
+4	4	NULL
+5	5	NULL
+6	6	NULL
+7	7	NULL
+8	8	patched merged piece row 8
+
+
+query
+SELECT id, v, s FROM pad WHERE s IS NOT NULL ORDER BY id;
+----
+id	v	s
+7	7	patched flushed row number 7
+1007	1007	patched flushed row number 1007
+2007	2007	patched flushed row number 2007
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, v, s FROM pad WHERE s IS NOT NULL ORDER BY id;
+----
+id	v	s
+7	7	patched flushed row number 7
+1007	1007	patched flushed row number 1007
+2007	2007	patched flushed row number 2007
+
+
+connection after_crash
+query
+SELECT id, v, s FROM ppm ORDER BY id;
+----
+id	v	s
+1	10	patched piece row number 1
+2	2	plain piece row number 2
+3	30	patched piece row number 3
+4	4	NULL
+5	5	NULL
+6	6	NULL
+7	7	NULL
+8	8	patched merged piece row 8
+
+
+connection after_crash
+statement ok
+UPDATE pad SET s = 'patched again row ' || id WHERE id = 2999;
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, v, s FROM pad WHERE s IS NOT NULL ORDER BY id;
+----
+id	v	s
+7	7	patched flushed row number 7
+1007	1007	patched flushed row number 1007
+2007	2007	patched flushed row number 2007
+2999	2999	patched again row 2999
+
+
+connection after_checkpoint
+query
+SELECT count(*) AS n, count(s) AS with_s, sum(v) AS v FROM pad;
+----
+n	with_s	v
+3000	4	4501500
+
+
+connection after_checkpoint
+query
+SELECT id, v, s FROM ppm ORDER BY id;
+----
+id	v	s
+1	10	patched piece row number 1
+2	2	plain piece row number 2
+3	30	patched piece row number 3
+4	4	NULL
+5	5	NULL
+6	6	NULL
+7	7	NULL
+8	8	patched merged piece row 8
+
+
+connection after_checkpoint
+statement ok
+VACUUM (COMPACT_TABLE) pad;
+
+
+connection after_checkpoint
+query
+SELECT id, v, s FROM pad WHERE s IS NOT NULL ORDER BY id;
+----
+id	v	s
+7	7	patched flushed row number 7
+1007	1007	patched flushed row number 1007
+2007	2007	patched flushed row number 2007
+2999	2999	patched again row 2999

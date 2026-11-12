@@ -10,7 +10,7 @@ SET GLOBAL checkpoint_threshold = '64KB';
 
 statement ok
 CREATE TABLE pud (a BIGINT, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -22,7 +22,7 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(0, 1000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -30,7 +30,7 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(1000, 2000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -38,7 +38,7 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(2000, 3000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -46,7 +46,7 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(3000, 4000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -54,7 +54,7 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(4000, 5000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -62,7 +62,7 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(5000, 6000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -70,7 +70,7 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(6000, 7000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -78,7 +78,7 @@ INSERT INTO pud SELECT i, 'seed' || i FROM range(7000, 8000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -96,7 +96,7 @@ query
 EXPLAIN UPDATE pud SET b = 'u1_' || a;
 ----
 QUERY PLAN
-╭─ SEARCH_UPDATE<slt:ignore>Table: pud<slt:ignore>Row Ids: ASSUME_UNIQUE<slt:ignore>
+╭─ UPDATE<slt:ignore>Table: pud<slt:ignore>Row Ids: ASSUME_UNIQUE<slt:ignore>
 
 
 statement count 8000
@@ -104,7 +104,7 @@ UPDATE pud SET b = 'u1_' || a;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 query
@@ -131,7 +131,7 @@ UPDATE pud_plain SET b = 'few_' || a WHERE a < 40;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 query
@@ -151,7 +151,7 @@ query
 EXPLAIN UPDATE pud SET b = 'u2_' || pud.a FROM pud_src WHERE pud.a = pud_src.a;
 ----
 QUERY PLAN
-╭─ SEARCH_UPDATE<slt:ignore>Table: pud<slt:ignore>Row Ids: KEEP_FIRST<slt:ignore>
+╭─ UPDATE<slt:ignore>Table: pud<slt:ignore>Row Ids: KEEP_FIRST<slt:ignore>
 
 
 statement count 4000
@@ -163,7 +163,7 @@ UPDATE pud_plain SET b = 'u2_' || pud_plain.a FROM pud_src WHERE pud_plain.a = p
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 query
@@ -177,7 +177,7 @@ query
 EXPLAIN DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND pud.a % 4 = 0;
 ----
 QUERY PLAN
-╭─ SEARCH_DELETE<slt:ignore>Table: pud<slt:ignore>Row Ids: KEEP_FIRST<slt:ignore>
+╭─ DELETE<slt:ignore>Table: pud<slt:ignore>Row Ids: KEEP_FIRST<slt:ignore>
 
 
 statement count 2000
@@ -189,7 +189,7 @@ DELETE FROM pud_plain USING pud_src WHERE pud_plain.a = pud_src.a AND pud_plain.
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 query
@@ -222,7 +222,7 @@ UPDATE pud_plain SET b = 'u3_' || a WHERE a % 2 = 1;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 statement ok
@@ -246,7 +246,7 @@ DELETE FROM pud_plain WHERE a % 8 = 2;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) pud;
+VACUUM (FLUSH_TABLE) pud;
 
 
 query
@@ -273,7 +273,7 @@ query
 EXPLAIN DELETE FROM pud WHERE a % 8 = 6;
 ----
 QUERY PLAN
-╭─ SEARCH_DELETE<slt:ignore>Table: pud<slt:ignore>Row Ids: ASSUME_UNIQUE<slt:ignore>
+╭─ DELETE<slt:ignore>Table: pud<slt:ignore>Row Ids: ASSUME_UNIQUE<slt:ignore>
 
 
 statement ok
@@ -289,15 +289,11 @@ INSERT INTO pud_plain VALUES (100001, 'ins1'), (100002, 'ins2');
 
 
 statement ok
-UPDATE pud_plain SET b = 'u4_' || a WHERE a % 2 = 1 AND a < 100000;
+UPDATE pud_plain SET b = 'u4_' || a WHERE a % 2 = 1;
 
 
 statement ok
-DELETE FROM pud_plain WHERE a % 8 = 6 AND a < 100000;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) pud;
+DELETE FROM pud_plain WHERE a % 8 = 6;
 
 
 query
@@ -323,7 +319,7 @@ UPDATE pud SET b = 'u5_' || a WHERE a < 100000;
 
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) pud;
+SELECT 1;
 
 
 connection after_crash

@@ -22,6 +22,7 @@
 
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/filters/vector_exact_filter.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -31,7 +32,9 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
   const auto& opts = options();
   const auto* ann = segment.Ann(opts.ann_id);
   if (!ann) {
-    return QueryBuilder::Empty();
+    return PrepareExactVectors(segment, ctx, field_id(), opts.query,
+                               opts.ann_id, opts.metric, opts.inner,
+                               opts.radius, opts.inclusive, GetBoost());
   }
   SDB_ASSERT(ann->SupportsRange());
   auto sub_ctx = ctx;

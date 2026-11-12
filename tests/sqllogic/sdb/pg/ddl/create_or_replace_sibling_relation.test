@@ -1,0 +1,39 @@
+statement ok
+CREATE SEQUENCE corsr_seq;
+
+
+statement error
+CREATE OR REPLACE TABLE corsr_seq (a INT);
+----
+db error: ERROR: Existing object "corsr_seq" is of type Sequence, trying to replace with type Table
+
+
+statement error
+CREATE OR REPLACE VIEW corsr_seq AS SELECT 1 AS one;
+----
+db error: ERROR: Existing object "corsr_seq" is of type Sequence, trying to replace with type View
+
+
+query
+SELECT nextval('corsr_seq') AS n;
+----
+n
+1
+
+
+statement ok
+CREATE TABLE corsr_t (a INT);
+
+
+statement error
+CREATE OR REPLACE VIEW corsr_t AS SELECT 1 AS a;
+----
+db error: ERROR: Existing object "corsr_t" is of type Table, trying to replace with type View
+
+
+statement ok
+DROP TABLE corsr_t;
+
+
+statement ok
+DROP SEQUENCE corsr_seq;

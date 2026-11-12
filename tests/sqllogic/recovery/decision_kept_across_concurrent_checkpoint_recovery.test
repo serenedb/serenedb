@@ -32,7 +32,7 @@ INSERT INTO melstroi.public.pudge VALUES (1, 'base');
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) melstroi.public.pudge;
+VACUUM (FLUSH_TABLE) melstroi.public.pudge;
 
 
 connection default
@@ -135,7 +135,7 @@ n
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) melstroi.public.pudge;
+VACUUM (FLUSH_TABLE) melstroi.public.pudge;
 
 
 connection after_crash

@@ -1,0 +1,94 @@
+statement ok
+CREATE TABLE swm_src (id BIGINT, k BIGINT)
+  WITH (row_group_size = 2048, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO swm_src SELECT i, i FROM range(20480) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) swm_src;
+
+
+statement ok
+CREATE TABLE swm_wide (
+  id BIGINT,
+  c01 TEXT, c02 TEXT, c03 TEXT, c04 TEXT, c05 TEXT, c06 TEXT, c07 TEXT, c08 TEXT, c09 TEXT, c10 TEXT,
+  c11 TEXT, c12 TEXT, c13 TEXT, c14 TEXT, c15 TEXT, c16 TEXT, c17 TEXT, c18 TEXT, c19 TEXT, c20 TEXT,
+  c21 TEXT, c22 TEXT, c23 TEXT, c24 TEXT, c25 TEXT, c26 TEXT, c27 TEXT, c28 TEXT, c29 TEXT, c30 TEXT,
+  c31 TEXT, c32 TEXT, c33 TEXT, c34 TEXT, c35 TEXT, c36 TEXT, c37 TEXT, c38 TEXT, c39 TEXT, c40 TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+SET threads = 8
+
+
+statement ok
+INSERT INTO swm_wide (id, c01, c40) SELECT id, 'first ' || id, 'last ' || id FROM swm_src WHERE k % 1000 = 7;
+
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = 'swm_wide'::regclass AND metric IN ('num_buffered_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_buffered_docs	21
+num_segments	0
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO swm_wide (id, c01) VALUES (100001, 'one');
+
+
+statement ok
+INSERT INTO swm_wide (id, c02) VALUES (100002, 'two');
+
+
+statement ok
+INSERT INTO swm_wide (id, c03) VALUES (100003, 'three');
+
+
+statement ok
+INSERT INTO swm_wide (id, c04) VALUES (100004, 'four');
+
+
+statement ok
+INSERT INTO swm_wide (id, c05) VALUES (100005, 'five');
+
+
+query
+SELECT count(*) AS n, count(c01) AS c01, count(c05) AS c05, max(id) AS hi FROM swm_wide;
+----
+n	c01	c05	hi
+26	22	1	100005
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = 'swm_wide'::regclass AND metric IN ('num_buffered_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_buffered_docs	26
+num_segments	0
+
+
+query
+SELECT id, c01, c02, c03, c40 FROM swm_wide WHERE id IN (7, 20007, 100001, 100003) ORDER BY id;
+----
+id	c01	c02	c03	c40
+7	first 7	NULL	NULL	last 7
+20007	first 20007	NULL	NULL	last 20007
+100001	one	NULL	NULL	NULL
+100003	NULL	NULL	three	NULL

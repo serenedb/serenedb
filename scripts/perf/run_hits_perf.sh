@@ -302,12 +302,8 @@ SELECT \"UserID\", COUNT(*) AS hits FROM hits_native
 GROUP BY \"UserID\" ORDER BY hits DESC LIMIT 10;"
 
 # --- 3. Storage size ----------------------------------------------------------
-# The print block below partitions the data dir into iresearch segment files
-# (per extension), the iresearch `segments_N` per-commit manifests, the
-# RocksDB engine state under engine_rocksdb/, and the top-level serened
-# catalog files (LANGUAGE, LOCK, VERSION-*, SERVER). The `other` line should
-# always read 0 -- if it doesn't, a new file kind has appeared and the
-# inventory comment in the print block needs updating.
+# The `other` line should always read 0 -- if it doesn't, a new file kind has
+# appeared and the inventory needs updating.
 sum_ext() {
 	local dir="$1" ext="$2"
 	find "${dir}" -name "*.${ext}" -printf '%s\n' 2>/dev/null |
@@ -348,46 +344,23 @@ ndb_pre_total=$((NATIVE_SIZE_PRE_MAIN + NATIVE_SIZE_PRE_WAL))
 		"${ndb_post_total}" "$(human "${ndb_post_total}")" \
 		"$(human "${ndb}")" "$(human "${ndb_wal}")"
 	printf "serened data dir:         %12d bytes (%s)\n" "${total}" "$(human "${total}")"
-	# Every file in the data dir falls into exactly one of these buckets:
-	#   iresearch per-segment files (in engine_v1/<db>/<oid>/<seg>.<ext>):
-	#     .doc  postings doc-id stream
-	#     .pos  positions stream      (0 bytes with split_text_csv dict; populated with split_text)
-	#     .pay  payload stream        (0 bytes without frequency/payload features)
-	#     .tm   terms data            (FST-encoded term suffixes)
-	#     .ti   terms index           (top-level pointers into .tm)
-	#     .sm   segment_meta
-	#     .cs   new typed columnstore (this work)
-	#     .csd  legacy columnstore data
-	#     .csi  legacy columnstore index
-	#   iresearch directory-level files:
-	#     segments_N  per-commit manifest
-	#   RocksDB engine (engine_rocksdb/*: LOCK, LOG, MANIFEST-*, OPTIONS-*,
-	#                   IDENTITY, CURRENT, journals/*.log).
-	#   serened catalog (top-level files: LANGUAGE, LOCK, VERSION-*, SERVER).
-	# `other` should always print 0 -- if it doesn't, the data dir grew a
-	# new file kind we haven't accounted for yet.
 	sum_glob() {
 		find "$@" -printf '%s\n' 2>/dev/null |
 			awk '{s+=$1} END{printf "%d\n", s+0}'
 	}
-	declare -a exts=(doc pos pay cs csd csi ti tm sm)
+	declare -a exts=(col idx doc pos pay)
 	ext_total=0
 	for ext in "${exts[@]}"; do
-		s=$(sum_ext "${SERENED_DATA_DIR}" "${ext}")
+		s=$(sum_ext "${SERENED_DATA_DIR}/engine_v1/store" "${ext}")
 		ext_total=$((ext_total + s))
 		printf "  .%-7s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
 	done
-	# iresearch per-commit manifest: `segments_N` (no extension).
-	seg_total=$(sum_glob "${SERENED_DATA_DIR}" -name 'segments_*' -type f)
-	printf "  %-8s %14d bytes (%s)\n" "segments_*" "${seg_total}" "$(human "${seg_total}")"
-	# RocksDB engine state.
-	rdb_total=$(sum_glob "${SERENED_DATA_DIR}/engine_rocksdb" -type f)
-	printf "  %-8s %14d bytes (%s)\n" "rocksdb" "${rdb_total}" "$(human "${rdb_total}")"
-	# Top-level serened catalog files.
-	cat_total=$(sum_glob "${SERENED_DATA_DIR}" -maxdepth 1 -type f)
-	printf "  %-8s %14d bytes (%s)\n" "catalog" "${cat_total}" "$(human "${cat_total}")"
-	classified=$((ext_total + seg_total + rdb_total + cat_total))
-	other=$((total - classified))
+	wal_total=$(sum_glob "${SERENED_DATA_DIR}/engine_v1/wal" -type f)
+	printf "  %-8s %14d bytes (%s)\n" "wal" "${wal_total}" "$(human "${wal_total}")"
+	rest_total=$(sum_glob "${SERENED_DATA_DIR}" -path "${SERENED_DATA_DIR}/engine_v1" -prune -o -type f)
+	printf "  %-8s %14d bytes (%s)\n" "rest" "${rest_total}" "$(human "${rest_total}")"
+	files_total=$(sum_glob "${SERENED_DATA_DIR}" -type f)
+	other=$((files_total - ext_total - wal_total - rest_total))
 	printf "  %-8s %14d bytes (%s)\n" "other" "${other}" "$(human "${other}")"
 } | tee -a "${RUN_LOG}"
 

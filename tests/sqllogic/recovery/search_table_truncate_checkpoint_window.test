@@ -5,7 +5,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE tcw (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE TABLE tcw_rows (id INTEGER, body TEXT);
@@ -14,7 +14,7 @@ statement ok
 INSERT INTO tcw VALUES (1, 'a'), (2, 'b');
 
 statement ok
-VACUUM (REFRESH_TABLE) tcw;
+VACUUM (FLUSH_TABLE) tcw;
 
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
@@ -28,11 +28,8 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement error
+statement ok
 CHECKPOINT;
-----
-db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
-
 
 connection default
 statement ok
@@ -61,6 +58,14 @@ SET GLOBAL checkpoint_threshold = '1KB';
 
 connection default
 statement ok
+SET GLOBAL max_wal_size = '1KB';
+
+connection writer
+statement ok
+INSERT INTO tcw_rows SELECT i, repeat('x', 100) FROM range(100) t(i);
+
+connection default
+statement ok
 SET sdb_faults = 'pause_search_commit_before_irs';
 
 connection truncator
@@ -72,15 +77,8 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
-statement error
-CHECKPOINT;
-----
-db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
-
-
-connection writer
 statement ok
-INSERT INTO tcw_rows SELECT i, repeat('x', 100) FROM range(100) t(i);
+CHECKPOINT;
 
 connection default
 statement ok
@@ -105,11 +103,15 @@ SET GLOBAL checkpoint_threshold = '16MB';
 
 connection after_crash
 statement ok
+RESET GLOBAL max_wal_size;
+
+connection after_crash
+statement ok
 INSERT INTO tcw VALUES (4, 'd');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) tcw;
+VACUUM (FLUSH_TABLE) tcw;
 
 connection after_crash
 query

@@ -154,17 +154,27 @@ void WritePgControl(const std::filesystem::path& data_dir,
   utils::file_utils::ReplaceFile(path, buffer);
 }
 
-void EnsurePgVersion(const std::filesystem::path& data_dir) {
+std::filesystem::path PendingPgVersion(const std::filesystem::path& data_dir) {
+  auto path = data_dir / kPendingPgVersionFile;
+  const int fd =
+    ::open(path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
+  if (fd < 0) {
+    utils::file_utils::ThrowFileError("create file", path.string(), errno);
+  }
+  ::close(fd);
+  return path;
+}
+
+void PublishPgVersion(const std::filesystem::path& data_dir) {
+  const auto pending = data_dir / kPendingPgVersionFile;
   const auto path = data_dir / kPgVersionFile;
-  std::error_code ec;
-  if (std::filesystem::exists(path, ec)) {
-    return;
-  }
-  if (ec) {
-    utils::file_utils::ThrowFileError("check", path.string(), ec);
-  }
-  utils::file_utils::Spit(path.string(),
+  utils::file_utils::Spit(pending.string(),
                           absl::StrCat(pg::kPgMajorVersion, "\n"), true);
+  std::error_code ec;
+  std::filesystem::rename(pending, path, ec);
+  if (ec) {
+    utils::file_utils::ThrowFileError("rename", pending.string(), ec);
+  }
   utils::file_utils::SyncDirectory(data_dir);
 }
 

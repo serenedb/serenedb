@@ -145,6 +145,7 @@ statement ok
 CREATE VIEW size_test_view AS SELECT id FROM size_test
 
 
+skipif serenedb
 query
 SELECT c.relname, pg_relation_size(c.oid) > 0 AS own, pg_table_size(c.oid) > 0 AS tab,
   pg_indexes_size(c.oid) > 0 AS idx, pg_total_relation_size(c.oid) > 0 AS total
@@ -155,6 +156,19 @@ relname	own	tab	idx	total
 size_test	t	t	t	t
 size_test_data_idx	t	t	f	t
 size_test_pkey	t	t	f	t
+
+
+onlyif serenedb
+query
+SELECT c.relname, pg_relation_size(c.oid) > 0 AS own, pg_table_size(c.oid) > 0 AS tab,
+  pg_indexes_size(c.oid) > 0 AS idx, pg_total_relation_size(c.oid) > 0 AS total
+FROM pg_class c WHERE c.relname IN ('size_test', 'size_test_pkey', 'size_test_data_idx')
+ORDER BY 1;
+----
+relname	own	tab	idx	total
+size_test	t	t	f	t
+size_test_data_idx	f	f	f	f
+size_test_pkey	f	f	f	f
 
 
 query

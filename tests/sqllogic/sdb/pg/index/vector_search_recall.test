@@ -35,13 +35,8 @@ statement ok
 INSERT INTO correct_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
 
 
-
 statement ok
 CREATE INDEX vecs_idx ON vecs USING inverted(emb ivf (metric = 'l2'));
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs;
 
 
 query
@@ -50,7 +45,7 @@ EXPLAIN SELECT id FROM vecs_idx ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: vecs_idx                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[8]) │
 │ Top: 10                           │
 │ Projections: id                   │
@@ -70,14 +65,13 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct WHERE id IN (SELECT id FROM resu
 t
 
 
-
 query
 EXPLAIN SELECT id FROM vecs_idx WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: vecs_idx                   │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[8]) │
 │ Top: 10                           │
 │ Projections: id                   │
@@ -116,10 +110,6 @@ statement ok
 CREATE INDEX vecs_idx_l1 ON vecs USING inverted(id, emb ivf (metric = 'l1'));
 
 
-statement ok
-VACUUM (REFRESH_TABLE) vecs;
-
-
 query
 WITH
   result AS (SELECT id FROM vecs_idx_l1 ORDER BY emb <+> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
@@ -149,10 +139,6 @@ INSERT INTO correct_cos2 SELECT id FROM vecs ORDER BY cosine_similarity(emb, [0.
 
 statement ok
 CREATE INDEX vecs_idx_cos ON vecs USING inverted(id, emb ivf (metric = 'cosine'));
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs;
 
 
 query
@@ -185,10 +171,6 @@ INSERT INTO correct_ip SELECT id FROM vecs ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0,
 
 statement ok
 CREATE INDEX vecs_idx_ip ON vecs USING inverted(id, emb ivf (metric = 'ip'));
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs;
 
 
 query
@@ -287,10 +269,6 @@ INSERT INTO correct_text_hybrid2 SELECT id FROM vecs_text WHERE body = 'red fox'
 
 statement ok
 CREATE INDEX vecs_text_idx ON vecs_text USING inverted(id, body en, emb ivf (metric = 'l2'));
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs_text;
 
 
 # Filtered ANN needs higher efSearch to maintain recall

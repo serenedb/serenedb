@@ -7,12 +7,12 @@
 
 statement ok
 CREATE TABLE sa (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE TABLE sb (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -21,14 +21,6 @@ INSERT INTO sa VALUES (1, 'alpha');
 
 statement ok
 INSERT INTO sb VALUES (1, 'alpha');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sa;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sb;
 
 
 connection reader
@@ -61,16 +53,6 @@ INSERT INTO sa VALUES (2, 'beta');
 connection writer
 statement ok
 INSERT INTO sb VALUES (2, 'beta');
-
-
-connection writer
-statement ok
-VACUUM (REFRESH_TABLE) sa;
-
-
-connection writer
-statement ok
-VACUUM (REFRESH_TABLE) sb;
 
 
 # Published, and still invisible here: the pins hold before the build runs.

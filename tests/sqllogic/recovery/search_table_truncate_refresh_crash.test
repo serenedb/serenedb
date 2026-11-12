@@ -5,13 +5,13 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE trc (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO trc VALUES (1, 'a'), (2, 'b');
 
 statement ok
-VACUUM (REFRESH_TABLE) trc;
+VACUUM (FLUSH_TABLE) trc;
 
 statement ok
 INSERT INTO trc VALUES (3, 'c');
@@ -29,7 +29,7 @@ SET sdb_faults = '-pause_search_commit_before_build_truncate:parked';
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) trc;
+VACUUM (FLUSH_TABLE) trc;
 
 connection default
 statement ok
@@ -58,7 +58,7 @@ INSERT INTO trc VALUES (4, 'd');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) trc;
+VACUUM (FLUSH_TABLE) trc;
 
 connection after_crash
 query

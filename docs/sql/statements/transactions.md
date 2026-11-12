@@ -60,14 +60,18 @@ SereneDB's concurrency model guarantees snapshot isolation. Transactions that vi
 
 Two of [PostgreSQL's transaction isolation levels](https://www.postgresql.org/docs/current/transaction-iso.html) exist:
 
--   `REPEATABLE READ`, the default: the transaction reads one snapshot from its first statement to its end.
--   `READ COMMITTED`: each statement sees the data committed before it started, until the transaction writes. From its first `INSERT`, `UPDATE` or `DELETE` on, the transaction keeps one snapshot to its end, so its own uncommitted rows stay consistent.
+-   `REPEATABLE READ`, the default: the transaction reads one snapshot, taken by its first statement that reads or writes a table, to its end.
+-   `READ COMMITTED`: each statement sees the data committed before it started, and the transaction's own changes. From the transaction's first DDL statement on, it keeps one snapshot to its end.
 
 Pick one with `BEGIN ISOLATION LEVEL READ COMMITTED`. `SERIALIZABLE` is refused with `transaction isolation level "serializable" is not supported`.
 
+Two transactions that update or delete the same row conflict: the first to commit wins, and the other fails with `could not serialize access due to concurrent update`, at the latest at its `COMMIT`. Under `READ COMMITTED`, a row conflicts when another transaction committed a change to it after the statement that updated or deleted it started, even if a later statement of the transaction saw that change; PostgreSQL would wait for the other writer and re-check the row instead.
+
+An `INSERT ... ON CONFLICT`, an `INSERT OR REPLACE` or a `MERGE` that inserts a key another transaction committed after the statement's snapshot fails the same way, at the statement or at its `COMMIT`, so a retry sees the row and takes the conflict path. A plain `INSERT` of a key another transaction committed fails with the duplicate key error, which a retry would hit again.
+
 `ALTER TABLE` and `DROP TABLE` wait for the commits that are already writing the table to finish, then change it. A transaction that wrote to the table but commits only after the change fails at `COMMIT` with a serialization failure; PostgreSQL would have made the `ALTER TABLE` wait for that transaction instead.
 
-`CREATE INDEX` and an `ALTER TABLE` that changes the table's columns (renaming, adding or dropping one, or changing its type) conflict when they run in concurrent transactions: whichever commits second fails at `COMMIT` with `Catalog write-write conflict`. Other `ALTER TABLE` forms, such as `COMMENT ON COLUMN` or `SET (...)`, don't conflict with `CREATE INDEX`.
+A transaction that creates, replaces or drops an index of a table, or alters or drops the table, holds the table until it commits or rolls back. Such a change from another transaction meanwhile fails at once with `table "<name>" is being changed by another transaction`; retry it once the first transaction ends (see [Concurrent changes](create_index/inverted.md#concurrent-changes)). `COMMENT ON COLUMN` does not hold the table.
 
 ## Example
 

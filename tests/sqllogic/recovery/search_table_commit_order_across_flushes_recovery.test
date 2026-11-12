@@ -6,7 +6,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE order_docs (id BIGINT, msg TEXT)
-  WITH (storage = 'search', refresh_interval = 20, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -14,21 +14,32 @@ INSERT INTO order_docs SELECT i, 'm' || (i % 7) FROM range(100) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) order_docs;
+VACUUM (FLUSH_ALL);
 
 
 statement ok
-SET sdb_faults = 'pause_index_refresh';
-
-
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_index_refresh:parked';
+CHECKPOINT;
 
 
 statement ok
 INSERT INTO order_docs VALUES (-1, 'm6');
 
 
+statement ok
+SET sdb_faults = 'pause_search_write_out';
+
+
+connection cooler
+statement async ok
+VACUUM (FLUSH_ALL);
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_write_out:parked';
+
+
+connection default
 statement ok
 SET sdb_faults = 'search_commit_prepared';
 
@@ -43,21 +54,6 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-search_commit_prepared:parked';
 
 
-connection default
-statement ok
-SET sdb_faults = 'pause_irs_commit_after_flush_switch';
-
-
-connection default
-statement ok
-SET sdb_faults = 'pause_index_refresh:release';
-
-
-connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
-
-
 connection other
 statement ok
 INSERT INTO order_docs VALUES (-3, 'm4');
@@ -68,22 +64,25 @@ statement ok
 SET sdb_faults = 'search_commit_prepared:release';
 
 
+connection writer
+query
+SELECT count(*) AS n FROM order_docs WHERE id < 0;
+----
+n
+3
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_write_out:release';
+
+
 wait
 
 
 connection default
 statement ok
-SET sdb_faults = 'pause_index_refresh';
-
-
-connection default
-statement ok
-SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
-
-
-connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_index_refresh:parked';
+CHECKPOINT;
 
 
 connection default
@@ -111,7 +110,12 @@ INSERT INTO order_docs VALUES (-4, 'm3');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) order_docs;
+VACUUM (FLUSH_ALL);
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
 
 
 connection after_crash

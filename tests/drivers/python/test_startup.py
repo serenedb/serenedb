@@ -88,7 +88,7 @@ def test_info_timeline(tmp_path: Path) -> None:
 
     second = _run_until_ready(datadir)
     assert "Created database directory" not in second.output(), second.output()
-    assert "search index recovery" not in second.output(), second.output()
+    assert "replayed the log" not in second.output(), second.output()
 
 
 def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
@@ -109,8 +109,8 @@ def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("search index recovery: replayed the WAL into 1 of 1 inverted "
-            "index(es)" in restarted.output()), restarted.output()
+    assert ("recovery: replayed the log into 1 of 1 table(s) in "
+            in restarted.output()), restarted.output()
 
 
 def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
@@ -121,10 +121,8 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         with psycopg.connect(host="127.0.0.1", port=server.port,
                              user="postgres", dbname="postgres",
                              autocommit=True) as conn:
-            conn.execute("CREATE TABLE tusk (id INT, body TEXT) "
-                         "WITH (storage = 'search', refresh_interval = 0)")
-            conn.execute("CREATE TABLE idle (id INT) "
-                         "WITH (storage = 'search', refresh_interval = 0)")
+            conn.execute("CREATE TABLE tusk (id INT, body TEXT) ")
+            conn.execute("CREATE TABLE idle (id INT) ")
             conn.execute("INSERT INTO tusk SELECT i, 'ice ' || i "
                          "FROM range(100) t(i)")
     finally:
@@ -132,8 +130,8 @@ def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
         server.proc.wait(timeout=60)
 
     restarted = _run_until_ready(datadir)
-    assert ("search index recovery: replayed the WAL into 1 of 2 search "
-            "table(s) in " in restarted.output()), restarted.output()
+    assert ("recovery: replayed the log into 1 of 2 table(s) in "
+            in restarted.output()), restarted.output()
 
 
 def test_terminate_while_starting(tmp_path: Path) -> None:
@@ -157,7 +155,8 @@ def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
         second = _Server(datadir)
         try:
             assert second.proc.wait(timeout=60) != 0, second.output()
-            assert (f"database is locked by process {first.proc.pid}"
+            assert (f"the data directory is in use: '{datadir}/PG_VERSION' "
+                    "is locked by a running server or a read-only attachment"
                     in second.output()), second.output()
         finally:
             second.stop()

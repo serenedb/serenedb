@@ -42,7 +42,6 @@
 #include <vector>
 
 #include "connector/copy_batch_parse.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_batch_builder.h"
 
@@ -52,29 +51,6 @@ namespace {
 constexpr std::string_view kCopyStdinPath = "/dev/stdin";
 constexpr size_t kOrderedRun = 16;
 constexpr uint64_t kCopyFileRangeBytes = 8 << 20;
-
-pg::CopyInBatches& RequireCopyInBatches(duckdb::ClientContext& context,
-                                        bool binary) {
-  const std::string_view format = binary ? "binary" : "text";
-  auto* state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
-      .get();
-  if (!state) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("COPY ... FROM STDIN (FORMAT ", format,
-                            ") is only valid on a server-side PostgreSQL wire "
-                            "connection"));
-  }
-  auto* batches =
-    state->GetConnectionContext().GetSideChannel<pg::CopyInBatches>();
-  if (!batches) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("COPY ... FROM STDIN (FORMAT ", format,
-                            ") requires a PG wire connection (transport not "
-                            "attached)"));
-  }
-  return *batches;
-}
 
 class CopyFileReader {
  public:
@@ -489,10 +465,7 @@ void ScanRanges(duckdb::ClientContext& context,
 }  // namespace
 
 bool BindCopyFrom(duckdb::ClientContext& context,
-                  duckdb::CopyFromFunctionBindInput& input, bool binary) {
-  if (input.info.file_path == kCopyStdinPath) {
-    RequireCopyInBatches(context, binary);
-  }
+                  duckdb::CopyFromFunctionBindInput& input) {
   const auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
     context, input.info.GetQualifiedName(),
     duckdb::OnEntryNotFound::RETURN_NULL);
@@ -511,9 +484,10 @@ bool BindCopyFrom(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
   duckdb::ClientContext& context, const std::string& path,
   pg::CopyInTarget target, bool ordered) {
-  if (path == kCopyStdinPath) {
-    auto& queue = RequireCopyInBatches(context, target.binary);
-    return duckdb::make_uniq<BatchesGlobalState>(context, queue,
+  if (auto* queue =
+        ConnectionContext::Get(context).GetSideChannel<pg::CopyInBatches>();
+      queue && path == kCopyStdinPath) {
+    return duckdb::make_uniq<BatchesGlobalState>(context, *queue,
                                                  std::move(target), ordered);
   }
   const auto flags = target.binary

@@ -52,9 +52,6 @@ INSERT INTO deg_ivf_sq8 VALUES
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
 
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_sq8
-
 # -- ivf sq8: quantized path alone (width 0) ------------------------------
 
 statement ok
@@ -138,9 +135,6 @@ statement ok
 INSERT INTO deg_ivf_sq8_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_sq8_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -176,9 +170,6 @@ CREATE INDEX deg_ivf_sq8_zero_idx ON deg_ivf_sq8_zero
 
 statement ok
 INSERT INTO deg_ivf_sq8_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_sq8_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -223,9 +214,6 @@ INSERT INTO deg_ivf_sq4 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_sq4
 
 # -- ivf sq4: quantized path alone (width 0) ------------------------------
 
@@ -310,9 +298,6 @@ statement ok
 INSERT INTO deg_ivf_sq4_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_sq4_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -348,9 +333,6 @@ CREATE INDEX deg_ivf_sq4_zero_idx ON deg_ivf_sq4_zero
 
 statement ok
 INSERT INTO deg_ivf_sq4_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_sq4_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -395,9 +377,6 @@ INSERT INTO deg_ivf_usq8 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_usq8
 
 # -- ivf usq8: quantized path alone (width 0) ------------------------------
 
@@ -482,9 +461,6 @@ statement ok
 INSERT INTO deg_ivf_usq8_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_usq8_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -520,9 +496,6 @@ CREATE INDEX deg_ivf_usq8_zero_idx ON deg_ivf_usq8_zero
 
 statement ok
 INSERT INTO deg_ivf_usq8_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_usq8_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -567,9 +540,6 @@ INSERT INTO deg_ivf_usq4 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_usq4
 
 # -- ivf usq4: quantized path alone (width 0) ------------------------------
 
@@ -654,9 +624,6 @@ statement ok
 INSERT INTO deg_ivf_usq4_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_usq4_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -692,9 +659,6 @@ CREATE INDEX deg_ivf_usq4_zero_idx ON deg_ivf_usq4_zero
 
 statement ok
 INSERT INTO deg_ivf_usq4_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_usq4_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -739,9 +703,6 @@ INSERT INTO deg_ivf_pq VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_pq
 
 # -- ivf pq: quantized path alone (width 0) ------------------------------
 
@@ -826,9 +787,6 @@ statement ok
 INSERT INTO deg_ivf_pq_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_pq_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -864,9 +822,6 @@ CREATE INDEX deg_ivf_pq_zero_idx ON deg_ivf_pq_zero
 
 statement ok
 INSERT INTO deg_ivf_pq_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_pq_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -911,9 +866,6 @@ INSERT INTO deg_ivf_rabitq VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_rabitq
 
 # -- ivf rabitq: quantized path alone (width 0) ------------------------------
 
@@ -998,9 +950,6 @@ statement ok
 INSERT INTO deg_ivf_rabitq_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_rabitq_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -1036,9 +985,6 @@ CREATE INDEX deg_ivf_rabitq_zero_idx ON deg_ivf_rabitq_zero
 
 statement ok
 INSERT INTO deg_ivf_rabitq_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_rabitq_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -1083,9 +1029,6 @@ INSERT INTO deg_ivf_tq3 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_tq3
 
 # -- ivf tq3: quantized path alone (width 0) ------------------------------
 
@@ -1170,9 +1113,6 @@ statement ok
 INSERT INTO deg_ivf_tq3_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_tq3_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -1208,9 +1148,6 @@ CREATE INDEX deg_ivf_tq3_zero_idx ON deg_ivf_tq3_zero
 
 statement ok
 INSERT INTO deg_ivf_tq3_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_tq3_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -1255,9 +1192,6 @@ INSERT INTO deg_ivf_tq2 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_tq2
 
 # -- ivf tq2: quantized path alone (width 0) ------------------------------
 
@@ -1342,9 +1276,6 @@ statement ok
 INSERT INTO deg_ivf_tq2_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_tq2_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -1380,9 +1311,6 @@ CREATE INDEX deg_ivf_tq2_zero_idx ON deg_ivf_tq2_zero
 
 statement ok
 INSERT INTO deg_ivf_tq2_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_ivf_tq2_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -1431,9 +1359,6 @@ INSERT INTO deg_hnsw_sq8 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_sq8
 
 # -- hnsw sq8: quantized path alone (width 0) ------------------------------
 
@@ -1518,9 +1443,6 @@ statement ok
 INSERT INTO deg_hnsw_sq8_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_sq8_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -1556,9 +1478,6 @@ CREATE INDEX deg_hnsw_sq8_zero_idx ON deg_hnsw_sq8_zero
 
 statement ok
 INSERT INTO deg_hnsw_sq8_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_sq8_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -1603,9 +1522,6 @@ INSERT INTO deg_hnsw_sq4 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_sq4
 
 # -- hnsw sq4: quantized path alone (width 0) ------------------------------
 
@@ -1690,9 +1606,6 @@ statement ok
 INSERT INTO deg_hnsw_sq4_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_sq4_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -1728,9 +1641,6 @@ CREATE INDEX deg_hnsw_sq4_zero_idx ON deg_hnsw_sq4_zero
 
 statement ok
 INSERT INTO deg_hnsw_sq4_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_sq4_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -1775,9 +1685,6 @@ INSERT INTO deg_hnsw_usq8 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_usq8
 
 # -- hnsw usq8: quantized path alone (width 0) ------------------------------
 
@@ -1862,9 +1769,6 @@ statement ok
 INSERT INTO deg_hnsw_usq8_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_usq8_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -1900,9 +1804,6 @@ CREATE INDEX deg_hnsw_usq8_zero_idx ON deg_hnsw_usq8_zero
 
 statement ok
 INSERT INTO deg_hnsw_usq8_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_usq8_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -1947,9 +1848,6 @@ INSERT INTO deg_hnsw_usq4 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_usq4
 
 # -- hnsw usq4: quantized path alone (width 0) ------------------------------
 
@@ -2034,9 +1932,6 @@ statement ok
 INSERT INTO deg_hnsw_usq4_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_usq4_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -2072,9 +1967,6 @@ CREATE INDEX deg_hnsw_usq4_zero_idx ON deg_hnsw_usq4_zero
 
 statement ok
 INSERT INTO deg_hnsw_usq4_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_usq4_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -2119,9 +2011,6 @@ INSERT INTO deg_hnsw_rabitq VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_rabitq
 
 # -- hnsw rabitq: quantized path alone (width 0) ------------------------------
 
@@ -2206,9 +2095,6 @@ statement ok
 INSERT INTO deg_hnsw_rabitq_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_rabitq_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -2244,9 +2130,6 @@ CREATE INDEX deg_hnsw_rabitq_zero_idx ON deg_hnsw_rabitq_zero
 
 statement ok
 INSERT INTO deg_hnsw_rabitq_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_rabitq_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -2291,9 +2174,6 @@ INSERT INTO deg_hnsw_tq3 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_tq3
 
 # -- hnsw tq3: quantized path alone (width 0) ------------------------------
 
@@ -2378,9 +2258,6 @@ statement ok
 INSERT INTO deg_hnsw_tq3_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_tq3_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -2416,9 +2293,6 @@ CREATE INDEX deg_hnsw_tq3_zero_idx ON deg_hnsw_tq3_zero
 
 statement ok
 INSERT INTO deg_hnsw_tq3_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_tq3_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0
@@ -2463,9 +2337,6 @@ INSERT INTO deg_hnsw_tq2 VALUES
   (1001, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1002, [500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
   (1003, [0, 0, 0, 0, 0, 0, 0, 500]::FLOAT[8])
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_tq2
 
 # -- hnsw tq2: quantized path alone (width 0) ------------------------------
 
@@ -2550,9 +2421,6 @@ statement ok
 INSERT INTO deg_hnsw_tq2_same SELECT g, [7, 7, 7, 7, 7, 7, 7, 7]::FLOAT[8] FROM generate_series(1, 40) g
 
 statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_tq2_same
-
-statement ok
 SET sdb_ann_rescore_width = 0
 
 query
@@ -2588,9 +2456,6 @@ CREATE INDEX deg_hnsw_tq2_zero_idx ON deg_hnsw_tq2_zero
 
 statement ok
 INSERT INTO deg_hnsw_tq2_zero SELECT g, [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM generate_series(1, 40) g
-
-statement ok
-VACUUM (REFRESH_TABLE) deg_hnsw_tq2_zero
 
 statement ok
 SET sdb_ann_rescore_width = 0

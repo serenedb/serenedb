@@ -30,7 +30,7 @@ SETUP_SQL=$(sed "s/@N@/${ROWS}/g" "$(dirname "$0")/iresearch_sweep/cases/${CASE}
 echo "prep..."
 $PSQL <<<"$SETUP_SQL" >/dev/null
 $PSQL -c "CREATE INDEX sweep_idx ON sweep_t USING inverted(${_idx_clause});" >/dev/null
-$PSQL -c "VACUUM (REFRESH_TABLE) sweep_t;" >/dev/null
+$PSQL -c "VACUUM (FLUSH_TABLE) sweep_t;" >/dev/null
 HOT_SQL=""
 for _ in $(seq 1 "$N"); do HOT_SQL+="${_query};"$'\n'; done
 $PSQL <<<"${_query};" >/dev/null

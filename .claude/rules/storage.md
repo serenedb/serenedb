@@ -25,7 +25,7 @@ A new storage version only for a change older releases would misread instead of 
 
 Test a format change the way a release meets old data: a fault point makes the writer produce the old shape, the test restarts and reads it back.
 
-- Search index files: the footer and the leading `storage_version` of `segments_N` never change; an object's fields are numbered from 0 through named constants, and every field written is read.
+- Search index files: the footer never changes; an object's fields are numbered from 0 through named constants, and every field written is read.
 - Database files: checkpoint and log entries take their field ids from `third_party/duckdb/src/include/duckdb/storage/serialization/*.json`; the log header never gains a field (a framing change bumps `WAL_VERSION_NUMBER`); replay refuses an entry it can't read instead of dropping it, and drops only a torn tail.
 
 ## DuckDB database files

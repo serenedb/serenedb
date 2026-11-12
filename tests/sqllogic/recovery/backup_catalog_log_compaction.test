@@ -8,11 +8,6 @@ statement ok
 CREATE TABLE bclc_seed (x BIGINT);
 
 
-statement ok
-CREATE TEMP TABLE bclc_before AS
-SELECT size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
-
-
 connection holder
 query
 SELECT pg_backup_start('bclc') IS NOT NULL AS started;
@@ -163,20 +158,14 @@ DROP TABLE bclc_churn_12;
 
 connection default
 query
-SELECT
-  live.size > (SELECT size FROM bclc_before) AS grew,
-  link.size = live.size AS same_file
-FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal') AS live,
-  read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/catalog.wal') AS link;
+SELECT count(*) > 0 AS linked,
+       count(*) FILTER (WHERE regexp_extract(b.file, '[^/]+$') NOT IN (
+         SELECT regexp_extract(l.file, '[^/]+$')
+         FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log') AS l)) AS truncated
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*.log') AS b;
 ----
-grew	same_file
-t	t
-
-
-connection default
-statement ok
-CREATE TEMP TABLE bclc_during AS
-SELECT size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+linked	truncated
+t	0
 
 
 connection holder
@@ -194,8 +183,7 @@ CREATE TABLE bclc_3 (x BIGINT);
 
 connection default
 query
-SELECT size < (SELECT size FROM bclc_during) AS compacted
-FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+SELECT value < 4096 AS compacted FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
 ----
 compacted
 t

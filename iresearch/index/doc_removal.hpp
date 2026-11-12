@@ -20,22 +20,22 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
 class DirectoryReader;
-class SegmentReaderImpl;
-struct DocMapsSlot;
 
 struct DocMap {
   uint64_t source = 0;
@@ -44,39 +44,31 @@ struct DocMap {
   doc_id_t rank_begin = 0;
   doc_id_t rank_end = 0;
   doc_id_t base = doc_limits::min();
-  std::shared_ptr<const DocMapsSlot> next;
-};
-
-struct DocMapsSlot {
-  std::vector<DocMap> maps;
 };
 
 struct DocRemoval {
   struct Group {
     uint64_t segment = 0;
     DocumentMask docs;
-    std::shared_ptr<const DocMapsSlot> maps;
   };
 
   std::vector<Group> groups;
-};
-
-struct KeyRemoval {
-  std::vector<int64_t> keys;
 };
 
 class DocRemovalBuilder {
  public:
   void Add(uint32_t index, doc_id_t doc);
   void AddRange(uint32_t index, doc_id_t first, doc_id_t last);
+  DocumentMaskBuilder& Group(uint32_t index);
 
-  bool Empty() const noexcept { return _groups.empty(); }
+  bool Empty() const noexcept {
+    return absl::c_all_of(
+      _groups, [](const auto& group) { return group.second.Empty(); });
+  }
 
   std::shared_ptr<const DocRemoval> Finish(const DirectoryReader& reader) &&;
 
  private:
-  DocumentMaskBuilder& Group(uint32_t index);
-
   std::vector<std::pair<uint32_t, DocumentMaskBuilder>> _groups;
   size_t _last = 0;
 };
@@ -84,17 +76,12 @@ class DocRemovalBuilder {
 bool MapDocs(const DocMap& map, const DocumentMask& docs,
              DocumentMaskBuilder& out);
 
-struct RemovalTarget {
-  const SegmentReaderImpl* reader;
-  DocumentMaskBuilder* removed;
+struct MappedRow {
+  size_t index = 0;
+  uint64_t row = 0;
 };
 
-using RemovalTargets = containers::FlatHashMap<uint64_t, RemovalTarget>;
-
-// Lands a removal on the segments that hold its docs now. A group names the
-// segment the docs were in when it was recorded; where a consolidation has
-// since replaced that segment, the group's own maps carry the docs forward,
-// which is why a removal cannot simply be matched by segment id.
-void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets);
+void MapRows(const DocMap& map, std::span<const uint64_t> rows,
+             std::vector<MappedRow>& out);
 
 }  // namespace irs

@@ -28,6 +28,9 @@ INSERT INTO rda_t
   FROM generate_series(1, 5000) t(i);
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+statement ok
 CHECKPOINT;
 
 query
@@ -263,6 +266,10 @@ statement ok
 INSERT INTO rda_t
   SELECT i, md5(i::VARCHAR), 'aBc', md5((i * 13)::VARCHAR), 'dEf'
   FROM generate_series(5001, 10000) t(i);
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_ALL);
 
 connection after_crash
 statement ok

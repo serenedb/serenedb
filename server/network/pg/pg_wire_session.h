@@ -74,7 +74,6 @@
 #include <yaclib/util/helper.hpp>
 
 #include "catalog/catalog.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
@@ -373,6 +372,11 @@ class PgWireSession
   void DescribePortal(Portal& portal);
   PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan,
                       std::span<const duckdb::Value> values);
+  duckdb::unique_ptr<duckdb::PreparedStatement> PrepareInternal(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement,
+    duckdb::optional_ptr<
+      const duckdb::case_insensitive_map_t<duckdb::LogicalType>>
+      hints = nullptr);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
                          std::string_view statement_name);
 
@@ -457,10 +461,7 @@ class PgWireSession
   // per-command ParameterStatus poll in ReportChangedParameters.
   uint64_t _reported_settings_version = 0;
   duckdb::unique_ptr<duckdb::Connection> _conn;
-  std::shared_ptr<ConnectionContext> _connection_ctx;
-  // Owned by _conn's registered_state; cached here to skip the keyed registry
-  // lookup on every query. Valid for the connection's lifetime.
-  connector::SereneDBClientState* _client_state = nullptr;
+  ConnectionContext* _connection_ctx = nullptr;
   sdb::pg::ProgressRegistration _progress;
   // Reused across queries (Reset per query); see MakeWireContext.
   std::shared_ptr<WireSinkContext> _wire_ctx;

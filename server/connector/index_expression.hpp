@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/planner/expression.hpp>
@@ -43,11 +44,20 @@ struct IndexedExpression {
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context);
 
-duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
-                                     duckdb::DataChunk& chunk,
-                                     duckdb::idx_t table_id,
-                                     std::span<const ColumnId> slot_to_col_id,
-                                     duckdb::ClientContext& context);
+class EvaluatedExpression {
+ public:
+  EvaluatedExpression(const duckdb::Expression& bound_expr,
+                      duckdb::DataChunk& chunk, duckdb::idx_t table_id,
+                      std::span<const ColumnId> slot_to_col_id,
+                      duckdb::ClientContext& context);
+
+  duckdb::Vector& Result() noexcept { return _result; }
+
+ private:
+  duckdb::unique_ptr<duckdb::Expression> _expression;
+  duckdb::ExpressionExecutor _executor;
+  duckdb::Vector _result;
+};
 
 // Rewrites binder-state noise so bytes match across binding contexts:
 // alias/query_location cleared, is_operator=false, column refs keyed by

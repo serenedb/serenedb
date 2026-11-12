@@ -28,11 +28,11 @@ ID_SPAN = 1_000_000_000
 ROUND_SPAN = 100_000_000
 
 WRITER_CASES = [
-    ("refresh_interval = 0, compaction_interval = 0", 6, ""),
-    ("refresh_interval = 20, compaction_interval = 10", 6, "index"),
-    ("refresh_interval = 5, compaction_interval = 5", 4, "index big_inserts"),
-    ("refresh_interval = 10, compaction_interval = 20", 6, "builds"),
-    ("refresh_interval = 5, compaction_interval = 5", 4, "index builds big_inserts"),
+    ("compaction_interval = 0", 6, ""),
+    ("compaction_interval = 10", 6, "index"),
+    ("compaction_interval = 5", 4, "index big_inserts"),
+    ("compaction_interval = 20", 6, "builds"),
+    ("compaction_interval = 5", 4, "index builds big_inserts"),
 ]
 
 
@@ -52,7 +52,7 @@ def pause(rng: random.Random) -> None:
 
 def create_schema(conn: psycopg.Connection, options: str, index: bool) -> None:
     conn.execute("CREATE TEXT SEARCH DICTIONARY s_words AS split_text()")
-    conn.execute(f"CREATE TABLE s (id BIGINT, body TEXT) WITH (storage = 'search', {options})")
+    conn.execute(f"CREATE TABLE s (id BIGINT, body TEXT) WITH ({options})")
     conn.execute("CREATE TABLE m (id BIGINT, body TEXT)")
     if index:
         conn.execute("CREATE INDEX s_idx ON s USING inverted (id, body s_words)")
@@ -98,7 +98,6 @@ def update_rows(conn: psycopg.Connection, lo: int, hi: int, mod: int, rem: int,
 
 
 def assert_matches_model(conn: psycopg.Connection, index: bool) -> None:
-    conn.execute("VACUUM (REFRESH_TABLE) s")
     searched, modeled = conn.execute(
         "SELECT (SELECT count(*) FROM s), (SELECT count(*) FROM m)"
     ).fetchone()
@@ -218,7 +217,6 @@ class Workload:
                 conn.execute(f"SET threads = {rng.choice([1, 4])}")
                 while not self.stop.is_set():
                     if stale:
-                        conn.execute("VACUUM (REFRESH_TABLE) s")
                         stale = False
                     try:
                         next_id, stale = self.step(conn, rng, lo, next_id)
@@ -237,9 +235,7 @@ class Workload:
             with psycopg.connect(self.server.dsn(), autocommit=True) as conn:
                 while not self.stop.is_set():
                     op = rng.random()
-                    if op < 0.4:
-                        conn.execute("VACUUM (REFRESH_TABLE) s")
-                    elif op < 0.55:
+                    if op < 0.55:
                         try:
                             conn.execute("CHECKPOINT")
                         except psycopg.errors.SerializationFailure:
@@ -287,7 +283,6 @@ class Workload:
 
 def seed_rows(conn: psycopg.Connection, rows: int) -> None:
     insert_rows(conn, 0, rows, 1)
-    conn.execute("VACUUM (REFRESH_TABLE) s")
 
 
 def concurrent_writers_keep_the_search_table_equal_to_its_model(
@@ -317,7 +312,7 @@ def a_crash_during_concurrent_writes_replays_to_an_equal_search_table(
     with make_server(tmp_path) as server:
         server.start()
         with psycopg.connect(server.dsn(), autocommit=True) as conn:
-            create_schema(conn, "refresh_interval = 50, compaction_interval = 20", index)
+            create_schema(conn, "compaction_interval = 20", index)
             seed_rows(conn, 5000)
         for round_ in range(3):
             workload = Workload(server, seed=rng.randrange(1 << 30), writers=6,

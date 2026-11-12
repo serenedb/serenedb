@@ -24,101 +24,28 @@
 #include "index_writer.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/functional/overload.h>
-#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/common/vector/vector_iterator.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
-#include <duckdb/storage/statistics/numeric_stats.hpp>
-#include <new>
-#include <ranges>
-#include <shared_mutex>
-#include <type_traits>
-#include <variant>
+#include <iterator>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/index_meta_reader.hpp"
-#include "iresearch/formats/segment_meta_reader.hpp"
-#include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/index/index_features.hpp"
-#include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/async.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
-#include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/resource_manager.hpp"
-#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
-
-// do-nothing progress reporter, used as fallback if no other progress
-// reporter is used
-const ProgressReportCallback kNoProgress =
-  [](std::string_view /*phase*/, size_t /*current*/, size_t /*total*/) {
-    // intentionally do nothing
-  };
-
-struct FlushedSegmentContext {
-  FlushedSegmentContext(std::shared_ptr<const SegmentReaderImpl>&& reader,
-                        IndexWriter::FlushedSegment& flushed)
-    : reader{std::move(reader)}, flushed{flushed} {
-    SDB_ASSERT(this->reader != nullptr);
-  }
-
-  std::shared_ptr<const SegmentReaderImpl> reader;
-  IndexWriter::FlushedSegment& flushed;
-
-  bool MakeDocumentMask(DocumentMaskBuilder& document_mask,
-                        IndexSegment& index) {
-    const auto docs_count = flushed.meta.docs_count;
-    const auto committed = static_cast<doc_id_t>(flushed.docs.size());
-    SDB_ASSERT(0 < committed);
-    SDB_ASSERT(committed <= docs_count);
-    if (committed != docs_count) {
-      flushed.docs_mask.AddRange(doc_limits::min() + committed,
-                                 doc_limits::min() + docs_count);
-    }
-    if (flushed.docs_mask.Count() == docs_count) {
-      return true;
-    }
-    document_mask = std::move(flushed.docs_mask);
-    index = std::move(flushed);
-    return false;
-  }
-
-  void RemoveAll(uint64_t tick);
-};
-
-void FlushedSegmentContext::RemoveAll(uint64_t tick) {
-  const auto bound = flushed.docs.UpperBound(tick);
-  if (bound == 0) {
-    return;
-  }
-  flushed.docs_mask.AddRange(doc_limits::min(),
-                             static_cast<doc_id_t>(bound + doc_limits::min()));
-}
-
-uint64_t SegmentId(const SubReader& segment) {
-  return utils::downCast<SegmentReader>(segment).GetImpl()->Id();
-}
 
 std::vector<DocMap> MergeMaps(CompactionView candidates,
                               const MergeWriter& merger,
@@ -132,535 +59,27 @@ std::vector<DocMap> MergeMaps(CompactionView candidates,
                     .target = merged.Id(),
                     .mask = segment.SharedDocsMask(),
                     .rank_end = segment.Meta().live_docs_count,
-                    .base = merger[i].remap.base_id,
-                    .next = merged.DocMaps()});
+                    .base = merger[i].remap.base_id});
   }
   return maps;
 }
 
-void CarryRemovals(const DocMap& map, const SubReader* source,
-                   DocumentMaskBuilder& carried) {
-  if (source == nullptr) {
-    carried.AddRange(map.base, map.base + (map.rank_end - map.rank_begin));
-  } else if (const auto* mask = source->docs_mask()) {
-    MapDocs(map, *mask, carried);
+void SyncSegment(RefTrackingDirectory& dir, const SegmentMeta& meta) {
+  const auto names = SegmentFiles(meta.name, meta.kinds);
+  const std::vector<std::string_view> files{names.begin(), names.end()};
+  if (!dir.sync(files)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("Failed to sync segment '", meta.name, "'"));
   }
-}
-
-std::string ToString(CompactionView compaction) {
-  std::string str;
-
-  size_t total_size = 0;
-  size_t total_docs_count = 0;
-  size_t total_live_docs_count = 0;
-
-  for (const auto* segment : compaction) {
-    auto& meta = segment->Meta();
-
-    absl::StrAppend(&str, "Name='", meta.name,
-                    "', docs_count=", meta.docs_count,
-                    ", live_docs_count=", meta.live_docs_count,
-                    ", size=", meta.byte_size, "\n");
-
-    total_docs_count += meta.docs_count;
-    total_live_docs_count += meta.live_docs_count;
-    total_size += meta.byte_size;
-  }
-
-  absl::StrAppend(&str, "Total: segments=", compaction.size(),
-                  ", docs_count=", total_docs_count,
-                  ", live_docs_count=", total_live_docs_count,
-                  " size=", total_size, "");
-
-  return str;
-}
-
-bool IsInitialCommit(const DirectoryMeta& meta) noexcept {
-  // Initial commit is always for required for empty directory
-  return meta.filename.empty();
-}
-
-enum class Sync : uint8_t {
-  None,
-  Meta,
-  All,
-};
-
-Sync SyncOf(bool durable, bool meta_written) noexcept {
-  if (!durable) {
-    return Sync::All;
-  }
-  return meta_written ? Sync::Meta : Sync::None;
-}
-
-uint64_t MaxSegmentId(const Directory& dir) {
-  uint64_t max_id = 0;
-  dir.visit([&max_id](std::string_view name) {
-    if (uint64_t id = 0; ParseSegmentId(name, id)) {
-      max_id = std::max(max_id, id);
-    }
-    return true;
-  });
-  return max_id;
-}
-
-struct PublishedSegment {
-  IndexSegment segment;
-  SegmentReader reader;
-  Sync sync;
-};
-
-void SortUnique(std::vector<int64_t>& keys) {
-  if (!absl::c_is_sorted(keys)) {
-    absl::c_sort(keys);
-  }
-  keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-}
-
-std::span<const int64_t> KeysWithin(const duckdb::BaseStatistics& stats,
-                                    std::span<const int64_t> keys) {
-  if (!duckdb::NumericStats::HasMinMax(stats)) {
-    return keys;
-  }
-  const auto first =
-    absl::c_lower_bound(keys, duckdb::NumericStats::GetMin<int64_t>(stats));
-  return {first,
-          std::upper_bound(first, keys.end(),
-                           duckdb::NumericStats::GetMax<int64_t>(stats))};
-}
-
-void RemoveKeys(std::span<const int64_t> keys, field_id key_column,
-                const SubReader& segment, const auto& remove) {
-  const auto* columns = segment.GetColReader();
-  const auto* column = columns ? columns->Column(key_column) : nullptr;
-  if (!column) {
-    return;
-  }
-  SDB_ASSERT(column->Type().InternalType() == duckdb::PhysicalType::INT64);
-  const auto candidates = KeysWithin(column->MergedStatistics(), keys);
-  if (candidates.empty()) {
-    return;
-  }
-  ReadContext ctx{*columns};
-  auto state = column->InitScan(ctx);
-  ColumnReader::VectorScratch scratch{column->Type()};
-  uint64_t cursor = 0;
-  const auto blocks = column->DataBlocks();
-  for (size_t block = 0; block != blocks.size(); ++block) {
-    const auto matching = KeysWithin(blocks[block].statistics, candidates);
-    if (matching.empty()) {
-      continue;
-    }
-    if (const auto first = column->DataBlockFirstRow(block); first != cursor) {
-      column->Skip(state, first - cursor);
-      cursor = first;
-    }
-    for (auto left = blocks[block].tuple_count; left != 0;) {
-      const auto take = std::min<uint64_t>(left, STANDARD_VECTOR_SIZE);
-      auto& scanned = scratch.Reset();
-      column->Scan(state, scanned, take);
-      const auto values = scanned.Values<int64_t>();
-      for (duckdb::idx_t i = 0; i != take; ++i) {
-        const auto value = values[i].GetValue();
-        const auto key = absl::c_lower_bound(matching, value);
-        if (key != matching.end() && *key == value) {
-          remove(*key, static_cast<doc_id_t>(doc_limits::min() + cursor + i));
-        }
-      }
-      cursor += take;
-      left -= take;
-    }
-  }
-}
-
-struct PublishResult {
-  std::vector<PublishedSegment> segments;
-  bool modified = false;
-};
-
-bool MergePublished(DocumentMaskBuilder& removed,
-                    const DocumentMask* published) {
-  if (removed.Empty()) {
-    return false;
-  }
-  if (published == nullptr) {
-    return true;
-  }
-  const auto masked = published->Count();
-  removed.Merge(*published);
-  return removed.Count() > masked;
-}
-
-PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
-                             const CompactingSegments& segment_mask,
-                             uint64_t all_tick,
-                             std::span<DocumentMaskBuilder> removed,
-                             Directory& dir,
-                             const ProgressReportCallback& progress) {
-  const auto& committed_meta = committed_reader.Meta();
-  const size_t committed_reader_size = committed_reader.size();
-  size_t current_segment_index = 0;
-
-  PublishResult result;
-  result.segments.reserve(committed_reader_size);
-
-  for (const auto& existing_segment : committed_reader.GetReaders()) {
-    const auto segment_index = current_segment_index++;
-    const auto& index_segment =
-      committed_meta.index_meta.segments[segment_index];
-    progress("Stage 1: Apply removals to the existing segments", segment_index,
-             committed_reader_size);
-
-    // skip already masked segments
-    if (segment_mask.contains(existing_segment->Meta().name)) {
-      continue;
-    }
-
-    if (all_tick != writer_limits::kMinTick) {
-      result.modified = true;
-      continue;
-    }
-
-    auto& docs_mask = removed[segment_index];
-    if (!MergePublished(docs_mask, existing_segment.docs_mask())) {
-      result.segments.emplace_back(index_segment, existing_segment, Sync::None);
-      continue;
-    }
-    if (docs_mask.Count() == existing_segment.docs_count()) {
-      result.modified = true;
-      continue;
-    }
-
-    // Append removals
-    IndexSegment segment{.meta = index_segment.meta};
-    segment.meta.docs_mask =
-      std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
-
-    // Write with new mask
-    index_utils::FlushIndexSegment(dir, segment, true);
-    auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
-
-    result.segments.emplace_back(std::move(segment),
-                                 SegmentReader{std::move(reader)}, Sync::Meta);
-  }
-  return result;
-}
-
-PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
-                          std::span<DocumentMaskBuilder> removed,
-                          Directory& dir,
-                          const ProgressReportCallback& progress) {
-  size_t current_incoming_index = 0;
-
-  PublishResult result;
-  for (auto& incoming : incoming_segments) {
-    const auto incoming_index = current_incoming_index++;
-    progress("Stage 2: Handling incoming segments", incoming_index,
-             incoming_segments.size());
-
-    SDB_ASSERT(incoming.reader);
-    if (all_tick != writer_limits::kMinTick && incoming.tick <= all_tick) {
-      result.modified = true;
-      continue;
-    }
-    auto& meta = incoming.segment.meta;
-    auto& reader = incoming.reader;
-    auto docs_mask = std::move(removed[incoming_index]);
-    const auto* published = reader->docs_mask();
-    size_t masked = published != nullptr ? published->Count() : 0;
-    const bool docs_mask_modified = MergePublished(docs_mask, published);
-    if (docs_mask_modified) {
-      masked = docs_mask.Count();
-    }
-
-    // Skip empty segments
-    if (meta.docs_count <= masked) {
-      SDB_ASSERT(meta.docs_count == masked);
-      result.modified = true;  // FIXME(gnusi): looks strange
-      continue;
-    }
-
-    if (docs_mask_modified) {
-      meta.docs_mask =
-        std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
-    }
-
-    const bool unwritten = incoming.segment.filename.empty();
-    if (docs_mask_modified || unwritten) {
-      index_utils::FlushIndexSegment(dir, incoming.segment, !unwritten);
-    }
-
-    if (docs_mask_modified) {
-      reader = reader->UpdateMeta(dir, meta);
-    }
-
-    result.segments.emplace_back(
-      std::move(incoming.segment), SegmentReader{std::move(reader)},
-      SyncOf(incoming.compaction_ctx.candidates.empty(), docs_mask_modified));
-    result.modified = true;
-  }
-  return result;
-}
-
-std::vector<FlushedSegmentContext> OpenFlushed(
-  std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  const Directory& dir, const IndexReaderOptions& reader_options,
-  const ProgressReportCallback& progress) {
-  // count total number of segments once
-  size_t total_flushed_segments = 0;
-  size_t current_flushed_segments = 0;
-  for (const auto& segment : segments) {
-    SDB_ASSERT(segment != nullptr);
-    // TODO(mbkkt) precise count?
-    total_flushed_segments += segment->flushed.size();
-  }
-
-  std::vector<FlushedSegmentContext> segment_ctxs;
-  // TODO(mbkkt) reserve
-  // process all segments that have been seen by the current flush_context
-  for (const auto& segment : segments) {
-    SDB_ASSERT(segment);
-
-    // was updated after flush
-    SDB_ASSERT(segment->committed_buffered_docs == 0);
-    // process individually each flushed SegmentMeta from the SegmentContext
-    for (auto& flushed : segment->flushed) {
-      SDB_ASSERT(flushed.committed_docs == flushed.docs.size());
-      SDB_ASSERT(!flushed.docs.empty());
-      progress("Stage 3: Creating new/reopen old segments",
-               current_flushed_segments++, total_flushed_segments);
-
-      SDB_ASSERT(flushed.meta.live_docs_count != 0);
-      SDB_ASSERT(flushed.meta.live_docs_count <= flushed.meta.docs_count);
-      SDB_ASSERT(!flushed.meta.docs_mask);
-
-      auto reader = SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
-      SDB_ASSERT(reader);
-
-      segment_ctxs.emplace_back(std::move(reader), flushed);
-    }
-  }
-  return segment_ctxs;
-}
-
-void ResolveKeys(std::span<const int64_t> keys, field_id key_column,
-                 std::span<FlushedSegmentContext> flushed,
-                 const auto& removed_at) {
-  for (auto& segment : flushed) {
-    RemoveKeys(keys, key_column, *segment.reader,
-               [&](const int64_t& key, doc_id_t doc) {
-                 if (segment.flushed.docs.TickAt(doc - doc_limits::min()) <=
-                     removed_at(key)) {
-                   segment.flushed.docs_mask.Add(doc);
-                 }
-               });
-  }
-}
-
-uint64_t ResolveRemovals(
-  std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  const DirectoryReaderImpl& committed_reader,
-  const CompactingSegments& segment_mask, const auto& incoming,
-  const auto& merges, std::span<FlushedSegmentContext> flushed,
-  std::span<DocumentMaskBuilder> removed, field_id key_column) {
-  if (merges.empty() && absl::c_all_of(segments, [](const auto& segment) {
-        return segment->queries.empty();
-      })) {
-    return writer_limits::kMinTick;
-  }
-  const auto& readers = committed_reader.GetReaders();
-  RemovalTargets targets;
-  targets.reserve(removed.size());
-  for (size_t i = 0; i != readers.size(); ++i) {
-    const auto& reader = *readers[i].GetImpl();
-    const bool replaced = segment_mask.contains(reader.Meta().name);
-    targets.emplace(reader.Id(),
-                    RemovalTarget{&reader, replaced ? nullptr : &removed[i]});
-  }
-  for (size_t i = 0; i != incoming.size(); ++i) {
-    const auto& reader = *incoming[i].reader;
-    targets.emplace(reader.Id(),
-                    RemovalTarget{&reader, &removed[readers.size() + i]});
-  }
-  for (const auto& [source, unlinked] : merges) {
-    const auto it = targets.find(source);
-    const auto* current = it != targets.end() ? it->second.reader : nullptr;
-    for (const auto& map :
-         current != nullptr ? current->DocMaps()->maps : unlinked) {
-      const auto target = targets.find(map.target);
-      SDB_ASSERT(target != targets.end() && target->second.removed != nullptr);
-      CarryRemovals(map, current, *target->second.removed);
-    }
-  }
-  uint64_t all_tick = writer_limits::kMinTick;
-  std::vector<std::pair<const KeyRemoval*, uint64_t>> key_removals;
-  for (const auto& segment : segments) {
-    SDB_ASSERT(segment != nullptr);
-    for (const auto& entry : segment->queries) {
-      std::visit(
-        absl::Overload{[&](const std::shared_ptr<const DocRemoval>& positions) {
-                         ResolveRemoval(*positions, targets);
-                       },
-                       [&](const KeyRemoval& keys) {
-                         key_removals.emplace_back(&keys, entry.tick);
-                       },
-                       [&](IndexWriter::Queued::AllDocs) {
-                         all_tick = std::max(all_tick, entry.tick);
-                       },
-                       [](const IndexWriter::Queued::Adopted&) {}},
-        entry.op);
-    }
-  }
-  if (key_removals.empty()) {
-    return all_tick;
-  }
-  std::vector<int64_t> unsettled;
-  if (key_removals.size() == 1) {
-    const auto [removal, tick] = key_removals.front();
-    unsettled = removal->keys;
-    ResolveKeys(unsettled, key_column, flushed,
-                [tick](const int64_t&) { return tick; });
-  } else {
-    std::vector<std::pair<int64_t, uint64_t>> removed;
-    for (const auto& [removal, tick] : key_removals) {
-      for (const auto key : removal->keys) {
-        removed.emplace_back(key, tick);
-      }
-    }
-    absl::c_sort(removed);
-    std::vector<uint64_t> ticks;
-    unsettled.reserve(removed.size());
-    ticks.reserve(removed.size());
-    for (size_t i = 0; i != removed.size(); ++i) {
-      if (i + 1 == removed.size() || removed[i + 1].first != removed[i].first) {
-        unsettled.push_back(removed[i].first);
-        ticks.push_back(removed[i].second);
-      }
-    }
-    ResolveKeys(unsettled, key_column, flushed, [&](const int64_t& key) {
-      return ticks[&key - unsettled.data()];
-    });
-  }
-  std::vector<int64_t> settled;
-  for (const auto& target : targets | std::views::values) {
-    if (!target.removed) {
-      continue;
-    }
-    const auto masked = target.reader->MaskedDocs();
-    settled.clear();
-    RemoveKeys(unsettled, key_column, *target.reader,
-               [&](int64_t key, doc_id_t doc) {
-                 if (!masked.Contains(doc) && target.removed->Add(doc)) {
-                   settled.emplace_back(key);
-                 }
-               });
-    SortUnique(settled);
-    auto next = settled.begin();
-    std::erase_if(unsettled, [&](int64_t key) {
-      while (next != settled.end() && *next < key) {
-        ++next;
-      }
-      return next != settled.end() && *next == key;
-    });
-    if (unsettled.empty()) {
-      break;
-    }
-  }
-  return all_tick;
-}
-
-PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
-                             Directory& dir,
-                             const ProgressReportCallback& progress) {
-  PublishResult result;
-  // write docs_mask if !empty(), if all docs are masked then remove segment
-  // altogether
-  size_t current_segment_ctxs = 0;
-  for (auto& segment_ctx : segment_ctxs) {
-    progress("Stage 4: Applying removals for new segments",
-             current_segment_ctxs++, segment_ctxs.size());
-
-    DocumentMaskBuilder document_mask;
-    IndexSegment new_segment;
-    if (segment_ctx.MakeDocumentMask(document_mask, new_segment)) {
-      continue;
-    }
-    const bool need_flush = !document_mask.Empty();
-    if (need_flush) {
-      ++new_segment.meta.version;
-      new_segment.meta.docs_mask =
-        std::make_shared<const DocumentMask>(std::move(document_mask).Finish());
-    }
-    if (need_flush || !segment_ctx.flushed.meta_on_disk) {
-      index_utils::FlushIndexSegment(dir, new_segment, false);
-    }
-    if (need_flush) {
-      segment_ctx.reader =
-        segment_ctx.reader->UpdateMeta(dir, new_segment.meta);
-    }
-    result.segments.emplace_back(
-      std::move(new_segment), SegmentReader{std::move(segment_ctx.reader)},
-      SyncOf(segment_ctx.flushed.meta_on_disk, need_flush));
-    result.modified = true;
-  }
-  return result;
 }
 
 }  // namespace
 
-using namespace std::chrono_literals;
-
-IndexWriter::ActiveSegmentContext::ActiveSegmentContext(
-  std::shared_ptr<SegmentContext> segment, std::atomic_size_t& segments_active,
-  FlushContext* flush, size_t pending_segment_offset) noexcept
-  : _segment{std::move(segment)},
-    _segments_active{&segments_active},
-    _flush{flush},
-    _pending_segment_offset{pending_segment_offset} {
-  SDB_ASSERT(_segment != nullptr);
-}
-
-IndexWriter::ActiveSegmentContext::~ActiveSegmentContext() {
-  if (_segments_active == nullptr) {
-    SDB_ASSERT(_segment == nullptr);
-    SDB_ASSERT(_flush == nullptr);
-    return;
-  }
-  _segment.reset();
-  _segments_active->fetch_sub(1, std::memory_order_relaxed);
-  if (_flush != nullptr) {
-    _flush->pending.Done();
-  }
-}
-
-IndexWriter::ActiveSegmentContext::ActiveSegmentContext(
-  ActiveSegmentContext&& other) noexcept
-  : _segment{std::move(other._segment)},
-    _segments_active{std::exchange(other._segments_active, nullptr)},
-    _flush{std::exchange(other._flush, nullptr)},
-    _pending_segment_offset{std::exchange(other._pending_segment_offset,
-                                          writer_limits::kInvalidOffset)} {}
-
-IndexWriter::ActiveSegmentContext& IndexWriter::ActiveSegmentContext::operator=(
-  ActiveSegmentContext&& other) noexcept {
-  if (this != &other) {
-    std::swap(_segment, other._segment);
-    std::swap(_segments_active, other._segments_active);
-    std::swap(_flush, other._flush);
-    std::swap(_pending_segment_offset, other._pending_segment_offset);
-  }
-  return *this;
-}
-
-IndexWriter::Document::Document(SegmentContext& segment, uint64_t tick,
-                                doc_id_t batch_size)
+IndexWriter::Document::Document(SegmentContext& segment, doc_id_t batch_size)
   : _writer{*segment.writer} {
   SDB_ASSERT(segment.writer != nullptr);
-  // ensure Reset() will be noexcept
-  _doc_id = _writer.begin(tick, batch_size);
+  _doc_id = _writer.begin(batch_size);
   SDB_ASSERT(irs::doc_limits::valid(_doc_id));
-  segment.buffered_docs.store(_writer.buffered_docs(),
-                              std::memory_order_relaxed);
 }
 
 IndexWriter::Document::~Document() noexcept { Finish(); }
@@ -674,662 +93,172 @@ void IndexWriter::Document::Finish() noexcept {
 }
 
 std::span<const IndexWriter::FlushedSegment>
-IndexWriter::Transaction::FlushAndFsync() {
-  auto* segment = _active.Segment();
-  if (segment == nullptr) {
+IndexWriter::Transaction::FlushSegments(bool sync) {
+  if (!_segment) {
     return {};
   }
-  SDB_ASSERT(_exclusive_segment,
-             "FlushAndFsync would report segments holding another "
-             "transaction's documents; acquire the batch with "
-             "exclusive_segment");
   Flush();
-
-  const auto flushed = std::span{segment->flushed};
-  if (flushed.empty()) {
-    return flushed;  // every document was masked away
+  const auto flushed = std::span{_segment->flushed};
+  if (!sync) {
+    return flushed;
   }
-
-  // The whole flushed set, not just the segment serialized above: a mid-insert
-  // auto-flush is this transaction's data too.
-  std::vector<std::string_view> files;
-  files.reserve(flushed.size() * (flushed.front().meta.files.size() + 1));
-  for (auto& entry : flushed) {
-    SDB_ASSERT(!entry.meta_on_disk,
-               "FlushAndFsync called twice on one transaction");
-    SDB_ASSERT(!entry.meta.files.empty());
-    index_utils::FlushIndexSegment(segment->dir, entry, false);
-    files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
-    files.emplace_back(entry.filename);
-  }
-  if (!segment->dir.sync(files)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("Failed to sync ", files.size(), " file(s) of ",
-                            flushed.size(), " flushed segment(s)"));
-  }
-  for (auto& entry : flushed) {
-    entry.meta_on_disk = true;
+  for (const auto& entry : flushed) {
+    SyncSegment(_segment->dir, entry.meta);
   }
   return flushed;
 }
 
-void IndexWriter::Transaction::Remove(KeyRemoval removal) {
-  SDB_ASSERT(_writer->_key_column != field_limits::invalid());
-  SortUnique(removal.keys);
-  Queue(std::move(removal));
-}
-
-void IndexWriter::Transaction::Adopt(std::string_view meta_file) {
-  auto& dir = _writer->_dir;
-  IndexSegment segment;
-  segment.filename = meta_file;
-  segment_meta::Read(dir, segment.meta, meta_file);
-  if (segment.meta.live_docs_count == 0) {
-    return;
-  }
-  auto meta_ref = directory_utils::Reference(dir, segment.filename);
-  if (!meta_ref) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("cannot adopt segment meta '", segment.filename,
-                            "': it does not exist"));
-  }
-  auto reader = SegmentReaderImpl::Open(dir, segment.meta,
-                                        _writer->GetSnapshotImpl()->Options());
-  [[maybe_unused]] uint64_t id = 0;
-  SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
-               id <= _writer->_seg_counter.load(std::memory_order_relaxed),
-             "Adopted segment id is above the segment counter; the writer was "
-             "not opened with cleanup_on_open = false");
-  FileRefs refs;
-  refs.emplace_back(std::move(meta_ref));
-  Queue(Queued::Adopted{.segment = std::move(segment),
-                        .refs = std::move(refs),
-                        .reader = std::move(reader)});
-}
-
-bool IndexWriter::Transaction::CommitImpl(
-  const SourcePosition& position) noexcept try {
-  auto* segment = _active.Segment();
-  SDB_ASSERT(segment != nullptr);
-  SDB_ASSERT(_staged);
-  SDB_IF_FAILURE("IndexWriter::Transaction::Commit") { throw std::bad_alloc{}; }
-  segment->Commit(_queries, _first_tick + _queries);
-  _writer->GetFlushContext()->Emplace(std::move(_active), position);
-  SDB_ASSERT(_active.Segment() == nullptr);
-  _queries = 0;
-  _staged = false;
-  return true;
-} catch (...) {
-  SDB_ASSERT(_active.Segment() != nullptr);
-  // TODO(mbkkt) Use intrusive list to avoid possibility bad_alloc here
-  return false;
+std::shared_ptr<const SegmentReaderImpl> IndexWriter::Transaction::SealPiece(
+  uint64_t id) {
+  SDB_ASSERT(_segment && _hot);
+  return _segment->writer->SealPiece(id);
 }
 
 void IndexWriter::Transaction::Abort() noexcept {
-  auto* segment = _active.Segment();
-  if (segment == nullptr) {
-    return;  // nothing to do
-  }
-  _queries = 0;
-  _staged = false;
-  if (_active.Flush() == nullptr) {
-    segment->Reset();  // reset before returning to pool
-    _active = {};      // back to pool no needed Rollback
+  if (!_segment) {
     return;
   }
-  segment->Rollback();
-  // cannot throw because active_.Flush() not null
-  _writer->GetFlushContext()->Emplace(std::move(_active));
-  SDB_ASSERT(_active.Segment() == nullptr);
+  _segment->Reset();
+  _segment.reset();
 }
 
-void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
-  SDB_ASSERT(Valid());
-  while (_active.Segment() == nullptr) {  // lazy init
-    _active = _writer->GetSegmentContext(_exclusive_segment);
+void IndexWriter::Transaction::Flush() {
+  if (!_segment) {
+    return;
   }
+  try {
+    _segment->Flush();
+  } catch (...) {
+    _segment->Reset();
+    throw;
+  }
+}
 
-  auto& segment = *_active.Segment();
-  auto& writer = *segment.writer;
-
+void IndexWriter::Transaction::UpdateSegment(doc_id_t batch_size) {
+  SDB_ASSERT(Valid());
+  if (!_segment) {
+    _segment = _writer->GetSegmentContext();
+  }
+  auto& writer = *_segment->writer;
   if (writer.initialized()) [[likely]] {
-    // The delete path encodes nothing, so resume unconditionally; the gate
-    // below does not apply.
-    if (disable_flush) {
+    if (_hot) {
       return;
     }
-    // A pooled segment may be resumed by a later transaction, but only under
-    // equal options -- a segment must never mix encodings. Mismatch (or a full
-    // segment) forces a flush so the new options start fresh.
     const bool options_match =
       CompatibleFieldOptions(writer.ActiveFieldOptions(), _field_options.get());
-    if (options_match && !_writer->FlushRequired(writer)) {
-      // Re-point at this transaction's snapshot: the opener may have released
-      // its own, so its shared_ptr in the writer could be the last (stale)
-      // owner.
+    if (options_match && !_writer->FlushRequired(writer, batch_size)) {
       writer.SetFieldOptions(_field_options);
       return;
     }
-    // Force flush of a full segment (or one whose options no longer match).
     SDB_TRACE(IRESEARCH, "Flushing segment '", writer.name(),
               "', docs=", writer.buffered_docs(),
               ", memory=", writer.memory_active(),
               ", docs limit=", _writer->_segment_limits.Docs(),
               ", memory limit=", _writer->_segment_limits.Memory(),
               ", options_match=", options_match);
-
-    try {
-      segment.Flush();
-    } catch (...) {
-      // TODO(mbkkt) What the goal are we want to achieve
-      //  with keeping already flushed data?
-      segment.Reset(true);
-      throw;
-    }
+    Flush();
   }
-  // Hand the per-op options to the (pooled) writer before it materializes a
-  // segment; a forced flush above reset it to the fallback, so set after it.
   writer.SetFieldOptions(_field_options);
-  segment.Prepare();
+  writer.SetDeferredColumns(_hot);
+  _segment->Prepare(_hot ? _hot_segment : _writer->NextSegmentId());
 }
 
-bool IndexWriter::FlushRequired(const SegmentWriter& segment) const noexcept {
+void IndexWriter::Transaction::SetHot(uint64_t segment_id) noexcept {
+  SDB_ASSERT(!_segment);
+  _hot = true;
+  _hot_segment = segment_id;
+  _writer->ReserveSegmentId(segment_id);
+}
+
+bool IndexWriter::FlushRequired(const SegmentWriter& segment,
+                                doc_id_t batch_size) const noexcept {
   return _segment_limits.Memory() <= segment.memory_active() ||
-         _segment_limits.Docs() <= segment.buffered_docs();
+         _segment_limits.Docs() < segment.buffered_docs() + batch_size;
 }
 
-bool IndexWriter::FlushContext::PrepareEmplace(
-  ActiveSegmentContext& active) noexcept {
-  SDB_ASSERT(active._segment != nullptr);
-
-  if (!active._segment->committed) {
-    // Reset all segment data because there wasn't successful transactions
-    active._segment->Reset();
-    active = {};  // release
-    return false;
-  }
-
-  auto* flush = active._flush;
-  if (flush != nullptr && flush != this) {
-    active = {};  // release
-    return false;
-  }
-  return true;
-}
-
-void IndexWriter::FlushContext::EmplaceLocked(ActiveSegmentContext&& active) {
-  const bool is_null = active._flush == nullptr;
-  auto* node = [&] {
-    if (is_null) {
-      return &pending_segments.emplace_back(std::move(active._segment),
-                                            pending_segments.size());
-    }
-    SDB_ASSERT(active._pending_segment_offset < pending_segments.size());
-    auto& segment_context = pending_segments[active._pending_segment_offset];
-    SDB_ASSERT(segment_context.segment == active._segment);
-    return &segment_context;
-  }();
-  pending_freelist.push(*node);
-  active = {};
-}
-
-void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active,
-                                        const SourcePosition& position) {
-  if (auto* flush = active._flush; flush != nullptr && flush != this) {
-    std::lock_guard lock{flush->pending_mutex};
-    flush->position = std::max(flush->position, position);
-  }
-  if (!PrepareEmplace(active)) {
-    return;
-  }
-  std::lock_guard lock{pending_mutex};
-  this->position = std::max(this->position, position);
-  EmplaceLocked(std::move(active));
-}
-
-void IndexWriter::FlushContext::AddToPending(ActiveSegmentContext& active) {
-  std::lock_guard lock{pending_mutex};
-  const auto size_before = pending_segments.size();
-  SDB_ASSERT(active._segment != nullptr);
-  pending_segments.emplace_back(active._segment, size_before);
-  active._flush = this;
-  active._pending_segment_offset = size_before;
-  pending.Add();
-}
-
-void IndexWriter::FlushContext::Reset() noexcept {
-  // reset before returning to pool
-  for (auto& segment : segments) {
-    // use_count here isn't used for synchronization
-    if (segment.use_count() == 1) {
-      segment->Reset();
-    }
-  }
-
-  incoming.clear();
-  doc_maps.clear();
-  segments.clear();
-  position = {};
-  segment_mask.clear();
-  masked_names.clear();
-
-  for (auto& entry : pending_segments) {
-    if (auto& segment = entry.segment; segment != nullptr) {
-      segment->Reset();
-    }
-  }
-  ClearPending();
-  dir->clear_refs();
-}
-
-void IndexWriter::Cleanup(FlushContext& curr) noexcept {
-  for (auto& incoming : curr.incoming) {
-    auto& candidates = incoming.compaction_ctx.candidates;
-    for (const auto* candidate : candidates) {
-      _compacting.segments.erase(candidate->Meta().name);
-    }
-  }
-  if (!curr.doc_maps.empty()) {
-    auto ctx = GetFlushContext();
-    std::lock_guard lock{ctx->pending_mutex};
-    SwapDocMaps(curr);
-  }
-}
-
-void IndexWriter::SwapDocMaps(FlushContext& flushed) noexcept {
-  if (flushed.doc_maps.empty()) {
-    return;
-  }
-  for (const auto& segment : _committed_reader->GetReaders()) {
-    const auto& reader = *segment.GetImpl();
-    if (const auto it = flushed.doc_maps.find(reader.Id());
-        it != flushed.doc_maps.end()) {
-      reader.DocMaps()->maps.swap(it->second);
-    }
-  }
-}
-
-void IndexWriter::FlushContext::Absorb(std::vector<DocMap>&& maps) {
-  containers::FlatHashMap<uint64_t, size_t> counts;
-  for (const auto& map : maps) {
-    ++counts[map.source];
-  }
-  doc_maps.reserve(doc_maps.size() + counts.size());
-  for (const auto [source, count] : counts) {
-    auto& slot = doc_maps[source];
-    slot.reserve(slot.size() + count);
-  }
-  for (auto& map : maps) {
-    doc_maps.find(map.source)->second.push_back(std::move(map));
-  }
-}
-
-void IndexWriter::FlushContext::FlushPending() {
-  for (auto& entry : pending_segments) {
-    auto& segment = entry.segment;
-    SDB_ASSERT(segment != nullptr);
-    segment->Flush();
-    for (auto& queued : segment->queries) {
-      if (auto* adopted = std::get_if<Queued::Adopted>(&queued.op)) {
-        incoming.emplace_back(std::move(adopted->segment), queued.tick,
-                              std::move(adopted->refs),
-                              std::move(adopted->reader));
-      }
-    }
-    segments.push_back(std::move(segment));
-  }
-  ClearPending();
-}
-
-IndexWriter::SegmentContext::SegmentContext(
-  Directory& dir, segment_meta_generator_t&& meta_generator,
-  const SegmentWriterOptions& options)
+IndexWriter::SegmentContext::SegmentContext(Directory& dir,
+                                            const SegmentWriterOptions& options)
   : dir{dir},
-    queries{{options.resource_manager}},
     flushed{{options.resource_manager}},
-    meta_generator{std::move(meta_generator)},
-    writer{SegmentWriter::make(this->dir, options)} {
-  SDB_ASSERT(this->meta_generator);
+    writer{SegmentWriter::make(this->dir, options)} {}
+
+IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
+  Directory& dir, const SegmentWriterOptions& options) {
+  return std::make_unique<SegmentContext>(dir, options);
 }
 
 void IndexWriter::SegmentContext::Flush() {
-  if (!writer->initialized() || writer->buffered_docs() == 0) {
-    flushed_queries = queries.size();
-    SDB_ASSERT(committed_buffered_docs == 0);
-    // Leave the writer un-initialized like the flushing path below, so a caller
-    // can Prepare a fresh segment without an extra reset.
-    if (writer->initialized()) {
-      writer->reset();
-    }
-    return;  // Skip flushing an empty writer
+  if (!writer->initialized()) {
+    return;
+  }
+  if (writer->buffered_docs() == 0) {
+    writer->reset();
+    return;
   }
   SDB_ASSERT(writer->buffered_docs() <= doc_limits::eof());
 
-  Finally reset_writer = [&]() noexcept {
-    writer->reset();
-    committed_buffered_docs = 0;
-  };
+  Finally reset_writer = [&]() noexcept { writer->reset(); };
 
   DocumentMaskBuilder docs_mask;
   SDB_IF_FAILURE("IndexWriter::Flush") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   writer->flush(writer_meta, docs_mask);
-  if (writer_meta.meta.live_docs_count == 0) {
+  if (writer_meta.live_docs_count == 0) {
     return;
   }
-  SDB_ASSERT(!writer_meta.meta.files.empty());
-  auto& docs_context = writer->docs_context();
-  SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
-  SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
-
-  flushed.emplace_back(std::move(writer_meta), std::move(docs_mask),
-                       std::move(docs_context), committed_buffered_docs);
-  flushed_queries = queries.size();
+  SDB_ASSERT(writer_meta.kinds != 0);
+  SDB_ASSERT(writer_meta.live_docs_count <= writer_meta.docs_count);
+  flushed.emplace_back(std::move(writer_meta), std::move(docs_mask));
 }
 
-IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
-  Directory& dir, segment_meta_generator_t&& meta_generator,
-  const SegmentWriterOptions& segment_writer_options) {
-  return std::make_unique<SegmentContext>(dir, std::move(meta_generator),
-                                          segment_writer_options);
-}
-
-void IndexWriter::SegmentContext::Prepare() {
+void IndexWriter::SegmentContext::Prepare(uint64_t segment_id) {
   SDB_ASSERT(!writer->initialized());
-  writer_meta.filename.clear();
-  writer_meta.meta = meta_generator();
-  writer->reset(writer_meta.meta);
+  writer_meta = {};
+  writer_meta.name = FileName(segment_id);
+  writer->reset(writer_meta);
 }
 
-void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
-  buffered_docs.store(0, std::memory_order_relaxed);
-
-  if (store_flushed) [[unlikely]] {
-    queries.resize(flushed_queries);
-    committed_queries = std::min(committed_queries, flushed_queries);
-  } else {
-    queries.clear();
-    flushed_queries = 0;
-    committed_queries = 0;
-
-    flushed.clear();
-
-    committed = false;
-  }
-  committed_buffered_docs = 0;
-
+void IndexWriter::SegmentContext::Reset() noexcept {
+  flushed.clear();
   if (writer->initialized()) {
-    writer->reset();  // try to reduce number of files flushed below
+    writer->reset();
   }
-
-  // TODO(mbkkt) Is it ok to release refs in case of store_flushed?
-  // release refs only after clearing writer state to ensure
-  // 'writer_' does not hold any files
   dir.clear_refs();
 }
 
-void IndexWriter::SegmentContext::Rollback() noexcept {
-  // rollback modification queries
-  SDB_ASSERT(committed_queries <= queries.size());
-  queries.resize(committed_queries);
-
-  // truncate uncommitted flushed tail
-  const auto end = flushed.end();
-  // TODO(mbkkt) reverse find order
-  auto it = std::find_if(flushed.begin(), end, [](const auto& flushed) {
-    return flushed.committed_docs < flushed.docs.size();
-  });
-  if (it != end) {
-    // because committed docs point to flushed
-    SDB_ASSERT(committed_buffered_docs == 0);
-    if (it->committed_docs != 0) {
-      it->docs.Truncate(it->committed_docs);
-      flushed.erase(it + 1, end);
-    } else {
-      flushed.erase(it, end);
-    }
-  }
-
-  // rollback inserts located inside the writer
-  if (committed_buffered_docs == 0) {
-    writer->reset();
-    return;
-  }
-  const auto buffered_docs = writer->buffered_docs();
-  for (auto doc_id = buffered_docs - 1 + doc_limits::min(),
-            doc_id_rend = committed_buffered_docs - 1 + doc_limits::min();
-       doc_id > doc_id_rend; --doc_id) {
-    SDB_ASSERT(doc_limits::invalid() < doc_id);
-    SDB_ASSERT(doc_id <= doc_limits::eof());
-    writer->remove(static_cast<doc_id_t>(doc_id));
-  }
-
-  // If it will be first or last part of flushed segment in future,
-  // we need valid ticks for this documents
-  // TODO(mbkkt) Maybe we can just move docs_begin/end when FlushedSegment
-  //  will be ready? Also what about assign last_committed_tick
-  //  only for first and last value in range?
-  auto& docs = writer->docs_context();
-  docs.RewriteTail(committed_buffered_docs,
-                   docs.TickAt(committed_buffered_docs - 1));
-
-  committed_buffered_docs = buffered_docs;
-}
-
-void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
-                                         uint64_t commit_last_tick) {
-  SDB_ASSERT(commit_last_tick < writer_limits::kMaxTick);
-  SDB_ASSERT(commit_queries <= commit_last_tick);
-  const auto commit_first_tick = commit_last_tick - commit_queries;
-  SDB_ASSERT(writer_limits::kMinTick < commit_first_tick);
-
-  auto update_tick = [&](auto& entry) noexcept {
-    entry.tick += commit_first_tick;
-  };
-
-  std::for_each(queries.begin() + committed_queries, queries.end(),
-                update_tick);
-  committed_queries = queries.size();
-
-  for (auto& segment : flushed) {
-    segment.docs.Commit(segment.committed_docs, commit_first_tick);
-    segment.committed_docs = segment.docs.size();
-  }
-
-  auto& docs = writer->docs_context();
-  docs.Commit(committed_buffered_docs, commit_first_tick);
-  committed_buffered_docs = docs.size();
-
-  committed = true;
-}
-
-IndexWriter::IndexWriter(
-  ConstructToken, IndexLock::ptr&& lock, IndexFileRefs::ref_t&& lock_file_ref,
-  Directory& dir, size_t segment_pool_size,
-  const SegmentOptions& segment_limits, MetaPayloadWriter&& meta_payload_writer,
-  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
-  : _dir{dir},
-    _committed_reader{std::move(committed_reader)},
+IndexWriter::IndexWriter(ConstructToken, Directory& dir,
+                         size_t segment_pool_size,
+                         const SegmentOptions& segment_limits,
+                         const IndexReaderOptions& reader_options)
+  : _topk_scorer{reader_options.scorer},
+    _dir{dir},
+    _reader_options{reader_options},
     _segment_limits{segment_limits},
-    _segment_writer_pool{segment_pool_size},
-    _seg_counter{_committed_reader->Meta().index_meta.seg_counter},
-    _last_gen{_committed_reader->Meta().index_meta.gen},
-    _writer{std::move(meta_payload_writer)},
-    _write_lock{std::move(lock)},
-    _write_lock_file_ref{std::move(lock_file_ref)} {
-  _topk_scorer = _committed_reader->Options().scorer;
-  if (_topk_scorer) {
-    _score_bound_features |= _topk_scorer->GetIndexFeatures();
-  }
+    _segment_writer_pool{segment_pool_size} {}
 
-  _flush_context.store(_flush_contexts.data());
-
-  // setup round-robin chain
-  auto* ctx = _flush_contexts.data();
-  for (auto* last = ctx + _flush_contexts.size() - 1; ctx != last; ++ctx) {
-    ctx->dir = std::make_unique<RefTrackingDirectory>(dir);
-    ctx->next = ctx + 1;
-  }
-  ctx->dir = std::make_unique<RefTrackingDirectory>(dir);
-  ctx->next = _flush_contexts.data();
-}
-
-void IndexWriter::InitMeta(IndexMeta& meta) const {
-  meta.seg_counter = CurrentSegmentId();  // Ensure counter() >= max(seg#)
-  meta.gen = _last_gen;                   // Clone index metadata generation
-}
-
-void IndexWriter::Clear(const SourcePosition& position) {
-  std::lock_guard commit_lock{_commit_lock};
-
-  const bool had_pending = _pending_state.Valid();
-  Abort();
-  auto ctx = SwitchFlushContext();
-  // Ensure there are no active struct update operations
-  ctx->pending.Done();
-  {
-    duckdb::TaskScheduler::BlockingScope blocking;
-    ctx->pending.Wait();
-  }
-  ctx->pending.Reset(1);
-  // TODO(mbkkt) Move some pending to the next flush ctx?
-  //  It's not super trivial for spliting segments
-  //  It's not important now, because truncate running in exclusive mode
-
-  SDB_ASSERT(_committed_reader);
-  if (const auto& committed_meta = _committed_reader->Meta();
-      !had_pending && committed_meta.index_meta.segments.empty() &&
-      !IsInitialCommit(committed_meta)) {
-    return;  // Already empty
-  }
-
-  PendingContext to_commit{PendingBase{.position = position}, {}, {}, {}};
-  InitMeta(to_commit.meta);
-  to_commit.ctx = std::move(ctx);
-
-  ApplyFlush(std::move(to_commit));
-  Finish();
-
-  // Clear compacting segments
-  std::lock_guard lock{_compacting.lock};
-  _compacting.segments.clear();
-}
-
-IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
-                                   IndexWriterOptions options) {
+IndexWriter::ptr IndexWriter::Make(Directory& dir, IndexWriterOptions options) {
   SDB_ENSURE(options.db != nullptr,
              "IndexWriterOptions::db must be set; iresearch indexes require a "
              "duckdb::DatabaseInstance");
 
-  IndexLock::ptr lock;
-  IndexFileRefs::ref_t lock_ref;
-
-  if (options.lock_repository) {
-    // lock the directory
-    lock = dir.make_lock(kWriteLockName);
-    // will be created by try_lock
-    lock_ref = dir.attributes().refs().add(kWriteLockName);
-
-    if (!lock || !lock->try_lock()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_LOCK_NOT_AVAILABLE),
-                      ERR_MSG("could not obtain the index write lock '",
-                              kWriteLockName, "'"));
-    }
+  std::unique_ptr<HnswBases> hnsw_bases;
+  if (!options.reader_options.hnsw_bases) {
+    hnsw_bases = std::make_unique<HnswBases>();
+    options.reader_options.hnsw_bases = hnsw_bases.get();
   }
-
-  // read from directory or create index metadata
-  DirectoryMeta meta;
-
-  {
-    const bool index_exists = index_meta::LastFile(dir, meta.filename);
-
-    if (kOmCreate == mode ||
-        ((kOmCreate | kOmAppend) == mode && !index_exists)) {
-      if (index_exists) {
-        meta.index_meta.gen = index_meta::ParseGeneration(meta.filename);
-        meta.index_meta.seg_counter = MaxSegmentId(dir);
-        meta.filename.clear();  // Empty index meta -> new index
-      }
-    } else if (!index_exists) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("the directory holds no index to open"));
-    } else {
-      index_meta::Read(dir, meta.index_meta, meta.filename,
-                       std::move(options.meta_payload_reader));
-    }
-  }
-
-  auto hnsw_bases = std::make_unique<HnswBases>();
-  options.reader_options.hnsw_bases = hnsw_bases.get();
-  auto reader = [](Directory& dir, DirectoryMeta&& meta,
-                   const IndexReaderOptions& opts) {
-    const auto& segments = meta.index_meta.segments;
-
-    std::vector<SegmentReader> readers;
-    readers.reserve(segments.size());
-
-    for (auto& segment : segments) {
-      // Segment reader holds refs to all segment files
-      readers.emplace_back(SegmentReaderImpl::Open(dir, segment.meta, opts));
-      SDB_ASSERT(readers.back());
-    }
-
-    return std::make_shared<const DirectoryReaderImpl>(
-      dir, opts, std::move(meta), std::move(readers));
-  }(dir, std::move(meta), options.reader_options);
-
   auto writer = std::make_shared<IndexWriter>(
-    ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
-    options.segment_pool_size, SegmentOptions{options},
-    std::move(options.meta_payload_writer), std::move(reader));
+    ConstructToken{}, dir, options.segment_pool_size, SegmentOptions{options},
+    options.reader_options);
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
-  writer->_key_column = options.key_column;
   writer->_hnsw_bases = std::move(hnsw_bases);
-  // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
       std::move(options.column_options), std::move(options.norm_column_id),
       options.row_group_size, std::move(options.anns));
   }
-  if (options.cleanup_on_open) {
-    // Remove non-index files from directory
-    directory_utils::RemoveAllUnreferenced(dir);
-  } else {
-    // Unreferenced segments are kept for a host WAL to adopt, so their ids are
-    // still live and the committed seg_counter sits below them.
-    const auto max_id = MaxSegmentId(dir);
-    if (writer->_seg_counter.load(std::memory_order_relaxed) < max_id) {
-      writer->_seg_counter.store(max_id, std::memory_order_relaxed);
-    }
-  }
-
   return writer;
-}
-
-IndexWriter::~IndexWriter() noexcept {
-  // Failure may indicate a dangling 'document' instance
-  SDB_ASSERT(!_segments_active.load());
-  _write_lock.reset();  // Reset write lock if any
-  // Reset pending state (if any) before destroying flush contexts
-  _pending_state.Reset(*this);
-}
-
-uint64_t IndexWriter::BufferedDocs() const {
-  uint64_t docs_in_ram = 0;
-  auto ctx = GetFlushContext();
-  // 'pending_used_segment_contexts_'/'pending_free_segment_contexts_'
-  // may be modified
-  std::lock_guard lock{ctx->pending_mutex};
-
-  for (const auto& entry : ctx->pending_segments) {
-    SDB_ASSERT(entry.segment != nullptr);
-    // reading SegmentWriter::docs_count() is not thread safe
-    docs_in_ram += entry.segment->buffered_docs.load(std::memory_order_relaxed);
-  }
-
-  return docs_in_ram;
 }
 
 uint64_t IndexWriter::NextSegmentId() noexcept {
@@ -1340,427 +269,187 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
   return _seg_counter.load(std::memory_order_relaxed);
 }
 
-auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
-                               const IndexFieldOptions* field_options,
-                               const MergeWriter::FlushProgress& progress,
-                               const AnnBuildEnv* env)
-  -> yaclib::Future<CompactionResult> {
-  Compaction candidates;
-  const auto run_id = reinterpret_cast<uintptr_t>(&candidates);
+void IndexWriter::ReserveSegmentId(uint64_t id) noexcept {
+  for (auto current = _seg_counter.load(std::memory_order_relaxed);
+       current < id && !_seg_counter.compare_exchange_weak(
+                         current, id, std::memory_order_relaxed);) {
+  }
+}
 
-  decltype(_committed_reader) committed_reader;
-  // collect a list of compaction candidates
+void IndexWriter::MergeClaim::Release() noexcept {
+  if (writer == nullptr) {
+    return;
+  }
+  absl::MutexLock lock{&writer->_compacting.lock};
+  for (const auto* candidate : candidates) {
+    writer->_compacting.segments.erase(candidate->Meta().name);
+  }
+  writer = nullptr;
+  candidates.clear();
+}
+
+auto IndexWriter::MergeAsync(const CompactionPolicy& policy,
+                             DirectoryReader source,
+                             const IndexFieldOptions* field_options,
+                             const MergeWriter::FlushProgress& progress,
+                             const AnnBuildEnv* env) -> yaclib::Future<Merged> {
+  Merged merged;
+  merged.source = std::move(source);
+  const auto& reader = merged.source;
   {
-    std::lock_guard lock{_compacting.lock};
-    // hold a reference to the last committed state to prevent files from being
-    // deleted by a cleaner during the upcoming compaction
-    // use atomic_load(...) since Finish() may modify the pointer
-    committed_reader = GetSnapshotImpl();
-
-    if (committed_reader->size() == 0) {
-      // nothing to compact
-      co_return CompactionResult{0, CompactionError::Ok};
-    }
-
-    // FIXME TODO remove from 'compacting_segments_' any segments in
-    // 'committed_state_' or 'pending_state_' to avoid data duplication
+    absl::MutexLock lock{&_compacting.lock};
+    CompactingSegments unavailable = _compacting.segments;
     const auto floor = _compacting.floor;
-    if (floor == 0) {
-      policy(candidates, *committed_reader, _compacting.segments);
-    } else {
-      // Hide the backfill-protected segments from the policy
-      // TODO(Dronplane): maybe make it member and not refill every run?
-      CompactingSegments unavailable = _compacting.segments;
-      for (const auto& segment : *committed_reader) {
+    if (floor != 0) {
+      for (const auto& segment : reader) {
         uint64_t id = 0;
         const auto& name = segment.Meta().name;
         if (ParseSegmentId(name, id) && id <= floor) {
           unavailable.insert(name);
         }
       }
-      policy(candidates, *committed_reader, unavailable);
-
-      // TODO(Dronplane): should it be an assert?
+    }
+    Compaction candidates;
+    policy(candidates, reader, unavailable);
+    if (floor != 0) {
       std::erase_if(candidates, [floor](const SubReader* candidate) {
         uint64_t id = 0;
         return ParseSegmentId(candidate->Meta().name, id) && id <= floor;
       });
     }
-
-    switch (candidates.size()) {
-      case 0:  // nothing to compact
-        co_return CompactionResult{0, CompactionError::Ok};
-      case 1: {
-        const auto* candidate = candidates.front();
-        SDB_ASSERT(candidate != nullptr);
-        if (!HasRemovals(candidate->Meta())) {
-          // no removals, nothing to compact
-          co_return CompactionResult{0, CompactionError::Ok};
-        }
-      }
+    uint64_t docs = 0;
+    candidates.erase(absl::c_find_if(candidates,
+                                     [&](const SubReader* candidate) {
+                                       docs += candidate->live_docs_count();
+                                       return docs > doc_limits::kMaxDocs;
+                                     }),
+                     candidates.end());
+    if (candidates.empty() ||
+        (candidates.size() == 1 && !HasRemovals(candidates.front()->Meta()) &&
+         candidates.front()->PatchedDocs() == 0)) {
+      co_return merged;
     }
-
     for (const auto* candidate : candidates) {
-      SDB_ASSERT(candidate != nullptr);
-      // TODO(mbkkt) Make this check assert in future
       if (_compacting.segments.contains(candidate->Meta().name)) {
-        // A concurrent compaction already owns this candidate; not an error,
-        // the caller retries or lets the other compaction finish it.
-        co_return CompactionResult{0, CompactionError::Busy};
+        co_return merged;
       }
     }
-
-    // register for compaction
-    _compacting.segments.reserve(_compacting.segments.size() +
-                                 candidates.size());
     for (const auto* candidate : candidates) {
       _compacting.segments.emplace(candidate->Meta().name);
     }
+    merged.claim = MergeClaim{*this, std::move(candidates)};
   }
-
-  // unregisterer for all registered candidates
-  Finally unregister_segments = [&candidates, this]() noexcept {
-    if (candidates.empty()) {
-      return;
-    }
-    std::lock_guard lock{_compacting.lock};
-    for (const auto* candidate : candidates) {
-      _compacting.segments.erase(candidate->Meta().name);
-    }
-  };
   SDB_PARK_ONCE_ON_FAILURE("pause_irs_compaction_registered");
-
-  // validate candidates: no duplicates and all should be from committed reader
-#ifdef SDB_DEV
-  {
-    auto sorted = candidates;
-    absl::c_sort(sorted);
-    SDB_ASSERT(std::unique(sorted.begin(), sorted.end()) == sorted.end());
-    size_t found = 0;
-    for (const auto& segment : *committed_reader) {
-      found += static_cast<size_t>(absl::c_binary_search(sorted, &segment));
-    }
-    SDB_ASSERT(found == sorted.size());
-  }
-#endif
-
-  SDB_TRACE(IRESEARCH, "Starting compaction id='", run_id, "':\n",
-            ToString(candidates));
-
-  // do lock-free merge
-
-  CompactionResult result{candidates.size(), CompactionError::Fail};
-
-  IndexSegment compaction_segment;
-  compaction_segment.meta.version = 0;  // Reset version for new segment
-  // Increment active meta
-  compaction_segment.meta.name = FileName(NextSegmentId());
-
-  RefTrackingDirectory dir{_dir};  // Track references for new segment
-
-  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
-  merger.Reset(candidates.begin(), candidates.end());
-
-  // We do not persist segment meta since some removals may come later
-  if (!(co_await merger.Flush(compaction_segment.meta, progress, env))) {
-    // Nothing to compact or compaction failure
-    co_return result;
-  }
-
-  auto opts = committed_reader->Options();
-  auto pending_reader =
-    SegmentReaderImpl::Open(_dir, compaction_segment.meta, opts);
-  SDB_ASSERT(pending_reader);
-
-  // Commit merge, ensure no concurrent Commit/etc
-  std::shared_lock lock{_commit_lock};
-  const auto current_committed_reader = _committed_reader;
-  SDB_ASSERT(current_committed_reader != nullptr);
-  const bool pending = _pending_state.Valid();
-  auto ctx = GetFlushContext();
-  if (pending) {
-    lock.unlock();
-  }
-  const bool changed = committed_reader != current_committed_reader;
-  containers::FlatHashMap<uint64_t, const SubReader*> current;
-  if (changed) {
-    current.reserve(current_committed_reader->size());
-    for (const SubReader& segment : *current_committed_reader) {
-      current.emplace(SegmentId(segment), &segment);
-    }
-    if (!absl::c_all_of(candidates, [&](const SubReader* candidate) {
-          return current.contains(SegmentId(*candidate));
-        })) {
-      SDB_DEBUG(IRESEARCH, "Failed to finish compaction id='", run_id,
-                "' for segment '", compaction_segment.meta.name,
-                "': a candidate left the committed state");
-      result.error = CompactionError::Busy;
-      co_return result;
-    }
-  }
-
-  auto maps = MergeMaps(candidates, merger, *pending_reader);
-  if (!pending) {
-    if (changed) {
-      DocumentMaskBuilder carried;
-      for (const auto& map : maps) {
-        CarryRemovals(map, current.at(map.source), carried);
-      }
-      if (!carried.Empty()) {
-        compaction_segment.meta.docs_mask =
-          std::make_shared<const DocumentMask>(std::move(carried).Finish());
-      }
-    }
-    index_utils::FlushIndexSegment(dir, compaction_segment, false);
-    if (compaction_segment.meta.docs_mask) {
-      pending_reader = pending_reader->UpdateMeta(dir, compaction_segment.meta);
-    }
-  }
-  auto refs = dir.GetRefs();
-  std::lock_guard ctx_lock{ctx->pending_mutex};
-  auto& segment_mask = ctx->segment_mask;
-  segment_mask.reserve(segment_mask.size() + candidates.size());
-  ctx->incoming.reserve(ctx->incoming.size() + 1);
-  ctx->Absorb(std::move(maps));
-  const auto& pending_segment = ctx->incoming.emplace_back(
-    std::move(compaction_segment), std::move(refs), std::move(candidates),
-    std::move(pending_reader), std::move(committed_reader));
-  for (const auto* candidate : pending_segment.compaction_ctx.candidates) {
-    segment_mask.emplace(candidate->Meta().name);
-  }
-  SDB_TRACE(IRESEARCH, "Compaction id='", run_id,
-            "' successfully finished: Name='",
-            pending_segment.segment.meta.name,
-            "', docs_count=", pending_segment.segment.meta.docs_count,
-            ", live_docs_count=", pending_segment.segment.meta.live_docs_count,
-            ", size=", pending_segment.segment.meta.byte_size);
-  result.error = pending ? CompactionError::Pending : CompactionError::Ok;
-  co_return result;
+  co_return co_await FlushMerge(std::move(merged), NextSegmentId(),
+                                field_options, progress, env);
 }
 
-CompactionResult IndexWriter::Compact(
-  const CompactionPolicy& policy, const IndexFieldOptions* field_options,
-  const MergeWriter::FlushProgress& progress) {
-  return GetReady(CompactAsync(policy, field_options, progress,
-                               /*env=*/nullptr));
+auto IndexWriter::WriteAsync(DirectoryReader source, uint64_t id,
+                             const IndexFieldOptions* field_options,
+                             const MergeWriter::FlushProgress& progress,
+                             const AnnBuildEnv* env) -> yaclib::Future<Merged> {
+  Merged merged;
+  merged.source = std::move(source);
+  Compaction candidates;
+  for (const auto& segment : merged.source) {
+    candidates.emplace_back(&segment);
+  }
+  if (candidates.empty()) {
+    co_return merged;
+  }
+  merged.claim.candidates = std::move(candidates);
+  co_return co_await FlushMerge(std::move(merged), id, field_options, progress,
+                                env);
+}
+
+IndexWriter::Merged IndexWriter::MergePieces(
+  DirectoryReader source, uint64_t id, const IndexFieldOptions* field_options) {
+  Merged merged;
+  merged.source = std::move(source);
+  auto& candidates = merged.claim.candidates;
+  for (const auto& segment : merged.source) {
+    candidates.emplace_back(&segment);
+  }
+  if (candidates.empty()) {
+    return merged;
+  }
+  SegmentMeta meta;
+  meta.name = FileName(id);
+  MergeWriter merger{_dir, GetSegmentWriterOptions(true, field_options)};
+  merger.Reset(candidates.begin(), candidates.end());
+  merged.reader = merger.FlushPiece(meta, id);
+  if (merged.reader) {
+    merged.maps = MergeMaps(candidates, merger, *merged.reader);
+  }
+  return merged;
+}
+
+auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
+                             const IndexFieldOptions* field_options,
+                             const MergeWriter::FlushProgress& progress,
+                             const AnnBuildEnv* env) -> yaclib::Future<Merged> {
+  const auto& candidates = merged.claim.candidates;
+  SegmentMeta meta;
+  meta.name = FileName(id);
+  RefTrackingDirectory dir{_dir};
+  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
+  merger.Reset(candidates.begin(), candidates.end());
+  if (!(co_await merger.Flush(meta, progress, env))) {
+    co_return merged;
+  }
+  merged.reader = SegmentReaderImpl::Open(_dir, meta, merged.source.Options());
+  merged.maps = MergeMaps(candidates, merger, *merged.reader);
+  SyncSegment(dir, meta);
+  merged.refs = dir.GetRefs();
+  merged.meta = std::move(meta);
+  co_return merged;
 }
 
 void IndexWriter::CompactionFloorGuard::Release() noexcept {
   if (_writer == nullptr) {
     return;
   }
-  std::lock_guard lock{_writer->_compacting.lock};
+  absl::MutexLock lock{&_writer->_compacting.lock};
   _writer->_compacting.floor = 0;
   _writer = nullptr;
 }
 
-IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
-  std::lock_guard lock{_compacting.lock};
-  if (!_compacting.segments.empty()) {
+bool IndexWriter::CompactionFloorGuard::Arm() noexcept {
+  SDB_ASSERT(_writer);
+  SDB_ASSERT(_floor == kPendingFloor);
+  absl::MutexLock lock{&_writer->_compacting.lock};
+  if (!_writer->_compacting.segments.empty()) {
     // A compaction is between selecting candidates and minting its output id,
     // so it could still stamp a fresh id on segments below the floor we are
     // about to set. The caller should retry once it finishes.
-    return {};
+    return false;
   }
-  if (_compacting.floor != 0) {
-    return {};  // already armed; one holder at a time
-  }
-  const auto floor = CurrentSegmentId();
-  _compacting.floor = floor;
-  return {*this, floor};
+  _floor = _writer->CurrentSegmentId();
+  _writer->_compacting.floor = _floor;
+  return true;
 }
 
-void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
-                                  std::vector<Replacement> replacements) {
-  if (replaced.empty() && replacements.empty()) {
-    return;
-  }
-
-  // Open every replacement before touching the flush context, so a failure
-  // leaves nothing behind.
-  struct Adopted {
-    IndexSegment segment;
-    FileRefs refs;
-    std::shared_ptr<const SegmentReaderImpl> reader;
-  };
-  std::vector<Adopted> adopted;
-  adopted.reserve(replacements.size());
-  std::vector<DocMap> maps;
-  for (auto& replacement : replacements) {
-    Adopted entry;
-    entry.segment.filename = replacement.meta_file;
-    segment_meta::Read(_dir, entry.segment.meta, replacement.meta_file);
-    if (entry.segment.meta.live_docs_count == 0) {
-      continue;  // nothing to adopt; the sources are still replaced
-    }
-    auto meta_ref = directory_utils::Reference(_dir, entry.segment.filename);
-    if (!meta_ref) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("cannot replace with segment meta '",
-                              entry.segment.filename, "': it does not exist"));
-    }
-    entry.reader = SegmentReaderImpl::Open(_dir, entry.segment.meta,
-                                           GetSnapshotImpl()->Options());
-    entry.refs.emplace_back(std::move(meta_ref));
-    for (auto& map : replacement.absorbed) {
-      map.target = entry.reader->Id();
-      map.next = entry.reader->DocMaps();
-      maps.push_back(std::move(map));
-    }
-    adopted.push_back(std::move(entry));
-  }
-
-  std::shared_lock commit_lock{_commit_lock};
-  if (_pending_state.Valid()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-      ERR_MSG("cannot replace segments while a begun commit is not finished"));
-  }
-
-  // Pin the committed state: the candidate names are masked as string_views
-  // into its metas, so it has to outlive the flush context that holds them --
-  // and holding it also keeps the cleaner off the files until the commit
-  // publishes them. Same reason Compact pins it.
-  auto committed_reader = GetSnapshotImpl();
-  Compaction candidates;
-  candidates.reserve(replaced.size());
-  for (const auto* replaced_segment : replaced) {
-    const auto& name = replaced_segment->Meta().name;
-    const SubReader* found = nullptr;
-    for (const auto& segment : *committed_reader) {
-      if (segment.Meta().name == name) {
-        found = &segment;
-        break;
-      }
-    }
-    if (found == nullptr) {
-      // Not a lost race: a removal that takes a segment's last live doc masks
-      // the whole segment out rather than giving it a docs_mask (PrepareFlush
-      // stage 1), so a source whose rows were all deleted while the caller was
-      // rebuilding it is simply gone. Nothing left to mask; the commit masks
-      // its rows in the replacement.
-      continue;
-    }
-    candidates.push_back(found);
-  }
-
-  auto flush = GetFlushContext();
-  std::lock_guard lock{flush->pending_mutex};
-
-  // Pre-allocation so tail is allocation-free
-  auto& segment_mask = flush->segment_mask;
-  flush->incoming.reserve(flush->incoming.size() + adopted.size());
-  segment_mask.reserve(segment_mask.size() + candidates.size());
-  std::vector<std::string_view> masked;
-  masked.reserve(candidates.size());
-  for (const auto* candidate : candidates) {
-    masked.emplace_back(
-      flush->masked_names.emplace_back(candidate->Meta().name));
-  }
-  flush->Absorb(std::move(maps));
-
-  // Mutating tail
-  // The replacements are already written, and the commit carries what reached
-  // the replaced segments since through their doc maps. The pinned reader rides
-  // along so the files it names survive until the commit publishes them.
-  for (auto& entry : adopted) {
-    // A copy per segment: the ctor takes the pin by rvalue, and every segment
-    // needs its own so the files stay referenced until the commit.
-    flush->incoming.emplace_back(
-      std::move(entry.segment), std::move(entry.refs), Compaction{},
-      std::move(entry.reader), decltype(committed_reader){committed_reader});
-  }
-  for (const auto name : masked) {
-    segment_mask.emplace(name);
-  }
+IndexWriter::CompactionFloorGuard IndexWriter::ClaimCompactionFloor() {
+  absl::MutexLock lock{&_compacting.lock};
+  SDB_ASSERT(_compacting.floor == 0);
+  _compacting.floor = kPendingFloor;
+  return {*this, kPendingFloor};
 }
 
-IndexWriter::FlushContextPtr IndexWriter::GetFlushContext() const noexcept
-  ABSL_NO_THREAD_SAFETY_ANALYSIS {
-  auto* ctx = _flush_context.load(std::memory_order_relaxed);
-  for (;;) {
-    const bool lock = ctx->context_mutex.try_lock_shared();
-    auto* curr = _flush_context.load(std::memory_order_acquire);
-    if (lock) {
-      if (ctx == curr) [[likely]] {
-        return {ctx, [](FlushContext* ctx)
-                       ABSL_UNLOCK_FUNCTION(ctx->context_mutex) noexcept {
-                         ctx->context_mutex.unlock_shared();
-                       }};
-      }
-      ctx->context_mutex.unlock_shared();
-    }
-    ctx = curr;
-  }
+bool IndexWriter::Compacting() {
+  absl::MutexLock lock{&_compacting.lock};
+  return !_compacting.segments.empty();
 }
 
-IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept {
-  _commit_lock.AssertHeld();
-  SDB_ASSERT(!_pending_state.Valid());
-  auto* ctx = _flush_context.load(std::memory_order_relaxed);
-  absl::MutexLock lock{&ctx->context_mutex};
-  SwapDocMaps(*ctx);
-  _flush_context.store(ctx->next, std::memory_order_release);
-  return {ctx, [](FlushContext* ctx) noexcept {
-            absl::MutexLock lock{&ctx->context_mutex};
-            ctx->Reset();
-          }};
-}
-
-IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
-  bool exclusive) try {
-  // TODO(mbkkt) rewrite this when will be written parallel Commit
-  //  Few ideas about rewriting:
-  //  1. We should use all available memory
-  //  2. Flush should be async, waiting Flush only if we don't have other choice
-  //  3. segment_memory/count_max should be removed in their current state
-  // increment counter to acquire reservation,
-  // if another thread tries to reserve last context then it'll be over limit
-  const auto segments_active =
-    _segments_active.fetch_add(1, std::memory_order_relaxed) + 1;
-
-  // no free segment_context available and maximum number of segments reached
-  // must return to caller so as to unlock/relock flush_context before retrying
-  // to get a new segment so as to avoid a deadlock due to a read-write-read
-  // situation for FlushContext::context_mutex_ with threads trying to lock
-  // FlushContext::context_mutex_ to return their segment_context
-  if (_segment_limits.Count() < segments_active) {
-    _segments_active.fetch_sub(1, std::memory_order_relaxed);
-    return {};
-  }
-
-  if (!exclusive) {
-    auto flush = GetFlushContext();
-    auto* freelist_node = flush->pending_freelist.pop();
-    if (freelist_node != nullptr) {
-      flush->pending.Add();
-      return {static_cast<PendingSegmentContext*>(freelist_node)->segment,
-              _segments_active, flush.get(), freelist_node->value};
-    }
-  }
-
+std::shared_ptr<IndexWriter::SegmentContext> IndexWriter::GetSegmentContext() {
   const auto options =
     GetSegmentWriterOptions(false, /*field_options=*/nullptr);
-
-  // should allocate a new segment_context from the pool
-  std::shared_ptr<SegmentContext> segment_ctx = _segment_writer_pool.emplace(
-    _dir,
-    [this] {
-      SegmentMeta meta;
-      meta.name = FileName(NextSegmentId());
-      return meta;
-    },
-    options);
-
-  // recreate writer if it reserved more memory than allowed by current limits
-  if (_segment_limits.Memory() < segment_ctx->writer->memory_reserved()) {
-    segment_ctx->writer = SegmentWriter::make(segment_ctx->dir, options);
+  std::shared_ptr<SegmentContext> segment =
+    _segment_writer_pool.emplace(_dir, options);
+  if (_segment_limits.Memory() < segment->writer->memory_reserved()) {
+    segment->writer = SegmentWriter::make(segment->dir, options);
   }
-
-  return {segment_ctx, _segments_active};
-} catch (...) {
-  _segments_active.fetch_sub(1, std::memory_order_relaxed);
-  throw;
+  return segment;
 }
 
 SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
@@ -1774,247 +463,8 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
-    .hnsw_bases = _hnsw_bases.get(),
+    .hnsw_bases = _reader_options.hnsw_bases,
   };
-}
-
-IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
-  auto ctx = SwitchFlushContext();
-  SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_after_flush_switch");
-  // ensure there are no active struct update operations
-  ctx->pending.Done();
-  {
-    duckdb::TaskScheduler::BlockingScope blocking;
-    ctx->pending.Wait();
-  }
-  ctx->pending.Reset(1);
-  ctx->FlushPending();
-
-  std::unique_lock cleanup_lock{_compacting.lock, std::defer_lock};
-  Finally cleanup = [&]() noexcept {
-    if (ctx == nullptr) {
-      return;
-    }
-    if (!cleanup_lock) {
-      cleanup_lock.lock();
-    }
-    Cleanup(*ctx);
-  };
-
-  const auto& progress =
-    (info.progress != nullptr ? info.progress : kNoProgress);
-
-  auto& dir = *ctx->dir;
-  const auto& committed_reader = *_committed_reader;
-  auto segment_ctxs =
-    OpenFlushed(ctx->segments, dir, committed_reader.Options(), progress);
-  std::vector<DocumentMaskBuilder> removed(committed_reader.size() +
-                                           ctx->incoming.size());
-  const auto all_tick = ResolveRemovals(
-    ctx->segments, committed_reader, ctx->segment_mask, ctx->incoming,
-    ctx->doc_maps, segment_ctxs, removed, _key_column);
-
-  // Stage 1
-  // update document_mask for existing (i.e. sealed) segments
-  auto existing = UpdateExisting(committed_reader, ctx->segment_mask, all_tick,
-                                 removed, dir, progress);
-
-  // Stage 2
-  // Add incoming segments registered by compaction, adoption or replacement
-  auto incoming = AddIncoming(
-    ctx->incoming, all_tick,
-    std::span{removed}.subspan(committed_reader.size()), dir, progress);
-
-  auto segments = std::move(existing.segments);
-  segments.insert(segments.end(),
-                  std::make_move_iterator(incoming.segments.begin()),
-                  std::make_move_iterator(incoming.segments.end()));
-
-  if (info.reopen_reader) {
-    for (auto& entry : segments) {
-      entry.reader = SegmentReader{entry.reader.GetImpl()->ReopenReader(
-        dir, entry.segment.meta, committed_reader.Options())};
-    }
-  }
-
-  // Stage 3
-  // create new segments
-  for (auto& segment_ctx : segment_ctxs) {
-    segment_ctx.RemoveAll(all_tick);
-  }
-  auto flushed = PublishFlushed(segment_ctxs, dir, progress);
-  segments.insert(segments.end(),
-                  std::make_move_iterator(flushed.segments.begin()),
-                  std::make_move_iterator(flushed.segments.end()));
-
-  IndexMeta pending_meta;
-  pending_meta.segments.reserve(segments.size());
-  std::vector<SegmentReader> readers;
-  readers.reserve(segments.size());
-  std::vector<std::string_view> files_to_sync;
-  // +1 for index meta
-  files_to_sync.reserve(1 + segments.size());
-  for (auto& [segment, reader, sync] : segments) {
-    const auto& published =
-      pending_meta.segments.emplace_back(std::move(segment));
-    readers.emplace_back(std::move(reader));
-    if (sync != Sync::None) {
-      files_to_sync.emplace_back(published.filename);
-    }
-    if (sync == Sync::All) {
-      files_to_sync.insert(files_to_sync.end(), published.meta.files.begin(),
-                           published.meta.files.end());
-    }
-  }
-
-#ifdef SDB_DEV
-  {
-    std::vector<std::string_view> filenames;
-    filenames.reserve(pending_meta.segments.size());
-    for (const auto& meta : pending_meta.segments) {
-      filenames.emplace_back(meta.filename);
-    }
-    absl::c_sort(filenames);
-    auto it = std::unique(filenames.begin(), filenames.end());
-    SDB_ASSERT(it == filenames.end());
-  }
-#endif
-
-  const bool modified = info.payload_changed ||
-                        IsInitialCommit(committed_reader.Meta()) ||
-                        existing.modified || incoming.modified ||
-                        flushed.modified || !files_to_sync.empty();
-
-  // only flush a new index version upon a new index or a metadata change
-  if (!modified) {
-    SDB_ASSERT(readers.size() == committed_reader.size());
-    if (info.reopen_reader) {
-      auto new_reader = std::make_shared<const DirectoryReaderImpl>(
-        committed_reader.Dir(), committed_reader.Options(),
-        DirectoryMeta{committed_reader.Meta()}, std::move(readers));
-      std::atomic_store_explicit(&_committed_reader, std::move(new_reader),
-                                 std::memory_order_release);
-    }
-    return {};
-  }
-
-  InitMeta(pending_meta);
-
-  const auto position = ctx->position;
-  return {
-    PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
-                .position = position},
-    std::move(pending_meta),  // Retain meta pending flush
-    std::move(readers),
-    std::move(files_to_sync),
-  };
-}
-
-void IndexWriter::ApplyFlush(PendingContext&& context) {
-  SDB_ASSERT(!_pending_state.Valid());
-  SDB_ASSERT(context.ctx);
-  SDB_ASSERT(context.ctx->dir != nullptr);
-
-  RefTrackingDirectory& dir = *context.ctx->dir;
-
-  std::string index_meta_file;
-  DirectoryMeta to_commit{.index_meta = std::move(context.meta)};
-
-  // Execute 1st phase of index meta transaction
-  if (!_writer.prepare(dir, to_commit.index_meta, to_commit.filename,
-                       index_meta_file, context.position)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("Failed to write index metadata for index: ", index_meta_file,
-              ": a previous commit is still pending"));
-  }
-
-  // The 1st phase of the transaction successfully finished here,
-  // ensure we rollback changes if something goes wrong afterwards
-  const auto new_gen = to_commit.index_meta.gen;
-  Finally update_generation = [&]() noexcept {
-    if (!_pending_state.Valid()) [[unlikely]] {
-      _writer.rollback();  // Rollback failed transaction
-    }
-
-    // Ensure writer's generation is updated
-    _last_gen = new_gen;
-  };
-
-  context.files_to_sync.emplace_back(to_commit.filename);
-
-  if (!dir.sync(context.files_to_sync)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_IO_ERROR),
-      ERR_MSG("Failed to sync files for index: ", index_meta_file));
-  }
-
-  // Update file name so that directory reader holds a reference
-  to_commit.filename = std::move(index_meta_file);
-  // Assemble directory reader
-  _pending_state.commit = std::make_shared<const DirectoryReaderImpl>(
-    dir, _committed_reader->Options(), std::move(to_commit),
-    std::move(context.readers));
-  SDB_ASSERT(context.ctx);
-  static_cast<PendingBase&>(_pending_state) = std::move(context);
-  SDB_ASSERT(_pending_state.Valid());
-}
-
-bool IndexWriter::Start(const CommitInfo& info) {
-  if (_pending_state.Valid()) {
-    // Begin has been already called without corresponding call to commit
-    return false;
-  }
-
-  auto to_commit = PrepareFlush(info);
-
-  if (to_commit.Empty()) {
-    // Nothing to commit, no transaction started
-    return false;
-  }
-  Finally cleanup = [&]() noexcept {
-    if (!to_commit.Empty()) {
-      to_commit.StartReset(*this);
-    }
-  };
-
-  ApplyFlush(std::move(to_commit));
-
-  return true;
-}
-
-void IndexWriter::Finish() {
-  if (!_pending_state.Valid()) {
-    return;
-  }
-
-  Finally cleanup = [&]() noexcept {
-    Abort();  // after FinishReset it's noop
-  };
-
-  if (!_writer.commit()) [[unlikely]] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("Failed to commit index metadata: no commit is prepared"));
-  }
-
-  // noexcept part!
-  _pending_state.ctx->doc_maps.clear();
-  _pending_state.StartReset(*this);
-  // after this line transaction is successful (only noexcept operations below)
-  std::atomic_store_explicit(&_committed_reader,
-                             std::move(_pending_state.commit),
-                             std::memory_order_release);
-  _pending_state.FinishReset();
-}
-
-void IndexWriter::Abort() noexcept {
-  if (!_pending_state.Valid()) {
-    return;  // There is no open transaction
-  }
-
-  _writer.rollback();
-  _pending_state.Reset(*this);
 }
 
 }  // namespace irs

@@ -28,9 +28,6 @@ CREATE INDEX dce_idx ON dce USING inverted(id, (lower(a)) dce_dict);
 statement ok
 INSERT INTO dce SELECT g, 'AA ' || g || ' BRAVO', g FROM generate_series(1, 2000) g;
 
-statement ok
-VACUUM (REFRESH_TABLE) dce;
-
 query
 SELECT count(*) FROM dce_idx WHERE lower(a) @@ ts_like('bravo');
 ----
@@ -60,9 +57,6 @@ count
 statement ok
 INSERT INTO dce SELECT g, 'AA ' || g || ' BRAVO' FROM generate_series(2001, 2300) g;
 
-statement ok
-VACUUM (REFRESH_TABLE) dce;
-
 query
 SELECT count(*) FROM dce_idx WHERE lower(a) @@ ts_like('bravo');
 ----
@@ -90,9 +84,6 @@ ALTER TABLE dce2 ADD COLUMN tmp INTEGER;
 statement ok
 ALTER TABLE dce2 DROP COLUMN tmp;
 
-statement ok
-VACUUM (REFRESH_TABLE) dce2;
-
 query
 SELECT count(*) FROM dce2_idx WHERE lower(a) @@ ts_like('bravo');
 ----
@@ -112,9 +103,6 @@ INSERT INTO dce3 SELECT g, 'row ' || g || ' bravo', g FROM generate_series(1, 50
 
 statement ok
 ALTER TABLE dce3 DROP COLUMN spare;
-
-statement ok
-VACUUM (REFRESH_TABLE) dce3;
 
 query
 SELECT count(*) FROM dce3_idx WHERE a @@ ts_like('bravo');

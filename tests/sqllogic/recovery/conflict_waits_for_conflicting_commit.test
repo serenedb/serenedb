@@ -1,0 +1,58 @@
+statement ok
+CREATE TABLE cwc (id INT PRIMARY KEY)
+
+
+statement ok
+INSERT INTO cwc VALUES (1), (2)
+
+
+statement ok
+SET sdb_faults = 'pause_wal_sync'
+
+
+connection s1
+statement async ok
+DELETE FROM cwc WHERE id = 1
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_wal_sync:parked'
+
+
+connection s2
+statement async error
+DELETE FROM cwc WHERE id = 1
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'DELETE FROM cwc%'
+----
+n
+2
+
+
+statement ok
+SET sdb_faults = 'pause_wal_sync:release'
+
+
+connection s1
+wait
+
+
+connection s2
+wait
+
+
+connection s2
+statement ok
+DELETE FROM cwc WHERE id = 1
+
+
+connection s2
+query
+SELECT id FROM cwc ORDER BY id
+----
+id
+2

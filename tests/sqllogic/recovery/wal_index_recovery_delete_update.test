@@ -1,11 +1,5 @@
 control substitution on
 
-# Phase 2 bounded replay, mutating tail: a refresh makes the rows durable in
-# the segments. Then a DELETE and an UPDATE run with the search commit faulted
-# off, so they live only in the store WAL. After a crash, recovery replays that
-# tail (these ops are PAST the durable cursor, so they are NOT skipped) and the
-# index reflects them -- the deleted rows are gone, the updated row carries its
-# new value.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY du_dict AS
@@ -22,11 +16,7 @@ statement ok
 INSERT INTO du_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) du_t;
-
-# Post-refresh mutations, index leg suppressed -> store WAL only.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+VACUUM (FLUSH_TABLE) du_t;
 
 statement ok
 DELETE FROM du_t WHERE id < 100;
@@ -44,7 +34,7 @@ SELECT 1;
 
 connection du_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) du_t;
+SELECT 1;
 
 connection du_after
 query

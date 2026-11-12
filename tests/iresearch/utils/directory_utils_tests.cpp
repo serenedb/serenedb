@@ -50,10 +50,6 @@ class DirectoryUtilsTests : public ::testing::Test {
       return false;
     }
 
-    irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
-      return nullptr;
-    }
-
     bool mtime(std::time_t&, std::string_view) const noexcept final {
       return false;
     }
@@ -133,21 +129,6 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
 
     ASSERT_EQ(&dir, &(*track_dir));
     ASSERT_EQ(&(dir.attributes()), &(track_dir.attributes()));
-  }
-
-  // test make_lock
-  {
-    irs::MemoryDirectory dir;
-    irs::RefTrackingDirectory track_dir(dir);
-    auto lock1 = dir.make_lock("abc");
-    ASSERT_FALSE(!lock1);
-    auto lock2 = track_dir.make_lock("abc");
-    ASSERT_FALSE(!lock2);
-
-    ASSERT_TRUE(lock1->lock());
-    ASSERT_FALSE(lock2->lock());
-    ASSERT_TRUE(lock1->unlock());
-    ASSERT_TRUE(lock2->lock());
   }
 
   // test open
@@ -260,9 +241,6 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
       return false;
     }
     bool visit(const visitor_f&) const final { return false; }
-    irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
-      return nullptr;
-    }
     bool mtime(std::time_t&, std::string_view) const noexcept final {
       return false;
     }
@@ -308,21 +286,6 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
 
     ASSERT_EQ(&dir, &track_dir.GetImpl());
     ASSERT_EQ(&(dir.attributes()), &(track_dir.attributes()));
-  }
-
-  // test make_lock
-  {
-    irs::MemoryDirectory dir;
-    irs::TrackingDirectory track_dir(dir);
-    auto lock1 = dir.make_lock("abc");
-    ASSERT_FALSE(!lock1);
-    auto lock2 = track_dir.make_lock("abc");
-    ASSERT_FALSE(!lock2);
-
-    ASSERT_TRUE(lock1->lock());
-    ASSERT_FALSE(lock2->lock());
-    ASSERT_TRUE(lock1->unlock());
-    ASSERT_TRUE(lock2->lock());
   }
 
   // test create

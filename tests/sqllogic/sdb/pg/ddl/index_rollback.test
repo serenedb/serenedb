@@ -92,7 +92,8 @@ n
 statement error
 INSERT INTO ixrb_t VALUES (4, 30, 'delta');
 ----
-db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixrb_rank_idx"
+DETAIL: Key (rank)=(30) already exists.
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +136,8 @@ kept
 statement error
 INSERT INTO ixrb_t VALUES (5, 30, 'echo');
 ----
-db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixrb_rank_idx"
+DETAIL: Key (rank)=(30) already exists.
 
 
 # ... and a non-conflicting row still lands and is still found.
@@ -166,7 +168,8 @@ committed
 statement error
 INSERT INTO ixrb_t VALUES (6, 50, 'foxtrot');
 ----
-db error: ERROR: Duplicate key "rank: 50" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixrb_rank_idx"
+DETAIL: Key (rank)=(50) already exists.
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +207,8 @@ ixrb_rank_idx
 statement error
 INSERT INTO ixrb_t VALUES (7, 50, 'golf');
 ----
-db error: ERROR: Duplicate key "rank: 50" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixrb_rank_idx"
+DETAIL: Key (rank)=(50) already exists.
 
 
 statement ok
@@ -281,7 +285,8 @@ ixrb_at_rank_idx
 statement error
 INSERT INTO ixrb_at VALUES (3, 10, 300, 'charlie');
 ----
-db error: ERROR: Duplicate key "rank: 10" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixrb_at_rank_idx"
+DETAIL: Key (rank)=(10) already exists.
 
 
 statement ok
@@ -313,7 +318,8 @@ bigint
 statement error
 INSERT INTO ixrb_at VALUES (4, 30, 400, 'delta');
 ----
-db error: ERROR: Duplicate key "rank: 30" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "ixrb_at_rank_idx"
+DETAIL: Key (rank)=(30) already exists.
 
 
 statement ok

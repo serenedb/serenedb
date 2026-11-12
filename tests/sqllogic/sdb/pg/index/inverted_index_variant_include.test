@@ -28,10 +28,6 @@ INSERT INTO variant_inc VALUES
   (4, 'delta horse', '{"a": 42}'::json::variant);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) variant_inc;
-
-
 query
 SELECT id FROM variant_inc_idx WHERE body @@ ts_phrase('alpha')
 ORDER BY id;

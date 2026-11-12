@@ -43,8 +43,7 @@ TEST_P(AllFilterTestCase, all_sequential) {
   }
 
   auto rdr = open_reader();
-  ASSERT_NE(nullptr, rdr);
-  ASSERT_EQ(1, rdr->size());
+  ASSERT_EQ(1, rdr.size());
 
   Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
@@ -55,7 +54,7 @@ TEST_P(AllFilterTestCase, all_sequential) {
   MaxMemoryCounter counter;
   {
     const irs::All all_filter;
-    tests::PreparedFilter prepared{all_filter, *rdr, nullptr, counter};
+    tests::PreparedFilter prepared{all_filter, rdr, nullptr, counter};
     auto it = prepared.Execute(0);
     ASSERT_NE(nullptr, it);
     ASSERT_EQ(docs.size(), prepared.Estimate(0));

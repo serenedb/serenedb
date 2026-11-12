@@ -66,6 +66,7 @@ struct SearchColumnInfo {
   bool nullable = false;
   irs::DictLayout layout = irs::DictLayout::String;
   irs::field_id text = irs::field_limits::invalid();
+  irs::field_id key_field = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
   std::optional<uint32_t> levenshtein_max_terms;
@@ -331,8 +332,7 @@ bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);
 // functions, excluding the index-only match sugar.
 bool IsStrictComparisonShape(const duckdb::Expression& expr);
 
-// The term a query for `value` on this column would look up. Declines a type
-// the term dictionary does not carry.
+// The term a query for `value` on this column would look up.
 absl::Status SetupTermClause(irs::TermClause& clause,
                              const SearchColumnInfo& column_info,
                              const duckdb::Value& value);

@@ -1,0 +1,110 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS cdii_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS cdii_dst_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS cdii_schema_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdii_src_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdii_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdii_schema_${__DATABASE__};
+
+
+statement ok
+USE cdii_src_${__DATABASE__};
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cdii_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE docs (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga'), (3, 'pudge plays again');
+
+
+statement ok
+CREATE INDEX docs_body ON docs USING inverted (id, body cdii_words);
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+COPY FROM DATABASE cdii_src_${__DATABASE__} TO cdii_dst_${__DATABASE__};
+
+
+query
+SELECT id FROM cdii_dst_${__DATABASE__}.public.docs WHERE body @@ 'pudge' ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+INSERT INTO cdii_dst_${__DATABASE__}.public.docs VALUES (4, 'pudge buys blink');
+
+
+query
+SELECT id FROM cdii_dst_${__DATABASE__}.public.docs WHERE body @@ 'pudge' ORDER BY id;
+----
+id
+1
+3
+4
+
+
+statement ok
+COPY FROM DATABASE cdii_src_${__DATABASE__} TO cdii_schema_${__DATABASE__} (SCHEMA);
+
+
+query
+SELECT count(*) AS n FROM cdii_schema_${__DATABASE__}.public.docs;
+----
+n
+0
+
+
+statement ok
+INSERT INTO cdii_schema_${__DATABASE__}.public.docs VALUES (5, 'pudge hooks techies'), (6, 'lina burns');
+
+
+query
+SELECT id FROM cdii_schema_${__DATABASE__}.public.docs WHERE body @@ 'pudge' ORDER BY id;
+----
+id
+5
+
+
+statement ok
+DROP DATABASE cdii_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdii_dst_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdii_schema_${__DATABASE__};

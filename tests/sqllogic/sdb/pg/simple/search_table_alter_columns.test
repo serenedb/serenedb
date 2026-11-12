@@ -1,6 +1,5 @@
 statement ok
-CREATE TABLE sac (id INT PRIMARY KEY, a INT, b TEXT, n INT NOT NULL)
-WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sac (id INT PRIMARY KEY, a INT, b TEXT, n INT NOT NULL);
 
 
 statement ok
@@ -12,7 +11,7 @@ INSERT INTO sac VALUES (1, 10, 'alpha', 1), (2, 20, 'bravo', 2);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sac;
+VACUUM (FLUSH_TABLE) sac;
 
 
 statement ok
@@ -29,10 +28,6 @@ ALTER TABLE sac ADD COLUMN IF NOT EXISTS c INT;
 
 statement ok
 INSERT INTO sac VALUES (4, 40, 'delta', 4, 400);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac;
 
 
 query
@@ -68,10 +63,6 @@ statement ok
 INSERT INTO sac (id, a, b, n) VALUES (5, 50, 'echo', 5);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sac;
-
-
 query
 SELECT id, c, d FROM sac ORDER BY id;
 ----
@@ -96,10 +87,6 @@ CREATE SEQUENCE sac_seq;
 
 statement ok
 ALTER TABLE sac ADD COLUMN s BIGINT DEFAULT nextval('sac_seq');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac;
 
 
 query
@@ -142,10 +129,6 @@ db error: ERROR: NOT NULL constraint failed: sac.n
 
 statement ok
 INSERT INTO sac (id, b, n, c) VALUES (6, 'foxtrot', 6, 600);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac;
 
 
 query
@@ -226,7 +209,7 @@ id	c
 statement error
 ALTER TABLE sac ALTER COLUMN n TYPE INT USING CASE WHEN n = 3 THEN NULL ELSE n END;
 ----
-db error: ERROR: NOT NULL constraint failed: sac.n
+db error: ERROR: column "n" of relation "sac" contains null values
 
 
 statement error
@@ -272,10 +255,6 @@ statement ok
 INSERT INTO sac (id, n, cc) VALUES (7, 7, 700);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sac;
-
-
 query
 SELECT id, cc FROM sac WHERE cc >= 600 ORDER BY id;
 ----
@@ -285,7 +264,7 @@ id	cc
 
 
 statement ok
-CREATE TABLE sac_ck (x INT, CONSTRAINT sac_ck_x CHECK (x > 0)) WITH (storage = 'search');
+CREATE TABLE sac_ck (x INT, CONSTRAINT sac_ck_x CHECK (x > 0));
 
 
 statement ok
@@ -309,21 +288,19 @@ ALTER TABLE sac_ck DROP CONSTRAINT IF EXISTS sac_ck_pos;
 statement error
 ALTER TABLE sac_ck DROP CONSTRAINT sac_ck_pos;
 ----
-db error: ERROR: constraint "sac_ck_pos" of table sac_ck does not exist
+db error: ERROR: constraint "sac_ck_pos" of relation "sac_ck" does not exist
 
 
 statement ok
 INSERT INTO sac_ck VALUES (-1);
 
 
-statement error
+statement ok
 ALTER TABLE sac DROP CONSTRAINT sac_pkey;
-----
-db error: ERROR: dropping a PRIMARY KEY or UNIQUE constraint of a search-backed table is not supported
 
 
 statement ok
-CREATE TABLE sac_tx (id INT, v TEXT) WITH (storage = 'search');
+CREATE TABLE sac_tx (id INT, v TEXT);
 
 
 statement ok
@@ -350,10 +327,6 @@ statement ok
 INSERT INTO sac_tx VALUES (3, 'three');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sac_tx;
-
-
 query
 SELECT id, v FROM sac_tx ORDER BY id;
 ----
@@ -376,10 +349,6 @@ INSERT INTO sac_tx VALUES (4, 'four', 6);
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac_tx;
 
 
 query
@@ -405,7 +374,7 @@ connection s2
 statement error
 INSERT INTO sac_tx VALUES (5, 'five', 7);
 ----
-db error: ERROR: search table "sac_tx" was altered by a concurrent transaction
+db error: ERROR: table "sac_tx" was altered by a concurrent transaction
 HINT: Retry the transaction.
 
 
@@ -420,11 +389,6 @@ INSERT INTO sac_tx VALUES (5, 7);
 
 
 connection s2
-statement ok
-VACUUM (REFRESH_TABLE) sac_tx;
-
-
-connection s2
 query
 SELECT id, w FROM sac_tx ORDER BY id;
 ----
@@ -436,8 +400,176 @@ id	w
 
 
 statement ok
-CREATE TABLE sac_vec (id INT PRIMARY KEY, emb FLOAT[2], a INT)
-WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sac_iso (id INT);
+
+
+statement ok
+INSERT INTO sac_iso VALUES (1);
+
+
+connection s1
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection s1
+query
+SELECT count(*) FROM sac_iso;
+----
+count
+1
+
+
+connection s2
+statement ok
+INSERT INTO sac_iso VALUES (2);
+
+
+connection s1
+statement ok
+ALTER TABLE sac_iso ADD COLUMN w INT DEFAULT 5;
+
+
+connection s1
+statement error
+SELECT id, w FROM sac_iso ORDER BY id;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+INSERT INTO sac_iso VALUES (3);
+
+
+connection s1
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+connection s1
+statement async ok
+ALTER TABLE sac_iso ADD COLUMN w INT DEFAULT 5;
+
+
+connection s2
+statement ok
+COMMIT;
+
+
+wait
+
+
+connection s1
+query
+SELECT id, w FROM sac_iso ORDER BY id;
+----
+id	w
+1	5
+2	5
+3	5
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s1
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection s1
+query
+SELECT count(*) FROM sac_iso;
+----
+count
+3
+
+
+connection s2
+statement ok
+INSERT INTO sac_iso VALUES (4, 6);
+
+
+connection s1
+statement ok
+CREATE INDEX sac_iso_w ON sac_iso USING inverted (w);
+
+
+connection s1
+query
+SELECT id, w FROM sac_iso ORDER BY id;
+----
+id	w
+1	5
+2	5
+3	5
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE sac_del (id INT, v INT);
+
+
+statement ok
+INSERT INTO sac_del VALUES (1, 1), (2, 2), (3, 3);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) FROM sac_del;
+----
+count
+3
+
+
+connection s2
+statement ok
+ALTER TABLE sac_del ADD COLUMN c INT DEFAULT 7;
+
+
+connection s1
+statement ok
+DELETE FROM sac_del WHERE id = 3;
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT id, c FROM sac_del ORDER BY id;
+----
+id	c
+1	7
+2	7
+
+
+statement ok
+CREATE TABLE sac_vec (id INT PRIMARY KEY, emb FLOAT[2], a INT);
 
 
 statement ok
@@ -450,7 +582,7 @@ INSERT INTO sac_vec VALUES (1, [1, 0], 10), (2, [2, 0], 20);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sac_vec;
+VACUUM (FLUSH_TABLE) sac_vec;
 
 
 statement ok
@@ -461,18 +593,13 @@ statement ok
 INSERT INTO sac_vec VALUES (3, [3, 0], 30, 5), (4, [4, 0], 40, 50);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sac_vec;
-
-
 query
 EXPLAIN SELECT id FROM sac_vec WHERE a = 10 OR c = 50
   ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 3;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: sac_vec                    │
-│ Lookup: search                    │
+│ Table: sac_vec                    │
 │ Row Filter: (a = 10) OR (c = 50)  │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
@@ -500,8 +627,7 @@ id
 
 
 statement ok
-CREATE TABLE sac_expr (id INT PRIMARY KEY, b TEXT, n INT)
-WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sac_expr (id INT PRIMARY KEY, b TEXT, n INT);
 
 
 statement ok
@@ -513,19 +639,11 @@ INSERT INTO sac_expr VALUES (1, 'Alpha', 1), (2, 'Bravo', 2);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sac_expr;
-
-
-statement ok
 ALTER TABLE sac_expr ADD COLUMN d TEXT DEFAULT 'x';
 
 
 statement ok
 ALTER TABLE sac_expr ALTER COLUMN n TYPE BIGINT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac_expr;
 
 
 query
@@ -544,8 +662,7 @@ id	b	n	d
 
 
 statement ok
-CREATE TABLE sac_serial (id SERIAL, v INT)
-WITH (storage = 'search', refresh_interval = 0);
+CREATE TABLE sac_serial (id SERIAL, v INT);
 
 
 statement ok
@@ -584,10 +701,6 @@ public.sac_serial_id_seq
 
 statement ok
 INSERT INTO sac_serial (v) VALUES (30);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sac_serial;
 
 
 query

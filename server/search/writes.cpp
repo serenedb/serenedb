@@ -171,7 +171,6 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     *columns, projections, {}, &context, filter_states};
   duckdb::DataChunk chunk;
   chunk.Initialize(duckdb::Allocator::Get(context), types);
-  duckdb::Vector keys{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
   duckdb::SelectionVector rows{STANDARD_VECTOR_SIZE};
   const uint64_t docs_count = segment.Meta().docs_count;
   uint64_t window = 0;
@@ -185,6 +184,7 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
       window, std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs_count - window),
       chunk, &rows, count);
     chunk.SetCardinality(scanned);
+    duckdb::Vector keys{duckdb::LogicalType::BLOB, scanned};
     encoder.Encode(chunk, column_ids, keys);
     auto values = keys.Values<duckdb::string_t>();
     for (duckdb::idx_t row = 0; row != scanned; ++row) {

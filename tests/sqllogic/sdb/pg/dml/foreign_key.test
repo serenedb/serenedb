@@ -313,3 +313,40 @@ DROP TABLE fk_a_c;
 
 statement ok
 DROP TABLE fk_a_p;
+
+statement ok
+CREATE TABLE fk_w_p(id INTEGER PRIMARY KEY, u INTEGER UNIQUE);
+
+statement ok
+CREATE TABLE fk_w_c(id INTEGER PRIMARY KEY, u INTEGER REFERENCES fk_w_p(u));
+
+statement ok
+SET threads = 1;
+
+statement count 4096
+INSERT INTO fk_w_p SELECT i, CASE WHEN i = 0 THEN NULL ELSE i END FROM range(4096) t(i);
+
+statement ok
+RESET threads;
+
+statement count 1
+INSERT INTO fk_w_c VALUES (1, 2048);
+
+statement error
+DELETE FROM fk_w_p WHERE id >= 0;
+----
+db error: ERROR: update or delete on table "fk_w_p" violates foreign key constraint "fk_w_c_u_fkey" on table "fk_w_c"
+DETAIL: Key (u)=(2048) is still referenced from table "fk_w_c".
+
+
+query
+SELECT count(*) FROM fk_w_p;
+----
+count
+4096
+
+statement ok
+DROP TABLE fk_w_c;
+
+statement ok
+DROP TABLE fk_w_p;

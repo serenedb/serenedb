@@ -1,0 +1,38 @@
+statement ok
+ATTACH ':memory:' AS cdaa_dup;
+
+
+statement ok
+CREATE TABLE cdaa_dup.main.t (a INTEGER);
+
+
+statement ok
+INSERT INTO cdaa_dup.main.t VALUES (1);
+
+
+statement error
+CREATE DATABASE cdaa_dup;
+----
+db error: ERROR: database "cdaa_dup" already exists
+
+
+statement ok
+CREATE DATABASE IF NOT EXISTS cdaa_dup;
+
+
+query
+SELECT count(*) AS n FROM cdaa_dup.main.t;
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'cdaa_dup';
+----
+n
+0
+
+
+statement ok
+DETACH cdaa_dup;

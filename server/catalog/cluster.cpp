@@ -459,7 +459,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
   AssignObjectOid(*this, info);
   auto entry = duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
   auto& database = *entry;
-  if (!_databases.Create(transaction, std::move(entry))) {
+  const auto attached = duckdb::DatabaseManager::Get(transaction.GetContext())
+                          .GetDatabase(info.GetQualifiedName().Name());
+  if ((attached && !IsSereneDB(attached->GetCatalog())) ||
+      !_databases.Create(transaction, std::move(entry))) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
     }

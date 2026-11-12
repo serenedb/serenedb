@@ -1398,15 +1398,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropConstraint(
   }
   const bool key = (*it)->type == duckdb::ConstraintType::UNIQUE ||
                    (*it)->type == duckdb::ConstraintType::FOREIGN_KEY;
+  std::vector<std::string> own_references;
   if ((*it)->type == duckdb::ConstraintType::UNIQUE && !IsReplay(info)) {
     const auto field = (*it)->oid;
     auto transaction = catalog.GetCatalogTransaction(context);
     transaction.view.visibility_bound = duckdb::VisibilityBound::AllCommitted();
     for (const auto& child : search::LiveReferencing(
            *this, _storage->ReferencingKeys(), field, transaction)) {
-      if (child.table->Storage() == _storage) {
-        continue;
-      }
       if (!info.cascade) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -1417,6 +1415,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropConstraint(
                      child.table->name.GetIdentifierName(),
                      " depends on index ", info.constraint_name),
           ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+      }
+      if (child.table->Storage() == _storage) {
+        own_references.push_back(child.spec->constraint);
+        continue;
       }
       duckdb::DropConstraintInfo drop{
         duckdb::AlterEntryData{
@@ -1433,6 +1435,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterDropConstraint(
                           search::TableChange::Schema);
   }
   constraints.erase(it);
+  for (const auto& reference : own_references) {
+    constraints.erase(FindConstraint(constraints, reference));
+  }
   auto altered = Altered(context, info, std::move(definition));
   if (key) {
     if (!IsReplay(info)) {

@@ -286,3 +286,34 @@ z
 
 statement ok
 DROP TABLE fkcol_c;
+
+
+statement ok
+CREATE TABLE selfref (id INTEGER PRIMARY KEY, up INTEGER REFERENCES selfref (id));
+
+
+statement error
+ALTER TABLE selfref DROP CONSTRAINT selfref_pkey;
+----
+db error: ERROR: cannot drop constraint selfref_pkey on table selfref because other objects depend on it
+DETAIL: constraint selfref_up_fkey on table selfref depends on index selfref_pkey
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+ALTER TABLE selfref DROP CONSTRAINT selfref_pkey CASCADE;
+
+
+statement ok
+INSERT INTO selfref VALUES (1, 7), (1, 8);
+
+
+query
+SELECT count(*) AS constraints FROM pg_constraint WHERE conrelid = 'selfref'::regclass AND contype IN ('p', 'f');
+----
+constraints
+0
+
+
+statement ok
+DROP TABLE selfref;

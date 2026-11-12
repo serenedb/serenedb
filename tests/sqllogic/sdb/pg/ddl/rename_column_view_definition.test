@@ -253,3 +253,80 @@ DROP TABLE rcv_u;
 
 statement ok
 DROP TABLE rcv_t;
+
+
+statement ok
+CREATE TABLE rcv_tf (a INTEGER);
+
+
+statement ok
+INSERT INTO rcv_tf VALUES (1);
+
+
+statement ok
+CREATE VIEW rcv_tf_v AS SELECT a, r.range AS g FROM rcv_tf, range(2) r;
+
+
+statement ok
+ALTER TABLE rcv_tf RENAME COLUMN a TO a2;
+
+
+query
+SELECT a, g FROM rcv_tf_v ORDER BY g;
+----
+a	g
+1	0
+1	1
+
+
+statement ok
+CREATE TABLE rcv_l (k INTEGER, v INTEGER);
+
+
+statement ok
+CREATE TABLE rcv_r (k INTEGER, w INTEGER);
+
+
+statement ok
+CREATE VIEW rcv_using AS SELECT v, w FROM rcv_l JOIN rcv_r USING (k);
+
+
+statement error
+ALTER TABLE rcv_l RENAME COLUMN k TO k2;
+----
+db error: ERROR: cannot rename column k of table rcv_l because other objects depend on it
+DETAIL: view rcv_using refers to the column where its rename cannot be followed
+
+
+statement error
+ALTER TABLE rcv_l DROP COLUMN k;
+----
+db error: ERROR: cannot drop column k of table rcv_l because other objects depend on it
+DETAIL: view rcv_using depends on column k of table rcv_l
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+CREATE TABLE rcv_o (a INTEGER);
+
+
+statement ok
+INSERT INTO rcv_o VALUES (3);
+
+
+statement ok
+CREATE VIEW rcv_corr AS SELECT (SELECT a) AS x FROM rcv_o;
+
+
+statement error
+ALTER TABLE rcv_o RENAME COLUMN a TO a2;
+----
+db error: ERROR: cannot rename column a of table rcv_o because other objects depend on it
+DETAIL: view rcv_corr refers to the column where its rename cannot be followed
+
+
+query
+SELECT x FROM rcv_corr;
+----
+x
+3

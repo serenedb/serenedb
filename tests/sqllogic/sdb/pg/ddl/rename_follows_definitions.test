@@ -193,3 +193,52 @@ SELECT 'y'::rfd_s.rfd_enum AS e;
 ----
 e
 y
+
+
+statement ok
+CREATE SCHEMA rfd_cast;
+
+
+statement ok
+CREATE TYPE rfd_cast.t AS ENUM ('x');
+
+
+statement ok
+CREATE VIEW rfd_cast_v AS SELECT 'x'::rfd_cast.t AS e;
+
+
+statement ok
+ALTER SCHEMA rfd_cast RENAME TO rfd_cast2;
+
+
+query
+SELECT e::VARCHAR AS e FROM rfd_cast_v;
+----
+e
+x
+
+
+statement ok
+CREATE SEQUENCE rfd_regclass;
+
+
+statement ok
+CREATE VIEW rfd_regclass_v AS SELECT nextval('rfd_regclass'::regclass) AS a;
+
+
+statement ok
+ALTER SEQUENCE rfd_regclass RENAME TO rfd_regclass2;
+
+
+query
+SELECT a FROM rfd_regclass_v;
+----
+a
+1
+
+
+query
+SELECT currval('rfd_regclass2') AS a;
+----
+a
+1

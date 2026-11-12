@@ -38,6 +38,7 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -477,6 +478,9 @@ class Rewriter {
           Rename(expr.Cast<duckdb::TypeExpression>().GetQualifiedNameMutable());
         }
         break;
+      case duckdb::ExpressionClass::CAST:
+        Visit(expr.Cast<duckdb::CastExpression>().TargetTypeMutable());
+        break;
       default:
         break;
     }
@@ -514,20 +518,27 @@ class Rewriter {
     if (arguments.empty()) {
       return;
     }
-    auto& argument = arguments[0].GetExpressionMutable();
-    if (!argument ||
-        argument->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT) {
+    auto* argument = &arguments[0].GetExpressionMutable();
+    if (*argument &&
+        (*argument)->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
+      auto& cast = (*argument)->Cast<duckdb::CastExpression>();
+      if (cast.TargetType().GetQualifiedName().Name() == "regclass") {
+        argument = &cast.ChildMutable();
+      }
+    }
+    if (!*argument || (*argument)->GetExpressionClass() !=
+                        duckdb::ExpressionClass::CONSTANT) {
       return;
     }
     const auto& literal =
-      argument->Cast<duckdb::ConstantExpression>().GetLiteral();
+      (*argument)->Cast<duckdb::ConstantExpression>().GetLiteral();
     if (literal.kind != duckdb::LiteralKind::STRING) {
       return;
     }
     auto name = duckdb::QualifiedName::Parse(
       literal.text, duckdb::IdentifierCaseMode::LOWERCASE);
     if (Rename(name)) {
-      argument = duckdb::ConstantExpression::String(name.ToString());
+      *argument = duckdb::ConstantExpression::String(name.ToString());
     }
   }
 
@@ -577,6 +588,7 @@ class ColumnRewriter {
 
   bool changed = false;
   bool expands_all = false;
+  bool uncertain = false;
 
   void Visit(duckdb::QueryNode& node) {
     for (auto& [name, cte] : node.cte_map.map) {
@@ -608,7 +620,9 @@ class ColumnRewriter {
   struct Scope {
     std::vector<duckdb::Identifier> qualifiers;
     std::vector<duckdb::ParsedExpression*> conditions;
-    bool exclusive = true;
+    bool known = true;
+    bool other_has_column = false;
+    bool merged = false;
   };
 
   void VisitSelect(duckdb::SelectNode& select) {
@@ -616,8 +630,8 @@ class ColumnRewriter {
     if (select.from_table) {
       VisitFrom(*select.from_table, scope);
     }
-    if (scope.qualifiers.empty()) {
-      scope.exclusive = false;
+    if (scope.merged && !scope.qualifiers.empty()) {
+      uncertain = true;
     }
     for (auto* condition : scope.conditions) {
       Rewrite(*condition, scope);
@@ -667,10 +681,11 @@ class ColumnRewriter {
         if (found && found->oid == _table.oid) {
           scope.qualifiers.push_back(ref.alias.empty() ? name.Name()
                                                        : ref.alias);
-        } else if (!found || found->type != duckdb::CatalogType::TABLE_ENTRY ||
-                   found->Cast<duckdb::TableCatalogEntry>().ColumnExists(
+        } else if (!found || found->type != duckdb::CatalogType::TABLE_ENTRY) {
+          scope.known = false;
+        } else if (found->Cast<duckdb::TableCatalogEntry>().ColumnExists(
                      _old_column)) {
-          scope.exclusive = false;
+          scope.other_has_column = true;
         }
         break;
       }
@@ -681,14 +696,21 @@ class ColumnRewriter {
         if (join.condition) {
           scope.conditions.push_back(join.condition.get());
         }
+        scope.merged =
+          scope.merged || join.ref_type == duckdb::JoinRefType::NATURAL ||
+          absl::c_any_of(join.using_columns, [&](const auto& column) {
+            return _equals(column, _old_column);
+          });
         break;
       }
       case duckdb::TableReferenceType::SUBQUERY:
         Visit(*ref.Cast<duckdb::SubqueryRef>().subquery->node);
-        scope.exclusive = false;
+        scope.known = false;
+        break;
+      case duckdb::TableReferenceType::EMPTY_FROM:
         break;
       default:
-        scope.exclusive = false;
+        scope.known = false;
         break;
     }
   }
@@ -706,11 +728,18 @@ class ColumnRewriter {
     if (!_equals(names.back(), _old_column)) {
       return false;
     }
-    if (names.size() == 1
-          ? !scope.exclusive
-          : !absl::c_any_of(scope.qualifiers, [&](const duckdb::Identifier& q) {
-              return _equals(q, names[names.size() - 2]);
-            })) {
+    if (names.size() == 1) {
+      if (scope.qualifiers.empty() ? scope.known && !scope.other_has_column
+                                   : scope.merged) {
+        uncertain = true;
+      }
+      if (scope.qualifiers.empty() || scope.merged) {
+        return false;
+      }
+    } else if (!absl::c_any_of(scope.qualifiers,
+                               [&](const duckdb::Identifier& q) {
+                                 return _equals(q, names[names.size() - 2]);
+                               })) {
       return false;
     }
     names.back() = _new_column;
@@ -1355,10 +1384,24 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
       }
       continue;
     }
+    const auto refuse = [&] {
+      auto& context = transaction.GetContext();
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+        ERR_MSG("cannot rename column ", old_column.GetIdentifierName(),
+                " of table ", table.name.GetIdentifierName(),
+                " because other objects depend on it"),
+        ERR_DETAIL(pg::DescribeObject(context, dependent),
+                   " refers to the column where its rename cannot be "
+                   "followed"));
+    };
     if (dependent.type == duckdb::CatalogType::VIEW_ENTRY) {
       auto info = dependent.GetInfo();
       auto& view = info->Cast<duckdb::CreateViewInfo>();
       rewriter.Visit(*view.query->node);
+      if (rewriter.uncertain) {
+        refuse();
+      }
       const duckdb::IdentifierEquality equals{
         table.ParentCatalog().IsCaseSensitive()};
       const bool renames_output =
@@ -1380,6 +1423,9 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
     auto info = dependent.GetInfo();
     for (auto& macro : info->Cast<duckdb::CreateMacroInfo>().macros) {
       rewriter.Visit(*macro->Cast<duckdb::TableMacroFunction>().query_node);
+    }
+    if (rewriter.uncertain) {
+      refuse();
     }
     if (rewriter.changed) {
       schema.Alter(transaction, *info->GetAlterInfo());
@@ -1414,7 +1460,7 @@ void DropColumnReaders(duckdb::CatalogTransaction transaction,
       } else {
         continue;
       }
-      if (!reads.changed && !reads.expands_all) {
+      if (!reads.changed && !reads.expands_all && !reads.uncertain) {
         continue;
       }
       lines.push_back(absl::StrCat(

@@ -237,8 +237,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   bool stats_stage = false;
   std::atomic_uint32_t prepare_next{0};
   ScanBarrier stats_barrier;
-  std::atomic_uint32_t ordered_next{0};
-  ScanBarrier ordered_barrier;
 
   ScanShape shape = ScanShape::Stream;
   bool splittable = true;
@@ -460,8 +458,6 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState* l,
                                             uint32_t seg_idx);
 bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
-                     ScanLocalState& l);
-bool RunOrderedStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                      ScanLocalState& l);
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);

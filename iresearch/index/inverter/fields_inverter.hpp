@@ -25,7 +25,6 @@
 
 #include <array>
 #include <deque>
-#include <new>
 #include <span>
 #include <string>
 
@@ -607,15 +606,13 @@ class FieldInverter : util::Noncopyable {
     SDB_ASSERT(!_state.value_open);
     SDB_ASSERT(Layout() == TokenLayout::Terms);
     auto& log = *std::get_if<PostingLog<TokenLayout::Terms>>(&_log);
-    alignas(duckdb::string_t) std::array<byte_type, kBufferBytes> buffer;
-    auto* const terms =
-      std::launder(reinterpret_cast<duckdb::string_t*>(buffer.data()));
-    auto* const keys = buffer.data() + kMaxValues * sizeof(duckdb::string_t);
+    duckdb::string_t terms[kMaxValues];
+    std::array<byte_type, kMaxValues * kKeyBytes> keys;
     for (size_t base = 0; base < n;) {
       const auto m =
         static_cast<uint32_t>(std::min<size_t>(kMaxValues, n - base));
       AppendNumericTermsBlock<P>(
-        terms, m, [&](size_t j) { return value_at(base + j); }, keys);
+        terms, m, [&](size_t j) { return value_at(base + j); }, keys.data());
       auto* const ids = ResolveTerms(terms, m);
       for (uint32_t k = 0; k < m; ++k) {
         if (!PushDocTerms(log, doc_at(base + k), ids + k, 1)) [[unlikely]] {

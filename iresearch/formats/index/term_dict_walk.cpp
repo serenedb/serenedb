@@ -32,6 +32,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
+#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -53,7 +54,6 @@ class SuffixFilter {
     for (const auto& suffix : required) {
       SDB_ASSERT(!suffix.empty());
       ++_starts[suffix.back() + 1];
-      _tails.Add(suffix.back());
       uint64_t word = 0;
       std::memcpy(&word, suffix.data(),
                   std::min(suffix.size(), sizeof(uint64_t)));
@@ -70,8 +70,7 @@ class SuffixFilter {
       const auto match =
         Classify(pending->data, pending->size,
                  pending->restart ? nullptr : SuffixCodes(cursor),
-                 {.byte = cursor.View().befores[cursor.Entry()],
-                  .known = pending->lcp > prefix});
+                 pending->lcp <= prefix);
       if (match == Match::Some) {
         return false;
       }
@@ -92,16 +91,16 @@ class SuffixFilter {
     uint32_t lcp = kNoSkip;
     for (;;) {
       auto last = Match::None;
-      lcp = std::min(
-        lcp,
-        cursor.SkipTails(prefix, _tails,
-                         [&](const byte_type* data, Header header,
-                             byte_type before, bool restart) IRS_FORCE_INLINE {
-                           last = Classify(
-                             data, header.len, restart ? nullptr : fsst,
-                             {.byte = before, .known = header.lcp > prefix});
-                           return last == Match::None;
-                         }));
+      lcp =
+        std::min(lcp, cursor.SkipWhile([&](const byte_type* data, Header header,
+                                           bool restart) IRS_FORCE_INLINE {
+          if (header.lcp < prefix) {
+            return false;
+          }
+          last = Classify(data, header.len, restart ? nullptr : fsst,
+                          header.lcp <= prefix);
+          return last == Match::None;
+        }));
       if (last != Match::Unknown) {
         return lcp;
       }
@@ -116,11 +115,6 @@ class SuffixFilter {
   struct Tail {
     uint64_t bytes;
     size_t size;
-  };
-
-  struct Before {
-    byte_type byte;
-    bool known;
   };
 
   enum class Match : uint8_t {
@@ -150,7 +144,7 @@ class SuffixFilter {
     return {.bytes = bytes, .size = decoded};
   }
 
-  Match TailMatch(Tail tail, Before before) const noexcept {
+  Match TailMatch(Tail tail, bool whole) const noexcept {
     if (tail.size == 0) {
       return Match::Unknown;
     }
@@ -173,13 +167,8 @@ class SuffixFilter {
       if (have == size) {
         return Match::Some;
       }
-      if (!before.known ||
-          static_cast<byte_type>(_words[i] >> (8 * (size - have - 1))) !=
-            before.byte) {
+      if (whole) {
         continue;
-      }
-      if (have + 1 == size) {
-        return Match::Some;
       }
       match = Match::Unknown;
     }
@@ -188,7 +177,7 @@ class SuffixFilter {
 
   IRS_FORCE_INLINE Match Classify(const byte_type* data, uint32_t size,
                                   const duckdb_fsst_decoder_t* fsst,
-                                  Before before) const noexcept {
+                                  bool whole) const noexcept {
     if (size != 0) {
       const auto last = data[size - 1];
       if (!fsst) {
@@ -201,13 +190,13 @@ class SuffixFilter {
         }
       }
     }
-    return ClassifyTail(data, size, fsst, before);
+    return ClassifyTail(data, size, fsst, whole);
   }
 
   IRS_NO_INLINE Match ClassifyTail(const byte_type* data, uint32_t size,
                                    const duckdb_fsst_decoder_t* fsst,
-                                   Before before) const noexcept {
-    return TailMatch(TailOf(data, size, fsst), before);
+                                   bool whole) const noexcept {
+    return TailMatch(TailOf(data, size, fsst), whole);
   }
 
   const duckdb_fsst_decoder_t* SuffixCodes(const Cursor& cursor) {
@@ -273,7 +262,6 @@ class SuffixFilter {
   std::span<const RegexpAcceptor::ExemptKey> _exempt;
   std::vector<uint64_t> _words;
   std::array<uint8_t, kLabels + 1> _starts{};
-  ByteSet _tails;
   std::array<Match, kLabels> _last{};
   bool _coded = false;
 };
@@ -332,34 +320,34 @@ class InfixFilter {
     size_t hit =
       SeekHit(_hit, static_cast<uint32_t>(cursor.NextSuffix() - base));
     uint32_t lcp;
-    const auto raw = [&](const byte_type* data, Header header,
-                         byte_type before) IRS_FORCE_INLINE {
+    const auto raw = [&](const byte_type* data,
+                         Header header) IRS_FORCE_INLINE {
       const auto from = static_cast<uint32_t>(data - base);
       while (hit != count && hits[hit] < from) {
         ++hit;
       }
-      return !Spans(data, header.len, Boundary(header.lcp, before)) &&
+      return !Spans(data, header.len, Boundary(header.lcp)) &&
              (header.len < m || hit == count ||
               hits[hit] >= from + header.len - m + 1);
     };
     if (view.coded) {
-      lcp = cursor.SkipWhile([&](const byte_type* data, Header header,
-                                 byte_type before, bool restart) {
-        if (restart) [[unlikely]] {
-          return raw(data, header, before);
-        }
-        const auto from = static_cast<uint32_t>(data - base);
-        while (hit != count && hits[hit] <= from) {
-          ++hit;
-        }
-        const auto* p = data;
-        return (NextCode(p) & (Boundary(header.lcp, before) | 1)) == 0 &&
-               (hit == count || hits[hit] >= from + header.len);
-      });
+      lcp = cursor.SkipWhile(
+        [&](const byte_type* data, Header header, bool restart) {
+          if (restart) [[unlikely]] {
+            return raw(data, header);
+          }
+          const auto from = static_cast<uint32_t>(data - base);
+          while (hit != count && hits[hit] <= from) {
+            ++hit;
+          }
+          const auto* p = data;
+          return (NextCode(p) & (Boundary(header.lcp) | 1)) == 0 &&
+                 (hit == count || hits[hit] >= from + header.len);
+        });
     } else {
-      lcp = cursor.SkipWhile([&](const byte_type* data, Header header,
-                                 byte_type before,
-                                 bool) { return raw(data, header, before); });
+      lcp = cursor.SkipWhile([&](const byte_type* data, Header header, bool) {
+        return raw(data, header);
+      });
     }
     _hit = hit;
     if (cursor.AtGroupEnd()) {
@@ -373,8 +361,6 @@ class InfixFilter {
 
  private:
   static constexpr uint32_t kInfixProbe = 256;
-  static constexpr uint32_t kSparseProbe = 64;
-  static constexpr uint32_t kSparseCandidates = 1;
   static constexpr size_t kNone = std::numeric_limits<size_t>::max();
 
   struct HitSpan {
@@ -384,14 +370,9 @@ class InfixFilter {
   };
 
   void BuildLiterals() {
-    const size_t m = _infix.size();
     for (size_t label = 0; label != kLabels; ++label) {
       const auto byte = static_cast<byte_type>(label);
       _literals[label] = Pieces({&byte, 1});
-    }
-    for (size_t k = 1; k != m; ++k) {
-      _before[_infix[k - 1]] |= uint64_t{1} << k;
-      _prefix_ends.Add(_infix[k - 1]);
     }
   }
 
@@ -443,9 +424,8 @@ class InfixFilter {
     return pieces;
   }
 
-  uint64_t Boundary(size_t lcp, byte_type before) const noexcept {
-    return ((uint64_t{2} << std::min(lcp, _infix.size() - 1)) - 2) &
-           _before[before];
+  uint64_t Boundary(size_t lcp) const noexcept {
+    return (uint64_t{2} << std::min(lcp, _infix.size() - 1)) - 2;
   }
 
   uint64_t NextCode(const byte_type*& p) const noexcept {
@@ -586,53 +566,21 @@ class InfixFilter {
   }
 
   bool Straddles(const BlockView& view, uint32_t first, uint32_t end,
-                 const byte_type* sp) noexcept {
-    uint32_t entry = first + 1;
-    if (!_sparse) {
-      sp += HeaderAt(view, first).len;
-      for (; entry < end; ++entry) {
-        const auto header = HeaderAt(view, entry);
-        if (Crosses(view, sp, header, view.befores[entry])) {
-          return true;
-        }
-        sp += header.len;
-      }
-      return false;
-    }
-    uint32_t candidates =
-      ClassifyByteSet16(view.befores + first, _prefix_ends) &
-      analysis::classify::LowBits(end - first) & ~uint32_t{1};
-    if (_probed != kSparseProbe) {
-      _probed_candidates += std::popcount(candidates);
-      if (++_probed == kSparseProbe &&
-          _probed_candidates > kSparseProbe * kSparseCandidates) {
-        _sparse = false;
-      }
-    }
-    if (candidates == 0) {
-      return false;
-    }
+                 const byte_type* sp) const noexcept {
     sp += HeaderAt(view, first).len;
-    do {
-      for (const uint32_t next = first + std::countr_zero(candidates);
-           entry != next; ++entry) {
-        sp += ColumnAt(view.lens, view.width, entry);
-      }
+    for (uint32_t entry = first + 1; entry < end; ++entry) {
       const auto header = HeaderAt(view, entry);
-      if (Crosses(view, sp, header, view.befores[entry])) {
+      if (Crosses(view, sp, header)) {
         return true;
       }
       sp += header.len;
-      ++entry;
-      candidates &= candidates - 1;
-    } while (candidates != 0);
+    }
     return false;
   }
 
   IRS_FORCE_INLINE bool Crosses(const BlockView& view, const byte_type* sp,
-                                Header header,
-                                byte_type before) const noexcept {
-    const uint64_t across = Boundary(header.lcp, before);
+                                Header header) const noexcept {
+    const uint64_t across = Boundary(header.lcp);
     if (view.coded) {
       const auto* p = sp;
       return (NextCode(p) & across) != 0;
@@ -733,7 +681,7 @@ class InfixFilter {
       LoadHits(cursor);
     }
     const size_t m = _infix.size();
-    const uint64_t across = Boundary(suffix->lcp, view.befores[cursor.Entry()]);
+    const uint64_t across = Boundary(suffix->lcp);
     const auto from = static_cast<uint32_t>(suffix->data - view.suffixes);
     if (view.coded && !suffix->restart) {
       const auto* p = suffix->data;
@@ -762,20 +710,15 @@ class InfixFilter {
   bool _checked = false;
   bool _off = false;
   bool _coded = false;
-  bool _sparse = true;
-  uint32_t _probed = 0;
-  uint32_t _probed_candidates = 0;
   uint32_t _hits_block = kNoEntry;
   size_t _hit = 0;
   std::vector<uint32_t> _hits;
   std::vector<HitSpan> _spans;
   ByteSet _anchors;
-  ByteSet _prefix_ends;
   bstring _decoded;
   bytes_view _infix;
   re2::LiteralFinder _finder;
   std::array<uint64_t, kLabels> _literals{};
-  std::array<uint64_t, kLabels> _before{};
   std::array<uint64_t, kLabels> _codes{};
 };
 

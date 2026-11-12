@@ -28,13 +28,11 @@
 #include <cstring>
 #include <limits>
 
-#include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -67,8 +65,6 @@ struct BlockView {
   const byte_type* record_offsets;
   const byte_type* lcps;
   const byte_type* lens;
-  const byte_type* tails;
-  const byte_type* befores;
   const byte_type* suffixes;
   const byte_type* keys;
   const byte_type* records;
@@ -116,9 +112,7 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
     view.record_offsets = view.heads + kHeadBytes * view.restarts;
     view.lcps = view.record_offsets + kRecordOffset * RecordGroups(view.count);
     view.lens = view.lcps + uint64_t{view.count} * view.width;
-    view.tails = view.lens + uint64_t{view.count} * view.width;
-    view.befores = view.tails + view.count;
-    view.suffixes = view.befores + view.count;
+    view.suffixes = view.lens + uint64_t{view.count} * view.width;
     view.records = view.suffixes + suffixes;
     return view;
   }
@@ -664,53 +658,11 @@ class Cursor {
   IRS_FORCE_INLINE bool Rejects(Reject& reject, uint32_t entry,
                                 const byte_type* sp, Header header) const {
     if (entry % kRestartInterval != 0) [[likely]] {
-      return reject(sp, header, _view.befores[entry], false);
+      return reject(sp, header, false);
     }
     return reject(sp + header.lcp,
                   Header{.lcp = header.lcp, .len = header.len - header.lcp},
-                  _view.befores[entry], true);
-  }
-
-  template<typename Reject>
-  IRS_FORCE_INLINE uint32_t SkipTails(size_t prefix, const ByteSet& tails,
-                                      Reject&& reject) {
-    const auto [first, end] = SkipSpan();
-    if (first >= end) {
-      return kNoSkip;
-    }
-    static_assert(kRestartInterval == 16);
-    const auto* sp = _sp;
-    uint32_t entry = first;
-    uint32_t lcp = kNoSkip;
-    for (uint32_t chunk = first; chunk < end; chunk += kRestartInterval) {
-      const uint32_t chunk_end = std::min(chunk + kRestartInterval, end);
-      uint32_t candidates = ClassifyByteSet16(_view.tails + chunk, tails) &
-                            analysis::classify::LowBits(chunk_end - chunk);
-      for (;;) {
-        const uint32_t next =
-          candidates == 0 ? chunk_end : chunk + std::countr_zero(candidates);
-        for (; entry != next; ++entry) {
-          const auto header = HeaderAt(_view, entry);
-          if (header.lcp < prefix) {
-            return Skipped(first, entry, end, sp, lcp);
-          }
-          lcp = std::min(lcp, header.lcp);
-          sp += header.len;
-        }
-        if (entry == chunk_end) {
-          break;
-        }
-        candidates &= candidates - 1;
-        const auto header = HeaderAt(_view, entry);
-        if (header.lcp < prefix || !Rejects(reject, entry, sp, header)) {
-          return Skipped(first, entry, end, sp, lcp);
-        }
-        lcp = std::min(lcp, header.lcp);
-        sp += header.len;
-        ++entry;
-      }
-    }
-    return Skipped(first, entry, end, sp, lcp);
+                  true);
   }
 
   bytes_view PeekNext() {

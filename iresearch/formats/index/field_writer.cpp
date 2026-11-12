@@ -55,8 +55,7 @@ uint64_t VarBytes(uint64_t count, uint64_t head_skip, uint32_t max,
   return 2 + VSize(count) + VSize(restarts) + VSize(suffixes) +
          VSize(head_skip) + (kVarRestart + kHeadBytes) * restarts +
          kRecordOffset * RecordGroups(count) +
-         count * (2 * uint64_t{ColumnWidth(max)} + 2) + suffixes + records +
-         kSlack;
+         count * 2 * uint64_t{ColumnWidth(max)} + suffixes + records + kSlack;
 }
 
 uint64_t FixedBytes(uint64_t count, uint64_t records, uint64_t width,
@@ -218,14 +217,6 @@ void Serialize(const BlockBuilder& block, DataOutput& out) {
     }
     WriteColumn(out, columns.lcps, width);
     WriteColumn(out, columns.lens, width);
-    for (uint32_t i = 0; i != count; ++i) {
-      const auto key = KeyAt(block, i);
-      out.WriteByte(key.empty() ? 0 : key.back());
-    }
-    for (uint32_t i = 0; i != count; ++i) {
-      const auto lcp = columns.lcps[i];
-      out.WriteByte(lcp == 0 ? 0 : KeyAt(block, i)[lcp - 1]);
-    }
     out.WriteData(columns.suffixes.data(), columns.suffixes.size());
   } else {
     const uint32_t stride = block.width - block.prefix;

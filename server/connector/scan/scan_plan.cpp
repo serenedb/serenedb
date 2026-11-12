@@ -730,16 +730,21 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
   return ScanShape::Stream;
 }
 
-void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
-                         duckdb::Vector* scores, duckdb::DataChunk& output) {
+void WriteVirtualColumns(ScanGlobalState& g, bool*& empty_filled,
+                         duckdb::idx_t num_rows, duckdb::Vector* scores,
+                         duckdb::DataChunk& output) {
   if (g.tableoid_output_idx != duckdb::DConstants::INVALID_INDEX) {
     auto* tableoid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
       output.data[g.tableoid_output_idx]);
     std::fill_n(tableoid_data, num_rows, g.tableoid_value);
   }
   if (g.empty_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    duckdb::ConstantVector::SetNull(output.data[g.empty_output_idx],
-                                    duckdb::count_t(num_rows));
+    auto* data =
+      duckdb::FlatVector::GetDataMutable<bool>(output.data[g.empty_output_idx]);
+    if (data != empty_filled) {
+      std::fill_n(data, STANDARD_VECTOR_SIZE, false);
+      empty_filled = data;
+    }
   }
   if (!g.ScanScore()) {
     return;
@@ -872,7 +877,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
   WriteRowPositions(g, batch.seg, batch.docs, output);
-  WriteVirtualColumns(g, batch.count, batch.score_vec, output);
+  WriteVirtualColumns(g, f.empty_filled, batch.count, batch.score_vec, output);
   return batch.count;
 }
 

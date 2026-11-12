@@ -35,6 +35,7 @@
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/memory.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/singleton.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <optional>
@@ -104,6 +105,7 @@ class ScoredWrapper : public irs::lead::Node {
 
   irs::ScoreFunction PrepareScore() final {
     return _record.scorer->PrepareScorer({
+      .memory = _ctx.memory,
       .segment = _segment,
       .field = {},
       .doc_attrs = _provider,
@@ -176,8 +178,8 @@ class QueryWrapper : public irs::QueryBuilder {
     if (!it || !_query->Scores() || !ctx.fetcher) {
       return it;
     }
-    return irs::memory::make_managed<ScoredWrapper>(std::move(it), Segment(),
-                                                    ctx, _query->Stats(ctx));
+    return ctx.memory.Make<ScoredWrapper>(std::move(it), Segment(), ctx,
+                                          _query->Stats(ctx));
   }
 
   irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
@@ -209,7 +211,7 @@ class FilterWrapper : public irs::Filter {
     if (irs::QueryBuilder::IsEmpty(*query)) {
       return query;
     }
-    return irs::memory::make_managed<QueryWrapper>(segment, std::move(query));
+    return ctx.memory.Make<QueryWrapper>(segment, std::move(query));
   }
 
   // Only ever reached through `Filter::MakeCollector`, which has already
@@ -261,7 +263,7 @@ struct Boost : public irs::ScorerBase<Boost, void> {
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    return irs::ScoreFunction::Constant(ctx.boost);
+    return irs::ScoreFunction::Constant(ctx.memory, ctx.boost);
   }
 };
 
@@ -313,7 +315,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
       return prepare_scorer(ctx);
     }
 
-    return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
+    return irs::ScoreFunction::Make<CustomSort::Scorer>(ctx.memory, *this, ctx);
   }
 
   std::function<void(irs::byte_type*, const irs::FieldCollector*,
@@ -380,7 +382,8 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     auto* stats = stats_cast(ctx.stats);
     const irs::doc_id_t docs_count = stats->count;
-    return irs::ScoreFunction::Make<FrequencySort::Scorer>(docs_count);
+    return irs::ScoreFunction::Make<FrequencySort::Scorer>(ctx.memory,
+                                                           docs_count);
   }
 };
 
@@ -418,7 +421,7 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
     auto freqs = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freqs);
 
-    return irs::ScoreFunction::Make<FrequencyScore::Scorer>(freqs);
+    return irs::ScoreFunction::Make<FrequencyScore::Scorer>(ctx.memory, freqs);
   }
 };
 
@@ -506,10 +509,9 @@ class PreparedFilter {
   std::unique_ptr<LeadCursor> Execute(size_t i) const {
     const auto& query = _queries[i];
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
-      return std::make_unique<LeadCursor>(
-        irs::memory::make_managed<LeadEmpty>());
+      return std::make_unique<LeadCursor>(_plan_memory.Make<LeadEmpty>());
     }
-    auto node = query->PlanLead({});
+    auto node = query->PlanLead({.memory = _plan_memory});
     if (!node) {
       return nullptr;
     }
@@ -520,10 +522,10 @@ class PreparedFilter {
     size_t i, irs::ColumnArgsFetcher& fetcher) const {
     const auto& query = _queries[i];
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
-      return std::make_unique<LeadCursor>(
-        irs::memory::make_managed<ScoredEmpty>());
+      return std::make_unique<LeadCursor>(_plan_memory.Make<ScoredEmpty>());
     }
     auto node = query->PlanLead({
+      .memory = _plan_memory,
       .scorer = _scorer,
       .fetcher = &fetcher,
     });
@@ -535,6 +537,8 @@ class PreparedFilter {
 
  private:
   const irs::Scorer* _scorer;
+  irs::QueryMemory _query_memory;
+  mutable irs::PlanMemory _plan_memory;
   std::optional<irs::StatsArena> _stats;
   std::optional<irs::PreparedCollector> _collector;
   std::vector<irs::QueryBuilder::ptr> _queries;

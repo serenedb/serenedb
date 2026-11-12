@@ -135,9 +135,13 @@ H ReadPodHeader(std::span<const byte_type> in) noexcept {
 inline constexpr uint32_t kTurboQuantLutChunk = 256;
 
 template<typename Codebook, typename Reader>
-std::unique_ptr<QuantizerReader> MakeReaderT(const Codebook* self) {
-  return std::make_unique<Reader>(
-    std::static_pointer_cast<const Codebook>(self->shared_from_this()));
+QuantizerReader::ptr MakeReaderT(const Codebook* self, PlanMemory* plan) {
+  auto book =
+    std::static_pointer_cast<const Codebook>(self->shared_from_this());
+  if (plan) {
+    return plan->Make<QuantizerReader, Reader>(std::move(book));
+  }
+  return memory::make_managed<QuantizerReader, Reader>(std::move(book));
 }
 
 template<typename Stats, typename Codebook>

@@ -56,7 +56,7 @@ class SegmentReader final : public SubReader {
 
   const SegmentInfo& Meta() const final;
 
-  lead::Node::ptr docs_iterator() const final;
+  lead::Node::ptr docs_iterator(PlanMemory& memory) const final;
 
   const DocumentMask* docs_mask() const final;
 
@@ -64,6 +64,7 @@ class SegmentReader final : public SubReader {
   std::span<const field_id> field_ids() const final;
 
   NormReader::ptr norms(field_id field) const final;
+  NormReader::ptr norms(PlanMemory& memory, field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;

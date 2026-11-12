@@ -88,7 +88,7 @@ typename Family::Result MakeQuery(const MultiTermQuery& query, const Ctx& ctx) {
     if constexpr (kProbePlan<Family>) {
       return probe::MakeDisjunction(terms, {}, field, segment,
                                     Family::Interrogations(ctx), NoScoring{},
-                                    ScoredCtx{});
+                                    ScoredCtx{.memory = Family::MemoryOf(ctx)});
     } else {
       return builder::MakeDisjunctionOfTerms<Family>(
         terms, field, *DocOf(*field),

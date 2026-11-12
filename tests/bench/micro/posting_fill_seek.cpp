@@ -80,6 +80,7 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
@@ -289,17 +290,26 @@ irs::Filter::ptr Both(std::string_view lhs, std::string_view rhs) {
 // Prepared once per benchmark, outside the timed loop: what is being measured
 // is posting iteration, not filter preparation.
 struct Prepared {
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
   irs::QueryBuilder::ptr query;
 
   Prepared(const irs::SubReader& segment, const irs::Filter& filter)
-    : query{filter.PrepareSegment(segment, {})} {}
+    : query{filter.PrepareSegment(segment, {.memory = query_memory})} {}
 
-  irs::lead::Node::ptr Lead() const { return query->PlanLead({}); }
+  irs::lead::Node::ptr Lead() {
+    plan_memory.Rewind();
+    return query->PlanLead({.memory = plan_memory});
+  }
 
-  irs::docs::Root::ptr Docs() const { return irs::docs::MakeRoot(*query); }
+  irs::docs::Root::ptr Docs() {
+    plan_memory.Rewind();
+    return irs::docs::MakeRoot(*query, {.memory = plan_memory});
+  }
 
-  irs::fill::Node::ptr Fill() const {
-    return query->PlanFill({}, irs::ScoreMergeType::Noop);
+  irs::fill::Node::ptr Fill() {
+    plan_memory.Rewind();
+    return query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
   }
 };
 
@@ -356,7 +366,7 @@ size_t Window(const irs::fill::Node::ptr& docs) {
 void BmNext(benchmark::State& state, std::string_view term) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto filter = Term(term);
-  const Prepared prepared{index.reader[0], *filter};
+  Prepared prepared{index.reader[0], *filter};
 
   size_t docs = 0;
   for (auto _ : state) {
@@ -368,7 +378,7 @@ void BmNext(benchmark::State& state, std::string_view term) {
 void BmEmit(benchmark::State& state, std::string_view term) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto filter = Term(term);
-  const Prepared prepared{index.reader[0], *filter};
+  Prepared prepared{index.reader[0], *filter};
 
   size_t docs = 0;
   for (auto _ : state) {
@@ -381,7 +391,7 @@ void BmEmit(benchmark::State& state, std::string_view term) {
 void BmWindow(benchmark::State& state, std::string_view term) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto filter = Term(term);
-  const Prepared prepared{index.reader[0], *filter};
+  Prepared prepared{index.reader[0], *filter};
 
   size_t docs = 0;
   for (auto _ : state) {
@@ -416,7 +426,7 @@ void BmSeek(benchmark::State& state, std::string_view term, double density) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& segment = index.reader[0];
   const auto filter = Term(term);
-  const Prepared prepared{segment, *filter};
+  Prepared prepared{segment, *filter};
   const auto n = static_cast<irs::doc_id_t>(state.range(0));
   const auto blocks = static_cast<double>(state.range(1));
   const auto kStride = static_cast<irs::doc_id_t>(
@@ -451,7 +461,7 @@ void BmConj(benchmark::State& state, std::string_view lhs,
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& segment = index.reader[0];
   const auto filter = Both(lhs, rhs);
-  const Prepared prepared{segment, *filter};
+  Prepared prepared{segment, *filter};
 
   size_t docs = 0;
   for (auto _ : state) {
@@ -501,10 +511,15 @@ void BmText(benchmark::State& state, uint32_t lhs, uint32_t rhs) {
   const auto rhs_term = ZipfTerm(rhs);
   const auto filter = Both(lhs_term, rhs_term);
 
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
   size_t docs = 0;
   for (auto _ : state) {
-    auto query = filter->PrepareSegment(segment, {});
-    auto plan = query ? irs::count::MakeRoot(*query) : irs::count::Root::ptr{};
+    query_memory.Rewind();
+    plan_memory.Rewind();
+    auto query = filter->PrepareSegment(segment, {.memory = query_memory});
+    auto plan = query ? irs::count::MakeRoot(*query, {.memory = plan_memory})
+                      : irs::count::Root::ptr{};
     docs +=
       plan ? plan->Run(irs::doc_limits::min(), irs::doc_limits::eof()) : 0;
   }

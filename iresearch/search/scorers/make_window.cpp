@@ -111,18 +111,18 @@ class WindowConstScore : public ScoreOperator {
 
 }  // namespace
 
-ScoreFunction MakeWindowScore(ScoreMergeType inner, const score_t* gathered,
-                              score_t constant) {
+ScoreFunction MakeWindowScore(PlanMemory& memory, ScoreMergeType inner,
+                              const score_t* gathered, score_t constant) {
   if (constant == 0) {
-    return ScoreFunction::Make<WindowScore>(gathered);
+    return ScoreFunction::Make<WindowScore>(memory, gathered);
   }
   if (inner == ScoreMergeType::Max) {
-    return ScoreFunction::Make<WindowConstScore<ScoreMergeType::Max>>(gathered,
-                                                                      constant);
+    return ScoreFunction::Make<WindowConstScore<ScoreMergeType::Max>>(
+      memory, gathered, constant);
   }
   SDB_ASSERT(inner == ScoreMergeType::Sum);
-  return ScoreFunction::Make<WindowConstScore<ScoreMergeType::Sum>>(gathered,
-                                                                    constant);
+  return ScoreFunction::Make<WindowConstScore<ScoreMergeType::Sum>>(
+    memory, gathered, constant);
 }
 
 }  // namespace irs::detail

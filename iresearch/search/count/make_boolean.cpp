@@ -55,7 +55,7 @@ Root::ptr MakeShortcut(const BooleanQuery& query, const Context& ctx) {
                        query.Queries(Occur::MustNot))) {
     const auto& term = must_terms.front();
     if (FewRuns(term, segment)) {
-      if (auto live = MakeLiveTerm(term, segment)) {
+      if (auto live = MakeLiveTerm(ctx.memory, term, segment)) {
         return live;
       }
     }
@@ -65,7 +65,7 @@ Root::ptr MakeShortcut(const BooleanQuery& query, const Context& ctx) {
           segment, ctx)) {
       return folded;
     }
-    if (auto live = MakeLiveTerm(term, segment)) {
+    if (auto live = MakeLiveTerm(ctx.memory, term, segment)) {
       return live;
     }
   }

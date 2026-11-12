@@ -195,11 +195,13 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   irs::VectorSimilarityScorer scorer;
   irs::StatsArena stats_arena{duckdb::Allocator::DefaultAllocator()};
   irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
+  irs::QueryMemory query_memory;
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(reader.size());
   for (auto& segment : reader) {
-    queries.emplace_back(
-      irs::PrepareMasked(filter, segment, {.collector = collector_tree.Get()}));
+    queries.emplace_back(irs::PrepareMasked(
+      filter, segment,
+      {.memory = query_memory, .collector = collector_tree.Get()}));
   }
   collector_tree.Finish();
 
@@ -207,6 +209,7 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
   std::atomic<irs::score_t> score_threshold{
     std::numeric_limits<irs::score_t>::lowest()};
   irs::LoserScoreCollector collector{score_threshold, std::span{hits}};
+  irs::PlanMemory plan_memory;
   irs::ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
   for (auto& query : queries) {
@@ -216,6 +219,7 @@ std::vector<irs::doc_id_t> RunKnn(const irs::DirectoryReader& reader,
       continue;
     }
     auto ann = irs::ann::MakeRoot(*query, {
+                                            .memory = plan_memory,
                                             .scorer = scorer,
                                             .fetcher = fetcher,
                                             .k = static_cast<uint32_t>(k),
@@ -1336,7 +1340,7 @@ void CheckWalkAsksPerHop() {
     std::partial_sort(truth.begin(), truth.begin() + kK, truth.end(),
                       std::greater<>{});
     truth.resize(kK);
-    const auto hits = [&](irs::TrackedVector<irs::HnswCandidate> nearest) {
+    const auto hits = [&](irs::HnswScratchVector<irs::HnswCandidate> nearest) {
       std::ranges::sort(nearest, [](const auto& l, const auto& r) {
         return l.score > r.score;
       });

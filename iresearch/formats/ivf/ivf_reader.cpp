@@ -112,7 +112,7 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
                                        const VectorFilterOptions& opts,
                                        uint32_t effort,
                                        AnnQueryCache* /*cache*/) const {
-  VectorState state;
+  VectorState state{ctx.memory.Arena()};
   QueryBuilder::ptr inner;
   const auto nprobe =
     effort != 0
@@ -128,7 +128,7 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
   state.top_k = opts.top_k;
   state.rescore_width = opts.rescore_width;
 
-  auto query = memory::make_managed<KnnVectorQuery>(
+  auto query = ctx.memory.Make<KnnVectorQuery>(
     segment, std::move(state), std::span<const float>{opts.query}, opts.metric,
     ctx.boost, std::move(inner));
   query->SetStats(ctx.Record());
@@ -141,7 +141,7 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
                                          float radius, bool inclusive,
                                          uint32_t /*effort*/,
                                          AnnQueryCache* /*cache*/) const {
-  VectorState state;
+  VectorState state{ctx.memory.Arena()};
   QueryBuilder::ptr inner;
   if (!PrepareVectorState(_tree, segment, ctx, opts,
                           std::numeric_limits<uint32_t>::max(), state, inner,
@@ -149,7 +149,7 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
     return QueryBuilder::Empty();
   }
 
-  auto query = memory::make_managed<RangeVectorQuery>(
+  auto query = ctx.memory.Make<RangeVectorQuery>(
     segment, std::move(state), std::span<const float>{opts.query}, opts.metric,
     radius, inclusive, ctx.boost, std::move(inner));
   query->SetStats(ctx.Record());

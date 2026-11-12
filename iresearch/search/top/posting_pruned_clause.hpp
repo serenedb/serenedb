@@ -70,7 +70,9 @@ class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
     SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
     SDB_ASSERT(_recipe.args.scorer != nullptr);
     _provider.freq.value = _gather;
+    SDB_ASSERT(_recipe.args.memory != nullptr);
     return _recipe.args.scorer->PrepareScorer({
+      .memory = *_recipe.args.memory,
       .segment = *_recipe.segment,
       .field = _recipe.field->meta(),
       .doc_attrs = _provider,

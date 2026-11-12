@@ -31,16 +31,18 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/tracked.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::ann {
 namespace {
 
 class HnswHits : public Root {
  public:
-  HnswHits(TrackedVector<ScoreDoc>&& hits, TrackedVector<score_t>&& spreads,
-           const SubReader& segment, ColumnArgsFetcher& fetcher,
-           irs::detail::TableFilter* table, const irs::detail::ScoreArgs& args)
+  HnswHits(memory::ArenaVector<ScoreDoc>&& hits,
+           memory::ArenaVector<score_t>&& spreads, const SubReader& segment,
+           ColumnArgsFetcher& fetcher, irs::detail::TableFilter* table,
+           const irs::detail::ScoreArgs& args)
     : _hits{std::move(hits)},
       _spreads{std::move(spreads)},
       _fetcher{fetcher},
@@ -51,6 +53,7 @@ class HnswHits : public Root {
   }
 
   void Run(Collector& collector) final {
+    collector.Reserve(_hits.size());
     for (size_t i = 0, total = _hits.size(); i < total;) {
       const auto n =
         static_cast<uint32_t>(std::min<size_t>(kScoreBlock, total - i));
@@ -77,8 +80,8 @@ class HnswHits : public Root {
   }
 
  private:
-  TrackedVector<ScoreDoc> _hits;
-  TrackedVector<score_t> _spreads;
+  memory::ArenaVector<ScoreDoc> _hits;
+  memory::ArenaVector<score_t> _spreads;
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
@@ -98,18 +101,19 @@ namespace irs {
 ann::Root::ptr HnswQuery::PlanAnn(const ann::Context& ctx) const {
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
-  TrackedVector<score_t> spreads;
-  auto hits = RunSearch(ctx.table, ctx.columns, &spreads);
+  memory::ArenaVector<score_t> spreads{ctx.memory.Scratch()};
+  auto hits = RunSearch(ctx.memory, ctx.table, ctx.columns, &spreads);
   if (hits.empty()) {
-    return ann::MakeEmpty();
+    return ann::MakeEmpty(ctx.memory);
   }
   const auto record = Stats(ann::ScoredOf(ctx));
-  const detail::ScoreArgs args{.scorer = record.scorer,
+  const detail::ScoreArgs args{.memory = &ctx.memory,
+                               .scorer = record.scorer,
                                .stats = record.stats,
                                .fetcher = &ctx.fetcher,
                                .boost = Boost()};
-  return memory::make_managed<ann::HnswHits>(
-    std::move(hits), std::move(spreads), Segment(), ctx.fetcher, narrow, args);
+  return ctx.memory.Make<ann::HnswHits>(std::move(hits), std::move(spreads),
+                                        Segment(), ctx.fetcher, narrow, args);
 }
 
 }  // namespace irs

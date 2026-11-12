@@ -28,7 +28,7 @@
 
 namespace irs {
 
-void RerankExactDistances(const SubReader& segment,
+void RerankExactDistances(PlanMemory& memory, const SubReader& segment,
                           const ColumnReader& vector_column, uint32_t d,
                           std::span<const float> query, VectorMetric metric,
                           std::span<ScoreDoc> hits) {
@@ -38,8 +38,8 @@ void RerankExactDistances(const SubReader& segment,
   }
   detail::RawVectorReader reader{vector_column, *col_reader, d};
   reader.SetQuery(query, metric);
-  TrackedVector<doc_id_t> docs(hits.size());
-  TrackedVector<score_t> scores(hits.size());
+  memory::ArenaVector<doc_id_t> docs(hits.size(), memory.Scratch());
+  memory::ArenaVector<score_t> scores(hits.size(), memory.Scratch());
   for (size_t i = 0; i < hits.size(); ++i) {
     docs[i] = hits[i].doc;
   }

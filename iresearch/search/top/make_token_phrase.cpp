@@ -56,6 +56,7 @@ class PrunedTokenPhrase : public Root {
                     irs::detail::LayoutOf(field), query.Segment(), field, args);
     _provider.freq.value = &_freq;
     _score = args.scorer->PrepareScorer({
+      .memory = *args.memory,
       .segment = query.Segment(),
       .field = field.meta(),
       .doc_attrs = _provider,
@@ -157,11 +158,12 @@ Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
   if (!record.stats || !HasScoreBounds(record.scorer)) {
     return {};
   }
-  auto approx = query.Approx().PlanLead({});
+  auto approx = query.Approx().PlanLead({.memory = ctx.memory});
   if (!approx) {
     return {};
   }
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.memory = &ctx.memory,
+                                    .scorer = record.scorer,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};

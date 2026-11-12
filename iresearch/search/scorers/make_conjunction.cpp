@@ -34,8 +34,9 @@ class ConjunctionScore : public ScoreOperator {
   static_assert(Inner != ScoreMergeType::Noop);
 
  public:
-  explicit ConjunctionScore(std::vector<ScoreFunction>&& children) noexcept
-    : _children{children.size(), [&](ScoreFunction& slot, size_t i) noexcept {
+  ConjunctionScore(PlanMemory& memory, std::span<ScoreFunction> children)
+    : _children{memory.Arena(), children.size(),
+                [&](ScoreFunction& slot, size_t i) noexcept {
                   slot = std::move(children[i]);
                 }} {
     SDB_ASSERT(_children.size() > 1);
@@ -104,9 +105,9 @@ class ConjunctionConstScore : public ScoreOperator {
   static_assert(Inner != ScoreMergeType::Noop);
 
  public:
-  ConjunctionConstScore(std::vector<ScoreFunction>&& children,
-                        score_t constant) noexcept
-    : _children{children.size(),
+  ConjunctionConstScore(PlanMemory& memory, std::span<ScoreFunction> children,
+                        score_t constant)
+    : _children{memory.Arena(), children.size(),
                 [&](ScoreFunction& slot, size_t i) noexcept {
                   slot = std::move(children[i]);
                 }},
@@ -177,31 +178,38 @@ class ConjunctionConstScore : public ScoreOperator {
 };
 
 template<template<ScoreMergeType> typename Score, typename... Args>
-ScoreFunction Resolve(ScoreMergeType inner, Args&&... args) {
+ScoreFunction Resolve(PlanMemory& memory, ScoreMergeType inner,
+                      Args&&... args) {
   if (inner == ScoreMergeType::Max) {
     return ScoreFunction::Make<Score<ScoreMergeType::Max>>(
-      std::forward<Args>(args)...);
+      memory, memory, std::forward<Args>(args)...);
   }
   SDB_ASSERT(inner == ScoreMergeType::Sum);
   return ScoreFunction::Make<Score<ScoreMergeType::Sum>>(
-    std::forward<Args>(args)...);
+    memory, memory, std::forward<Args>(args)...);
 }
 
-void DropDefaults(std::vector<ScoreFunction>& children) {
-  std::erase_if(children, [](const ScoreFunction& s) { return s.IsDefault(); });
+std::span<ScoreFunction> DropDefaults(std::span<ScoreFunction> children) {
+  size_t live = 0;
+  for (auto& child : children) {
+    if (!child.IsDefault()) {
+      children[live++] = std::move(child);
+    }
+  }
+  return children.first(live);
 }
 
 }  // namespace
 
-ScoreFunction MakeConjunctionScore(ScoreMergeType inner,
-                                   std::vector<ScoreFunction>&& children,
+ScoreFunction MakeConjunctionScore(PlanMemory& memory, ScoreMergeType inner,
+                                   std::span<ScoreFunction> children,
                                    score_t constant) {
-  DropDefaults(children);
+  children = DropDefaults(children);
   if (constant != 0) {
     if (children.empty()) {
-      return ScoreFunction::Constant(constant);
+      return ScoreFunction::Constant(memory, constant);
     }
-    return Resolve<ConjunctionConstScore>(inner, std::move(children), constant);
+    return Resolve<ConjunctionConstScore>(memory, inner, children, constant);
   }
   if (children.empty()) {
     return ScoreFunction::Default();
@@ -209,7 +217,7 @@ ScoreFunction MakeConjunctionScore(ScoreMergeType inner,
   if (children.size() == 1) {
     return std::move(children.front());
   }
-  return Resolve<ConjunctionScore>(inner, std::move(children));
+  return Resolve<ConjunctionScore>(memory, inner, children);
 }
 
 }  // namespace irs::detail

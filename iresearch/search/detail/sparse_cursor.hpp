@@ -86,19 +86,22 @@ class SparseCursor {
     if constexpr (!kProbes && !kOptional) {
       return _lead.PrepareScore();
     } else {
-      std::vector<ScoreFunction> scorers;
+      auto& memory = *_score.memory;
+      memory::ArenaVector<ScoreFunction> scorers{memory.Scratch()};
       AppendScorer(scorers, _lead.PrepareScore());
       if constexpr (kProbes) {
         _probes.CollectScorers(scorers);
       }
       if constexpr (kOptional) {
-        if constexpr (requires { _optional.PrepareScore(_score.inner); }) {
-          AppendScorer(scorers, _optional.PrepareScore(_score.inner));
+        if constexpr (requires {
+                        _optional.PrepareScore(memory, _score.inner);
+                      }) {
+          AppendScorer(scorers, _optional.PrepareScore(memory, _score.inner));
         } else {
           AppendScorer(scorers, _optional.PrepareScore());
         }
       }
-      return MakeConjunctionScore(_score.inner, std::move(scorers),
+      return MakeConjunctionScore(memory, _score.inner, scorers,
                                   _score.absorbed);
     }
   }

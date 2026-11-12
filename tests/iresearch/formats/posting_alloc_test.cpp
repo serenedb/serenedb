@@ -123,14 +123,17 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
 
   // Warm up so first-touch growth of any pooled structure is not attributed to
   // the measured rounds.
+  irs::PlanMemory memory;
   for (size_t i = 0; i != kWarmup; ++i) {
-    auto docs = irs::lead::MakePostingDocs(posting, *found_segment);
+    memory.Rewind();
+    auto docs = irs::lead::MakePostingDocs(memory, posting, *found_segment);
     ASSERT_NE(nullptr, docs);
   }
 
   const auto before = ThreadAllocatedBytes();
   for (size_t i = 0; i != kRounds; ++i) {
-    auto docs = irs::lead::MakePostingDocs(posting, *found_segment);
+    memory.Rewind();
+    auto docs = irs::lead::MakePostingDocs(memory, posting, *found_segment);
     ASSERT_NE(nullptr, docs);
   }
   const auto after = ThreadAllocatedBytes();

@@ -153,7 +153,7 @@ struct CompoundSort final : irs::ScorerBase<CompoundSort, void> {
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     if (current < indexes.size()) {
       return irs::ScoreFunction::Constant(
-        static_cast<irs::score_t>(indexes[current++]));
+        ctx.memory, static_cast<irs::score_t>(indexes[current++]));
     } else {
       return irs::ScoreFunction::Default();
     }
@@ -171,12 +171,17 @@ struct SegmentReaderMock final : irs::SubReader {
   uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return _meta; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
-  irs::lead::Node::ptr docs_iterator() const final { return {}; }
+  irs::lead::Node::ptr docs_iterator(irs::PlanMemory&) const final {
+    return {};
+  }
   std::span<const irs::TermReader* const> fields(irs::field_id) const final {
     return {};
   }
   std::span<const irs::field_id> field_ids() const final { return {}; }
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+  irs::NormReader::ptr norms(irs::PlanMemory&, irs::field_id) const final {
+    return nullptr;
+  }
   irs::SegmentInfo _meta;
 };
 
@@ -268,6 +273,7 @@ class LeadScored : public irs::lead::Node {
 
   irs::ScoreFunction PrepareScore() final {
     return _ctx.scorer->PrepareScorer({
+      .memory = _ctx.memory,
       .segment = _segment,
       .field = {},
       .doc_attrs = _attrs,
@@ -313,6 +319,7 @@ class ProbeScored : public irs::probe::Node {
 
   irs::ScoreFunction PrepareScore() final {
     return _ctx.scorer->PrepareScorer({
+      .memory = _ctx.memory,
       .segment = _segment,
       .field = {},
       .doc_attrs = _attrs,
@@ -388,6 +395,7 @@ class FillScored : public irs::fill::Node {
     const auto words = irs::detail::WindowWords(min, max);
     const auto next = _list.Window(min, max, _own.data());
     const auto score = _ctx.scorer->PrepareScorer({
+      .memory = _ctx.memory,
       .segment = _segment,
       .field = {},
       .doc_attrs = _attrs,
@@ -463,6 +471,7 @@ class ScoredRoot : public irs::hits::Root {
   uint32_t Run(irs::doc_id_t min, irs::doc_id_t max, irs::doc_id_t* docs,
                irs::score_t* scores) final {
     const auto score = _ctx.scorer.PrepareScorer({
+      .memory = _ctx.memory,
       .segment = _segment,
       .field = {},
       .doc_attrs = _attrs,
@@ -503,20 +512,21 @@ struct Boosted : public irs::FilterWithType<Boosted> {
 
     irs::score_t Boost() const noexcept final { return _boost; }
 
-    irs::count::Root::ptr PlanCount(const irs::count::Context&) const final {
+    irs::count::Root::ptr PlanCount(
+      const irs::count::Context& ctx) const final {
       Boosted::gExecuteCount++;
-      return irs::memory::make_managed<CountRoot>(docs.size());
+      return ctx.memory.Make<CountRoot>(docs.size());
     }
 
-    irs::docs::Root::ptr PlanDocs(const irs::docs::Context&) const final {
+    irs::docs::Root::ptr PlanDocs(const irs::docs::Context& ctx) const final {
       Boosted::gExecuteCount++;
-      return irs::memory::make_managed<DocsRoot>(docs);
+      return ctx.memory.Make<DocsRoot>(docs);
     }
 
     irs::hits::Root::ptr PlanScored(const irs::hits::Context& ctx) const final {
       Boosted::gExecuteCount++;
-      return irs::memory::make_managed<ScoredRoot>(docs, Segment(), ctx, _boost,
-                                                   Stats().stats);
+      return ctx.memory.Make<ScoredRoot>(docs, Segment(), ctx, _boost,
+                                         Stats().stats);
     }
 
     irs::top::Root::ptr PlanTop(const irs::top::Context&) const final {
@@ -527,30 +537,30 @@ struct Boosted : public irs::FilterWithType<Boosted> {
       const irs::detail::ScoredCtx& ctx) const final {
       Boosted::gExecuteCount++;
       if (!Scores()) {
-        return irs::memory::make_managed<LeadDocs>(docs);
+        return ctx.memory.Make<LeadDocs>(docs);
       }
-      return irs::memory::make_managed<LeadScored>(docs, Segment(), ctx, _boost,
-                                                   Stats().stats);
+      return ctx.memory.Make<LeadScored>(docs, Segment(), ctx, _boost,
+                                         Stats().stats);
     }
 
     irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
                                     uint64_t) const final {
       Boosted::gExecuteCount++;
       if (!Scores()) {
-        return irs::memory::make_managed<ProbeDocs>(docs);
+        return ctx.memory.Make<ProbeDocs>(docs);
       }
-      return irs::memory::make_managed<ProbeScored>(docs, Segment(), ctx,
-                                                    _boost, Stats().stats);
+      return ctx.memory.Make<ProbeScored>(docs, Segment(), ctx, _boost,
+                                          Stats().stats);
     }
 
     irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
                                   irs::ScoreMergeType merge) const final {
       Boosted::gExecuteCount++;
       if (!Scores()) {
-        return irs::memory::make_managed<FillDocs>(docs);
+        return ctx.memory.Make<FillDocs>(docs);
       }
-      return irs::memory::make_managed<FillScored>(docs, Segment(), ctx, _boost,
-                                                   Stats().stats, merge);
+      return ctx.memory.Make<FillScored>(docs, Segment(), ctx, _boost,
+                                         Stats().stats, merge);
     }
 
     DocList::DocidsT docs;
@@ -561,8 +571,8 @@ struct Boosted : public irs::FilterWithType<Boosted> {
 
   irs::QueryBuilder::ptr PrepareSegment(
     const irs::SubReader& segment, const irs::PrepareContext& ctx) const final {
-    auto query = irs::memory::make_managed<Boosted::Prepared>(
-      segment, docs, ctx.boost * GetBoost());
+    auto query =
+      ctx.memory.Make<Boosted::Prepared>(segment, docs, ctx.boost * GetBoost());
     query->SetStats(ctx.Record());
     return query;
   }
@@ -611,34 +621,32 @@ struct Unestimated : public irs::FilterWithType<Unestimated> {
     irs::lead::Node::ptr PlanLead(
       const irs::detail::ScoredCtx& ctx) const final {
       if (!Scores()) {
-        return irs::memory::make_managed<LeadDocs>(DocList::DocidsT{});
+        return ctx.memory.Make<LeadDocs>(DocList::DocidsT{});
       }
-      return irs::memory::make_managed<LeadScored>(
-        DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats);
+      return ctx.memory.Make<LeadScored>(DocList::DocidsT{}, Segment(), ctx,
+                                         irs::kNoBoost, Stats().stats);
     }
     irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
                                     uint64_t) const final {
       if (!Scores()) {
-        return irs::memory::make_managed<ProbeDocs>(DocList::DocidsT{});
+        return ctx.memory.Make<ProbeDocs>(DocList::DocidsT{});
       }
-      return irs::memory::make_managed<ProbeScored>(
-        DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats);
+      return ctx.memory.Make<ProbeScored>(DocList::DocidsT{}, Segment(), ctx,
+                                          irs::kNoBoost, Stats().stats);
     }
     irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
                                   irs::ScoreMergeType merge) const final {
       if (!Scores()) {
-        return irs::memory::make_managed<FillDocs>(DocList::DocidsT{});
+        return ctx.memory.Make<FillDocs>(DocList::DocidsT{});
       }
-      return irs::memory::make_managed<FillScored>(
-        DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats,
-        merge);
+      return ctx.memory.Make<FillScored>(DocList::DocidsT{}, Segment(), ctx,
+                                         irs::kNoBoost, Stats().stats, merge);
     }
   };
 
   irs::QueryBuilder::ptr PrepareSegment(
-    const irs::SubReader& segment,
-    const irs::PrepareContext& /*ctx*/) const final {
-    return irs::memory::make_managed<Unestimated::Prepared>(segment);
+    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final {
+    return ctx.memory.Make<Unestimated::Prepared>(segment);
   }
 
   bool equals(const irs::Filter& rhs) const noexcept final {
@@ -677,35 +685,33 @@ struct Estimated : public irs::FilterWithType<Estimated> {
     irs::lead::Node::ptr PlanLead(
       const irs::detail::ScoredCtx& ctx) const final {
       if (!Scores()) {
-        return irs::memory::make_managed<LeadDocs>(DocList::DocidsT{});
+        return ctx.memory.Make<LeadDocs>(DocList::DocidsT{});
       }
-      return irs::memory::make_managed<LeadScored>(
-        DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats);
+      return ctx.memory.Make<LeadScored>(DocList::DocidsT{}, Segment(), ctx,
+                                         irs::kNoBoost, Stats().stats);
     }
     irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx& ctx,
                                     uint64_t) const final {
       if (!Scores()) {
-        return irs::memory::make_managed<ProbeDocs>(DocList::DocidsT{});
+        return ctx.memory.Make<ProbeDocs>(DocList::DocidsT{});
       }
-      return irs::memory::make_managed<ProbeScored>(
-        DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats);
+      return ctx.memory.Make<ProbeScored>(DocList::DocidsT{}, Segment(), ctx,
+                                          irs::kNoBoost, Stats().stats);
     }
     irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx& ctx,
                                   irs::ScoreMergeType merge) const final {
       if (!Scores()) {
-        return irs::memory::make_managed<FillDocs>(DocList::DocidsT{});
+        return ctx.memory.Make<FillDocs>(DocList::DocidsT{});
       }
-      return irs::memory::make_managed<FillScored>(
-        DocList::DocidsT{}, Segment(), ctx, irs::kNoBoost, Stats().stats,
-        merge);
+      return ctx.memory.Make<FillScored>(DocList::DocidsT{}, Segment(), ctx,
+                                         irs::kNoBoost, Stats().stats, merge);
     }
   };
 
   irs::QueryBuilder::ptr PrepareSegment(
-    const irs::SubReader& segment,
-    const irs::PrepareContext& /*ctx*/) const final {
-    return irs::memory::make_managed<Estimated::Prepared>(segment, est, est_min,
-                                                          &evaluated);
+    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final {
+    return ctx.memory.Make<Estimated::Prepared>(segment, est, est_min,
+                                                &evaluated);
   }
 
   bool equals(const irs::Filter& rhs) const noexcept final {
@@ -1892,9 +1898,11 @@ TEST(boolean_conjunction, max_merge_is_the_same_in_lead_and_fill) {
     EXPECT_EQ(expected, lead);
 
     std::map<irs::doc_id_t, irs::score_t> fill;
+    irs::PlanMemory plan_memory;
     irs::ColumnArgsFetcher fill_fetcher;
     auto node = prep.Query(0)->PlanFill(
-      {.scorer = &sort, .fetcher = &fill_fetcher}, irs::ScoreMergeType::Sum);
+      {.memory = plan_memory, .scorer = &sort, .fetcher = &fill_fetcher},
+      irs::ScoreMergeType::Sum);
     ASSERT_TRUE(bool(node));
     const auto min = irs::doc_limits::min();
     std::vector<uint64_t> mask(irs::detail::kWindowWords);
@@ -1952,9 +1960,10 @@ TEST(boolean_exclusion, optional_scores_are_the_same_in_lead_and_probe) {
   EXPECT_EQ(expected, lead);
 
   std::map<irs::doc_id_t, irs::score_t> probe;
+  irs::PlanMemory plan_memory;
   irs::ColumnArgsFetcher probe_fetcher;
-  auto node =
-    prep.Query(0)->PlanProbe({.scorer = &sort, .fetcher = &probe_fetcher}, 16);
+  auto node = prep.Query(0)->PlanProbe(
+    {.memory = plan_memory, .scorer = &sort, .fetcher = &probe_fetcher}, 16);
   ASSERT_TRUE(bool(node));
   const auto probe_score = node->PrepareScore();
   for (irs::doc_id_t doc = irs::doc_limits::min(); doc != 16; ++doc) {

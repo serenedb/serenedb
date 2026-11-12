@@ -145,8 +145,6 @@ void Bm25TestCase::TestQueryNorms() {
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
 
-  irs::ColumnArgsFetcher fetcher;
-
   // by_range multiple
   {
     irs::tests::BlobPointReader values{segment, *column};
@@ -167,7 +165,7 @@ void Bm25TestCase::TestQueryNorms() {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
 
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -212,7 +210,7 @@ void Bm25TestCase::TestQueryNorms() {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
 
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -329,12 +327,10 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
   auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index->size());
 
-  irs::ColumnArgsFetcher fetcher;
-
   auto collect = [&](const irs::Filter& filter) {
     std::map<irs::doc_id_t, irs::score_t> scores;
     tests::PreparedFilter prepared_filter{filter, *index, impl.get()};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
     while (!irs::doc_limits::eof(docs->Next())) {
@@ -461,8 +457,6 @@ TEST_P(Bm25TestCase, test_phrase) {
   ASSERT_EQ(1, index->size());
   auto& segment = *(index.begin());
 
-  irs::ColumnArgsFetcher fetcher;
-
   // "jumps high" with order
   {
     irs::ByPhrase filter;
@@ -482,7 +476,7 @@ TEST_P(Bm25TestCase, test_phrase) {
 
     tests::PreparedFilter prepared_filter{filter, *index, impl.get()};
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
 
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -541,7 +535,7 @@ TEST_P(Bm25TestCase, test_phrase) {
     tests::PreparedFilter prepared_filter{*Lower(std::move(filter), impl.get()),
                                           *index, impl.get()};
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
 
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -597,8 +591,6 @@ TEST_P(Bm25TestCase, test_query) {
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
 
-  irs::ColumnArgsFetcher fetcher;
-
   // by_term
   {
     irs::tests::BlobPointReader values{segment, *column};
@@ -613,7 +605,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
@@ -838,6 +830,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
+    irs::ColumnArgsFetcher fetcher;
     for (size_t i = 0; auto& segment : reader) {
       fetcher.Clear();
       const auto* column = segment.Column(kSeq);
@@ -998,7 +991,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
@@ -1041,7 +1034,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
@@ -1084,7 +1077,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
@@ -1127,7 +1120,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
@@ -1170,7 +1163,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     irs::BytesViewInput in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
@@ -1203,7 +1196,7 @@ TEST_P(Bm25TestCase, test_query) {
     filter.SetBoost(1.5f);
 
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
@@ -1228,7 +1221,7 @@ TEST_P(Bm25TestCase, test_query) {
     filter.SetBoost(0.f);
 
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
 
@@ -1319,8 +1312,6 @@ TEST_P(Bm25TestCase, test_order) {
   auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
 
-  irs::ColumnArgsFetcher fetcher;
-
   irs::ByTerm query;
   *query.mutable_field_id() = kField;
 
@@ -1346,7 +1337,7 @@ TEST_P(Bm25TestCase, test_order) {
         irs::BytesViewInput in;
         query.SetBoost(boost);
         tests::PreparedFilter prepared{query, reader, &sort};
-        fetcher.Clear();
+        irs::ColumnArgsFetcher fetcher;
         auto docs = prepared.ExecuteScored(0, fetcher);
         auto score = docs->PrepareScore();
 

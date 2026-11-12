@@ -194,9 +194,9 @@ struct ScaleScore : public irs::ScorerBase<ScaleScore, tests::sort::StatsT> {
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     const auto* scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
     if (scale == nullptr) {
-      return irs::ScoreFunction::Constant(irs::kNoBoost);
+      return irs::ScoreFunction::Constant(ctx.memory, irs::kNoBoost);
     }
-    return irs::ScoreFunction::Make<Scorer>(scale);
+    return irs::ScoreFunction::Make<Scorer>(ctx.memory, scale);
   }
 };
 

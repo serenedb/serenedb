@@ -38,8 +38,7 @@
 
 namespace irs::detail {
 
-inline bool ClauseTerms(const QueryBuilder& child,
-                        TrackedVector<PostingClause>& terms) {
+inline bool ClauseTerms(const QueryBuilder& child, Clauses& terms) {
   if (child.Kind() != QueryKind::Terms) {
     return false;
   }
@@ -65,16 +64,18 @@ bool CollectConjunctionBuckets(std::span<const Term> terms,
   return VisitOrderedOf(
     terms, filters, true, 0, std::numeric_limits<size_t>::max(),
     [&](const Term& term) {
-      out.must.emplace_back().emplace_back(ClauseOf(term, field));
+      out.must.emplace_back(out.must.get_allocator())
+        .emplace_back(ClauseOf(term, field));
       return true;
     },
     [&](const QueryBuilder& child) {
-      return ClauseTerms(child, out.must.emplace_back());
+      return ClauseTerms(child,
+                         out.must.emplace_back(out.must.get_allocator()));
     });
 }
 
 template<typename Result, typename Term>
-Result MakeConjunctionBitset(std::span<const Term> terms,
+Result MakeConjunctionBitset(PlanMemory& memory, std::span<const Term> terms,
                              std::span<const QueryBuilder::ptr> filters,
                              const TermReader* field, const SubReader& segment,
                              TableFilter* table) {
@@ -83,7 +84,7 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
   if (doc == nullptr) {
     return {};
   }
-  BitsetBuckets buckets;
+  BitsetBuckets buckets{memory};
   if (!CollectConjunctionBuckets(terms, filters, field, buckets)) {
     return {};
   }
@@ -92,11 +93,14 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
                            HeadEstimate(terms, filters))) {
     return {};
   }
-  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+  return MakeBitsetNode<Result>(memory, std::move(buckets), *doc, docs_count,
+                                table);
 }
 
 struct ExcludeFills {
-  std::vector<const QueryBuilder*> children;
+  explicit ExcludeFills(PlanMemory& memory) : children{memory.Scratch()} {}
+
+  memory::ArenaVector<const QueryBuilder*> children;
   double cost = 0;
 };
 
@@ -120,10 +124,11 @@ void CollectExcludeBuckets(std::span<const Term> terms,
   }
 }
 
-inline bool PlanExcludeFills(const ExcludeFills& fills, BitsetBuckets& out) {
+inline bool PlanExcludeFills(PlanMemory& memory, const ExcludeFills& fills,
+                             BitsetBuckets& out) {
   out.exclude_fills.reserve(fills.children.size());
   for (const auto* child : fills.children) {
-    auto node = child->PlanFill({}, ScoreMergeType::Noop);
+    auto node = child->PlanFill({.memory = memory}, ScoreMergeType::Noop);
     if (!node) {
       return false;
     }
@@ -174,8 +179,9 @@ inline bool TakeExclusionFold(const BitsetBuckets& buckets,
 }
 
 template<typename Result>
-Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
-                         TableFilter* table, doc_id_t span) {
+Result MakeBooleanBitset(PlanMemory& memory, const BooleanGroups& groups,
+                         const SubReader& segment, TableFilter* table,
+                         doc_id_t span) {
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   if (span < docs_count) {
     return {};
@@ -191,11 +197,12 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
         !TakeBitset<Result>(groups.should, *doc, docs_count)) {
       return {};
     }
-    auto buckets = DisjunctionBuckets(groups.should, nullptr);
+    auto buckets = DisjunctionBuckets(memory, groups.should, nullptr);
     if (groups.should_fills != nullptr) {
       buckets.fills = std::move(*groups.should_fills);
     }
-    return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+    return MakeBitsetNode<Result>(memory, std::move(buckets), *doc, docs_count,
+                                  table);
   }
   if (!groups.should.empty() || !groups.should_filters.empty()) {
     return {};
@@ -206,7 +213,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   if (doc == nullptr) {
     return {};
   }
-  BitsetBuckets buckets;
+  BitsetBuckets buckets{memory};
   if (!CollectConjunctionBuckets(groups.must, groups.must_filters, nullptr,
                                  buckets)) {
     return {};
@@ -216,12 +223,13 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
                              HeadEstimate(groups.must, groups.must_filters))) {
       return {};
     }
-    return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+    return MakeBitsetNode<Result>(memory, std::move(buckets), *doc, docs_count,
+                                  table);
   }
   const auto candidates =
     IncludeCandidates(groups.must, groups.must_filters, segment);
   const auto split = SplitMask(groups.must_not_filters);
-  ExcludeFills fills;
+  ExcludeFills fills{memory};
   CollectExcludeBuckets(groups.must_not, split.rest, nullptr, docs_count,
                         buckets, fills);
   if (split.masked) {
@@ -233,10 +241,11 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
     docs_count,      ExcludeUse::PerDoc};
   if (!TakeExclusionFold(buckets, fills, kFoldEmit<Result>, exclusion, *doc,
                          docs_count, candidates) ||
-      !PlanExcludeFills(fills, buckets)) {
+      !PlanExcludeFills(memory, fills, buckets)) {
     return {};
   }
-  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+  return MakeBitsetNode<Result>(memory, std::move(buckets), *doc, docs_count,
+                                table);
 }
 
 }  // namespace irs::detail

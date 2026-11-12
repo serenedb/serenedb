@@ -85,7 +85,9 @@ class SinglePostingScored {
   ScoreFunction PrepareScore() {
     _provider.freq.value = _gather;
     SDB_ASSERT(_args.scorer != nullptr);
+    SDB_ASSERT(_args.memory);
     return _args.scorer->PrepareScorer({
+      .memory = *_args.memory,
       .segment = *_segment,
       .field = _field->meta(),
       .doc_attrs = _provider,
@@ -95,9 +97,7 @@ class SinglePostingScored {
     });
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out) {
-    detail::AppendScorer(out, PrepareScore());
-  }
+  void CollectScorers(auto& out) { detail::AppendScorer(out, PrepareScore()); }
 
  private:
   struct Provider final : AttributeProvider {
@@ -139,7 +139,7 @@ class PlainSinglePostingScored {
     return ScoreFunction::Default();
   }
 
-  void CollectScorers(std::vector<ScoreFunction>&) const noexcept {}
+  void CollectScorers(auto&) const noexcept {}
 
  private:
   SinglePostingDocs _leaf;

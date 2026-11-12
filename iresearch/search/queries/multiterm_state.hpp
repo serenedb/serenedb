@@ -28,7 +28,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/tracked.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
@@ -42,28 +42,39 @@ class MultiTermState {
     const byte_type* stats = nullptr;
   };
 
+  explicit MultiTermState(QueryMemory& memory)
+    : _terms{memory.Arena()}, _walked{memory.Scratch()} {}
+
   void Prepare(const TermReader* reader) {
     SDB_ASSERT(reader);
     SDB_ASSERT(!_reader || _reader == reader);
     _reader = reader;
   }
 
-  bool Empty() const noexcept { return _terms.empty(); }
+  bool Empty() const noexcept { return _terms.empty() && _walked.empty(); }
   const auto* Reader() const noexcept { return _reader; }
 
   void Push(const PostingMeta& cookie, score_t boost,
             const byte_type* stats = nullptr) {
-    _terms.emplace_back(cookie, boost, stats);
+    _walked.emplace_back(cookie, boost, stats);
   }
 
-  auto& Terms() noexcept { return _terms; }
+  auto& Walked() noexcept { return _walked; }
+
+  void Seal() {
+    _terms.reserve(_walked.size());
+    _terms.assign(_walked.begin(), _walked.end());
+    _walked = memory::ArenaVector<Entry>{_walked.get_allocator()};
+  }
+
   const auto& Terms() const noexcept { return _terms; }
   auto TermsSize() const { return _terms.size(); }
 
  private:
   const TermReader* _reader = nullptr;
 
-  TrackedVector<Entry> _terms;
+  memory::ArenaVector<Entry> _terms;
+  memory::ArenaVector<Entry> _walked;
 };
 
 }  // namespace irs

@@ -457,7 +457,7 @@ class ScalarQuantizerCodebook final : public QuantizerCodebook {
                           std::span<const float> query)
     : _stats{std::move(stats)}, _query(query.begin(), query.end()) {}
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const faiss::ScalarQuantizer& Sq() const noexcept { return _stats->Sq(); }
   std::span<const float> Query() const noexcept { return _query; }
@@ -468,7 +468,7 @@ class ScalarQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class ScalarQuantizerReader final : public QuantizerReader {
+class ScalarQuantizerReader : public QuantizerReader {
  public:
   ScalarQuantizerReader(std::shared_ptr<const ScalarQuantizerCodebook<M>> cb)
     : _cb{std::move(cb)} {
@@ -738,10 +738,10 @@ class ScalarQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> ScalarQuantizerCodebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr ScalarQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<ScalarQuantizerCodebook<M>, ScalarQuantizerReader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>

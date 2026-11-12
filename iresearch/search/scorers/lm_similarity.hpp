@@ -59,8 +59,8 @@ ScoreFunction PrepareLMScorer(const ScoreContext& ctx, const LMStats& stats,
   const auto* scale = ScaleOf(ctx);
 
   return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<Score<HasScale>>(ctx.boost, param, stats, freq,
-                                                norm, scale);
+    return ScoreFunction::Make<Score<HasScale>>(ctx.memory, ctx.boost, param,
+                                                stats, freq, norm, scale);
   });
 }
 

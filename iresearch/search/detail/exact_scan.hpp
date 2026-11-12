@@ -36,7 +36,7 @@ class ExactScanner {
  public:
   static constexpr uint32_t kRun = doc_limits::kBlockSize;
 
-  explicit ExactScanner(const ExactVectorQuery& query)
+  ExactScanner(PlanMemory& memory, const ExactVectorQuery& query)
     : _reader{query.Column(), query.Columns(),
               static_cast<uint32_t>(query.Column().ArraySize())},
       _threshold{query.Threshold()},
@@ -47,7 +47,7 @@ class ExactScanner {
     _doc = _last;
     _end = _last;
     if (const auto* inner = query.Inner()) {
-      _matches = docs::MakeRoot(*inner, {});
+      _matches = docs::MakeRoot(*inner, {.memory = memory});
     }
     if (const auto& column = query.Column();
         column.HasValidity() && column.MergedStatistics().CanHaveNull()) {

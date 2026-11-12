@@ -35,17 +35,17 @@
 namespace irs::count {
 namespace {
 
-Root::ptr MakeLiveCount(const SubReader& segment) {
+Root::ptr MakeLiveCount(PlanMemory& memory, const SubReader& segment) {
   return ResolveDocsMask(segment,
                          [&]<DocsMaskType Mask>(Mask docs_mask) -> Root::ptr {
-                           return memory::make_managed<LiveCount<Mask>>(
+                           return memory.Make<LiveCount<Mask>>(
                              std::move(docs_mask), LiveEnd(segment));
                          });
 }
 
 }  // namespace
 
-Root::ptr MakeLiveTerm(const detail::PostingClause& term,
+Root::ptr MakeLiveTerm(PlanMemory& memory, const detail::PostingClause& term,
                        const SubReader& segment) {
   const auto& field = *term.state.reader;
   const auto* doc = detail::DocOf(field);
@@ -57,7 +57,7 @@ Root::ptr MakeLiveTerm(const detail::PostingClause& term,
   return ResolveDocsMask(
     segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Root::ptr {
       return detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
-        return memory::make_managed<LiveTermCount<Mask, Input>>(
+        return memory.Make<LiveTermCount<Mask, Input>>(
           std::move(docs_mask), meta, *doc, detail::LayoutOf(field),
           many && detail::BoundsOf(field), many && detail::FreqOf(field));
       });
@@ -73,13 +73,14 @@ Root::ptr Family::MakeNegation(
       exclude_terms, exclude_filters, segment, candidates, ctx);
   }
   if (detail::OnlyMask(exclude_terms, exclude_filters)) {
-    return MakeLiveCount(segment);
+    return MakeLiveCount(ctx.memory, segment);
   }
   if (const auto split = detail::SplitMask(exclude_filters); split.masked) {
     if (exclude_terms.size() == 1 && split.rest.empty()) {
-      if (auto live = MakeLiveTerm(exclude_terms.front(), segment)) {
-        return memory::make_managed<Subtract>(MakeLiveCount(segment),
-                                              std::move(live), ctx.partial);
+      if (auto live =
+            MakeLiveTerm(ctx.memory, exclude_terms.front(), segment)) {
+        return ctx.memory.Make<Subtract>(MakeLiveCount(ctx.memory, segment),
+                                         std::move(live), ctx.partial);
       }
     }
     return detail::builder::MakeWindowNegation<Family>(
@@ -107,8 +108,8 @@ Root::ptr Family::MakeNegation(
   if (!excluded) {
     return {};
   }
-  return memory::make_managed<Subtract>(
-    MakeAllCount(static_cast<doc_id_t>(segment.docs_count())),
+  return ctx.memory.Make<Subtract>(
+    MakeAllCount(ctx.memory, static_cast<doc_id_t>(segment.docs_count())),
     std::move(excluded), ctx.partial);
 }
 

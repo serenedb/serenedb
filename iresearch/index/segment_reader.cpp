@@ -39,6 +39,10 @@ NormReader::ptr SegmentReader::norms(field_id field) const {
   return _impl->norms(field);
 }
 
+NormReader::ptr SegmentReader::norms(PlanMemory& memory, field_id field) const {
+  return _impl->norms(memory, field);
+}
+
 const ColumnReader* SegmentReader::Column(field_id field) const {
   return _impl->Column(field);
 }
@@ -57,8 +61,8 @@ std::span<const TermReader* const> SegmentReader::fields(field_id id) const {
   return _impl->fields(id);
 }
 
-lead::Node::ptr SegmentReader::docs_iterator() const {
-  return _impl->docs_iterator();
+lead::Node::ptr SegmentReader::docs_iterator(PlanMemory& memory) const {
+  return _impl->docs_iterator(memory);
 }
 
 const SegmentInfo& SegmentReader::Meta() const { return _impl->Meta(); }

@@ -101,6 +101,23 @@ struct OnHeap final : Base {
   void Destroy() const noexcept final { delete this; }
 };
 
+struct ArenaOnly {
+  static void* operator new(size_t) = delete;
+  static void* operator new(size_t, std::align_val_t) = delete;
+  static void* operator new(size_t, void* p) noexcept { return p; }
+};
+
+template<typename Base>
+struct OnArena final : Base {
+  static_assert(std::is_base_of_v<Managed, Base>);
+
+  template<typename... Args>
+  OnArena(Args&&... args) : Base{std::forward<Args>(args)...} {}
+
+ private:
+  void Destroy() const noexcept final { this->~OnArena(); }
+};
+
 struct ManagedDeleter {
   void operator()(const Managed* p) noexcept {
     SDB_ASSERT(p != nullptr);  // std::unique_ptr doesn't call dtor on nullptr
@@ -123,6 +140,9 @@ class [[clang::trivial_abi]] managed_ptr final
 
   template<typename Base, typename Derived, typename... Args>
   friend managed_ptr<Base> make_managed(Args&&... args);
+
+  template<typename Base, typename Derived, typename... Args>
+  friend managed_ptr<Base> make_managed_at(void* storage, Args&&... args);
 
   constexpr explicit managed_ptr(T* p) noexcept : Ptr{p} {}
 
@@ -178,6 +198,12 @@ constexpr managed_ptr<Base> to_managed(Derived& p) noexcept {
 template<typename Base, typename Derived = Base, typename... Args>
 managed_ptr<Base> make_managed(Args&&... args) {
   return managed_ptr<Base>{new OnHeap<Derived>{std::forward<Args>(args)...}};
+}
+
+template<typename Base, typename Derived = Base, typename... Args>
+managed_ptr<Base> make_managed_at(void* storage, Args&&... args) {
+  return managed_ptr<Base>{::new (storage)
+                             OnArena<Derived>{std::forward<Args>(args)...}};
 }
 // NOLINTEND
 

@@ -515,11 +515,11 @@ struct HnswCodeBuildDist {
   uint32_t d = 0;
   std::span<const float> pair_terms;
   std::shared_ptr<const QuantizerCodebook> query_book;
-  std::unique_ptr<QuantizerReader> query_reader;
+  QuantizerReader::ptr query_reader;
   std::vector<float> decoded_query;
   bool symmetric = false;
   std::shared_ptr<const QuantizerCodebook> pair_book;
-  std::unique_ptr<QuantizerReader> pair_reader;
+  QuantizerReader::ptr pair_reader;
   std::vector<float> decoded_pair;
   uint32_t pair_key = kHnswInvalidNode;
   const float* window = nullptr;
@@ -621,12 +621,12 @@ struct HnswCodeDistFactory {
     dist.symmetric = !pair_terms.empty();
     dist.decoded_query.assign(d, 0.f);
     dist.query_book = stats->MakeBuildCodebook(dist.decoded_query);
-    dist.query_reader = MakeQuantizerReader(dist.query_book);
+    dist.query_reader = MakeQuantizerReader(nullptr, dist.query_book);
     dist.query_reader->StartCluster(centroid);
     if (!dist.symmetric) {
       dist.decoded_pair.assign(d, 0.f);
       dist.pair_book = stats->MakeBuildCodebook(dist.decoded_pair);
-      dist.pair_reader = MakeQuantizerReader(dist.pair_book);
+      dist.pair_reader = MakeQuantizerReader(nullptr, dist.pair_book);
       dist.pair_reader->StartCluster(centroid);
     }
     dist.SetWindow(resident, 0, resident ? rows : 0);
@@ -634,10 +634,10 @@ struct HnswCodeDistFactory {
   }
 
  private:
-  std::unique_ptr<QuantizerReader> MakeReader() const {
+  QuantizerReader::ptr MakeReader() const {
     std::vector<float> scratch(d, 0.f);
     auto book = stats->MakeBuildCodebook(scratch);
-    auto reader = MakeQuantizerReader(book);
+    auto reader = MakeQuantizerReader(nullptr, book);
     reader->StartCluster(centroid);
     return reader;
   }
@@ -1242,7 +1242,7 @@ void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
   FanOut(env, (rows + kPanoramaApplyRows - 1) / kPanoramaApplyRows,
          [&](size_t part) {
            const std::vector<float> zero(d, 0.f);
-           auto reader = MakeQuantizerReader(stats.MakeCodebook(zero));
+           auto reader = MakeQuantizerReader(nullptr, stats.MakeCodebook(zero));
            std::vector<float> row(d);
            const size_t first = part * kPanoramaApplyRows;
            const size_t last = std::min(rows, first + kPanoramaApplyRows);

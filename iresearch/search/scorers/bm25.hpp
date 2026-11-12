@@ -98,7 +98,7 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 
-  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
+  ScoreBoundSource::ptr PrepareScoreBoundSource(PlanMemory& memory) const final;
 
   bool HasScoreBounds() const noexcept final { return !IsBM1(); }
 

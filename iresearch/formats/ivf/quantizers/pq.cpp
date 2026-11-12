@@ -337,7 +337,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
   const PqErrorTerms& ErrorTerms() const noexcept { return _error_terms; }
@@ -359,7 +359,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class ProductQuantizerReader final : public QuantizerReader {
+class ProductQuantizerReader : public QuantizerReader {
  public:
   explicit ProductQuantizerReader(
     std::shared_ptr<const ProductQuantizerCodebook<M>> cb)
@@ -433,10 +433,10 @@ class ProductQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> ProductQuantizerCodebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr ProductQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<ProductQuantizerCodebook<M>, ProductQuantizerReader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>
@@ -1061,7 +1061,7 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const std::shared_ptr<const ProductQuantizer8Stats<M>>& StatsPtr()
     const noexcept {
@@ -1083,7 +1083,7 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class ProductQuantizer8Reader final : public QuantizerReader {
+class ProductQuantizer8Reader : public QuantizerReader {
  public:
   explicit ProductQuantizer8Reader(
     std::shared_ptr<const ProductQuantizer8Codebook<M>> cb)
@@ -1493,10 +1493,10 @@ class ProductQuantizer8Reader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> ProductQuantizer8Codebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr ProductQuantizer8Codebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<ProductQuantizer8Codebook<M>, ProductQuantizer8Reader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>

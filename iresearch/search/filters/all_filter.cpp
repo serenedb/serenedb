@@ -28,7 +28,7 @@ namespace irs {
 
 QueryBuilder::ptr MakeAllQuery(const SubReader& segment,
                                const PrepareContext& ctx, score_t boost) {
-  auto query = memory::make_managed<AllQuery>(segment, ctx.boost * boost);
+  auto query = ctx.memory.Make<AllQuery>(segment, ctx.boost * boost);
   query->SetStats(ctx.Record());
   return query;
 }

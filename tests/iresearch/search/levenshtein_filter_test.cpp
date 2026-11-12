@@ -549,8 +549,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   ASSERT_NE(nullptr, index);
   ASSERT_EQ(1, index->size());
 
-  irs::ColumnArgsFetcher fetcher;
-
   {
     irs::ByEditDistance filter;
     *filter.mutable_field_id() = kIdId;
@@ -566,6 +564,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
@@ -608,7 +607,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
@@ -650,7 +649,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
@@ -693,7 +692,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
@@ -756,7 +755,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
@@ -820,7 +819,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared.ExecuteScored(0, fetcher);
     ASSERT_NE(nullptr, docs);
 
@@ -1082,12 +1081,10 @@ TEST_P(ByEditDistanceTestCase, blends_document_frequency) {
   ASSERT_EQ(1, rdr.size());
 
   auto scorer = irs::BM25::Make(irs::BM25::Options{});
-  irs::ColumnArgsFetcher fetcher;
-
   const auto scores_of = [&](const irs::Filter& filter) {
     std::map<irs::doc_id_t, irs::score_t> scores;
     tests::PreparedFilter prepared{filter, rdr, scorer.get()};
-    fetcher.Clear();
+    irs::ColumnArgsFetcher fetcher;
     auto docs = prepared.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
     while (!irs::doc_limits::eof(docs->Next())) {

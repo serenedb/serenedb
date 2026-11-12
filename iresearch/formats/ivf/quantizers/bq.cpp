@@ -650,7 +650,7 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const std::shared_ptr<const BinaryQuantizerStats<M>>& StatsPtr()
     const noexcept {
@@ -714,7 +714,7 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class BinaryQuantizerReader final : public QuantizerReader {
+class BinaryQuantizerReader : public QuantizerReader {
  public:
   explicit BinaryQuantizerReader(
     std::shared_ptr<const BinaryQuantizerCodebook<M>> cb)
@@ -880,10 +880,10 @@ class BinaryQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> BinaryQuantizerCodebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr BinaryQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<BinaryQuantizerCodebook<M>, BinaryQuantizerReader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>

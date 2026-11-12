@@ -214,7 +214,7 @@ class PlainProbeScored {
 
   ScoreFunction PrepareScore() { return ScoreFunction::Default(); }
 
-  void CollectScorers(std::vector<ScoreFunction>&) const noexcept {}
+  void CollectScorers(auto&) const noexcept {}
 
  private:
   PostingProbe<InputType> _leaf;

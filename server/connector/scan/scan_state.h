@@ -25,6 +25,7 @@
 #include <absl/synchronization/notification.h>
 
 #include <atomic>
+#include <deque>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
@@ -43,6 +44,7 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/bitset.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <memory>
@@ -246,6 +248,9 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::vector<std::shared_ptr<irs::Scorer>> owned_where_scorers;
   std::unique_ptr<irs::Scorer> scorer_obj;
   bool needs_terms = false;
+  absl::Mutex query_memories_mutex;
+  std::deque<irs::QueryMemory> query_memories
+    ABSL_GUARDED_BY(query_memories_mutex);
   std::vector<irs::QueryBuilder::ptr> queries;
   std::optional<irs::StatsArena> stats_arena;
   std::optional<irs::PreparedCollector> collector;
@@ -356,9 +361,11 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 };
 
 struct ScanLocalState : public duckdb::LocalTableFunctionState {
+  irs::PlanMemory plan_memory;
   duckdb::DataChunk scan_chunk;
   uint32_t worker = std::numeric_limits<uint32_t>::max();
   uint32_t thread_slot = std::numeric_limits<uint32_t>::max();
+  irs::QueryMemory* query_memory = nullptr;
   irs::ColFilterStateCache filter_states;
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   irs::ColFilterClassification seg_cls;

@@ -38,13 +38,6 @@ class All : public Root {
   static constexpr uint32_t kBatch = kScoreBlock;
 
   All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count,
-      score_t score = 0) noexcept
-    : _end{doc_limits::min() + count},
-      _score{ScoreFunction::Constant(score)},
-      _fetcher{fetcher},
-      _admit{table} {}
-
-  All(Table table, ColumnArgsFetcher& fetcher, doc_id_t count,
       ScoreFunction score) noexcept
     : _end{doc_limits::min() + count},
       _score{std::move(score)},

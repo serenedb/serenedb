@@ -27,7 +27,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/tracked.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
@@ -37,10 +37,17 @@ class ColumnReader;
 class QuantizerCodebook;
 
 struct VectorState {
+  explicit VectorState(MemoryArena& arena)
+    : cookies{arena},
+      pay_starts{arena},
+      pay_lanes{arena},
+      cluster_counts{arena},
+      cluster_centroids{arena} {}
+
   const TermReader* reader = nullptr;
   const ColumnReader* vector_column = nullptr;
   const ColReader* col_reader = nullptr;
-  TrackedVector<PostingMeta> cookies;
+  memory::ArenaVector<PostingMeta> cookies;
   std::unique_ptr<IndexInput> payload;
   uint64_t estimation = 0;
 
@@ -48,12 +55,12 @@ struct VectorState {
   uint32_t d = 0;
   uint32_t top_k = 0;
   float rescore_width = 0.f;
-  TrackedVector<uint64_t> pay_starts;
-  TrackedVector<uint32_t> pay_lanes;
-  TrackedVector<uint32_t> cluster_counts;
+  memory::ArenaVector<uint64_t> pay_starts;
+  memory::ArenaVector<uint32_t> pay_lanes;
+  memory::ArenaVector<uint32_t> cluster_counts;
 
   std::shared_ptr<const QuantizerCodebook> codebook;
-  TrackedVector<float> cluster_centroids;
+  memory::ArenaVector<float> cluster_centroids;
 };
 
 }  // namespace irs

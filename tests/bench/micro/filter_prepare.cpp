@@ -44,6 +44,7 @@
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
@@ -160,6 +161,7 @@ class FilterPrepareFixture : public benchmark::Fixture {
   irs::TFIDF _tfidf;
 
   std::vector<std::string> _term_pool;
+  irs::QueryMemory _memory;
 };
 
 template<typename Filter, void (*Configure)(Filter&), bool Scored = false,
@@ -340,10 +342,11 @@ void SetUpNot(irs::BooleanFilter& n) {
         irs::Occur::MustNot);
 }
 
-void RunPrepare(const irs::Filter::ptr& filter,
+void RunPrepare(irs::QueryMemory& memory, const irs::Filter::ptr& filter,
                 const irs::DirectoryReader& reader, const irs::Scorer* scorer) {
   // No scorer means this variant does not score, so it builds no collector at
   // all -- which is what an unscored prepare now costs.
+  memory.Rewind();
   auto& allocator = duckdb::Allocator::DefaultAllocator();
   std::optional<irs::StatsArena> stats;
   std::optional<irs::PreparedCollector> collector;
@@ -355,7 +358,8 @@ void RunPrepare(const irs::Filter::ptr& filter,
   queries.reserve(reader.size());
   for (const auto& sub : reader) {
     auto q = filter->PrepareSegment(
-      sub, {.collector = collector ? collector->Get() : nullptr});
+      sub,
+      {.memory = memory, .collector = collector ? collector->Get() : nullptr});
     queries.emplace_back(std::move(q));
   }
   if (collector) {
@@ -371,7 +375,7 @@ void RunPrepare(const irs::Filter::ptr& filter,
                               Setup)                                           \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      RunPrepare(_filter, _reader, nullptr);                                   \
+      RunPrepare(_memory, _filter, _reader, nullptr);                          \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_NoScorer)                  \
@@ -381,7 +385,7 @@ void RunPrepare(const irs::Filter::ptr& filter,
                               Setup, true)                                     \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      RunPrepare(_filter, _reader, &_bm25);                                    \
+      RunPrepare(_memory, _filter, _reader, &_bm25);                           \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25)                      \
@@ -391,7 +395,7 @@ void RunPrepare(const irs::Filter::ptr& filter,
                               Setup, true)                                     \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      RunPrepare(_filter, _reader, &_tfidf);                                   \
+      RunPrepare(_memory, _filter, _reader, &_tfidf);                          \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Tfidf)                     \
@@ -401,7 +405,7 @@ void RunPrepare(const irs::Filter::ptr& filter,
                               Setup, true, true)                               \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      RunPrepare(_filter, _reader, &_bm25);                                    \
+      RunPrepare(_memory, _filter, _reader, &_bm25);                           \
     }                                                                          \
   }                                                                            \
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25_Boost)                \

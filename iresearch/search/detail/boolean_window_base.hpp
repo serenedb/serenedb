@@ -63,10 +63,11 @@ class BooleanWindowBase {
   ScoreFunction PrepareScore()
     requires Scored
   {
-    return MakeWindowScore(_score.inner, _gathered, _score.absorbed);
+    return MakeWindowScore(*_score.memory, _score.inner, _gathered,
+                           _score.absorbed);
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out)
+  void CollectScorers(auto& out)
     requires Scored
   {
     AppendScorer(out, PrepareScore());

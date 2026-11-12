@@ -31,9 +31,10 @@ namespace irs {
 
 class MultiTermQuery : public QueryBuilderImpl<MultiTermQuery> {
  public:
-  explicit MultiTermQuery(const SubReader& segment, score_t boost,
-                          ScoreMergeType merge_type)
+  MultiTermQuery(QueryMemory& memory, const SubReader& segment, score_t boost,
+                 ScoreMergeType merge_type)
     : QueryBuilderImpl{segment, 0, QueryKind::Terms},
+      _state{memory},
       _boost{boost},
       _merge_type{merge_type} {}
 

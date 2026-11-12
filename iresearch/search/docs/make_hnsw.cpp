@@ -19,22 +19,20 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <utility>
-#include <vector>
 
 #include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
-#include "iresearch/utils/containers/fixed.hpp"
-#include "iresearch/utils/tracked.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs::docs {
 namespace {
 
 class HnswHits : public Root {
  public:
-  explicit HnswHits(TrackedVector<ScoreDoc>&& hits)
-    : _hits{hits.size(),
-            [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }} {}
+  explicit HnswHits(memory::ArenaVector<ScoreDoc>&& hits)
+    : _hits{std::move(hits)} {}
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
     uint32_t n = 0;
@@ -52,14 +50,14 @@ class HnswHits : public Root {
   }
 
  private:
-  containers::Fixed<ScoreDoc> _hits;
+  memory::ArenaVector<ScoreDoc> _hits;
   size_t _pos = 0;
 };
 
 }  // namespace
 
-Root::ptr Family::Make(const HnswQuery& query, const Context&) {
-  return memory::make_managed<HnswHits>(query.RunSearch());
+Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
+  return ctx.memory.Make<HnswHits>(query.RunSearch(ctx.memory));
 }
 
 }  // namespace irs::docs

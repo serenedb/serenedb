@@ -41,9 +41,9 @@ class PrunedReqOpt : public Root {
   static constexpr uint64_t kLeapfrogCost = 2;
 
   template<typename Init>
-  PrunedReqOpt(Table table, ColumnArgsFetcher& fetcher, size_t size,
-               Init&& init)
-    : _optional{fetcher, size - 1,
+  PrunedReqOpt(Table table, PlanMemory& memory, ColumnArgsFetcher& fetcher,
+               size_t size, Init&& init)
+    : _optional{memory, fetcher, size - 1,
                 [&](auto& leaf, size_t i) { init(leaf, i + 1); }},
       _admit{table} {
     SDB_ASSERT(size > 1);

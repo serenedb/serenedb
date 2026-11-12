@@ -31,6 +31,7 @@
 #include <iresearch/search/detail/exclusion_of.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
@@ -185,7 +186,7 @@ struct RunnerOf final : Runner {
 using Window = irs::probe::BooleanWindow<
   irs::detail::OrGroup<irs::fill::SetLeaves<irs::fill::Erased>>>;
 
-std::unique_ptr<Runner> Build(ExcludeForm form,
+std::unique_ptr<Runner> Build(irs::PlanMemory& memory, ExcludeForm form,
                               std::span<const PostingClause> metas,
                               const irs::SubReader& segment,
                               uint64_t candidates) {
@@ -197,10 +198,10 @@ std::unique_ptr<Runner> Build(ExcludeForm form,
   switch (form) {
     case ExcludeForm::Probes:
       return irs::detail::BuildExcludeProbes<Result, void>(
-        metas, {}, nullptr, segment, candidates, make);
+        memory, metas, {}, nullptr, segment, candidates, make);
     case ExcludeForm::Bitset:
       return irs::detail::BuildExcludeBitset<Result>(
-        metas, {}, nullptr, segment, *irs::detail::SegmentDoc(segment),
+        memory, metas, {}, nullptr, segment, *irs::detail::SegmentDoc(segment),
         [&](auto&& set) -> Result {
           return make.template operator()<irs::probe::BitsetDocs>(
             std::forward_as_tuple(std::forward<decltype(set)>(set)));
@@ -209,7 +210,7 @@ std::unique_ptr<Runner> Build(ExcludeForm form,
       break;
   }
   return irs::detail::BuildExcludeFills<Result>(
-    metas, {}, nullptr, segment, [&](auto&& leaves) -> Result {
+    memory, metas, {}, nullptr, segment, [&](auto&& leaves) -> Result {
       return make.template operator()<Window>(std::forward_as_tuple(
         std::piecewise_construct, std::forward<decltype(leaves)>(leaves)));
     });
@@ -262,10 +263,12 @@ void BmExclude(benchmark::State& state) {
   const auto p = PointOf(state);
   const auto form = static_cast<ExcludeForm>(state.range(4));
   const auto s = SetupOf(p);
+  irs::PlanMemory memory;
   uint64_t kept = 0;
   for (auto _ : state) {
-    auto runner =
-      Build(form, std::span{&s.clause, 1}, s.segment, s.candidates.size());
+    memory.Rewind();
+    auto runner = Build(memory, form, std::span{&s.clause, 1}, s.segment,
+                        s.candidates.size());
     kept += runner->Run(s.candidates, p.use, kBlock / p.ratio);
   }
   benchmark::DoNotOptimize(kept);
@@ -278,6 +281,7 @@ void BmExclude(benchmark::State& state) {
 }
 
 void BmCheck(benchmark::State& state) {
+  irs::PlanMemory memory;
   for (const auto use : {ExcludeUse::PerDoc, ExcludeUse::PerBlock}) {
     for (const auto excluded : kExcluded) {
       for (const int64_t lead : {8, 16}) {
@@ -286,9 +290,10 @@ void BmCheck(benchmark::State& state) {
         uint64_t expected = 0;
         for (const auto form :
              {ExcludeForm::Probes, ExcludeForm::Window, ExcludeForm::Bitset}) {
-          const auto kept =
-            Build(form, std::span{&s.clause, 1}, s.segment, s.candidates.size())
-              ->Run(s.candidates, use, kBlock);
+          memory.Rewind();
+          const auto kept = Build(memory, form, std::span{&s.clause, 1},
+                                  s.segment, s.candidates.size())
+                              ->Run(s.candidates, use, kBlock);
           if (form == ExcludeForm::Probes) {
             expected = kept;
           } else if (kept != expected) {

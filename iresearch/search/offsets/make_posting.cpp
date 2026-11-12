@@ -23,8 +23,9 @@
 
 namespace irs::offsets {
 
-Root::ptr MakePosting(const PostingMeta& meta, const Handles& handles) {
-  return detail::MakePostingOffsets(meta, handles);
+Root::ptr MakePosting(PlanMemory& memory, const PostingMeta& meta,
+                      const Handles& handles) {
+  return detail::MakePostingOffsets(memory, meta, handles);
 }
 
 }  // namespace irs::offsets

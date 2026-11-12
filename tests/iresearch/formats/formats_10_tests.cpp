@@ -53,6 +53,7 @@ class Format10TestCase : public tests::FormatTestCase {
  protected:
   void PostingsSeek(const std::vector<std::pair<irs::doc_id_t, uint32_t>>& docs,
                     irs::IndexFeatures features) {
+    irs::PlanMemory memory;
     irs::FieldMeta field;
     field.index_features = features;
     auto dir = get_directory(*this);
@@ -138,7 +139,7 @@ class Format10TestCase : public tests::FormatTestCase {
         const auto handles = reader.Handles();
 
         auto assert_docs = [&](size_t seed, size_t inc) {
-          auto actual = tests::MakeSeekPostings(read_meta, handles,
+          auto actual = tests::MakeSeekPostings(memory, read_meta, handles,
                                                 field.index_features, features,
                                                 /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));
@@ -170,9 +171,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // next + seek to eof
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_TRUE(!irs::doc_limits::eof(it->Next()));
           ASSERT_EQ(docs.front().first, it->Value());
@@ -195,7 +197,7 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           for (auto doc = docs.rbegin(), end = docs.rend(); doc != end; ++doc) {
             TestPostings expected(docs, field.index_features);
-            auto it = tests::MakeSeekPostings(read_meta, handles,
+            auto it = tests::MakeSeekPostings(memory, read_meta, handles,
                                               field.index_features, features,
                                               /*has_score_bounds=*/false);
             ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
@@ -217,9 +219,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::invalid()
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_FALSE(
             irs::doc_limits::valid(it->Seek(irs::doc_limits::invalid())));
@@ -229,9 +232,10 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::eof()
         {
-          auto it = tests::MakeSeekPostings(
-            read_meta, handles, field.index_features, irs::IndexFeatures::None,
-            /*has_score_bounds=*/false);
+          auto it = tests::MakeSeekPostings(memory, read_meta, handles,
+                                            field.index_features,
+                                            irs::IndexFeatures::None,
+                                            /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(it->Value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->Seek(irs::doc_limits::eof())));
           ASSERT_FALSE(!irs::doc_limits::eof(it->Next()));
@@ -791,8 +795,9 @@ TEST_P(Format10TestCase, ires336) {
   const auto handles = field->Handles();
   const auto layout = field->meta().index_features;
   const bool bounds = field->HasScoreBounds();
+  irs::PlanMemory memory;
   auto make_docs = [&] {
-    return tests::MakeSeekPostings(term_meta, handles, layout,
+    return tests::MakeSeekPostings(memory, term_meta, handles, layout,
                                    irs::IndexFeatures::None, bounds);
   };
 
@@ -939,6 +944,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
   auto test_reset =
     [&](const std::vector<std::pair<irs::doc_id_t, uint32_t>>& docs,
         irs::IndexFeatures features) {
+      irs::PlanMemory memory;
       irs::FieldMeta field;
       field.index_features = features;
       auto dir = get_directory(*this);
@@ -1000,7 +1006,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         for (size_t i = 0; i < docs.size();
              i += std::max<size_t>(1, docs.size() / 10)) {
-          auto actual = tests::MakeSeekPostings(read_meta, handles,
+          auto actual = tests::MakeSeekPostings(memory, read_meta, handles,
                                                 field.index_features, features,
                                                 /*has_score_bounds=*/false);
           ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));

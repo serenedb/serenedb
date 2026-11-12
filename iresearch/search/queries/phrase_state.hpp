@@ -26,21 +26,45 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/tracked.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
 struct TermReader;
 
+template<typename T>
+void CopyExact(memory::ArenaVector<T>& to, const memory::ArenaVector<T>& from) {
+  to.reserve(from.size());
+  to.assign(from.begin(), from.end());
+}
+
 struct PostingsState {
-  TrackedVector<PostingMeta> metas;
+  explicit PostingsState(MemoryArena& arena) : metas{arena} {}
+
+  PostingsState(MemoryArena& arena, const PostingsState& from)
+    : metas{arena}, reader{from.reader}, handles{from.handles} {
+    CopyExact(metas, from.metas);
+  }
+
+  memory::ArenaVector<PostingMeta> metas;
   const TermReader* reader{};
   detail::PhraseHandles handles;
 };
 
-struct NGramState : PostingsState {};
+struct NGramState : PostingsState {
+  using PostingsState::PostingsState;
+};
 
 struct PhraseState : PostingsState {
+  explicit PhraseState(MemoryArena& arena)
+    : PostingsState{arena}, boosts{arena}, offsets{arena} {}
+
+  PhraseState(MemoryArena& arena, const PhraseState& from)
+    : PostingsState{arena, from}, boosts{arena}, offsets{arena} {
+    CopyExact(boosts, from.boosts);
+    CopyExact(offsets, from.offsets);
+  }
+
   size_t Slots() const noexcept {
     SDB_ASSERT(!offsets.empty());
     return offsets.size() - 1;
@@ -50,8 +74,8 @@ struct PhraseState : PostingsState {
     return metas.size() == Slots() && boosts.empty();
   }
 
-  TrackedVector<score_t> boosts;
-  TrackedVector<uint32_t> offsets;
+  memory::ArenaVector<score_t> boosts;
+  memory::ArenaVector<uint32_t> offsets;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<NGramState>);

@@ -39,8 +39,8 @@ inline const uint32_t* FieldNormsOf(const ScoreContext& ctx) {
   if (const auto* attr = irs::get<Norm>(ctx.doc_attrs)) {
     return &attr->value;
   }
-  return ctx.fetcher.AddNorms(ctx.field.norm,
-                              ctx.segment.norms(ctx.field.norm));
+  return ctx.fetcher.AddNorms(ctx.memory, ctx.field.norm,
+                              ctx.segment.norms(ctx.memory, ctx.field.norm));
 }
 
 inline const uint32_t* NormsOf(const ScoreContext& ctx) {

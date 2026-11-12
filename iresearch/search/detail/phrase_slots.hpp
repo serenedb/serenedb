@@ -32,6 +32,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -42,12 +43,13 @@ class PhraseSlots {
 
  public:
   template<typename... Args>
-  PhraseSlots(std::span<const PostingMeta> metas,
+  PhraseSlots(PlanMemory& memory, std::span<const PostingMeta> metas,
               std::span<const TermInterval> intervals, const IndexInput& doc_in,
               IndexFeatures layout, const IndexInput& pos_in,
               const IndexInput* pay_in, Args&&... args)
-    : _matcher{metas.size(), std::forward<Args>(args)...},
-      _leaves{metas.size(), [&](uint32_t j) { return metas[j].docs_count; },
+    : _matcher{memory, metas.size(), std::forward<Args>(args)...},
+      _leaves{memory, metas.size(),
+              [&](uint32_t j) { return metas[j].docs_count; },
               [&](uint32_t j) {
                 return std::forward_as_tuple(metas[j], doc_in, layout, pos_in,
                                              pay_in);
@@ -62,19 +64,19 @@ class PhraseSlots {
   }
 
   template<typename... Args>
-  PhraseSlots(std::span<const PostingMeta> metas,
+  PhraseSlots(PlanMemory& memory, std::span<const PostingMeta> metas,
               std::span<const uint32_t> offsets,
               std::span<const score_t> boosts,
               std::span<const TermInterval> intervals, const IndexInput& doc_in,
               IndexFeatures layout, const IndexInput& pos_in,
               const IndexInput* pay_in, Args&&... args)
-    : _terms{metas.size(), std::piecewise_construct,
+    : _terms{memory.Arena(), metas.size(), std::piecewise_construct,
              [&](size_t i) {
                return std::forward_as_tuple(metas[i], doc_in, layout, pos_in,
                                             pay_in);
              }},
-      _matcher{intervals.size(), std::forward<Args>(args)...},
-      _leaves{intervals.size(),
+      _matcher{memory, intervals.size(), std::forward<Args>(args)...},
+      _leaves{memory, intervals.size(),
               [&](uint32_t j) {
                 uint64_t estimate = 0;
                 for (auto i = offsets[j]; i != offsets[j + 1]; ++i) {
@@ -84,8 +86,8 @@ class PhraseSlots {
               },
               [&](uint32_t j) {
                 const auto offset = offsets[j];
-                return std::tuple<Leaf*, uint32_t, const score_t*>{
-                  _terms.data() + offset, offsets[j + 1] - offset,
+                return std::tuple<PlanMemory&, Leaf*, uint32_t, const score_t*>{
+                  memory, _terms.data() + offset, offsets[j + 1] - offset,
                   boosts.empty() ? nullptr : boosts.data() + offset};
               },
               [&](uint32_t j, Slot& slot) {

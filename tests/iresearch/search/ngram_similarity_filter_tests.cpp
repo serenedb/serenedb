@@ -80,7 +80,7 @@ void CaptureNGramAttrs(sort::CustomSort& scorer, NGramAttrs& attrs) {
     [&attrs](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
     attrs.freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     attrs.scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
-    return irs::ScoreFunction::Constant(0.f);
+    return irs::ScoreFunction::Constant(ctx.memory, 0.f);
   };
 }
 
@@ -686,7 +686,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
     }
     const auto* scale_attr = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
     scale = scale_attr != nullptr ? scale_attr->value[0] : irs::kNoBoost;
-    return irs::ScoreFunction::Constant(0.f);
+    return irs::ScoreFunction::Constant(ctx.memory, 0.f);
   };
   {
     tests::PreparedFilter prepared{filter, rdr, &sort};
@@ -1054,7 +1054,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
     auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     auto* scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
     return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
-      &frequency, freq, &scale_values, scale);
+      ctx.memory, &frequency, freq, &scale_values, scale);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
   std::vector<irs::score_t> expected_scale{
@@ -1111,7 +1111,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
     auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     auto* scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
     return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
-      &frequency, freq, &scale_values, scale);
+      ctx.memory, &frequency, freq, &scale_values, scale);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
   std::vector<irs::score_t> expected_scale{

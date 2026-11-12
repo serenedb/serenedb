@@ -32,19 +32,19 @@ bool Resolve(const TermReader* field, Handles& out) {
          out.pay != nullptr;
 }
 
-Root::ptr Make(const FixedPhraseQuery& query) {
+Root::ptr Make(PlanMemory& memory, const FixedPhraseQuery& query) {
   return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query); });
+    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(memory, query); });
 }
 
-Root::ptr Make(const VariadicPhraseQuery& query) {
+Root::ptr Make(PlanMemory& memory, const VariadicPhraseQuery& query) {
   return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query); });
+    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(memory, query); });
 }
 
-Root::ptr Make(const NGramSimilarityQuery& query) {
+Root::ptr Make(PlanMemory& memory, const NGramSimilarityQuery& query) {
   return detail::ResolveNGram(
-    query, [&]<detail::NGramMatch M> { return MakeNGram<M>(query); });
+    query, [&]<detail::NGramMatch M> { return MakeNGram<M>(memory, query); });
 }
 
 }  // namespace irs::offsets

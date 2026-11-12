@@ -112,7 +112,8 @@ bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
       return false;
     }
     bound += irs::detail::AllDocsScore(
-      segment, irs::detail::ScoreArgs{.scorer = scorer,
+      segment, irs::detail::ScoreArgs{.memory = &ctx.memory,
+                                      .scorer = scorer,
                                       .stats = entry.stats,
                                       .fetcher = &ctx.fetcher,
                                       .boost = entry.boost * boost});
@@ -133,7 +134,7 @@ Root::ptr MakeNestedPrunedConjunction(
   if (merge != ScoreMergeType::Sum || terms.size() + filters.size() < 2) {
     return {};
   }
-  std::vector<NestedClause> clauses;
+  memory::ArenaVector<NestedClause> clauses{ctx.memory.Scratch()};
   clauses.reserve(terms.size() + filters.size());
   if (!irs::detail::VisitOrderedOf(
         terms, filters, true, 0, std::numeric_limits<size_t>::max(),
@@ -181,7 +182,8 @@ Root::ptr MakeNestedPrunedConjunction(
   if (matches < static_cast<double>(ctx.k) * kNestedMatchesPerHit) {
     return {};
   }
-  std::vector<fill::Node::ptr> fills(clauses.size());
+  memory::ArenaVector<fill::Node::ptr> fills(clauses.size(),
+                                             ctx.memory.Scratch());
   for (size_t i = 1; i != clauses.size(); ++i) {
     if (clauses[i].constant == nullptr) {
       continue;
@@ -203,7 +205,8 @@ Root::ptr MakeNestedPrunedConjunction(
       probe::BooleanWindow<irs::detail::OrGroup<fill::SetLeaves<fill::Erased>>,
                            irs::detail::Scored, true>;
     const auto args = [&](const irs::detail::PostingClause& posting) {
-      return irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
+      return irs::detail::ScoreArgs{.memory = &ctx.memory,
+                                    .scorer = posting.stats.scorer,
                                     .stats = posting.stats.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = posting.boost};
@@ -223,38 +226,38 @@ Root::ptr MakeNestedPrunedConjunction(
     const auto erased = [&](size_t i) -> PrunedClause::ptr {
       const auto& clause = clauses[i];
       if (clause.constant != nullptr) {
-        return memory::make_managed<PrunedClauseImpl<Window>>(
+        return ctx.memory.Make<PrunedClauseImpl<Window>>(
           std::piecewise_construct,
-          std::forward_as_tuple(size_t{1},
+          std::forward_as_tuple(ctx.memory, size_t{1},
                                 [&](fill::Erased& leaf, size_t) {
                                   leaf = fill::Erased{std::move(fills[i])};
                                 }),
-          irs::detail::Scored{merge, 0}, clause.bound);
+          irs::detail::Scored{&ctx.memory, merge, 0}, clause.bound);
       }
       if (clause.terms.size() == 1) {
         const auto& posting = clause.terms.front();
         const auto& own = *posting.state.reader;
-        return memory::make_managed<PrunedClauseImpl<Leaf>>(
+        return ctx.memory.Make<PrunedClauseImpl<Leaf>>(
           posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment, own,
           args(posting));
       }
-      return memory::make_managed<PrunedClauseImpl<Group>>(clause.terms.size(),
-                                                           each(clause));
+      return ctx.memory.Make<PrunedClauseImpl<Group>>(
+        ctx.memory, clause.terms.size(), each(clause));
     };
     const auto build = [&]<typename Lead, typename Others>(
                          auto&& lead, auto&& others_args) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
         return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
-          ctx, ctx.fetcher, size, std::piecewise_construct,
+          ctx, ctx.memory, ctx.fetcher, size, std::piecewise_construct,
           std::forward<decltype(lead)>(lead), others_args,
           std::forward_as_tuple());
       }
       const uint64_t lead_docs = clauses.front().docs;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
-        excludes, exclude_filters, nullptr, segment, lead_docs, lead_docs,
-        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+        ctx.memory, excludes, exclude_filters, nullptr, segment, lead_docs,
+        lead_docs, [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
-            ctx, ctx.fetcher, size, std::piecewise_construct,
+            ctx, ctx.memory, ctx.fetcher, size, std::piecewise_construct,
             std::forward<decltype(lead)>(lead), others_args,
             std::forward<decltype(negated)>(negated));
         });
@@ -270,7 +273,8 @@ Root::ptr MakeNestedPrunedConjunction(
       return build.template operator()<Lead, Others>(
         std::forward<decltype(lead)>(lead), [&](size_t i) {
           const auto& clause = clauses[i + 1];
-          return std::make_tuple(clause.terms.size(), each(clause));
+          return std::make_tuple(std::ref(ctx.memory), clause.terms.size(),
+                                 each(clause));
         });
     };
     const auto& first = clauses.front();
@@ -284,7 +288,7 @@ Root::ptr MakeNestedPrunedConjunction(
                               args(posting)));
     }
     return make.template operator()<DisjunctionLead<Input>>(
-      std::forward_as_tuple(first.terms.size(), each(first)));
+      std::forward_as_tuple(ctx.memory, first.terms.size(), each(first)));
   });
 }
 

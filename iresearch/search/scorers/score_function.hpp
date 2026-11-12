@@ -27,6 +27,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -48,7 +49,7 @@ enum class ScoreMergeType {
   Max,
 };
 
-struct ScoreOperator : memory::Managed {
+struct ScoreOperator : memory::Managed, memory::ArenaOnly {
   virtual score_t Score() const noexcept {
     score_t result;
     Score(&result, 1);
@@ -135,14 +136,14 @@ class ScoreFunction {
 
  public:
   template<typename T, typename... Args>
-  static ScoreFunction Make(Args&&... args) {
-    return ScoreFunction{memory::make_managed<T>(std::forward<Args>(args)...)};
+  static ScoreFunction Make(PlanMemory& memory, Args&&... args) {
+    return ScoreFunction{memory.Make<T>(std::forward<Args>(args)...)};
   }
   static ScoreFunction Wrap(ScoreOperator& impl) noexcept {
     return ScoreFunction{memory::to_managed<ScoreOperator>(impl)};
   }
   static ScoreFunction Default() noexcept { return ScoreFunction{}; }
-  static ScoreFunction Constant(score_t value) noexcept;
+  static ScoreFunction Constant(PlanMemory& memory, score_t value);
 
   ScoreFunction() noexcept
     : ScoreFunction{memory::to_managed<ScoreOperator>(gDefaultScore)} {}

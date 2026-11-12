@@ -164,6 +164,18 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     }
     return MakePersistedNormReader(*col);
   }
+
+  NormReader::ptr norms(PlanMemory& memory, field_id id) const final {
+    if (_col_reader == nullptr) {
+      return {};
+    }
+    const auto* col = _col_reader->NormColumn(id);
+    if (col == nullptr) {
+      return {};
+    }
+    return MakePersistedNormReader(memory, *col);
+  }
+
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
 
   // Owning per-op encoding config (the snapshot's InvertedIndex): flush encodes

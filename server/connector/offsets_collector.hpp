@@ -25,6 +25,8 @@
 #include <iresearch/search/offsets/root.hpp>
 #include <iresearch/search/queries/prepared_state_visitor.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/query_memory.hpp>
+#include <memory>
 #include <span>
 #include <variant>
 #include <vector>
@@ -56,6 +58,7 @@ struct FilterEntry {
 // Per-field state, rebuilt on each segment transition.
 struct FieldState {
   const irs::TermReader* reader = nullptr;
+  std::unique_ptr<irs::PlanMemory> memory = std::make_unique<irs::PlanMemory>();
   std::vector<FilterEntry> entries;
   irs::containers::FlatHashSet<const irs::PostingMeta*> seen_cookies;
   std::vector<irs::offsets::Range> scratch;
@@ -63,6 +66,7 @@ struct FieldState {
   void Clear() noexcept {
     reader = nullptr;
     entries.clear();
+    memory->Rewind();
     seen_cookies.clear();
   }
 };
@@ -74,7 +78,8 @@ struct FieldEntry {
   FieldState state;
 };
 
-void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader);
+void PrepareFilterEntry(irs::PlanMemory& memory, FilterEntry& entry,
+                        const irs::TermReader* reader);
 
 void FillRowOffsets(FieldState& state, irs::doc_id_t doc_id, size_t max_pairs,
                     std::vector<highlight::HitRange>& hits);

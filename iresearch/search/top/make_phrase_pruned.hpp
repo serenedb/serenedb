@@ -41,12 +41,13 @@ Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
   if (!record.stats) {
     return {};
   }
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.memory = &ctx.memory,
+                                    .scorer = record.scorer,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return irs::detail::BuildPhrase<M, true, false, false>(
-    query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
+    ctx.memory, query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
       return MakeShape<PrunedPhrase, Slots>(
         ctx, query.Segment(), *query.state.reader, args,
         std::forward<decltype(rest)>(rest)...);

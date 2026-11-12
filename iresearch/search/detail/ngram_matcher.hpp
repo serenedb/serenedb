@@ -33,6 +33,7 @@
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::ngram {
@@ -177,9 +178,9 @@ class NGramMatcher final : public Base {
   static constexpr bool kHasPosition = std::is_same_v<NGramPosition, Base>;
   static constexpr bool kCollectAll = CollectAll;
 
-  NGramMatcher(size_t size, size_t total_terms_count,
+  NGramMatcher(PlanMemory& memory, size_t size, size_t total_terms_count,
                size_t min_match_count = 1)
-    : _pos(size),
+    : _pos{memory.Arena(), size},
       _min_match_count{min_match_count},
       _total_terms_count{static_cast<score_t>(total_terms_count)} {}
 

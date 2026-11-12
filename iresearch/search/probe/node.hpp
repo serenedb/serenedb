@@ -31,7 +31,7 @@
 
 namespace irs::probe {
 
-struct Node : memory::Managed, Tracked {
+struct Node : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<Node>;
 
   virtual doc_id_t Probe(doc_id_t target) = 0;

@@ -388,8 +388,9 @@ SlotCounts CountSlots(const ByPhraseOptions& options) {
   return counts;
 }
 
-PhraseQuery::Positions MakePositions(const ByPhraseOptions& options) {
-  PhraseQuery::Positions positions(options.size());
+PhraseQuery::Positions MakePositions(QueryMemory& memory,
+                                     const ByPhraseOptions& options) {
+  PhraseQuery::Positions positions{memory.Arena(), options.size()};
   auto position = positions.begin();
   PosAttr::value_t look_back = 0;
   for (const auto& word : options) {
@@ -464,9 +465,10 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   auto stats = covered ? PhraseWordStats(options, reader)
                        : std::vector<PhraseWordStat>(options.size());
   std::vector<const PostingMeta*> word_metas(covered ? 0 : options.size());
+  auto& memory = ctx.memory;
   auto sub = ctx;
   sub.collector = nullptr;
-  BooleanBuilder builder{segment, 0, kNoBoost, ScoreMergeType::Noop};
+  BooleanBuilder builder{memory, segment, 0, kNoBoost, ScoreMergeType::Noop};
   containers::FlatHashSet<bytes_view> words;
   for (size_t slot = 0; const auto& info : options) {
     const auto begin = state.offsets[slot];
@@ -482,9 +484,10 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
         builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
       }
     } else {
-      auto terms = memory::make_managed<MultiTermQuery>(segment, kNoBoost,
-                                                        ScoreMergeType::Noop);
+      auto terms = memory.Make<MultiTermQuery>(memory, segment, kNoBoost,
+                                               ScoreMergeType::Noop);
       terms->State().Prepare(&reader);
+      terms->State().Walked().reserve(end - begin);
       for (auto i = begin; i != end; ++i) {
         terms->State().Push(state.metas[i], kNoBoost);
       }
@@ -494,7 +497,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   }
   auto approx = builder.Finish();
   SDB_ASSERT(approx && !QueryBuilder::IsEmpty(*approx));
-  auto query = memory::make_managed<TokenPhraseQuery>(
+  auto query = memory.Make<TokenPhraseQuery>(
     segment, reader, std::move(approx), options.tokenizer(), column, options,
     std::move(part_terms), stats, word_metas, ctx.boost);
   query->SetStats(ctx.Record());
@@ -511,7 +514,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                       : nullptr;
   const auto is_ord_empty = !collector || !collector->GetScorer();
 
-  PhraseState state;
+  PhraseState state{ctx.memory.Scratch()};
   const auto* reader = segment.field(field, dict);
   state.reader = reader;
   const ColumnReader* column = nullptr;
@@ -647,25 +650,27 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   }
 
   if (phrase_size == 1 && state.metas.size() == 1) {
-    return MakeTermQuery(segment, state.reader, state.metas.front(), ctx.boost,
-                         ctx.Record());
+    return MakeTermQuery(ctx.memory, segment, state.reader, state.metas.front(),
+                         ctx.boost, ctx.Record());
   }
 
-  auto positions = MakePositions(options);
+  auto positions = MakePositions(ctx.memory, options);
   if (options.slop() != 0) {
     ApplyTermGroups(options, part_terms, positions);
   }
 
   const auto boost = ctx.boost;
   if (state.Fixed()) {
-    auto query = memory::make_managed<FixedPhraseQuery>(
-      segment, std::move(state), std::move(positions), boost, options.slop());
+    auto query = ctx.memory.Make<FixedPhraseQuery>(
+      segment, PhraseState{ctx.memory.Arena(), state}, std::move(positions),
+      boost, options.slop());
     query->SetStats(ctx.Record());
     return query;
   }
 
-  auto query = memory::make_managed<VariadicPhraseQuery>(
-    segment, std::move(state), std::move(positions), boost, options.slop());
+  auto query = ctx.memory.Make<VariadicPhraseQuery>(
+    segment, PhraseState{ctx.memory.Arena(), state}, std::move(positions),
+    boost, options.slop());
   query->SetStats(ctx.Record());
   return query;
 }

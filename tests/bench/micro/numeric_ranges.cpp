@@ -39,6 +39,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <memory>
 #include <random>
 #include <span>
@@ -521,13 +522,15 @@ uint64_t WideRows() {
 }
 
 irs::detail::BitsetStorage Fold(
-  const Data& data, std::span<const irs::MultiTermState::Entry> terms) {
-  auto buckets = irs::detail::DisjunctionBuckets(terms, data.field);
-  return irs::detail::BuildBitset(buckets, *data.field->Handles().doc,
+  irs::PlanMemory& memory, const Data& data,
+  std::span<const irs::MultiTermState::Entry> terms) {
+  auto buckets = irs::detail::DisjunctionBuckets(memory, terms, data.field);
+  return irs::detail::BuildBitset(memory, buckets, *data.field->Handles().doc,
                                   static_cast<irs::doc_id_t>(data.rows));
 }
 
 std::string ValidateFold(const Data& data) {
+  irs::PlanMemory memory;
   std::vector<irs::MultiTermState::Entry> terms;
   for (const auto& set : data.sets) {
     for (const auto& query : set.queries) {
@@ -536,7 +539,8 @@ std::string ValidateFold(const Data& data) {
         terms.push_back({.cookie = meta});
       };
       VisitQuery(data, query, visit);
-      const auto bits = Fold(data, terms);
+      memory.Rewind();
+      const auto bits = Fold(memory, data, terms);
       uint64_t rows = 0;
       for (uint32_t i = 0; i != bits.WordCount(); ++i) {
         rows += static_cast<uint64_t>(std::popcount(bits.Words()[i]));
@@ -650,6 +654,7 @@ void Wide(benchmark::State& state, const Shape& shape, Ladder ladder,
     return;
   }
   const auto& queries = data.sets[kind].queries;
+  irs::PlanMemory memory;
   std::vector<irs::MultiTermState::Entry> terms;
   irs::doc_id_t buffer[irs::doc_limits::kBlockSize];
   uint64_t lists = 0;
@@ -683,7 +688,8 @@ void Wide(benchmark::State& state, const Shape& shape, Ladder ladder,
       };
       VisitQuery(data, query, visit);
       if (phase == Phase::Fold) {
-        auto bits = Fold(data, terms);
+        memory.Rewind();
+        auto bits = Fold(memory, data, terms);
         benchmark::DoNotOptimize(bits.Words());
       }
     }

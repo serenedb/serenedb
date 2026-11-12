@@ -27,7 +27,8 @@ namespace {
 
 class ExactDocs : public Root {
  public:
-  explicit ExactDocs(const ExactVectorQuery& query) : _scanner{query} {}
+  ExactDocs(PlanMemory& memory, const ExactVectorQuery& query)
+    : _scanner{memory, query} {}
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
     _scanner.Reset(min, max);
@@ -48,8 +49,8 @@ class ExactDocs : public Root {
 
 }  // namespace
 
-Root::ptr Family::Make(const ExactVectorQuery& query, const Context&) {
-  return memory::make_managed<ExactDocs>(query);
+Root::ptr Family::Make(const ExactVectorQuery& query, const Context& ctx) {
+  return ctx.memory.Make<ExactDocs>(ctx.memory, query);
 }
 
 }  // namespace irs::docs

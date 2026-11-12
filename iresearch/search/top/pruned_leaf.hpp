@@ -77,6 +77,8 @@ class PrunedLeafBase {
     void Set(uint32_t, uint32_t) noexcept final {}
   };
 
+  inline static NoBoundSource gNoBoundSource;
+
  public:
   static constexpr bool kDefaultInit = true;
 
@@ -99,24 +101,27 @@ class PrunedLeafBase {
     _provider.freq.value = _freqs.data;
     _cost = meta.docs_count;
 
-    auto source = args.scorer->PrepareScoreBoundSource();
-    if (source) {
+    SDB_ASSERT(args.memory != nullptr);
+    _own_bound_source = args.scorer->PrepareScoreBoundSource(*args.memory);
+    if (_own_bound_source) {
+      _bound_source = _own_bound_source.get();
       _bound_func = args.scorer->PrepareScorer({
+        .memory = *args.memory,
         .segment = segment,
         .field = field.meta(),
-        .doc_attrs = *source,
+        .doc_attrs = *_bound_source,
         .fetcher = *args.fetcher,
         .stats = args.stats,
         .boost = args.boost,
       });
-      _bound_source = std::move(source);
     } else {
-      _bound_func =
-        ScoreFunction::Constant(std::numeric_limits<score_t>::max());
-      _bound_source = std::make_unique<NoBoundSource>();
+      _bound_source = &gNoBoundSource;
+      _bound_func = ScoreFunction::Constant(
+        *args.memory, std::numeric_limits<score_t>::max());
     }
 
     _score = args.scorer->PrepareScorer({
+      .memory = *args.memory,
       .segment = segment,
       .field = field.meta(),
       .doc_attrs = _provider,
@@ -416,7 +421,8 @@ class PrunedLeafBase {
   BlockCursor _cursor;
   GrowingHint _hint;
   ScoreFunction _bound_func;
-  ScoreBoundSource::ptr _bound_source;
+  ScoreBoundSource::ptr _own_bound_source;
+  ScoreBoundSource* _bound_source = nullptr;
   std::array<uint32_t, kCachedBlocks> _cached;
   std::array<score_t, kCachedBlocks> _cached_scores;
   std::array<uint32_t, kCachedRuns> _cached_runs;

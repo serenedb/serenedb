@@ -38,6 +38,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 namespace detail::slop {
@@ -433,8 +434,10 @@ class PhraseSlopMatcher {
 
   static_assert(HasFreq || !HasBoost);
 
-  PhraseSlopMatcher(size_t size, PosAttr::value_t max_slop)
-    : _pos{size}, _max_slop{max_slop}, _offsets{size} {}
+  PhraseSlopMatcher(PlanMemory& memory, size_t size, PosAttr::value_t max_slop)
+    : _pos{memory.Arena(), size},
+      _max_slop{max_slop},
+      _offsets{memory.Arena(), size} {}
 
   TermPosition& Position(size_t i) noexcept {
     SDB_ASSERT(i < _pos.size());

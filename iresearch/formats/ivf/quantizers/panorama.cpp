@@ -220,7 +220,7 @@ class PanoramaQuantizerCodebook final : public QuantizerCodebook {
     _pano->compute_query_cum_sums(_query.data(), _cums.data());
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   uint32_t Dim() const noexcept { return _stats->Dim(); }
   uint32_t Levels() const noexcept { return _levels; }
@@ -243,7 +243,7 @@ class PanoramaQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class PanoramaQuantizerReader final : public QuantizerReader {
+class PanoramaQuantizerReader : public QuantizerReader {
  public:
   explicit PanoramaQuantizerReader(
     std::shared_ptr<const PanoramaQuantizerCodebook<M>> cb)
@@ -351,10 +351,10 @@ class PanoramaQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> PanoramaQuantizerCodebook<M>::MakeReader()
-  const {
+QuantizerReader::ptr PanoramaQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
   return MakeReaderT<PanoramaQuantizerCodebook<M>, PanoramaQuantizerReader<M>>(
-    this);
+    this, plan);
 }
 
 template<VectorMetric M>

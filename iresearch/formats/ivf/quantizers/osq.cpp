@@ -539,7 +539,7 @@ class OsqQuantizerCodebook final : public QuantizerCodebook {
     _query.assign(query.begin(), query.end());
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader() const final;
+  QuantizerReader::ptr MakeReader(PlanMemory* plan) const final;
 
   const std::shared_ptr<const OsqQuantizerStats<M>>& StatsPtr() const noexcept {
     return _stats;
@@ -553,7 +553,7 @@ class OsqQuantizerCodebook final : public QuantizerCodebook {
 };
 
 template<VectorMetric M>
-class OsqQuantizerReader final : public QuantizerReader {
+class OsqQuantizerReader : public QuantizerReader {
  public:
   explicit OsqQuantizerReader(std::shared_ptr<const OsqQuantizerCodebook<M>> cb)
     : _cb{std::move(cb)},
@@ -782,8 +782,10 @@ class OsqQuantizerReader final : public QuantizerReader {
 };
 
 template<VectorMetric M>
-std::unique_ptr<QuantizerReader> OsqQuantizerCodebook<M>::MakeReader() const {
-  return MakeReaderT<OsqQuantizerCodebook<M>, OsqQuantizerReader<M>>(this);
+QuantizerReader::ptr OsqQuantizerCodebook<M>::MakeReader(
+  PlanMemory* plan) const {
+  return MakeReaderT<OsqQuantizerCodebook<M>, OsqQuantizerReader<M>>(this,
+                                                                     plan);
 }
 
 template<VectorMetric M>

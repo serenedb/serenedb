@@ -98,13 +98,14 @@ class BooleanSparse {
     if constexpr (kInherited) {
       return _lead.PrepareScore();
     } else if constexpr (kOptional && !kDecides) {
-      return _optional.PrepareScore(_score.inner, Required(), _score.absorbed);
+      return _optional.PrepareScore(*_score.memory, _score.inner, Required(),
+                                    _score.absorbed);
     } else {
       return Required();
     }
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out)
+  void CollectScorers(auto& out)
     requires(kScored || kInherited)
   {
     detail::AppendScorer(out, PrepareScore());
@@ -115,7 +116,8 @@ class BooleanSparse {
     requires kScored
   {
     if constexpr (kProbes || kDecides) {
-      std::vector<ScoreFunction> scorers;
+      auto& memory = *_score.memory;
+      memory::ArenaVector<ScoreFunction> scorers{memory.Scratch()};
       detail::AppendScorer(scorers, _lead.PrepareScore());
       if constexpr (kProbes) {
         _probes.CollectScorers(scorers);
@@ -124,7 +126,7 @@ class BooleanSparse {
         detail::AppendScorer(scorers, _optional.PrepareScore());
       }
       return detail::MakeConjunctionScore(
-        _score.inner, std::move(scorers),
+        memory, _score.inner, scorers,
         kOptional && !kDecides ? score_t{0} : _score.absorbed);
     } else {
       return _lead.PrepareScore();

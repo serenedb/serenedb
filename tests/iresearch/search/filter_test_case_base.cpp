@@ -46,10 +46,12 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
 
   if (!collects) {
     for (const auto& sub : index) {
-      _queries.emplace_back(filter.PrepareSegment(sub, {
-                                                         .collector = nullptr,
-                                                         .ctx = ctx,
-                                                       }));
+      _queries.emplace_back(
+        filter.PrepareSegment(sub, {
+                                     .memory = _query_memory,
+                                     .collector = nullptr,
+                                     .ctx = ctx,
+                                   }));
     }
     return;
   }
@@ -72,6 +74,7 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
   for (const auto& sub : index) {
     _queries.emplace_back(
       filter.PrepareSegment(sub, {
+                                   .memory = _query_memory,
                                    .collector = _collector->Get(),
                                    .ctx = ctx,
                                    .thread = seg++ % threads,

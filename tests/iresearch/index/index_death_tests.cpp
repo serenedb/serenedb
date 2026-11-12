@@ -355,7 +355,8 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
   ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
 
   // validate live docs
-  auto live_docs = segment.docs_iterator();
+  irs::PlanMemory memory;
+  auto live_docs = segment.docs_iterator(memory);
   ASSERT_EQ(1, live_docs->Next());
   ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
 }
@@ -1254,7 +1255,8 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
 
   // validate live docs
-  auto live_docs = segment.docs_iterator();
+  irs::PlanMemory memory;
+  auto live_docs = segment.docs_iterator(memory);
   ASSERT_EQ(1, live_docs->Next());
   ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
 }
@@ -2707,7 +2709,8 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
   ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
 
   // live docs
-  auto live_docs = segment.docs_iterator();
+  irs::PlanMemory memory;
+  auto live_docs = segment.docs_iterator(memory);
   ASSERT_EQ(1, live_docs->Next());
   ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
 }

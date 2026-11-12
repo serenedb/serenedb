@@ -74,7 +74,7 @@ bool Unique(Clauses& clauses, Same same, ScoreMergeType merge) {
 
 score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
                    const SubReader& segment, ScoreMergeType merge,
-                   ColumnArgsFetcher& fetcher) {
+                   PlanMemory& memory, ColumnArgsFetcher& fetcher) {
   score_t out = 0;
   bool any = false;
   for (const auto occur : {Occur::Must, Occur::Should}) {
@@ -84,6 +84,7 @@ score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
         continue;
       }
       const auto one = detail::AllDocsScore(segment, detail::ScoreArgs{
+                                                       .memory = &memory,
                                                        .scorer = record.scorer,
                                                        .stats = record.stats,
                                                        .fetcher = &fetcher,
@@ -462,14 +463,14 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
       }
       if (bucket.filters.empty() && bucket.postings.size() == 1) {
         const auto& clause = bucket.postings.front();
-        return MakeTermQuery(_segment, clause.state.reader, clause.state.cookie,
-                             clause.boost, clause.stats);
+        return MakeTermQuery(_memory, _segment, clause.state.reader,
+                             clause.state.cookie, clause.boost, clause.stats);
       }
       return nullptr;
     };
     if (msm == 0 && should.empty()) {
       if (must.empty()) {
-        auto all = memory::make_managed<AllQuery>(_segment, _boost);
+        auto all = _memory.Make<AllQuery>(_segment, _boost);
         all->SetStats(_collector != nullptr ? _collector->Record()
                                             : detail::StatsRecord{});
         return all;
@@ -540,16 +541,17 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
     std::clamp(static_cast<uint32_t>(
                  std::llround(expected.share * static_cast<double>(docs))),
                least, estimate);
-  auto query = memory::make_managed<BooleanQuery>(
-    _segment, std::move(_clauses), msm, matching_msm, _boost, least, matches,
-    estimate, _merge_type);
+  auto query = _memory.Make<BooleanQuery>(
+    _segment, BooleanQuery::ExactClauses(_memory.Arena(), _clauses), msm,
+    matching_msm, _boost, least, matches, estimate, _merge_type);
   query->SetStats(_collector != nullptr ? _collector->Record()
                                         : detail::StatsRecord{});
   return query;
 }
 
-score_t BooleanQuery::Absorbed(ColumnArgsFetcher& fetcher) const noexcept {
-  return AbsorbedOf(_clauses, _segment, _merge_type, fetcher);
+score_t BooleanQuery::Absorbed(PlanMemory& memory,
+                               ColumnArgsFetcher& fetcher) const {
+  return AbsorbedOf(_clauses, _segment, _merge_type, memory, fetcher);
 }
 
 void BooleanQuery::Visit(PreparedStateVisitor& visitor, score_t boost) const {

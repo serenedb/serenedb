@@ -22,22 +22,22 @@
 
 #include <optional>
 #include <span>
-#include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/utils/containers/fixed.hpp"
 
 namespace irs {
 
 class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
  public:
-  ExactVectorQuery(const SubReader& segment, const ColumnReader& column,
-                   const ColReader& columns, std::vector<float> query,
-                   VectorMetric metric, score_t boost,
-                   QueryBuilder::ptr&& inner = nullptr,
+  ExactVectorQuery(QueryMemory& memory, const SubReader& segment,
+                   const ColumnReader& column, const ColReader& columns,
+                   std::span<const float> query, VectorMetric metric,
+                   score_t boost, QueryBuilder::ptr&& inner = nullptr,
                    AnnExactCodes codes = {},
                    std::optional<score_t> threshold = {},
                    bool inclusive = false)
@@ -47,7 +47,8 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
       _columns{&columns},
       _inner{std::move(inner)},
       _codes{std::move(codes)},
-      _query{std::move(query)},
+      _query{memory.Arena(), query.size(),
+             [&](float& slot, size_t i) noexcept { slot = query[i]; }},
       _metric{metric},
       _boost{boost},
       _threshold{threshold},
@@ -73,7 +74,7 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   const ColReader* _columns;
   QueryBuilder::ptr _inner;
   AnnExactCodes _codes;
-  std::vector<float> _query;
+  containers::Fixed<float> _query;
   VectorMetric _metric;
   score_t _boost;
   std::optional<score_t> _threshold;

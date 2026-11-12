@@ -47,14 +47,17 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   const auto range = g.RangeOf(unit);
   if (l.root_seg != unit.seg || range.begin < l.root_end) {
     const auto& seg = (*g.reader)[unit.seg];
+    l.root.reset();
     l.score_fetcher.Clear();
+    l.plan_memory.Rewind();
     const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
     auto* table = BeginVerify(l.col_verify, seg, g, l);
     SDB_ENSURE(g.scorer_obj != nullptr,
                "a scan that ranks by score has a scorer to rank with");
     auto plan = irs::top::MakeRoot(
       seg_query,
-      {.scorer = *g.scorer_obj,
+      {.memory = l.plan_memory,
+       .scorer = *g.scorer_obj,
        .fetcher = l.score_fetcher,
        .table = table,
        .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,

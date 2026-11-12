@@ -32,7 +32,8 @@
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_state.hpp"
-#include "iresearch/utils/tracked.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -41,11 +42,14 @@ struct TermReader;
 
 class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
  public:
-  using Filters = TrackedVector<QueryBuilder::ptr>;
+  using Filters = memory::ArenaVector<QueryBuilder::ptr>;
 
   struct PreparedBucket {
-    TrackedVector<detail::PostingClause> postings;
-    TrackedVector<detail::AllDocsClause> all_docs;
+    explicit PreparedBucket(MemoryArena& arena)
+      : postings{arena}, all_docs{arena}, filters{arena} {}
+
+    memory::ArenaVector<detail::PostingClause> postings;
+    memory::ArenaVector<detail::AllDocsClause> all_docs;
     Filters filters;
     detail::Terms uniformity = detail::Terms::Mixed;
 
@@ -56,6 +60,32 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
   };
 
   using Clauses = std::array<PreparedBucket, kNumOccur>;
+
+  static Clauses MakeClauses(MemoryArena& arena) {
+    static_assert(kNumOccur == 3);
+    return {PreparedBucket{arena}, PreparedBucket{arena},
+            PreparedBucket{arena}};
+  }
+
+  static PreparedBucket ExactBucket(MemoryArena& arena, PreparedBucket& from) {
+    PreparedBucket out{arena};
+    out.postings.reserve(from.postings.size());
+    out.postings.assign(from.postings.begin(), from.postings.end());
+    out.all_docs.reserve(from.all_docs.size());
+    out.all_docs.assign(from.all_docs.begin(), from.all_docs.end());
+    out.filters.reserve(from.filters.size());
+    for (auto& filter : from.filters) {
+      out.filters.emplace_back(std::move(filter));
+    }
+    out.uniformity = from.uniformity;
+    return out;
+  }
+
+  static Clauses ExactClauses(MemoryArena& arena, Clauses& from) {
+    static_assert(kNumOccur == 3);
+    return {ExactBucket(arena, from[0]), ExactBucket(arena, from[1]),
+            ExactBucket(arena, from[2])};
+  }
 
   BooleanQuery(const SubReader& segment, Clauses&& clauses,
                uint32_t declared_msm, uint32_t min_should_match, score_t boost,
@@ -111,7 +141,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
 
   uint32_t DeclaredMinShouldMatch() const noexcept { return _declared_msm; }
 
-  score_t Absorbed(ColumnArgsFetcher& fetcher) const noexcept;
+  score_t Absorbed(PlanMemory& memory, ColumnArgsFetcher& fetcher) const;
 
   ScoreMergeType MergeType() const noexcept { return _merge_type; }
 
@@ -141,11 +171,14 @@ extern template class QueryBuilderImpl<BooleanQuery>;
 
 class BooleanBuilder {
  public:
-  BooleanBuilder(const SubReader& segment, uint32_t min_should_match,
-                 score_t boost, ScoreMergeType merge_type,
+  BooleanBuilder(QueryMemory& memory, const SubReader& segment,
+                 uint32_t min_should_match, score_t boost,
+                 ScoreMergeType merge_type,
                  PrepareCollector* collector = nullptr,
                  bool needs_terms = false)
-    : _segment{segment},
+    : _clauses{BooleanQuery::MakeClauses(memory.Scratch())},
+      _memory{memory},
+      _segment{segment},
       _collector{collector},
       _msm{min_should_match},
       _boost{boost},
@@ -199,6 +232,7 @@ class BooleanBuilder {
     const BooleanQuery::PreparedBucket& bucket) const noexcept;
 
   BooleanQuery::Clauses _clauses;
+  QueryMemory& _memory;
   const SubReader& _segment;
   PrepareCollector* _collector;
   uint32_t _msm;

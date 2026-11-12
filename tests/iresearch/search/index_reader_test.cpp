@@ -573,7 +573,8 @@ TEST(segment_reader_test, open) {
 
     // check live docs
     {
-      auto it = rdr->docs_iterator();
+      irs::PlanMemory memory;
+      auto it = rdr->docs_iterator(memory);
       ASSERT_EQ(1, it->Next());
       ASSERT_EQ(2, it->Next());
       ASSERT_EQ(3, it->Next());

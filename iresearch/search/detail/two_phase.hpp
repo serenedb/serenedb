@@ -84,7 +84,9 @@ class SlotsScore {
     }
     SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
     SDB_ASSERT(_recipe.args.scorer != nullptr);
+    SDB_ASSERT(_recipe.args.memory);
     return _recipe.args.scorer->PrepareScorer({
+      .memory = *_recipe.args.memory,
       .segment = *_recipe.segment,
       .field = _recipe.field->meta(),
       .doc_attrs = _provider,
@@ -157,7 +159,7 @@ class TwoPhaseBase {
     return _score.Spreads();
   }
 
-  void CollectScorers(std::vector<ScoreFunction>& out)
+  void CollectScorers(auto& out)
     requires Scored
   {
     AppendScorer(out, PrepareScore());

@@ -63,6 +63,7 @@
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/tracked.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -883,6 +884,8 @@ int64_t TrackedMemory() {
 // of tests::PreparedFilter, inlined here because the bench target has no
 // access to the test helpers.
 struct BenchPrepared {
+  std::unique_ptr<irs::QueryMemory> memory =
+    std::make_unique<irs::QueryMemory>();
   std::vector<irs::QueryBuilder::ptr> queries;
 
   bool AnyNull() const noexcept {
@@ -895,7 +898,8 @@ BenchPrepared Prepare(const Filter& q, const irs::DirectoryReader& rdr) {
   BenchPrepared out;
   out.queries.reserve(rdr.size());
   for (const auto& sub : rdr) {
-    out.queries.emplace_back(q.PrepareSegment(sub, {.collector = nullptr}));
+    out.queries.emplace_back(
+      q.PrepareSegment(sub, {.memory = *out.memory, .collector = nullptr}));
   }
   return out;
 }
@@ -939,6 +943,7 @@ template<typename MakeFn>
     return;
   }
 
+  irs::PlanMemory plan_memory;
   size_t per_iter = 0;
 #ifdef SLOP_PROFILE
   // Collect callgrind counts only over the timed loop (index build and
@@ -948,7 +953,8 @@ template<typename MakeFn>
   for (auto _ : state) {
     per_iter = 0;
     for (const auto& query : prepared.queries) {
-      auto plan = irs::count::MakeRoot(*query);
+      plan_memory.Rewind();
+      auto plan = irs::count::MakeRoot(*query, {.memory = plan_memory});
       if (plan) {
         per_iter += plan->Run(irs::doc_limits::min(), irs::doc_limits::eof());
       }
@@ -1050,6 +1056,7 @@ template<typename PhraseQueryT = irs::FixedPhraseQuery, typename MakeFn>
     doc_buf;
   std::array<irs::offsets::Range, 256> range_buf;
 
+  irs::PlanMemory plan_memory;
   size_t docs_per_iter = 0;
   size_t matches_per_iter = 0;
 #ifdef SLOP_PROFILE
@@ -1061,8 +1068,10 @@ template<typename PhraseQueryT = irs::FixedPhraseQuery, typename MakeFn>
     docs_per_iter = 0;
     matches_per_iter = 0;
     for (size_t seg = 0; seg != prepared.queries.size(); ++seg) {
-      auto docs = irs::docs::MakeRoot(*prepared.queries[seg]);
-      auto offs = irs::offsets::Make(*phrase_queries[seg]);
+      plan_memory.Rewind();
+      auto docs =
+        irs::docs::MakeRoot(*prepared.queries[seg], {.memory = plan_memory});
+      auto offs = irs::offsets::Make(plan_memory, *phrase_queries[seg]);
       if (!docs || !offs) {
         continue;
       }

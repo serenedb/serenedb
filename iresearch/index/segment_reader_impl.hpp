@@ -80,7 +80,7 @@ class SegmentReaderImpl final : public SubReader {
     return _doc_maps;
   }
 
-  lead::Node::ptr docs_iterator() const final;
+  lead::Node::ptr docs_iterator(PlanMemory& memory) const final;
 
   std::span<const TermReader* const> fields(field_id id) const final {
     return _field_reader->fields(id);
@@ -91,6 +91,7 @@ class SegmentReaderImpl final : public SubReader {
   }
 
   NormReader::ptr norms(field_id field) const final;
+  NormReader::ptr norms(PlanMemory& memory, field_id field) const final;
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;

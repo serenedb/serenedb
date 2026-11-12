@@ -345,9 +345,9 @@ bool TakeProbeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count,
   return TakeFold(faster, terms.size(), doc, docs_count);
 }
 
-inline uint64_t FoldConjunctionCost(
-  std::span<const TrackedVector<PostingClause>> clauses, size_t lead,
-  size_t seed, doc_id_t docs_count) noexcept {
+inline uint64_t FoldConjunctionCost(std::span<const Clauses> clauses,
+                                    size_t lead, size_t seed,
+                                    doc_id_t docs_count) noexcept {
   const auto words = SegmentWords(docs_count);
   uint64_t cost = words;
   for (size_t i = 0; i != clauses.size(); ++i) {
@@ -362,9 +362,8 @@ inline uint64_t FoldConjunctionCost(
   return cost;
 }
 
-inline uint64_t WalkConjunctionCost(
-  std::span<const TrackedVector<PostingClause>> clauses, size_t lead,
-  uint64_t candidates) noexcept {
+inline uint64_t WalkConjunctionCost(std::span<const Clauses> clauses,
+                                    size_t lead, uint64_t candidates) noexcept {
   uint64_t terms = 0;
   for (size_t i = 0; i != clauses.size(); ++i) {
     if (i != lead) {
@@ -393,41 +392,46 @@ inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
 }
 
 template<typename Result>
-Result MakeBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
-                      doc_id_t docs_count, TableFilter* table);
+Result MakeBitsetNode(PlanMemory& memory, BitsetBuckets&& buckets,
+                      const IndexInput& doc, doc_id_t docs_count,
+                      TableFilter* table);
 
 template<>
-inline FillNode::ptr MakeBitsetNode<FillNode::ptr>(BitsetBuckets&& buckets,
+inline FillNode::ptr MakeBitsetNode<FillNode::ptr>(PlanMemory& memory,
+                                                   BitsetBuckets&& buckets,
                                                    const IndexInput& doc,
                                                    doc_id_t docs_count,
                                                    TableFilter*) {
-  return memory::make_managed<fill::Impl<fill::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
+  return memory.Make<fill::Impl<fill::BitsetDocs>>(
+    BuildBitset(memory, buckets, doc, docs_count));
 }
 
 template<>
-inline ProbeNode::ptr MakeBitsetNode<ProbeNode::ptr>(BitsetBuckets&& buckets,
+inline ProbeNode::ptr MakeBitsetNode<ProbeNode::ptr>(PlanMemory& memory,
+                                                     BitsetBuckets&& buckets,
                                                      const IndexInput& doc,
                                                      doc_id_t docs_count,
                                                      TableFilter*) {
-  return memory::make_managed<probe::Impl<probe::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
+  return memory.Make<probe::Impl<probe::BitsetDocs>>(
+    BuildBitset(memory, buckets, doc, docs_count));
 }
 
 template<>
-inline LeadNode::ptr MakeBitsetNode<LeadNode::ptr>(BitsetBuckets&& buckets,
+inline LeadNode::ptr MakeBitsetNode<LeadNode::ptr>(PlanMemory& memory,
+                                                   BitsetBuckets&& buckets,
                                                    const IndexInput& doc,
                                                    doc_id_t docs_count,
                                                    TableFilter*) {
-  return memory::make_managed<lead::Impl<lead::BitsetDocs>>(
-    BuildBitset(buckets, doc, docs_count));
+  return memory.Make<lead::Impl<lead::BitsetDocs>>(
+    BuildBitset(memory, buckets, doc, docs_count));
 }
 
 template<typename Term>
-BitsetBuckets DisjunctionBuckets(std::span<const Term> terms,
+BitsetBuckets DisjunctionBuckets(PlanMemory& memory,
+                                 std::span<const Term> terms,
                                  const TermReader* field) {
-  BitsetBuckets buckets;
-  auto& clause = buckets.must.emplace_back();
+  BitsetBuckets buckets{memory};
+  auto& clause = buckets.must.emplace_back(buckets.must.get_allocator());
   clause.reserve(terms.size());
   for (size_t i = 0; i != terms.size(); ++i) {
     clause.emplace_back(ClauseOf(terms[i], field));
@@ -436,14 +440,14 @@ BitsetBuckets DisjunctionBuckets(std::span<const Term> terms,
 }
 
 template<typename Result, typename Term>
-Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
-                    const IndexInput& doc, doc_id_t docs_count,
-                    TableFilter* table) {
+Result MakeBitsetOf(PlanMemory& memory, std::span<const Term> terms,
+                    const TermReader* field, const IndexInput& doc,
+                    doc_id_t docs_count, TableFilter* table) {
   if (!TakeBitset<Result>(terms, doc, docs_count)) {
     return {};
   }
-  return MakeBitsetNode<Result>(DisjunctionBuckets(terms, field), doc,
-                                docs_count, table);
+  return MakeBitsetNode<Result>(
+    memory, DisjunctionBuckets(memory, terms, field), doc, docs_count, table);
 }
 
 }  // namespace irs::detail

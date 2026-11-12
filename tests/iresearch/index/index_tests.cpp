@@ -312,7 +312,7 @@ class SubReaderMock final : public irs::SubReader {
 
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
 
-  irs::lead::Node::ptr docs_iterator() const final {
+  irs::lead::Node::ptr docs_iterator(irs::PlanMemory&) const final {
     EXPECT_FALSE(true);
     return nullptr;
   }
@@ -328,6 +328,10 @@ class SubReaderMock final : public irs::SubReader {
   }
 
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+
+  irs::NormReader::ptr norms(irs::PlanMemory&, irs::field_id) const final {
+    return nullptr;
+  }
 
  private:
   irs::SegmentInfo _meta;

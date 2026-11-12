@@ -27,7 +27,8 @@ namespace irs::top {
 Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
                           ScoreMergeType, score_t score) {
   return MakeShape<All>(ctx, ctx.fetcher,
-                        static_cast<doc_id_t>(segment.docs_count()), score);
+                        static_cast<doc_id_t>(segment.docs_count()),
+                        ScoreFunction::Constant(ctx.memory, score));
 }
 
 }  // namespace irs::top

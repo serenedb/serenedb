@@ -1854,9 +1854,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
       EXPECT_EQ(nullptr, segment.Column(kUnusedId));
 
       // doc4's columns are still on disk; the live-docs mask hides it.
-      // Use docs_iterator() to confirm only one local doc id is live.
+      // Use docs_iterator to confirm only one local doc id is live.
       std::vector<irs::doc_id_t> live;
-      auto it = segment.docs_iterator();
+      irs::PlanMemory memory;
+      auto it = segment.docs_iterator(memory);
       for (auto doc = it->Next(); !irs::doc_limits::eof(doc);
            doc = it->Next()) {
         live.push_back(doc);

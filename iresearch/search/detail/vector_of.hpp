@@ -39,24 +39,28 @@
 namespace irs::detail {
 
 struct ClusterFeed {
+  PlanMemory* memory;
   const VectorState* state;
   IndexInput* payload;
   bool has_centroids;
 
-  using Args =
-    std::tuple<const PostingMeta&, const IndexInput&,
-               std::unique_ptr<QuantizerReader>, VectorBlockReader, uint32_t>;
+  using Args = std::tuple<PlanMemory&, const PostingMeta&, const IndexInput&,
+                          QuantizerReader::ptr, VectorBlockReader, uint32_t>;
 
   Args operator()(size_t c) const {
-    auto quantizer = MakeQuantizerReader(state->codebook);
+    auto quantizer = MakeQuantizerReader(memory, state->codebook);
     SDB_ASSERT(quantizer);
     const float* centroid =
       has_centroids ? state->cluster_centroids.data() + c * state->d : nullptr;
     quantizer->StartCluster(centroid);
     VectorBlockReader pay{payload->Dup(), quantizer->BlockSetting()};
     pay.Reset(state->pay_starts[c]);
-    return Args{state->cookies[c], *detail::DocOf(*state->reader),
-                std::move(quantizer), std::move(pay), state->pay_lanes[c]};
+    return Args{*memory,
+                state->cookies[c],
+                *detail::DocOf(*state->reader),
+                std::move(quantizer),
+                std::move(pay),
+                state->pay_lanes[c]};
   }
 };
 
@@ -74,14 +78,15 @@ RawRecipe RecipeOf(const Query& query) {
 }
 
 template<typename Gate, typename Query, typename Emit>
-auto ResolveClusters(const Query& query, Emit&& emit) {
+auto ResolveClusters(PlanMemory& memory, const Query& query, Emit&& emit) {
   const auto& state = query.State();
   SDB_ASSERT(state.reader != nullptr);
   SDB_ASSERT(state.payload != nullptr);
   SDB_ASSERT(detail::DocOf(*state.reader) != nullptr);
   SDB_ASSERT(!state.cookies.empty());
 
-  const ClusterFeed feed{.state = &state,
+  const ClusterFeed feed{.memory = &memory,
+                         .state = &state,
                          .payload = state.payload.get(),
                          .has_centroids = state.cluster_centroids.size() ==
                                           state.cookies.size() * state.d};
@@ -95,26 +100,27 @@ auto ResolveClusters(const Query& query, Emit&& emit) {
 }
 
 template<typename Gate, bool Rescore, typename Query, typename Emit>
-auto ResolveVector(const Query& query, score_t edge, probe::Node::ptr inner,
-                   Emit&& emit) {
+auto ResolveVector(PlanMemory& memory, const Query& query, score_t edge,
+                   probe::Node::ptr inner, Emit&& emit) {
   const auto recipe = RecipeOf(query);
   return ResolveClusters<Gate>(
-    query, [&]<typename Cluster>(size_t count, const ClusterFeed& feed) {
+    memory, query,
+    [&]<typename Cluster>(size_t count, const ClusterFeed& feed) {
       return ResolveBool(inner != nullptr, [&]<bool HasInner>() {
         using Slots = VectorSlots<Cluster, Gate, HasInner, Rescore>;
-        return emit.template operator()<Slots>(count, feed, edge,
+        return emit.template operator()<Slots>(memory, count, feed, edge,
                                                std::move(inner), recipe);
       });
     });
 }
 
 template<typename Query>
-probe::Node::ptr InnerProbe(const Query& query) {
+probe::Node::ptr InnerProbe(PlanMemory& memory, const Query& query) {
   const auto* inner = query.Inner();
   if (inner == nullptr) {
     return {};
   }
-  return inner->PlanProbe({}, query.State().estimation);
+  return inner->PlanProbe({.memory = memory}, query.State().estimation);
 }
 
 template<typename Gate, typename Query, typename F>
@@ -131,13 +137,13 @@ typename Family::Result MakeVectorDocs(const Query& query,
                                        const typename Family::DocsContext& ctx,
                                        score_t edge) {
   using Result = typename Family::Result;
-  auto inner = InnerProbe(query);
+  auto inner = InnerProbe(Family::MemoryOf(ctx), query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   return ResolveRescore<Gate>(query, [&]<bool Rescore>() {
     return ResolveVector<Gate, Rescore>(
-      query, edge, std::move(inner),
+      Family::MemoryOf(ctx), query, edge, std::move(inner),
       [&]<typename Slots>(auto&&... args) -> Result {
         return Family::template Docs<
           typename Family::template TwoPhaseDocs<Slots>>(
@@ -150,19 +156,20 @@ template<typename Family, typename Gate, typename Query>
 typename Family::Result MakeVectorScored(
   const Query& query, const typename Family::ScoredContext& ctx, score_t edge) {
   using Result = typename Family::Result;
-  auto inner = InnerProbe(query);
+  auto inner = InnerProbe(Family::MemoryOf(ctx), query);
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
   const auto& scoring = Family::Scoring(ctx);
   const auto record = query.Stats(scoring);
-  const ScoreArgs score{.scorer = record.scorer,
+  const ScoreArgs score{.memory = &Family::MemoryOf(ctx),
+                        .scorer = record.scorer,
                         .stats = record.stats,
                         .fetcher = scoring.fetcher,
                         .boost = query.Boost()};
   return ResolveRescore<Gate>(query, [&]<bool Rescore>() {
     return ResolveVector<Gate, Rescore>(
-      query, edge, std::move(inner),
+      Family::MemoryOf(ctx), query, edge, std::move(inner),
       [&]<typename Slots>(auto&&... args) -> Result {
         return Family::template Scored<
           typename Family::template TwoPhaseScored<Slots>>(

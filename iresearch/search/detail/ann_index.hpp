@@ -110,7 +110,7 @@ inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
       return false;
     }
   } else if (HasRemovals(segment.Meta())) {
-    out = MakeAllQuery(segment, {}, kNoBoost);
+    out = MakeAllQuery(segment, {.memory = ctx.memory}, kNoBoost);
   }
   out = WithDocsMask(std::move(out), segment, inner_ctx);
   return true;

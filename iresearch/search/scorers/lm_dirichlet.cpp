@@ -120,8 +120,9 @@ ScoreBoundWriter::ptr LMDirichlet::PrepareScoreBoundWriter() const {
   return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>();
 }
 
-ScoreBoundSource::ptr LMDirichlet::PrepareScoreBoundSource() const {
-  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
+ScoreBoundSource::ptr LMDirichlet::PrepareScoreBoundSource(
+  PlanMemory& memory) const {
+  return memory.Make<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
 bool LMDirichlet::Compatible(const ScorerOptions& persisted) const noexcept {

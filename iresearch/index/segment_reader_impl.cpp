@@ -145,6 +145,18 @@ NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
   return MakePersistedNormReader(*nc);
 }
 
+NormReader::ptr SegmentReaderImpl::norms(PlanMemory& memory,
+                                         field_id field) const {
+  if (!_data) {
+    return {};
+  }
+  const auto* nc = _data->col_reader->NormColumn(field);
+  if (!nc) {
+    return {};
+  }
+  return MakePersistedNormReader(memory, *nc);
+}
+
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
   return _data->col_reader->Column(field);
 }
@@ -163,9 +175,9 @@ IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
   return _data->idx_reader->ReopenIn();
 }
 
-lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
+lead::Node::ptr SegmentReaderImpl::docs_iterator(PlanMemory& memory) const {
   if (!_docs_mask) {
-    return memory::make_managed<SegmentAllDocs>(_info.docs_count);
+    return memory.Make<SegmentAllDocs>(_info.docs_count);
   }
   SDB_ASSERT(!_docs_mask->Empty());
 
@@ -174,7 +186,7 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
   return ResolveDocsMask(
     _docs_mask.get(),
     [&]<DocsMaskType Mask>(Mask docs_mask) -> lead::Node::ptr {
-      return memory::make_managed<lead::Impl<detail::LiveDocs<Mask>>>(
+      return memory.Make<lead::Impl<detail::LiveDocs<Mask>>>(
         std::move(docs_mask), live_end);
     });
 }

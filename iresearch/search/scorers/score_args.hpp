@@ -36,6 +36,7 @@ struct SubReader;
 namespace detail {
 
 struct ScoreArgs {
+  PlanMemory* memory = nullptr;
   const Scorer* scorer = nullptr;
   const byte_type* stats = nullptr;
   ColumnArgsFetcher* fetcher = nullptr;
@@ -55,11 +56,13 @@ struct StatsRecord {
 };
 
 struct ScoreRecipe {
+  PlanMemory* memory = nullptr;
   const SubReader* segment = nullptr;
   ColumnArgsFetcher* fetcher = nullptr;
 
   ScoreArgs Args(const StatsRecord& record, score_t boost) const noexcept {
     return {
+      .memory = memory,
       .scorer = record.scorer,
       .stats = record.stats,
       .fetcher = fetcher,
@@ -68,8 +71,8 @@ struct ScoreRecipe {
   }
 };
 
-inline void AppendScorer(std::vector<ScoreFunction>& out,
-                         ScoreFunction&& score) {
+template<typename Out>
+void AppendScorer(Out& out, ScoreFunction&& score) {
   if (!score.IsDefault()) {
     out.emplace_back(std::move(score));
   }

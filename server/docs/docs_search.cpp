@@ -58,6 +58,7 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 #include <limits>
@@ -503,12 +504,17 @@ class ObjectFetcher {
 template<typename MakeFetcher, typename Fn>
 void ForEachMatchIn(const irs::DirectoryReader& reader,
                     const irs::Filter& filter, MakeFetcher&& make, Fn&& fn) {
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
   for (const auto& segment : reader) {
-    auto query = filter.PrepareSegment(segment, {});
+    query_memory.Rewind();
+    plan_memory.Rewind();
+    auto query = filter.PrepareSegment(segment, {.memory = query_memory});
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
       continue;
     }
-    auto node = query->PlanFill({}, irs::ScoreMergeType::Noop);
+    auto node =
+      query->PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
     if (!node) {
       continue;
     }
@@ -517,7 +523,7 @@ void ForEachMatchIn(const irs::DirectoryReader& reader,
     if (auto* folded = node->Folded()) {
       live.emplace(std::move(*folded), irs::MakeGenericDocsMask(segment));
     } else {
-      live.emplace(std::move(node), docs_count,
+      live.emplace(plan_memory, std::move(node), docs_count,
                    irs::MakeGenericDocsMask(segment));
     }
     auto fetcher = make(segment);

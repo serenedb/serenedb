@@ -38,6 +38,7 @@
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/memory.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <random>
 #include <roaring/roaring.hh>
@@ -712,8 +713,9 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
   const std::vector<irs::doc_id_t> docs{3, 5000, 9000};
 
   size_t windows = 0;
+  irs::PlanMemory memory;
   irs::detail::LazyBitset set{
-    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows), kDocs,
+    memory, memory.Make<WindowFill>(MakeSet(kDocs, docs), windows), kDocs,
     irs::MakeGenericDocsMask(nullptr)};
 
   ASSERT_EQ(0, windows);
@@ -751,8 +753,9 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
   const std::vector<irs::doc_id_t> docs{3, 9000};
 
   size_t windows = 0;
+  irs::PlanMemory memory;
   irs::detail::LazyBitset set{
-    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows), kDocs,
+    memory, memory.Make<WindowFill>(MakeSet(kDocs, docs), windows), kDocs,
     irs::MakeGenericDocsMask(nullptr)};
 
   // The segment spans three windows, the middle one holds nothing, and two
@@ -772,14 +775,16 @@ TEST(lazy_bitset_test, unfilled_windows_read_empty_over_reused_memory) {
   const std::vector<irs::doc_id_t> docs{3, 60000};
 
   size_t windows = 0;
-  auto node =
-    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows);
+  irs::PlanMemory memory;
   {
-    irs::detail::BitsetStorage dirty{kDocs, irs::memory::kAllocateOnly};
+    irs::detail::BitsetStorage dirty{memory.Scratch(), kDocs,
+                                     irs::memory::kAllocateOnly};
     std::fill_n(dirty.Words(), dirty.Alloc(), ~uint64_t{0});
   }
-  irs::detail::LazyBitset set{std::move(node), kDocs,
-                              irs::MakeGenericDocsMask(nullptr)};
+  memory.Rewind();
+  irs::detail::LazyBitset set{
+    memory, memory.Make<WindowFill>(MakeSet(kDocs, docs), windows), kDocs,
+    irs::MakeGenericDocsMask(nullptr)};
 
   ASSERT_EQ(60000, set.Probe(4));
   for (irs::doc_id_t doc = kMin; doc <= kDocs; ++doc) {
@@ -793,14 +798,16 @@ TEST(lazy_bitset_test, skipped_windows_read_empty_over_reused_memory) {
   const std::vector<irs::doc_id_t> docs{3, 20000, 70000};
 
   size_t windows = 0;
-  auto node =
-    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows);
+  irs::PlanMemory memory;
   {
-    irs::detail::BitsetStorage dirty{kDocs, irs::memory::kAllocateOnly};
+    irs::detail::BitsetStorage dirty{memory.Scratch(), kDocs,
+                                     irs::memory::kAllocateOnly};
     std::fill_n(dirty.Words(), dirty.Alloc(), ~uint64_t{0});
   }
-  irs::detail::LazyBitset set{std::move(node), kDocs,
-                              irs::MakeGenericDocsMask(nullptr)};
+  memory.Rewind();
+  irs::detail::LazyBitset set{
+    memory, memory.Make<WindowFill>(MakeSet(kDocs, docs), windows), kDocs,
+    irs::MakeGenericDocsMask(nullptr)};
 
   set.SkipTo(50000);
   ASSERT_EQ(70000, set.Probe(50000));

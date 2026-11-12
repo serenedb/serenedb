@@ -37,7 +37,8 @@
 namespace irs::detail {
 
 template<typename Result, bool Scored, NGramMatch M, typename F>
-Result Build(NGramKind<M>, const NGramSimilarityQuery& query, uint64_t, F&& f) {
+Result Build(PlanMemory& memory, NGramKind<M>,
+             const NGramSimilarityQuery& query, uint64_t, F&& f) {
   const auto& state = query.State();
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
@@ -47,10 +48,11 @@ Result Build(NGramKind<M>, const NGramSimilarityQuery& query, uint64_t, F&& f) {
       return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
         if constexpr (M == NGramMatch::All) {
           return f.template operator()<NGramAllSlots<Leaf, N, Scored>>(
-            metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
+            memory, metas, *h.doc, h.Layout(), *h.pos, h.pay,
+            query.TotalTerms());
         } else {
           return f.template operator()<NGramSlots<Leaf, Scored, false, N>>(
-            metas.size(),
+            memory, metas.size(),
             [&](Leaf& leaf, size_t i) {
               leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
             },

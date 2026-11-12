@@ -49,7 +49,9 @@ struct Family {
   using TwoPhaseDocs = lead::TwoPhaseDocs<Slots>;
   template<typename Slots>
   using TwoPhaseScored = lead::TwoPhaseScored<Slots>;
-  using DocsContext = utils::Empty;
+  struct DocsContext {
+    PlanMemory& memory;
+  };
 
   struct ScoredContext {
     detail::ScoredCtx scored;
@@ -60,27 +62,39 @@ struct Family {
 
   static uint64_t Interrogations(const ScoredContext&) noexcept { return 0; }
 
-  static DocsContext DocsOf(const ScoredContext&) noexcept { return {}; }
+  static DocsContext DocsOf(const ScoredContext& ctx) noexcept {
+    return {ctx.scored.memory};
+  }
 
   static const detail::ScoredCtx& Scoring(const ScoredContext& ctx) noexcept {
     return ctx.scored;
   }
 
+  static PlanMemory& MemoryOf(const DocsContext& ctx) noexcept {
+    return ctx.memory;
+  }
+
+  static PlanMemory& MemoryOf(const ScoredContext& ctx) noexcept {
+    return ctx.scored.memory;
+  }
+
   template<typename Node, typename... Args>
-  static Result Docs(const DocsContext&, Args&&... args) {
-    return memory::make_managed<ByWalkDocs<Node>>(std::forward<Args>(args)...);
+  static Result Docs(const DocsContext& ctx, Args&&... args) {
+    return ctx.memory.Make<ByWalkDocs<Node>>(std::forward<Args>(args)...);
   }
 
   template<typename Node, typename... Args>
   static Result Constant(const ScoredContext& ctx, score_t value,
                          Args&&... args) {
-    return memory::make_managed<WalkConstantScored<Node>>(
-      ctx.merge, *ctx.scored.fetcher, value, std::forward<Args>(args)...);
+    auto& memory = MemoryOf(ctx);
+    return memory.Make<WalkConstantScored<Node>>(ctx.merge, *ctx.scored.fetcher,
+                                                 memory, value,
+                                                 std::forward<Args>(args)...);
   }
 
   template<typename Node, typename... Args>
   static Result Scored(const ScoredContext& ctx, Args&&... args) {
-    return memory::make_managed<ByWalkScored<Node>>(
+    return MemoryOf(ctx).Make<ByWalkScored<Node>>(
       ctx.merge, *ctx.scored.fetcher, std::forward<Args>(args)...);
   }
 
@@ -98,10 +112,10 @@ struct Family {
 
   template<typename Lead, typename Others, typename Optional, typename Excludes,
            typename Ctx, typename Score, typename... Args>
-  static Result MakeWindow(const Ctx&, ScoreMergeType, Score score,
+  static Result MakeWindow(const Ctx& ctx, ScoreMergeType, Score score,
                            Args&&... args) {
     using Window = BooleanWindow<Lead, Others, Optional, Excludes, Score>;
-    return memory::make_managed<Impl<Window>>(
+    return MemoryOf(ctx).template Make<Impl<Window>>(
       std::piecewise_construct, std::forward<Args>(args)..., score);
   }
 
@@ -111,18 +125,18 @@ struct Family {
                            Args&&... args) {
     using Sparse = lead::BooleanSparse<Lead, Probes, Optional, Excludes, Score>;
     if constexpr (std::is_same_v<Score, utils::Empty>) {
-      return memory::make_managed<ByWalkDocs<Sparse>>(
+      return MemoryOf(ctx).template Make<ByWalkDocs<Sparse>>(
         std::piecewise_construct, std::forward<Args>(args)..., score);
     } else {
-      return memory::make_managed<ByWalkScored<Sparse>>(
+      return MemoryOf(ctx).template Make<ByWalkScored<Sparse>>(
         merge, *Scoring(ctx).fetcher, std::piecewise_construct,
         std::forward<Args>(args)..., score);
     }
   }
 
-  static Result PlanChild(const QueryBuilder& child, const DocsContext&,
+  static Result PlanChild(const QueryBuilder& child, const DocsContext& ctx,
                           ScoreMergeType) {
-    return child.PlanFill({}, ScoreMergeType::Noop);
+    return child.PlanFill({.memory = ctx.memory}, ScoreMergeType::Noop);
   }
 
   static Result PlanChild(const QueryBuilder& child, const ScoredContext& ctx,
@@ -131,11 +145,11 @@ struct Family {
   }
 
   static Result MakePosting(const detail::PostingClause& posting,
-                            const SubReader& segment, const DocsContext&,
+                            const SubReader& segment, const DocsContext& ctx,
                             ScoreMergeType) {
     return posting.state.cookie.docs_count == 1
-             ? MakeSinglePostingDocs(posting)
-             : MakePostingDocs(posting, segment);
+             ? MakeSinglePostingDocs(ctx.memory, posting)
+             : MakePostingDocs(ctx.memory, posting, segment);
   }
 
   static Result MakePosting(const detail::PostingClause& posting,
@@ -146,17 +160,17 @@ struct Family {
              : MakePostingScored(posting, segment, ctx.scored, merge);
   }
 
-  static Result MakeAll(const SubReader& segment, const DocsContext&,
+  static Result MakeAll(const SubReader& segment, const DocsContext& ctx,
                         ScoreMergeType, score_t) {
-    return MakeAllDocs(segment);
+    return MakeAllDocs(ctx.memory, segment);
   }
 
-  static Result MakeAll(const SubReader& segment, const ScoredContext&,
+  static Result MakeAll(const SubReader& segment, const ScoredContext& ctx,
                         ScoreMergeType merge, score_t absorbed) {
-    return MakeAllScored(segment, merge, absorbed);
+    return MakeAllScored(MemoryOf(ctx), segment, merge, absorbed);
   }
 
-  static Result MakeLiveDocs(const SubReader& segment);
+  static Result MakeLiveDocs(PlanMemory& memory, const SubReader& segment);
 
   static detail::TableFilter* BitsetTable(const DocsContext&) noexcept {
     return nullptr;
@@ -166,9 +180,10 @@ struct Family {
     return docs_count;
   }
 
-  static Result WrapMerge(ScoreMergeType merge, Result child) {
+  static Result WrapMerge(PlanMemory& memory, ScoreMergeType merge,
+                          Result child) {
     return irs::ResolveMergeType(merge, [&]<ScoreMergeType Merge> -> Result {
-      return memory::make_managed<ByWindowScored<Erased, Merge>>(
+      return memory.Make<ByWindowScored<Erased, Merge>>(
         Erased{std::move(child)});
     });
   }

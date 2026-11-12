@@ -33,6 +33,7 @@
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
@@ -126,6 +127,8 @@ struct NormProvider {
   virtual ~NormProvider() = default;
 
   virtual NormReader::ptr norms(field_id field) const = 0;
+
+  virtual NormReader::ptr norms(PlanMemory& memory, field_id field) const = 0;
 };
 
 // Generic interface for accessing an index segment
@@ -154,7 +157,7 @@ struct SubReader : public IndexReader, public NormProvider {
     return DocumentMask::Iterator{docs_mask()};
   }
 
-  virtual lead::Node::ptr docs_iterator() const = 0;
+  virtual lead::Node::ptr docs_iterator(PlanMemory& memory) const = 0;
 
   virtual std::span<const field_id> field_ids() const = 0;
 

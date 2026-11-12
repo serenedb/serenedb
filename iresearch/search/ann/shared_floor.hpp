@@ -55,6 +55,15 @@ class SharedFloor {
     _floor.store(seed, std::memory_order_release);
   }
 
+  void Reset(uint32_t k, score_t seed) {
+    absl::MutexLock lock{&_mutex};
+    _k = k;
+    _lowers.clear();
+    _lowers.reserve(2 * size_t{k});
+    _ranked = false;
+    _floor.store(seed, std::memory_order_release);
+  }
+
   void Merge(std::span<const score_t> lowers) {
     if (_k == 0 || lowers.empty()) {
       return;

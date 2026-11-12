@@ -580,9 +580,10 @@ TEST_P(TermsFilterTestCase, min_match) {
       [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
       auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
       if (!doc) {
-        return irs::ScoreFunction::Constant(ctx.boost);
+        return irs::ScoreFunction::Constant(ctx.memory, ctx.boost);
       }
-      return irs::ScoreFunction::Make<ScoreOperator>(doc, ctx.boost);
+      return irs::ScoreFunction::Make<ScoreOperator>(ctx.memory, doc,
+                                                     ctx.boost);
     };
 
     CheckQuery(*tests::Optimized(

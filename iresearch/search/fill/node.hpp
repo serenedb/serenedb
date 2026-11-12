@@ -36,7 +36,7 @@ class BitsetStorage;
 }
 namespace irs::fill {
 
-struct Node : memory::Managed, Tracked {
+struct Node : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<Node>;
 
   virtual doc_id_t FillOr(doc_id_t, doc_id_t, uint64_t* IRS_RESTRICT) {

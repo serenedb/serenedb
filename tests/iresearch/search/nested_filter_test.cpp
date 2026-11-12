@@ -48,9 +48,11 @@ inline constexpr irs::field_id kChild = 99;
 
 struct ChildIterator : irs::lead::Node {
  public:
-  ChildIterator(std::unique_ptr<tests::LeadCursor> it,
+  ChildIterator(std::unique_ptr<tests::PreparedFilter> prepared,
                 std::set<irs::doc_id_t> parents)
-    : _it{std::move(it)}, _parents{std::move(parents)} {
+    : _prepared{std::move(prepared)},
+      _it{_prepared->Execute(0)},
+      _parents{std::move(parents)} {
     SDB_ASSERT(_it);
   }
 
@@ -75,6 +77,7 @@ struct ChildIterator : irs::lead::Node {
   }
 
  private:
+  std::unique_ptr<tests::PreparedFilter> _prepared;
   std::unique_ptr<tests::LeadCursor> _it;
   std::set<irs::doc_id_t> _parents;
   irs::doc_id_t _doc = irs::doc_limits::invalid();
@@ -163,7 +166,7 @@ struct DocIdScorer : public irs::ScorerBase<void> {
     auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, doc);
 
-    return irs::ScoreFunction::Make<ScorerContext>(doc);
+    return irs::ScoreFunction::Make<ScorerContext>(ctx.memory, doc);
   }
 };
 
@@ -208,7 +211,8 @@ class ParentDocIterator : public irs::ParentDocs {
 };
 
 auto MakeParentProvider(irs::field_id id) {
-  return [id](const irs::SubReader& segment) -> irs::ParentDocs::ptr {
+  return [id](irs::PlanMemory& memory,
+              const irs::SubReader& segment) -> irs::ParentDocs::ptr {
     const auto* col = segment.Column(id);
     if (col == nullptr) {
       return nullptr;
@@ -219,8 +223,7 @@ auto MakeParentProvider(irs::field_id id) {
                                   parents.push_back(doc);
                                   return true;
                                 });
-    return irs::memory::make_managed<irs::ParentDocs, ParentDocIterator>(
-      std::move(parents));
+    return memory.Make<irs::ParentDocs, ParentDocIterator>(std::move(parents));
   };
 }
 
@@ -661,11 +664,12 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
   auto& opts = *filter.mutable_options();
   opts.child = MakeByNumericTerm(kCount, 2);
   opts.parent = MakeParentProvider(kParent);
-  opts.match = [&](const irs::SubReader& segment) -> irs::lead::Node::ptr {
+  opts.match = [&](irs::PlanMemory& memory,
+                   const irs::SubReader& segment) -> irs::lead::Node::ptr {
     const irs::All all;
-    tests::PreparedFilter prepared{all, segment, nullptr};
-    return irs::memory::make_managed<irs::lead::Node, ChildIterator>(
-      prepared.Execute(0), std::set{6U, 13U, 15U, 20U});
+    return memory.Make<irs::lead::Node, ChildIterator>(
+      std::make_unique<tests::PreparedFilter>(all, segment, nullptr),
+      std::set{6U, 13U, 15U, 20U});
   };
 
   {
@@ -673,11 +677,12 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
   }
 
   auto make_match = [&]() -> irs::ByNestedOptions::MatchType {
-    return [&](const irs::SubReader& segment) -> irs::lead::Node::ptr {
+    return [&](irs::PlanMemory& memory,
+               const irs::SubReader& segment) -> irs::lead::Node::ptr {
       const irs::All all;
-      tests::PreparedFilter prepared{all, segment, nullptr};
-      return irs::memory::make_managed<irs::lead::Node, ChildIterator>(
-        prepared.Execute(0), std::set{6U, 13U, 15U, 20U});
+      return memory.Make<irs::lead::Node, ChildIterator>(
+        std::make_unique<tests::PreparedFilter>(all, segment, nullptr),
+        std::set{6U, 13U, 15U, 20U});
     };
   };
 
@@ -1373,9 +1378,10 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
   auto& opts = *filter.mutable_options();
   opts.child = std::make_unique<irs::Empty>();
 
-  opts.parent = [](const irs::SubReader&) -> irs::ParentDocs::ptr {
-    return irs::memory::make_managed<irs::ParentDocs, PrevDocWrapper>(
-      irs::memory::make_managed<irs::lead::Node, VectorDocs>(
+  opts.parent = [](irs::PlanMemory& memory,
+                   const irs::SubReader&) -> irs::ParentDocs::ptr {
+    return memory.Make<irs::ParentDocs, PrevDocWrapper>(
+      memory.Make<irs::lead::Node, VectorDocs>(
         std::vector<irs::doc_id_t>{6, 8, 13, 20}));
   };
 
@@ -1387,9 +1393,10 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
              reader, SOURCE_LOCATION);
 
   auto make_parent = []() -> irs::ParentProvider {
-    return [](const irs::SubReader&) -> irs::ParentDocs::ptr {
-      return irs::memory::make_managed<irs::ParentDocs, PrevDocWrapper>(
-        irs::memory::make_managed<irs::lead::Node, VectorDocs>(
+    return [](irs::PlanMemory& memory,
+              const irs::SubReader&) -> irs::ParentDocs::ptr {
+      return memory.Make<irs::ParentDocs, PrevDocWrapper>(
+        memory.Make<irs::lead::Node, VectorDocs>(
           std::vector<irs::doc_id_t>{6, 8, 13, 20}));
     };
   };

@@ -21,7 +21,6 @@
 #pragma once
 
 #include <memory>
-#include <vector>
 
 #include "iresearch/search/count/term_counts.hpp"
 #include "iresearch/search/detail/bitset_build.hpp"
@@ -34,9 +33,15 @@ namespace irs::count {
 template<typename Input>
 class TermCountsOf : public TermCounts {
  public:
-  TermCountsOf(detail::LazyBitset& set, const IndexInput& doc,
-               IndexFeatures layout, bool bounds) noexcept
-    : _set{set}, _reader{doc}, _doc{&doc}, _layout{layout}, _bounds{bounds} {}
+  TermCountsOf(PlanMemory& memory, detail::LazyBitset& set,
+               const IndexInput& doc, IndexFeatures layout, bool bounds)
+    : _scratch{memory.Scratch()},
+      _set{set},
+      _probes{memory.Scratch()},
+      _reader{doc},
+      _doc{&doc},
+      _layout{layout},
+      _bounds{bounds} {}
 
   uint64_t Count(const PostingMeta& term, doc_id_t min, doc_id_t max) final {
     SDB_ASSERT(term.docs_count != 0);
@@ -65,8 +70,9 @@ class TermCountsOf : public TermCounts {
     }
     auto& slot = _probes[ordinal];
     if (!slot) {
-      slot = std::make_unique<detail::PostingProbe<Input>>(term, *_doc, _layout,
-                                                           _bounds);
+      slot = Probe{
+        std::construct_at(_scratch.Allocate<detail::PostingProbe<Input>>(1),
+                          term, *_doc, _layout, _bounds)};
     }
     return Scan(*slot, min, max);
   }
@@ -114,8 +120,16 @@ class TermCountsOf : public TermCounts {
     }
   }
 
+  struct DestroyProbe {
+    void operator()(detail::PostingProbe<Input>* p) const noexcept {
+      std::destroy_at(p);
+    }
+  };
+  using Probe = std::unique_ptr<detail::PostingProbe<Input>, DestroyProbe>;
+
+  MemoryArena& _scratch;
   detail::LazyBitset& _set;
-  std::vector<std::unique_ptr<detail::PostingProbe<Input>>> _probes;
+  memory::ArenaVector<Probe> _probes;
   detail::PostingReader<Input> _reader;
   const IndexInput* _doc;
   IndexFeatures _layout;

@@ -106,7 +106,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
       _prepare_scorer(ctx);
     }
 
-    return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
+    return irs::ScoreFunction::Make<CustomSort::Scorer>(ctx.memory, *this, ctx);
   }
 
   std::function<void(irs::byte_type*, const irs::FieldCollector*,

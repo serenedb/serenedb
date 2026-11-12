@@ -41,6 +41,7 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -241,8 +242,9 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
   });
 
-  auto query =
-    bind.stored_filter->PrepareSegment(*segment, {.needs_terms = true});
+  irs::QueryMemory query_memory;
+  auto query = bind.stored_filter->PrepareSegment(
+    *segment, {.memory = query_memory, .needs_terms = true});
   if (!query) {
     return;
   }

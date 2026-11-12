@@ -30,6 +30,7 @@
 namespace irs::top {
 
 struct Context {
+  PlanMemory& memory;
   const Scorer& scorer;
   ColumnArgsFetcher& fetcher;
   detail::TableFilter* table = nullptr;
@@ -40,12 +41,13 @@ struct Context {
 
 inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
   return {
+    .memory = ctx.memory,
     .scorer = &ctx.scorer,
     .fetcher = &ctx.fetcher,
   };
 }
 
-struct Root : memory::Managed {
+struct Root : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<Root>;
 
   virtual void Run(doc_id_t min, doc_id_t max,

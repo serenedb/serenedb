@@ -1806,9 +1806,12 @@ TEST(TokenPhraseIndexTest, table_filters_narrow_count_and_top) {
     const auto* query = prepared.Query(0);
     ASSERT_NE(nullptr, query);
     DeadRange table{kFirst, kFirst + 3};
-    EXPECT_EQ(2U, query->PlanCount({.table = &table})->Run(kFirst, end));
+    irs::PlanMemory plan_memory;
+    EXPECT_EQ(2U, query->PlanCount({.memory = plan_memory, .table = &table})
+                    ->Run(kFirst, end));
     irs::ColumnArgsFetcher fetcher;
-    auto top = query->PlanTop({.scorer = scorer,
+    auto top = query->PlanTop({.memory = plan_memory,
+                               .scorer = scorer,
                                .fetcher = fetcher,
                                .table = &table,
                                .prune = false,
@@ -1842,8 +1845,10 @@ Top TopOf(const Index& index, const irs::Filter& filter,
       continue;
     }
     collector.SetSegment(static_cast<uint32_t>(i));
+    irs::PlanMemory plan_memory;
     irs::ColumnArgsFetcher fetcher;
-    auto top = query->PlanTop({.scorer = scorer,
+    auto top = query->PlanTop({.memory = plan_memory,
+                               .scorer = scorer,
                                .fetcher = fetcher,
                                .table = table,
                                .prune = prune,

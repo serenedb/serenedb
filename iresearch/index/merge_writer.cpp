@@ -735,6 +735,17 @@ struct MergedNormProvider final : public NormProvider {
     }
     return MakePersistedNormReader(*col);
   }
+
+  NormReader::ptr norms(PlanMemory& memory, field_id id) const final {
+    if (reader == nullptr) {
+      return {};
+    }
+    const auto* col = reader->NormColumn(id);
+    if (col == nullptr) {
+      return {};
+    }
+    return MakePersistedNormReader(memory, *col);
+  }
 };
 
 bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,

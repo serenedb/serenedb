@@ -54,6 +54,10 @@ struct Family {
     return ScoredOf(ctx);
   }
 
+  static PlanMemory& MemoryOf(const Context& ctx) noexcept {
+    return ctx.memory;
+  }
+
   template<typename Node, typename... Args>
   static Result Constant(const Context& ctx, score_t value, Args&&... args) {
     return MakeShape<ConstantWalk, Node>(ctx, value,
@@ -96,13 +100,13 @@ struct Family {
   }
 
   template<typename Input, typename Exclude, typename ExcludeArgs>
-  static Result MakeExcludedPosting(const Context&, ExcludeArgs&& negated,
+  static Result MakeExcludedPosting(const Context& ctx, ExcludeArgs&& negated,
                                     const irs::detail::PostingClause& posting,
                                     const IndexInput& doc,
                                     const SubReader& segment,
                                     const TermReader& own,
                                     const irs::detail::ScoreRecipe& recipe) {
-    auto root = memory::make_managed<Posting<Input, utils::Empty, Exclude>>(
+    auto root = ctx.memory.Make<Posting<Input, utils::Empty, Exclude>>(
       std::piecewise_construct, std::forward_as_tuple(),
       std::forward<ExcludeArgs>(negated));
     root->Prepare(posting.state.cookie, doc, segment, own,
@@ -136,8 +140,8 @@ struct Family {
 
   static Result Make(const ExactVectorQuery& query, const Context& ctx);
 
-  static Result Make(const EmptyQueryBuilder&, const Context&) {
-    return MakeEmpty();
+  static Result Make(const EmptyQueryBuilder&, const Context& ctx) {
+    return MakeEmpty(ctx.memory);
   }
 };
 

@@ -36,16 +36,20 @@ class ExactChain : public Root {
  public:
   ExactChain(const ExactVectorQuery& query, const Context& ctx,
              const irs::detail::ScoreArgs& score)
-    : _scanner{query},
+    : _scanner{ctx.memory, query},
       _codes{query.Codes()},
       _fetcher{ctx.fetcher},
       _table{ctx.table},
+      _floor{ctx.memory.Scratch()},
       _boost{score.boost},
       _k{ctx.k},
       _ranked{_codes.bound && !ctx.table && score.boost > 0.f && ctx.k != 0 &&
               ctx.k < query.Segment().live_docs_count()} {
     _score = irs::detail::PrepareBlockScorer(
       score, query.Segment(), irs::detail::NoField(), _provider, _block);
+    if (_ranked) {
+      _floor.reserve(_k);
+    }
   }
 
   void Run(Collector& collector) final {
@@ -162,7 +166,7 @@ class ExactChain : public Root {
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
   irs::detail::TableFilter* _table;
-  std::vector<score_t> _floor;
+  memory::ArenaVector<score_t> _floor;
   score_t _boost;
   uint32_t _k;
   bool _ranked;
@@ -174,11 +178,12 @@ namespace irs {
 
 ann::Root::ptr ExactVectorQuery::PlanAnn(const ann::Context& ctx) const {
   const auto record = Stats(ann::ScoredOf(ctx));
-  const detail::ScoreArgs score{.scorer = record.scorer,
+  const detail::ScoreArgs score{.memory = &ctx.memory,
+                                .scorer = record.scorer,
                                 .stats = record.stats,
                                 .fetcher = &ctx.fetcher,
                                 .boost = Boost()};
-  return memory::make_managed<ann::ExactChain>(*this, ctx, score);
+  return ctx.memory.Make<ann::ExactChain>(*this, ctx, score);
 }
 
 }  // namespace irs

@@ -29,14 +29,14 @@
 
 namespace irs::top {
 
-struct PrunedClause : memory::Managed {
+struct PrunedClause : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<PrunedClause>;
 
   virtual doc_id_t Probe(doc_id_t target) = 0;
   virtual doc_id_t AdvanceBlock(doc_id_t target) = 0;
   virtual score_t MaxScore(doc_id_t last) = 0;
   virtual void FetchScoreArgs(uint32_t slot) = 0;
-  virtual ScoreFunction PrepareScore() = 0;
+  virtual ScoreFunction PrepareScore(PlanMemory& memory) = 0;
 };
 
 template<typename Leaf>
@@ -56,11 +56,11 @@ class PrunedClauseImpl : public PrunedClause {
 
   void FetchScoreArgs(uint32_t slot) final { _leaf.FetchScoreArgs(slot); }
 
-  ScoreFunction PrepareScore() final {
+  ScoreFunction PrepareScore(PlanMemory& memory) final {
     if constexpr (requires { _leaf.PrepareScore(); }) {
       return _leaf.PrepareScore();
     } else {
-      return _leaf.PrepareScore(ScoreMergeType::Sum, score_t{0});
+      return _leaf.PrepareScore(memory, ScoreMergeType::Sum, score_t{0});
     }
   }
 
@@ -91,7 +91,9 @@ class ErasedClause {
     _node->FetchScoreArgs(slot);
   }
 
-  ScoreFunction PrepareScore() { return _node->PrepareScore(); }
+  ScoreFunction PrepareScore(PlanMemory& memory) {
+    return _node->PrepareScore(memory);
+  }
 
  private:
   PrunedClause::ptr _node;

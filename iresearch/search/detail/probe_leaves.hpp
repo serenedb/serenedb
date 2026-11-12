@@ -24,7 +24,6 @@
 #include <span>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
@@ -38,6 +37,7 @@
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::detail {
@@ -88,7 +88,7 @@ bool ConcreteClauses(std::span<const Term> terms,
 
 template<typename Result, typename Term, typename Scoring, typename ProbeClause,
          typename Make>
-Result BuildProbeLeaves(std::span<const Term> terms,
+Result BuildProbeLeaves(PlanMemory& memory, std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
                         uint64_t interrogations, ProbeOrder order,
@@ -120,7 +120,7 @@ Result BuildProbeLeaves(std::span<const Term> terms,
       }
     });
   }
-  std::vector<probe::Erased> leaves;
+  memory::ArenaVector<probe::Erased> leaves{memory.Scratch()};
   leaves.reserve(terms.size() + filters.size());
   const auto ask = [&](const PostingClause& posting,
                        const QueryBuilder* child) noexcept {

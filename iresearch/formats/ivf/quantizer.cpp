@@ -167,9 +167,9 @@ void QuantizerReader::ComputeGathered(const byte_type* base,
   ComputeBlock(_gather, threshold, out);
 }
 
-std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  const std::shared_ptr<const QuantizerCodebook>& codebook) {
-  return codebook ? codebook->MakeReader() : nullptr;
+QuantizerReader::ptr MakeQuantizerReader(
+  PlanMemory* plan, const std::shared_ptr<const QuantizerCodebook>& codebook) {
+  return codebook ? codebook->MakeReader(plan) : nullptr;
 }
 
 }  // namespace irs

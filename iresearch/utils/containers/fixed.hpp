@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/cleanup/cleanup.h>
+
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -28,6 +30,7 @@
 #include <utility>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::containers {
@@ -60,6 +63,16 @@ class Fixed {
             std::make_index_sequence<N>{}} {
     SDB_ASSERT(size == N);
   }
+
+  Fixed(MemoryArena&, size_t size) : Fixed{size} {}
+
+  template<typename Init>
+  Fixed(MemoryArena&, size_t size, Init&& init)
+    : Fixed{size, std::forward<Init>(init)} {}
+
+  template<typename Args>
+  Fixed(MemoryArena&, size_t size, std::piecewise_construct_t, Args&& args)
+    : Fixed{size, std::piecewise_construct, std::forward<Args>(args)} {}
 
   template<typename... Args>
   explicit Fixed(std::piecewise_construct_t, Args&&... args)
@@ -123,67 +136,39 @@ class Fixed<T, 0> {
 
   explicit Fixed(size_t size) : Fixed{size, [](T&, size_t) noexcept {}} {}
 
+  Fixed(MemoryArena& arena, size_t size)
+    : Fixed{arena, size, [](T&, size_t) noexcept {}} {}
+
   template<typename Init>
   Fixed(size_t size, Init&& init) {
-    if (size == 0) {
-      return;
-    }
-    std::allocator<T> alloc;
-    T* const data = alloc.allocate(size);
-    size_t built = 0;
-    try {
-      while (built != size) {
-        if constexpr (kDefaultInit<T>) {
-          ::new (static_cast<void*>(data + built)) T;
-        } else {
-          std::construct_at(data + built);
-        }
-        ++built;
-        init(data[built - 1], built - 1);
-      }
-    } catch (...) {
-      std::destroy_n(data, built);
-      alloc.deallocate(data, size);
-      throw;
-    }
-    _data = data;
-    _size = size;
+    BuildDefault(nullptr, size, init);
+  }
+
+  template<typename Init>
+  Fixed(MemoryArena& arena, size_t size, Init&& init) {
+    BuildDefault(&arena, size, init);
   }
 
   template<typename Args>
   Fixed(size_t size, std::piecewise_construct_t, Args&& args) {
-    if (size == 0) {
-      return;
-    }
-    std::allocator<T> alloc;
-    T* const data = alloc.allocate(size);
-    size_t built = 0;
-    try {
-      while (built != size) {
-        std::apply(
-          [&](auto&&... one) {
-            std::construct_at(data + built,
-                              std::forward<decltype(one)>(one)...);
-          },
-          args(built));
-        ++built;
-      }
-    } catch (...) {
-      std::destroy_n(data, built);
-      alloc.deallocate(data, size);
-      throw;
-    }
-    _data = data;
-    _size = size;
+    BuildFrom(nullptr, size, args);
+  }
+
+  template<typename Args>
+  Fixed(MemoryArena& arena, size_t size, std::piecewise_construct_t,
+        Args&& args) {
+    BuildFrom(&arena, size, args);
   }
 
   Fixed(Fixed&& rhs) noexcept
     : _data{std::exchange(rhs._data, nullptr)},
-      _size{std::exchange(rhs._size, 0)} {}
+      _size{std::exchange(rhs._size, 0)},
+      _on_arena{rhs._on_arena} {}
 
   Fixed& operator=(Fixed&& rhs) noexcept {
     std::swap(_data, rhs._data);
     std::swap(_size, rhs._size);
+    std::swap(_on_arena, rhs._on_arena);
     return *this;
   }
 
@@ -228,16 +213,69 @@ class Fixed<T, 0> {
   const T* end() const noexcept { return _data + _size; }
 
  private:
+  template<typename Construct>
+  void Build(MemoryArena* arena, size_t size, Construct& construct) {
+    if (size == 0) {
+      return;
+    }
+    T* const data =
+      arena ? arena->Allocate<T>(size) : std::allocator<T>{}.allocate(size);
+    size_t built = 0;
+    absl::Cleanup undo = [&] noexcept {
+      std::destroy_n(data, built);
+      if (!arena) {
+        std::allocator<T>{}.deallocate(data, size);
+      }
+    };
+    for (; built != size; ++built) {
+      construct(data + built, built);
+    }
+    std::move(undo).Cancel();
+    _data = data;
+    _size = size;
+    _on_arena = arena;
+  }
+
+  template<typename Init>
+  void BuildDefault(MemoryArena* arena, size_t size, Init& init) {
+    auto construct = [&](T* p, size_t i) {
+      if constexpr (kDefaultInit<T>) {
+        ::new (static_cast<void*>(p)) T;
+      } else {
+        std::construct_at(p);
+      }
+      absl::Cleanup destroy = [&] noexcept { std::destroy_at(p); };
+      init(*p, i);
+      std::move(destroy).Cancel();
+    };
+    Build(arena, size, construct);
+  }
+
+  template<typename Args>
+  void BuildFrom(MemoryArena* arena, size_t size, Args& args) {
+    auto construct = [&](T* p, size_t i) {
+      std::apply(
+        [&](auto&&... one) {
+          std::construct_at(p, std::forward<decltype(one)>(one)...);
+        },
+        args(i));
+    };
+    Build(arena, size, construct);
+  }
+
   void Release() noexcept {
     if (_data == nullptr) {
       return;
     }
     std::destroy_n(_data, _size);
-    std::allocator<T>{}.deallocate(_data, _size);
+    if (!_on_arena) {
+      std::allocator<T>{}.deallocate(_data, _size);
+    }
   }
 
   T* _data = nullptr;
   size_t _size = 0;
+  bool _on_arena = false;
 };
 
 }  // namespace irs::containers

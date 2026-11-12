@@ -31,7 +31,7 @@ template<typename Family, typename Kind, typename Query>
 typename Family::Result MakeDocs(const Query& query,
                                  const typename Family::DocsContext& ctx) {
   return Build<typename Family::Result, false>(
-    Kind{}, query, Family::Interrogations(ctx),
+    Family::MemoryOf(ctx), Kind{}, query, Family::Interrogations(ctx),
     [&]<typename Slots>(auto&&... args) -> typename Family::Result {
       return Family::template Docs<
         typename Family::template TwoPhaseDocs<Slots>>(
@@ -44,7 +44,7 @@ typename Family::Result MakeConstant(const Query& query,
                                      const typename Family::ScoredContext& ctx,
                                      score_t value) {
   return Build<typename Family::Result, false>(
-    Kind{}, query, Family::Interrogations(ctx),
+    Family::MemoryOf(ctx), Kind{}, query, Family::Interrogations(ctx),
     [&]<typename Slots>(auto&&... args) -> typename Family::Result {
       return Family::template Constant<
         typename Family::template TwoPhaseDocs<Slots>>(
@@ -61,7 +61,8 @@ typename Family::Result MakeScored(const Query& query,
                                       AllDocsScoreOf(query, scoring));
   } else {
     const auto record = query.Stats(scoring);
-    const ScoreArgs args{.scorer = record.scorer,
+    const ScoreArgs args{.memory = &Family::MemoryOf(ctx),
+                         .scorer = record.scorer,
                          .stats = record.stats,
                          .fetcher = scoring.fetcher,
                          .boost = query.Boost()};
@@ -69,7 +70,7 @@ typename Family::Result MakeScored(const Query& query,
       return MakeConstant<Family, Kind>(query, ctx, *value);
     }
     return Build<typename Family::Result, true>(
-      Kind{}, query, Family::Interrogations(ctx),
+      Family::MemoryOf(ctx), Kind{}, query, Family::Interrogations(ctx),
       [&]<typename Slots>(auto&&... rest) -> typename Family::Result {
         return Family::template Scored<
           typename Family::template TwoPhaseScored<Slots>>(

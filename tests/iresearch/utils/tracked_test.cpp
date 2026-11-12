@@ -27,15 +27,55 @@
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/detail/stats_arena.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/huge_page_allocator.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/tracked.hpp>
+#include <string_view>
+#include <utility>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "tests_shared.hpp"
 
 namespace {
 
 constexpr size_t kMiB = size_t{1} << 20;
+constexpr irs::field_id kName = 1;
+
+irs::DirectoryReader BuildTermIndex(irs::Directory& dir, irs::doc_id_t n) {
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+  EXPECT_NE(nullptr, writer);
+  {
+    auto trx = writer->GetBatch();
+    for (irs::doc_id_t i = 0; i < n; ++i) {
+      const duckdb::string_t value{i % 3 == 0 ? "b" : "a", 1};
+      auto doc = trx.Insert();
+      const auto d = doc.DocId();
+      EXPECT_TRUE(doc.WithField(
+        kName, irs::StringLayout::kStrings, irs::IndexFeatures::Freq,
+        [&](irs::FieldInverter& field) {
+          return field.InvertKeywords([&](auto&& emit) { emit(value, d); });
+        }));
+    }
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+  return writer->GetSnapshot();
+}
+
+struct Counted : irs::memory::Managed {
+  explicit Counted(int& destroyed) noexcept : destroyed{destroyed} {}
+  ~Counted() override { ++destroyed; }
+
+  int& destroyed;
+};
 
 duckdb::BufferManager& Manager() {
   return duckdb::BufferManager::GetBufferManager(
@@ -79,13 +119,139 @@ TEST(TrackedTest, ObjectChargesItsSize) {
   EXPECT_EQ(base, TrackedMemory());
 }
 
-TEST(TrackedTest, QueryChargesItsSize) {
+TEST(TrackedTest, QueriesAndPlansChargePerArenaBlock) {
+  if constexpr (irs::kArenaRewindFrees) {
+    GTEST_SKIP();
+  }
   const auto base = TrackedMemory();
-  irs::QueryBuilder::ptr query =
-    irs::memory::make_managed<irs::AllQuery>(irs::SubReader::empty(), 1.f);
-  EXPECT_EQ(base + sizeof(irs::memory::OnHeap<irs::AllQuery>), TrackedMemory());
-  query.reset();
+  {
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    const auto& segment = irs::SubReader::empty();
+    const auto build = [&] {
+      irs::QueryBuilder::ptr query =
+        query_memory.Make<irs::AllQuery>(segment, 1.f);
+      auto node = query->PlanLead({.memory = plan_memory});
+      EXPECT_TRUE(node);
+      return std::pair{std::move(query), std::move(node)};
+    };
+    {
+      auto first = build();
+      EXPECT_LT(base, TrackedMemory());
+    }
+    query_memory.Rewind();
+    plan_memory.Rewind();
+    const auto warm = TrackedMemory();
+    for (int segment_no = 0; segment_no != 4; ++segment_no) {
+      {
+        auto next = build();
+        EXPECT_EQ(warm, TrackedMemory());
+      }
+      query_memory.Rewind();
+      plan_memory.Rewind();
+    }
+    EXPECT_EQ(warm, TrackedMemory());
+  }
   EXPECT_EQ(base, TrackedMemory());
+}
+
+TEST(TrackedTest, ReplanningAfterRewindChargesNothing) {
+  if constexpr (irs::kArenaRewindFrees) {
+    GTEST_SKIP();
+  }
+  irs::MemoryDirectory dir;
+  const auto reader = BuildTermIndex(dir, 3000);
+  ASSERT_EQ(1, reader.size());
+  const auto& segment = reader[0];
+
+  const irs::BM25 scorer;
+  irs::ByTerm filter;
+  *filter.mutable_field_id() = kName;
+  filter.mutable_options()->term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
+  irs::PreparedCollector collector{filter, scorer, stats, 1};
+  irs::QueryMemory query_memory;
+  const auto query = filter.PrepareSegment(
+    segment, {.memory = query_memory, .collector = collector.Get()});
+  collector.Finish();
+  ASSERT_NE(nullptr, query);
+
+  irs::PlanMemory plan_memory;
+  irs::ColumnArgsFetcher fetcher;
+  const auto check = [&](std::string_view kind, auto&& plan) {
+    SCOPED_TRACE(kind);
+    int64_t planned = 0;
+    const auto cycle = [&] {
+      {
+        auto root = plan();
+        EXPECT_NE(nullptr, root);
+        planned = TrackedMemory();
+      }
+      fetcher.Clear();
+      plan_memory.Rewind();
+    };
+    cycle();
+    cycle();
+    const auto warm_planned = planned;
+    const auto warm = TrackedMemory();
+    for (int segment_no = 0; segment_no != 4; ++segment_no) {
+      cycle();
+      EXPECT_EQ(warm_planned, planned);
+      EXPECT_EQ(warm, TrackedMemory());
+    }
+  };
+  check("count", [&] { return query->PlanCount({.memory = plan_memory}); });
+  check("docs", [&] { return query->PlanDocs({.memory = plan_memory}); });
+  check("hits", [&] {
+    return query->PlanScored(
+      {.memory = plan_memory, .scorer = scorer, .fetcher = fetcher});
+  });
+  check("top", [&] {
+    return query->PlanTop(
+      {.memory = plan_memory, .scorer = scorer, .fetcher = fetcher, .k = 10});
+  });
+}
+
+TEST(TrackedTest, ArenaObjectsAreDestroyedOnceByTheirOwner) {
+  int destroyed = 0;
+  irs::PlanMemory plan_memory;
+  {
+    auto first = plan_memory.Make<Counted>(destroyed);
+    auto second = plan_memory.Make<Counted>(destroyed);
+    EXPECT_EQ(0, destroyed);
+    first.reset();
+    EXPECT_EQ(1, destroyed);
+  }
+  EXPECT_EQ(2, destroyed);
+  plan_memory.Rewind();
+  EXPECT_EQ(2, destroyed);
+
+  irs::QueryMemory query_memory;
+  {
+    auto query = query_memory.Make<Counted>(destroyed);
+    EXPECT_EQ(2, destroyed);
+  }
+  EXPECT_EQ(3, destroyed);
+  query_memory.Rewind();
+  EXPECT_EQ(3, destroyed);
+
+  auto reused = plan_memory.Make<Counted>(destroyed);
+  reused.reset();
+  EXPECT_EQ(4, destroyed);
+}
+
+TEST(TrackedTest, ArenaAlignsOverAlignedObjects) {
+  struct alignas(64) Wide {
+    uint8_t bytes[64];
+  };
+  irs::MemoryArena arena;
+  arena.Allocate(3, 1);
+  auto* wide = arena.Allocate<Wide>(2);
+  EXPECT_EQ(0, reinterpret_cast<uintptr_t>(wide) % alignof(Wide));
+  irs::memory::ArenaVector<Wide> vector{arena};
+  vector.resize(3);
+  EXPECT_EQ(0, reinterpret_cast<uintptr_t>(vector.data()) % alignof(Wide));
 }
 
 TEST(TrackedTest, StringChargesItsCapacity) {

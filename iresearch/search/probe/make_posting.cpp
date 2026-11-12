@@ -34,18 +34,19 @@
 
 namespace irs::probe {
 
-Node::ptr MakePostingDocs(const detail::PostingClause& posting,
+Node::ptr MakePostingDocs(PlanMemory& memory,
+                          const detail::PostingClause& posting,
                           const SubReader&) {
   return ResolvePostingDocs<Node::ptr>(
     posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
-      return memory::make_managed<Impl<Leaf>>(
-        std::forward<decltype(args)>(args)...);
+      return memory.Make<Impl<Leaf>>(std::forward<decltype(args)>(args)...);
     });
 }
 
 namespace {
 
-Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
+Node::ptr MakeSinglePostingScored(PlanMemory& memory,
+                                  const detail::PostingClause& posting,
                                   const SubReader& segment,
                                   const detail::ScoreRecipe& recipe) {
   const auto& meta = posting.state.cookie;
@@ -58,18 +59,19 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                recipe.Args(posting.stats, posting.boost))
       : score_t{0};
   using Node = ConstantScored<SinglePostingDocs>;
-  return memory::make_managed<Impl<Node>>(value, meta);
+  return memory.Make<Impl<Node>>(memory, value, meta);
 }
 
 }  // namespace
 
-Node::ptr MakePostingScored(const detail::PostingClause& posting,
+Node::ptr MakePostingScored(PlanMemory& memory,
+                            const detail::PostingClause& posting,
                             const SubReader& segment,
                             const detail::ScoreRecipe& recipe) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {
-    return MakeSinglePostingScored(posting, segment, recipe);
+    return MakeSinglePostingScored(memory, posting, segment, recipe);
   }
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
@@ -79,8 +81,8 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
           segment, own, recipe.Args(posting.stats, posting.boost))) {
       return ResolvePostingDocs<Node::ptr>(
         posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
-          return memory::make_managed<Impl<ConstantScored<Leaf>>>(
-            *value, std::forward<decltype(args)>(args)...);
+          return memory.Make<Impl<ConstantScored<Leaf>>>(
+            memory, *value, std::forward<decltype(args)>(args)...);
         });
     }
   }
@@ -88,14 +90,13 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
     *detail::DocOf(own), [&]<typename Input> -> Node::ptr {
       if (!scores) {
         using Leaf = detail::PlainProbeScored<Input>;
-        return memory::make_managed<Impl<Leaf>>(meta, *detail::DocOf(own),
-                                                detail::LayoutOf(own),
-                                                detail::BoundsOf(own));
+        return memory.Make<Impl<Leaf>>(meta, *detail::DocOf(own),
+                                       detail::LayoutOf(own),
+                                       detail::BoundsOf(own));
       }
       using Leaf = detail::PostingProbeScored<Input>;
-      return memory::make_managed<Impl<Leaf>>(
-        meta, *detail::DocOf(own), segment, own,
-        recipe.Args(posting.stats, posting.boost));
+      return memory.Make<Impl<Leaf>>(meta, *detail::DocOf(own), segment, own,
+                                     recipe.Args(posting.stats, posting.boost));
     });
 }
 

@@ -38,9 +38,9 @@ inline bool IsSloppy(const TokenPhraseQuery& query) noexcept {
 }
 
 template<typename Result, bool Scored, typename F>
-Result Build(TokenPhraseKind, const TokenPhraseQuery& query,
+Result Build(PlanMemory& memory, TokenPhraseKind, const TokenPhraseQuery& query,
              uint64_t interrogations, F&& f) {
-  auto node = PlanApprox<Result>(query.Approx(), interrogations);
+  auto node = PlanApprox<Result>(memory, query.Approx(), interrogations);
   if (!node) {
     return {};
   }
@@ -48,7 +48,7 @@ Result Build(TokenPhraseKind, const TokenPhraseQuery& query,
     using Slots = TokenPhraseSlots<ApproxNode<Result>, Sloppy>;
     return f.template operator()<Slots>(std::piecewise_construct,
                                         std::forward_as_tuple(std::move(node)),
-                                        query, Scored);
+                                        memory, query, Scored);
   };
   if constexpr (Scored) {
     return ResolveBool(IsSloppy(query), make);

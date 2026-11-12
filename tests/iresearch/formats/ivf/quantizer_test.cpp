@@ -160,7 +160,7 @@ class ClusterScorer {
   ClusterScorer(const std::shared_ptr<const QuantizerCodebook>& codebook,
                 MemoryFile& file, uint64_t pay_start, size_t total,
                 const float* centroid, uint32_t lane0 = 0)
-    : _qr{MakeQuantizerReader(codebook)},
+    : _qr{MakeQuantizerReader(nullptr, codebook)},
       _setting{_qr->BlockSetting()},
       _in{std::make_unique<MemoryIndexInput>(file)},
       _base{pay_start},
@@ -218,7 +218,7 @@ class ClusterScorer {
     return _buf;
   }
 
-  std::unique_ptr<QuantizerReader> _qr;
+  QuantizerReader::ptr _qr;
   PayloadBlockSetting _setting;
   IndexInput::ptr _in;
   std::vector<byte_type> _buf;
@@ -1409,7 +1409,7 @@ TEST(pq_quantizer_test, subspace_errors_survive_the_stats_roundtrip) {
       auto stats = MakeQuantizerStats(VectorQuantization::PQ, d, stats_blob,
                                       VectorMetric::L2Sqr, row_major);
       EXPECT_NE(stats, nullptr);
-      auto reader = MakeQuantizerReader(stats->MakeCodebook(query));
+      auto reader = MakeQuantizerReader(nullptr, stats->MakeCodebook(query));
       EXPECT_NE(reader, nullptr);
       reader->StartCluster(cen.data());
       std::vector<score_t> scores{-40.f, -30.f, -20.f};
@@ -1476,7 +1476,7 @@ TEST(pq_quantizer_test, l2_error_is_twice_the_inner_product_error) {
       auto stats =
         MakeQuantizerStats(VectorQuantization::PQ, d, blob, metric, row_major);
       EXPECT_NE(stats, nullptr);
-      auto reader = MakeQuantizerReader(stats->MakeCodebook(query));
+      auto reader = MakeQuantizerReader(nullptr, stats->MakeCodebook(query));
       EXPECT_NE(reader, nullptr);
       reader->StartCluster(cen.data());
       std::vector<score_t> scores{-40.f, -30.f, -20.f};
@@ -1655,12 +1655,12 @@ CodeFixture BuildCodes(VectorQuantization quant, uint32_t d, uint32_t nb_bits,
   return f;
 }
 
-std::unique_ptr<QuantizerReader> MakeKeyedReader(const CodeFixture& f,
-                                                 std::span<const float> query,
-                                                 const float* centroid) {
+QuantizerReader::ptr MakeKeyedReader(const CodeFixture& f,
+                                     std::span<const float> query,
+                                     const float* centroid) {
   auto codebook = f.stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
-  auto reader = MakeQuantizerReader(codebook);
+  auto reader = MakeQuantizerReader(nullptr, codebook);
   EXPECT_NE(reader, nullptr);
   reader->StartCluster(centroid);
   return reader;
@@ -2534,7 +2534,7 @@ TEST(tq_quantizer_test, segments_of_an_index_share_one_codebook_per_query) {
             cache.Codebook(*sq8.stats, query));
 
   auto own = MakeKeyedReader(second, query, centroid.data());
-  auto via_cache = MakeQuantizerReader(shared);
+  auto via_cache = MakeQuantizerReader(nullptr, shared);
   via_cache->StartCluster(centroid.data());
   std::vector<score_t> want(n);
   std::vector<score_t> got(n);
@@ -3175,8 +3175,8 @@ TEST(bq_quantizer_test, build_codebook_is_binary_for_every_query_width) {
                             BqMode{1, true, 8, 0}, BqMode{1, false, 1, 0}}) {
     for (const VectorMetric metric : kBqMetrics) {
       const auto f = BuildBqCodes(d, mode, metric, points, n);
-      auto build =
-        MakeQuantizerReader(f.stats->MakeBuildCodebook({points.data(), d}));
+      auto build = MakeQuantizerReader(
+        nullptr, f.stats->MakeBuildCodebook({points.data(), d}));
       build->StartCluster(nullptr);
       ASSERT_TRUE(build->SupportsPairScores()) << BqModeName(mode);
       std::vector<score_t> keyed(n);
@@ -3486,7 +3486,7 @@ TEST(osq_quantizer_test, decode_needs_a_centroid) {
   const auto f =
     BuildOsqCodes(d, kOsqModes[0], VectorMetric::L2Sqr, points, n, centroid);
   auto codebook = f.stats->MakeCodebook({points.data(), d});
-  auto bare = MakeQuantizerReader(codebook);
+  auto bare = MakeQuantizerReader(nullptr, codebook);
   std::vector<float> decoded(d);
   EXPECT_FALSE(bare->Decode(f.codes.data(), decoded.data()));
   EXPECT_FALSE(bare->SupportsPairScores());

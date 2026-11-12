@@ -49,9 +49,10 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   if (opts.radius != std::numeric_limits<float>::max()) {
     threshold = RadiusThreshold(opts.metric, opts.radius);
   }
-  auto built = memory::make_managed<ExactVectorQuery>(
-    segment, *column, *columns, opts.query, opts.metric, ctx.boost * GetBoost(),
-    std::move(inner), std::move(codes), threshold, opts.inclusive);
+  auto built = ctx.memory.Make<ExactVectorQuery>(
+    ctx.memory, segment, *column, *columns, std::span<const float>{opts.query},
+    opts.metric, ctx.boost * GetBoost(), std::move(inner), std::move(codes),
+    threshold, opts.inclusive);
   built->SetStats(ctx.Record());
   return built;
 }

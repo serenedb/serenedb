@@ -33,7 +33,7 @@ namespace irs::count {
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
-    return MakeConstant(0);
+    return MakeConstant(ctx.memory, 0);
   }
   const detail::FoldReachScope reach{ctx.span};
   return query.PlanCount(ctx);

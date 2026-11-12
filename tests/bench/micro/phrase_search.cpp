@@ -40,6 +40,7 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
@@ -357,13 +358,16 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
 }
 
 uint64_t Count(const irs::DirectoryReader& reader, const irs::Filter& filter) {
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
   uint64_t hits = 0;
   for (const auto& segment : reader) {
-    auto query = filter.PrepareSegment(segment, {});
+    plan_memory.Rewind();
+    auto query = filter.PrepareSegment(segment, {.memory = query_memory});
     if (!query) {
       continue;
     }
-    if (auto plan = irs::count::MakeRoot(*query)) {
+    if (auto plan = irs::count::MakeRoot(*query, {.memory = plan_memory})) {
       hits += plan->Run(irs::doc_limits::min(), irs::doc_limits::eof());
     }
   }
@@ -375,10 +379,12 @@ double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
   static const irs::BM25 kScorer;
   irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
   irs::PreparedCollector collector{filter, kScorer, stats, 1};
+  irs::QueryMemory query_memory;
+  irs::PlanMemory plan_memory;
   std::vector<irs::QueryBuilder::ptr> queries;
   for (const auto& segment : reader) {
-    queries.emplace_back(
-      filter.PrepareSegment(segment, {.collector = collector.Get()}));
+    queries.emplace_back(filter.PrepareSegment(
+      segment, {.memory = query_memory, .collector = collector.Get()}));
   }
   collector.Finish();
   double total = 0;
@@ -386,8 +392,10 @@ double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
     if (!query || irs::QueryBuilder::IsEmpty(*query)) {
       continue;
     }
+    plan_memory.Rewind();
     irs::ColumnArgsFetcher fetcher;
-    auto node = query->PlanLead({.scorer = &kScorer, .fetcher = &fetcher});
+    auto node = query->PlanLead(
+      {.memory = plan_memory, .scorer = &kScorer, .fetcher = &fetcher});
     if (!node) {
       continue;
     }

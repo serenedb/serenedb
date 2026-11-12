@@ -24,6 +24,6 @@
 
 namespace irs::detail {
 
-IRS_MAKE_BOOLEAN_NEGATION(fill::Family, utils::Empty);
+IRS_MAKE_BOOLEAN_NEGATION(fill::Family, fill::Family::DocsContext);
 
 }  // namespace irs::detail

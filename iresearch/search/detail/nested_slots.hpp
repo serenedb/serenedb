@@ -27,6 +27,7 @@
 #include <tuple>
 #include <utility>
 
+#include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/filters/nested_filter.hpp"
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/scorers/make_window.hpp"
@@ -34,9 +35,21 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
+
+struct FetcherDestroy {
+  void operator()(ColumnArgsFetcher* p) const noexcept { std::destroy_at(p); }
+};
+
+using ArenaFetcher = std::unique_ptr<ColumnArgsFetcher, FetcherDestroy>;
+
+inline ArenaFetcher MakeArenaFetcher(PlanMemory& memory) {
+  return ArenaFetcher{::new (static_cast<void*>(
+    memory.Arena().Allocate<ColumnArgsFetcher>(1))) ColumnArgsFetcher{}};
+}
 
 class PlainChild {
  public:
@@ -62,9 +75,12 @@ class PlainChild {
 
 class ScoredChild {
  public:
-  ScoredChild(lead::Node::ptr child, std::unique_ptr<ColumnArgsFetcher> fetcher,
+  ScoredChild(PlanMemory& memory, lead::Node::ptr child, ArenaFetcher fetcher,
               ScoreMergeType merge)
-    : _child{std::move(child)}, _fetcher{std::move(fetcher)}, _merge{merge} {
+    : _child{std::move(child)},
+      _fetcher{std::move(fetcher)},
+      _memory{&memory},
+      _merge{merge} {
     SDB_ASSERT(_child);
     SDB_ASSERT(_fetcher);
     SDB_ASSERT(_merge != ScoreMergeType::Noop);
@@ -102,7 +118,7 @@ class ScoredChild {
   }
 
   ScoreFunction PrepareScore() {
-    return detail::MakeWindowScore(_merge, _parents);
+    return detail::MakeWindowScore(*_memory, _merge, _parents);
   }
 
  private:
@@ -121,7 +137,8 @@ class ScoredChild {
   ABSL_CACHELINE_ALIGNED score_t _batch[kScoreBlock];
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];
   lead::Node::ptr _child;
-  std::unique_ptr<ColumnArgsFetcher> _fetcher;
+  ArenaFetcher _fetcher;
+  PlanMemory* _memory;
   ScoreFunction _score;
   doc_id_t _doc = doc_limits::invalid();
   score_t _sum = 0;

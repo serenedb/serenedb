@@ -105,7 +105,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
       _prepare_scorer(ctx);
     }
 
-    return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
+    return irs::ScoreFunction::Make<CustomSort::Scorer>(ctx.memory, *this, ctx);
   }
 
   std::function<void(irs::byte_type*, const irs::FieldCollector*,
@@ -127,8 +127,8 @@ struct WithoutColumns final : irs::SubReader {
   const irs::DocumentMask* docs_mask() const final {
     return segment.docs_mask();
   }
-  irs::lead::Node::ptr docs_iterator() const final {
-    return segment.docs_iterator();
+  irs::lead::Node::ptr docs_iterator(irs::PlanMemory& memory) const final {
+    return segment.docs_iterator(memory);
   }
   std::span<const irs::field_id> field_ids() const final {
     return segment.field_ids();
@@ -138,6 +138,10 @@ struct WithoutColumns final : irs::SubReader {
   }
   irs::NormReader::ptr norms(irs::field_id id) const final {
     return segment.norms(id);
+  }
+  irs::NormReader::ptr norms(irs::PlanMemory& memory,
+                             irs::field_id id) const final {
+    return segment.norms(memory, id);
   }
 
   const irs::SubReader& segment;

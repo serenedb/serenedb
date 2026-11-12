@@ -56,6 +56,10 @@ struct Family {
     return ScoredOf(ctx);
   }
 
+  static PlanMemory& MemoryOf(const Context& ctx) noexcept {
+    return ctx.memory;
+  }
+
   template<typename Node, typename... Args>
   static Result Constant(const Context& ctx, score_t value, Args&&... args) {
     return MakeShape<ConstantWalk, Node>(ctx, value,
@@ -110,9 +114,8 @@ struct Family {
       }
     }
     return MakePrepared(ctx, [&](auto table) -> Result {
-      auto root =
-        memory::make_managed<Posting<Input, Exclude, decltype(table)>>(
-          table, std::piecewise_construct, std::forward<ExcludeArgs>(negated));
+      auto root = ctx.memory.Make<Posting<Input, Exclude, decltype(table)>>(
+        table, std::piecewise_construct, std::forward<ExcludeArgs>(negated));
       root->Prepare(posting.state.cookie, doc, segment, own,
                     recipe.Args(posting.stats, posting.boost),
                     irs::detail::LayoutOf(own), irs::detail::BoundsOf(own));
@@ -122,7 +125,8 @@ struct Family {
 
   static Result PlanChild(const QueryBuilder& child, const Context& ctx,
                           ScoreMergeType) {
-    return child.PlanTop({.scorer = ctx.scorer,
+    return child.PlanTop({.memory = ctx.memory,
+                          .scorer = ctx.scorer,
                           .fetcher = ctx.fetcher,
                           .table = ctx.table,
                           .prune = ctx.prune,
@@ -148,8 +152,8 @@ struct Family {
 
   static Result Make(const BooleanQuery& query, const Context& ctx);
 
-  static Result Make(const EmptyQueryBuilder&, const Context&) {
-    return MakeEmpty();
+  static Result Make(const EmptyQueryBuilder&, const Context& ctx) {
+    return MakeEmpty(ctx.memory);
   }
 };
 

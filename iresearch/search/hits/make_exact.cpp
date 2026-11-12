@@ -32,7 +32,7 @@ class ExactHits : public Root {
  public:
   ExactHits(const ExactVectorQuery& query, const Context& ctx,
             const irs::detail::ScoreArgs& args)
-    : _scanner{query}, _fetcher{ctx.fetcher} {
+    : _scanner{ctx.memory, query}, _fetcher{ctx.fetcher} {
     _score = irs::detail::PrepareBlockScorer(
       args, query.Segment(), irs::detail::NoField(), _provider, _block);
   }
@@ -80,11 +80,12 @@ class ExactHits : public Root {
 
 Root::ptr Family::Make(const ExactVectorQuery& query, const Context& ctx) {
   const auto record = query.Stats(ScoredOf(ctx));
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
+  const irs::detail::ScoreArgs args{.memory = &ctx.memory,
+                                    .scorer = record.scorer,
                                     .stats = record.stats,
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
-  return memory::make_managed<ExactHits>(query, ctx, args);
+  return ctx.memory.Make<ExactHits>(query, ctx, args);
 }
 
 }  // namespace irs::hits

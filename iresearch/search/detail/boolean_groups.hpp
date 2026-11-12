@@ -34,6 +34,7 @@
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -44,7 +45,7 @@ struct BooleanGroups {
   std::span<const QueryBuilder::ptr> must_filters;
   std::span<const PostingClause> should;
   std::span<const QueryBuilder::ptr> should_filters;
-  TrackedVector<FillNode::ptr>* should_fills = nullptr;
+  memory::ArenaVector<FillNode::ptr>* should_fills = nullptr;
   std::span<const PostingClause> must_not;
   std::span<const QueryBuilder::ptr> must_not_filters;
 };
@@ -165,10 +166,10 @@ class ThresholdGroup {
   static constexpr bool kLazyReset = Lazy;
 
   template<typename LeavesArgs>
-  ThresholdGroup(std::piecewise_construct_t, LeavesArgs&& leaves,
-                 uint32_t min_match, score_t constant)
+  ThresholdGroup(PlanMemory& memory, std::piecewise_construct_t,
+                 LeavesArgs&& leaves, uint32_t min_match, score_t constant)
     : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))},
-      _planes{size_t{min_match} * kWindowWords},
+      _planes{memory.Arena(), size_t{min_match} * kWindowWords},
       _constant{constant},
       _min_match{min_match} {
     SDB_ASSERT(_min_match > 1);
@@ -254,7 +255,7 @@ class TallyGroup {
   static constexpr bool kTally = !Lazy;
 
   template<typename LeavesArgs>
-  TallyGroup(std::piecewise_construct_t, LeavesArgs&& leaves,
+  TallyGroup(PlanMemory&, std::piecewise_construct_t, LeavesArgs&& leaves,
              uint32_t min_match, score_t constant)
     : _leaves{std::make_from_tuple<Leaves>(std::forward<LeavesArgs>(leaves))},
       _constant{constant},

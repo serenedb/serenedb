@@ -31,7 +31,7 @@
 
 namespace irs::lead {
 
-struct Node : memory::Managed, Tracked {
+struct Node : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<Node>;
 
   virtual doc_id_t Next() = 0;

@@ -30,6 +30,8 @@
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/tracked.hpp"
 
 namespace irs {
@@ -105,9 +107,10 @@ struct QuantizerLevelBound {
   uint32_t row_stride = 0;
 };
 
-class QuantizerReader {
+class QuantizerReader : public memory::Managed {
  public:
-  virtual ~QuantizerReader() = default;
+  using ptr = memory::managed_ptr<QuantizerReader>;
+
   virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
   virtual void StartCluster(const float* centroid) = 0;
   virtual void ComputeBlock(std::span<const byte_type> block, score_t threshold,
@@ -161,7 +164,7 @@ class QuantizerCodebook
   : public std::enable_shared_from_this<QuantizerCodebook> {
  public:
   virtual ~QuantizerCodebook() = default;
-  virtual std::unique_ptr<QuantizerReader> MakeReader() const = 0;
+  virtual QuantizerReader::ptr MakeReader(PlanMemory* plan) const = 0;
 };
 
 class QuantizerCodeBound {
@@ -226,8 +229,8 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
   VectorMetric metric, bool row_major = false, MemoryBudget* budget = nullptr);
 
-std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  const std::shared_ptr<const QuantizerCodebook>& codebook);
+QuantizerReader::ptr MakeQuantizerReader(
+  PlanMemory* plan, const std::shared_ptr<const QuantizerCodebook>& codebook);
 
 void GenerateSigns(uint32_t rotated_d, int64_t seed, std::vector<float>& signs);
 

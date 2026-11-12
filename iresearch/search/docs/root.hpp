@@ -21,15 +21,17 @@
 #pragma once
 
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
 
 struct Context {
+  PlanMemory& memory;
   doc_id_t span = 0;
 };
 
-struct Root : memory::Managed {
+struct Root : memory::Managed, memory::ArenaOnly {
   using ptr = memory::managed_ptr<Root>;
 
   virtual uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* out) = 0;

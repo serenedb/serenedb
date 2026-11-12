@@ -831,8 +831,21 @@ void Writes::CheckChanged(const StoreWrites& w,
 
 void Writes::ThrowDuplicateOrConflict(duckdb::ClientContext& context,
                                       const StoreWrites& w, const KeySpec& spec,
-                                      std::string_view key) {
+                                      std::string_view key, bool merge_insert) {
   CheckChanged(w, w.changed);
+  if (merge_insert) {
+    const auto& table = w.store->GetTable();
+    const auto committed = [&](std::shared_ptr<const TableState> state) {
+      const LiveUnits live{std::move(state), w.changes.removals};
+      KeyProbe probe{spec.key.field};
+      probe.AddLive(live);
+      return probe.Exists(key);
+    };
+    if (committed(table.State()) &&
+        !committed(table.VersionAt(Snapshot(), _walks).state)) {
+      ThrowConcurrentUpdate();
+    }
+  }
   ThrowDuplicate(context, spec, key);
 }
 
@@ -1107,7 +1120,8 @@ void Writes::CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
   }
 }
 
-void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
+void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
+                       bool merge_insert) {
   absl::MutexLock all{&_mutex};
   const auto found = _writes.find(store.GetId());
   if (found == _writes.end()) {
@@ -1130,6 +1144,10 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
   std::vector<KeyedRow> keyed;
   const duckdb::idx_t rows =
     w.changes.HasBufferedRows() ? w.changes.collection->Count() : 0;
+  if (merge_insert &&
+      (rows > w.keyed_rows || w.own_segments.size() > w.checked_segments)) {
+    w.merge_inserted = true;
+  }
   if (rows > w.keyed_rows) {
     const auto& collection = *w.changes.collection;
     std::vector<connector::ConstraintKeyEncoder> encoders;
@@ -1190,7 +1208,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store) {
     absl::c_sort(keys);
     if (auto duplicate =
           FindDuplicate(context, key_spec, segments, keys, existing)) {
-      ThrowDuplicateOrConflict(context, w, key_spec, *duplicate);
+      ThrowDuplicateOrConflict(context, w, key_spec, *duplicate, merge_insert);
     }
   }
   for (const auto& row : keyed) {
@@ -1295,7 +1313,8 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
         continue;
       }
       if (auto duplicate = FindDuplicate(context, spec, segments, {}, fresh)) {
-        ThrowDuplicateOrConflict(context, w, spec, *duplicate);
+        ThrowDuplicateOrConflict(context, w, spec, *duplicate,
+                                 w.merge_inserted);
       }
     }
   }

@@ -97,6 +97,7 @@ struct StoreWrites {
   uint64_t keyed_generation = 0;
   size_t checked_segments = 0;
   std::optional<LiveUnits> checked;
+  bool merge_inserted = false;
   // The unique keys of the rows this transaction removed, for every unique
   // key a foreign key references, and how many of them were checked; a key
   // first referenced after the transaction removed rows misses theirs until
@@ -196,7 +197,8 @@ class Writes {
   // referenced table does not hold, and the statement that removed the last
   // row holding a key a foreign key references. Runs once the statement has
   // handed its rows over.
-  void CheckKeys(duckdb::ClientContext& context, const Store& store);
+  void CheckKeys(duckdb::ClientContext& context, const Store& store,
+                 bool merge_insert);
 
   // Refuses the rows of `table`, the whole table, whose reference key `spec`
   // the referenced table does not hold; the commit checks them again if the
@@ -239,7 +241,8 @@ class Writes {
   [[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
                                              const StoreWrites& w,
                                              const KeySpec& spec,
-                                             std::string_view key);
+                                             std::string_view key,
+                                             bool merge_insert);
   void CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
                        const KeySpec& spec, std::span<const std::string> keys);
   void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,

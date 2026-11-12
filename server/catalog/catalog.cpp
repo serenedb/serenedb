@@ -29,6 +29,7 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
@@ -434,6 +435,19 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     op.update_column_count);
   update.children.emplace_back(plan);
   return update;
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) {
+  auto& merge = duckdb::Catalog::PlanMergeInto(context, planner, op, plan)
+                  .Cast<duckdb::PhysicalMergeInto>();
+  for (const auto& action : merge.actions) {
+    if (action->action_type == duckdb::MergeActionType::MERGE_INSERT) {
+      action->op->Cast<connector::SereneDBSearchInsert>().MarkMergeInsert();
+    }
+  }
+  return merge;
 }
 
 void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,

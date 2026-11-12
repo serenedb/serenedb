@@ -74,6 +74,8 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
   bool IsSource() const final { return true; }
 
+  void MarkMergeInsert() noexcept { _merge_insert = true; }
+
  private:
   // Insert mode: the pre-existing target. Unset in CTAS mode, where the table
   // does not exist until the sink runs.
@@ -85,6 +87,7 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
 
   bool _return_chunk = false;
+  bool _merge_insert = false;
 };
 
 }  // namespace sdb::connector

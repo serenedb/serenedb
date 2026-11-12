@@ -211,7 +211,7 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
       search_txn.AddRemoval(context, gstate.search_table, std::move(positions));
     }
   }
-  search_txn.CheckKeys(context, *gstate.search_table);
+  search_txn.CheckKeys(context, *gstate.search_table, /*merge_insert=*/false);
   return duckdb::SinkFinalizeType::READY;
 }
 

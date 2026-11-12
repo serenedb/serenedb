@@ -147,8 +147,10 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   BackgroundScheduler& s, SearchEngine& engine,
   const std::weak_ptr<Store>& weak, bool idle) noexcept {
   std::vector<yaclib::FutureOn<bool>> runs;
-  while (!ShouldStop() && !engine.IsBackupActive() &&
-         engine.TryAcquireCompaction()) {
+  for (auto free = engine.FreeCompactionSlots();
+       free > 0 && !ShouldStop() && !engine.IsBackupActive() &&
+       engine.TryAcquireCompaction();
+       --free) {
     const bool small = engine.FreeCompactionSlots() == 0;
     runs.push_back(
       s.Run([&engine, weak, small, idle]() -> yaclib::Future<bool> {

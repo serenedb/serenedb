@@ -36,6 +36,7 @@
 #include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/queries/multiterm_query.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/containers/bitset.hpp>
@@ -773,6 +774,60 @@ bool ClaimStart(ScanGlobalState& g, ScanLocalState& l) {
   return false;
 }
 
+bool CountsWhole(const irs::QueryBuilder& query) {
+  switch (query.Kind()) {
+    case irs::QueryKind::Empty:
+    case irs::QueryKind::Term:
+      return true;
+    case irs::QueryKind::Terms:
+      return irs::utils::downCast<irs::MultiTermQuery>(query)
+               .State()
+               .Terms()
+               .size() <= 1;
+    default:
+      return false;
+  }
+}
+
+struct PreparePass {
+  ScanGlobalState& g;
+  std::span<const uint32_t> segments;
+  std::atomic_uint32_t next{0};
+};
+
+void PrepareNext(PreparePass& pass) {
+  const auto size = static_cast<uint32_t>(pass.segments.size());
+  for (auto i = pass.next.fetch_add(1, std::memory_order_relaxed); i < size;
+       i = pass.next.fetch_add(1, std::memory_order_relaxed)) {
+    EnsureSegmentQuery(pass.g, nullptr, pass.segments[i]);
+  }
+}
+
+struct PrepareSlice final : duckdb::BaseExecutorTask {
+  PrepareSlice(duckdb::TaskExecutor& executor, PreparePass& pass)
+    : BaseExecutorTask{executor}, pass{pass} {}
+
+  void ExecuteTask() final { PrepareNext(pass); }
+
+  PreparePass& pass;
+};
+
+void PrepareSegments(ScanGlobalState& g, duckdb::ClientContext& context,
+                     uint64_t threads, std::span<const uint32_t> segments) {
+  PreparePass pass{.g = g, .segments = segments};
+  const auto helpers = std::min<uint64_t>(threads, segments.size());
+  if (helpers <= 1) {
+    PrepareNext(pass);
+    return;
+  }
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                context.GetSchedulerAccount()};
+  for (uint64_t i = 0; i != helpers; ++i) {
+    executor.ScheduleTask(duckdb::make_uniq<PrepareSlice>(executor, pass));
+  }
+  executor.WorkOnTasks();
+}
+
 }  // namespace
 
 std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads) {
@@ -843,6 +898,24 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const bool constant_count = g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
+  std::vector<uint8_t> counts_whole;
+  if (g.shape == ScanShape::Count && g.col_filters.empty() && where &&
+      !constant_count && !g.vector_scorer && g.split != SplitMode::Never) {
+    std::vector<uint32_t> candidates;
+    for (const auto seg : g.segment_order) {
+      const auto& sub = (*g.reader)[seg];
+      if (sub.live_docs_count() == sub.docs_count() &&
+          (sub.Meta().docs_count + g.rg_size - 1) / g.rg_size >
+            g.no_split_rgs) {
+        candidates.push_back(seg);
+      }
+    }
+    PrepareSegments(g, context, threads, candidates);
+    counts_whole.resize(g.total_segments);
+    for (const auto seg : candidates) {
+      counts_whole[seg] = CountsWhole(*g.queries[seg]);
+    }
+  }
   const auto unique = UniqueBound(g, where.get());
   const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
   irs::ColFilterStateCache states;
@@ -862,7 +935,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
     const bool split =
       g.split != SplitMode::Never && work.rg_count > g.no_split_rgs &&
-      !(constant_count && sub.live_docs_count() == sub.docs_count());
+      !(constant_count && sub.live_docs_count() == sub.docs_count()) &&
+      !(!counts_whole.empty() && counts_whole[seg]);
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
     if (split) {

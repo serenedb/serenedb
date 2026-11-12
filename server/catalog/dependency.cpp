@@ -21,6 +21,7 @@
 #include "catalog/dependency.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
@@ -62,6 +63,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -619,6 +621,7 @@ class ColumnRewriter {
  private:
   struct Scope {
     std::vector<duckdb::Identifier> qualifiers;
+    std::vector<duckdb::Identifier> others;
     std::vector<duckdb::ParsedExpression*> conditions;
     bool known = true;
     bool other_has_column = false;
@@ -630,11 +633,13 @@ class ColumnRewriter {
     if (select.from_table) {
       VisitFrom(*select.from_table, scope);
     }
-    if (scope.merged && !scope.qualifiers.empty()) {
+    if (scope.merged) {
       uncertain = true;
     }
+    _scopes.push_back(&scope);
+    absl::Cleanup pop = [&] { _scopes.pop_back(); };
     for (auto* condition : scope.conditions) {
-      Rewrite(*condition, scope);
+      Rewrite(*condition);
     }
     for (auto& item : select.select_list) {
       if (item->GetExpressionClass() == duckdb::ExpressionClass::STAR) {
@@ -648,21 +653,21 @@ class ColumnRewriter {
                                                return _equals(q, relation);
                                              }));
       }
-      if (Rewrite(*item, scope) && !item->HasAlias()) {
+      if (Rewrite(*item) && !item->HasAlias()) {
         item->SetAlias(_old_column);
       }
     }
     for (auto* expr : {&select.where_clause, &select.having, &select.qualify}) {
       if (*expr) {
-        Rewrite(**expr, scope);
+        Rewrite(**expr);
       }
     }
     for (auto& group : select.groups.group_expressions) {
-      Rewrite(*group, scope);
+      Rewrite(*group);
     }
     duckdb::ParsedExpressionIterator::EnumerateQueryNodeModifiers(
       select, [&](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
-        Rewrite(*child, scope);
+        Rewrite(*child);
       });
   }
 
@@ -678,10 +683,13 @@ class ColumnRewriter {
             _equals(name.Name(), _table.name)) {
           found = &_table;
         }
+        const auto& qualifier = ref.alias.empty() ? name.Name() : ref.alias;
         if (found && found->oid == _table.oid) {
-          scope.qualifiers.push_back(ref.alias.empty() ? name.Name()
-                                                       : ref.alias);
-        } else if (!found || found->type != duckdb::CatalogType::TABLE_ENTRY) {
+          scope.qualifiers.push_back(qualifier);
+          break;
+        }
+        scope.others.push_back(qualifier);
+        if (!found || found->type != duckdb::CatalogType::TABLE_ENTRY) {
           scope.known = false;
         } else if (found->Cast<duckdb::TableCatalogEntry>().ColumnExists(
                      _old_column)) {
@@ -691,55 +699,82 @@ class ColumnRewriter {
       }
       case duckdb::TableReferenceType::JOIN: {
         auto& join = ref.Cast<duckdb::JoinRef>();
+        const auto ours = scope.qualifiers.size();
         VisitFrom(*join.left, scope);
         VisitFrom(*join.right, scope);
         if (join.condition) {
           scope.conditions.push_back(join.condition.get());
         }
-        scope.merged =
-          scope.merged || join.ref_type == duckdb::JoinRefType::NATURAL ||
-          absl::c_any_of(join.using_columns, [&](const auto& column) {
-            return _equals(column, _old_column);
-          });
+        if (scope.qualifiers.size() != ours &&
+            (join.ref_type == duckdb::JoinRefType::NATURAL ||
+             absl::c_any_of(join.using_columns, [&](const auto& column) {
+               return _equals(column, _old_column);
+             }))) {
+          scope.merged = true;
+        }
         break;
       }
       case duckdb::TableReferenceType::SUBQUERY:
         Visit(*ref.Cast<duckdb::SubqueryRef>().subquery->node);
+        scope.others.push_back(ref.alias);
         scope.known = false;
         break;
       case duckdb::TableReferenceType::EMPTY_FROM:
         break;
       default:
+        scope.others.push_back(ref.alias);
         scope.known = false;
         break;
     }
   }
 
-  bool Rewrite(duckdb::ParsedExpression& expr, const Scope& scope) {
+  bool Ours(const duckdb::ColumnRefExpression& reference) {
+    const auto& names = reference.ColumnNames();
+    for (auto i = _scopes.size(); i-- > 0;) {
+      const auto& scope = *_scopes[i];
+      if (names.size() > 1) {
+        const auto& qualifier = names[names.size() - 2];
+        const auto named = [&](const duckdb::Identifier& q) {
+          return _equals(q, qualifier);
+        };
+        if (absl::c_any_of(scope.qualifiers, named)) {
+          return true;
+        }
+        if (absl::c_any_of(scope.others, named)) {
+          return false;
+        }
+        continue;
+      }
+      if (!scope.qualifiers.empty()) {
+        return !scope.merged;
+      }
+      if (scope.other_has_column) {
+        return false;
+      }
+      if (!scope.known) {
+        uncertain =
+          uncertain ||
+          absl::c_any_of(std::span{_scopes}.first(i), [](const Scope* outer) {
+            return !outer->qualifiers.empty();
+          });
+        return false;
+      }
+    }
+    return false;
+  }
+
+  bool Rewrite(duckdb::ParsedExpression& expr) {
     if (expr.GetExpressionClass() == duckdb::ExpressionClass::SUBQUERY) {
       Visit(*expr.Cast<duckdb::SubqueryExpression>().SubqueryMutable()->node);
     }
     duckdb::ParsedExpressionIterator::EnumerateChildren(
-      expr, [&](duckdb::ParsedExpression& child) { Rewrite(child, scope); });
+      expr, [&](duckdb::ParsedExpression& child) { Rewrite(child); });
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF) {
       return false;
     }
-    auto& names = expr.Cast<duckdb::ColumnRefExpression>().ColumnNamesMutable();
-    if (!_equals(names.back(), _old_column)) {
-      return false;
-    }
-    if (names.size() == 1) {
-      if (scope.qualifiers.empty() ? scope.known && !scope.other_has_column
-                                   : scope.merged) {
-        uncertain = true;
-      }
-      if (scope.qualifiers.empty() || scope.merged) {
-        return false;
-      }
-    } else if (!absl::c_any_of(scope.qualifiers,
-                               [&](const duckdb::Identifier& q) {
-                                 return _equals(q, names[names.size() - 2]);
-                               })) {
+    auto& reference = expr.Cast<duckdb::ColumnRefExpression>();
+    auto& names = reference.ColumnNamesMutable();
+    if (!_equals(names.back(), _old_column) || !Ours(reference)) {
       return false;
     }
     names.back() = _new_column;
@@ -753,6 +788,7 @@ class ColumnRewriter {
   duckdb::IdentifierEquality _equals;
   const duckdb::Identifier& _old_column;
   const duckdb::Identifier& _new_column;
+  std::vector<const Scope*> _scopes;
 };
 
 void Rewrite(duckdb::CatalogTransaction transaction, const Edge& edge,

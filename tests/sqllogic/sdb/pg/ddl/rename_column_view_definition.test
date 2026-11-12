@@ -315,18 +315,34 @@ INSERT INTO rcv_o VALUES (3);
 
 
 statement ok
-CREATE VIEW rcv_corr AS SELECT (SELECT a) AS x FROM rcv_o;
+CREATE TABLE rcv_k (a INTEGER, y INTEGER);
 
 
-statement error
+statement ok
+INSERT INTO rcv_k VALUES (3, 30), (4, 40);
+
+
+statement ok
+CREATE VIEW rcv_corr AS SELECT (SELECT a) AS x, (SELECT max(y) FROM rcv_k WHERE rcv_k.a = rcv_o.a) AS y, (SELECT max(rcv_o.a) FROM rcv_k AS rcv_o) AS shadowed FROM rcv_o;
+
+
+statement ok
 ALTER TABLE rcv_o RENAME COLUMN a TO a2;
-----
-db error: ERROR: cannot rename column a of table rcv_o because other objects depend on it
-DETAIL: view rcv_corr refers to the column where its rename cannot be followed
 
 
 query
-SELECT x FROM rcv_corr;
+SELECT x, y, shadowed FROM rcv_corr;
 ----
-x
-3
+x	y	shadowed
+3	30	4
+
+
+statement ok
+CREATE VIEW rcv_corr_fn AS SELECT (SELECT a2 FROM range(1)) AS x FROM rcv_o;
+
+
+statement error
+ALTER TABLE rcv_o RENAME COLUMN a2 TO a3;
+----
+db error: ERROR: cannot rename column a2 of table rcv_o because other objects depend on it
+DETAIL: view rcv_corr_fn refers to the column where its rename cannot be followed

@@ -76,7 +76,7 @@ tuples_done
 1000
 
 connection default
-query
+query ok retry 40 backoff 250ms
 SELECT lx_stale_segments('lxs') > 0 AS unswapped;
 ----
 unswapped

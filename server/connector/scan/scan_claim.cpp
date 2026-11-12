@@ -94,6 +94,82 @@ auto HeapOrder(const ScanOrderSpec& order) {
   };
 }
 
+struct RawKey {
+  uint32_t rg = 0;
+  size_t block = 0;
+  std::optional<long double> key;
+};
+
+bool RawStatType(const duckdb::BaseStatistics& stats) noexcept {
+  switch (stats.GetType().InternalType()) {
+    case duckdb::PhysicalType::INT8:
+    case duckdb::PhysicalType::INT16:
+    case duckdb::PhysicalType::INT32:
+    case duckdb::PhysicalType::INT64:
+    case duckdb::PhysicalType::UINT8:
+    case duckdb::PhysicalType::UINT16:
+    case duckdb::PhysicalType::UINT32:
+    case duckdb::PhysicalType::UINT64:
+    case duckdb::PhysicalType::FLOAT:
+    case duckdb::PhysicalType::DOUBLE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+template<typename T>
+long double RawStat(const duckdb::BaseStatistics& stats, bool min) {
+  return min ? duckdb::NumericStats::GetMinUnsafe<T>(stats)
+             : duckdb::NumericStats::GetMaxUnsafe<T>(stats);
+}
+
+std::optional<long double> RawStat(const duckdb::BaseStatistics& stats,
+                                   bool min) {
+  if (!duckdb::NumericStats::HasMinMax(stats)) {
+    return std::nullopt;
+  }
+  switch (stats.GetType().InternalType()) {
+    case duckdb::PhysicalType::INT8:
+      return RawStat<int8_t>(stats, min);
+    case duckdb::PhysicalType::INT16:
+      return RawStat<int16_t>(stats, min);
+    case duckdb::PhysicalType::INT32:
+      return RawStat<int32_t>(stats, min);
+    case duckdb::PhysicalType::INT64:
+      return RawStat<int64_t>(stats, min);
+    case duckdb::PhysicalType::UINT8:
+      return RawStat<uint8_t>(stats, min);
+    case duckdb::PhysicalType::UINT16:
+      return RawStat<uint16_t>(stats, min);
+    case duckdb::PhysicalType::UINT32:
+      return RawStat<uint32_t>(stats, min);
+    case duckdb::PhysicalType::UINT64:
+      return RawStat<uint64_t>(stats, min);
+    case duckdb::PhysicalType::FLOAT:
+      return RawStat<float>(stats, min);
+    case duckdb::PhysicalType::DOUBLE:
+      return RawStat<double>(stats, min);
+    default:
+      return std::nullopt;
+  }
+}
+
+RawKey UnitRawKey(const irs::ColumnReader& reader, uint32_t rg, bool asc,
+                  bool min, uint64_t begin, uint64_t end) {
+  RawKey best{.rg = rg};
+  irs::BlockWindow w;
+  for (uint64_t row = begin; row < end; row = w.end) {
+    w = reader.Locate(row, w);
+    const auto v = RawStat(reader.RowGroupStatistics(w.block), min);
+    if (v && (!best.key || (asc ? *v < *best.key : *best.key < *v))) {
+      best.key = v;
+      best.block = w.block;
+    }
+  }
+  return best;
+}
+
 duckdb::Value UnitOrderKey(const irs::ColumnReader& reader,
                            const ScanOrderSpec& order, uint64_t begin,
                            uint64_t end) {
@@ -196,47 +272,62 @@ ScanUnit WholeUnit(uint32_t seg, const SegmentWork& work) {
           .whole = true};
 }
 
-std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
-  ScanGlobalState& g, SegmentWork& work, uint32_t seg,
-  duckdb::Value segment_key);
-
-void BuildOrderedHeap(ScanGlobalState& g) {
-  g.order_dynamic_filter = FindOrderDynamicFilter(g);
-  g.ordered_barrier.Reset(static_cast<uint32_t>(g.segment_order.size()));
-  g.ordered = true;
-}
-
-void BuildOrderedUnits(ScanGlobalState& g, uint32_t seg) {
-  const auto& order = *g.Bind().scan_order;
-  duckdb::Value v;
-  if (const auto* column = OrderColumn(g, seg)) {
-    v = duckdb::RowGroupReorderer::RetrieveStat(
-      column->MergedStatistics(), order.order_by, order.column_type);
-  }
-  auto& work = g.Segment(seg);
-  work.ordered = BuildSegmentOrderedUnits(g, work, seg, std::move(v));
-}
-
-void FinishOrderedHeap(ScanGlobalState& g) {
-  g.ordered_heap.reserve(g.segment_order.size());
-  for (const auto seg : g.segment_order) {
-    g.ordered_heap.push_back({seg, g.Segment(seg).ordered->keys.front()});
-  }
-  absl::c_make_heap(g.ordered_heap, HeapOrder(*g.Bind().scan_order));
-}
-
-std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
-  ScanGlobalState& g, SegmentWork& work, uint32_t seg,
-  duckdb::Value segment_key) {
+std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(ScanGlobalState& g,
+                                                       SegmentWork& work,
+                                                       uint32_t seg) {
   const auto& order = *g.Bind().scan_order;
   auto built = std::make_unique<OrderedUnits>();
   if (work.claim.load(std::memory_order_relaxed) == SegmentWork::kWhole) {
+    duckdb::Value segment_key;
+    if (const auto* column = OrderColumn(g, seg)) {
+      segment_key = duckdb::RowGroupReorderer::RetrieveStat(
+        column->MergedStatistics(), order.order_by, order.column_type);
+    }
     built->units.push_back(WholeUnit(seg, work));
     built->keys.push_back(std::move(segment_key));
     return built;
   }
   const auto* column = OrderColumn(g, seg);
   const uint64_t docs = (*g.reader)[seg].Meta().docs_count;
+  if (column && order.column_type == duckdb::OrderByColumnType::NUMERIC &&
+      RawStatType(column->MergedStatistics())) {
+    const bool asc = order.order_type == duckdb::OrderType::ASCENDING;
+    const bool min = order.order_by == duckdb::OrderByStatistics::MIN;
+    const bool nulls_first =
+      order.null_order == duckdb::OrderByNullType::NULLS_FIRST;
+    std::vector<RawKey> raw;
+    raw.reserve(work.rg_count);
+    for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
+      const auto begin = uint64_t{rg} * g.rg_size;
+      raw.push_back(UnitRawKey(*column, rg, asc, min, begin,
+                               std::min<uint64_t>(docs, begin + g.rg_size)));
+    }
+    absl::c_sort(raw, [&](const RawKey& l, const RawKey& r) {
+      if (!l.key || !r.key) {
+        return bool(l.key) != bool(r.key)
+                 ? (!l.key ? nulls_first : !nulls_first)
+                 : l.rg < r.rg;
+      }
+      if (*l.key != *r.key) {
+        return asc ? *l.key < *r.key : *r.key < *l.key;
+      }
+      return l.rg < r.rg;
+    });
+    built->units.reserve(raw.size());
+    built->keys.reserve(raw.size());
+    for (const auto& key : raw) {
+      built->units.push_back({.seg = seg,
+                              .rg_begin = key.rg,
+                              .rg_end = key.rg + 1,
+                              .live = 1,
+                              .whole = false});
+      built->keys.push_back(key.key ? duckdb::RowGroupReorderer::RetrieveStat(
+                                        column->RowGroupStatistics(key.block),
+                                        order.order_by, order.column_type)
+                                    : duckdb::Value{});
+    }
+    return built;
+  }
   std::vector<ScanOrderKey> keys;
   keys.reserve(work.rg_count);
   for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
@@ -260,6 +351,18 @@ std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
     built->keys.push_back(std::move(key.value));
   }
   return built;
+}
+
+void BuildOrderedHeap(ScanGlobalState& g) {
+  g.order_dynamic_filter = FindOrderDynamicFilter(g);
+  g.ordered = true;
+  g.ordered_heap.reserve(g.segment_order.size());
+  for (const auto seg : g.segment_order) {
+    auto& work = g.Segment(seg);
+    work.ordered = BuildSegmentOrderedUnits(g, work, seg);
+    g.ordered_heap.push_back({seg, work.ordered->keys.front()});
+  }
+  absl::c_make_heap(g.ordered_heap, HeapOrder(*g.Bind().scan_order));
 }
 
 bool ConstantCount(const irs::Filter& filter) {
@@ -448,39 +551,25 @@ bool Steal(ScanGlobalState& g, ScanLocalState& l) {
 bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
   const auto heap_order = HeapOrder(*g.Bind().scan_order);
   auto& heap = g.ordered_heap;
-  for (;;) {
-    if (g.ordered_exhausted.load(std::memory_order_relaxed)) {
-      return false;
-    }
-    const auto bound = OrderBound(g);
-    ScanOrderKey head;
-    {
-      absl::MutexLock lock{&g.ordered_mutex};
-      if (DropPruned(g, bound)) {
-        g.ordered_exhausted.store(true, std::memory_order_relaxed);
-        return false;
-      }
-      absl::c_pop_heap(heap, heap_order);
-      head = std::move(heap.back());
-      heap.pop_back();
-      if (auto* ordered = g.Segment(head.id).ordered.get()) {
-        const auto k = ordered->next++;
-        TakeUnit(l, ordered->units[k]);
-        if (ordered->next < ordered->units.size()) {
-          heap.push_back({head.id, ordered->keys[ordered->next]});
-          absl::c_push_heap(heap, heap_order);
-        }
-        return true;
-      }
-    }
-    auto& work = g.Segment(head.id);
-    auto built =
-      BuildSegmentOrderedUnits(g, work, head.id, std::move(head.value));
-    absl::MutexLock lock{&g.ordered_mutex};
-    heap.push_back({head.id, built->keys.front()});
-    work.ordered = std::move(built);
+  if (g.ordered_exhausted.load(std::memory_order_relaxed)) {
+    return false;
+  }
+  const auto bound = OrderBound(g);
+  absl::MutexLock lock{&g.ordered_mutex};
+  if (DropPruned(g, bound)) {
+    g.ordered_exhausted.store(true, std::memory_order_relaxed);
+    return false;
+  }
+  absl::c_pop_heap(heap, heap_order);
+  const auto seg = heap.back().id;
+  heap.pop_back();
+  auto& ordered = *g.Segment(seg).ordered;
+  TakeUnit(l, ordered.units[ordered.next++]);
+  if (ordered.next < ordered.units.size()) {
+    heap.push_back({seg, ordered.keys[ordered.next]});
     absl::c_push_heap(heap, heap_order);
   }
+  return true;
 }
 
 void PublishFinished(ScanGlobalState& g, ScanLocalState& l) {
@@ -841,29 +930,6 @@ bool TrimDeadRowGroups(ScanGlobalState& g, ScanLocalState& l) {
 }
 
 }  // namespace
-
-bool RunOrderedStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
-                     ScanLocalState& l) {
-  if (!g.Ordered() || g.segment_order.empty() || g.ordered_barrier.Released()) {
-    return true;
-  }
-  const auto size = static_cast<uint32_t>(g.segment_order.size());
-  for (auto i = g.ordered_next.fetch_add(1, std::memory_order_relaxed);
-       i < size; i = g.ordered_next.fetch_add(1, std::memory_order_relaxed)) {
-    BuildOrderedUnits(g, g.segment_order[i]);
-    if (g.ordered_barrier.Arrive()) {
-      FinishOrderedHeap(g);
-      g.ordered_barrier.Release(input);
-      return true;
-    }
-  }
-  if (g.ordered_barrier.Park(input, *g.client_context)) {
-    l.parked_on = &g.ordered_barrier;
-    return false;
-  }
-  g.ordered_barrier.Wait();
-  return true;
-}
 
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l) {
   while (ClaimUnit(g, l)) {

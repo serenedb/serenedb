@@ -229,11 +229,8 @@ CREATE TEXT SEARCH DICTIONARY test_english AS
 statement ok
 CREATE INDEX vedernikoff_team_idx ON vedernikoff (team);
 
-# Inverted index: phrase search on quote. refresh_interval = 0 disables the
-# background refresh loop: the as-of-last-refresh assertions below are only
-# deterministic when refreshes happen solely through the explicit VACUUM.
 statement ok
-CREATE INDEX vedernikoff_quote_idx ON vedernikoff USING inverted(id, team, quote test_english) WITH (refresh_interval = 0);
+CREATE INDEX vedernikoff_quote_idx ON vedernikoff USING inverted(id, team, quote test_english);
 
 # 10000 rows; team cycles through 4 buckets, quote cycles through 5 sentences.
 # Each sentence mentions vedernikoff so a phrase('vedernikoff') match hits
@@ -251,9 +248,6 @@ SELECT
     'vedernikoff and babsky pair on rocksdb'
   ])[1 + x % 5]
 FROM generate_series(1, 10000) AS t(x);
-
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff;
 
 # Sanity-check both indexes before TRUNCATE.
 query
@@ -300,27 +294,17 @@ SELECT count(*) FROM vedernikoff WHERE team = 'babsky';
 count
 0
 
-# Inverted index scans are eventually consistent (as-of-last-refresh), not
-# MVCC. TRUNCATE without a subsequent refresh leaves the inverted index at its
-# last-refresh state, so count(*) WHERE <phrase> still returns the last-refresh
-# matched count, NOT 0. This contrasts with the secondary B-tree above, which
-# drops the rows immediately.
 query
 SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
 ----
 count
-10000
+0
 
 query
 SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
 ----
 count
-2000
-
-# Refresh the inverted index so it observes the TRUNCATE; only now does the
-# eventual count drop to 0.
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff;
+0
 
 query
 SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
@@ -345,9 +329,6 @@ SELECT
     'vedernikoff ships truncate today'
   ])[1 + x % 2]
 FROM generate_series(1, 500) AS t(x);
-
-statement ok
-VACUUM (REFRESH_TABLE) vedernikoff;
 
 query
 SELECT count(*) FROM vedernikoff WHERE team = 'babsky';
@@ -756,10 +737,10 @@ DROP TABLE babsky_tx;
 
 
 statement ok
-CREATE TABLE ri_serial (id SERIAL, v TEXT) WITH (storage = 'search');
+CREATE TABLE ri_serial (id SERIAL, v TEXT);
 
 statement ok
-CREATE TABLE ri_generated (v TEXT) WITH (storage = 'search');
+CREATE TABLE ri_generated (v TEXT);
 
 statement ok
 INSERT INTO ri_serial (v) VALUES ('a'), ('b');
@@ -779,9 +760,6 @@ ri_serial_id_seq	f
 
 statement ok
 INSERT INTO ri_serial (v) VALUES ('c');
-
-statement ok
-VACUUM (REFRESH_TABLE) ri_serial;
 
 query
 SELECT id, v FROM ri_serial;
@@ -807,36 +785,27 @@ query
 EXPLAIN DELETE FROM explain_t;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: explain_t      │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ DELETE ───────────────╮
+│ Table: explain_t       │
+│ Row Ids: ASSUME_UNIQUE │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: explain_t       │
+│ ~3 rows                │
+╰────────────────────────╯
 
 
 query
 EXPLAIN TRUNCATE explain_t;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: explain_t      │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ TRUNCATE ─╮
+╰────────────╯
 
 
 query
 EXPLAIN TRUNCATE TABLE explain_t;
 ----
 QUERY PLAN
-╭─ DELETE ──────────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: explain_t      │
-│ Type: Sequential Scan │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ TRUNCATE ─╮
+╰────────────╯

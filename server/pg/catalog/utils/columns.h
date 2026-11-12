@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -159,6 +160,10 @@ std::string ExpressionText(const duckdb::ParsedExpression& expression);
 const duckdb::TableCatalogEntry& SiblingTable(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
   const duckdb::Identifier& name);
+
+const duckdb::TableCatalogEntry& TriggerTable(
+  duckdb::CatalogTransaction transaction,
+  const duckdb::TriggerCatalogEntry& trigger);
 
 const duckdb::TableCatalogEntry& ReferencedTable(
   duckdb::CatalogTransaction transaction,

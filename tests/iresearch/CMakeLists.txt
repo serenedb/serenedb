@@ -101,7 +101,6 @@ add_executable(
     index/index_adopt_tests.cpp
     index/index_column_tests.cpp
     index/index_death_tests.cpp
-    index/index_meta_tests.cpp
     index/index_profile_tests.cpp
     index/index_tests.cpp
     index/inverter_oracle_test.cpp
@@ -109,6 +108,7 @@ add_executable(
     index/merge_writer_tests.cpp
     index/norm_column_test.cpp
     index/norm_test.cpp
+    index/piece_tests.cpp
     index/segment_writer_tests.cpp
     index/sorted_index_tests.cpp
     parser/lucene_parser_test.cpp
@@ -170,6 +170,7 @@ add_executable(
     store/directory_test_case.cpp
     store/memory_directory_tests.cpp
     store/memory_index_output_tests.cpp
+    store/overlay_directory_tests.cpp
     store/store_utils_tests.cpp
     utils/bit_packing_tests.cpp
     utils/bit_utils_tests.cpp
@@ -208,7 +209,7 @@ add_executable(
 )
 target_link_libraries(
     iresearch-tests
-    PRIVATE iresearch-test-support search-benchmark-common
+    PRIVATE iresearch-test-support iresearch-test-writer search-benchmark-common
 )
 target_include_directories(
     iresearch-tests

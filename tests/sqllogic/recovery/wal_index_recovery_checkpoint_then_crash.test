@@ -1,10 +1,5 @@
 control substitution on
 
-# Checkpoint, then a post-checkpoint delta with no further refresh, then crash.
-# The checkpoint truncates the store WAL and starts a fresh generation; the
-# index is durable up to the checkpoint baseline. Everything written after the
-# checkpoint lives only in the new-generation WAL (never refreshed into the
-# segments). Recovery replays the whole post-checkpoint delta exactly once.
 #
 # This exercises the generation-stamping fix: the durable cursor stamped at the
 # checkpoint barrier must carry the NEW (post-checkpoint) generation and a zero
@@ -26,9 +21,8 @@ statement ok
 INSERT INTO ck_t SELECT i, 'base_' || i FROM range(0, 2000) AS t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ck_t;
+VACUUM (FLUSH_TABLE) ck_t;
 
-# Checkpoint: store WAL truncated, iteration bumped, index durable to baseline.
 statement ok
 CHECKPOINT;
 
@@ -38,7 +32,6 @@ SELECT COUNT(*) FROM ck_idx;
 count
 2000
 
-# Post-checkpoint delta, never refreshed -> only in the new-generation WAL.
 statement ok
 INSERT INTO ck_t SELECT i, 'delta_' || i FROM range(2000, 4000) AS t(i);
 
@@ -52,7 +45,7 @@ SELECT 1;
 
 connection ck_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) ck_t;
+SELECT 1;
 
 connection ck_after
 query

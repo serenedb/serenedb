@@ -1,0 +1,131 @@
+control substitution on
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(0, 10) t(i)) TO '${__TEST_DIR__}/ivbc_1.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE VIEW ivbc_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/ivbc_*.parquet');
+
+
+statement ok
+CREATE INDEX ivbc_idx ON ivbc_v USING inverted(id, body)
+  WITH (reindex_interval = 0, compaction_interval = 0, compaction_max_segments = 2);
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(10, 20) t(i)) TO '${__TEST_DIR__}/ivbc_2.parquet' (FORMAT parquet);
+
+
+query
+SELECT action FROM serenedb_reindex('ivbc_idx');
+----
+action
+delta
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(20, 30) t(i)) TO '${__TEST_DIR__}/ivbc_3.parquet' (FORMAT parquet);
+
+
+query
+SELECT action FROM serenedb_reindex('ivbc_idx');
+----
+action
+delta
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(30, 40) t(i)) TO '${__TEST_DIR__}/ivbc_4.parquet' (FORMAT parquet);
+
+
+query
+SELECT action FROM serenedb_reindex('ivbc_idx');
+----
+action
+delta
+
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'ivbc_idx')
+  AND metric = 'num_segments';
+----
+segments
+4
+
+
+statement ok
+SET sdb_faults = 'pause_irs_compaction_registered';
+
+
+statement ok
+ALTER INDEX ivbc_idx SET (compaction_interval = 10);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_compaction_registered:parked';
+
+
+statement ok
+ALTER INDEX ivbc_idx SET (compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = 'search_compaction_before_selection';
+
+
+connection vacuum
+statement async ok
+VACUUM (COMPACT_INDEX) ivbc_idx;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_compaction_before_selection:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_compaction_before_selection:release';
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT value AS segments FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'ivbc_idx')
+  AND metric = 'num_segments';
+----
+segments
+3
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_compaction_registered:release';
+
+
+wait
+
+
+connection default
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'ivbc_idx')
+  AND metric = 'num_segments';
+----
+segments
+1
+
+
+connection default
+query
+SELECT count(*) AS n, sum(id) AS s FROM ivbc_idx;
+----
+n	s
+40	780

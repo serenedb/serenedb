@@ -5,7 +5,7 @@
 # results must be exact for any claim order. Segments exceed one scan unit
 # (122880 rows), and the key ascends within the first segment but descends
 # within the second, so ASC and DESC each find their best unit at opposite
-# ends of a file. A post-refresh DELETE demotes a segment to the masked
+# ends of a file. A DELETE demotes a segment to the masked
 # streaming walk, which cannot reorder -- results still exact.
 
 statement ok
@@ -15,13 +15,12 @@ CREATE TEXT SEARCH DICTIONARY uo_en AS
 
 
 statement ok
-CREATE TABLE uo (id BIGINT PRIMARY KEY, body VARCHAR, c BIGINT);
+CREATE TABLE uo (id BIGINT PRIMARY KEY, body VARCHAR, c BIGINT) WITH (compaction_interval = 0);
 
 
 statement ok
 CREATE INDEX uo_idx ON uo USING inverted(id, body uo_en)
-  INCLUDE (c)
-  WITH (compaction_interval = 0);
+  INCLUDE (c);
 
 
 # Segment 1: c ascends 0..130000 (best DESC values in the tail unit); two
@@ -33,7 +32,7 @@ INSERT INTO uo
 
 
 statement ok
-VACUUM (REFRESH_TABLE) uo;
+VACUUM (FLUSH_TABLE) uo;
 
 
 # Segment 2: c descends 269999..139999 (best DESC values in the head unit).
@@ -41,10 +40,6 @@ statement ok
 INSERT INTO uo
   SELECT i, 'dog', 400000 - i
   FROM generate_series(130001, 260001) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) uo;
 
 
 query
@@ -100,15 +95,8 @@ sum
 269499500
 
 
-# Deleting a matched row after refresh does not change the last-refresh
-# matched set; after the refresh below, segment 2 carries a mask and takes
-# the forward masked walk (no reordering) -- results stay exact.
 statement ok
 DELETE FROM uo WHERE c = 269999;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) uo;
 
 
 query

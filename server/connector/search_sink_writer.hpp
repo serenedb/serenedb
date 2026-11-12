@@ -44,10 +44,10 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
+#include "connector/constraint_keys.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
 #include "connector/inet_terms.h"
-#include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "pg/types/logical.h"
 #include "search/search_analyzer_impl.h"
@@ -112,9 +112,10 @@ class SearchSinkInsertBaseImpl {
   SearchSinkInsertBaseImpl(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     EntryInfoProvider&& entry_info_provider,
-    PkColumnKind pk = PkColumnKind::Has,
+    catalog::PkColumnKind pk = catalog::PkColumnKind::Has,
     std::vector<IndexedExpression>&& indexed_exprs = {},
-    const catalog::InvertedIndexConfig* config = nullptr);
+    const catalog::InvertedIndexConfig* config = nullptr,
+    std::vector<ConstraintKeyEncoder>&& constraint_keys = {});
 
   void InitImpl(size_t batch_size, const duckdb::Vector* pk = nullptr);
 
@@ -139,6 +140,10 @@ class SearchSinkInsertBaseImpl {
 
   std::span<const IndexedExpression> IndexedExpressions() const noexcept {
     return _indexed_expressions;
+  }
+
+  std::span<const ConstraintKeyEncoder> ConstraintKeys() const noexcept {
+    return _constraint_keys;
   }
 
   void FinishImpl();
@@ -268,7 +273,7 @@ class SearchSinkInsertBaseImpl {
   irs::containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
     _column_writers;
   irs::ColumnWriter* _pk_column_writer = nullptr;
-  PkColumnKind _pk;
+  catalog::PkColumnKind _pk;
 
   duckdb::ArenaAllocator _json_strings{duckdb::Allocator::DefaultAllocator()};
   irs::JsonLeafReader _json_reader{_json_strings};
@@ -308,6 +313,7 @@ class SearchSinkInsertBaseImpl {
   std::unique_ptr<InetBatch> _inet_batch;
   StoreAppender _store_appender;
   std::vector<IndexedExpression> _indexed_expressions;
+  std::vector<ConstraintKeyEncoder> _constraint_keys;
   irs::containers::FlatHashMap<ColumnId, std::vector<irs::field_id>>
     _terms_by_column;
 
@@ -322,7 +328,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const ColumnId> indexed_columns,
     EntryInfoProvider&& entry_info_provider = NoEntryInfoProvider(),
-    PkColumnKind pk = PkColumnKind::Has)
+    catalog::PkColumnKind pk = catalog::PkColumnKind::Has)
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
                                std::move(entry_info_provider), pk},
       _indexed{indexed_columns.begin(), indexed_columns.end()} {}
@@ -360,6 +366,7 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
                             duckdb::idx_t table_id,
-                            duckdb::ClientContext& context);
+                            duckdb::ClientContext& context,
+                            std::span<const ColumnId> copied = {});
 
 }  // namespace sdb::connector

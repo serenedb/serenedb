@@ -84,8 +84,25 @@ std::string_view DictSuffix(irs::DictRef dict) {
   return {};
 }
 
+const catalog::ConstraintKey* KeyOfField(const ScanBindData& bind_data,
+                                         irs::field_id field) {
+  if (!bind_data.relation.IsSearchTable()) {
+    return nullptr;
+  }
+  for (const auto& key : bind_data.relation.ScannedIndex().constraint_keys) {
+    if (key.field == field && catalog::IsSingleColumnKey(key)) {
+      return &key;
+    }
+  }
+  return nullptr;
+}
+
 auto MakeFieldNameResolver(const ScanBindData& bind_data) {
   return [&bind_data](ColumnId col_id, irs::DictRef dict) -> std::string {
+    if (const auto* key = KeyOfField(bind_data, col_id)) {
+      return absl::StrCat(bind_data.DisplayColumnName(key->columns.front()),
+                          "(key)");
+    }
     const auto& config = *bind_data.relation.inverted_config;
     auto base = bind_data.DisplayColumnName(col_id);
     const auto column_type = bind_data.ColumnTypeById(col_id);
@@ -145,6 +162,9 @@ duckdb::LogicalType ElementType(const duckdb::LogicalType& type) {
 auto MakeFieldTypeResolver(const ScanBindData& bind_data) {
   return [&bind_data](ColumnId col_id,
                       irs::DictRef dict) -> duckdb::LogicalType {
+    if (const auto* key = KeyOfField(bind_data, col_id)) {
+      return bind_data.ColumnTypeById(key->columns.front());
+    }
     const auto& config = *bind_data.relation.inverted_config;
     const auto lookup = config.LookupField(col_id);
     if (lookup.entry_field_id == term_dict::kPKFieldId) {
@@ -350,8 +370,9 @@ void AppendLookup(
   bool has_lookup_filter,
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) {
   const bool suppress_lookup =
-    bind.relation.kind == ScanEntryKind::InvertedIndex && !has_lookup_filter &&
-    (count_only || (!projections.entries.empty() && !projections.has_lookup));
+    bind.relation.kind == ScanEntryKind::SearchTable ||
+    (bind.relation.kind == ScanEntryKind::InvertedIndex && !has_lookup_filter &&
+     (count_only || (!projections.entries.empty() && !projections.has_lookup)));
   if (!bind.lookup.label.empty() && !suppress_lookup) {
     out.insert("Lookup", bind.lookup.label);
   }
@@ -369,9 +390,10 @@ void AppendProjections(
 
 duckdb::ExplainNode TableFilterNode(std::span<const DeferredCheck> checks,
                                     const irs::FieldNameResolver& name_of,
-                                    const irs::FieldTypeResolver& type_of) {
+                                    const irs::FieldTypeResolver& type_of,
+                                    const irs::FieldKeyResolver& key_of) {
   const auto node_of = [&](const DeferredCheck& check) {
-    auto node = irs::ToExplainNode(*check.source, name_of, type_of);
+    auto node = irs::ToExplainNode(*check.source, name_of, type_of, key_of);
     node.attributes["Verify"] = "table filter";
     return node;
   };
@@ -394,16 +416,19 @@ void ScanBindData::AppendSummary(
   std::unique_ptr<irs::Scorer> query_scorer;
   const auto name_of = MakeFieldNameResolver(bind);
   const auto type_of = MakeFieldTypeResolver(bind);
+  const irs::FieldKeyResolver key_of = [&bind](ColumnId field) {
+    return KeyOfField(bind, field) != nullptr;
+  };
   const bool vector_is_range =
     vector && vector->radius != std::numeric_limits<float>::max();
   if (vector_is_range) {
     const auto display =
       MakeVectorFilter(*vector, search.filter, vector->radius);
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                 *display, name_of, type_of)));
+                                 *display, name_of, type_of, key_of)));
   } else if (search.filter) {
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                 *search.filter, name_of, type_of)));
+                                 *search.filter, name_of, type_of, key_of)));
   }
   const auto rows_text = [](std::span<const RowFilter> rows) {
     return absl::StrJoin(rows | std::views::transform([](const RowFilter& row) {
@@ -413,7 +438,7 @@ void ScanBindData::AppendSummary(
                          }),
                          "\n");
   };
-  if (!search.duals.empty()) {
+  if (!search.duals.empty() && KeepsColumnForms()) {
     out.insert("Index or Column Filter", rows_text(search.duals));
   }
   if (!search.row_filters.empty()) {
@@ -421,7 +446,7 @@ void ScanBindData::AppendSummary(
   }
   if (!search.deferred.empty()) {
     out.insert("Table Filter", duckdb::ExplainValue(TableFilterNode(
-                                 search.deferred, name_of, type_of)));
+                                 search.deferred, name_of, type_of, key_of)));
   }
   for (const auto& req : ts_dict.requests) {
     if (!req.having_filter) {
@@ -431,8 +456,9 @@ void ScanBindData::AppendSummary(
       ts_dict.requests.size() == 1
         ? std::string{"Index Filter"}
         : absl::StrCat("Index Filter(", DisplayColumnName(req.display_id), ")");
-    out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
-                                 *req.having_filter, name_of, type_of)));
+    out.insert(std::move(key),
+               duckdb::ExplainValue(irs::ToExplainNode(
+                 *req.having_filter, name_of, type_of, key_of)));
   }
   if (vector && !vector_is_range) {
     const auto col_id = vector->field_id;
@@ -498,7 +524,9 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
     return result;
   }
   auto& bind = input.bind_data->Cast<ScanBindData>();
-  result.insert("Index", std::string{bind.RelationName()});
+  result.insert(
+    bind.relation.kind == ScanEntryKind::SearchTable ? "Table" : "Index",
+    std::string{bind.RelationName()});
   const auto projections = CollectProjections(bind, input);
   bool count_only = input.projected_column_ids;
   if (count_only) {

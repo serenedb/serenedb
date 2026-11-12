@@ -89,7 +89,7 @@ void IdfIndexTest::BuildAnalyzed() {
   tests::Document doc4;
   doc4.insert(make_body("cat"), true, false);
 
-  auto writer = open_writer(irs::kOmCreate, irs::IndexWriterOptions{});
+  auto writer = open_writer(tests::kOmCreate, irs::IndexWriterOptions{});
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
@@ -116,7 +116,7 @@ void IdfIndexTest::BuildKeyword() {
   tests::Document doc4;
   doc4.insert(make_tag("cat"), true, false);
 
-  auto writer = open_writer(irs::kOmCreate, irs::IndexWriterOptions{});
+  auto writer = open_writer(tests::kOmCreate, irs::IndexWriterOptions{});
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
@@ -130,14 +130,14 @@ std::map<irs::doc_id_t, irs::score_t> IdfIndexTest::Score(
   auto impl = std::make_unique<irs::IDF>();
 
   auto index = open_reader();
-  EXPECT_EQ(1, index->size());
+  EXPECT_EQ(1, index.size());
 
   irs::ByTerm filter;
   *filter.mutable_field_id() = kBodyId;
   filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
 
   MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, *index, impl.get(), counter};
+  tests::PreparedFilter prepared{filter, index, impl.get(), counter};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);

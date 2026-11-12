@@ -121,7 +121,7 @@ inline bool IsUtcTimeZoneName(std::string_view name) noexcept {
   return name == "UTC" || name == "GMT" || name == "Etc/UTC";
 }
 
-void FillContext(const Config& config, SerializationContext& context);
+void FillContext(duckdb::ClientContext& client, SerializationContext& context);
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,

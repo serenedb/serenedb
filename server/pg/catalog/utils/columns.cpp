@@ -38,6 +38,8 @@
 #include <ranges>
 #include <vector>
 
+#include "catalog/base_catalog.h"
+#include "catalog/dependency.h"
 #include "catalog/entry/inverted_index.h"
 #include "pg/catalog/utils/lookup.h"
 
@@ -252,6 +254,15 @@ const duckdb::TableCatalogEntry& SiblingTable(
   return entry->Cast<duckdb::TableCatalogEntry>();
 }
 
+const duckdb::TableCatalogEntry& TriggerTable(
+  duckdb::CatalogTransaction transaction,
+  const duckdb::TriggerCatalogEntry& trigger) {
+  auto& owner = trigger.catalog.Cast<catalog::BaseCatalog>();
+  auto entry = owner.LookupOid(transaction, owner.Oids().SetOwner(trigger.oid));
+  SDB_ASSERT(entry && entry->type == duckdb::CatalogType::TABLE_ENTRY);
+  return entry->Cast<duckdb::TableCatalogEntry>();
+}
+
 const duckdb::TableCatalogEntry& ReferencedTable(
   duckdb::CatalogTransaction transaction,
   const duckdb::TableCatalogEntry& table,
@@ -259,7 +270,10 @@ const duckdb::TableCatalogEntry& ReferencedTable(
   if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
     return table;
   }
-  return SiblingTable(transaction, table, fk.info.table);
+  auto entry = table.catalog.Cast<catalog::BaseCatalog>().LookupOid(
+    transaction, catalog::ReferencedTableOid(table, fk));
+  SDB_ASSERT(entry && entry->type == duckdb::CatalogType::TABLE_ENTRY);
+  return entry->Cast<duckdb::TableCatalogEntry>();
 }
 
 SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,

@@ -27,28 +27,24 @@ statement ok
 INSERT INTO sp_t VALUES (1, 'first', ROW('alpha', 10)), (2, 'second', ROW('beta', 20))
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sp_t
-
-
 # Single field: pushed into the scan -- no PROJECTION node above it; the field
 # appears in the scan's Projections as `payload.score (i)`.
 query
 EXPLAIN SELECT pk, payload.score FROM sp_t_idx WHERE t @@ ts_phrase('first');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: sp_t_idx                 │
-│ Lookup: table                   │
-│ Index Filter:                   │
-│ ╭─ Term ───────────╮            │
-│ │ Field: t(string) │            │
-│ │ Value: first     │            │
-│ ╰──────────────────╯            │
-│ Projections: pk (l),            │
-│              payload.score (i)  │
-│ ~1 row                          │
-╰─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: sp_t_idx             │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ───────────╮        │
+│ │ Field: t(string) │        │
+│ │ Value: first     │        │
+│ ╰──────────────────╯        │
+│ Projections: pk,            │
+│              payload.score  │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 # Two fields: each is independently pushed down -- `payload.name (i)` and
@@ -57,19 +53,19 @@ query
 EXPLAIN SELECT pk, payload.name, payload.score FROM sp_t_idx WHERE t @@ ts_phrase('first');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: sp_t_idx                 │
-│ Lookup: table                   │
-│ Index Filter:                   │
-│ ╭─ Term ───────────╮            │
-│ │ Field: t(string) │            │
-│ │ Value: first     │            │
-│ ╰──────────────────╯            │
-│ Projections: pk (l),            │
-│              payload.name (i),  │
-│              payload.score (i)  │
-│ ~1 row                          │
-╰─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: sp_t_idx             │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ───────────╮        │
+│ │ Field: t(string) │        │
+│ │ Value: first     │        │
+│ ╰──────────────────╯        │
+│ Projections: pk,            │
+│              payload.name,  │
+│              payload.score  │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 # An expression on top of an extract can't be pushed: the field is still served
@@ -78,22 +74,23 @@ query
 EXPLAIN SELECT pk, payload.score + 1 FROM sp_t_idx WHERE t @@ ts_phrase('first');
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────╮
-│ Projections: pk, payload + 1    │
-│ ~1 row                          │
-╰────────────────┬────────────────╯
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: sp_t_idx                 │
-│ Lookup: table                   │
-│ Index Filter:                   │
-│ ╭─ Term ───────────╮            │
-│ │ Field: t(string) │            │
-│ │ Value: first     │            │
-│ ╰──────────────────╯            │
-│ Projections: pk (l),            │
-│              payload.score (i)  │
-│ ~1 row                          │
-╰─────────────────────────────────╯
+╭─ PROJECTION ────────────────╮
+│ Projections: pk,            │
+│              payload + 1    │
+│ ~1 row                      │
+╰──────────────┬──────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: sp_t_idx             │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ───────────╮        │
+│ │ Field: t(string) │        │
+│ │ Value: first     │        │
+│ ╰──────────────────╯        │
+│ Projections: pk,            │
+│              payload.score  │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 # Values round-trip through the pushed-down projections.

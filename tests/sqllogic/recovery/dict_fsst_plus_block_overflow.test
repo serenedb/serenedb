@@ -1,15 +1,14 @@
-# dict_fsst FSST+ cut sizing: the cheap CleavedUpperBound that lets the compressor skip a real
-# cleave has to be a genuine upper bound on what the cleave will write. It once summed the region
-# sizes term by term while DictFSSTPlusLayout::Compute aligns six region starts, so it under-counted
-# by up to 42 bytes; a segment then kept accepting rows past the block and the checkpoint died with
-# "segment size exceeds block size in ColumnCheckpointState::FlushSegmentInternal".
+# Text segment sizing on shared prefixes with unique tails, over many segments.
 #
-# The shape below is what exposes it: a few hundred shared prefixes (i % 500) each carrying a unique
-# tail, so the cleave keeps repartitioning as entries arrive and the segment sits close to the block
-# for a long stretch. It needs enough rows to reach that stretch -- 3M reproduces, 2.5M does not.
-# No forced mode: this is the default path for serenedb-owned storage.
+# The shape: a few hundred shared prefixes (i % 500) each carrying a unique tail, over 3M rows, so
+# the column crosses dozens of segment boundaries. No forced codec: this is the default path of a
+# SereneDB table.
 
 control substitution on
+
+
+statement ok
+SET threads = 1;
 
 
 statement ok
@@ -37,16 +36,16 @@ n	bytes_match
 3000000	t
 
 
-# the data did land in a cleaved mode, so the sizing path under test is the one that ran
+# the column is stored as fsst, over many segments
 query
-SELECT count(*) > 0 AS has_plus FROM pragma_storage_info('dfo_own.grouped', include_segment_info=true)
-  WHERE compression='DICT_FSST' AND segment_info LIKE '%PLUS%';
+SELECT bool_and(compression = 'FSST') AS fsst, count(*) > 10 AS many_segments FROM pragma_storage_info('dfo_own.grouped', include_segment_info=true)
+  WHERE column_name='c' AND segment_type='VARCHAR';
 ----
-has_plus
-t
+fsst	many_segments
+t	t
 
 
-# random access through the cleaved segments still reconstructs prefix + suffix correctly
+# random access into the segments still reconstructs prefix + suffix correctly
 query
 SELECT c FROM dfo_own.grouped WHERE rowid IN (0, 499, 500, 1499999, 2999999) ORDER BY c;
 ----

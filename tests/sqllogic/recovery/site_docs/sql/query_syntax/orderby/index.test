@@ -39,13 +39,13 @@ CREATE OR REPLACE TABLE planets AS
 query
 SELECT *
 FROM planets
-ORDER BY kind;
+ORDER BY moons;
 ----
 planet	kind	moons
-Jupiter	gas giant	95
-Neptune	ice giant	14
-Mars	terrestrial	2
 Mercury	terrestrial	0
+Mars	terrestrial	2
+Neptune	ice giant	14
+Jupiter	gas giant	95
 
 # DOCS_TEST: example_005
 
@@ -54,13 +54,13 @@ Mercury	terrestrial	0
 query
 SELECT *
 FROM planets
-ORDER BY kind DESC NULLS LAST;
+ORDER BY moons DESC NULLS LAST;
 ----
 planet	kind	moons
+Jupiter	gas giant	95
+Neptune	ice giant	14
 Mars	terrestrial	2
 Mercury	terrestrial	0
-Neptune	ice giant	14
-Jupiter	gas giant	95
 
 # DOCS_TEST: example_006
 

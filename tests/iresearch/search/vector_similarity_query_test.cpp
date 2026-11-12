@@ -115,7 +115,8 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 irs::DirectoryReader BuildIndex(
   irs::Directory& dir, irs::doc_id_t n,
   irs::IndexWriterOptions opts = MakeWriterOptions()) {
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  auto writer =
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
   {
@@ -178,12 +179,11 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   void Build(irs::doc_id_t n) {
     _docs = n;
     _reader = BuildIndex(_dir, n);
-    ASSERT_NE(nullptr, _reader);
-    ASSERT_EQ(1U, _reader->size());
-    ASSERT_EQ(n, _reader->docs_count());
-    AssertQuantizedPath((*_reader)[0]);
+    ASSERT_EQ(1U, _reader.size());
+    ASSERT_EQ(n, _reader.docs_count());
+    AssertQuantizedPath((_reader)[0]);
     _filter = MakeKnnFilter();
-    _prepared.emplace(_filter, *_reader, nullptr, irs::IResourceManager::gNoop,
+    _prepared.emplace(_filter, _reader, nullptr, irs::IResourceManager::gNoop,
                       nullptr, ::tests::PreparedFilter::CollectMode::Single);
     ASSERT_EQ(1U, _prepared->size());
   }
@@ -239,7 +239,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   opts.quant = irs::VectorQuantization::SQ8;
   opts.radius = 100000.f;
   irs::VectorSimilarityScorer scorer;
-  tests::PreparedFilter prepared{filter, *_reader, &scorer};
+  tests::PreparedFilter prepared{filter, _reader, &scorer};
 
   const auto check_scores = [](auto& node, auto&& seek) {
     constexpr std::array<irs::doc_id_t, 6> kDocs{1, 2, 127, 128, 129, 300};
@@ -275,7 +275,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
 TEST_F(VectorSimilarityQueryTest, KnnScoresAreTheSameInHitsLeadAndTop) {
   Build(300);
   irs::VectorSimilarityScorer scorer;
-  tests::PreparedFilter prepared{_filter, *_reader, &scorer};
+  tests::PreparedFilter prepared{_filter, _reader, &scorer};
   const auto* query = prepared.Query(0);
   ASSERT_NE(nullptr, query);
 
@@ -408,7 +408,7 @@ irs::ByVectorExact MakeExactFilter(float x, float radius, bool inclusive) {
 
 TEST_F(VectorSimilarityQueryTest, ExactRadius) {
   Build(300);
-  const auto& segment = (*_reader)[0];
+  const auto& segment = (_reader)[0];
   irs::VectorSimilarityScorer scorer;
   for (const bool inclusive : {false, true}) {
     SCOPED_TRACE(inclusive);
@@ -463,9 +463,8 @@ class RerankExactDistancesTest
 
   void Build(irs::doc_id_t n) {
     _reader = BuildIndex(_dir, n, MakeWriterOptions(GetParam(), kRowGroup));
-    ASSERT_NE(nullptr, _reader);
-    ASSERT_EQ(1U, _reader->size());
-    const auto* column = (*_reader)[0].Column(kVec);
+    ASSERT_EQ(1U, _reader.size());
+    const auto* column = (_reader)[0].Column(kVec);
     ASSERT_NE(nullptr, column);
     const auto* child = column->Child();
     ASSERT_NE(nullptr, child);
@@ -482,7 +481,7 @@ class RerankExactDistancesTest
 
 TEST_P(RerankExactDistancesTest, Rerank) {
   Build(300);
-  const auto& segment = (*_reader)[0];
+  const auto& segment = (_reader)[0];
   const std::vector<float> query(kDim, 0.f);
   std::vector<irs::ScoreDoc> hits;
   for (irs::doc_id_t doc :

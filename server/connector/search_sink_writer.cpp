@@ -38,6 +38,7 @@
 
 #include "catalog/catalog.h"
 #include "connector/common.h"
+#include "connector/constraint_keys.h"
 #include "connector/inet_terms.h"
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"
@@ -256,14 +257,16 @@ bool SearchSinkInsertBaseImpl::InvertDictionary(
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-  EntryInfoProvider&& entry_info_provider, PkColumnKind pk,
+  EntryInfoProvider&& entry_info_provider, catalog::PkColumnKind pk,
   std::vector<IndexedExpression>&& indexed_exprs,
-  const catalog::InvertedIndexConfig* config)
+  const catalog::InvertedIndexConfig* config,
+  std::vector<ConstraintKeyEncoder>&& constraint_keys)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _trx{&trx},
     _pk{pk},
-    _indexed_expressions{std::move(indexed_exprs)} {
+    _indexed_expressions{std::move(indexed_exprs)},
+    _constraint_keys{std::move(constraint_keys)} {
   if (!config) {
     return;
   }
@@ -272,8 +275,12 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
       continue;
     }
     const auto* entry = config->FindEntry(key.field_id);
-    if (entry && entry->IsTermDict()) {
-      _terms_by_column[key.column_id].push_back(key.field_id);
+    if (!entry || !entry->IsTermDict()) {
+      continue;
+    }
+    auto& fields = _terms_by_column[key.column_id];
+    if (!absl::c_linear_search(fields, key.field_id)) {
+      fields.push_back(key.field_id);
     }
   }
 }
@@ -917,7 +924,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size,
                                         const duckdb::Vector* pk) {
   SDB_ASSERT(batch_size > 0);
   _document.reset();
-  _document.emplace(_trx->Insert(false, batch_size));
+  _document.emplace(_trx->Insert(batch_size));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
   // at the flushed segment while the terms land in the fresh one.
@@ -1043,6 +1050,11 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
       DeserializeBoundExpression(key.normalized_expression, context),
       key.field_id);
   }
+  std::vector<ConstraintKeyEncoder> constraint_keys;
+  constraint_keys.reserve(config->constraint_keys.size());
+  for (const auto& key : config->constraint_keys) {
+    constraint_keys.emplace_back(context, shard.GetId(), key);
+  }
   auto tokenizers =
     catalog::IndexTokenizers{context, catalog, *config}.AcquireAll(context);
   auto entry_of = [config](irs::field_id field_id) {
@@ -1052,29 +1064,40 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   trx.SetFieldOptions(config);
   return std::make_unique<SearchSinkInsertBaseImpl>(
     trx, BoundTokenizers(std::move(tokenizers)), std::move(entry_of),
-    catalog::PkColumnKind::None, std::move(indexed_exprs), config.get());
+    catalog::PkColumnKind::None, std::move(indexed_exprs), config.get(),
+    std::move(constraint_keys));
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
                             duckdb::idx_t table_id,
-                            duckdb::ClientContext& context) {
+                            duckdb::ClientContext& context,
+                            std::span<const ColumnId> copied) {
   const auto num_rows = chunk.size();
   sink.InitImpl(num_rows);
   for (size_t col = 0; col < column_ids.size(); ++col) {
     const auto& vec = chunk.data[col];
     const auto& type = vec.GetType();
-    sink.AppendToColumn(column_ids[col], type, vec, num_rows);
+    if (!absl::c_linear_search(copied, column_ids[col])) {
+      sink.AppendToColumn(column_ids[col], type, vec, num_rows);
+    }
     for (const auto term_field : sink.TermFieldsForColumn(column_ids[col])) {
       sink.SwitchFieldImpl(term_field, type, vec, num_rows);
     }
   }
   for (const auto& indexed_expr : sink.IndexedExpressions()) {
-    auto result = EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk,
-                                        table_id, column_ids, context);
+    EvaluatedExpression evaluated{*indexed_expr.normalized_expr, chunk,
+                                  table_id, column_ids, context};
+    auto& result = evaluated.Result();
     sink.SwitchExpressionImpl(indexed_expr.field_id, result.GetType(), result,
                               num_rows);
+  }
+  for (const auto& key : sink.ConstraintKeys()) {
+    duckdb::Vector keys{duckdb::LogicalType::BLOB, num_rows};
+    key.Encode(chunk, column_ids, keys);
+    sink.SwitchFieldImpl(key.Key().field, duckdb::LogicalType::BLOB, keys,
+                         num_rows);
   }
   sink.FinishImpl();
 }

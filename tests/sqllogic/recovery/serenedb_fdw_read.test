@@ -1,80 +1,74 @@
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-CREATE TABLE postgres.public.sfr_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE sfr_docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX sfr_docs_idx ON postgres.public.sfr_docs USING inverted(id, body)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+CREATE INDEX sfr_docs_idx ON sfr_docs USING inverted(id, body);
 
 statement ok
-INSERT INTO postgres.public.sfr_docs
+INSERT INTO sfr_docs
 SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1, 101) t(i);
 
 statement ok
-CREATE TABLE postgres.public.sfr_notes(id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE sfr_notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX sfr_notes_idx ON postgres.public.sfr_notes USING inverted(body);
+CREATE INDEX sfr_notes_idx ON sfr_notes USING inverted(body);
 
 statement ok
-INSERT INTO postgres.public.sfr_notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
+INSERT INTO sfr_notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) postgres.public.sfr_notes;
+CHECKPOINT;
 
 statement ok
-CREATE VIEW postgres.public.sfr_even AS SELECT id FROM postgres.public.sfr_docs WHERE id % 2 = 0;
+INSERT INTO sfr_notes VALUES (100, 'note1');
 
 statement ok
-CREATE SEQUENCE postgres.public.sfr_seq START 7;
+CREATE VIEW sfr_even AS SELECT id FROM sfr_docs WHERE id % 2 = 0;
 
 statement ok
-CREATE TABLE postgres.public.sfr_base(id INTEGER PRIMARY KEY, label TEXT, score INTEGER);
+CREATE TABLE sfr_base(id INTEGER PRIMARY KEY, label TEXT, score INTEGER);
 
 statement ok
-INSERT INTO postgres.public.sfr_base VALUES (1, 'alpha', 30), (2, 'beta', 25), (3, 'gamma', 30);
+INSERT INTO sfr_base VALUES (1, 'alpha', 30), (2, 'beta', 25), (3, 'gamma', 30);
 
 statement ok
-CREATE VIEW postgres.public.sfr_base_v AS SELECT * FROM postgres.public.sfr_base;
+CREATE VIEW sfr_base_v AS SELECT * FROM sfr_base;
 
 statement ok
-CREATE INDEX sfr_base_v_inv ON postgres.public.sfr_base_v USING inverted(score);
+CREATE INDEX sfr_base_v_inv ON sfr_base_v
+  USING inverted(score, id included(), label included());
 
-statement ok
-CHECKPOINT postgres;
+connection holder
+query
+SELECT pg_backup_start('sfr') IS NOT NULL AS started;
+----
+started
+t
 
 system ok
-rm -rf $__TEST_DIR__/sfr_snap && mkdir $__TEST_DIR__/sfr_snap && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfr_snap/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfr_snap/catalog.wal
+rm -rf $__TEST_DIR__/sfr_snap && mkdir -p $__TEST_DIR__/sfr_snap/engine_v1 && cp -r ${SDB_DATADIR}/engine_v1/wal $__TEST_DIR__/sfr_snap/engine_v1/ && cp -r ${SDB_DATADIR}/engine_v1/store $__TEST_DIR__/sfr_snap/engine_v1/ && cp ${SDB_DATADIR}/PG_VERSION $__TEST_DIR__/sfr_snap/
+
+connection holder
+statement ok
+SELECT * FROM pg_backup_stop();
 
 statement ok
 CREATE TABLE sfr_files AS
 SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfr_snap/**');
 
-query
-SELECT count(*) > 0 AS listed FROM sfr_files;
-----
-listed
-t
-
-
 statement ok
-CREATE SERVER sfr_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfr_snap/5');
+CREATE SERVER sfr_snap FOREIGN DATA WRAPPER serenedb_fdw
+  OPTIONS (path '${__TEST_DIR__}/sfr_snap', database '${__DATABASE__}');
 
 query
 SELECT type, readonly FROM duckdb_databases() WHERE database_name = 'sfr_snap';
 ----
 type	readonly
-serenedb_readonly	t
-
-query
-SELECT metric, value FROM sfr_snap.pg_catalog.sdb_metrics
-WHERE metric LIKE 'catalog_wal_%' ORDER BY metric;
-----
-metric	value
-catalog_wal_appended_bytes	0
-catalog_wal_size_on_disk	0
+serenedb	t
 
 query
 SELECT count(*) AS n, sum(id) AS s FROM sfr_snap.public.sfr_docs;
@@ -100,15 +94,15 @@ query
 SELECT count(*) AS n FROM sfr_snap.public.sfr_notes;
 ----
 n
-40
+41
 
 query
-SELECT id FROM sfr_snap.public.sfr_notes WHERE body @@ 'note1' ORDER BY id LIMIT 3;
+SELECT id FROM sfr_snap.public.sfr_notes WHERE body @@ 'note1' ORDER BY id DESC LIMIT 3;
 ----
 id
-1
-5
-9
+100
+37
+33
 
 query
 SELECT count(*) AS n FROM sfr_snap.public.sfr_even;
@@ -117,12 +111,12 @@ n
 50
 
 query
-SELECT id, label, score FROM sfr_snap.public.sfr_base_v_inv ORDER BY score, id;
+SELECT id, label FROM sfr_snap.public.sfr_base_v_inv ORDER BY id;
 ----
-id	label	score
-2	beta	25
-1	alpha	30
-3	gamma	30
+id	label
+1	alpha
+2	beta
+3	gamma
 
 query
 SELECT id, label FROM sfr_snap.public.sfr_base_v_inv WHERE score = 30 ORDER BY id;
@@ -147,60 +141,27 @@ USE ${__DATABASE__};
 
 
 statement ok
-INSERT INTO postgres.public.sfr_docs VALUES (1000, 'even');
+INSERT INTO sfr_docs VALUES (1000, 'even');
 
 statement ok
-INSERT INTO postgres.public.sfr_notes VALUES (1000, 'note1');
+INSERT INTO sfr_notes VALUES (1000, 'note1');
 
 statement ok
-VACUUM (REFRESH_TABLE) postgres.public.sfr_notes;
+CHECKPOINT;
 
 statement ok
-VACUUM (REFRESH_INDEX) postgres.public.sfr_docs_idx;
-
-statement ok
-CHECKPOINT postgres;
-
-statement ok
-FORCE CHECKPOINT postgres;
-
-system ok
-stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal > $__TEST_DIR__/sfr_log.inode
-
-statement ok
-SET sdb_faults = 'compact_inside_ddl';
-
-statement ok
-CREATE TABLE postgres.public.sfr_compacted (x INT);
-
-statement ok
-SET sdb_faults = '-compact_inside_ddl';
-
-system ok
-[ "$(stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal)" != "$(cat $__TEST_DIR__/sfr_log.inode)" ]
+INSERT INTO sfr_docs VALUES (1002, 'even');
 
 query
-SELECT (SELECT count(*) FROM sfr_snap.public.sfr_docs) AS docs, (SELECT count(*) FROM sfr_snap.public.sfr_notes) AS notes;
-----
-docs	notes
-100	40
-
-query
-SELECT (SELECT count(*) FROM postgres.public.sfr_docs_idx WHERE body @@ 'even') AS live_docs,
+SELECT (SELECT count(*) FROM sfr_even) AS live_even,
+       (SELECT count(*) FROM sfr_snap.public.sfr_even) AS snap_even,
+       (SELECT count(*) FROM sfr_docs_idx WHERE body @@ 'even') AS live_docs,
        (SELECT count(*) FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'even') AS snap_docs,
-       (SELECT count(*) FROM postgres.public.sfr_notes WHERE body @@ 'note1') AS live_notes,
+       (SELECT count(*) FROM sfr_notes WHERE body @@ 'note1') AS live_notes,
        (SELECT count(*) FROM sfr_snap.public.sfr_notes WHERE body @@ 'note1') AS snap_notes;
 ----
-live_docs	snap_docs	live_notes	snap_notes
-51	50	11	10
-
-sleep 1500ms
-
-query
-SELECT count(*) AS n FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'odd';
-----
-n
-50
+live_even	snap_even	live_docs	snap_docs	live_notes	snap_notes
+52	50	52	50	12	11
 
 query
 SELECT count(*) AS changed FROM (
@@ -233,7 +194,7 @@ query
 SELECT count(*) AS n FROM sfr_snap.public.sfr_notes;
 ----
 n
-40
+41
 
 connection after_restart
 query
@@ -242,16 +203,6 @@ SELECT id, label FROM sfr_snap.public.sfr_base_v_inv WHERE score = 30 ORDER BY i
 id	label
 1	alpha
 3	gamma
-
-connection after_restart
-query
-SELECT (SELECT count(*) FROM postgres.public.sfr_docs_idx WHERE body @@ 'even') AS live_docs,
-       (SELECT count(*) FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'even') AS snap_docs,
-       (SELECT count(*) FROM postgres.public.sfr_notes WHERE body @@ 'note1') AS live_notes,
-       (SELECT count(*) FROM sfr_snap.public.sfr_notes WHERE body @@ 'note1') AS snap_notes;
-----
-live_docs	snap_docs	live_notes	snap_notes
-51	50	11	10
 
 connection after_restart
 query
@@ -286,7 +237,8 @@ n
 
 connection after_restart
 statement ok
-CREATE SERVER sfr_again FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfr_snap/5');
+CREATE SERVER sfr_again FOREIGN DATA WRAPPER serenedb_fdw
+  OPTIONS (path '${__TEST_DIR__}/sfr_snap', database '${__DATABASE__}');
 
 connection after_restart
 query

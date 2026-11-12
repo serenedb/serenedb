@@ -3,10 +3,13 @@ control substitution on
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SET force_compression = 'rle';
 
+statement ok
+SET threads = 1;
+
 
 statement ok
 CREATE TABLE stdcm_forced (a INTEGER PRIMARY KEY, runs BIGINT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -14,7 +17,7 @@ INSERT INTO stdcm_forced SELECT a, a // 1000 FROM range(20000) t(a);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stdcm_forced;
+VACUUM (FLUSH_TABLE) stdcm_forced;
 
 
 query
@@ -31,7 +34,7 @@ SET disabled_compression_methods = 'rle';
 
 statement ok
 CREATE TABLE stdcm_disabled (a INTEGER PRIMARY KEY, runs BIGINT, tags INTEGER[])
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -39,7 +42,7 @@ INSERT INTO stdcm_disabled SELECT a, a // 1000, [a // 1000, 7] FROM range(20000)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stdcm_disabled;
+VACUUM (FLUSH_TABLE) stdcm_disabled;
 
 
 query
@@ -64,7 +67,7 @@ RESET force_compression;
 
 statement ok
 CREATE TABLE stdcm_auto (a INTEGER PRIMARY KEY, runs BIGINT, tags INTEGER[])
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -72,7 +75,7 @@ INSERT INTO stdcm_auto SELECT a, a // 1000, [a // 1000, 7] FROM range(20000) t(a
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stdcm_auto;
+VACUUM (FLUSH_TABLE) stdcm_auto;
 
 
 query

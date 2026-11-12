@@ -30,7 +30,7 @@ For example, to apply zstd compression, run:
 
 <SqlLogicTest id="sql/data_types/text/example_002" />
 
-A search table (`WITH (storage = 'search')`) accepts the same clause with its own text codecs, listed in [Columnstore Storage & Compression](../indexes/inverted/columnstore.md#codecs).
+The codecs a text column takes, and the level some of them accept, are listed in [Columnstore Storage & Compression](../indexes/inverted/columnstore.md#codecs).
 
 ## Text Type Values
 

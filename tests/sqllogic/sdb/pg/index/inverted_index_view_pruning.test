@@ -12,6 +12,9 @@ hash-threshold 100
 statement ok
 SET late_materialization_lookup_max_rows = 0;
 
+statement ok
+SET SESSION preserve_insertion_order = true;
+
 statement count 5
 COPY (SELECT 1 AS id, 'pudge goes mid'     AS body, 'alpha' AS unused1, 100 AS unused2, 'X' AS unused3
       UNION ALL SELECT 2, 'anchin reads manga',     'bravo', 200, 'Y'
@@ -222,7 +225,6 @@ count
 
 
 # Case 6: single-column inverted index on a view over a base table.
-# The view's surrogate PK is the base table's real PK.
 
 statement ok
 CREATE TABLE prune_base (
@@ -245,14 +247,13 @@ query
 EXPLAIN CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: prune_base     │
-│ Type: Sequential Scan │
-│ Projections: body     │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ───────╮
+╰─────────┬─────────╯
+╭─ IRESEARCH_SCAN ──╮
+│ Table: prune_base │
+│ Projections: body │
+│ ~3 rows           │
+╰───────────────────╯
 
 statement ok
 CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
@@ -269,19 +270,18 @@ count
 statement ok
 CREATE VIEW prune_v7 AS SELECT * FROM prune_base;
 
-# `id` appears twice in projections: once as an index key, once as PK plumbing.
 query
 EXPLAIN CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ SEQ_SCAN ┴───────────╮
-│ Table: prune_base     │
-│ Type: Sequential Scan │
-│ Projections: id, body │
-│ ~3 rows               │
-╰───────────────────────╯
+╭─ EXTENSION ────────╮
+╰──────────┬─────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Table: prune_base  │
+│ Projections: id,   │
+│              body  │
+│ ~3 rows            │
+╰────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);

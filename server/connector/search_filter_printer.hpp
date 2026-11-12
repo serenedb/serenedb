@@ -34,6 +34,7 @@ using FieldNameResolver =
   std::function<std::string(sdb::connector::ColumnId, DictRef)>;
 using FieldTypeResolver =
   std::function<duckdb::LogicalType(sdb::connector::ColumnId, DictRef)>;
+using FieldKeyResolver = std::function<bool(sdb::connector::ColumnId)>;
 
 // Builds the structured filter tree for EXPLAIN: one node per filter with its
 // attributes (field, decoded terms/bounds, max_terms, min_match, boost, ...)
@@ -42,6 +43,7 @@ using FieldTypeResolver =
 duckdb::ExplainNode ToExplainNode(const Filter& f);
 duckdb::ExplainNode ToExplainNode(const Filter& f,
                                   const FieldNameResolver& name_of,
-                                  const FieldTypeResolver& type_of);
+                                  const FieldTypeResolver& type_of,
+                                  const FieldKeyResolver& key_of);
 
 }  // namespace irs

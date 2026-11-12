@@ -48,6 +48,7 @@
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_seal.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -182,6 +183,20 @@ bool Accepts(const codecs::CompressionFunction& function,
   return !function.accepts || function.accepts(chunks);
 }
 
+bool SelfContained(const ColumnBlockMeta& block) noexcept {
+  return block.codec->type != codecs::CodecType::Uncompressed ||
+         block.statistics.GetType().InternalType() !=
+           duckdb::PhysicalType::VARCHAR;
+}
+
+bool EmptyValidity(const ColumnBlockMeta& block) noexcept {
+  return block.byte_size == 0 && block.codec->type == codecs::CodecType::Empty;
+}
+
+bool InCodec(codecs::CodecType forced, const ColumnBlockMeta& block) noexcept {
+  return forced == codecs::CodecType::Auto || block.codec->type == forced;
+}
+
 ColumnMeta TuningOf(ColumnMeta& from) {
   ColumnMeta to;
   to.id = from.id;
@@ -203,6 +218,10 @@ void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink) {
   m.tuple_count = rows;
   m.codec = codecs::GetCodec(codecs::CodecType::Empty, type.InternalType());
   sink.push_back(std::move(m));
+}
+
+WriteContext& ColumnWriter::WriteCtx() const noexcept {
+  return _owner->WriteCtx();
 }
 
 template<typename Encode>
@@ -622,28 +641,30 @@ void ColumnWriter::SealColumn(
   SealValidity(chunks, row_count, meta.validity);
 }
 
-ColumnWriter::ColumnWriter(WriteContext& ctx, field_id id,
+ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
                            duckdb::LogicalType type,
-                           const ColumnWriterOptions& options)
-  : _ctx{&ctx},
+                           const ColumnWriterOptions& options, bool deferred)
+  : _owner{&owner},
     _id{id},
     _type{std::move(type)},
     _skip_validity{options.skip_validity},
-    _ingest_lists{!options.hyperloglog},
+    _ingest_lists{options.distinct == DistinctStats::None && !deferred},
     _row_group_size{options.row_group_size},
     _named{options.compression},
-    _codec_params{options.codec_params} {
+    _codec_params{options.codec_params},
+    _deferred{deferred},
+    _distinct{options.distinct} {
   if (_type.id() == duckdb::LogicalTypeId::VARIANT) {
-    const auto& config = duckdb::DBConfig::GetConfig(WriteCtx().Database());
+    const auto& config = duckdb::DBConfig::GetConfig(_owner->Database());
     _variant_min_shred_size =
       duckdb::Settings::Get<duckdb::VariantMinimumShreddingSizeSetting>(config);
     _force_variant_shredding = config.options.force_variant_shredding;
   }
   _meta.id = _id;
   _meta.type = _type;
-  if (options.hyperloglog) {
-    _meta.hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
-    _hll_auto = true;
+  _meta.compression_level = _codec_params.compression_level;
+  if (_distinct != DistinctStats::None) {
+    _meta.distinct = duckdb::make_shared_ptr<duckdb::DistinctStatistics>();
   }
   if (!_ingest_lists) {
     return;
@@ -672,7 +693,7 @@ WriteChunk& ColumnWriter::OpenChunk() {
     return _staged[_staged_chunks - 1];
   }
   if (_staged_chunks == _staged.size()) {
-    auto& alloc = duckdb::Allocator::Get(WriteCtx().Database());
+    auto& alloc = duckdb::Allocator::Get(_owner->Database());
     auto& cache = _staged_caches.emplace_back(
       alloc, IngestsList() ? duckdb::LogicalType::BOOLEAN : _type,
       STANDARD_VECTOR_SIZE);
@@ -692,9 +713,10 @@ void ColumnWriter::Stage(uint64_t count, Fill&& fill) {
   uint64_t off = 0;
   while (off < count) {
     auto& back = OpenChunk();
-    const auto take = static_cast<duckdb::idx_t>(
-      std::min({count - off, STANDARD_VECTOR_SIZE - uint64_t{back.count},
-                _row_group_size - _staged_rows}));
+    const uint64_t rg_room =
+      _deferred ? STANDARD_VECTOR_SIZE : _row_group_size - _staged_rows;
+    const auto take = static_cast<duckdb::idx_t>(std::min(
+      {count - off, STANDARD_VECTOR_SIZE - uint64_t{back.count}, rg_room}));
     fill(back, static_cast<duckdb::idx_t>(off), take);
     back.count += take;
     if (back.count == duckdb::idx_t{STANDARD_VECTOR_SIZE}) {
@@ -707,7 +729,7 @@ void ColumnWriter::Stage(uint64_t count, Fill&& fill) {
     duckdb::FlatVector::SetSize(back.data, back.count);
     _staged_rows += take;
     off += take;
-    if (_staged_rows == _row_group_size) {
+    if (!_deferred && _staged_rows == _row_group_size) {
       SealRowGroup();
     }
   }
@@ -763,6 +785,12 @@ void ColumnWriter::Append(const duckdb::Vector& vec, duckdb::idx_t count) {
     return;
   }
   Stage(count, [&](WriteChunk& back, duckdb::idx_t off, duckdb::idx_t take) {
+    if (_deferred) {
+      duckdb::VectorOperations::Copy(vec, back.data, off + take,
+                                     /*source_offset=*/off,
+                                     /*target_offset=*/back.count);
+      return;
+    }
     duckdb::ImmutableStrings::Copy(vec, back.data, off + take,
                                    /*source_offset=*/off,
                                    /*target_offset=*/back.count);
@@ -808,22 +836,204 @@ void ColumnWriter::PadNullsTo(uint64_t target_row) {
   }
 }
 
+bool ColumnWriter::LayoutMatches(const ColumnReader& column) const noexcept {
+  return !_type.IsNested() && !_deferred &&
+         _type.id() != duckdb::LogicalTypeId::VARIANT && !column.InMemory() &&
+         !column.Patched() && column.Type() == _type &&
+         !(_skip_validity && column.HasValidity()) &&
+         column.CompressionLevel() == _codec_params.compression_level;
+}
+
+codecs::CodecType ColumnWriter::ForcedCodec() const {
+  auto forced = _named;
+  if (forced == codecs::CodecType::Auto) {
+    forced =
+      codecs::FromDuckDB(duckdb::Settings::Get<duckdb::ForceCompressionSetting>(
+        duckdb::DBConfig::GetConfig(_owner->Database())));
+  }
+  if (forced == codecs::CodecType::Auto) {
+    return forced;
+  }
+  const auto physical = _type.InternalType();
+  if (physical == duckdb::PhysicalType::VARCHAR &&
+      forced != codecs::CodecType::Uncompressed) {
+    return codecs::ChoiceOf(forced) ? forced : codecs::CodecType::Auto;
+  }
+  const auto* function = codecs::GetCodec(forced, physical);
+  return function && function->analyze ? forced : codecs::CodecType::Auto;
+}
+
+bool ColumnWriter::CopyableFrom(const ColumnReader& column) const {
+  if (!LayoutMatches(column) || column.RowCount() < _row_group_size) {
+    return false;
+  }
+  const auto forced = ForcedCodec();
+  if (!absl::c_all_of(column.DataBlocks(), [&](const ColumnBlockMeta& block) {
+        return SelfContained(block) && InCodec(forced, block);
+      })) {
+    return false;
+  }
+  const auto* validity = column.Validity();
+  return !validity || absl::c_all_of(validity->DataBlocks(), SelfContained);
+}
+
+void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
+                             std::vector<ColumnBlockMeta>& sink,
+                             std::vector<byte_type>& buffer) {
+  ColumnBlockMeta m{
+    .statistics = block.statistics.Copy(),
+    .tuple_count = block.tuple_count,
+    .codec = block.codec,
+  };
+  if (block.byte_size != 0) {
+    const auto* bytes =
+      source.TryReadStable(block.file_offset, block.byte_size);
+    if (!bytes) {
+      buffer.resize(block.byte_size);
+      source.Read(block.file_offset, buffer.data(), block.byte_size);
+      bytes = buffer.data();
+    }
+    m.file_offset =
+      AppendAligned(WriteCtx().Blocks(),
+                    {reinterpret_cast<const char*>(bytes), block.byte_size});
+    m.byte_size = block.byte_size;
+  }
+  sink.push_back(std::move(m));
+}
+
+void ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& source) {
+  SDB_ASSERT(CopyableFrom(column));
+  SealRowGroup();
+  std::vector<byte_type> buffer;
+  for (const auto& block : column.DataBlocks()) {
+    CopyBlock(block, source, _meta.data, buffer);
+  }
+  CopyValidity(column, source, 0, column.RowCount(), buffer);
+  _row_start += column.RowCount();
+}
+
+bool ColumnWriter::ValidityCopyable(const ColumnReader& column, uint64_t first,
+                                    uint64_t end) const noexcept {
+  const auto* validity = column.Validity();
+  if (_skip_validity || !validity) {
+    return true;
+  }
+  const auto blocks = validity->DataBlocks();
+  for (auto v = validity->Locate(first).block; v < blocks.size(); ++v) {
+    const auto v_first = validity->DataBlockFirstRow(v);
+    if (v_first >= end) {
+      break;
+    }
+    const auto v_end = v_first + blocks[v].tuple_count;
+    if (!EmptyValidity(blocks[v]) &&
+        (v_first < first || v_end > end || !SelfContained(blocks[v]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void ColumnWriter::CopyValidity(const ColumnReader& column, ReadContext& source,
+                                uint64_t first, uint64_t end,
+                                std::vector<byte_type>& buffer) {
+  if (_skip_validity) {
+    return;
+  }
+  const auto* validity = column.Validity();
+  if (!validity) {
+    EmitEmptyValidity(end - first, _meta.validity);
+    return;
+  }
+  const auto blocks = validity->DataBlocks();
+  for (auto v = validity->Locate(first).block; v < blocks.size(); ++v) {
+    const auto v_first = validity->DataBlockFirstRow(v);
+    if (v_first >= end) {
+      break;
+    }
+    const auto v_end = v_first + blocks[v].tuple_count;
+    if (v_first >= first && v_end <= end) {
+      CopyBlock(blocks[v], source, _meta.validity, buffer);
+    } else {
+      SDB_ASSERT(EmptyValidity(blocks[v]));
+      EmitEmptyValidity(std::min(v_end, end) - std::max(v_first, first),
+                        _meta.validity);
+    }
+  }
+}
+
+void ColumnWriter::DecodeRows(const ColumnReader& column, ReadContext& source,
+                              uint64_t first, uint64_t count) {
+  auto state = column.InitScan(source);
+  if (first != 0) {
+    column.Skip(state, first);
+  }
+  ColumnReader::VectorScratch scratch{column.Type()};
+  for (uint64_t done = 0; done < count;) {
+    const auto take = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(count - done, STANDARD_VECTOR_SIZE));
+    auto& batch = scratch.Reset();
+    column.Scan(state, batch, take);
+    Append(batch, take);
+    done += take;
+  }
+}
+
+void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
+                            ReadContext& source, uint64_t first,
+                            uint64_t count) {
+  SDB_ASSERT(_row_start + _staged_rows <= start_row);
+  SDB_ASSERT(first + count <= column.RowCount());
+  PadNullsTo(start_row);
+  const auto end = first + count;
+  auto written = first;
+  if (LayoutMatches(column) && _distinct == DistinctStats::None &&
+      !_owner->HasAnn(_id)) {
+    const auto forced = ForcedCodec();
+    const auto blocks = column.DataBlocks();
+    std::vector<byte_type> buffer;
+    for (auto b = column.Locate(first).block; b < blocks.size(); ++b) {
+      const auto block_first = column.DataBlockFirstRow(b);
+      const auto block_end = block_first + blocks[b].tuple_count;
+      if (block_first >= end) {
+        break;
+      }
+      if (block_first < first || block_end > end || !SelfContained(blocks[b]) ||
+          !InCodec(forced, blocks[b]) ||
+          !ValidityCopyable(column, block_first, block_end)) {
+        continue;
+      }
+      if (written < block_first) {
+        DecodeRows(column, source, written, block_first - written);
+      }
+      SealRowGroup();
+      CopyBlock(blocks[b], source, _meta.data, buffer);
+      CopyValidity(column, source, block_first, block_end, buffer);
+      _row_start += blocks[b].tuple_count;
+      written = block_end;
+    }
+  }
+  if (written < end) {
+    DecodeRows(column, source, written, end - written);
+  }
+}
+
+void ColumnWriter::SealStaged(std::span<WriteChunk> chunks, uint64_t rows) {
+  SealColumn(_type, chunks, rows, _skip_validity, _meta, _ingest);
+  _row_start += rows;
+}
+
 void ColumnWriter::SealRowGroup() {
   if (_staged_rows == 0) {
     return;
   }
   std::span<WriteChunk> chunks{_staged.data(), _staged_chunks};
-  if (_hll_auto && _meta.hyperloglog) {
-    if (!_hll_hashes.GetBufferRef()) {
-      _hll_hashes.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
-                             STANDARD_VECTOR_SIZE);
-    }
+  if (_distinct != DistinctStats::None) {
     for (auto& chunk : chunks) {
-      duckdb::VectorOperations::Hash(chunk.data, _hll_hashes, chunk.count);
-      _meta.hyperloglog->Update(chunk.data, _hll_hashes);
+      UpdateDistinct(*_meta.distinct, _distinct, chunk.data, chunk.count,
+                     _distinct_hashes);
     }
   }
-  const auto& config = duckdb::DBConfig::GetConfig(WriteCtx().Database());
+  const auto& config = duckdb::DBConfig::GetConfig(_owner->Database());
   _global_method = codecs::FromDuckDB(
     duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config));
   _method = _named == codecs::CodecType::Auto ? _global_method : _named;
@@ -831,18 +1041,76 @@ void ColumnWriter::SealRowGroup() {
   for (const auto disabled : config.GetDisabledCompressionMethods()) {
     _disabled.set(std::to_underlying(codecs::FromDuckDB(disabled)));
   }
-  SealColumn(_type, chunks, _staged_rows, _skip_validity, _meta, _ingest);
+  if (!_deferred) {
+    SealStaged(chunks, _staged_rows);
+  } else {
+    const size_t per_seal = std::max<size_t>(
+      1, size_t{_row_group_size} / size_t{STANDARD_VECTOR_SIZE});
+    for (size_t begin = 0; begin < chunks.size(); begin += per_seal) {
+      const auto slice =
+        chunks.subspan(begin, std::min(per_seal, chunks.size() - begin));
+      uint64_t rows = 0;
+      for (const auto& chunk : slice) {
+        rows += chunk.count;
+      }
+      SealStaged(slice, rows);
+    }
+  }
   for (duckdb::idx_t c = 0; c != _staged_chunks; ++c) {
     _staged[c].data.ResetFromCache(_staged_caches[c]);
   }
-  _row_start += _staged_rows;
   _staged_chunks = 0;
   _staged_rows = 0;
 }
 
-void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
-  _meta.hyperloglog = std::move(hll);
-  _hll_auto = false;
+std::vector<WriteChunk> ColumnWriter::Snapshot(uint64_t rows) const {
+  SDB_ASSERT(_deferred && _row_start == 0);
+  std::vector<WriteChunk> chunks;
+  auto left = std::min(rows, _staged_rows);
+  for (size_t i = 0; i < _staged_chunks && left != 0; ++i) {
+    const auto& chunk = _staged[i];
+    const auto take =
+      static_cast<duckdb::idx_t>(std::min<uint64_t>(left, chunk.count));
+    if (take == duckdb::idx_t{STANDARD_VECTOR_SIZE}) {
+      chunks.push_back(WriteChunk{duckdb::Vector::Ref(chunk.data), take});
+    } else {
+      duckdb::Vector copy{_type, take};
+      duckdb::VectorOperations::Copy(chunk.data, copy, take, 0, 0);
+      duckdb::FlatVector::SetSize(copy, take);
+      chunks.push_back(WriteChunk{std::move(copy), take});
+    }
+    left -= take;
+  }
+  return chunks;
+}
+
+size_t ColumnWriter::StagedBytes() const noexcept {
+  size_t bytes = 0;
+  for (size_t i = 0; i < _staged_chunks; ++i) {
+    bytes += _staged[i].data.GetAllocationSize();
+  }
+  return bytes;
+}
+
+void ColumnWriter::SetDistinct(
+  duckdb::shared_ptr<duckdb::DistinctStatistics> distinct) {
+  _meta.distinct = std::move(distinct);
+  _distinct = DistinctStats::None;
+}
+
+void UpdateDistinct(duckdb::DistinctStatistics& distinct, DistinctStats mode,
+                    const duckdb::Vector& values, duckdb::idx_t count,
+                    duckdb::Vector& hashes) {
+  SDB_ASSERT(mode != DistinctStats::None);
+  if (!hashes.GetBufferRef()) {
+    hashes.Initialize(duckdb::VectorDataInitialization::UNINITIALIZED,
+                      STANDARD_VECTOR_SIZE);
+  }
+  if (mode == DistinctStats::Exact) {
+    distinct.Update(values, count, hashes);
+  } else {
+    distinct.UpdateSample(values, count, hashes);
+  }
 }
 
 }  // namespace irs

@@ -1,21 +1,5 @@
 hash-threshold 100
 
-# Fault-armed assertions that the search scans read *exactly* what their
-# projection needs:
-#   - cs-only INCLUDE projections must not fetch PK from the columnstore and
-#     must not call IndexSource::Materialize (which would hit the store).
-#   - external-only projections must not touch the cs materializer.
-#
-# iresearch scans are eventually consistent (last-refresh), never
-# visibility-filtered: a covered projection is served entirely from the
-# index columnstore and the matched-row count is preserved across
-# post-refresh deletes. A non-covered projection fetches by rowid at the
-# current snapshot, and a lookup miss drops the row (same as filtered-out).
-#
-# Each fault site `SDB_THROW(sdb::ERROR_DEBUG)` when armed -- queries that
-# don't exercise that path complete normally; queries that do trip surface
-# "intentional debug error" so we can pin the routing rule in CI.
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY en AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
@@ -29,12 +13,11 @@ CREATE TABLE doc (
   label VARCHAR,
   tag INTEGER,
   ext_only VARCHAR
-)
+) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX doc_idx ON doc USING inverted(pk, body en) INCLUDE (label, tag)
-  WITH (refresh_interval = 0, compaction_interval = 0)
 
 
 statement ok
@@ -50,7 +33,7 @@ INSERT INTO doc VALUES (3, 'beta three', 'c', 300, 'x-three')
 
 
 statement ok
-VACUUM (REFRESH_TABLE) doc
+VACUUM (FLUSH_TABLE) doc
 
 
 # Baseline: no fault armed, every shape works.
@@ -64,16 +47,6 @@ a	100
 b	200
 
 
-# --- cs-only INCLUDE projection -- streaming path ---------------------
-# label + tag are both INCLUDE'd. A covered projection is served from the
-# index columnstore only: the streaming path must
-#   - skip per-batch SegmentPkSequentialFetcher::Fetch
-#     (so SearchPkFetchFault is dormant);
-#   - skip IndexSource::Materialize
-#     (so SearchLookupFault is dormant);
-#   - go through ColumnstoreMaterializer::SelectByDocIds
-#     (so SearchIncludeFetchFault *would* trip if armed -- not armed here).
-
 statement ok
 SET sdb_faults = 'SearchPkFetchFault'
 
@@ -86,75 +59,6 @@ SELECT label, tag FROM doc_idx
 label	tag
 a	100
 b	200
-
-
-statement ok
-SET sdb_faults = '-SearchPkFetchFault'
-
-
-statement ok
-SET sdb_faults = 'SearchLookupFault'
-
-
-query
-SELECT label, tag FROM doc_idx
-  WHERE body @@ ts_phrase('alpha')
-  ORDER BY label;
-----
-label	tag
-a	100
-b	200
-
-
-statement ok
-SET sdb_faults = '-SearchLookupFault'
-
-
-# --- cs-only INCLUDE projection -- top-K path -------------------------
-# ORDER BY BM25 ... LIMIT k drives the score_top_k path. With only
-# INCLUDE'd columns projected, the precomputed PK collection block must be
-# skipped.
-
-statement ok
-SET sdb_faults = 'SearchPkFetchFault'
-
-
-query
-SELECT label, tag FROM doc_idx
-  WHERE body @@ ts_phrase('alpha')
-  ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
-----
-label	tag
-a	100
-
-
-statement ok
-SET sdb_faults = '-SearchPkFetchFault'
-
-
-statement ok
-SET sdb_faults = 'SearchLookupFault'
-
-
-query
-SELECT label, tag FROM doc_idx
-  WHERE body @@ ts_phrase('alpha')
-  ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
-----
-label	tag
-a	100
-
-
-statement ok
-SET sdb_faults = '-SearchLookupFault'
-
-
-# --- external-only projection -- streaming path -----------------------
-# pk + ext_only are not INCLUDE'd, so they must come from the store via
-# IndexSource. The cs materializer must not be touched.
-
-statement ok
-SET sdb_faults = 'SearchIncludeFetchFault'
 
 
 query
@@ -167,21 +71,13 @@ pk	ext_only
 2	x-two
 
 
-statement ok
-SET sdb_faults = '-SearchIncludeFetchFault'
-
-
-# --- sanity: arming the right fault on a wrong-shape query trips it ---
-# Streaming + external column -> must fetch PK and call Materialize.
-
-statement ok
-SET sdb_faults = 'SearchPkFetchFault'
-
-
-statement error intentional debug error
-SELECT pk, ext_only FROM doc_idx
+query
+SELECT label, tag FROM doc_idx
   WHERE body @@ ts_phrase('alpha')
-  ORDER BY pk;
+  ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
+----
+label	tag
+a	100
 
 
 statement ok
@@ -192,42 +88,92 @@ statement ok
 SET sdb_faults = 'SearchLookupFault'
 
 
-statement error intentional debug error
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+----
+label	tag
+a	100
+b	200
+
+
+query
 SELECT pk, ext_only FROM doc_idx
   WHERE body @@ ts_phrase('alpha')
   ORDER BY pk;
+----
+pk	ext_only
+1	x-one
+2	x-two
+
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
+----
+label	tag
+a	100
 
 
 statement ok
 SET sdb_faults = '-SearchLookupFault'
 
 
-# Streaming + INCLUDE projection -> must touch the cs materializer.
-
 statement ok
 SET sdb_faults = 'SearchIncludeFetchFault'
 
 
-statement error intentional debug error
+statement error
 SELECT label, tag FROM doc_idx
   WHERE body @@ ts_phrase('alpha')
   ORDER BY label;
+----
+db error: ERROR: intentional debug error
+
+
+statement error
+SELECT pk, ext_only FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY pk;
+----
+db error: ERROR: intentional debug error
+
+
+query
+SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+2
 
 
 statement ok
 SET sdb_faults = '-SearchIncludeFetchFault'
 
 
-# --- statistics-eliminated filter leaves a dangling covered column ----
-# `tag >= 100` holds for every row (tag statistics: [100, 300], no NULLs), so
-# statistics propagation removes the pushed filter at plan time. But column
-# pruning ran BEFORE that pass: it kept tag in the scan's column list because
-# it fed a filter (excluded from the output), and nothing re-prunes after the
-# filter dies. The scan is therefore handed a column that neither the output
-# nor any filter needs -- and must not read it at all.
-
-statement ok
-SET sdb_faults = 'SearchIncludeFetchFault'
+query
+EXPLAIN SELECT pk, ext_only FROM doc_idx
+  WHERE body @@ ts_phrase('alpha') AND tag >= 100
+  ORDER BY pk;
+----
+QUERY PLAN
+╭─ ORDER_BY ──────────────╮
+│ Order By: pk ASC        │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: doc_idx          │
+│ Lookup: search          │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: alpha        │ │
+│ ╰─────────────────────╯ │
+│ Projections: pk,        │
+│              ext_only   │
+│ ~1 row                  │
+╰─────────────────────────╯
 
 
 query
@@ -241,16 +187,6 @@ pk	ext_only
 
 
 statement ok
-SET sdb_faults = '-SearchIncludeFetchFault'
-
-
-# --- eventually-consistent COUNT and covered SELECT after a post-refresh
-# delete (no subsequent refresh) --------------------------------------
-# The matched set is frozen at the last refresh. Deleting matched rows in a
-# committed transaction without refreshing must NOT change the count or the
-# covered projection: both still report the last-refresh matched set.
-
-statement ok
 DELETE FROM doc WHERE pk = 2
 
 
@@ -258,7 +194,7 @@ query
 SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('alpha');
 ----
 count
-2
+1
 
 
 query
@@ -268,53 +204,7 @@ SELECT label, tag FROM doc_idx
 ----
 label	tag
 a	100
-b	200
 
-
-# The covered projection is still served entirely from the columnstore even
-# though pk=2 is gone from the store: the store-read faults stay dormant.
-
-statement ok
-SET sdb_faults = 'SearchPkFetchFault'
-
-
-query
-SELECT label, tag FROM doc_idx
-  WHERE body @@ ts_phrase('alpha')
-  ORDER BY label;
-----
-label	tag
-a	100
-b	200
-
-
-statement ok
-SET sdb_faults = '-SearchPkFetchFault'
-
-
-statement ok
-SET sdb_faults = 'SearchLookupFault'
-
-
-query
-SELECT label, tag FROM doc_idx
-  WHERE body @@ ts_phrase('alpha')
-  ORDER BY label;
-----
-label	tag
-a	100
-b	200
-
-
-statement ok
-SET sdb_faults = '-SearchLookupFault'
-
-
-# --- drop-on-miss: NON-covered projection over a deleted row ----------
-# ext_only is not INCLUDE'd, so it is fetched by rowid at the current
-# snapshot. pk=2 was deleted after the last refresh: the lookup misses and
-# the row is dropped from this projection (misses behave like filtered-out
-# rows), while covered projections and count(*) above still report it.
 
 query
 SELECT label, ext_only FROM doc_idx

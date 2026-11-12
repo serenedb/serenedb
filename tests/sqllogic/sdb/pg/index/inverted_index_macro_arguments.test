@@ -46,8 +46,7 @@ statement ok
 CREATE MACRO dup0(a) AS a || a;
 
 statement ok
-CREATE TABLE docs (id BIGINT, s VARCHAR, v VARCHAR[], l STRUCT(a VARCHAR, b VARCHAR, t VARCHAR[])[])
-  WITH (storage = 'search');
+CREATE TABLE docs (id BIGINT, s VARCHAR, v VARCHAR[], l STRUCT(a VARCHAR, b VARCHAR, t VARCHAR[])[]);
 
 statement ok
 CREATE INDEX docs_idx ON docs USING inverted (id,
@@ -78,9 +77,6 @@ INSERT INTO docs VALUES
   (2, 'Chef', ['x', 'chef'], [{'a': 'Chef', 'b': 'Cook', 't': ['p']}, {'a': 'Sous', 'b': 'Chef', 't': []}]),
   (3, '', [], []);
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 query
 SELECT id FROM docs WHERE array_to_string(list_sort(v), ' ') @@ ts_regexp('chef x') ORDER BY id;
 ----
@@ -92,8 +88,7 @@ EXPLAIN SELECT id FROM docs WHERE array_to_string(list_sort(v), ' ') @@ ts_regex
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────╮
-│ Index: docs                                    │
-│ Lookup: search                                 │
+│ Table: docs                                    │
 │ Index Filter:                                  │
 │ ╭─ Term ─────────────────────────────────────╮ │
 │ │ Field:                                     │ │
@@ -116,8 +111,7 @@ EXPLAIN SELECT id FROM docs WHERE array_to_string(list_sort(v), '-') @@ ts_regex
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────╮
-│ Index: docs                                    │
-│ Lookup: search                                 │
+│ Table: docs                                    │
 │ Index Filter:                                  │
 │ ╭─ Automaton ────────────────────────────────╮ │
 │ │ Field:                                     │ │
@@ -138,8 +132,7 @@ EXPLAIN SELECT id FROM docs WHERE array_to_string(list_sort(v), ' ') @@ ts_regex
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────╮
-│ Index: docs                                    │
-│ Lookup: search                                 │
+│ Table: docs                                    │
 │ Index Filter:                                  │
 │ ╭─ Automaton ────────────────────────────────╮ │
 │ │ Field:                                     │ │
@@ -161,8 +154,7 @@ EXPLAIN SELECT id FROM docs WHERE twice(lower(s)) @@ ts_regexp('data engineer');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
-│ Index: docs                               │
-│ Lookup: search                            │
+│ Table: docs                               │
 │ Index Filter:                             │
 │ ╭─ Term ────────────────────────────────╮ │
 │ │ Field: public.twice(lower(s))(string) │ │
@@ -186,8 +178,7 @@ EXPLAIN SELECT id FROM docs WHERE both_match(twice(lower(s)), 'data.*', '.*engin
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────╮
-│ Index: docs                                                                          │
-│ Lookup: search                                                                       │
+│ Table: docs                                                                          │
 │ Index Filter:                                                                        │
 │ ╭─ And ─────────────────────────────────╮                                            │
 │ ╰───────────────────┬───────────────────╯                                            │
@@ -211,8 +202,7 @@ EXPLAIN SELECT id FROM docs WHERE joined(l) @@ ts_regexp('chef sous');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
-│ Index: docs                         │
-│ Lookup: search                      │
+│ Table: docs                         │
 │ Index Filter:                       │
 │ ╭─ Term ──────────────────────────╮ │
 │ │ Field: public.joined(l)(string) │ │
@@ -233,8 +223,7 @@ EXPLAIN SELECT id FROM docs WHERE lower(array_to_string(list_transform(l, lambda
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
-│ Index: docs                         │
-│ Lookup: search                      │
+│ Table: docs                         │
 │ Index Filter:                       │
 │ ╭─ Term ──────────────────────────╮ │
 │ │ Field: public.joined(l)(string) │ │
@@ -255,8 +244,7 @@ EXPLAIN SELECT id FROM docs WHERE edu(l) @@ ts_regexp('data.engineer');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────────────────────────╮
-│ Index: docs                                                                                               │
-│ Lookup: search                                                                                            │
+│ Table: docs                                                                                               │
 │ Index Filter:                                                                                             │
 │ ╭─ Automaton ───────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                                                                │ │
@@ -278,8 +266,7 @@ EXPLAIN SELECT id FROM docs WHERE lower(array_to_string(flatten(list_transform(l
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────────────────────────╮
-│ Index: docs                                                                                               │
-│ Lookup: search                                                                                            │
+│ Table: docs                                                                                               │
 │ Index Filter:                                                                                             │
 │ ╭─ Automaton ───────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                                                                │ │
@@ -301,8 +288,7 @@ EXPLAIN SELECT id FROM docs WHERE suffixes(l) @@ ts_regexp('Sous ous us s');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
-│ Index: docs                   │
-│ Lookup: search                │
+│ Table: docs                   │
 │ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: public.suffixes(l) │ │
@@ -323,8 +309,7 @@ EXPLAIN SELECT id FROM docs WHERE tails(l, s) @@ ts_regexp('Data Engineer:x');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
-│ Index: docs                   │
-│ Lookup: search                │
+│ Table: docs                   │
 │ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: public.tails(l, s) │ │
@@ -353,8 +338,7 @@ WHERE flatten(list_transform(l, lambda x: list_transform(
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
-│ Index: docs                   │
-│ Lookup: search                │
+│ Table: docs                   │
 │ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: public.tails(l, s) │ │
@@ -379,8 +363,7 @@ WHERE list_transform(l, lambda x: array_to_string(list_transform(range(1, len(x.
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────╮
-│ Index: docs                   │
-│ Lookup: search                │
+│ Table: docs                   │
 │ Index Filter:                 │
 │ ╭─ Term ────────────────────╮ │
 │ │ Field: public.suffixes(l) │ │
@@ -401,8 +384,7 @@ EXPLAIN SELECT id FROM docs WHERE tagged(l, v) @@ ts_regexp('Sous:chef x');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: docs                    │
-│ Lookup: search                 │
+│ Table: docs                    │
 │ Index Filter:                  │
 │ ╭─ Term ─────────────────────╮ │
 │ │ Field: public.tagged(l, v) │ │
@@ -423,8 +405,7 @@ EXPLAIN SELECT id FROM docs WHERE list_transform(l, lambda x: x.a || ':' || arra
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: docs                    │
-│ Lookup: search                 │
+│ Table: docs                    │
 │ Index Filter:                  │
 │ ╭─ Term ─────────────────────╮ │
 │ │ Field: public.tagged(l, v) │ │
@@ -445,8 +426,7 @@ EXPLAIN SELECT id FROM docs WHERE annotated(list_sort(v)) @@ ts_regexp('eng/2');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
-│ Index: docs                               │
-│ Lookup: search                            │
+│ Table: docs                               │
 │ Index Filter:                             │
 │ ╭─ Term ────────────────────────────────╮ │
 │ │ Field: public.annotated(list_sort(v)) │ │
@@ -467,8 +447,7 @@ EXPLAIN SELECT id FROM docs WHERE annotated(list_sort(v)) @@ ts_regexp('x/2');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────╮
-│ Index: docs                               │
-│ Lookup: search                            │
+│ Table: docs                               │
 │ Index Filter:                             │
 │ ╭─ Term ────────────────────────────────╮ │
 │ │ Field: public.annotated(list_sort(v)) │ │
@@ -489,8 +468,7 @@ EXPLAIN SELECT id FROM docs WHERE counted(list_transform(l, lambda x: x.a)) @@ t
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────╮
-│ Index: docs                                                    │
-│ Lookup: search                                                 │
+│ Table: docs                                                    │
 │ Index Filter:                                                  │
 │ ╭─ Term ─────────────────────────────────────────────────────╮ │
 │ │ Field:                                                     │ │
@@ -512,8 +490,7 @@ EXPLAIN SELECT id FROM docs WHERE counted(list_transform(l, lambda x: x.a)) @@ t
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────╮
-│ Index: docs                                                    │
-│ Lookup: search                                                 │
+│ Table: docs                                                    │
 │ Index Filter:                                                  │
 │ ╭─ Term ─────────────────────────────────────────────────────╮ │
 │ │ Field:                                                     │ │
@@ -535,8 +512,7 @@ EXPLAIN SELECT id FROM docs WHERE reduced(list_sort(v)) @@ ts_regexp('\+data\+en
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
-│ Index: docs                              │
-│ Lookup: search                           │
+│ Table: docs                              │
 │ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
 │ │ Field:                               │ │
@@ -558,8 +534,7 @@ EXPLAIN SELECT id FROM docs WHERE reduced(list_sort(v)) @@ ts_regexp('#0');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
-│ Index: docs                              │
-│ Lookup: search                           │
+│ Table: docs                              │
 │ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
 │ │ Field:                               │ │
@@ -581,8 +556,7 @@ EXPLAIN SELECT id FROM docs WHERE typed_join(list_sort(v)) @@ ts_regexp('chef;x'
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
-│ Index: docs                                 │
-│ Lookup: search                              │
+│ Table: docs                                 │
 │ Index Filter:                               │
 │ ╭─ Term ──────────────────────────────────╮ │
 │ │ Field:                                  │ │
@@ -604,8 +578,7 @@ EXPLAIN SELECT id FROM docs WHERE array_to_string(list_sort(v), ';') @@ ts_regex
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────╮
-│ Index: docs                                 │
-│ Lookup: search                              │
+│ Table: docs                                 │
 │ Index Filter:                               │
 │ ╭─ Term ──────────────────────────────────╮ │
 │ │ Field:                                  │ │
@@ -627,8 +600,7 @@ EXPLAIN SELECT id FROM docs WHERE list_transform(l, lambda x: array_to_string(li
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────╮
-│ Index: docs                                                             │
-│ Lookup: search                                                          │
+│ Table: docs                                                             │
 │ Index Filter:                                                           │
 │ ╭─ Term ──────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                              │ │
@@ -650,8 +622,7 @@ EXPLAIN SELECT id FROM docs WHERE dup0(lower(s)) @@ ts_regexp('chefchef');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
-│ Index: docs                              │
-│ Lookup: search                           │
+│ Table: docs                              │
 │ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
 │ │ Field: public.dup0(lower(s))(string) │ │
@@ -675,8 +646,7 @@ EXPLAIN SELECT id FROM docs WHERE dup0(lower(s)) @@ ts_regexp('chefchef');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
-│ Index: docs                              │
-│ Lookup: search                           │
+│ Table: docs                              │
 │ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
 │ │ Field: public.dup0(lower(s))(string) │ │
@@ -707,8 +677,7 @@ EXPLAIN SELECT id FROM docs WHERE flatten(list_transform(l, lambda x: list_trans
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Index: docs                                                                                                        │
-│ Lookup: search                                                                                                     │
+│ Table: docs                                                                                                        │
 │ Index Filter:                                                                                                      │
 │ ╭─ Term ─────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                                                                         │ │
@@ -734,8 +703,7 @@ WHERE list_transform(l, lambda x: list_aggr(list_transform(range(1, len(x.a) + 1
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Index: docs                                                                                                                             │
-│ Lookup: search                                                                                                                          │
+│ Table: docs                                                                                                                             │
 │ Index Filter:                                                                                                                           │
 │ ╭─ Term ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                                                                                              │ │
@@ -758,8 +726,7 @@ EXPLAIN SELECT id FROM docs WHERE list_transform(l, lambda x: array_to_string(['
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────╮
-│ Index: docs                                                                   │
-│ Lookup: search                                                                │
+│ Table: docs                                                                   │
 │ Index Filter:                                                                 │
 │ ╭─ Term ────────────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                                    │ │
@@ -781,8 +748,7 @@ EXPLAIN SELECT id FROM docs WHERE list_transform(l, lambda x: array_to_string(x.
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────╮
-│ Index: docs                                                  │
-│ Lookup: search                                               │
+│ Table: docs                                                  │
 │ Index Filter:                                                │
 │ ╭─ Term ───────────────────────────────────────────────────╮ │
 │ │ Field:                                                   │ │
@@ -804,8 +770,7 @@ EXPLAIN SELECT id FROM docs WHERE once(list_transform(l, lambda y: y.a)) @@ ts_r
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────╮
-│ Index: docs                                                 │
-│ Lookup: search                                              │
+│ Table: docs                                                 │
 │ Index Filter:                                               │
 │ ╭─ Term ──────────────────────────────────────────────────╮ │
 │ │ Field:                                                  │ │
@@ -827,8 +792,7 @@ EXPLAIN SELECT id FROM docs WHERE either(v) @@ ts_regexp('chef');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
-│ Index: docs                 │
-│ Lookup: search              │
+│ Table: docs                 │
 │ Index Filter:               │
 │ ╭─ Term ──────────────────╮ │
 │ │ Field: public.either(v) │ │
@@ -841,7 +805,7 @@ QUERY PLAN
 # A shared argument that the optimizer rewrites, a || chain or a cast of a
 # constant, matches too, also where the body uses it inside its own lambda.
 statement ok
-CREATE TABLE rewritten (id BIGINT, s VARCHAR) WITH (storage = 'search');
+CREATE TABLE rewritten (id BIGINT, s VARCHAR);
 
 statement ok
 CREATE INDEX rewritten_idx ON rewritten USING inverted (id,
@@ -850,9 +814,6 @@ CREATE INDEX rewritten_idx ON rewritten USING inverted (id,
 
 statement ok
 INSERT INTO rewritten VALUES (1, 'a'), (2, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) rewritten;
 
 query
 SELECT id FROM rewritten WHERE annotated(string_split(s || '-' || s || '-x', '-')) @@ ts_regexp('x/3') ORDER BY id;
@@ -866,8 +827,7 @@ EXPLAIN SELECT id FROM rewritten WHERE annotated(string_split(s || '-' || s || '
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────╮
-│ Index: rewritten                                                     │
-│ Lookup: search                                                       │
+│ Table: rewritten                                                     │
 │ Index Filter:                                                        │
 │ ╭─ Term ───────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                           │ │
@@ -889,8 +849,7 @@ EXPLAIN SELECT id FROM rewritten WHERE twice(s || '-' || CAST(1 AS VARCHAR) || '
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────╮
-│ Index: rewritten                                                             │
-│ Lookup: search                                                               │
+│ Table: rewritten                                                             │
 │ Index Filter:                                                                │
 │ ╭─ Term ───────────────────────────────────────────────────────────────────╮ │
 │ │ Field:                                                                   │ │
@@ -902,7 +861,7 @@ QUERY PLAN
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 statement ok
-CREATE TABLE checked (id BIGINT, s VARCHAR) WITH (storage = 'search');
+CREATE TABLE checked (id BIGINT, s VARCHAR);
 
 statement ok
 CREATE MACRO narrowed(x) AS CASE WHEN len(x) > 1000 THEN CAST(300 AS TINYINT)::VARCHAR ELSE x END;
@@ -942,9 +901,6 @@ statement ok
 INSERT INTO stamped VALUES (1, '2026-01-01 23:30:00');
 
 statement ok
-VACUUM (REFRESH_TABLE) stamped;
-
-statement ok
 SET TimeZone = 'Asia/Tokyo';
 
 query
@@ -963,7 +919,7 @@ QUERY PLAN
 ╰──────────┬─────────╯
 ╭─ IRESEARCH_SCAN ───╮
 │ Index: stamped_idx │
-│ Lookup: table      │
+│ Lookup: search     │
 │ Projections: plain │
 │ ~1 row             │
 ╰────────────────────╯

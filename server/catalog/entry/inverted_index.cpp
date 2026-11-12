@@ -35,12 +35,14 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_job_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/parser/statement/pragma_statement.hpp>
 #include <duckdb/storage/data_table.hpp>
@@ -54,13 +56,13 @@
 #include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/dependency.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
+#include "catalog/transaction.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_reindex_function.h"
-#include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
@@ -73,8 +75,6 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kPayloadOption = "sdb_payload";
-constexpr std::string_view kKeyColumnsOption = "key_columns";
-constexpr std::string_view kStorePkOption = "store_pk";
 
 duckdb::Value Pack(const persistence::InvertedIndexData& data) {
   const auto bytes = persistence::Pack(data);
@@ -130,16 +130,13 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   }
   config->pk = data.pk;
   config->top_k_scorer = std::move(data.top_k_scorer);
-  return config;
-}
-
-duckdb::shared_ptr<duckdb::IndexDataTableInfo> DataTableInfoOf(
-  duckdb::optional_ptr<duckdb::TableCatalogEntry> table) {
-  if (!table || !table->IsDuckTable()) {
-    return nullptr;
+  if (data.unique_key) {
+    config->constraint_keys.push_back(
+      {.field = data.unique_key->field,
+       .columns = std::move(data.unique_key->columns),
+       .expressions = std::move(data.unique_key->expressions)});
   }
-  return duckdb::make_shared_ptr<duckdb::IndexDataTableInfo>(
-    table->Cast<duckdb::DuckTableEntry>().GetStorage().GetDataTableInfo());
+  return config;
 }
 
 constexpr auto kCreateOnlyOptions = std::to_array({
@@ -182,7 +179,7 @@ void SetJobOwnedBy(duckdb::CatalogTransaction transaction,
   duckdb::ChangeOwnershipInfo ownership{
     duckdb::CatalogType::JOB_ENTRY,
     duckdb::AlterEntryData{job, duckdb::OnEntryNotFound::THROW_EXCEPTION},
-    job.Schema(), owner};
+    duckdb::Identifier{}, owner};
   catalog.Alter(transaction, ownership);
 }
 
@@ -218,11 +215,8 @@ InvertedIndexSettings ResolveSettings(
   };
   return {
     .row_group_size = get(kRowGroupSizeSetting).GetValue<uint32_t>(),
-    .refresh_interval_ms = get(kRefreshIntervalSetting).GetValue<uint32_t>(),
     .compaction_interval_ms =
       get(kCompactionIntervalSetting).GetValue<uint32_t>(),
-    .cleanup_interval_step =
-      get(kCleanupIntervalStepSetting).GetValue<uint32_t>(),
     .segment_memory_max = get(kSegmentMemoryMaxSetting).GetValue<uint64_t>(),
     .segment_docs_max = get(kSegmentDocsMaxSetting).GetValue<uint32_t>(),
     .compaction_max_segments =
@@ -268,10 +262,23 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
       options.compression = declared.type;
       options.compression_level = declared.compression_level;
     }
-    options.hyperloglog |= declared.hyperloglog;
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
+    auto distinct = irs::DistinctStats::None;
+    for (const auto& key : keys) {
+      const auto* included =
+        key.column_id == id ? FindEntry(key.field_id) : nullptr;
+      if (!included || !included->IsStored()) {
+        continue;
+      }
+      const auto& options = included->column_options;
+      distinct = std::max(distinct, options.distinct);
+      if (options.compression != irs::codecs::CodecType::Auto) {
+        declared.type = options.compression;
+        declared.compression_level = options.compression_level;
+      }
+    }
     if (declared.type == irs::codecs::CodecType::Auto) {
       for (const auto ann : AnnFields(id)) {
         if (const auto& options = FindEntry(ann)->column_options;
@@ -282,7 +289,7 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
       }
     }
     return {.compression = declared.type,
-            .hyperloglog = declared.hyperloglog,
+            .distinct = distinct,
             .compression_level = declared.compression_level};
   }
   // The pk column is written for every row of every segment, so its validity
@@ -330,8 +337,8 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      const auto dict =
-        serene.FindIn<TokenizerCatalogEntry>(&context, field.text_dictionary);
+      const auto dict = serene.FindIn<TokenizerCatalogEntry>(
+        serene.GetCatalogTransaction(context), field.text_dictionary);
       if (!dict) {
         continue;
       }
@@ -532,6 +539,14 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
   for (const auto& [field_id, field] : _config->fields) {
     data.fields.emplace(field_id, field);
   }
+  SDB_ASSERT(_config->constraint_keys.size() <= 1);
+  if (!_config->constraint_keys.empty()) {
+    const auto& key = _config->constraint_keys.front();
+    data.unique_key =
+      persistence::UniqueKeyRecord{.field = key.field,
+                                   .columns = key.columns,
+                                   .expressions = key.expressions};
+  }
   return data;
 }
 
@@ -539,9 +554,27 @@ InvertedIndexEntry::InvertedIndexEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateIndexInfo& info,
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table)
-  : duckdb::DuckIndexEntry{catalog, schema, info, DataTableInfoOf(table)},
+  : duckdb::IndexCatalogEntry{catalog, schema, info},
     _relation_name{info.table} {
-  if (table && !table->IsDuckTable()) {
+  const duckdb::IdentifierEquality same_name{catalog.IsCaseSensitive()};
+  const auto unqualify = [&](duckdb::ParsedExpression& expression) {
+    duckdb::ParsedExpressionIterator::VisitExpressionMutable<
+      duckdb::ColumnRefExpression>(
+      expression, [&](duckdb::ColumnRefExpression& reference) {
+        auto& names = reference.ColumnNamesMutable();
+        if (reference.IsQualified() &&
+            same_name(names[names.size() - 2], info.table)) {
+          names.erase(names.begin(), names.end() - 1);
+        }
+      });
+  };
+  for (auto& expression : parsed_expressions) {
+    unqualify(*expression);
+  }
+  if (where_clause) {
+    unqualify(*where_clause);
+  }
+  if (table) {
     _search_table = table->Cast<SearchTableEntry>().Storage();
   }
   if (auto data =
@@ -577,18 +610,31 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo(
 }
 
 duckdb::Identifier InvertedIndexEntry::GetTableName() const {
-  if (info) {
-    return duckdb::DuckIndexEntry::GetTableName();
-  }
+  auto& owner = catalog.Cast<BaseCatalog>();
+  const CommittedView view;
   const auto relation =
-    catalog.Cast<duckdb::DuckCatalog>().GetOidIndex().GetCommitted(table_oid);
+    owner.LookupOid(view.Transaction(owner.GetDatabase()), table_oid);
   return relation ? relation->name : _relation_name;
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> InvertedIndexEntry::GetRelation(
+  duckdb::CatalogTransaction transaction) const {
+  return catalog.Cast<BaseCatalog>().LookupOid(transaction, table_oid);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::REPLACE_DEFINITION) {
+    auto& definition = info.Cast<duckdb::ReplaceDefinitionInfo>()
+                         .definition->Cast<duckdb::CreateIndexInfo>();
+    auto result = duckdb::make_uniq<InvertedIndexEntry>(
+      catalog, ParentSchema(transaction.GetContext()), definition, nullptr);
+    result->_storage = _storage;
+    result->_search_table = _search_table;
+    return std::move(result);
+  }
   if (info.type != duckdb::AlterType::ALTER_INDEX) {
-    return duckdb::DuckIndexEntry::AlterEntry(transaction, info);
+    return duckdb::IndexCatalogEntry::AlterEntry(transaction, info);
   }
   auto& index_alter = info.Cast<duckdb::AlterIndexInfo>();
   auto& context = transaction.GetContext();
@@ -604,12 +650,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
         reindex_interval =
           connector::ValidateSetting(context, node.key(), node.mapped());
       }
-      for (const auto& [name, value] : options) {
+      for (const auto name : connector::SortedOptionNames(options)) {
         RequireAlterableOption(name);
         if (_search_table) {
           RequireSearchTableIndexOption(name);
         }
-        new_options[name] = connector::ValidateSetting(context, name, value);
+        new_options[name] =
+          connector::ValidateSetting(context, name, options.find(name)->second);
       }
       break;
     }
@@ -622,8 +669,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
           duckdb::Identifier{kReindexIntervalSetting},
           reindex_interval.emplace());
       }
-      for (const auto& identifier : options) {
-        const auto& name = identifier.GetIdentifierName();
+      for (const auto name : connector::SortedOptionNames(options)) {
         RequireAlterableOption(name);
         if (_search_table) {
           RequireSearchTableIndexOption(name);
@@ -632,7 +678,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
         if (const auto it = reset.values.find(name); it != reset.values.end()) {
           value = it->second;
         } else {
-          context.TryGetCurrentSetting(identifier, value);
+          context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
           reset.values.emplace(name, value);
         }
       }
@@ -650,14 +696,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   }
   if (_storage) {
     auto settings = ResolveSettings(new_options);
-    if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-      connection->DeferToCommit(
-        [storage = _storage, settings = std::move(settings)] {
-          storage->ApplyOptions(settings);
-        });
-    } else {
-      _storage->ApplyOptions(settings);
-    }
+    SessionOf(context, catalog)
+      .DeferToCommit([storage = _storage, settings = std::move(settings)] {
+        storage->ApplyOptions(settings);
+      });
   }
   return result;
 }
@@ -684,8 +726,7 @@ void InvertedIndexEntry::CreateReindexJob(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> InvertedIndexEntry::ReindexJob(
   duckdb::CatalogTransaction transaction) const {
-  const auto owned =
-    catalog.GetDependencyManager()->OwnedEntries(transaction, *this);
+  const auto owned = OwnedEntries(transaction, *this);
   const auto job = absl::c_find_if(owned, [](const auto& entry) {
     return entry.get().type == duckdb::CatalogType::JOB_ENTRY;
   });
@@ -724,8 +765,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
   auto& index_info = info_copy->Cast<duckdb::CreateIndexInfo>();
   auto result = duckdb::make_uniq<InvertedIndexEntry>(
     catalog, ParentSchema(context), index_info, nullptr);
-  result->info = info;
-  result->initial_index_size = initial_index_size;
   result->_storage = _storage;
   result->_search_table = _search_table;
   result->_config = _config;
@@ -750,6 +789,18 @@ void InvertedIndexEntry::OnDrop() {
   }
 }
 
+duckdb::optional_idx InvertedIndexEntry::GetDataVersion(
+  duckdb::ClientContext& context) const {
+  auto& session = SessionOf(context, catalog);
+  if (_search_table) {
+    return session.SearchTxn().PlanVersion(*_search_table);
+  }
+  if (_storage) {
+    return session.SearchTxn().PlanVersion(*_storage);
+  }
+  return duckdb::optional_idx{};
+}
+
 InvertedIndexEntry::~InvertedIndexEntry() {
   if (_retired) {
     _search_table->ReleaseRetiredConfig(oid);
@@ -760,7 +811,6 @@ void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (CreatedObject(prev_entry)) {
     OnDrop();
   }
-  duckdb::DuckIndexEntry::Rollback(prev_entry);
 }
 
 bool InvertedIndexEntry::ScanColumnSegmentInfo(
@@ -782,31 +832,28 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   if (state.position++ != 0 || !_storage) {
     return false;
   }
-  const auto snapshot = _storage->Snapshot();
   const auto keys = connector::primary_key::KeyColumns(table);
   const auto key_column =
     keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID
                  : table.GetColumns().LogicalToPhysical(keys.front()).index;
-  result =
-    SearchTableEntry::ColumnSegmentRows(snapshot->reader, table, key_column);
+  const auto latest = _storage->GetTable().State();
+  result = SearchTableEntry::ColumnSegmentRows(
+    context, latest->reader, table, key_column,
+    state.options.include_segment_info);
   return true;
 }
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
-  duckdb::DuckCatalog& catalog) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  BaseCatalog& catalog) {
   std::vector<duckdb::reference<InvertedIndexEntry>> indexes;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
+  catalog.ScanSchemas([&](Schema& schema) {
+    schema.Scan(
       duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (connector::IsInvertedIndex(
-              entry.Cast<duckdb::IndexCatalogEntry>())) {
+        if (IsInvertedIndex(entry.Cast<duckdb::IndexCatalogEntry>())) {
           indexes.emplace_back(entry.Cast<InvertedIndexEntry>());
         }
       });
-  }
+  });
   return indexes;
 }
 

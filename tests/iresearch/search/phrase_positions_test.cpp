@@ -257,8 +257,8 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
   const auto value = dense ? doc.Text() : doc.Explicit();
   irs::MemoryDirectory dir;
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
     EXPECT_NE(nullptr, writer);
     Field field{.value = value};
     field.tokenizer = &explicit_positions;
@@ -273,7 +273,8 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
     ctx.Commit();
     writer->RefreshCommit();
   }
-  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  const auto reader =
+    tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
 
   irs::ByPhrase filter;
   *filter.mutable_field_id() = kField;
@@ -281,19 +282,19 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
   filter.mutable_options()->LowerParts();
 
   Outcome out;
-  tests::PreparedFilter prepared{filter, *reader};
+  tests::PreparedFilter prepared{filter, reader};
   for (size_t i = 0; i != prepared.size(); ++i) {
     auto docs = prepared.Execute(i);
     out.matched |= !irs::doc_limits::eof(docs->Next());
   }
-  const auto freqs = Scores<tests::sort::FrequencyScore>(filter, *reader);
+  const auto freqs = Scores<tests::sort::FrequencyScore>(filter, reader);
   EXPECT_EQ(out.matched, !freqs.empty());
   if (!freqs.empty()) {
     EXPECT_EQ(1U, freqs.size());
     out.freq = static_cast<uint32_t>(freqs.front());
   }
   if (out.matched && (phrase.slop() != 0 || Boosted(phrase))) {
-    const auto scales = Scores<ScaleScore>(filter, *reader);
+    const auto scales = Scores<ScaleScore>(filter, reader);
     EXPECT_EQ(1U, scales.size());
     if (!scales.empty()) {
       out.scale = scales.front();

@@ -50,6 +50,7 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <span>
 #include <string>
 #include <utility>
@@ -62,6 +63,7 @@
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
+#include "pg/connection_context.h"
 #include "pg/types/logical.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -87,7 +89,7 @@ constexpr std::string_view kMField = "m";
 constexpr std::string_view kEfConstructionField = "ef_construction";
 constexpr std::string_view kCompressionField = "compression";
 constexpr std::string_view kCompressionLevelField = "compression_level";
-constexpr std::string_view kHyperLogLogField = "hyperloglog";
+constexpr std::string_view kDistinctField = "distinct";
 
 constexpr std::string_view kL2Metric = "l2";
 constexpr std::string_view kL1Metric = "l1";
@@ -227,6 +229,33 @@ void ParseBitsOption(std::string_view kind, std::string_view column_name,
   }
   quant.nb_bits = static_cast<uint32_t>(whole);
   quant.half_bit = frac != 0.0;
+}
+
+irs::DistinctStats ParseDistinctOption(duckdb::ClientContext& context,
+                                       std::string_view owner_label,
+                                       std::string_view key,
+                                       const duckdb::Value& v,
+                                       const duckdb::LogicalType& value_type) {
+  const auto name =
+    GetIndexStringOption(catalog::kIncludedKind, owner_label, key, v);
+  const auto mode = magic_enum::enum_cast<irs::DistinctStats>(
+    name, magic_enum::case_insensitive);
+  if (!mode) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", owner_label, "': ", catalog::kIncludedKind,
+              " option '", key, "' must be 'none', 'sampled' or 'exact', got '",
+              name, "'"));
+  }
+  if (*mode != irs::DistinctStats::None &&
+      (value_type.id() == duckdb::LogicalTypeId::BOOLEAN ||
+       value_type.id() == duckdb::LogicalTypeId::BIT)) {
+    ConnectionContext::Get(context).AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_WARNING),
+      ERR_MSG("Column '", owner_label, "': distinct statistics of a ",
+              value_type.ToString(), " column do not help query planning")));
+  }
+  return *mode;
 }
 
 std::string DescribeKnownOpclassTypes() {
@@ -613,24 +642,20 @@ void ApplyIncludedOpclass(
     } else if (key == kCompressionLevelField) {
       level = ParsePositiveUintOption(catalog::kIncludedKind, owner_label, key,
                                       raw_val);
-    } else if (key == kHyperLogLogField) {
-      entry.column_options.hyperloglog =
-        GetIndexBoolOption(catalog::kIncludedKind, owner_label, key, raw_val);
+    } else if (key == kDistinctField) {
+      entry.column_options.distinct =
+        ParseDistinctOption(context, owner_label, key, raw_val, value_type);
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Column '", owner_label, "': unknown included option '", key,
                 "'. Accepted options: compression (string, default 'auto'), "
                 "compression_level (integer, default the codec's), "
-                "hyperloglog (bool, default false)"));
+                "distinct (string: 'none', 'sampled' or 'exact', default "
+                "'none')"));
     }
   }
-  auto& storage =
-    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog())
-      .GetAttached()
-      .GetStorageManager();
-  catalog::CheckColumnCodec(context, &storage, owner_label, declared, level,
-                            value_type, catalog::TableEngine::Search);
+  catalog::CheckColumnCodec(owner_label, declared, level, value_type);
   entry.column_options.compression_level = static_cast<uint8_t>(level);
 }
 
@@ -752,32 +777,13 @@ void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
 void ValidateTermDictKey(std::string_view label,
                          const duckdb::LogicalType& type,
                          std::string_view opclass) {
-  const auto kind = type.id();
-  const auto unsupported = [&]() -> void {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                    ERR_MSG("Column '", label, "' has unsupported type ",
-                            type.ToString(), " and can not be indexed"));
-  };
-
-  if (kind == duckdb::LogicalTypeId::LIST ||
-      kind == duckdb::LogicalTypeId::ARRAY) {
-    const auto child = (kind == duckdb::LogicalTypeId::LIST
-                          ? duckdb::ListType::GetChildType(type)
-                          : duckdb::ArrayType::GetChildType(type))
-                         .id();
-    if (child == duckdb::LogicalTypeId::GEOMETRY ||
-        !term_dict::IsIndexable(child)) {
-      unsupported();
-    }
+  if (TermDictIndexable(type) ||
+      (type.id() == duckdb::LogicalTypeId::GEOMETRY && !opclass.empty())) {
     return;
   }
-
-  if (!term_dict::IsIndexable(kind)) {
-    unsupported();
-  }
-  if (kind == duckdb::LogicalTypeId::GEOMETRY && opclass.empty()) {
-    unsupported();
-  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                  ERR_MSG("Column '", label, "' has unsupported type ",
+                          type.ToString(), " and can not be indexed"));
 }
 
 void ValidateIncludedKey(std::string_view label,
@@ -938,7 +944,8 @@ struct KeyOpclass {
     return IsBuiltin(catalog::kIVFKind) || IsBuiltin(catalog::kHNSWKind);
   }
   bool IsTokenizer() const noexcept {
-    return !IsAnn() && !IsBuiltin(catalog::kIncludedKind);
+    return !IsAnn() && !IsBuiltin(catalog::kIncludedKind) &&
+           !IsBuiltin(catalog::kPlainKind);
   }
 };
 
@@ -954,6 +961,9 @@ void ValidateInvertedIndexKey(std::string_view label,
   }
   if (opclass.IsBuiltin(catalog::kIncludedKind)) {
     ValidateIncludedKey(label, type);
+    return;
+  }
+  if (opclass.IsBuiltin(catalog::kPlainKind)) {
     return;
   }
   if (opclass.HasParentheses()) {
@@ -980,6 +990,18 @@ void ValidateInvertedIndexKey(std::string_view label,
 
 }  // namespace
 
+bool TermDictIndexable(const duckdb::LogicalType& type) {
+  using enum duckdb::LogicalTypeId;
+  if (type.id() == LIST || type.id() == ARRAY) {
+    const auto child =
+      (type.id() == LIST ? duckdb::ListType::GetChildType(type)
+                         : duckdb::ArrayType::GetChildType(type))
+        .id();
+    return child != GEOMETRY && term_dict::IsIndexable(child);
+  }
+  return type.id() != GEOMETRY && term_dict::IsIndexable(type);
+}
+
 // An opclass names a dictionary of the index's own schema first -- the index
 // and its dictionary are created together and that schema need not be on the
 // reader's search path -- and otherwise resolves like any other name.
@@ -992,8 +1014,16 @@ duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassTokenizer(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
                             duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!dict || &dict->ParentCatalog() != &schema.ParentCatalog()) {
+  if (!dict) {
     return nullptr;
+  }
+  if (&dict->ParentCatalog() != &schema.ParentCatalog()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cross-database references are not implemented: \"",
+              dict->ParentCatalog().GetName().GetIdentifierName(), ".",
+              dict->ParentSchema(context).name.GetIdentifierName(), ".",
+              dict->name.GetIdentifierName(), "\""));
   }
   return &dict->Cast<TokenizerCatalogEntry>();
 }
@@ -1023,7 +1053,8 @@ void ApplyOpclassToEntry(
     ApplyHNSWOpclass(label, value_type, opclass.options, entry);
     return;
   }
-  if (opclass.IsBuiltin(catalog::kIncludedKind)) {
+  if (opclass.IsBuiltin(catalog::kIncludedKind) ||
+      opclass.IsBuiltin(catalog::kPlainKind)) {
     ApplyIncludedOpclass(context, label, value_type, opclass.options, entry);
     entry.store_values = true;
     return;
@@ -1063,7 +1094,7 @@ PkColumnKind ResolvePkColumn(
   const duckdb::case_insensitive_map_t<duckdb::Value>& with, bool table_backed,
   bool has_pk, bool single_key, bool file_row) {
   std::string store_pk = "auto";
-  if (auto* v = catalog::FindOption(with, "store_pk")) {
+  if (auto* v = catalog::FindOption(with, catalog::kStorePkOption)) {
     store_pk = duckdb::StringUtil::Lower(
       v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>());
     if (store_pk == "true") {
@@ -1169,6 +1200,7 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
   InvertedIndexFields entries;
   irs::containers::FlatHashMap<std::string, irs::field_id> expression_fields;
   irs::containers::FlatHashMap<connector::ColumnId, irs::field_id> term_fields;
+  irs::containers::FlatHashMap<irs::field_id, size_t> field_keys;
   auto& db_manager = duckdb::DatabaseManager::Get(context);
 
   for (size_t i = 0; i < count; ++i) {
@@ -1228,6 +1260,18 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     }
 
     ValidateInvertedIndexKey(label, value_type, opclass);
+
+    if (const auto [it, first] = field_keys.try_emplace(record.field_id, i);
+        !first && entry.column_opclasses[it->second].empty() &&
+        entry.column_opclasses[i].empty() &&
+        !duckdb::TypeVisitor::Contains(
+          value_type, [](const duckdb::LogicalType& type) {
+            return type.id() == duckdb::LogicalTypeId::VARCHAR ||
+                   type.id() == duckdb::LogicalTypeId::BLOB;
+          })) {
+      keys.emplace_back(std::move(record));
+      continue;
+    }
 
     // A built-in is only a built-in in the parenthesised form, so a bare name
     // is looked up as a dictionary first and may shadow one.

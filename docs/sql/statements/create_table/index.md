@@ -48,17 +48,17 @@ Note that only the column names and types are copied to `t1`, other pieces of in
 
 ## Temporary Tables
 
-Temporary tables are session scoped, meaning that only the specific connection that created them can access them and once the connection to SereneDB is closed they will be automatically dropped (similar to PostgreSQL, for example).
+Temporary tables are session scoped, meaning that only the specific connection that created them can access them and once the connection to SereneDB is closed they will be automatically dropped.
 
-They can be created using the `CREATE TEMP TABLE` or the `CREATE TEMPORARY TABLE` statement (see diagram below) and are part of the `temp.main` schema. While discouraged, their names can overlap with the names of the regular database tables. In these cases, temporary tables take priority in name resolution and full qualification is required to refer to a regular table e.g., `memory.main.t1`.
+They can be created using the `CREATE TEMP TABLE` or the `CREATE TEMPORARY TABLE` statement (see diagram below) and are part of the `pg_temp` schema. While discouraged, their names can overlap with the names of the regular database tables. In these cases, temporary tables take priority in name resolution and full qualification is required to refer to a regular table, e.g., `public.t1`.
 
-Temporary tables reside in memory rather than on disk even when connecting to a persistent SereneDB, but if the `temp_directory` [configuration](../../../configuration/overview.md) is set, data will be spilled to disk if memory becomes constrained.
+Temporary tables reside in memory rather than on disk, and their rows stay in memory even when memory becomes constrained.
 
 Create a temporary table from a CSV file (automatically detecting column names and types):
 
 <SqlLogicTest id="sql/statements/create_table/index/example_009" />
 
-Allow temporary tables to off-load excess memory to disk:
+The `temp_directory` [setting](../../../configuration/overview.md) names the directory where queries spill intermediate results that do not fit in memory; it does not apply to temporary tables:
 
 <SqlLogicTest id="sql/statements/create_table/index/example_010" />
 
@@ -103,6 +103,27 @@ Or:
 <SqlLogicTest id="sql/statements/create_table/index/example_017" />
 
 It is not possible to create tables using CTAS statements with constraints (primary keys, check constraints, etc.).
+
+## Table Options
+
+`CREATE TABLE ... WITH (option = value, ...)` sets how the table stores and maintains its rows and the [inverted indexes](../../indexes/inverted/index.md) on it:
+
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `compaction_interval` | `1000` | Background compaction interval in milliseconds; `0` disables it |
+| `compaction_max_segments` | `10` | Segments merged by one background compaction |
+| `compaction_max_segments_bytes` | `5368709120` (5 GB) | Size budget of one background compaction |
+| `compaction_floor_segment_bytes` | `2097152` (2 MB) | Segments smaller than this count as equal-sized when choosing what to merge |
+| `segment_memory_max` | `268435456` (256 MB) | Committed rows, deletes and in-place updates the table holds in memory before writing them to disk; below 4 GiB |
+| `row_group_size` | `122880` | Rows in a row group of the table's columns; a multiple of 2048 |
+| `block_size` | `262144` | Sets the size of the segments the table's text columns are compressed in, about twice this many bytes; a power of two from 16384 to 262144 |
+| `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
+
+The settings of the same names give the defaults of a new table, and the `default_block_size` setting that of `block_size`; `row_group_size` and `block_size` take the database's `ROW_GROUP_SIZE` and `BLOCK_SIZE` first (see [`CREATE DATABASE`](../create_database/index.md#storage-options)). The four `compaction_*` options can be changed later with [`ALTER TABLE ... SET` and `RESET`](../alter_table/index.md#set--reset-table-options); the others are fixed when the table is created. Any other option fails with `unrecognized parameter "<name>"`. See [Maintenance](../../indexes/inverted/maintenance.md) for what the options trade.
+
+## Key Lookups
+
+A filter that compares a single-column `PRIMARY KEY`, `UNIQUE` or `FOREIGN KEY` column with a value (`=`) or a list of values (`IN`) reads only the matching rows, whatever the column's type, instead of scanning the table. `EXPLAIN` shows it as an `Index Filter` on the column.
 
 ## Check Constraints
 

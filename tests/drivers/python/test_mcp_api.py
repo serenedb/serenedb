@@ -308,10 +308,9 @@ def test_list_docs_sections(conn):
 def test_list_objects_by_kind(conn):
     text, is_error = call_tool(conn, "list_objects", {"kind": "index_type"})
     assert not is_error
-    lines = sorted(text.split("\n"))
-    assert len(lines) == 2
-    assert lines[0].startswith("art - ")
-    assert lines[1].startswith("inverted - ")
+    lines = text.split("\n")
+    assert len(lines) == 1
+    assert lines[0].startswith("inverted - ")
 
 
 def test_list_objects_all_kinds_are_labelled(conn):

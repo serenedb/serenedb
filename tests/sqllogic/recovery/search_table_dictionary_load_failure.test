@@ -6,7 +6,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE dlf (id INT PRIMARY KEY, body TEXT USING COMPRESSION dict_zstd)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+  WITH (compaction_interval = 0,
         row_group_size = 8192);
 
 
@@ -16,7 +16,7 @@ FROM generate_series(1, 32768) s(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dlf;
+VACUUM (FLUSH_TABLE) dlf;
 
 
 statement ok
@@ -25,7 +25,7 @@ FROM generate_series(32769, 65536) s(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dlf;
+VACUUM (FLUSH_TABLE) dlf;
 
 
 statement ok
@@ -33,7 +33,7 @@ DELETE FROM dlf WHERE id IN (1, 65536);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dlf;
+VACUUM (FLUSH_TABLE) dlf;
 
 
 statement ok

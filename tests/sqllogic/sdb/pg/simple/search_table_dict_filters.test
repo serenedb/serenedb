@@ -3,7 +3,7 @@ CREATE TABLE df_s (a INTEGER PRIMARY KEY,
                    k TEXT USING COMPRESSION dict_fsst,
                    l TEXT USING COMPRESSION dict_lz4,
                    p TEXT USING COMPRESSION fsst)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 16384);
+  WITH (compaction_interval = 0, row_group_size = 16384);
 
 statement ok
 CREATE TABLE df_d (a INTEGER PRIMARY KEY, k TEXT, l TEXT, p TEXT);
@@ -19,7 +19,7 @@ statement ok
 INSERT INTO df_s SELECT * FROM df_d;
 
 statement ok
-VACUUM (REFRESH_TABLE) df_s;
+VACUUM (FLUSH_TABLE) df_s;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression, count(*) > 1 AS several

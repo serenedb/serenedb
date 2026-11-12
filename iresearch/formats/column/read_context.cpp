@@ -55,7 +55,8 @@ class ColMapping final : public duckdb::MemoryMappedFile {
 }  // namespace
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : BlockManager{db, /*block_header_size=*/0}, _cache{&db.GetObjectCache()} {}
+  : BlockManager{db, DEFAULT_BLOCK_ALLOC_SIZE, /*block_header_size=*/0},
+    _cache{&db.GetObjectCache()} {}
 
 ReadContext::ReadContext(const ColReader& reader, bool random_access)
   : ReadContext{reader.Database()} {

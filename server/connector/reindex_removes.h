@@ -31,7 +31,7 @@
 
 namespace sdb::connector {
 
-std::shared_ptr<const irs::DocRemoval> ResolveRemoves(
+irs::DocRemovalBuilder ResolveRemoves(
   const irs::DirectoryReader& snapshot, std::vector<uint64_t> deleted_files,
   std::vector<IcebergObserve::DeleteMask> masks,
   std::vector<std::pair<uint64_t, int64_t>> eq_rows);

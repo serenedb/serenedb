@@ -178,11 +178,17 @@ struct AnnInfo {
   friend bool operator==(const AnnInfo&, const AnnInfo&) = default;
 };
 
+enum class DistinctStats : uint8_t {
+  None,
+  Sampled,
+  Exact,
+};
+
 struct ColumnOptions {
   bool skip_validity = false;
   codecs::CodecType compression = codecs::CodecType::Auto;
   std::optional<AnnInfo> ann_info;
-  bool hyperloglog = false;
+  DistinctStats distinct = DistinctStats::None;
   uint8_t compression_level = 0;
 };
 

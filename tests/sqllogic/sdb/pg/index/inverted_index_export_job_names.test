@@ -53,7 +53,7 @@ USE exjn_${__DATABASE__};
 statement error
 IMPORT DATABASE '${__TEST_DIR__}/exjn_export';
 ----
-db error: ERROR: Job with name "exjn_b" already exists!
+db error: ERROR: job "exjn_b" already exists
 
 
 query

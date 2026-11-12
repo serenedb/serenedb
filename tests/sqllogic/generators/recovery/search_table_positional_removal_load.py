@@ -1,8 +1,8 @@
 from sqllogic_gen import Test
 
-t = Test("Random inserts, deletes and updates on a search table that refreshes "
-         "and compacts in the background, with crashes right after a DELETE "
-         "commits: once the log is replayed, the rows left match a model.",
+t = Test("Random inserts, deletes and updates on a search table that compacts "
+         "in the background, with crashes right after a DELETE commits: once "
+         "the log is replayed, the rows left match a model.",
          seed=5)
 COUNT = "SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;"
 RETRY = "retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION"
@@ -16,22 +16,19 @@ crashes = 0
 def statement(sql):
     t.connection(conn)
     t.statement(sql)
-    if not sql.startswith("VACUUM"):
+    if not sql.startswith("CHECKPOINT"):
         t.connection(conn)
-        t.statement("VACUUM (REFRESH_TABLE) rl;")
+        t.statement("CHECKPOINT;")
 
 
 def check():
-    t.connection(conn)
-    t.statement("VACUUM (REFRESH_TABLE) rl;")
     t.connection(conn)
     t.expect(COUNT, ["n", "s"], [[len(live), sum(live)]])
 
 
 t.control("substitution on")
 t.statement("RESET sdb_faults;")
-t.statement("CREATE TABLE rl (id BIGINT, grp INT) WITH (storage = 'search', "
-            "refresh_interval = 30, compaction_interval = 10, "
+t.statement("CREATE TABLE rl (id BIGINT, grp INT) WITH (compaction_interval = 10, "
             "compaction_max_segments = 3);", kind=f"statement ok {RETRY}")
 for _ in range(120):
     x = t.rng.random()
@@ -49,7 +46,7 @@ for _ in range(120):
         lo = t.rng.randrange(0, max(next_id, 1))
         hi = lo + t.rng.randrange(1, 5000)
         statement(f"UPDATE rl SET grp = grp + 1 WHERE id BETWEEN {lo} AND {hi};")
-        statement("VACUUM (REFRESH_TABLE) rl;")
+        statement("CHECKPOINT;")
     elif x < 0.93:
         check()
     else:

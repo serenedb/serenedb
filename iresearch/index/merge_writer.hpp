@@ -31,6 +31,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -103,6 +104,9 @@ class MergeWriter : public util::Noncopyable {
   // Flush all added readers into a single segment.
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
              const AnnBuildEnv* env = nullptr) -> yaclib::Future<bool>;
+
+  std::shared_ptr<const SegmentReaderImpl> FlushPiece(SegmentMeta& segment,
+                                                      uint64_t id);
 
   const ReaderCtx& operator[](size_t i) const noexcept {
     SDB_ASSERT(i < _readers.size());

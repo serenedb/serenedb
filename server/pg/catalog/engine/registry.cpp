@@ -29,7 +29,7 @@
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_table_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/optimizer/expression_rewriter.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
@@ -225,12 +225,15 @@ void InitSystemViews(duckdb::Parser& parser) {
 }
 
 void InitSystemFunctions(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
+  auto& oids = duckdb::DatabaseManager::Get(db);
   const auto add = [&](const SystemMacro& macro) {
     auto info = ParseMacro(parser, macro);
     const FunctionKey key{macro.schema, macro.name, info->macros[0]->type};
     if (const auto [it, inserted] =
           gFunctions.try_emplace(key, std::move(info));
-        !inserted) {
+        inserted) {
+      it->second->oid = oids.NextSystemOid();
+    } else {
       for (auto& m : info->macros) {
         it->second->macros.emplace_back(std::move(m));
       }
@@ -245,8 +248,8 @@ void InitSystemFunctions(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
     defined.emplace(std::get<1>(key));
   }
   auto& catalog =
-    duckdb::Catalog::GetSystemCatalog(db).Cast<duckdb::DuckCatalog>();
-  catalog.ScanSchemas([&](duckdb::SchemaCatalogEntry& schema) {
+    duckdb::Catalog::GetSystemCatalog(db).Cast<catalog::BaseCatalog>();
+  catalog.ScanSchemas([&](catalog::Schema& schema) {
     const auto collect = [&](duckdb::CatalogEntry& entry) {
       defined.emplace(entry.name.GetIdentifierName());
     };

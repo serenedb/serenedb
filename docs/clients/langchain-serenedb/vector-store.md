@@ -51,7 +51,6 @@ The synchronous factory. `engine`, `embedding_service` and `table_name` are posi
 | `index_query_options` | `Optional[QueryOptions]` | `None` | Per-query index tuning. See [`IVFQueryOptions`](./indexes.md#ivfqueryoptions). |
 | `hybrid_search_config` | `Optional[HybridSearchConfig]` | `None` | Query-time fusion settings. The combined index must already exist — see [Hybrid Search](./hybrid-search.md). |
 | `metadata_index` | `Optional[MetadataIndexConfig]` | `None` | Which indexed metadata this store filters on. May be a subset of what the index covers, but each declared field must use the type the index was built with. |
-| `sync_load` | `bool` | `True` | When `False`, writes do not auto-refresh the inverted index. |
 
 **Validation.** The factory queries `information_schema.columns` and fails fast if the table does not match:
 
@@ -100,17 +99,16 @@ Returns the list of ids actually written.
 
 Metadata is routed per key: a key matching a declared metadata column is bound to that column (a `dict` value is JSON-serialized), and what remains goes into the JSON column. A declared column with no matching key binds `NULL`.
 
-Unless the store was created with `sync_load=False`, the write ends with a [`refresh_table()`](./engine.md#refresh_table) so the new rows are immediately searchable.
+The new rows are searchable as soon as the call returns ([Write visibility](./engine.md#visibility)).
 
-For a bulk load, skip the per-batch refresh and build the index afterwards:
+For a bulk load, build the index afterwards:
 
 ```python
-store = SereneDBVectorStore.create_sync(engine, embeddings, "my_docs", sync_load=False)
+store = SereneDBVectorStore.create_sync(engine, embeddings, "my_docs")
 
 for batch in batches:
     store.add_texts(batch)
 
-engine.refresh_table("my_docs")
 store.apply_vector_index(IVFIndex())
 ```
 
@@ -135,7 +133,7 @@ store.delete(ids=None, filter=None)
 | `ids` | `Optional[list]` | `None` | Ids to delete. |
 | `filter` | `Optional[dict]` | `None` | A [metadata filter](./filtering.md); rows matching it are deleted. |
 
-Both may be given, in which case they are ANDed — the deleted rows are those whose id is in the list **and** which match the filter. Returns `True` when a `DELETE` was issued, and `False` when neither argument was supplied (nothing is deleted in that case). Refreshes the index afterwards unless `sync_load=False`.
+Both may be given, in which case they are ANDed — the deleted rows are those whose id is in the list **and** which match the filter. Returns `True` when a `DELETE` was issued, and `False` when neither argument was supplied (nothing is deleted in that case).
 
 ```python
 store.delete(filter={"category": {"$in": ["draft", "archived"]}})
@@ -271,7 +269,7 @@ These methods live on the store but are documented with the classes they take, o
 | [`apply_vector_index()`](./indexes.md#apply_vector_index) | Build the vector (or combined) inverted index. |
 | [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) | Build the combined index for hybrid search. |
 | [`drop_vector_index()`](./indexes.md#drop_vector_index) | Drop it. |
-| [`reindex()`](./indexes.md#reindex) | Rebuild in place — raises `NotImplementedError` for now. |
+| [`reindex()`](./indexes.md#reindex) | Rebuild in place — raises `NotImplementedError`. |
 | [`is_valid_index()`](./indexes.md#is_valid_index) | Whether the index currently exists. |
 
 ## Not implemented {#not-implemented}
@@ -282,7 +280,7 @@ These methods live on the store but are documented with the classes they take, o
 Initialize the table with SereneDBEngine.init_vectorstore_table, then use create_sync().
 ```
 
-[`reindex()`](./indexes.md#reindex) also raises for now, because SereneDB's `REINDEX` applies to view-backed indexes rather than to the base table a store lives in. Drop and re-apply the index to rebuild it.
+[`reindex()`](./indexes.md#reindex) also raises, because SereneDB's `REINDEX` applies to view-backed indexes rather than to the base table a store lives in. Drop and re-apply the index to rebuild it.
 
 The synchronous class also does not implement `add_embeddings()`, `similarity_search_with_score_by_vector()`, `max_marginal_relevance_search_by_vector()` or `max_marginal_relevance_search_with_score_by_vector()`. They exist on the async store — see [Async-only methods](./async.md#async-only).
 

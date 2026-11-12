@@ -47,22 +47,22 @@ SELECT c.relname, pg_get_indexdef(c.oid) AS def
 FROM pg_class c WHERE c.relnamespace = 'rs'::regnamespace AND c.relkind = 'i' ORDER BY c.relname;
 ----
 relname	def
-Odd Idx	CREATE INDEX "Odd Idx" ON rs.t USING secondary ("Odd Col")
-t_c_uq	CREATE UNIQUE INDEX t_c_uq ON rs.t USING secondary (c)
-t_coalesce	CREATE INDEX t_coalesce ON rs.t USING secondary (COALESCE(a, b))
-t_expr	CREATE INDEX t_expr ON rs.t USING secondary (((a + b)))
-t_incl	CREATE UNIQUE INDEX t_incl ON rs.t USING secondary (b)
-t_lower	CREATE UNIQUE INDEX t_lower ON rs.t USING secondary (lower(c))
-t_part	CREATE INDEX t_part ON rs.t USING secondary (a) WHERE ((a > 10) AND (b IS NOT NULL))
-t_pkey	CREATE UNIQUE INDEX t_pkey ON rs.t USING secondary (id)
-t_plain	CREATE INDEX t_plain ON rs.t USING secondary (a, b)
+Odd Idx	CREATE INDEX "Odd Idx" ON rs.t USING inverted ("Odd Col")
+t_c_uq	CREATE UNIQUE INDEX t_c_uq ON rs.t USING inverted (c)
+t_coalesce	CREATE INDEX t_coalesce ON rs.t USING inverted (COALESCE(a, b))
+t_expr	CREATE INDEX t_expr ON rs.t USING inverted (((a + b)))
+t_incl	CREATE UNIQUE INDEX t_incl ON rs.t USING inverted (b) INCLUDE (c)
+t_lower	CREATE UNIQUE INDEX t_lower ON rs.t USING inverted (lower(c))
+t_part	CREATE INDEX t_part ON rs.t USING inverted (a) WHERE ((a > 10) AND (b IS NOT NULL))
+t_pkey	CREATE UNIQUE INDEX t_pkey ON rs.t USING inverted (id)
+t_plain	CREATE INDEX t_plain ON rs.t USING inverted (a, b)
 
 
 query
 SELECT pg_get_indexdef('rs.t_plain'::regclass, 0, true) AS def;
 ----
 def
-CREATE INDEX t_plain ON rs.t USING secondary (a, b)
+CREATE INDEX t_plain ON rs.t USING inverted (a, b)
 
 
 statement ok
@@ -73,7 +73,7 @@ query
 SELECT pg_get_indexdef('rs.t_plain'::regclass, 0, true) AS pretty, pg_get_indexdef('rs.t_plain'::regclass) AS plain;
 ----
 pretty	plain
-CREATE INDEX t_plain ON t USING secondary (a, b)	CREATE INDEX t_plain ON rs.t USING secondary (a, b)
+CREATE INDEX t_plain ON t USING inverted (a, b)	CREATE INDEX t_plain ON rs.t USING inverted (a, b)
 
 
 statement ok
@@ -94,7 +94,8 @@ INSERT INTO rs.t (id, a, b, c) VALUES (1, 1, 1, 'x');
 statement error
 INSERT INTO rs.t (id, a, b, c) VALUES (2, 2, 1, 'y');
 ----
-db error: ERROR: Duplicate key "b: 1" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "t_incl"
+DETAIL: Key (b)=(1) already exists.
 
 
 query
@@ -106,7 +107,7 @@ t_ab_check	CHECK (((a > 0) AND (b IS NOT NULL)))
 
 
 statement ok
-CREATE TABLE rs.docs (id integer, body text, emb FLOAT[3], j JSON, tag text);
+CREATE TABLE rs.docs (id integer, body text, emb FLOAT[3], j JSON, tag text) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -114,14 +115,14 @@ CREATE TEXT SEARCH DICTIONARY rs.docs_text AS split_text(case := 'lower') WITH (
 
 
 statement ok
-CREATE INDEX docs_idx ON rs.docs USING inverted (id, body rs.docs_text, emb ivf (metric = 'l2'), lower(tag)) INCLUDE (j) WITH (compaction_interval = 0) WHERE id > 0;
+CREATE INDEX docs_idx ON rs.docs USING inverted (id, body rs.docs_text, emb ivf (metric = 'l2'), lower(tag)) INCLUDE (j) WHERE id > 0;
 
 
 query
 SELECT pg_get_indexdef('rs.docs_idx'::regclass) AS def;
 ----
 def
-CREATE INDEX docs_idx ON rs.docs USING inverted (id, body rs.docs_text, emb ivf (metric=l2), lower(tag)) INCLUDE (j) WITH (row_group_size='122880', refresh_interval='1000', compaction_interval='0', cleanup_interval_step='1', segment_memory_max='268435456', segment_docs_max='0', compaction_max_segments='10', compaction_max_segments_bytes='5368709120', compaction_floor_segment_bytes='2097152') WHERE (id > 0)
+CREATE INDEX docs_idx ON rs.docs USING inverted (id, body rs.docs_text, emb ivf (metric=l2), lower(tag)) INCLUDE (j) WHERE (id > 0)
 
 
 query

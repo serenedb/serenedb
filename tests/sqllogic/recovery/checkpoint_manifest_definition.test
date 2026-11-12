@@ -115,14 +115,16 @@ connection after_crash
 statement error
 INSERT INTO cmd_parent VALUES (1, 30, 'c');
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "cmd_parent_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_crash
 statement error
 INSERT INTO cmd_parent VALUES (3, 10, 'c');
 ----
-db error: ERROR: Duplicate key "code: 10" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "cmd_parent_code_key"
+DETAIL: Key (code)=(10) already exists.
 
 
 # The constraint added after the checkpoint has no index in the file. The boot
@@ -151,14 +153,16 @@ connection after_crash
 statement error
 INSERT INTO cmd_child VALUES (300, 999);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 999" does not exist in the referenced table
+db error: ERROR: insert or update on table "cmd_child" violates foreign key constraint "cmd_child_parent_fkey"
+DETAIL: Key (parent)=(999) is not present in table "cmd_parent".
 
 
 connection after_crash
 statement error
 DELETE FROM cmd_parent WHERE id = 1;
 ----
-db error: ERROR: Violates foreign key constraint because key "parent: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
+db error: ERROR: update or delete on table "cmd_parent" violates foreign key constraint "cmd_child_parent_fkey" on table "cmd_child"
+DETAIL: Key (id)=(1) is still referenced from table "cmd_child".
 
 
 # The index built after the checkpoint is back, and it holds the rows that were

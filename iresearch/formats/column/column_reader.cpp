@@ -247,7 +247,9 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
                      });
                  }
                });
-  s.WritePropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  s.WritePropertyWithDefault(7, "distinct", meta.distinct);
+  s.WritePropertyWithDefault<uint8_t>(8, "compression_level",
+                                      meta.compression_level, 0);
 }
 
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
@@ -270,7 +272,9 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
       rg.shredded = std::make_unique<ColumnMeta>(DeserializeColumnMeta(in));
     });
   });
-  d.ReadPropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  d.ReadPropertyWithDefault(7, "distinct", meta.distinct);
+  meta.compression_level =
+    d.ReadPropertyWithExplicitDefault<uint8_t>(8, "compression_level", 0);
   return meta;
 }
 
@@ -304,6 +308,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _type{std::move(type)},
     _segments{std::move(segments)},
     _validity{std::move(validity)},
+    _validity_view{_validity.get()},
     _children{std::move(children)},
     _array_size{_type.id() == duckdb::LogicalTypeId::ARRAY
                   ? duckdb::ArrayType::GetSize(_type)
@@ -662,8 +667,7 @@ bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
     return false;
   }
   const auto window = Locate(first, s.window);
-  if (last >= window.end || (s.initialized && window.block == s.window.block) ||
-      (s.fetch.segment && s.fetch_window.block == window.block)) {
+  if (s.initialized && window.block == s.window.block) {
     return false;
   }
   SkipTo(s, first);
@@ -1058,7 +1062,8 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
       });
       break;
   }
-  col->_hyperloglog = std::move(meta.hyperloglog);
+  col->_distinct = std::move(meta.distinct);
+  col->_compression_level = meta.compression_level;
   col->_file_id = file_id;
   return col;
 }
@@ -1068,6 +1073,7 @@ ColumnReader::PointReader::PointReader(const ColReader& col_reader,
                                        bool random_access)
   : _ctx{col_reader, random_access},
     _reader{&col},
+    _stored{!col.InMemory() && !col.Patched()},
     _blocks(col.DataRgCount()),
     _validity_blocks(col.Validity() ? col.Validity()->DataRgCount() : 0) {}
 
@@ -1119,14 +1125,25 @@ IRS_FORCE_INLINE bool ColumnReader::PointReader::FetchOne(
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
-bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
-                                         duckdb::idx_t out_offset) {
+bool ColumnReader::FetchPoint(PointReader& reader, uint64_t row,
+                              duckdb::Vector& out,
+                              duckdb::idx_t out_offset) const {
+  return reader.FetchStored(row, out, out_offset);
+}
+
+bool ColumnReader::ValidPoint(PointReader& reader, uint64_t row,
+                              duckdb::Vector& scratch) const {
+  return reader.ValidStored(row, scratch);
+}
+
+bool ColumnReader::PointReader::FetchStored(uint64_t row, duckdb::Vector& out,
+                                            duckdb::idx_t out_offset) {
   if (row >= _reader->RowCount()) {
     duckdb::FlatVector::ValidityMutable(out).SetInvalid(out_offset);
     return false;
   }
   duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
-  const auto* validity = _reader->_validity.get();
+  const auto* validity = _reader->_validity_view;
   if (validity && !FetchOne(_validity_blocks, *validity, _validity_window, row,
                             out, out_offset)) {
     return false;
@@ -1134,10 +1151,30 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   return FetchOne(_blocks, *_reader, _window, row, out, out_offset);
 }
 
-void ColumnReader::PointReader::FetchRows(std::span<const uint32_t> ids,
-                                          uint32_t first_id,
-                                          duckdb::Vector& out,
-                                          duckdb::idx_t out_offset) {
+void ColumnReader::PointReader::FetchPoints(std::span<const uint32_t> ids,
+                                            uint32_t first_id,
+                                            duckdb::Vector& out,
+                                            duckdb::idx_t out_offset) {
+  SDB_ASSERT(out_offset + ids.size() <= STANDARD_VECTOR_SIZE);
+  const bool strings =
+    out.GetType().InternalType() == duckdb::PhysicalType::VARCHAR;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    SDB_ASSERT(ids[i] >= first_id);
+    const auto at = out_offset + i;
+    if (!_reader->FetchPoint(*this, ids[i] - first_id, out, at) || !strings) {
+      continue;
+    }
+    auto& value = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(out)[at];
+    if (!value.IsInlined()) {
+      value = duckdb::StringVector::AddStringOrBlob(out, value);
+    }
+  }
+}
+
+void ColumnReader::PointReader::FetchStoredRows(std::span<const uint32_t> ids,
+                                                uint32_t first_id,
+                                                duckdb::Vector& out,
+                                                duckdb::idx_t out_offset) {
   SDB_ASSERT(out_offset + ids.size() <= STANDARD_VECTOR_SIZE);
   SDB_ASSERT(ids.empty() || ids.front() >= first_id);
   SDB_ASSERT(absl::c_adjacent_find(ids, std::greater_equal<>{}) == ids.end());
@@ -1150,7 +1187,7 @@ void ColumnReader::PointReader::FetchRows(std::span<const uint32_t> ids,
   while (count != 0 && ids[count - 1] >= stored) {
     mask.SetInvalid(out_offset + --count);
   }
-  if (const auto* validity = _reader->_validity.get()) {
+  if (const auto* validity = _reader->_validity_view) {
     for (size_t i = 0; i < count;) {
       auto& block =
         Block(_validity_blocks, *validity, _validity_window, ids[i] - first_id);
@@ -1208,12 +1245,12 @@ void ColumnReader::PointReader::FetchRows(std::span<const uint32_t> ids,
   }
 }
 
-bool ColumnReader::PointReader::ValidRow(uint64_t row,
-                                         duckdb::Vector& scratch) {
+bool ColumnReader::PointReader::ValidStored(uint64_t row,
+                                            duckdb::Vector& scratch) {
   if (row >= _reader->RowCount()) {
     return false;
   }
-  const auto* validity = _reader->_validity.get();
+  const auto* validity = _reader->_validity_view;
   if (!validity) {
     return true;
   }

@@ -35,10 +35,6 @@ INSERT INTO union_struct_inc VALUES
   (3, 'gamma cat', {'u': 7::UNION(num INTEGER, str VARCHAR), 'n': 30});
 
 
-statement ok
-VACUUM (REFRESH_TABLE) union_struct_inc;
-
-
 # Extract the UNION member: whole struct materializes, native s.u is cast to
 # VARCHAR for the client.
 query

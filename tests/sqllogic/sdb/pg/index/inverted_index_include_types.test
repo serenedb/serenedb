@@ -36,10 +36,6 @@ INSERT INTO iit VALUES (
     [1, 2, 3], 'hello world');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) iit;
-
-
 query
 SELECT c_u64, c_i128, c_u128, c_dec FROM iit_idx WHERE body @@ ts_phrase('hello world');
 ----

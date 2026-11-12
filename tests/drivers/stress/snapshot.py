@@ -48,7 +48,6 @@ class Snapshot:
         self.row_tokens = {}
         self.row_errors = {}
         self.database_count = 1
-        self.catalog_wal_bytes = None
         self.errors = []
 
     def is_generated(self, name):
@@ -75,14 +74,6 @@ def read_row_tokens(conn, keys):
         except Exception as exc:
             errors[key] = f"{type(exc).__name__}: {exc}"
     return out, errors
-
-
-def catalog_wal_size(datadir):
-    path = os.path.join(datadir, "engine_v1", "catalog.wal")
-    try:
-        return os.path.getsize(path)
-    except OSError:
-        return None
 
 
 def take(conn, run_tag, datadir=None, scan_artifacts=False):
@@ -147,26 +138,18 @@ def take(conn, run_tag, datadir=None, scan_artifacts=False):
         # this only runs where that contract applies: after a restart.
         if scan_artifacts:
             snap.orphan_files = scan_datadir(datadir, snap.all_oids)
-        snap.catalog_wal_bytes = catalog_wal_size(datadir)
     return snap
 
 
 def scan_datadir(datadir, live_oids):
     findings = []
-    engine = os.path.join(datadir, "engine_v1")
-    if not os.path.isdir(engine):
+    store = os.path.join(datadir, "engine_v1", "store")
+    if not os.path.isdir(store):
         return findings
-    for database in os.listdir(engine):
-        path = os.path.join(engine, database)
-        if not database.isdigit() or not os.path.isdir(path):
-            continue
-        if int(database) not in live_oids:
-            findings.append(("engine_v1", database))
-            continue
-        for entry in os.listdir(path):
-            if (entry.isdigit() and os.path.isdir(os.path.join(path, entry))
-                    and int(entry) not in live_oids):
-                findings.append((os.path.join("engine_v1", database), entry))
+    for entry in os.listdir(store):
+        if (entry.isdigit() and os.path.isdir(os.path.join(store, entry))
+                and int(entry) not in live_oids):
+            findings.append((os.path.join("engine_v1", "store"), entry))
     return findings
 
 

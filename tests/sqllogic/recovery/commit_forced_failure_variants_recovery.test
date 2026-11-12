@@ -112,6 +112,29 @@ statement error Forced commit failure
 COMMIT;
 
 
+connection victim
+statement ok
+CREATE TEMP TABLE cfv_scratch (a INTEGER);
+
+
+connection victim
+statement error Forced commit failure
+INSERT INTO cfv_scratch VALUES (1);
+
+
+connection victim
+statement ok
+CREATE ROLE cfv_lone_role;
+
+
+connection victim
+query
+SELECT (SELECT count(*) FROM pg_roles WHERE rolname = 'cfv_lone_role') AS ro, (SELECT count(*) FROM cfv_scratch) AS t;
+----
+ro	t
+1	0
+
+
 connection default
 statement ok
 SET debug_force_commit_failure = false;
@@ -186,4 +209,5 @@ connection after_crash
 statement error
 INSERT INTO cfv_base VALUES (1, 'dup');
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "cfv_base_pkey"
+DETAIL: Key (id)=(1) already exists.

@@ -64,4 +64,5 @@ connection after_checkpoint
 statement error
 INSERT INTO gos_t VALUES (1);
 ----
-db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "gos_t_pkey"
+DETAIL: Key (a)=(1) already exists.

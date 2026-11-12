@@ -13,9 +13,6 @@ INSERT INTO include_dates VALUES
 statement ok
 CREATE INDEX include_dates_idx ON include_dates USING inverted(id, y) INCLUDE (d, h, t);
 
-statement ok
-VACUUM (REFRESH_TABLE) include_dates;
-
 query
 SELECT list(id ORDER BY id) AS ids FROM include_dates_idx WHERE d >= DATE '2026-01-01' AND d < DATE '2026-01-03' AND y = 0;
 ----

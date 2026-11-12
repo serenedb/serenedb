@@ -65,7 +65,6 @@ constexpr std::string_view kOperation = "CREATE TEXT SEARCH DICTIONARY";
 constexpr std::string_view kInput = "input";
 constexpr std::string_view kPipe = "|";
 constexpr std::string_view kListValue = "list_value";
-constexpr std::string_view kMainSchema = "main";
 
 constexpr std::string_view kPipelineName =
   irs::analysis::PipelineTokenizer::type_name();
@@ -228,8 +227,8 @@ std::optional<std::vector<const duckdb::ParsedExpression*>> AsListLiteral(
   }
   const auto& qualified = fn->GetQualifiedName();
   if (!qualified.Catalog().empty() ||
-      (!qualified.Schema().empty() &&
-       qualified.Schema().GetIdentifierName() != kMainSchema)) {
+      (!qualified.Schema().empty() && qualified.Schema().GetIdentifierName() !=
+                                        irs::StaticStrings::kPgCatalogSchema)) {
     return std::nullopt;
   }
   for (const auto& arg : fn->GetArguments()) {

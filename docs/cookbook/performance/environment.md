@@ -107,7 +107,7 @@ Therefore, it's recommended to use a Linux distribution with glibc for performan
 
 #### File Descriptors and Memory Maps
 
-SereneDB keeps many files open at once — the database file, the write-ahead log, external Parquet, CSV and JSON sources and, above all, the per-segment files of [inverted indexes](../../sql/indexes/inverted/index.md) — and it memory-maps those index segments. Two Linux limits therefore matter for search-heavy and large workloads.
+SereneDB keeps many files open at once — the write-ahead log, attached DuckDB database files, external Parquet, CSV and JSON sources and, above all, the per-segment files of tables and of [inverted indexes](../../sql/indexes/inverted/index.md) on views — and it memory-maps those segment files. Two Linux limits therefore matter for search-heavy and large workloads.
 
 **Open files (`RLIMIT_NOFILE`).**
 On startup SereneDB raises its own _soft_ open-file limit to 65535, or to the _hard_ limit if that is lower. Raising the hard limit requires elevated privileges, so set it before starting the server if it sits below that. The `.deb` package's service does this for you (`LimitNOFILE=131072`); for a [shell-script](../../installation/shell-script.md) or [tarball](../../installation/tarball.md) install, raise it yourself first:

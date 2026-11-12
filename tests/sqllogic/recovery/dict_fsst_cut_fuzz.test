@@ -1,18 +1,18 @@
-# Deterministic fuzz for the dict_fsst CUT machinery. dict_fsst_plus_fuzz stresses the encoder's
-# round-trip on adversarial bytes; this stresses the near-block sizing: every table is built to cross
-# several block boundaries while the properties the cut has to track -- cardinality, uniqueness,
+# Deterministic fuzz of text segment sizing. dict_fsst_plus_fuzz stresses the encoder's round-trip
+# on adversarial bytes; this stresses where segments end: every table is built to cross several
+# segment boundaries while the properties a segment's layout depends on -- cardinality, uniqueness,
 # NULLs, value length, prefix structure -- change mid-segment on hash-driven schedules the test
-# writer did not hand-place. The large row group keeps segments wide, where the re-prices are
-# biggest. Everything is a pure function of ord, so failures replay exactly and every row is
-# verified against the expression that generated it.
+# writer did not hand-place. The large row group keeps segments wide. Everything is a pure function
+# of ord, so failures replay exactly and every row is verified against the expression that
+# generated it.
 #
-# ramp_card   distinct count doubles every 60k rows (4 -> 512): a selection-width bump lands in
-#             every regime, early and late
+# ramp_card   distinct count doubles every 60k rows (4 -> 512): a code width bump lands in every
+#             regime, early and late
 # flip_blocks alternating ~35k-row blocks of all-unique and low-cardinality values: the uniqueness
-#             flip and its rewind fire repeatedly at hash-chosen offsets
+#             flip fires repeatedly at hash-chosen offsets
 # holes_len   12% NULLs, 6% empties, hash-driven lengths 1..~90 with rare ~800-char spikes: length
 #             width bumps under a dictionary full of holes
-# mixed_all   all of it at once, plus shared prefixes so the cleaved candidates stay in play
+# mixed_all   all of it at once, plus shared prefixes
 
 control substitution on
 
@@ -90,12 +90,12 @@ hl_nulls	hl_empties	rc_distinct	hl_maxlen
 48237	23891	512	802
 
 
-# the shapes really exercised dict_fsst, and the cleaved modes stayed in play where prefixes exist
+# the shapes really exercised the fsst codecs: a dictionary where values repeat, one entry per row too
 query
 SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfz.ramp_card', include_segment_info=true) WHERE column_name='s' AND compression='DICT_FSST') AS rc_dict_fsst,
-       (SELECT bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfz.mixed_all', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS ma_has_plus;
+       (SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) FROM pragma_storage_info('dfz.mixed_all', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS ma_fsst;
 ----
-rc_dict_fsst	ma_has_plus
+rc_dict_fsst	ma_fsst
 t	t
 
 

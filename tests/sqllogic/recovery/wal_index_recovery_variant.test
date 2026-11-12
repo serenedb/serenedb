@@ -3,10 +3,8 @@ control substitution on
 # VARIANT survives WAL replay through an inverted index's INCLUDE columnstore.
 #
 # A VARIANT INCLUDE column is stored as VARCHAR-with-JSON-alias in the .col
-# file. The pre-crash row is made durable by a refresh; the post-crash rows
-# (an int, a string, a bool, and a json object variant) live only in the
-# store WAL with the search commit faulted off. On restart the index's cs
-# must be rebuilt from the WAL so every payload reads back from the index.
+# file. On restart the index's cs must be rebuilt from the WAL so every payload
+# reads back from the index.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY var_rec_dict AS
@@ -20,23 +18,17 @@ statement ok
 CREATE INDEX var_rec_idx ON var_rec_t
   USING inverted(body var_rec_dict) INCLUDE (payload);
 
-# Pre-crash row, made durable in the segments + cs by a refresh.
 statement ok
 INSERT INTO var_rec_t VALUES (1, 'alpha bravo', 42::variant);
 
 statement ok
-VACUUM (REFRESH_TABLE) var_rec_t;
+VACUUM (FLUSH_TABLE) var_rec_t;
 
 query
 SELECT id, payload FROM var_rec_idx WHERE body @@ ts_phrase('alpha');
 ----
 id	payload
 1	42
-
-# Post-crash rows: suppress the index commit so they land only in the store
-# WAL, post-refresh and not yet durable in the segments.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO var_rec_t VALUES
@@ -54,7 +46,7 @@ SELECT 1;
 
 connection var_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) var_rec_t;
+SELECT 1;
 
 # Pre-crash row's VARIANT still served from cs.
 connection var_after

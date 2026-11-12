@@ -22,13 +22,13 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/storage/statistics/distinct_statistics.hpp>
 #include <memory>
 #include <span>
 #include <vector>
@@ -37,26 +37,40 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/list_ingest.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
+class ColWriter;
+
 void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink);
+
+void UpdateDistinct(duckdb::DistinctStatistics& distinct, DistinctStats mode,
+                    const duckdb::Vector& values, duckdb::idx_t count,
+                    duckdb::Vector& hashes);
+
+struct StagedColumn {
+  field_id id;
+  duckdb::LogicalType type;
+  std::vector<WriteChunk> chunks;
+  DistinctStats distinct = DistinctStats::None;
+};
 
 struct ColumnWriterOptions {
   bool skip_validity = false;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   codecs::CodecType compression = codecs::CodecType::Auto;
-  bool hyperloglog = false;
+  DistinctStats distinct = DistinctStats::None;
   ColCodecParams codec_params;
 };
 
 class ColumnWriter final {
  public:
-  ColumnWriter(WriteContext& ctx, field_id id, duckdb::LogicalType type,
-               const ColumnWriterOptions& options);
+  ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
+               const ColumnWriterOptions& options, bool deferred);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -74,16 +88,24 @@ class ColumnWriter final {
     ++back.count;
     duckdb::FlatVector::SetSize(back.data, back.count);
     ++_staged_rows;
-    if (_staged_rows == _row_group_size) {
+    if (!_deferred && _staged_rows == _row_group_size) {
       SealRowGroup();
     }
   }
 
   void PadNullsTo(uint64_t target_row);
 
+  bool CopyableFrom(const ColumnReader& column) const;
+  void CopyBlocks(const ColumnReader& column, ReadContext& source);
+  void CopyRows(uint64_t start_row, const ColumnReader& column,
+                ReadContext& source, uint64_t first, uint64_t count);
+
+  std::vector<WriteChunk> Snapshot(uint64_t rows) const;
+  size_t StagedBytes() const noexcept;
+
   void Finish() { SealRowGroup(); }
 
-  void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
+  void SetDistinct(duckdb::shared_ptr<duckdb::DistinctStatistics> distinct);
 
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
@@ -101,7 +123,21 @@ class ColumnWriter final {
            _type.InternalType() == duckdb::PhysicalType::LIST;
   }
 
+  bool LayoutMatches(const ColumnReader& column) const noexcept;
+  codecs::CodecType ForcedCodec() const;
+  bool ValidityCopyable(const ColumnReader& column, uint64_t first,
+                        uint64_t end) const noexcept;
+  void CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
+                 std::vector<ColumnBlockMeta>& sink,
+                 std::vector<byte_type>& buffer);
+  void CopyValidity(const ColumnReader& column, ReadContext& source,
+                    uint64_t first, uint64_t end,
+                    std::vector<byte_type>& buffer);
+  void DecodeRows(const ColumnReader& column, ReadContext& source,
+                  uint64_t first, uint64_t count);
+
   void SealRowGroup();
+  void SealStaged(std::span<WriteChunk> chunks, uint64_t rows);
 
   template<typename Encode>
   uint64_t WriteBlocks(const codecs::CompressionFunction& function,
@@ -164,9 +200,9 @@ class ColumnWriter final {
                   uint64_t row_count, bool skip_validity, ColumnMeta& meta,
                   std::span<const std::unique_ptr<ListIngest>> ingest = {});
 
-  WriteContext& WriteCtx() const noexcept { return *_ctx; }
+  WriteContext& WriteCtx() const noexcept;
 
-  WriteContext* _ctx;
+  ColWriter* _owner;
   field_id _id;
   duckdb::LogicalType _type;
   bool _skip_validity = false;
@@ -184,8 +220,9 @@ class ColumnWriter final {
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
   uint64_t _row_start = 0;
-  bool _hll_auto = false;
-  duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
+  bool _deferred = false;
+  DistinctStats _distinct = DistinctStats::None;
+  duckdb::Vector _distinct_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
   std::vector<std::unique_ptr<ListIngest>> _ingest;

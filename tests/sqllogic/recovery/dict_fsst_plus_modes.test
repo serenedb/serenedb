@@ -1,17 +1,20 @@
-# dict_fsst serenedb-only FSST+ modes (DICT_FSST_PLUS / FSST_PLUS)
-# and the native-write gate. force_compression pins dict_fsst so the per-segment mode is
-# observable via pragma_storage_info(..., include_segment_info=true), which
-# reports "mode: <name>". Contract: on serenedb-owned storage an FSST-worthy
-# dictionary is cleaved into a _plus mode; native storage never writes a plus mode
-# (so it stays readable by vanilla duckdb). Every dataset is copied from one
-# shared source into both databases and read back to prove byte-identical
-# round-trip through the new compress/decompress paths.
+# dict_fsst on both storages. force_compression pins dict_fsst so what a segment
+# stores is observable via pragma_storage_info(..., include_segment_info=true).
+# Contract: a SereneDB database stores text with the columnstore's dict_fsst, a
+# dictionary with FSST over its entries; native storage uses DuckDB's and never
+# writes a plus mode (so it stays readable by vanilla duckdb). Every dataset is
+# copied from one shared source into both databases and read back to prove
+# byte-identical round-trip through both compress/decompress paths.
 
 control substitution on
 
 
 statement ok
 SET force_compression='dict_fsst';
+
+
+statement ok
+SET threads = 1;
 
 
 statement ok
@@ -22,7 +25,7 @@ statement ok
 ATTACH '${__TEST_DIR__}/dfp_native.db' AS nat (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
 
 
-# --- 1. FSST-worthy low-cardinality dictionary -> owned picks a _PLUS mode ----
+# --- 1. FSST-worthy low-cardinality dictionary ---------------------------------
 statement ok
 CREATE TABLE src_dup AS
   SELECT i, 'https://example.com/path/segment/subpath/page/' || (i % 4000)::VARCHAR AS s FROM range(200000) t(i);
@@ -59,14 +62,14 @@ n
 0
 
 
-# owned uses a _PLUS mode (at least one dict_fsst plus segment, and no non-plus dict_fsst segment)
+# owned stores a dictionary with FSST over its entries in every segment
 query
-SELECT (SELECT count(*) FROM pragma_storage_info('own.dup', include_segment_info=true)
-          WHERE compression='DICT_FSST' AND segment_info LIKE '%PLUS%') > 0 AS has_plus,
-       (SELECT count(*) FROM pragma_storage_info('own.dup', include_segment_info=true)
-          WHERE compression='DICT_FSST' AND segment_info NOT LIKE '%PLUS%') AS non_plus;
+SELECT count(*) > 0 AS has_dict_fsst,
+       count(*) FILTER (WHERE compression <> 'DICT_FSST' OR segment_info NOT LIKE '%shape: dedup, codec: fsst,%') AS other
+  FROM pragma_storage_info('own.dup', include_segment_info=true)
+ WHERE column_name='s' AND segment_type='VARCHAR';
 ----
-has_plus	non_plus
+has_dict_fsst	other
 t	0
 
 
@@ -78,7 +81,7 @@ n
 0
 
 
-# filter pushdown over a _PLUS segment
+# filter pushdown over a dict_fsst segment
 query
 SELECT count(*) AS n FROM own.dup WHERE s = 'https://example.com/path/segment/subpath/page/7';
 ----
@@ -93,7 +96,7 @@ n
 50
 
 
-# --- 2. High-cardinality / all-unique -> FSST_ONLY, round-trip on both --------
+# --- 2. High-cardinality / all-unique, round-trip on both ----------------------
 statement ok
 CREATE TABLE src_uniq AS SELECT i, 'https://u.example/' || i::VARCHAR AS s FROM range(20000) t(i);
 

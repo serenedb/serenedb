@@ -33,7 +33,6 @@
 #include <optional>
 #include <span>
 
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
 #include "pg/protocol.h"
@@ -48,7 +47,7 @@ constexpr std::string_view kDevStdout = "/dev/stdout";
 struct ConnectionPlumbing {
   pg::CopyInBatches* batches;
   message::Buffer* send_buffer;
-  SereneDBClientState& state;
+  ConnectionContext& state;
 };
 
 ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
@@ -60,18 +59,8 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
       ERR_MSG("COPY ", path,
               " is only valid on a server-side PostgreSQL wire connection"));
   }
-  auto* state = client_context->registered_state
-                  ->Get<SereneDBClientState>(kSereneDBClientStateKey)
-                  .get();
-  if (!state) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("COPY ", path,
-              " requires SereneDB client state (not registered)"));
-  }
-  auto& conn = state->GetConnectionContext();
-  return {conn.GetSideChannel<pg::CopyInBatches>(), conn.GetSendBuffer(),
-          *state};
+  auto& conn = ConnectionContext::Get(*client_context);
+  return {conn.GetSideChannel<pg::CopyInBatches>(), conn.GetSendBuffer(), conn};
 }
 
 }  // namespace
@@ -82,7 +71,7 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
 // nothing to replay. The session has already sent CopyInResponse by the time
 // the handle exists.
 struct CopyInFileHandle final : public duckdb::FileHandle {
-  CopyInFileHandle(duckdb::FileSystem& fs, SereneDBClientState& state,
+  CopyInFileHandle(duckdb::FileSystem& fs, ConnectionContext& state,
                    pg::CopyInBatches& batches)
     : duckdb::FileHandle(
         fs, std::string{kDevStdin},
@@ -141,7 +130,7 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
   }
 
  private:
-  SereneDBClientState& _state;
+  ConnectionContext& _state;
   pg::CopyInBatches& _batches;
   pg::CopyBatchLease _batch;
   size_t _segment = 0;

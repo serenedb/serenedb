@@ -3,16 +3,16 @@
 # recompression path (UPDATE/DELETE then a second CHECKPOINT re-runs the same cut machinery over a
 # changed dictionary).
 #
-# Every boundary constant in the cut logic is relative to block_size, so a 16KB block re-arms every
-# near-block subtlety at 16x the frequency: the flip shape here crosses a segment boundary every
-# ~1,300 rows instead of every ~33,000. Two block-size-specific facts get pinned rather than
-# assumed:
-#   - the never-encoded width-bump geometry CHANGES at small blocks: ROW_HEADROOM (4KB) is a
-#     quarter of the block, so only the narrowest widths (2 -> 3 bit) can still jump the gap;
-#   - integer bitpacking (every width, HUGEINT and DECIMAL included) declines 16KB blocks entirely
-#     and falls back to Uncompressed; at the default block size all of them bitpack.
+# A 16KB block cuts a table's text into segments of about 32KB, so the flip shape here crosses a
+# segment boundary many times as often as at the default block size. One block-size-specific fact
+# gets pinned rather than assumed: integer bitpacking (every width, HUGEINT and DECIMAL included)
+# is the same at both block sizes, since the block size cuts text segments only.
 
 control substitution on
+
+
+statement ok
+SET compaction_interval = 0;
 
 
 statement ok
@@ -52,7 +52,7 @@ statement ok
 CHECKPOINT c16;
 
 
-# values LARGER than the whole 16KB block: the overflow-string path under dict_fsst pressure
+# values LARGER than the whole 16KB block, under dict_fsst
 statement ok
 CREATE TABLE c16.overblock AS
   SELECT ord, CASE WHEN ord % 5000 = 2500 THEN repeat('B', 60000) || ord::VARCHAR
@@ -64,8 +64,8 @@ statement ok
 CHECKPOINT c16;
 
 
-# the never-encoded width bump at the only boundary that can still clear a 16KB block: 3 distinct
-# values ride a 2-bit selection to ~49k rows, then the 4th value forces 3 bits on every row
+# a code width bump: 3 distinct values ride 2-bit codes to ~49k rows, then the 4th value forces
+# 3 bits on every row
 statement ok
 CREATE TABLE c16.width2to3 AS
   SELECT ord, CASE WHEN ord < 49000 THEN 'k' || (ord % 3)::VARCHAR
@@ -191,20 +191,20 @@ deleted_gone
 
 # codec placement pinned per combination. flip/blob really reached DICT_FSST at 16KB; the 60KB
 # values survived alongside it; every integer width including HUGEINT and DECIMAL bitpacks at the
-# default block size and declines 16KB blocks. If any of these engine behaviours changes, this
+# default block size and at 16KB blocks alike. If any of these engine behaviours changes, this
 # flips and says so rather than letting the coverage silently mean something else.
 query
 SELECT 'flip16_dict_fsst' AS combo, (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('c16.flip16', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR') AS ok
 UNION ALL SELECT 'blob16_dict_fsst', (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('c16.blob16', include_segment_info=true) WHERE column_name='v' AND segment_type NOT IN ('VALIDITY'))
 UNION ALL SELECT 'bigint_bitpacks_256k', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('c256.ints256', include_segment_info=true) WHERE column_name='t8' AND segment_type NOT IN ('VALIDITY'))
-UNION ALL SELECT 'bigint_declines_16k', (SELECT bool_or(compression = 'Uncompressed') AND NOT bool_or(compression = 'BitPacking') FROM pragma_storage_info('c16.ints16', include_segment_info=true) WHERE column_name='t8' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'bigint_bitpacks_16k', (SELECT bool_and(compression = 'BitPacking') FROM pragma_storage_info('c16.ints16', include_segment_info=true) WHERE column_name='t8' AND segment_type NOT IN ('VALIDITY'))
 UNION ALL SELECT 'hugeint_bitpacks_256k', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('c256.ints256', include_segment_info=true) WHERE column_name='t16' AND segment_type NOT IN ('VALIDITY'))
 UNION ALL SELECT 'decimal_bitpacks_256k', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('c256.ints256', include_segment_info=true) WHERE column_name='dec18' AND segment_type NOT IN ('VALIDITY'))
 ORDER BY combo;
 ----
 combo	ok
+bigint_bitpacks_16k	t
 bigint_bitpacks_256k	t
-bigint_declines_16k	t
 blob16_dict_fsst	t
 decimal_bitpacks_256k	t
 flip16_dict_fsst	t

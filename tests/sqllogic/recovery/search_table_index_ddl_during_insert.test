@@ -10,7 +10,7 @@ CREATE TEXT SEARCH DICTIONARY dic_sti AS
 
 statement ok
 CREATE TABLE sti (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO sti VALUES (1, 'fox before');
@@ -50,7 +50,7 @@ wait
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) sti;
+VACUUM (FLUSH_TABLE) sti;
 
 connection default
 query
@@ -109,7 +109,7 @@ wait
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) sti;
+VACUUM (FLUSH_TABLE) sti;
 
 connection default
 statement ok
@@ -128,7 +128,7 @@ CREATE INDEX sti_body ON sti USING inverted (body dic_sti);
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) sti;
+VACUUM (FLUSH_TABLE) sti;
 
 connection default
 query

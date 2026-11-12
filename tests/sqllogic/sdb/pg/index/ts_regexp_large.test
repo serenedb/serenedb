@@ -2,7 +2,7 @@ hash-threshold 100
 
 
 statement ok
-CREATE TABLE regexp_large (id BIGINT, k VARCHAR) WITH (storage = 'search')
+CREATE TABLE regexp_large (id BIGINT, k VARCHAR)
 
 
 statement ok
@@ -11,10 +11,6 @@ CREATE INDEX regexp_large_idx ON regexp_large USING inverted (id, k)
 
 statement ok
 INSERT INTO regexp_large SELECT i, md5(i::VARCHAR)[1:8] FROM range(1000) r(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) regexp_large
 
 
 query

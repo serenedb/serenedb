@@ -93,9 +93,12 @@ class FullScanner {
 };
 
 void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
+                  uint64_t begin, uint64_t end,
                   std::span<const irs::ColumnstoreProjection> projections,
                   irs::ColFilterStateCache& filter_states,
                   duckdb::SelectionVector& live, duckdb::DataChunk& chunk,
-                  absl::FunctionRef<bool(duckdb::DataChunk&)> visit);
+                  absl::FunctionRef<bool(duckdb::DataChunk&, uint64_t,
+                                         std::span<const duckdb::sel_t>)>
+                    visit);
 
 }  // namespace sdb::connector

@@ -27,6 +27,7 @@
 #include <re2/regexp.h>
 
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/function/scalar/regexp.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -71,9 +72,11 @@
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
+#include <vector>
 
 #include "comparison_op.hpp"
 #include "connector/common.h"
+#include "connector/constraint_keys.h"
 #include "connector/index_expression.hpp"
 #include "connector/term_dict.h"
 #include "functions/search.h"
@@ -577,6 +580,9 @@ bool IsStrictComparisonShape(const duckdb::Expression& expr) {
 const SearchColumnInfo* FindColumnRefInfo(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref);
 
+const SearchColumnInfo* FindKeyColumnInfo(const FilterContext& ctx,
+                                          const duckdb::Expression& expr);
+
 namespace {
 
 // UNKNOWN exactly on NULL operands; false for shapes whose null behavior
@@ -840,6 +846,35 @@ absl::Status FromIsNull(BoolTarget filter, const FilterContext& ctx,
   return absl::OkStatus();
 }
 
+bool LooksUpKey(const SearchColumnInfo& info) {
+  return info.key_field != irs::field_limits::invalid();
+}
+
+absl::Status FromKeyLookup(BoolTarget filter, const FilterContext& ctx,
+                           const SearchColumnInfo& info,
+                           std::span<const duckdb::Value* const> values,
+                           bool negated) {
+  if (negated && info.nullable) {
+    return absl::UnimplementedError(
+      "a negated key lookup would admit the column's NULL rows");
+  }
+  std::vector<irs::bstring> terms;
+  terms.reserve(values.size());
+  for (const auto* value : values) {
+    if (value->type() != info.logical_type) {
+      return absl::UnimplementedError("the value's type is not the key's");
+    }
+    const auto key = EncodeKeyValue(*value);
+    terms.emplace_back(irs::ViewCast<irs::byte_type>(std::string_view{key}));
+  }
+  auto& node = AddTermSet(negated ? NegateScoped(filter, info) : filter,
+                          info.key_field, kConstraintKeyDict, terms,
+                          /*min_match=*/1);
+  node.SetBoost(ctx.boost);
+  node.SetScorer(LeafScorer(info));
+  return absl::OkStatus();
+}
+
 template<bool GenericVersion>
 absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
                           const duckdb::Expression& left_expr,
@@ -860,6 +895,9 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
   }
 
   const auto* column_info = FindColumnInfoForExpr(ctx, left_expr);
+  if (!column_info) {
+    column_info = FindKeyColumnInfo(ctx, left_expr);
+  }
   const auto* const_val = TryGetConstant(right_expr);
 
   if (!column_info || !const_val) {
@@ -875,6 +913,10 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
     // foo == NULL is always false and foo != NULL is false too.
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
+  }
+  if (LooksUpKey(*column_info)) {
+    return FromKeyLookup(filter, ctx, *column_info, {&const_val, 1},
+                         ctx.negated != not_equal);
   }
   if constexpr (GenericVersion) {
     if (auto s =
@@ -1221,6 +1263,9 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   const auto* column_info =
     FindColumnInfoForExpr(ctx, *op_expr.GetChildren()[0]);
   if (!column_info) {
+    column_info = FindKeyColumnInfo(ctx, *op_expr.GetChildren()[0]);
+  }
+  if (!column_info) {
     return absl::InvalidArgumentError(
       "IN input is not a reference to an indexed column");
   }
@@ -1229,10 +1274,12 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   }
 
   if constexpr (GenericVersion) {
-    if (auto s = RequireKeywordAnalyzed(
-          *column_info,
-          "Use `col @@ ts_any('a', 'b', ...)` (tokenised) or `col @@ "
-          "ts_any('a'::tokenize('keyword'), ...)` (raw).");
+    if (auto s = LooksUpKey(*column_info)
+                   ? absl::OkStatus()
+                   : RequireKeywordAnalyzed(
+                       *column_info,
+                       "Use `col @@ ts_any('a', 'b', ...)` (tokenised) or `col "
+                       "@@ ts_any('a'::tokenize('keyword'), ...)` (raw).");
         !s.ok()) {
       return s;
     }
@@ -1261,6 +1308,10 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   if ((ctx.negated && has_null) || values.empty()) {
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
+  }
+
+  if (LooksUpKey(*column_info)) {
+    return FromKeyLookup(filter, ctx, *column_info, values, ctx.negated);
   }
 
   auto type_id = column_info->logical_type.id();
@@ -1451,6 +1502,24 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSEndsWithLike(
                 duckdb::Value(std::move(pattern)))));
 }
 
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWithLike(
+  std::string_view literal) {
+  std::string pattern;
+  pattern.reserve(literal.size() * 2 + 1);
+  AppendEscapedLikePattern(literal, pattern);
+  pattern.push_back('%');
+  return MakeTSQueryCall(
+    kTSQLike, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                duckdb::Value(std::move(pattern)))));
+}
+
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSILike(
+  std::string_view literal) {
+  return MakeTSQueryCall(
+    kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                  duckdb::Value(irs::LikeRegexp(literal, true)))));
+}
+
 bool AnchoredAtText(re2::Regexp* re, bool start) {
   while (re->op() == re2::kRegexpCapture || re->op() == re2::kRegexpConcat) {
     re =
@@ -1496,6 +1565,13 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
                   duckdb::Value(TSRegexpPattern(literal)))));
 }
 
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSFullRegexp(
+  std::string_view literal) {
+  return MakeTSQueryCall(
+    kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                  duckdb::Value(literal))));
+}
+
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
   std::string_view literal) {
   return MakeTSQueryCall(
@@ -1503,28 +1579,34 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
                 duckdb::Value(literal))));
 }
 
-using AnalyzerPredicate = bool (*)(irs::TypeInfo::type_id);
+struct StringBuiltin {
+  StringBuiltinBuilder keyword;
+  StringBuiltinBuilder wildcard;
+  bool like_pattern = false;
+  bool per_term = false;
+};
 
-bool IsKeywordAnalyzer(irs::TypeInfo::type_id t) {
-  return t == irs::Type<irs::KeywordTokenizer>::id();
-}
-
-bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
-  return t == irs::Type<irs::KeywordTokenizer>::id() ||
-         t == irs::Type<irs::analysis::WildcardTokenizer>::id();
-}
-
-const irs::containers::FlatHashMap<std::string_view, StringBuiltinBuilder>
+const irs::containers::FlatHashMap<std::string_view, StringBuiltin>
   kBuiltinBuilder = {
-    {"contains", &BuildTSContainsLike},
-    {"^@", &BuildTSStartsWith},
-    {"starts_with", &BuildTSStartsWith},
-    {"prefix", &BuildTSStartsWith},
-    {"suffix", &BuildTSEndsWithLike},
-    {"ends_with", &BuildTSEndsWithLike},
-    {"regexp_matches", &BuildTSRegexp},
-    {"regexp_like", &BuildTSRegexp},
-    {"~~", &BuildTSLike},
+    {"contains", {&BuildTSContainsLike, &BuildTSContainsLike}},
+    {"^@", {&BuildTSStartsWith, &BuildTSStartsWithLike}},
+    {"starts_with", {&BuildTSStartsWith, &BuildTSStartsWithLike}},
+    {"prefix", {&BuildTSStartsWith, &BuildTSStartsWithLike}},
+    {"suffix", {&BuildTSEndsWithLike, &BuildTSEndsWithLike}},
+    {"ends_with", {&BuildTSEndsWithLike, &BuildTSEndsWithLike}},
+    {"regexp_matches", {&BuildTSRegexp, &BuildTSRegexp}},
+    {"regexp_like", {&BuildTSRegexp, &BuildTSRegexp}},
+    {"regexp_full_match", {&BuildTSFullRegexp, &BuildTSFullRegexp}},
+    {"~~", {&BuildTSLike, &BuildTSLike, true, true}},
+    {"~~*", {&BuildTSILike, &BuildTSILike, true}},
+};
+
+const irs::containers::FlatHashMap<std::string_view, std::string_view>
+  kNegatedPatternFunction = {
+    {"!~~", "~~"},
+    {"!~~*", "~~*"},
+    {"not_like_escape", "like_escape"},
+    {"not_ilike_escape", "ilike_escape"},
 };
 
 absl::Status FromFunctionExpression(
@@ -1549,8 +1631,15 @@ absl::Status FromFunctionExpression(
     return FromInetNetworkOp(filter, ctx, *inet);
   }
 
+  FilterContext pattern_ctx = ctx;
+  if (const auto negated = kNegatedPatternFunction.find(name);
+      negated != kNegatedPatternFunction.end()) {
+    name = negated->second;
+    pattern_ctx.negated = !ctx.negated;
+  }
+
   std::string_view escape = "\\";
-  if (name == "like_escape") {
+  if (name == "like_escape" || name == "ilike_escape") {
     SDB_ASSERT(args.size() == 3);
     const auto* escape_val = TryGetConstant(*args[2]);
     if (!escape_val || escape_val->IsNull() ||
@@ -1565,13 +1654,25 @@ absl::Status FromFunctionExpression(
     }
     escape = escape_str;
     args = args.subspan(0, 2);
-    name = "~~";
+    name = name == "like_escape" ? "~~" : "~~*";
+  }
+
+  bool case_insensitive = false;
+  if (args.size() == 3 &&
+      (name == "regexp_matches" || name == "regexp_full_match")) {
+    const auto& options =
+      func.BindInfo()->Cast<duckdb::RegexpBaseBindData>().options;
+    if (options.literal() || options.dot_nl()) {
+      return absl::UnimplementedError(
+        absl::StrCat(name, ": only the case options are indexed"));
+    }
+    case_insensitive = !options.case_sensitive();
+    args = args.subspan(0, 2);
   }
 
   if (args.size() == 2) {
-    auto builtin = kBuiltinBuilder.find(name);
-    if (auto builder =
-          builtin != kBuiltinBuilder.end() ? builtin->second : nullptr) {
+    if (const auto builtin = kBuiltinBuilder.find(name);
+        builtin != kBuiltinBuilder.end()) {
       if (args[0]->GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
         return absl::UnimplementedError(
           absl::StrCat(func.Function().GetName().GetIdentifierName(),
@@ -1585,15 +1686,15 @@ absl::Status FromFunctionExpression(
           absl::StrCat(name, " must be a non-null VARCHAR constant"));
       }
       std::string pattern{duckdb::StringValue::Get(*pattern_val)};
-      auto validator = &IsKeywordAnalyzer;
-
-      if (builder == &BuildTSLike) {
+      if (builtin->second.like_pattern) {
         pattern = LikeEscapePattern(pattern, escape);
         if (LikePatternEndsWithEscape(pattern)) {
           return absl::InvalidArgumentError(
             "LIKE pattern must not end with escape character");
         }
-        validator = &IsLikeCompatibleAnalyzer;
+      }
+      if (case_insensitive) {
+        pattern.insert(0, "(?i)");
       }
 
       const auto* column_info = FindColumnInfoForExpr(ctx, *args[0]);
@@ -1604,12 +1705,24 @@ absl::Status FromFunctionExpression(
       if (auto s = RequireLeafValues(*column_info); !s.ok()) {
         return s;
       }
-      if (!validator(column_info->tokenizer.analyzer->type())) {
+      const auto& analyzer = *column_info->tokenizer.analyzer;
+      StringBuiltinBuilder builder = nullptr;
+      if (analyzer.type() == irs::Type<irs::KeywordTokenizer>::id()) {
+        builder = builtin->second.keyword;
+      } else if (analyzer.type() ==
+                   irs::Type<irs::analysis::WildcardTokenizer>::id() &&
+                 (builtin->second.per_term ||
+                  irs::utils::downCast<irs::analysis::WildcardTokenizer>(
+                    analyzer)
+                    .KeepsWholeValues())) {
+        builder = builtin->second.wildcard;
+      }
+      if (!builder) {
         return absl::InvalidArgumentError(
           absl::StrCat(name, ": column analyzer not supported"));
       }
       auto inner = builder(pattern);
-      FromTSQueryMatch(filter, ctx, *args[0], *inner);
+      FromTSQueryMatch(filter, pattern_ctx, *args[0], *inner);
       return absl::OkStatus();
     }
   }
@@ -2399,7 +2512,9 @@ void UnwrapElementType(duckdb::LogicalType& type) {
   }
 }
 
-const SearchColumnInfo* FindColumnRefInfo(
+namespace {
+
+const SearchColumnInfo* LookupColumnRef(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
   auto cache_it = ctx.column_cache.find(ref.Binding());
   if (cache_it != ctx.column_cache.end()) {
@@ -2417,12 +2532,35 @@ const SearchColumnInfo* FindColumnRefInfo(
             .first->second;
 }
 
+bool KeyOnly(const SearchColumnInfo& info) {
+  return !irs::field_limits::valid(info.field_id) &&
+         irs::field_limits::valid(info.key_field);
+}
+
+}  // namespace
+
+const SearchColumnInfo* FindColumnRefInfo(
+  const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
+  const auto* info = LookupColumnRef(ctx, ref);
+  return info && !KeyOnly(*info) ? info : nullptr;
+}
+
 const duckdb::BoundColumnRefExpression* TryGetColumnRef(
   const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
   }
   return &expr.Cast<duckdb::BoundColumnRefExpression>();
+}
+
+const SearchColumnInfo* FindKeyColumnInfo(const FilterContext& ctx,
+                                          const duckdb::Expression& expr) {
+  const auto* ref = TryGetColumnRef(expr);
+  if (!ref) {
+    return nullptr;
+  }
+  const auto* info = LookupColumnRef(ctx, *ref);
+  return info && KeyOnly(*info) ? info : nullptr;
 }
 
 struct UnwrappedField {

@@ -130,14 +130,14 @@ void TfidfTestCase::TestQueryNorms() {
         }
       });
 
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreSeq());
   }
 
   auto scorer = irs::TFIDF{true};
   irs::ColumnArgsFetcher fetcher;
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
@@ -344,7 +344,7 @@ TEST_P(TfidfTestCase, test_phrase) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 analyzed_json_field_factory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -352,7 +352,7 @@ TEST_P(TfidfTestCase, test_phrase) {
 
   // read segment
   auto index = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
   auto& segment = *(index.begin());
 
   MaxMemoryCounter counter;
@@ -377,7 +377,7 @@ TEST_P(TfidfTestCase, test_phrase) {
       "R"   // jumps high jumps left jumps right walks down walks back
     };
 
-    tests::PreparedFilter prepared_filter{filter, *index, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, index, &scorer, counter};
 
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -440,7 +440,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     };
 
     tests::PreparedFilter prepared_filter{*Lower(std::move(filter), &scorer),
-                                          *index, &scorer, counter};
+                                          index, &scorer, counter};
 
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -490,13 +490,13 @@ TEST_P(TfidfTestCase, test_query) {
           doc.insert(std::move(field), false, true);
         }
       });
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreSeq());
   }
 
   auto scorer = irs::TFIDF{false, true};
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
@@ -567,7 +567,7 @@ TEST_P(TfidfTestCase, test_query) {
         }
       });
     auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+      open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
     auto store_seq = StoreSeq();
     const Document* doc;
 
@@ -608,8 +608,7 @@ TEST_P(TfidfTestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::ByTerm filter;
     *filter.mutable_field_id() = kField;
     filter.mutable_options()->term =
@@ -677,7 +676,7 @@ TEST_P(TfidfTestCase, test_query) {
         }
       });
     auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+      open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
     auto store_seq = StoreSeq();
     const Document* doc;
 
@@ -718,8 +717,7 @@ TEST_P(TfidfTestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::BooleanFilter filter;
     // doc 0, 2, 5
     filter.Add(
@@ -802,7 +800,7 @@ TEST_P(TfidfTestCase, test_query) {
         }
       });
     auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+      open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
     auto store_seq = StoreSeq();
     const Document* doc;
 
@@ -843,8 +841,7 @@ TEST_P(TfidfTestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::ByPrefix filter;
     *filter.mutable_field_id() = kPrefix;
     filter.SetScorer(&scorer);
@@ -1221,11 +1218,11 @@ TEST_P(TfidfTestCase, test_order) {
           doc.insert(std::move(field), false, true);
         }
       });
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreSeq());
   }
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
 
   irs::ByTerm query;

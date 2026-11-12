@@ -22,9 +22,6 @@ INSERT INTO catalog VALUES
 (3, 'gaming laptop'),
 (4, 'wireless headphones');
 
-statement ok
-VACUUM (REFRESH_TABLE) catalog;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
@@ -88,9 +85,6 @@ INSERT INTO furniture VALUES
 (1, 'leather couch'),
 (2, 'fabric sofa'),
 (3, 'velvet divan');
-
-statement ok
-VACUUM (REFRESH_TABLE) furniture;
 
 # DOCS_TEST_BODY
 

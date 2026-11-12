@@ -21,9 +21,6 @@ INSERT INTO articles VALUES
     (1, 'Quick Fox', 'jumps high'),
     (2, 'Lazy Dog', 'sleeps quickly');
 
-statement ok
-VACUUM (REFRESH_TABLE) articles;
-
 query
 SELECT count(*) FROM articles_idx;
 ----
@@ -60,9 +57,6 @@ pk
 statement ok
 UPDATE articles SET body = 'now runs fast' WHERE pk = 1;
 
-statement ok
-VACUUM (REFRESH_TABLE) articles;
-
 query
 SELECT pk FROM articles_idx WHERE (title || ' ' || body) @@ 'runs' ORDER BY pk;
 ----
@@ -92,9 +86,6 @@ statement ok
 INSERT INTO parts VALUES
     (1, 'Alpha', 'Beta', 'Gamma'),
     (2, 'delta', NULL, 'epsilon');
-
-statement ok
-VACUUM (REFRESH_TABLE) parts;
 
 query
 SELECT pk FROM parts_idx WHERE (concat_ws(' ', a, b, c)) @@ 'gamma' ORDER BY pk;
@@ -135,9 +126,6 @@ statement ok
 INSERT INTO mixed VALUES
     (1, 'Quick Fox', 'red animal', 2024),
     (2, 'Lazy Dog', NULL, 2023);
-
-statement ok
-VACUUM (REFRESH_TABLE) mixed;
 
 query
 SELECT pk FROM mixed_idx
@@ -181,9 +169,6 @@ CREATE INDEX nullcat_idx ON nullcat USING inverted(pk, (a || b) row_sql);
 
 statement ok
 INSERT INTO nullcat VALUES (1, 'foo', 'bar'), (2, 'x', NULL), (3, 'baz', 'qux');
-
-statement ok
-VACUUM (REFRESH_TABLE) nullcat;
 
 query
 SELECT count(*) FROM nullcat_idx;

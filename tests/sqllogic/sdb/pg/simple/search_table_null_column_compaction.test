@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE stnc (id INTEGER PRIMARY KEY, a "NULL", b INTEGER)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -8,7 +8,7 @@ INSERT INTO stnc SELECT i, NULL, 7 FROM range(3000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stnc;
+VACUUM (FLUSH_TABLE) stnc;
 
 
 statement ok
@@ -16,7 +16,7 @@ INSERT INTO stnc SELECT i, NULL, 7 FROM range(3000, 6000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stnc;
+VACUUM (FLUSH_TABLE) stnc;
 
 
 statement ok

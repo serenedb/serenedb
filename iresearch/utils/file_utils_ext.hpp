@@ -93,11 +93,6 @@ namespace irs {
 
 using path_char_t = std::filesystem::path::value_type;
 
-// pid_t glue used by the lockfile primitives below + iresearch tests.
-pid_t GetPid();
-bool IsRunning(pid_t pid);
-bool IsValidPid(const char* buf);
-
 }  // namespace irs
 namespace irs::file_utils {
 
@@ -108,15 +103,6 @@ inline auto ToStr(const path_char_t* path) {
     return std::filesystem::path{path}.string();
   }
 }
-
-struct LockFileDeleter {
-  void operator()(void* handle) const;
-};
-
-typedef std::unique_ptr<void, LockFileDeleter> lock_handle_t;
-
-lock_handle_t CreateLockFile(const path_char_t* file);
-bool VerifyLockFile(const path_char_t* file);
 
 bool ByteSize(uint64_t& result, const path_char_t* file) noexcept;
 bool ByteSize(uint64_t& result, int fd) noexcept;

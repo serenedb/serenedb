@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/column/col_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <cstddef>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -115,6 +117,10 @@ void ColWriter::EnsureOut() {
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
+bool ColWriter::Empty() const noexcept {
+  return _columns.empty() && _ann_writers.empty();
+}
+
 void ColWriter::SetFieldOptions(
   const IndexFieldOptions* field_options) noexcept {
   SDB_ASSERT(
@@ -135,14 +141,16 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                existing._skip_validity == options.skip_validity &&
                existing._named == options.compression &&
                existing._codec_params == options.codec_params &&
-               (existing._meta.hyperloglog != nullptr) == options.hyperloglog);
+               existing._distinct == options.distinct);
     return existing;
   }
-  EnsureOut();
+  if (!_deferred) {
+    EnsureOut();
+  }
   _by_id.emplace(id, _columns.size());
   auto& writer = _columns.emplace_back().writer;
-  writer =
-    std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type), options);
+  writer = std::make_unique<ColumnWriter>(*this, id, std::move(type), options,
+                                          _deferred);
   return *writer;
 }
 
@@ -154,7 +162,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
       .skip_validity = opts.skip_validity,
       .row_group_size = _field_options->row_group_size,
       .compression = opts.compression,
-      .hyperloglog = opts.hyperloglog,
+      .distinct = opts.distinct,
       .codec_params = _field_options->CodecParams(opts),
     };
   }
@@ -231,6 +239,12 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   return *entry.writer;
 }
 
+bool ColWriter::HasAnn(field_id column_id) const noexcept {
+  return absl::c_any_of(_ann_writers, [&](const AnnEntry& entry) {
+    return entry.column_id == column_id;
+  });
+}
+
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
   for (auto& entry : _ann_writers) {
     if (entry.writer) {
@@ -255,6 +269,51 @@ void ColWriter::Rollback() noexcept {
   _out.reset();
 }
 
+std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
+  std::vector<StagedColumn> columns;
+  columns.reserve(_columns.size());
+  for (const auto& entry : _columns) {
+    SDB_ASSERT(entry.writer);
+    const auto& writer = *entry.writer;
+    columns.push_back(StagedColumn{.id = writer._id,
+                                   .type = writer._type,
+                                   .chunks = writer.Snapshot(rows),
+                                   .distinct = writer._distinct});
+  }
+  return columns;
+}
+
+std::vector<NormColumnSpec> ColWriter::SealNorms(uint64_t rows) {
+  std::vector<NormColumnSpec> norms;
+  norms.reserve(_norms.size());
+  for (auto& writer : _norms) {
+    if (writer->RowCount() < rows) {
+      writer->PadTo(rows);
+    }
+    writer->Finalize();
+    if (!writer->Meta().regions.empty()) {
+      norms.push_back({.id = writer->Id(), .meta = writer->Meta()});
+    }
+  }
+  if (!norms.empty()) {
+    EnsureOut();
+  }
+  if (_out) {
+    _out->Flush();
+  }
+  return norms;
+}
+
+size_t ColWriter::StagedBytes() const noexcept {
+  size_t bytes = 0;
+  for (const auto& entry : _columns) {
+    if (entry.writer) {
+      bytes += entry.writer->StagedBytes();
+    }
+  }
+  return bytes;
+}
+
 constexpr auto kNoCancel = [] { return true; };
 
 bool ColWriter::Commit(uint64_t target_row) {
@@ -272,7 +331,9 @@ bool ColWriter::Commit(uint64_t target_row,
   }
   std::vector<const NormColumnWriter*> norms;
   for (auto& writer : _norms) {
-    writer->PadTo(target_row);
+    if (writer->RowCount() < target_row) {
+      writer->PadTo(target_row);
+    }
     writer->Finalize();
     SDB_ASSERT(writer->Meta().row_count == target_row,
                "ColWriter::Commit: norm column ", writer->Id(), " holds ",
@@ -281,7 +342,7 @@ bool ColWriter::Commit(uint64_t target_row,
       norms.push_back(writer.get());
     }
   }
-  if (!_out && norms.empty()) {
+  if (Empty() && !_out && norms.empty()) {
     _committed = true;
     return true;
   }

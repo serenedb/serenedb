@@ -31,7 +31,6 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
@@ -51,6 +50,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "postings_cursor.hpp"
+#include "test_index_writer.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
@@ -742,13 +742,13 @@ void AssertTermsSeek(const Field& expected_field,
   }
 }
 
-void AssertIndex(irs::IndexReader::ptr actual_index,
+void AssertIndex(const irs::IndexReader& actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
                  size_t skip, const irs::RegexpAcceptor* acceptor) {
-  ASSERT_EQ(expected_index.size(), actual_index->size());
+  ASSERT_EQ(expected_index.size(), actual_index.size());
   size_t i = 0;
   size_t segment_index = 0;
-  for (auto& actual_segment : *actual_index) {
+  for (auto& actual_segment : actual_index) {
     SCOPED_TRACE(absl::StrCat("segment_index=", segment_index++));
     if (skip) {
       ++i;
@@ -828,10 +828,8 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
 void AssertIndex(const irs::Directory& dir, const index_t& expected_index,
                  irs::IndexFeatures features, size_t skip,
                  const irs::RegexpAcceptor* acceptor) {
-  auto reader = irs::DirectoryReader(dir, ::irs::tests::DefaultReaderOptions());
-  ASSERT_NE(nullptr, reader);
-
-  AssertIndex(reader.GetImpl(), expected_index, features, skip, acceptor);
+  AssertIndex(OpenReader(dir, ::irs::tests::DefaultReaderOptions()),
+              expected_index, features, skip, acceptor);
 }
 
 }  // namespace tests

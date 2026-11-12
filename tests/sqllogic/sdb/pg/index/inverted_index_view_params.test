@@ -1,6 +1,10 @@
 hash-threshold 100
 control substitution on
 
+statement ok
+SET SESSION preserve_insertion_order = true;
+
+
 # View bodies with non-default reader parameters. CREATE INDEX must always
 # succeed -- it streams via the standard reader. SELECT-with-materialise
 # uses the lookup TF, which has to receive the same dialect/format params

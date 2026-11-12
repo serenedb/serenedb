@@ -43,6 +43,7 @@
 #include "s2/s2latlng.h"
 #include "s2/s2loop.h"
 #include "s2/s2polygon.h"
+#include "segments.h"
 
 // This example demonstrates iresearch's S2-based geospatial filters:
 //   1. Index a corpus of points (GeoJSON) with the geojson analyzer
@@ -177,12 +178,13 @@ irs::IndexWriterOptions MakeWriterOptions() {
   return options;
 }
 
-// Build a tiny index from the corpus above. Returns the writer's snapshot.
+// Build a tiny index from the corpus above.
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 const std::vector<GeoEntry>& docs,
                                 std::vector<std::string>& names_out) {
-  auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
+  auto options = MakeWriterOptions();
+  examples::Segments segments{dir, options.reader_options};
+  auto writer = irs::IndexWriter::Make(dir, std::move(options));
 
   GeoField geo;
 
@@ -202,10 +204,9 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
       }
       AppendStoredShape(*geo_cw, doc.DocId(), geo.shape_text);
     }
-    trx.Commit();
+    segments.Add(trx.FlushSegments(true));
   }
-  writer->RefreshCommit();
-  return writer->GetSnapshot();
+  return segments.Reader();
 }
 
 // Run a prepared filter over all segments, collect names of matching docs.

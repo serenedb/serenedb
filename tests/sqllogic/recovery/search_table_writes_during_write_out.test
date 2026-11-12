@@ -1,0 +1,77 @@
+control substitution on
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+SET GLOBAL threads = 2;
+
+
+statement ok
+CREATE TABLE wdw (id BIGINT, body TEXT)
+  WITH (compaction_interval = 0, segment_memory_max = 4096);
+
+
+statement ok
+SET sdb_faults = 'pause_search_write_out';
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('a', 100) FROM range(0, 100) r(i);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_write_out:parked';
+
+
+system ok
+python3 -c "import os,sys; i=os.stat(sys.argv[1]).st_ino; print(next(f[4] for f in map(str.split, open('/proc/locks')) if f[1] == 'FLOCK' and f[5].endswith(':' + str(i))))" ${SDB_DATADIR}/PG_VERSION > $__TEST_DIR__/wdw_pid && ls /proc/$(cat $__TEST_DIR__/wdw_pid)/task | wc -l > $__TEST_DIR__/wdw_threads
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('b', 100) FROM range(100, 200) r(i);
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('c', 100) FROM range(200, 300) r(i);
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('d', 100) FROM range(300, 400) r(i);
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('e', 100) FROM range(400, 500) r(i);
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('f', 100) FROM range(500, 600) r(i);
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('g', 100) FROM range(600, 700) r(i);
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('h', 100) FROM range(700, 800) r(i);
+
+
+statement ok
+INSERT INTO wdw SELECT i, repeat('i', 100) FROM range(800, 900) r(i);
+
+
+system ok
+test $(ls /proc/$(cat $__TEST_DIR__/wdw_pid)/task 2>/dev/null | wc -l) -lt $(( $(cat $__TEST_DIR__/wdw_threads) + 4 ))
+
+
+statement ok
+SET sdb_faults = 'pause_search_write_out:release';
+
+
+query
+SELECT count(*) AS n, count(DISTINCT body) AS bodies FROM wdw;
+----
+n	bodies
+900	9

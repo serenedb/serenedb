@@ -44,8 +44,6 @@ def _pgbackrest(config: Path, *args: str) -> str:
 
 def _state(server: Serened) -> tuple:
     with _connect(server) as conn:
-        conn.execute("VACUUM (REFRESH_INDEX) docs_idx")
-        conn.execute("VACUUM (REFRESH_TABLE) notes")
         return (
             conn.execute("SELECT count(*), sum(id) FROM docs").fetchone(),
             conn.execute("SELECT count(*) FROM docs_idx WHERE body @@ 'second'").fetchone(),
@@ -78,8 +76,7 @@ def test_pgbackrest_backs_up_and_restores_a_running_server(tmp_path: Path) -> No
         with _connect(source) as conn:
             conn.execute("CREATE TABLE docs (id BIGINT, body TEXT)")
             conn.execute("CREATE INDEX docs_idx ON docs USING inverted (body)")
-            conn.execute("CREATE TABLE notes (id BIGINT PRIMARY KEY, body TEXT) "
-                         "WITH (storage = 'search')")
+            conn.execute("CREATE TABLE notes (id BIGINT PRIMARY KEY, body TEXT) ")
             conn.execute("INSERT INTO docs SELECT i, 'first' FROM range(0, 1000) r(i)")
             conn.execute("INSERT INTO notes SELECT i, 'first' FROM range(0, 500) r(i)")
             conn.execute("CHECKPOINT")

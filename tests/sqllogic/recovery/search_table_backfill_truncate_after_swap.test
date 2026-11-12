@@ -5,13 +5,13 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bfs (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bfs VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 statement ok
-VACUUM (REFRESH_TABLE) bfs;
+VACUUM (FLUSH_TABLE) bfs;
 
 statement ok
 SET sdb_faults = 'pause_search_backfill_before_publish';
@@ -44,7 +44,7 @@ wait
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) bfs;
+VACUUM (FLUSH_TABLE) bfs;
 
 connection default
 query
@@ -66,13 +66,13 @@ DROP TABLE bfs;
 
 statement ok
 CREATE TABLE bfu (id BIGINT PRIMARY KEY, tag TEXT)
-  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO bfu VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 statement ok
-VACUUM (REFRESH_TABLE) bfu;
+VACUUM (FLUSH_TABLE) bfu;
 
 statement ok
 SET sdb_faults = 'pause_search_backfill_before_publish';
@@ -97,7 +97,7 @@ wait
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) bfu;
+VACUUM (FLUSH_TABLE) bfu;
 
 connection default
 query

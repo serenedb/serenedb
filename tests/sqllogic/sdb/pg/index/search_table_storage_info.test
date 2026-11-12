@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE nested_si (id INT PRIMARY KEY, tags INT[], u UNION(num INTEGER, str VARCHAR), v VARIANT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 2048)
+WITH (compaction_interval = 0, row_group_size = 2048)
 
 
 statement ok
@@ -12,7 +12,7 @@ FROM generate_series(1, 5000) s(i)
 
 
 statement ok
-VACUUM (REFRESH_TABLE) nested_si
+VACUUM (FLUSH_TABLE) nested_si
 
 
 query
@@ -57,7 +57,7 @@ DROP TABLE nested_si
 
 statement ok
 CREATE TABLE shredded_si (id INT PRIMARY KEY, v VARIANT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+WITH (compaction_interval = 0)
 
 
 statement ok
@@ -73,7 +73,7 @@ RESET threads
 
 
 statement ok
-VACUUM (REFRESH_TABLE) shredded_si
+VACUUM (FLUSH_TABLE) shredded_si
 
 
 query

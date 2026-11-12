@@ -41,6 +41,7 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
 #include <string>
@@ -48,6 +49,7 @@
 #include <utility>
 #include <vector>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 #include "test_resources.hpp"
 #include "text_chain.hpp"
@@ -342,8 +344,12 @@ Corpus BuildIndex() {
 
   auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
 
+  auto* db = &irs::DuckDBEngine::Instance().instance();
+  irs::IndexWriterOptions options;
+  options.db = db;
+  options.reader_options.db = db;
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, irs::IndexWriterOptions{});
+    tests::IndexWriter::Make(*dir, tests::kOmCreate, std::move(options));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -374,7 +380,7 @@ Corpus BuildIndex() {
                "regexp_vs_wildcard bench: indexed %zu documents from %s\n",
                inserted, data_path.string().c_str());
 
-  auto rdr = irs::DirectoryReader{*dir};
+  auto rdr = tests::OpenReader(*dir, irs::IndexReaderOptions{.db = db});
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
                 .reader = std::move(rdr)};

@@ -782,17 +782,13 @@ def test_search_paging_and_source(conn, corpus):
     assert body["hits"]["total"] == 3
 
 
-def test_search_visibility_follows_refresh(conn, corpus):
+def test_search_sees_a_written_document_at_once(conn, corpus):
     match_quick = {"query": {"match": {"title": "quick"}}}
     status, body = _request(conn, "POST", f"/{corpus}/_count", match_quick)
     assert body["count"] == 2
 
     _request(conn, "PUT", f"/{corpus}/_doc/4",
              {"title": "quick addendum", "year": 2000})
-    status, body = _request(conn, "POST", f"/{corpus}/_count", match_quick)
-    assert body["count"] == 2  # not searchable until refresh
-
-    _request(conn, "POST", f"/{corpus}/_refresh")
     status, body = _request(conn, "POST", f"/{corpus}/_count", match_quick)
     assert body["count"] == 3
 

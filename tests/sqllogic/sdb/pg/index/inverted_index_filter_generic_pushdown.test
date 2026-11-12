@@ -10,7 +10,7 @@ CREATE TEXT SEARCH DICTIONARY gfp_en AS
 
 
 statement ok
-CREATE TABLE gfp (id INT PRIMARY KEY, body VARCHAR, meta JSON, tag VARCHAR, n BIGINT);
+CREATE TABLE gfp (id INT PRIMARY KEY, body VARCHAR, meta JSON, tag VARCHAR, n BIGINT) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -24,12 +24,7 @@ INSERT INTO gfp VALUES
 
 statement ok
 CREATE INDEX gfp_idx ON gfp USING inverted(id, body gfp_en)
-  INCLUDE (meta, tag, n)
-  WITH (compaction_interval = 0);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) gfp;
+  INCLUDE (meta, tag, n);
 
 
 query

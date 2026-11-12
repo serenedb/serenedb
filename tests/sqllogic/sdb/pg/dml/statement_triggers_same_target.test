@@ -1,0 +1,62 @@
+statement ok
+CREATE TABLE src (id INTEGER, payload TEXT);
+
+
+statement ok
+CREATE TABLE audit (kind TEXT, id INTEGER);
+
+
+statement ok
+CREATE TRIGGER audit_a AFTER INSERT ON src REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO audit SELECT 'a', id FROM new_rows;
+
+
+statement ok
+CREATE TRIGGER audit_b AFTER INSERT ON src REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO audit SELECT 'b', id FROM new_rows;
+
+
+statement ok
+SET threads = 8;
+
+
+statement ok
+INSERT INTO src SELECT i, repeat('x', 100) FROM range(200000) t(i);
+
+
+query
+SELECT kind, count(*) AS n, count(DISTINCT id) AS ids FROM audit GROUP BY kind ORDER BY kind;
+----
+kind	n	ids
+a	200000	200000
+b	200000	200000
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO src SELECT i, 'y' FROM range(200000, 300000) t(i);
+
+
+query
+SELECT kind, count(*) AS n FROM audit GROUP BY kind ORDER BY kind;
+----
+kind	n
+a	300000
+b	300000
+
+
+statement ok
+INSERT INTO src VALUES (300000, 'z');
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT kind, count(*) AS n, max(id) AS last FROM audit GROUP BY kind ORDER BY kind;
+----
+kind	n	last
+a	300001	300000
+b	300001	300000

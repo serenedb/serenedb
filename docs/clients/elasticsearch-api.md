@@ -179,7 +179,7 @@ EOF
 
 ### Refresh and request bodies
 
-- `?refresh=true`, `?refresh=wait_for` or a bare `?refresh` on a write refreshes the index before the response returns, so the new documents are searchable at once. `POST /<index>/_refresh` refreshes one index and `POST /_refresh` all of them. See [Visibility](#visibility).
+- `?refresh=true`, `?refresh=wait_for` or a bare `?refresh` on a write, `POST /<index>/_refresh` and `POST /_refresh` are accepted and change nothing: a document is searchable as soon as its write returns. See [Visibility](#visibility).
 - A request body is at most 100 MiB, Elasticsearch's default `http.max_content_length`. A larger one gets `413`. A listener that also serves other APIs (`?api=es&api=otel`) applies the largest of their limits to every request.
 - A request body can be compressed. A body sent with `Content-Encoding` is decompressed before the request reaches the API; see [HTTP Compression](../configuration/http_compression.md#compressed-request-bodies) for the codings and limits.
 
@@ -409,9 +409,7 @@ The Python client's `helpers.scan` pages through a scroll this way.
 
 ## Visibility
 
-- `GET /<index>/_doc/<id>`, `_source`, `_mget` and searches without a full-text clause read the table, so they see a document as soon as its write returns.
-- Searches with a full-text clause, with their counts and aggregations, read the `<index>$text` index. It picks up new documents when it refreshes, every second by default (its [`refresh_interval`](../sql/indexes/inverted/maintenance.md#visibility-and-the-refresh-model)).
-- `?refresh=true` on the write or `POST /<index>/_refresh` makes new documents visible to those searches at once.
+Every read sees a document as soon as its write returns: `GET /<index>/_doc/<id>`, `_source`, `_mget` and searches, full-text ones included, with their counts and aggregations.
 
 ```bash
 curl -s -u postgres: -X PUT http://127.0.0.1:9200/articles/_doc/4 \
@@ -419,14 +417,8 @@ curl -s -u postgres: -X PUT http://127.0.0.1:9200/articles/_doc/4 \
 
 curl -s -u postgres: http://127.0.0.1:9200/articles/_count \
   -H 'Content-Type: application/json' -d '{"query": {"match": {"title": "vector"}}}'
-# {"count":0,...}  the text index has not refreshed yet
-
-curl -s -u postgres: http://127.0.0.1:9200/articles/_count \
-  -H 'Content-Type: application/json' -d '{"query": {"term": {"tag": "search"}}}'
-# {"count":3,...}  document 4 is already in the table
+# {"count":1,...}
 ```
-
-After the next refresh, the first count returns `1`.
 
 ## Using a client library
 

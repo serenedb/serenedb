@@ -44,4 +44,6 @@ enum WildcardMatch : uint8_t {
   kEscape = '\\',  // escape control symbol, e.g. "\%" issues literal "%"
 };
 
+std::string LikeRegexp(std::string_view pattern, bool ignore_case);
+
 }  // namespace irs

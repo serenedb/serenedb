@@ -33,7 +33,7 @@ CREATE SEQUENCE al_seq START 5
 query
 SELECT count(*) AS unaliased
 FROM duckdb_functions() src
-WHERE src.database_name = 'system' AND src.schema_name = 'main'
+WHERE src.database_name = current_database() AND src.schema_name = 'pg_catalog'
   AND src.function_type = 'table' AND src.function_name LIKE '%duckdb\_%'
   AND NOT EXISTS (
     SELECT 1 FROM duckdb_functions() a WHERE a.alias_of = src.function_name)
@@ -56,7 +56,7 @@ aliases
 query
 SELECT function_name, alias_of
 FROM duckdb_functions()
-WHERE function_name = 'truncate_sdb_logs'
+WHERE function_name = 'truncate_sdb_logs' AND database_name = current_database()
 ----
 function_name	alias_of
 truncate_sdb_logs	truncate_duckdb_logs
@@ -172,9 +172,9 @@ statement ok
 INSERT INTO duckdb_tables VALUES (42)
 
 query
-SELECT (SELECT count(*) FROM system.main.sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
-     = (SELECT count(*) FROM system.main.duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
-   AND (SELECT count(*) FROM system.main.sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%') > 0
+SELECT (SELECT count(*) FROM pg_catalog.sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
+     = (SELECT count(*) FROM pg_catalog.duckdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%')
+   AND (SELECT count(*) FROM pg_catalog.sdb_tables WHERE database_name = current_database() AND table_name LIKE 'al%') > 0
    AS not_hijacked
 ----
 not_hijacked
@@ -185,16 +185,16 @@ t
 # alias's body is unaffected either way.
 
 query
-SELECT pwned AS shadowed_source FROM main.duckdb_tables
+SELECT pwned AS shadowed_source FROM duckdb_tables
 ----
 shadowed_source
 42
 
 query
 SELECT (SELECT column_count FROM duckdb_views()
-          WHERE view_name = 'sdb_tables' AND schema_name = 'main')
+          WHERE view_name = 'sdb_tables' AND schema_name = 'pg_catalog' AND database_name = current_database())
      = (SELECT column_count FROM duckdb_views()
-          WHERE view_name = 'duckdb_tables' AND schema_name = 'main') AS cols_match
+          WHERE view_name = 'duckdb_tables' AND schema_name = 'pg_catalog' AND database_name = current_database()) AS cols_match
 ----
 cols_match
 t
@@ -210,8 +210,8 @@ statement ok
 CREATE MACRO public.duckdb_profiling_settings() AS TABLE SELECT 99 AS pwned
 
 query
-SELECT (SELECT count(*) FROM system.main.sdb_profiling_settings())
-     = (SELECT count(*) FROM system.main.duckdb_profiling_settings())
+SELECT (SELECT count(*) FROM pg_catalog.sdb_profiling_settings())
+     = (SELECT count(*) FROM pg_catalog.duckdb_profiling_settings())
   AS macro_not_hijacked
 ----
 macro_not_hijacked
@@ -296,13 +296,13 @@ SELECT 1	select 1
 # CALL and schema-qualified spellings resolve the same entry.
 
 query
-SELECT count(*) > 0 AS ok FROM main.sdb_keywords()
+SELECT count(*) > 0 AS ok FROM pg_catalog.sdb_keywords()
 ----
 ok
 t
 
 query
-SELECT (SELECT count(*) FROM main.sdb_tables WHERE database_name = current_database())
+SELECT (SELECT count(*) FROM pg_catalog.sdb_tables WHERE database_name = current_database())
      = (SELECT count(*) FROM sdb_tables WHERE database_name = current_database())
   AS ok
 ----
@@ -324,7 +324,7 @@ leaked
 
 query
 SELECT count(*) AS aliased_views
-FROM duckdb_views() WHERE view_name LIKE 'sdb\_%'
+FROM duckdb_views() WHERE view_name LIKE 'sdb\_%' AND database_name = current_database()
 ----
 aliased_views
 9

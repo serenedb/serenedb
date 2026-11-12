@@ -9,57 +9,57 @@ statement ok
 RESET sdb_faults;
 
 statement ok
-CREATE TABLE lx_db (oid BIGINT);
-
-statement ok
-INSERT INTO lx_db SELECT oid FROM pg_database WHERE datname = current_database();
-
-statement ok
-CREATE MACRO lx_dir(file) AS regexp_extract(file, '/engine_v1/[0-9]+/([0-9]+)/', 1);
+CREATE MACRO lx_dir(file) AS regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1);
 
 statement ok
 CREATE MACRO lx_orphans() AS (
   SELECT count(DISTINCT lx_dir(file))
-  FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
-  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM lx_db) || '/%'
-    AND lx_dir(file) <> ''
-    AND lx_dir(file)::BIGINT NOT IN (SELECT oid FROM pg_class)
+  FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+  WHERE lx_dir(file)::BIGINT NOT IN (SELECT table_oid FROM duckdb_tables())
     AND lx_dir(file)::BIGINT NOT IN (SELECT index_oid FROM duckdb_indexes()));
 
 statement ok
 CREATE MACRO lx_stale_segments(rel) AS (
-  (SELECT count(DISTINCT regexp_extract(file, '/(_[0-9]+)\.[^/]*$', 1))
-   FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
-   WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM lx_db) || '/'
-                   || (SELECT oid FROM pg_class WHERE relname = rel) || '/%'
-     AND regexp_extract(file, '/(_[0-9]+)\.[^/]*$', 1) <> '')
+  (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1))
+   FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
+   WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = rel) || '/%'
+     AND regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '')
   - (SELECT value FROM sdb_metrics
      WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = rel) AND metric = 'num_segments'));
 
 statement ok
 CREATE TABLE lxs (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
+
+statement ok
+CREATE INDEX lxs_x ON lxs USING inverted (body);
 
 statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1, 1000) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) lxs;
+VACUUM (FLUSH_ALL);
+
+statement ok
+CHECKPOINT;
 
 statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1001, 2000) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) lxs;
+VACUUM (FLUSH_ALL);
+
+statement ok
+CHECKPOINT;
 
 statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(2001, 3000) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) lxs;
+VACUUM (FLUSH_ALL);
 
 statement ok
-CREATE INDEX lxs_x ON lxs USING inverted (body);
+CHECKPOINT;
 
 # ----------------------------------------------------------------------
 # 1. A crash while a replace has rebuilt a segment it has not swapped in.
@@ -85,7 +85,7 @@ tuples_done
 1000
 
 connection default
-query
+query ok retry 40 backoff 250ms
 SELECT lx_stale_segments('lxs') > 0 AS unswapped;
 ----
 unswapped
@@ -180,25 +180,25 @@ SET sdb_faults = 'crash_before_catalog_commit';
 
 connection after_commit_crash
 statement error connection closed
-ALTER TABLE lxs SET (refresh_interval = 4321);
+ALTER TABLE lxs SET (compaction_interval = 4321);
 
 connection after_alter_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'lxs';
+SELECT reloptions[1] AS compaction FROM pg_class WHERE relname = 'lxs';
 ----
-refresh
-refresh_interval=0
+compaction
+compaction_interval=0
 
 connection after_alter_crash
 statement ok
-ALTER TABLE lxs SET (refresh_interval = 1234);
+ALTER TABLE lxs SET (compaction_interval = 1234);
 
 connection after_alter_crash
 query
-SELECT reloptions[1] AS refresh FROM pg_class WHERE relname = 'lxs';
+SELECT reloptions[1] AS compaction FROM pg_class WHERE relname = 'lxs';
 ----
-refresh
-refresh_interval=1234
+compaction
+compaction_interval=1234
 
 # ----------------------------------------------------------------------
 # 4. A replace whose commit fails.
@@ -227,11 +227,7 @@ def
 CREATE INDEX lxs_x ON public.lxs USING inverted (body, id)
 
 connection after_alter_crash
-statement ok
-VACUUM (REFRESH_TABLE) lxs;
-
-connection after_alter_crash
-query
+query ok retry 40 backoff 250ms
 SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
 ----
 stale	orphans
@@ -260,11 +256,7 @@ statement ok
 RESET search_backfill_group_bytes;
 
 connection after_alter_crash
-statement ok
-VACUUM (REFRESH_TABLE) lxs;
-
-connection after_alter_crash
-query
+query ok retry 40 backoff 250ms
 SELECT lx_stale_segments('lxs') AS stale, lx_orphans() AS orphans;
 ----
 stale	orphans
@@ -320,13 +312,6 @@ phase
 finalizing
 
 connection after_alter_crash
-query
-SELECT lx_orphans() AS orphans;
-----
-orphans
-1
-
-connection after_alter_crash
 statement ok
 SET sdb_faults = 'crash_on_packet';
 
@@ -338,7 +323,7 @@ wait
 
 connection after_regular_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT regexp_extract(regexp_replace(sql, ' WITH \(.*', ''), 'USING inverted \((.*)\)$', 1) AS keys
+SELECT regexp_extract(regexp_replace(sql, ' WITH \(.*|;$', ''), 'USING inverted \((.*)\)$', 1) AS keys
 FROM duckdb_indexes()
 WHERE database_name = current_database() AND index_name = 'lxr_x';
 ----

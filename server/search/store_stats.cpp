@@ -21,22 +21,16 @@
 #include "search/store_stats.h"
 
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/utils/assert.hpp>
 
 namespace sdb::search {
 
 StoreStats StoreStats::FromReader(const irs::DirectoryReader& reader) {
-  SDB_ASSERT(reader);
   StoreStats stats;
-  auto& segments = reader->Meta().index_meta.segments;
-  stats.numSegments = segments.size();
-  stats.numDocs = reader->docs_count();
-  stats.numLiveDocs = reader->live_docs_count();
-  stats.numFiles = 1 + stats.numSegments;
-  for (const auto& segment : segments) {
-    const auto& meta = segment.meta;
-    stats.indexSize += meta.byte_size;
-    stats.numFiles += meta.files.size();
+  stats.numSegments = reader.size();
+  stats.numDocs = reader.docs_count();
+  stats.numLiveDocs = reader.live_docs_count();
+  for (const auto& segment : reader) {
+    stats.indexSize += segment.Meta().byte_size;
   }
   return stats;
 }

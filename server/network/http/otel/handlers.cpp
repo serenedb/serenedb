@@ -44,7 +44,6 @@
 #include <type_traits>
 #include <variant>
 
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "network/http/handler.h"
@@ -231,7 +230,7 @@ yaclib::Task<InsertOutcome> RunSourceInsert(
   if (prepared.error) {
     co_return NotPrepared(*prepared.error);
   }
-  auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
+  auto& connection = ConnectionContext::Get(*ctx.Connection().context);
   connection.SetSideChannel(&request);
   const absl::Cleanup clear = [&] {
     connection.SetSideChannel<Request>(nullptr);

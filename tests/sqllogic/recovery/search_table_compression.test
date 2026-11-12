@@ -2,13 +2,13 @@
 
 statement ok
 CREATE TABLE search_declared (a INTEGER PRIMARY KEY, v_uncompressed TEXT USING COMPRESSION uncompressed, v_zstd TEXT USING COMPRESSION zstd, v_dict_fsst TEXT USING COMPRESSION dict_fsst, v_rle INTEGER USING COMPRESSION rle, v_bitpacking INTEGER USING COMPRESSION bitpacking, v_alp DOUBLE USING COMPRESSION alp, v_alprd DOUBLE USING COMPRESSION alprd, v_roaring BOOLEAN USING COMPRESSION roaring)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_declared SELECT a, repeat('u' || a, 20), repeat('z' || a, 20), 'v' || (a % 7), a // 100, a, a / 10.0, a * 0.1234567891, a % 3 = 0 FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_declared;
+VACUUM (FLUSH_TABLE) search_declared;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_declared') WHERE column_name LIKE 'v\_%' GROUP BY column_name ORDER BY column_name;
@@ -34,13 +34,13 @@ SET GLOBAL force_compression = 'uncompressed';
 
 statement ok
 CREATE TABLE search_forced_uncompressed (a INTEGER PRIMARY KEY, v TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_uncompressed SELECT a, repeat('u' || a, 20) FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_uncompressed;
+VACUUM (FLUSH_TABLE) search_forced_uncompressed;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -62,13 +62,13 @@ SET GLOBAL force_compression = 'zstd';
 
 statement ok
 CREATE TABLE search_forced_zstd (a INTEGER PRIMARY KEY, v TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_zstd SELECT a, repeat('z' || a, 20) FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_zstd;
+VACUUM (FLUSH_TABLE) search_forced_zstd;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -90,13 +90,13 @@ SET GLOBAL force_compression = 'dict_fsst';
 
 statement ok
 CREATE TABLE search_forced_dict_fsst (a INTEGER PRIMARY KEY, v TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_dict_fsst SELECT a, 'v' || (a % 7) FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_dict_fsst;
+VACUUM (FLUSH_TABLE) search_forced_dict_fsst;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -118,13 +118,13 @@ SET GLOBAL force_compression = 'rle';
 
 statement ok
 CREATE TABLE search_forced_rle (a INTEGER PRIMARY KEY, v INTEGER)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_rle SELECT a, a // 100 FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_rle;
+VACUUM (FLUSH_TABLE) search_forced_rle;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -158,13 +158,13 @@ SET GLOBAL force_compression = 'bitpacking';
 
 statement ok
 CREATE TABLE search_forced_bitpacking (a INTEGER PRIMARY KEY, v INTEGER)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_bitpacking SELECT a, a FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_bitpacking;
+VACUUM (FLUSH_TABLE) search_forced_bitpacking;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -186,13 +186,13 @@ SET GLOBAL force_compression = 'bitpacking';
 
 statement ok
 CREATE TABLE search_forced_bitpacking_wide (a INTEGER PRIMARY KEY, v BIGINT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_bitpacking_wide SELECT a, CASE WHEN a % 2 = 0 THEN -9223372036854775807 - 1 ELSE 9223372036854775807 END FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_bitpacking_wide;
+VACUUM (FLUSH_TABLE) search_forced_bitpacking_wide;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -214,13 +214,13 @@ SET GLOBAL force_compression = 'alp';
 
 statement ok
 CREATE TABLE search_forced_alp (a INTEGER PRIMARY KEY, v DOUBLE)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_alp SELECT a, a / 10.0 FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_alp;
+VACUUM (FLUSH_TABLE) search_forced_alp;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -242,13 +242,13 @@ SET GLOBAL force_compression = 'alprd';
 
 statement ok
 CREATE TABLE search_forced_alprd (a INTEGER PRIMARY KEY, v DOUBLE)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_alprd SELECT a, a * 0.1234567891 FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_alprd;
+VACUUM (FLUSH_TABLE) search_forced_alprd;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -270,13 +270,13 @@ SET GLOBAL force_compression = 'roaring';
 
 statement ok
 CREATE TABLE search_forced_roaring (a INTEGER PRIMARY KEY, v BOOLEAN)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_roaring SELECT a, a % 3 = 0 FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_roaring;
+VACUUM (FLUSH_TABLE) search_forced_roaring;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -295,13 +295,13 @@ count
 
 statement ok
 CREATE TABLE search_forced_empty_lists (a INTEGER PRIMARY KEY, v_rle BIGINT[] USING COMPRESSION rle, v_bitpacking BIGINT[] USING COMPRESSION bitpacking, v_alp DOUBLE[] USING COMPRESSION alp, v_alprd DOUBLE[] USING COMPRESSION alprd, v_roaring BOOLEAN[] USING COMPRESSION roaring)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_empty_lists SELECT a, [], [], [], [], [] FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_empty_lists;
+VACUUM (FLUSH_TABLE) search_forced_empty_lists;
 
 query
 SELECT count(*) FROM search_forced_empty_lists WHERE len(v_rle) = 0 AND len(v_bitpacking) = 0 AND len(v_alp) = 0 AND len(v_alprd) = 0 AND len(v_roaring) = 0;
@@ -313,7 +313,7 @@ statement ok
 INSERT INTO search_forced_empty_lists SELECT a, [a // 100, a // 100], [a], [a / 10.0], [a * 0.1234567891], [a % 3 = 0] FROM range(5000, 10000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_empty_lists;
+VACUUM (FLUSH_TABLE) search_forced_empty_lists;
 
 query
 SELECT count(*) FROM search_forced_empty_lists WHERE a >= 5000 AND (v_rle IS DISTINCT FROM [a // 100, a // 100] OR v_bitpacking IS DISTINCT FROM [a] OR v_alp IS DISTINCT FROM [a / 10.0] OR v_alprd IS DISTINCT FROM [a * 0.1234567891] OR v_roaring IS DISTINCT FROM [a % 3 = 0]);
@@ -339,26 +339,26 @@ BitPacking
 
 statement ok
 CREATE TABLE search_auto_numeric (a INTEGER PRIMARY KEY, g BIGINT, d BIGINT, h UBIGINT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_auto_numeric SELECT a, ((a * 7919) % 5000) * 1000000, (a % 7) * 1000000007 + 123456789012, hash(a % 100) FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_auto_numeric;
+VACUUM (FLUSH_TABLE) search_auto_numeric;
 
 statement ok
 SET GLOBAL force_compression = 'zstd';
 
 statement ok
 CREATE TABLE search_forced_numeric (a INTEGER PRIMARY KEY, g BIGINT, d BIGINT, h UBIGINT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_numeric SELECT * FROM search_auto_numeric;
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_numeric;
+VACUUM (FLUSH_TABLE) search_forced_numeric;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -387,20 +387,20 @@ statement ok
 DROP TABLE search_auto_numeric;
 
 statement error
-CREATE TABLE search_roaring_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION roaring) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE search_roaring_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION roaring) WITH (compaction_interval = 0);
 ----
 db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32) using compression type 'Roaring'
 
 
 statement ok
 CREATE TABLE search_col_codecs (a INTEGER PRIMARY KEY, v_dict_lz4 TEXT USING COMPRESSION dict_lz4, v_dict_zstd TEXT USING COMPRESSION dict_zstd, v_lz4 TEXT USING COMPRESSION lz4, v_fsst TEXT USING COMPRESSION fsst, v_dict_zxc TEXT USING COMPRESSION dict_zxc, v_zxc TEXT USING COMPRESSION zxc)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_col_codecs SELECT a, 'd' || (a % 11), 'z' || (a % 13), repeat('p' || a, 10), 'f' || a, 'x' || (a % 17), repeat('q' || a, 6) FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_col_codecs;
+VACUUM (FLUSH_TABLE) search_col_codecs;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_col_codecs') WHERE column_name LIKE 'v\_%' AND segment_type <> 'VALIDITY' GROUP BY column_name ORDER BY column_name;
@@ -419,24 +419,18 @@ SELECT count(*) FROM search_col_codecs WHERE v_dict_lz4 IS DISTINCT FROM 'd' || 
 count
 0
 
-statement error
-CREATE TABLE plain_col_codec (a INTEGER, v TEXT USING COMPRESSION dict_lz4);
-----
-db error: ERROR: Column "v": compression 'dict_lz4' is only available on search tables (WITH (storage = 'search'))
-
-
 statement ok
 SET GLOBAL force_compression = 'dictionary';
 
 statement ok
 CREATE TABLE search_forced_dictionary (a INTEGER PRIMARY KEY, v TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_forced_dictionary SELECT a, 'v' || (a % 7) FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_forced_dictionary;
+VACUUM (FLUSH_TABLE) search_forced_dictionary;
 
 statement ok
 RESET GLOBAL force_compression;
@@ -456,13 +450,13 @@ count
 
 statement ok
 CREATE TABLE search_col_levels (a INTEGER PRIMARY KEY, v_zstd9 TEXT USING COMPRESSION dict_zstd(compression_level = 9), v_zxc5 TEXT USING COMPRESSION zxc(compression_level = 5), v_lz4 TEXT USING COMPRESSION dict_lz4)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_col_levels SELECT a, 'z' || (a % 13), repeat('q' || a, 6), 'd' || (a % 11) FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_col_levels;
+VACUUM (FLUSH_TABLE) search_col_levels;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_col_levels') WHERE column_name LIKE 'v\_%' AND segment_type <> 'VALIDITY' GROUP BY column_name ORDER BY column_name;
@@ -479,19 +473,19 @@ count
 0
 
 statement error
-CREATE TABLE search_level_fsst (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst(compression_level = 2)) WITH (storage = 'search');
+CREATE TABLE search_level_fsst (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_fsst(compression_level = 2));
 ----
 db error: ERROR: Column "v": compression 'dict_fsst' takes no compression_level
 
 
 statement error
-CREATE TABLE search_level_range (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 99)) WITH (storage = 'search');
+CREATE TABLE search_level_range (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compression_level = 99));
 ----
 db error: ERROR: Column "v": compression_level 99 is out of range for 'lz4' (1 to 12)
 
 
 statement error
-CREATE TABLE search_level_option (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(speed = 3)) WITH (storage = 'search');
+CREATE TABLE search_level_option (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(speed = 3));
 ----
 db error: ERROR: Unknown compression option 'speed', expected compression_level
 
@@ -542,7 +536,7 @@ DROP TABLE search_forced_empty_lists;
 
 statement ok
 CREATE TABLE obj_auto (a INTEGER PRIMARY KEY, host TEXT, body TEXT, url TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 SET threads = 1;
@@ -551,7 +545,7 @@ statement ok
 INSERT INTO obj_auto SELECT a, 'host-' || (a % 17), 'event ' || a || ' completed for user ' || (a % 1000) || ' on host-' || (a % 17) || ' status ok latency ' || (a % 500) || ' ms', 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(10000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) obj_auto;
+VACUUM (FLUSH_TABLE) obj_auto;
 
 statement ok
 INSERT INTO obj_auto SELECT a, 'host-' || (a % 17), 'event ' || a || ' completed for user ' || (a % 1000) || ' on host-' || (a % 17) || ' status ok latency ' || (a % 500) || ' ms', 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(10000, 20000) t(a);
@@ -560,7 +554,7 @@ statement ok
 RESET threads;
 
 statement ok
-VACUUM (REFRESH_TABLE) obj_auto;
+VACUUM (FLUSH_TABLE) obj_auto;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
@@ -598,45 +592,45 @@ DROP TABLE obj_auto;
 
 statement ok
 CREATE TABLE bg_merge (a INTEGER PRIMARY KEY, url TEXT)
-  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 50);
+  WITH (compaction_interval = 50);
 
 statement ok
 INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(0, 20000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) bg_merge;
+VACUUM (FLUSH_TABLE) bg_merge;
 
 statement ok
 INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(20000, 40000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) bg_merge;
+VACUUM (FLUSH_TABLE) bg_merge;
 
 statement ok
 INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(40000, 60000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) bg_merge;
+VACUUM (FLUSH_TABLE) bg_merge;
 
 statement ok
 INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(60000, 80000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) bg_merge;
+VACUUM (FLUSH_TABLE) bg_merge;
 
 statement ok
 INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(80000, 100000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) bg_merge;
+VACUUM (FLUSH_TABLE) bg_merge;
 
 statement ok
 INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(100000, 120000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) bg_merge;
+VACUUM (FLUSH_TABLE) bg_merge;
 
-query ok retry 300 backoff 100ms
+query ?? retry 300 backoff 100ms
 SELECT bool_or(compression = 'DICT_FSST') AS objective
 FROM pragma_storage_info('bg_merge') WHERE column_name = 'url' AND segment_type <> 'VALIDITY';
 ----
@@ -654,13 +648,13 @@ DROP TABLE bg_merge;
 
 statement ok
 CREATE TABLE search_nested_codecs (a INTEGER PRIMARY KEY, attrs MAP(TEXT, TEXT) USING COMPRESSION dict_zstd, tags TEXT[] USING COMPRESSION dict_lz4, plain MAP(TEXT, TEXT))
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_nested_codecs SELECT a, MAP {'service': 'svc-' || (a % 13), 'host': 'host-' || (a % 97) || '.example.org'}, ['t' || (a % 5), 'u' || (a % 11)], MAP {'service': 'svc-' || (a % 13)} FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_nested_codecs;
+VACUUM (FLUSH_TABLE) search_nested_codecs;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_nested_codecs') WHERE column_name IN ('attrs', 'tags') AND segment_type = 'VARCHAR' GROUP BY column_name ORDER BY column_name;
@@ -676,7 +670,7 @@ statement ok
 INSERT INTO search_nested_codecs SELECT a, MAP {'service': 'svc-' || (a % 13), 'host': 'host-' || (a % 97) || '.example.org'}, ['t' || (a % 5), 'u' || (a % 11)], MAP {'service': 'svc-' || (a % 13)} FROM range(5000, 10000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_nested_codecs;
+VACUUM (FLUSH_TABLE) search_nested_codecs;
 
 query
 SELECT bool_or(compression = 'DICT_LZ4') AS altered FROM pragma_storage_info('search_nested_codecs') WHERE column_name = 'plain' AND segment_type = 'VARCHAR';
@@ -691,7 +685,7 @@ count
 0
 
 statement error
-CREATE TABLE search_mixed_map_codec (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION dict_zstd) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE search_mixed_map_codec (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION dict_zstd) WITH (compaction_interval = 0);
 ----
 db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: STRUCT) using compression type 'DICT_ZSTD'
 
@@ -701,13 +695,13 @@ DROP TABLE search_nested_codecs;
 
 statement ok
 CREATE TABLE search_nested_engine_names (a INTEGER PRIMARY KEY, tags TEXT[] USING COMPRESSION dict_fsst, notes TEXT[] USING COMPRESSION zstd, vals DOUBLE[] USING COMPRESSION alp)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO search_nested_engine_names SELECT a, ['t' || (a % 5), 'u' || (a % 11)], [repeat('n' || a, 8)], [a / 10.0, a * 0.5] FROM range(5000) t(a);
 
 statement ok
-VACUUM (REFRESH_TABLE) search_nested_engine_names;
+VACUUM (FLUSH_TABLE) search_nested_engine_names;
 
 query
 SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_nested_engine_names') WHERE column_name IN ('tags', 'notes', 'vals') AND segment_type IN ('VARCHAR', 'DOUBLE') GROUP BY column_name ORDER BY column_name;
@@ -730,31 +724,43 @@ statement ok
 DROP TABLE search_nested_engine_names;
 
 statement ok
-CREATE TABLE search_mixed_uncompressed (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION uncompressed) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE search_mixed_uncompressed (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION uncompressed) WITH (compaction_interval = 0);
 
 statement ok
 DROP TABLE search_mixed_uncompressed;
 
 statement error
-CREATE TABLE search_mixed_zstd (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION zstd) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE search_mixed_zstd (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION zstd) WITH (compaction_interval = 0);
 ----
 db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'ZSTD'
 
 
-statement error
-CREATE TABLE plain_nested_dict_fsst (a INTEGER, tags TEXT[] USING COMPRESSION dict_fsst);
+statement ok
+CREATE TABLE plain_nested_dict_fsst (a INTEGER, tags TEXT[] USING COMPRESSION dict_fsst) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO plain_nested_dict_fsst SELECT a, ['t' || (a % 5), 'u' || (a % 11)] FROM range(5000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) plain_nested_dict_fsst;
+
+query
+SELECT string_agg(DISTINCT compression, ',') AS compression, (SELECT count(*) FROM plain_nested_dict_fsst WHERE tags[1] IS DISTINCT FROM 't' || (a % 5) OR tags[2] IS DISTINCT FROM 'u' || (a % 11)) AS wrong FROM pragma_storage_info('plain_nested_dict_fsst') WHERE column_name = 'tags' AND segment_type = 'VARCHAR';
 ----
-db error: ERROR: Can't compress column "tags" with type 'VARCHAR[]' (physical: LIST) using compression type 'DICT_FSST'
+compression	wrong
+DICT_FSST	0
 
+statement ok
+DROP TABLE plain_nested_dict_fsst;
 
 statement error
-CREATE TABLE search_internal_codec (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION compression_col_numeric) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE search_internal_codec (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION compression_col_numeric) WITH (compaction_interval = 0);
 ----
 db error: ERROR: Enum value: unrecognized value "compression_col_numeric" for enum "CompressionType"<slt:ignore>
 
 
 statement ok
-CREATE TABLE search_internal_include (a INTEGER PRIMARY KEY, body TEXT, p TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE search_internal_include (a INTEGER PRIMARY KEY, body TEXT, p TEXT) WITH (compaction_interval = 0);
 
 statement error
 CREATE INDEX search_internal_include_idx ON search_internal_include USING inverted(body) INCLUDE (p included (compression = 'compression_col_numeric'));

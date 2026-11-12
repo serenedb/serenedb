@@ -2,12 +2,11 @@
 # term posting: the vector value is stored once under its column id and the IVF
 # attaches to that column, so an ANN query through the index scan pushes the
 # distance + top-k INTO the scan (accelerated) rather than computing distances
-# over every row. Commit-time-only, so rows are observed after
-# VACUUM (REFRESH_TABLE).
+# over every row.
 
 statement ok
 CREATE TABLE v (id BIGINT PRIMARY KEY, vec FLOAT[3])
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX v_idx ON v USING inverted (vec ivf(metric='l2'));
@@ -18,9 +17,6 @@ INSERT INTO v VALUES
   (2, array_value(10::FLOAT, 10::FLOAT, 10::FLOAT)),
   (3, array_value(5::FLOAT, 5::FLOAT, 5::FLOAT)),
   (4, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT));
-
-statement ok
-VACUUM (REFRESH_TABLE) v;
 
 # The two nearest neighbours of [1,2,3] are row 1 (itself) and row 4 ([0,0,0]).
 query
@@ -72,16 +68,13 @@ id
 # expression, stored + IVF-attached under the expression's own field.
 statement ok
 CREATE TABLE ve (id BIGINT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX ve_idx ON ve USING inverted ((array_value(x, y, z)) ivf(metric='l2'));
 
 statement ok
 INSERT INTO ve VALUES (1, 1, 2, 3), (2, 10, 10, 10), (3, 5, 5, 5), (4, 0, 0, 0);
-
-statement ok
-VACUUM (REFRESH_TABLE) ve;
 
 query
 SELECT id FROM ve_idx
@@ -130,7 +123,7 @@ id
 
 statement ok
 CREATE TABLE dv (id BIGINT PRIMARY KEY, vec FLOAT[3], txt TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX dv_ivf ON dv USING inverted (vec ivf(metric = 'l2'));
@@ -143,7 +136,7 @@ INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
   'w' || (i % 10) FROM range(500) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) dv;
+VACUUM (FLUSH_TABLE) dv;
 
 statement ok
 DROP INDEX dv_ivf;
@@ -151,9 +144,6 @@ DROP INDEX dv_ivf;
 statement ok
 INSERT INTO dv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3],
   'w' || (i % 10) FROM range(500, 1000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) dv;
 
 statement ok
 VACUUM (COMPACT_TABLE) dv;
@@ -174,7 +164,7 @@ s	z
 # HNSW graph and leaves the IVF's cluster postings out.
 statement ok
 CREATE TABLE rv (id BIGINT PRIMARY KEY, vec FLOAT[3])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rv_idx ON rv USING inverted (vec ivf(metric = 'l2'));
@@ -184,7 +174,7 @@ INSERT INTO rv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(500) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rv;
+VACUUM (FLUSH_TABLE) rv;
 
 statement ok
 DROP INDEX rv_idx;
@@ -195,9 +185,6 @@ CREATE INDEX rv_idx ON rv USING inverted (vec hnsw(metric = 'l2'));
 statement ok
 INSERT INTO rv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(500, 1000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) rv;
 
 statement ok
 VACUUM (COMPACT_TABLE) rv;
@@ -221,7 +208,7 @@ n
 
 statement ok
 CREATE TABLE sv (id BIGINT PRIMARY KEY, vec FLOAT[3])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX sv_a ON sv USING inverted (vec ivf(metric = 'l2'), vec);
@@ -232,9 +219,6 @@ CREATE INDEX sv_b ON sv USING inverted (id, vec ivf(metric = 'l2')) INCLUDE (vec
 statement ok
 INSERT INTO sv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(300) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) sv;
 
 query
 SELECT (SELECT id FROM sv_a ORDER BY vec <-> array_value(5::FLOAT, 5::FLOAT, 5.1::FLOAT) LIMIT 1) AS a,
@@ -247,9 +231,6 @@ a	b	eq
 statement ok
 INSERT INTO sv SELECT i, [i::FLOAT, (i % 7)::FLOAT, (i % 13)::FLOAT]::FLOAT[3]
   FROM range(300, 600) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) sv;
 
 statement ok
 VACUUM (COMPACT_TABLE) sv;

@@ -202,12 +202,30 @@ void ClassifySegmentColFilters(
   }
 }
 
+bool UsesColumnForms(const ScanGlobalState& g, const irs::SubReader& seg) {
+  return g.vector_scorer == nullptr && !g.dual_filters.empty() &&
+         RowsOnlySegment(seg);
+}
+
 void ScanLocalState::Classify(ScanGlobalState& g, uint32_t seg) {
   if (classified_seg == seg) {
     return;
   }
-  ClassifySegmentColFilters((*g.reader)[seg], g, g.col_filters, filter_states,
-                            seg_cls, true);
+  const auto& segment = (*g.reader)[seg];
+  ClassifySegmentColFilters(segment, g, g.col_filters, filter_states, seg_cls,
+                            true);
+  if (!seg_cls.segment_dead && UsesColumnForms(g, segment)) {
+    ClassifySegmentColFilters(segment, g, g.dual_filters, filter_states,
+                              column_form_cls, true);
+    if (column_form_cls.segment_dead) {
+      seg_cls.segment_dead = true;
+      seg_cls.active.clear();
+    } else {
+      seg_cls.active.insert(seg_cls.active.end(),
+                            column_form_cls.active.begin(),
+                            column_form_cls.active.end());
+    }
+  }
   classified_seg = seg;
 }
 

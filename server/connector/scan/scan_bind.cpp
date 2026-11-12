@@ -38,20 +38,25 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <iresearch/index/segment_reader.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <ranges>
 
+#include "catalog/base_catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
-#include "connector/duckdb_client_state.h"
-#include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_function.h"
@@ -65,14 +70,120 @@
 namespace sdb::connector {
 namespace {
 
-uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
-                                  uint64_t live_docs) {
+using FieldSet = irs::containers::FlatHashSet<irs::field_id>;
+
+FieldSet UniqueTermFields(const ScanBindData& bind) {
+  FieldSet fields;
+  if (!bind.relation.IsSearchTable() || !bind.relation.inverted_config) {
+    return fields;
+  }
+  const auto& config = bind.relation.ScannedIndex();
+  for (const auto& spec :
+       bind.relation.table_entry->Cast<catalog::SearchTableEntry>()
+         .KeySpecs()) {
+    if (spec.kind != search::KeyKind::Unique ||
+        !catalog::IsSingleColumnKey(spec.key)) {
+      continue;
+    }
+    fields.insert(spec.key.field);
+    const auto column = spec.key.columns.front();
+    const auto type = bind.ColumnTypeById(column).id();
+    const auto term = config.TermField(column);
+    const auto* entry = config.LookupField(term).entry;
+    if (entry && entry->IsTermDict() && !entry->HasJsonLeafFields() &&
+        (!entry->HasTextDictionary() || entry->is_keyword) &&
+        type != duckdb::LogicalTypeId::LIST &&
+        type != duckdb::LogicalTypeId::ARRAY) {
+      fields.insert(term);
+    }
+  }
+  return fields;
+}
+
+std::optional<uint64_t> KeyValueCount(const duckdb::Expression& filter) {
+  switch (filter.GetExpressionType()) {
+    case duckdb::ExpressionType::COMPARE_EQUAL: {
+      auto type = duckdb::ExpressionType::INVALID;
+      if (!duckdb::BoundComparisonExpression::IsComparison(filter) ||
+          !duckdb::ExpressionFilter::TryGetColumnConstantComparison(
+            filter.Cast<duckdb::BoundFunctionExpression>(), type)) {
+        return std::nullopt;
+      }
+      return 1;
+    }
+    case duckdb::ExpressionType::CONJUNCTION_AND: {
+      std::optional<uint64_t> bound;
+      for (const auto& child :
+           filter.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+        if (const auto rows = KeyValueCount(*child)) {
+          bound = bound ? std::min(*bound, *rows) : *rows;
+        }
+      }
+      return bound;
+    }
+    default:
+      return std::nullopt;
+  }
+}
+
+std::optional<uint64_t> UniqueMatches(const irs::Filter& filter,
+                                      const FieldSet& unique) {
+  if (filter.type() == irs::Type<irs::ByTerm>::id()) {
+    if (unique.contains(irs::utils::downCast<irs::ByTerm>(filter).field_id())) {
+      return 1;
+    }
+    return std::nullopt;
+  }
+  if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
+    return std::nullopt;
+  }
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(filter);
+  std::optional<uint64_t> bound;
+  const auto tighten = [&](uint64_t rows) {
+    bound = bound ? std::min(*bound, rows) : rows;
+  };
+  for (const auto& term : node.Terms(irs::Occur::Must)) {
+    if (unique.contains(term.field)) {
+      tighten(1);
+    }
+  }
+  for (const auto& child : node.Filters(irs::Occur::Must)) {
+    if (const auto rows = UniqueMatches(*child, unique)) {
+      tighten(*rows);
+    }
+  }
+  if (bound || node.Size(irs::Occur::Must) != 0 ||
+      node.Size(irs::Occur::Should) == 0 || node.MinShouldMatch() == 0) {
+    return bound;
+  }
+  uint64_t rows = 0;
+  for (const auto& term : node.Terms(irs::Occur::Should)) {
+    if (!unique.contains(term.field)) {
+      return std::nullopt;
+    }
+    ++rows;
+  }
+  for (const auto& child : node.Filters(irs::Occur::Should)) {
+    const auto child_rows = UniqueMatches(*child, unique);
+    if (!child_rows) {
+      return std::nullopt;
+    }
+    rows += *child_rows;
+  }
+  return rows;
+}
+
+uint64_t EstimateFilterMatchCount(const irs::Filter& filter, uint64_t live_docs,
+                                  const FieldSet& unique) {
   const auto type = filter.type();
   if (type == irs::Type<irs::All>::id()) {
     return live_docs;
   }
   if (type == irs::Type<irs::Empty>::id()) {
     return 0;
+  }
+  if (const auto rows = UniqueMatches(filter, unique)) {
+    return std::max<uint64_t>(std::min(*rows, live_docs), 1U);
   }
   constexpr double kDefaultFilterSelectivity = 0.2;
   return std::max<uint64_t>(
@@ -81,7 +192,7 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
   duckdb::ClientContext& context, const ScanBindData& bind) {
-  const auto snapshot = bind.Snapshot(context);
+  const auto& reader = *bind.Read(context).reader;
   uint64_t estimate = 0;
   for (const auto& req : bind.ts_dict.requests) {
     const uint64_t rows = [&] -> uint64_t {
@@ -93,7 +204,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
         return 1;
       }
       uint64_t terms = 0;
-      for (const auto& segment : snapshot->reader) {
+      for (const auto& segment : reader) {
         if (const auto* field = segment.field(
               req.field_id,
               {.layout = req.layout, .member = irs::DictMember::Strings})) {
@@ -103,7 +214,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
       return std::max<uint64_t>(terms, 1);
     }();
     estimate += req.having_filter
-                  ? EstimateFilterMatchCount(*req.having_filter, rows)
+                  ? EstimateFilterMatchCount(*req.having_filter, rows, {})
                   : rows;
   }
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
@@ -118,63 +229,6 @@ const duckdb::ColumnDefinition* FindColumnById(
   }
   return nullptr;
 }
-
-search::Writes::PinnedSearchTable PinnedSearchTable(
-  duckdb::ClientContext& context, const search::Store& store) {
-  auto* conn_ctx = GetSereneDBContextPtr(context);
-  if (!conn_ctx) {
-    auto config = store.ScanConfig();
-    return {
-      .reader =
-        std::make_shared<irs::DirectoryReader>(store.GetDirectoryReader()),
-      .config = std::move(config),
-    };
-  }
-  return conn_ctx->SearchTxn().EnsureSearchTable(store);
-}
-
-search::StoreSnapshotPtr IndexSnapshot(
-  duckdb::ClientContext& context, duckdb::idx_t oid,
-  const std::shared_ptr<search::Store>& storage) {
-  auto* conn_ctx = GetSereneDBContextPtr(context);
-  if (!conn_ctx) {
-    return storage->Snapshot();
-  }
-  return conn_ctx->EnsureSearchSnapshot(oid, storage);
-}
-
-decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
-  const catalog::SearchTableEntry& table) {
-  return [store = table.Storage()](
-           duckdb::ClientContext& context) -> search::StoreSnapshotPtr {
-    return std::make_shared<search::StoreSnapshot>(
-      irs::DirectoryReader{*PinnedSearchTable(context, *store).reader},
-      nullptr);
-  };
-}
-
-void AcquireSnapshot(ScanBindData& data, duckdb::ClientContext& context,
-                     decltype(SearchSpec::acquire_snapshot) acquire) {
-  data.search.planned_reader = acquire(context)->reader.GetImpl();
-  data.search.acquire_snapshot = std::move(acquire);
-}
-
-class SnapshotVersion final : public duckdb::PlanDataVersion {
- public:
-  SnapshotVersion(std::weak_ptr<const irs::DirectoryReaderImpl> planned,
-                  decltype(SearchSpec::acquire_snapshot) acquire)
-    : _planned{std::move(planned)}, _acquire{std::move(acquire)} {}
-
-  bool IsCurrent(duckdb::ClientContext& context) const final {
-    const auto snapshot = _acquire(context);
-    const auto& current = snapshot->reader.GetImpl();
-    return !_planned.owner_before(current) && !current.owner_before(_planned);
-  }
-
- private:
-  std::weak_ptr<const irs::DirectoryReaderImpl> _planned;
-  decltype(SearchSpec::acquire_snapshot) _acquire;
-};
 
 duckdb::unique_ptr<ScanBindData> MakeTableScanBindData(
   duckdb::TableCatalogEntry& table, ScanEntryKind kind,
@@ -275,6 +329,59 @@ std::unique_ptr<AnnFilter> MakeAnnFilter(
   return f;
 }
 
+duckdb::unique_ptr<ScanBindData> BindIndexScan(
+  duckdb::ClientContext& context, const catalog::InvertedIndexEntry& entry) {
+  auto host = entry.GetRelation(entry.catalog.GetCatalogTransaction(context));
+  if (!host) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+      ERR_MSG("relation \"", entry.GetTableName().GetIdentifierName(),
+              "\" does not exist"));
+  }
+  auto& relation = *host;
+  const auto* search_table =
+    dynamic_cast<const catalog::SearchTableEntry*>(&relation);
+  auto data =
+    relation.type == duckdb::CatalogType::VIEW_ENTRY
+      ? MakeViewScanBindData(context, relation.Cast<duckdb::ViewCatalogEntry>(),
+                             entry.options)
+      : MakeTableScanBindData(relation.Cast<duckdb::TableCatalogEntry>(),
+                              search_table ? ScanEntryKind::SearchTableIndex
+                                           : ScanEntryKind::InvertedIndex,
+                              search_table ? "search" : "table");
+  data->relation.inverted_index = &entry;
+  data->relation.inverted_config = entry.Config();
+  if (search_table) {
+    const auto config =
+      ConnectionContext::Get(context).Transaction().ScanConfig(
+        context, *search_table->Storage());
+    if (!absl::c_all_of(entry.Config()->fields, [&](const auto& field) {
+          return config->fields.contains(field.first);
+        })) {
+      search::ThrowConcurrentUpdate();
+    }
+  }
+  data->relation.row_group_size =
+    search_table ? search_table->Storage()->Config()->row_group_size
+                 : entry.Config()->row_group_size;
+  data->score.prune = search_table ? search_table->Storage()->TopKScorer()
+                                   : entry.Config()->top_k_scorer;
+  return data;
+}
+
+duckdb::unique_ptr<ScanBindData> BindSearchTable(
+  duckdb::ClientContext& context, catalog::SearchTableEntry& entry) {
+  auto data =
+    MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
+  data->score.prune = entry.Storage()->TopKScorer();
+  data->relation.inverted_config =
+    ConnectionContext::Get(context).Transaction().ScanConfig(context,
+                                                             *entry.Storage());
+  data->relation.row_group_size =
+    data->relation.inverted_config->row_group_size;
+  return data;
+}
+
 }  // namespace
 
 double SegmentBeamShare(double k, size_t segments) noexcept {
@@ -340,15 +447,31 @@ bool ScanBindData::Equals(const duckdb::FunctionData& other) const {
   return relation.table_entry.get() == o.relation.table_entry.get();
 }
 
+bool ScanBindData::HasPushdowns() const noexcept {
+  return search.filter || search.index_only || !search.duals.empty() ||
+         !search.deferred.empty() || !search.filter_scorers.empty() ||
+         !search.row_filters.empty() || score.text || score.vector ||
+         score.HasTopK() || score.top_offset_expr || score.top_offset != 0 ||
+         score.top_n_consumed || score.order ||
+         score.static_floor != std::numeric_limits<float>::lowest() ||
+         scan_order || offsets.Active() || ts_dict.Active() ||
+         plan_cache.deferred;
+}
+
 bool ScanBindData::ReadsParametersAtExecution() const {
   return !plan_cache.declined_parameter && !ts_dict.Active() &&
          !offsets.Active();
 }
 
-duckdb::shared_ptr<duckdb::PlanDataVersion> ScanBindData::GetPlanDataVersion()
-  const {
-  return duckdb::make_shared_ptr<SnapshotVersion>(search.planned_reader,
-                                                  search.acquire_snapshot);
+search::ReadView ScanBindData::Read(duckdb::ClientContext& context) const {
+  auto& transaction = ConnectionContext::Get(context).Transaction();
+  if (relation.kind == ScanEntryKind::InvertedIndex) {
+    return transaction.SearchTxn().Read(context,
+                                        *relation.inverted_index->Storage());
+  }
+  return transaction.SearchTxn().Read(
+    context,
+    *relation.table_entry->Cast<catalog::SearchTableEntry>().Storage());
 }
 
 duckdb::idx_t ScanColumnOfStorage(const ScanBindData& bind,
@@ -380,6 +503,10 @@ duckdb::LogicalType ScanBindData::ColumnTypeById(ColumnId col_id) const {
                                       : duckdb::LogicalType::INVALID;
   }
   const auto* column = FindColumnById(*relation.table_entry, col_id);
+  if (!column && relation.inverted_config) {
+    column = FindColumnById(*relation.table_entry,
+                            relation.inverted_config->ColumnOf(col_id));
+  }
   return column ? column->Type() : duckdb::LogicalType::INVALID;
 }
 
@@ -442,9 +569,11 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
   if (ts_dict.Active()) {
     return TsDictEstimation(context, *this);
   }
-  const auto live = Snapshot(context)->reader.live_docs_count();
+  const auto live = Read(context).reader->live_docs_count();
   const auto* filter = search.filter.get();
-  const auto estimate = filter ? EstimateFilterMatchCount(*filter, live) : live;
+  const auto estimate =
+    filter ? EstimateFilterMatchCount(*filter, live, UniqueTermFields(*this))
+           : live;
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
 
@@ -456,61 +585,47 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   duckdb::vector<duckdb::Identifier> path;
-  for (const auto& part : duckdb::ListValue::GetChildren(input.inputs[0])) {
+  for (const auto& part : input.inputs) {
     path.emplace_back(part.GetValue<std::string>());
   }
   const auto qualified = duckdb::QualifiedName::FromPath(std::move(path));
   auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
     context, qualified, duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!index || !IsInvertedIndex(*index)) {
+  if (!index || !catalog::IsInvertedIndex(*index)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", qualified.Name().GetIdentifierName(),
                             "\" does not exist"));
   }
   if (input.binder) {
-    input.binder->GetStatementProperties().RegisterDBRead(
-      index->ParentCatalog(), context);
+    auto& properties = input.binder->GetStatementProperties();
+    properties.RegisterDBRead(index->ParentCatalog(), context);
+    properties.RegisterDataRead(*index, context);
   }
-  const auto& entry = irs::utils::downCast<catalog::InvertedIndexEntry>(*index);
-  auto host = index->GetRelation(index->catalog.GetCatalogTransaction(context));
-  if (!host) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-      ERR_MSG("relation \"", index->GetTableName().GetIdentifierName(),
-              "\" does not exist"));
-  }
-  auto& relation = *host;
-  const auto* search_table =
-    dynamic_cast<const catalog::SearchTableEntry*>(&relation);
-  auto data =
-    relation.type == duckdb::CatalogType::VIEW_ENTRY
-      ? MakeViewScanBindData(context, relation.Cast<duckdb::ViewCatalogEntry>(),
-                             entry.options)
-      : MakeTableScanBindData(relation.Cast<duckdb::TableCatalogEntry>(),
-                              search_table ? ScanEntryKind::SearchTableIndex
-                                           : ScanEntryKind::InvertedIndex,
-                              search_table ? "search" : "table");
-  data->relation.inverted_index = &entry;
-  if (search_table) {
-    AcquireSnapshot(*data, context, SearchTableSnapshot(*search_table));
-  } else {
-    AcquireSnapshot(*data, context,
-                    [oid = entry.oid, storage = entry.Storage()](
-                      duckdb::ClientContext& ctx) -> search::StoreSnapshotPtr {
-                      return IndexSnapshot(ctx, oid, storage);
-                    });
-  }
-  data->relation.inverted_config = entry.Config();
-  data->relation.row_group_size =
-    search_table ? search_table->Storage()->Config()->row_group_size
-                 : entry.Config()->row_group_size;
-  data->score.prune = search_table ? search_table->Storage()->TopKScorer()
-                                   : entry.Config()->top_k_scorer;
+  auto data = BindIndexScan(
+    context, irs::utils::downCast<catalog::InvertedIndexEntry>(*index));
   data->IterateColumns([&](ColumnId id, const duckdb::LogicalType& type) {
     return_types.emplace_back(type);
     names.emplace_back(data->ColumnNameById(id));
   });
   return data;
+}
+
+duckdb::unique_ptr<ScanBindData> RebindScan(duckdb::ClientContext& context,
+                                            const duckdb::Identifier& catalog,
+                                            duckdb::idx_t oid,
+                                            ScanEntryKind kind) {
+  auto& base =
+    duckdb::Catalog::GetCatalog(context, catalog).Cast<catalog::BaseCatalog>();
+  auto entry = base.LookupOid(base.GetCatalogTransaction(context), oid);
+  if (!entry) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation with OID ", oid, " does not exist"));
+  }
+  if (kind == ScanEntryKind::SearchTable) {
+    return BindSearchTable(context, entry->Cast<catalog::SearchTableEntry>());
+  }
+  return BindIndexScan(
+    context, irs::utils::downCast<catalog::InvertedIndexEntry>(*entry));
 }
 
 duckdb::TableFunction BindSearchTableScan(
@@ -519,21 +634,13 @@ duckdb::TableFunction BindSearchTableScan(
   SDB_IF_FAILURE("connector::ScanBind") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  const auto& store = entry.Storage();
-  auto data =
-    MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
-  AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
-  data->score.prune = store->TopKScorer();
-  data->relation.inverted_config = PinnedSearchTable(context, *store).config;
-  data->relation.row_group_size =
-    data->relation.inverted_config->row_group_size;
-  bind_data = std::move(data);
+  bind_data = BindSearchTable(context, entry);
   return CreateIResearchScanFunction();
 }
 
 bool LooksUpByPk(const ScanBindData& bind) {
   return bind.relation.kind == ScanEntryKind::InvertedIndex &&
-         bind.relation.ScannedIndex().pk == PkColumnKind::Has &&
+         bind.relation.ScannedIndex().pk == catalog::PkColumnKind::Has &&
          (!bind.view || bind.view->fast_path);
 }
 
@@ -548,7 +655,8 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
 }
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
-  if (bind.view && bind.relation.inverted_config->pk == PkColumnKind::Has) {
+  if (bind.view &&
+      bind.relation.inverted_config->pk == catalog::PkColumnKind::Has) {
     if (const auto& fp = bind.view->fast_path) {
       return fp->pk_spec;
     }
@@ -556,9 +664,34 @@ std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
   return std::nullopt;
 }
 
+bool RowsOnlySegment(const irs::SubReader& segment) {
+  return segment.field_ids().empty();
+}
+
+std::optional<uint64_t> UniqueMatchBound(const ScanBindData& scan,
+                                         const irs::Filter& filter) {
+  return UniqueMatches(filter, UniqueTermFields(scan));
+}
+
+std::optional<uint64_t> UniqueColumnBound(const ScanBindData& scan,
+                                          ColumnId column,
+                                          const duckdb::Expression& filter) {
+  if (!scan.relation.IsSearchTable() ||
+      absl::c_none_of(
+        scan.relation.table_entry->Cast<catalog::SearchTableEntry>().KeySpecs(),
+        [&](const auto& spec) {
+          return spec.kind == search::KeyKind::Unique &&
+                 catalog::IsSingleColumnKey(spec.key) &&
+                 spec.key.columns.front() == column;
+        })) {
+    return std::nullopt;
+  }
+  return KeyValueCount(filter);
+}
+
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
-                                  const search::StoreSnapshot& snapshot) {
+                                  const irs::DirectoryReader& reader) {
   SDB_ASSERT(scan.plan_cache.deferred);
   const auto& claim = *scan.plan_cache.deferred;
   const auto bound = [&](const std::shared_ptr<const duckdb::Expression>& e) {
@@ -570,21 +703,25 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> index_only;
   conjuncts.reserve(claim.conjuncts.size() + claim.ranges.size());
-  const bool keeps_columns = scan.KeepsColumnForms();
+  const bool keeps_columns =
+    scan.KeepsColumnForms() || scan.ReadsRowsOnlySegments();
   const auto keep_column_form = [&](const duckdb::Expression& conjunct) {
-    const auto* ref = optimizer::SoleColumn(conjunct);
-    if (!ref) {
+    auto form = optimizer::RowFormOf(conjunct);
+    if (!form) {
       return false;
     }
-    const auto it = claim.columns->find(MakeBindingKey(ref->Binding()));
-    if (it == claim.columns->end() || !it->second.column_stored) {
-      return false;
+    DeferredRowFilter row;
+    for (const auto* ref : form->columns) {
+      const auto it = claim.columns->find(MakeBindingKey(ref->Binding()));
+      if (it == claim.columns->end() || !it->second.column_stored) {
+        return false;
+      }
+      row.columns.push_back(it->second.column);
+      row.types.push_back(ref->GetReturnType());
     }
-    out.dual_filters.push_back(
-      {.column = it->second.column,
-       .type = ref->GetReturnType(),
-       .filter = duckdb::make_uniq<duckdb::ExpressionFilter>(
-         optimizer::ColumnFormOf(conjunct.Copy()))});
+    row.filter =
+      duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(form->expr));
+    out.dual_filters.push_back(std::move(row));
     return true;
   };
   const auto to_index = [&](duckdb::unique_ptr<duckdb::Expression> conjunct) {
@@ -605,7 +742,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     auto info = optimizer::ResolveSearchColumnById(
       context, scan, it->second.column, it->second.column_stored);
     if (info && info->column_stored) {
-      info->stats = snapshot.reader.GetColumnStats(it->second.column);
+      info->stats = reader.GetColumnStats(it->second.column);
     }
     return info;
   };
@@ -707,9 +844,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     MakeSearchFilter(*root, conjuncts, getter, context, expr_getter, &scorers);
   if (!status.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("cannot build the search filter from the "
-                            "statement's parameters: ",
-                            status.message()));
+                    ERR_MSG(status.message()));
   }
   irs::Filter::ptr filter = std::move(root);
   EnsureIncludeSides(*filter);
@@ -719,7 +854,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                            .scorer = scorer.get()};
   ctx.analyzed_fields.insert(claim.analyzed_fields.begin(),
                              claim.analyzed_fields.end());
-  irs::Deferral deferral{.reader = snapshot.reader};
+  irs::Deferral deferral{.reader = reader};
   if (scan.DefersChecks()) {
     ctx.deferral = &deferral;
   }

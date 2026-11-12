@@ -26,7 +26,7 @@ SET sdb_ann_rescore_width = 100;
 
 statement ok
 CREATE TABLE rq_ivf (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rq_ivf_idx ON rq_ivf
@@ -36,19 +36,16 @@ statement ok
 INSERT INTO rq_ivf SELECT * FROM rq_ref WHERE id < 1000;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_ivf;
+VACUUM (FLUSH_TABLE) rq_ivf;
 
 statement ok
 INSERT INTO rq_ivf SELECT * FROM rq_ref WHERE id >= 1000 AND id < 2000;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_ivf;
+VACUUM (FLUSH_TABLE) rq_ivf;
 
 statement ok
 INSERT INTO rq_ivf SELECT * FROM rq_ref WHERE id >= 2000;
-
-statement ok
-VACUUM (REFRESH_TABLE) rq_ivf;
 
 query
 SELECT count(*) AS hits FROM (
@@ -67,8 +64,7 @@ EXPLAIN SELECT id FROM rq_ivf ORDER BY emb <-> rq_vec(1234.5) LIMIT 10;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
-│ Index: rq_ivf                      │
-│ Lookup: search                     │
+│ Table: rq_ivf                      │
 │ Score: l2_distance(emb, FLOAT[16]) │
 │ Top: 10                            │
 │ Projections: id                    │
@@ -113,7 +109,7 @@ hits
 
 statement ok
 CREATE TABLE rq_hnsw (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rq_hnsw_idx ON rq_hnsw
@@ -123,19 +119,16 @@ statement ok
 INSERT INTO rq_hnsw SELECT * FROM rq_ref WHERE id < 1000;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_hnsw;
+VACUUM (FLUSH_TABLE) rq_hnsw;
 
 statement ok
 INSERT INTO rq_hnsw SELECT * FROM rq_ref WHERE id >= 1000 AND id < 2000;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_hnsw;
+VACUUM (FLUSH_TABLE) rq_hnsw;
 
 statement ok
 INSERT INTO rq_hnsw SELECT * FROM rq_ref WHERE id >= 2000;
-
-statement ok
-VACUUM (REFRESH_TABLE) rq_hnsw;
 
 query
 SELECT count(*) AS hits FROM (
@@ -154,8 +147,7 @@ EXPLAIN SELECT id FROM rq_hnsw ORDER BY emb <-> rq_vec(1234.5) LIMIT 10;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────╮
-│ Index: rq_hnsw                     │
-│ Lookup: search                     │
+│ Table: rq_hnsw                     │
 │ Score: l2_distance(emb, FLOAT[16]) │
 │ Top: 10                            │
 │ Projections: id                    │
@@ -200,7 +192,7 @@ hits
 
 statement ok
 CREATE TABLE rq_tx (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rq_tx_idx ON rq_tx
@@ -210,13 +202,10 @@ statement ok
 INSERT INTO rq_tx SELECT * FROM rq_ref WHERE id < 1500;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_tx;
+VACUUM (FLUSH_TABLE) rq_tx;
 
 statement ok
 INSERT INTO rq_tx SELECT * FROM rq_ref WHERE id >= 1500;
-
-statement ok
-VACUUM (REFRESH_TABLE) rq_tx;
 
 statement ok
 BEGIN;
@@ -243,19 +232,16 @@ hits
 
 statement ok
 CREATE TABLE rq_two (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO rq_two SELECT * FROM rq_ref WHERE id < 1500;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_two;
+VACUUM (FLUSH_TABLE) rq_two;
 
 statement ok
 INSERT INTO rq_two SELECT * FROM rq_ref WHERE id >= 1500;
-
-statement ok
-VACUUM (REFRESH_TABLE) rq_two;
 
 statement ok
 CREATE INDEX rq_two_sq8 ON rq_two
@@ -304,7 +290,7 @@ hits
 
 statement ok
 CREATE TABLE rq_snap_ivf (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rq_snap_ivf_idx ON rq_snap_ivf
@@ -312,7 +298,7 @@ CREATE INDEX rq_snap_ivf_idx ON rq_snap_ivf
 
 statement ok
 CREATE TABLE rq_snap_hnsw (id INTEGER PRIMARY KEY, emb FLOAT[16])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX rq_snap_hnsw_idx ON rq_snap_hnsw
@@ -325,25 +311,19 @@ statement ok
 INSERT INTO rq_snap_ivf SELECT * FROM rq_ref WHERE id < 1500;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_snap_ivf;
+VACUUM (FLUSH_TABLE) rq_snap_ivf;
 
 statement ok
 INSERT INTO rq_snap_ivf SELECT * FROM rq_ref WHERE id >= 1500;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_snap_ivf;
-
-statement ok
 INSERT INTO rq_snap_hnsw SELECT * FROM rq_ref WHERE id < 1500;
 
 statement ok
-VACUUM (REFRESH_TABLE) rq_snap_hnsw;
+VACUUM (FLUSH_TABLE) rq_snap_hnsw;
 
 statement ok
 INSERT INTO rq_snap_hnsw SELECT * FROM rq_ref WHERE id >= 1500;
-
-statement ok
-VACUUM (REFRESH_TABLE) rq_snap_hnsw;
 
 connection reader
 statement ok

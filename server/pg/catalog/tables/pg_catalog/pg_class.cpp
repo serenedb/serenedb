@@ -43,6 +43,7 @@
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
+#include "search/store.h"
 
 namespace sdb::pg {
 namespace {
@@ -62,10 +63,9 @@ constexpr SystemIndex kIndexes[] = {
 std::optional<std::vector<std::string>> Reloptions(
   const catalog::SearchTableEntry& table) {
   std::vector<std::string> result;
-  for (const auto name : catalog::kSearchTableOptions) {
-    if (const auto value = table.Option(name); !value.IsNull()) {
-      result.emplace_back(absl::StrCat(name, "=", value.ToString()));
-    }
+  for (const auto& option : table.ExplicitOptions()) {
+    result.emplace_back(
+      absl::StrCat(option.name, "=", option.value.ToString()));
   }
   return NonEmpty(std::move(result));
 }
@@ -179,8 +179,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
     Col<"relkind">([](const auto&) { return 'r'; }), kRelationState,
-    Col<"relam">(
-      [](const auto& row) { return row.search ? kPgAmIResearch : kPgAmHeap; }),
+    Col<"relam">([](const auto&) { return kPgAmIResearch; }),
     Col<"relnatts">([](const auto& row) {
       return row.table.GetColumns().LogicalColumnCount();
     }),
@@ -207,9 +206,13 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
              scan.Triggered(row.table);
     }),
     Col<"reltuples">([](const auto& row) {
-      return row.table.IsDuckTable()
-               ? static_cast<float>(row.table.GetStorage().GetTotalRows())
-               : -1.0F;
+      if (row.table.IsDuckTable()) {
+        return static_cast<float>(row.table.GetStorage().GetTotalRows());
+      }
+      if (row.search && row.search->Storage()->HasTable()) {
+        return static_cast<float>(row.search->Storage()->GetTable().LiveDocs());
+      }
+      return -1.0F;
     }),
     Col<"relacl">([](const auto& row) -> const auto& {
       return row.table.permissions.acl;
@@ -225,7 +228,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
     Col<"relkind">([](const auto&) { return 'i'; }),
-    Col<"relam">([](const auto&) { return kPgAmSecondary; }),
+    Col<"relam">([](const auto&) { return kPgAmInverted; }),
     Col<"relnatts">([](const auto& row) {
       return KeyAttnums(row.table.GetColumns(), row.key).size();
     }));
@@ -237,11 +240,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relnamespace">(
       [](const auto& row) { return row.index.ParentSchemaOid(); }),
     Col<"relkind">([](const auto&) { return 'i'; }),
-    Col<"relam">([](const auto& row) {
-      return row.index.index_type == catalog::kInvertedIndexTypeName
-               ? kPgAmInverted
-               : kPgAmSecondary;
-    }),
+    Col<"relam">([](const auto&) { return kPgAmInverted; }),
     Col<"relnatts">(
       [](const auto& row) { return row.index.parsed_expressions.size(); }),
     Col<"reloptions">([](const auto& row) {
@@ -313,8 +312,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       Emit<kSystem>(table.Cast<catalog::SystemTableEntry>(), shown);
       return;
     }
-    Emit<kOrdinary>(
-      {table, dynamic_cast<const catalog::SearchTableEntry*>(&table)}, shown);
+    const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
+    Emit<kOrdinary>({table, search}, shown);
     if (Allows<"relkind">('i')) {
       if (Reads<"relowner">()) {
         _owners.emplace(table.oid, table.permissions.owner);

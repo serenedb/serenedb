@@ -3,6 +3,14 @@
 # the UPDATE set, which tripped the "update touches an index column" heuristic and
 # forced the delete+insert path, bumping rowid.
 
+control substitution on
+
+statement ok
+ATTACH '${__TEST_DIR__}/update_returning_rowid.duckdb' AS urr_${__DATABASE__};
+
+statement ok
+USE urr_${__DATABASE__};
+
 statement ok
 CREATE TABLE rr(a INTEGER PRIMARY KEY, b INTEGER);
 

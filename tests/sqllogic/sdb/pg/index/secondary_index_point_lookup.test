@@ -36,14 +36,16 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ──────────────╮
-│ Table: pudge_pt           │
-│ Type: Index Scan          │
-│ Projections: a            │
-│ Column Filter: b = 12345  │
-│ Row Groups Scanned: 0 / 1 │
-│ 1 row                 0µs │
-╰───────────────────────────╯
+╭─ TABLE_SCAN ──────────╮
+│ Table: pudge_pt       │
+│ Index Filter:         │
+│ ╭─ Term ────────────╮ │
+│ │ Field: b(numeric) │ │
+│ │ Value: 12345      │ │
+│ ╰───────────────────╯ │
+│ Projections: a        │
+│ 1 row             0µs │
+╰───────────────────────╯
 
 
 query
@@ -61,14 +63,16 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ──────────────╮
-│ Table: pudge_pt           │
-│ Type: Sequential Scan     │
-│ Projections: a            │
-│ Column Filter: b < 60000  │
-│ Row Groups Scanned: 1 / 1 │
-│ 60,000 rows           0µs │
-╰───────────────────────────╯
+╭─ TABLE_SCAN ──────────╮
+│ Table: pudge_pt       │
+│ Index Filter:         │
+│ ╭─ Granular Range ──╮ │
+│ │ Field: b(numeric) │ │
+│ │ Range: <60000     │ │
+│ ╰───────────────────╯ │
+│ Projections: a        │
+│ 60,000 rows       0µs │
+╰───────────────────────╯
 
 
 query
@@ -93,10 +97,12 @@ QUERY PLAN
 ╰─────────────────────╯
 ╭─ TABLE_SCAN ─────────────────────────╮
 │ Table: pudge_pt                      │
-│ Type: Index Scan                     │
+│ Index Filter:                        │
+│ ╭─ Term ───────────────────────────╮ │
+│ │ Field: abs((b - 50000))(numeric) │ │
+│ │ Value: 42                        │ │
+│ ╰──────────────────────────────────╯ │
 │ Projections: a                       │
-│ Column Filter: abs((b - 50000)) = 42 │
-│ Row Groups Scanned: 0 / 1            │
 │ 2 rows                           0µs │
 ╰──────────────────────────────────────╯
 

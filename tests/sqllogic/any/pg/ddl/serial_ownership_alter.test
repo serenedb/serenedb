@@ -1,0 +1,93 @@
+statement ok
+CREATE SEQUENCE soa_other
+
+
+statement ok
+CREATE TABLE soa (id serial, ref bigint DEFAULT nextval('soa_other'), note text)
+
+
+statement ok
+ALTER TABLE soa RENAME COLUMN id TO ident
+
+
+statement ok
+ALTER TABLE soa ALTER COLUMN note SET NOT NULL
+
+
+query
+SELECT pg_get_serial_sequence('soa', 'ident') AS seq
+----
+seq
+public.soa_id_seq
+
+
+statement error
+DROP SEQUENCE soa_id_seq
+----
+db error: ERROR: cannot drop sequence soa_id_seq because other objects depend on it
+DETAIL: default value for column ident of table soa depends on sequence soa_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement error
+DROP SEQUENCE soa_other
+----
+db error: ERROR: cannot drop sequence soa_other because other objects depend on it
+DETAIL: default value for column ref of table soa depends on sequence soa_other
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+ALTER TABLE soa ALTER COLUMN ident DROP DEFAULT
+
+
+query
+SELECT pg_get_serial_sequence('soa', 'ident') AS seq
+----
+seq
+public.soa_id_seq
+
+
+statement ok
+DROP TABLE soa
+
+
+query
+SELECT relname FROM pg_class WHERE relkind = 'S' AND relname LIKE 'soa%' ORDER BY 1
+----
+relname
+soa_other
+
+
+statement ok
+CREATE TABLE soa_dropped (id serial, v int)
+
+
+statement ok
+ALTER TABLE soa_dropped ALTER COLUMN id DROP DEFAULT
+
+
+statement ok
+DROP SEQUENCE soa_dropped_id_seq
+
+
+query
+SELECT pg_get_serial_sequence('soa_dropped', 'id') AS seq
+----
+seq
+NULL
+
+
+query
+SELECT count(*) AS columns FROM information_schema.columns WHERE table_name = 'soa_dropped'
+----
+columns
+2
+
+
+statement ok
+DROP TABLE soa_dropped
+
+
+statement ok
+DROP SEQUENCE soa_other

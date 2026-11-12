@@ -35,8 +35,10 @@ target_sources(
         column/codecs/zxc.cpp
         column/col_reader.cpp
         column/col_writer.cpp
+        column/column_patch.cpp
         column/column_reader.cpp
         column/column_writer.cpp
+        column/hot_column_reader.cpp
         column/internal/write_context.cpp
         column/list_ingest.cpp
         column/merge.cpp
@@ -57,11 +59,8 @@ target_sources(
         index/term_dict_root.cpp
         index/term_dict_single.cpp
         index/term_dict_walk.cpp
-        index_meta_reader.cpp
-        index_meta_writer.cpp
+        piece_fields.cpp
         posting/block_codec.cpp
-        segment_meta_reader.cpp
-        segment_meta_writer.cpp
 )
 
 if(IRESEARCH_BENCH)

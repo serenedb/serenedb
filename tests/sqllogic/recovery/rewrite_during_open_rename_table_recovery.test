@@ -13,7 +13,7 @@ INSERT INTO papich_stream VALUES (1, 'arthas'), (2, 'dota');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) papich_stream;
+VACUUM (FLUSH_TABLE) papich_stream;
 
 
 connection donsimon
@@ -94,7 +94,7 @@ INSERT INTO papich_stream VALUES (3, 'arthas');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) papich_stream;
+VACUUM (FLUSH_TABLE) papich_stream;
 
 
 connection after_crash

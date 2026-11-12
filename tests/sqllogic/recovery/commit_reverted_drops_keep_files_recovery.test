@@ -13,7 +13,7 @@ CREATE INDEX crd_docs_idx ON crd_docs USING inverted (body);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) crd_docs;
+VACUUM (FLUSH_TABLE) crd_docs;
 
 
 statement ok
@@ -60,7 +60,7 @@ INSERT INTO crd_docs VALUES (4, 'beta');
 
 connection victim
 statement ok
-VACUUM (REFRESH_TABLE) crd_docs;
+VACUUM (FLUSH_TABLE) crd_docs;
 
 
 connection victim
@@ -83,7 +83,7 @@ n
 
 connection after_restart
 statement ok
-VACUUM (REFRESH_TABLE) crd_docs;
+VACUUM (FLUSH_TABLE) crd_docs;
 
 
 connection after_restart

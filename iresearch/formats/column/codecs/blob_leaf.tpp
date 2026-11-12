@@ -136,6 +136,54 @@ struct BlobScan {
     SDB_ENSURE(off == m.raw_len, "col codec: corrupted entry lengths");
   }
 
+  template<typename Frames, typename Entry, typename Writer>
+  void EmitRows(Frames& s, uint32_t f, duckdb::idx_t i, duckdb::idx_t j,
+                Entry entry_at, duckdb::ArenaAllocator& arena, Writer& writer,
+                FramePrefix& scratch) {
+    auto& [raw, ends] = scratch;
+    const auto& m = s.frames[f];
+    const auto first = m.first_entry;
+    const auto prefix = static_cast<uint32_t>(entry_at(j - 1)) - first + 1;
+    if (ends.size() < prefix) {
+      ends.resize(prefix);
+    }
+    s.length_reader.Read(first, prefix, ends.data());
+    uint64_t end = 0;
+    for (uint32_t k = 0; k < prefix; ++k) {
+      end += ends[k];
+      ends[k] = static_cast<uint32_t>(end);
+    }
+    SDB_ENSURE(end <= m.raw_len, "col codec: corrupted entry lengths");
+    if (raw.size() < m.raw_len) {
+      raw.resize_and_overwrite(m.raw_len, [](char*, size_t n) { return n; });
+    }
+    const auto got = inflater.Inflate(s.header, s.base, m, f, raw.data(), end);
+    SDB_ENSURE(got.size() >= end, "col codec: corrupted frame");
+    const auto span = [&](duckdb::idx_t k) {
+      const auto at = static_cast<uint32_t>(entry_at(k)) - first;
+      const auto begin = at == 0 ? 0 : ends[at - 1];
+      return std::string_view{got.data() + begin, ends[at] - begin};
+    };
+    uint64_t bytes = 0;
+    for (auto k = i; k < j; ++k) {
+      const auto len = span(k).size();
+      bytes += len > duckdb::string_t::INLINE_LENGTH ? len : 0;
+    }
+    auto* out =
+      bytes != 0 ? duckdb::char_ptr_cast(arena.Allocate(bytes)) : nullptr;
+    for (auto k = i; k < j; ++k) {
+      const auto value = span(k);
+      const auto len = static_cast<uint32_t>(value.size());
+      if (len <= duckdb::string_t::INLINE_LENGTH) {
+        writer.WriteStringRef(duckdb::string_t{value.data(), len});
+        continue;
+      }
+      std::memcpy(out, value.data(), len);
+      writer.WriteStringRef(duckdb::string_t{out, len});
+      out += len;
+    }
+  }
+
   uint64_t HeapBytes() const noexcept { return 0; }
 
   FrameInflater<Codec> inflater;

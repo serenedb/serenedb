@@ -56,9 +56,20 @@ inline constexpr uint64_t kSingleRowCost = 100;
 inline constexpr uint64_t kFrameRowCost = 25;
 inline constexpr uint64_t kChainGroupCost = 180;
 inline constexpr uint64_t kChainMinRowBytes = 8;
+inline constexpr uint64_t kInflateByteCost = 6;
+inline constexpr uint64_t kFrameCopyByteCost = 2;
+inline constexpr uint64_t kFrameEntryCost = 72;
+inline constexpr uint64_t kPrefixEntryCost = 16;
+inline constexpr uint64_t kHitByteCost = 2;
+inline constexpr uint64_t kHitCost = 128;
 inline constexpr uint32_t kLazyFilterEntries = 4096;
 inline constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
 inline constexpr duckdb::idx_t kFetchAhead = 16;
+
+struct FramePrefix {
+  std::string raw;
+  std::vector<uint32_t> ends;
+};
 
 struct PackedReader {
   PackedReader(duckdb::data_ptr_t src, uint8_t width)

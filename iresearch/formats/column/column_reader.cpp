@@ -169,6 +169,8 @@ GatherBands BandsFor(codecs::CodecType codec,
       return {2, 70};
     case codecs::CodecType::Numeric:
       return {10, 1000};
+    case codecs::CodecType::Lz4:
+      return {0, 1000};
     default:
       return type.InternalType() == duckdb::PhysicalType::VARCHAR
                ? GatherBands{10, 1000}

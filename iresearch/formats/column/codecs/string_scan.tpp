@@ -313,6 +313,61 @@ struct EntryFrames {
     }
   }
 
+  template<typename Entry>
+  void SelectFrames(duckdb::Vector& result, idx_t result_offset, idx_t count,
+                    Entry entry_at, uint32_t window_first, uint32_t window_end,
+                    FramePrefix& scratch) {
+    auto writer =
+      duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
+    auto& arena = duckdb::StringVector::GetStringAllocator(result);
+    bool referenced = false;
+    uint32_t f = kNoFrame;
+    for (idx_t i = 0; i < count;) {
+      auto e = static_cast<uint32_t>(entry_at(i));
+      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+        f = FrameOf(e);
+      }
+      const auto first = frames[f].first_entry;
+      const auto end = FrameEnd(f);
+      auto j = i + 1;
+      for (; j < count; ++j) {
+        const auto next = static_cast<uint32_t>(entry_at(j));
+        if (next < e || next >= end) {
+          break;
+        }
+        e = next;
+      }
+      if (!decoded[f]) {
+        const uint64_t rows = end - first;
+        const uint64_t prefix = e - first + 1;
+        const uint64_t hits = j - i;
+        const uint64_t entry_bytes = frames[f].raw_len / rows;
+        const uint64_t frame_byte_cost =
+          kInflateByteCost +
+          (header.flags == FrameDictionary::None ? 0 : kFrameCopyByteCost);
+        const bool done =
+          end <= window_end ||
+          count * uint64_t{end - window_end} < window_end - window_first;
+        if (done &&
+            prefix * (entry_bytes * kInflateByteCost + kPrefixEntryCost) +
+                hits * (entry_bytes * kHitByteCost + kHitCost) <=
+              rows * (entry_bytes * frame_byte_cost + kFrameEntryCost)) {
+          leaf->EmitRows(*this, f, i, j, entry_at, arena, writer, scratch);
+          i = j;
+          continue;
+        }
+        DecodeFrame(f);
+      }
+      referenced = true;
+      for (; i < j; ++i) {
+        writer.WriteStringRef(values[entry_at(i)]);
+      }
+    }
+    if (referenced) {
+      ReferenceHeap(result);
+    }
+  }
+
   const char* Data() const noexcept {
     return reinterpret_cast<const char*>(base + header.off_data);
   }

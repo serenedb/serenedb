@@ -2059,6 +2059,86 @@ TEST_F(ColCodecsTest, DenseSelectionsAfterSparseOnesFilterOnTheDictionary) {
   }
 }
 
+TEST_F(ColCodecsTest, SelectionsOfLz4FramesMatchTheValues) {
+  struct Shape {
+    const char* name;
+    uint64_t rows;
+    Value value;
+  };
+  const std::vector<Shape> shapes{
+    {"short", 40000,
+     [](uint64_t g) -> std::optional<std::string> {
+       if (g % 13 == 0) {
+         return std::nullopt;
+       }
+       return g % 5 == 0 ? std::string{} : Pseudo(g, 1 + g % 12);
+     }},
+    {"medium", 40000,
+     [](uint64_t g) -> std::optional<std::string> {
+       return "row " + std::to_string(g) + " " + Pseudo(g % 977, 30 + g % 60);
+     }},
+    {"long", 6000,
+     [](uint64_t g) -> std::optional<std::string> {
+       if (g % 17 == 0) {
+         return std::nullopt;
+       }
+       return Pseudo(g % 211, 300 + g % 900) + std::to_string(g);
+     }},
+  };
+  size_t trained = 0;
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    for (const auto& shape : shapes) {
+      SCOPED_TRACE(testing::Message()
+                   << shape.name << " tier " << static_cast<int>(tier));
+      irs::MemoryDirectory dir{};
+      Write(dir, irs::codecs::CodecType::Lz4, {.tier = tier}, shape.rows, 16384,
+            shape.value);
+      trained += absl::c_count(SegmentInfo(dir, "dictionary"), "local");
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      for (const uint64_t stride : {2, 3, 7, 41, 250, 1000}) {
+        for (const bool appending : {false, true}) {
+          SCOPED_TRACE(testing::Message()
+                       << "stride " << stride << " appending " << appending);
+          std::vector<uint64_t> picked;
+          for (uint64_t g = stride / 2; g < shape.rows; g += stride) {
+            picked.push_back(g);
+          }
+          if (picked.back() != shape.rows - 1) {
+            picked.push_back(shape.rows - 1);
+          }
+          auto state = col->InitScan(r.Ctx());
+          constexpr size_t kBatch = STANDARD_VECTOR_SIZE / 2;
+          std::unique_ptr<duckdb::Vector> out;
+          for (size_t i = 0; i < picked.size(); i += kBatch) {
+            const auto take = std::min(picked.size() - i, kBatch);
+            const duckdb::idx_t at = appending ? (i / kBatch % 2) * kBatch : 0;
+            if (at == 0) {
+              out = std::make_unique<duckdb::Vector>(
+                duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE);
+              duckdb::FlatVector::ValidityMutable(*out).Reset(
+                STANDARD_VECTOR_SIZE);
+            }
+            irs::column_internal::GatherRows(
+              *col, state, Rows2{&picked[i], take}, *out, at, !appending);
+            if (!appending) {
+              out->Flatten(take);
+            }
+            for (size_t k = 0; k < take; ++k) {
+              ExpectRow(*out, at + k, picked[i + k], shape.value);
+            }
+            if (HasFatalFailure()) {
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+  EXPECT_GT(trained, 0u);
+}
+
 TEST_F(ColCodecsTest, ZxcFramesAfterAnOversizedEntryCanBeEmpty) {
   const Value value = [](uint64_t g) -> std::optional<std::string> {
     if (g == 0) {

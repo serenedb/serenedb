@@ -30,6 +30,7 @@
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/formats/column/codecs/string_scan.tpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -112,6 +113,10 @@ struct PlainScan final : SegmentScanState {
                              static_cast<uint32_t>(start + span));
         WriteRefs(result, result_offset, count, entry_at);
       }
+    } else if constexpr (Leaf::kCodec == ByteCodec::Lz4) {
+      entries.SelectFrames(result, result_offset, count, entry_at,
+                           static_cast<uint32_t>(start),
+                           static_cast<uint32_t>(start + span), prefix);
     } else {
       WriteEntries(result, result_offset, count, entry_at);
     }
@@ -137,6 +142,8 @@ struct PlainScan final : SegmentScanState {
   }
 
   EntryFrames<Shape::Plain, Leaf> entries;
+  [[no_unique_address]] utils::Need<Leaf::kCodec == ByteCodec::Lz4, FramePrefix>
+    prefix;
 };
 
 }  // namespace irs::codecs::text

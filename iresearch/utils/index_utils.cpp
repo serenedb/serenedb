@@ -377,7 +377,7 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
     const auto too_big_segments_threshold = max_segments_bytes / 2;
     std::erase_if(sorted_segments, [&](const auto& segment) {
       return segment.size > too_big_segments_threshold &&
-             segment.fill_factor > total_fill_factor;
+             segment.fill_factor >= total_fill_factor;
     });
 
     if (sorted_segments.size() < min_segments_per_tier) {

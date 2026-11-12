@@ -123,6 +123,7 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kUnprepared = 0;
   static constexpr uint8_t kPreparing = 1;
   static constexpr uint8_t kReady = 2;
+  static constexpr uint8_t kAwaited = 3;
 
   uint32_t rg_count = 0;
   uint32_t run_end = 0;

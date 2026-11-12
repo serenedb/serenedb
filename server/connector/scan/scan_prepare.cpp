@@ -58,12 +58,19 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     g.queries[seg_idx] = g.vector_scorer == nullptr
                            ? irs::PrepareMasked(filter, segment, ctx)
                            : g.filter->PrepareSegment(segment, ctx);
-    work.prepare.store(SegmentWork::kReady, std::memory_order_release);
-    work.prepare.notify_all();
+    if (work.prepare.exchange(SegmentWork::kReady, std::memory_order_acq_rel) ==
+        SegmentWork::kAwaited) {
+      work.prepare.notify_all();
+    }
     return *g.queries[seg_idx];
   }
   while (state != SegmentWork::kReady) {
-    work.prepare.wait(state, std::memory_order_acquire);
+    if (state == SegmentWork::kPreparing &&
+        !work.prepare.compare_exchange_weak(state, SegmentWork::kAwaited,
+                                            std::memory_order_acq_rel)) {
+      continue;
+    }
+    work.prepare.wait(SegmentWork::kAwaited, std::memory_order_acquire);
     state = work.prepare.load(std::memory_order_acquire);
   }
   return *g.queries[seg_idx];

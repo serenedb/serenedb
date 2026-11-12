@@ -13,6 +13,10 @@ INSERT INTO mc SELECT i, 'a' || i FROM generate_series(0, 999) g(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 

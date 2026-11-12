@@ -124,7 +124,7 @@ A [serial column](../../data_types/index.md#general-purpose-data-types) gets a s
 
 <SqlLogicTest id="sql/statements/alter_table/index/add_column_serial" />
 
-With `IF NOT EXISTS`, adding a serial column that already exists changes nothing and creates no sequence. On a table that already has rows, a serial column can't declare `PRIMARY KEY` or `UNIQUE` in the same statement: it fails with `Cannot create index with outstanding updates`.
+With `IF NOT EXISTS`, adding a serial column that already exists changes nothing and creates no sequence. A serial column can declare `PRIMARY KEY` or `UNIQUE` in the same statement, also on a table that already has rows.
 
 ## `DROP COLUMN`
 
@@ -138,8 +138,7 @@ Or:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_021" />
 
-The `DROP [COLUMN]` clause can be used to remove a column from a table. As in PostgreSQL, every index created with `CREATE INDEX` that uses the column (as a key, in an indexed expression or in its `WHERE` predicate) is dropped along with it. A column cannot be removed while an index created as part of a `PRIMARY KEY` or `UNIQUE` constraint relies on it, or while a remaining plain index (not an [inverted index](../../indexes/inverted/maintenance.md#schema-changes-on-an-indexed-table)) uses a column that comes after it. Columns that are part of multi-column check constraints cannot be dropped either.
-In those cases SereneDB returns a `Catalog Error` reporting that an index or constraint depends on the column.
+The `DROP [COLUMN]` clause can be used to remove a column from a table. As in PostgreSQL, every index created with `CREATE INDEX` that uses the column (as a key, in an indexed expression or in its `WHERE` predicate) is dropped along with it, and so are the `CHECK` and `FOREIGN KEY` constraints of the table that use it (see [Schema changes on an indexed table](../../indexes/inverted/maintenance.md#schema-changes-on-an-indexed-table)). A column of a `PRIMARY KEY` or `UNIQUE` constraint cannot be removed: the statement fails with `Cannot drop column ⟨name⟩ because there is a PRIMARY KEY constraint that depends on it`, or `UNIQUE` for a unique constraint. In an [attached DuckDB file](../attach/duckdb.md), a column also cannot be removed while an index uses a column that comes after it.
 
 ## `[SET [DATA]] TYPE`
 
@@ -157,7 +156,7 @@ Change the type of the column `i` to the type `VARCHAR`, using the specified exp
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_023" />
 
-The `[SET [DATA]] TYPE` clause changes the type of a column in a table. Any data present in the column is converted according to the provided expression in the `USING` clause, or, if the `USING` clause is absent, cast to the new data type. Note that columns can only have their type changed if they do not have any indexes that rely on them and are not part of any `CHECK` constraints.
+The `[SET [DATA]] TYPE` clause changes the type of a column in a table. Any data present in the column is converted according to the provided expression in the `USING` clause, or, if the `USING` clause is absent, cast to the new data type. Note that a column can only have its type changed if no index and no `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint uses it.
 
 ### Handling Structs
 
@@ -196,11 +195,11 @@ A primary key can also span multiple columns:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_028" />
 
-The statement fails if the table already has a primary key, if an index depends on the table or if the existing data would violate the new constraint (duplicate or `NULL` values in the key columns).
+The statement fails if the table already has a primary key (`table "⟨name⟩" can have only one primary key`), or if the existing rows would violate the new constraint: duplicates fail with `could not create unique index "⟨name⟩_pkey"`, and `NULL` values with `column "⟨column⟩" of relation "⟨name⟩" contains null values`. A table with indexes takes a primary key like any other.
 
 ## `SET` / `RESET` (Table Options)
 
-`SET (option = value, …)` changes the background maintenance options of a table, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `compaction_interval`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back. `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. `pg_class.reloptions` lists the options whose values differ from the defaults.
+`SET (option = value, …)` changes the background maintenance options of a table, and `RESET (option, …)` returns them to the current session defaults. These options can be changed: `compaction_interval`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)). A change reaches the table's background tasks at once and is undone if its transaction rolls back. `row_group_size`, `block_size`, `segment_memory_max` and `optimize_top_k` are fixed at [`CREATE TABLE`](../create_table/index.md#table-options): setting or resetting one fails with `option "⟨name⟩" cannot be changed with ALTER TABLE`. `pg_class.reloptions` lists the options whose values differ from the defaults.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_036" />
 
@@ -216,19 +215,19 @@ A statement that sets or resets several options fails as a whole when one of the
 
 ## `DROP CONSTRAINT`
 
-The `DROP CONSTRAINT` clause removes a named `CHECK` constraint from a table:
+The `DROP CONSTRAINT` clause removes a named constraint from a table, a `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint alike:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_034" />
 
-`DROP CONSTRAINT` (and `RENAME CONSTRAINT`) operate on named `CHECK` constraints. Index-backed constraints — those created by `PRIMARY KEY` and `UNIQUE` — cannot be dropped this way.
+A `PRIMARY KEY` or `UNIQUE` constraint that a foreign key references can't be dropped: the statement fails with `cannot drop constraint ⟨name⟩ on table ⟨table⟩ because other objects depend on it`. `DROP CONSTRAINT ... CASCADE` drops the referencing foreign keys too. `RENAME CONSTRAINT` renames a constraint.
 
 ## `ADD CONSTRAINT`
 
-The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE` or `PRIMARY KEY` constraint to an existing table:
+The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint to an existing table:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_035" />
 
-`FOREIGN KEY` constraints cannot be added with `ADD CONSTRAINT`.
+The rows already in the table are checked against the new constraint: a duplicate key fails the statement with `could not create unique index "⟨name⟩"`, and a foreign key value missing from the referenced table with the error an `INSERT` of that row would raise.
 
 ## `ENABLE` / `DISABLE TRIGGER`
 
@@ -244,9 +243,9 @@ Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `DR
 
 `ADD COLUMN` without a default, or with `DEFAULT NULL`, gives the existing rows `NULL`. With any other default, the existing rows get the default, evaluated per row, and the statement rewrites the table. A generated column can't be added.
 
-`DROP COLUMN` drops the indexes on the column and the `CHECK` constraints that use it. A column of the `PRIMARY KEY` can't be dropped.
+`DROP COLUMN` drops the indexes on the column and the `CHECK` and `FOREIGN KEY` constraints that use it. A column of a `PRIMARY KEY` or `UNIQUE` constraint can't be dropped.
 
-`ALTER COLUMN TYPE` rewrites the table, converting each value with the `USING` expression, or with a cast when there is none. It is refused for a column of the `PRIMARY KEY`, a column an index covers, a column a `CHECK` constraint or a generated column uses, and a generated column. If the column is `NOT NULL`, every converted value must be non-`NULL`.
+`ALTER COLUMN TYPE` rewrites the table, converting each value with the `USING` expression, or with a cast when there is none. It is refused for a column of a `PRIMARY KEY`, `UNIQUE` or `FOREIGN KEY` constraint, a column an index covers, a column a `CHECK` constraint or a generated column uses, and a generated column. If the column is `NOT NULL`, every converted value must be non-`NULL`.
 
 Every row written is checked against the `NOT NULL` and `CHECK` constraints. `SET NOT NULL` and adding a `CHECK` constraint fail if a row of the table violates the new constraint.
 

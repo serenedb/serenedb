@@ -30,6 +30,9 @@ statement ok
 INSERT INTO sdc_twin SELECT i, md5(i::TEXT) || md5((i + 1)::TEXT) || md5((i + 2)::TEXT) FROM generate_series(1, 2000) s(i);
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+statement ok
 CHECKPOINT;
 
 query

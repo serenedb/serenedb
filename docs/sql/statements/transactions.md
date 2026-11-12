@@ -71,7 +71,7 @@ An `INSERT ... ON CONFLICT`, an `INSERT OR REPLACE` or a `MERGE` that inserts a 
 
 `ALTER TABLE` and `DROP TABLE` wait for the commits that are already writing the table to finish, then change it. A transaction that wrote to the table but commits only after the change fails at `COMMIT` with a serialization failure; PostgreSQL would have made the `ALTER TABLE` wait for that transaction instead.
 
-`CREATE INDEX` and an `ALTER TABLE` that changes the table's columns (renaming, adding or dropping one, or changing its type) conflict when they run in concurrent transactions: whichever commits second fails at `COMMIT` with `Catalog write-write conflict`. Other `ALTER TABLE` forms, such as `COMMENT ON COLUMN` or `SET (...)`, don't conflict with `CREATE INDEX`.
+A transaction that creates, replaces or drops an index of a table, or alters or drops the table, holds the table until it commits or rolls back. Such a change from another transaction meanwhile fails at once with `table "<name>" is being changed by another transaction`; retry it once the first transaction ends (see [Concurrent changes](create_index/inverted.md#concurrent-changes)). `COMMENT ON COLUMN` does not hold the table.
 
 ## Example
 

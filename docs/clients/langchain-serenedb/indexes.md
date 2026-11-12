@@ -61,7 +61,7 @@ The IVF index configuration. Every field is optional.
 | `index_type` | `str` | `"ivf"` | Identifies the index kind. Leave it alone. |
 | `distance_strategy` | `DistanceStrategy` | `COSINE_DISTANCE` | Determines the emitted `metric`. Overwritten by the store when building. |
 | `partial_indexes` | `Optional[list[str]]` | `None` | Not supported -- a non-empty value raises. |
-| `quant` | `Optional[str]` | `None` | Vector quantization: `"sq8"`, `"sq4"`, `"pq"`, `"rabitq"` or `"none"`. Quantized modes require metric `l2` or `ip`. |
+| `quant` | `Optional[str]` | `None` | Vector quantization: `"sq8"`, `"sq4"`, `"pq"`, `"rabitq"` or `"none"`. Quantized modes require metric `l2`, `ip` or `cosine`, and `"rabitq"` requires `l2` or `ip`. |
 | `pq_m` | `Optional[int]` | `None` | Number of PQ sub-quantizers; must divide the vector dimension. Valid only with `quant="pq"`. |
 | `rabitq_bits` | `Optional[int]` | `None` | RaBitQ bit count, 1-9. Valid only with `quant="rabitq"`. |
 | `compression` | `Optional[bool]` | `None` | `False` stores index vectors uncompressed. The database default is `True`. |
@@ -78,7 +78,7 @@ IVFIndex(
 # "ivf (metric = 'l2', quant = 'sq8', compression = false)"
 ```
 
-Option combinations are validated by the database at `CREATE INDEX` time, not in Python, so an invalid pairing surfaces as a SereneDB error. `partial_indexes` is the exception -- it raises immediately, because SereneDB inverted indexes have no `CREATE INDEX ... WHERE` form.
+Option combinations are validated by the database at `CREATE INDEX` time, not in Python, so an invalid pairing surfaces as a SereneDB error. `partial_indexes` is the exception -- the integration does not build [partial indexes](../../sql/statements/create_index/inverted.md#partial-indexes), so a non-empty value raises immediately.
 
 `get_index_metric()` returns the metric string the current `distance_strategy` implies.
 

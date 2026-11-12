@@ -109,6 +109,7 @@ const MovedUnit* FindMoved(const TableState& state, uint64_t id) noexcept {
 
 void SetDeletes(TableUnit& unit, irs::DocumentMask&& mask) {
   unit.deleted = std::make_shared<const irs::DocumentMask>(std::move(mask));
+  unit.deleted_bytes = unit.deleted->ByteSize();
   if (unit.reader) {
     unit.reader = unit.reader->WithDocsMask(unit.deleted);
   }
@@ -489,6 +490,7 @@ std::shared_ptr<TableUnit> PieceUnit(
   unit->docs = reader->Meta().docs_count;
   unit->meta.name = reader->Meta().name;
   unit->deleted = reader->SharedDocsMask();
+  unit->deleted_bytes = unit->deleted ? unit->deleted->ByteSize() : 0;
   unit->reader = std::move(reader);
   unit->first = first;
   unit->piece = true;
@@ -670,23 +672,23 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
 
 void Table::CountPieces(const TableState& state) noexcept {
   uint64_t bytes = 0;
-  uint64_t patches = 0;
+  uint64_t dirty = 0;
   PieceRuns runs;
   bool run = false;
   for (const auto& unit : state.units) {
-    uint64_t patched = 0;
+    uint64_t inline_bytes = unit->deleted_bytes;
     for (const auto& patch : unit->patches) {
-      patched += patch.patch->Bytes();
+      inline_bytes += patch.patch->Bytes();
     }
     if (unit->piece) {
-      bytes += unit->reader->Meta().byte_size + patched;
+      bytes += unit->reader->Meta().byte_size + inline_bytes;
       run = runs.Next(*unit) || run;
     } else {
-      patches += patched;
+      dirty += inline_bytes;
     }
   }
   _piece_bytes.store(bytes, std::memory_order_relaxed);
-  _patch_bytes.store(patches, std::memory_order_relaxed);
+  _dirty_bytes.store(dirty, std::memory_order_relaxed);
   _merge_run.store(run, std::memory_order_relaxed);
 }
 
@@ -1091,6 +1093,7 @@ std::shared_ptr<TableUnit> Table::SegmentUnit(OwnSegment&& segment) const {
   unit->id = segment.reader->Id();
   unit->docs = segment.reader->Meta().docs_count;
   unit->deleted = segment.reader->SharedDocsMask();
+  unit->deleted_bytes = unit->deleted ? unit->deleted->ByteSize() : 0;
   unit->meta = std::move(segment.meta);
   unit->reader = std::move(segment.reader);
   return unit;

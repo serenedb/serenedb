@@ -35,6 +35,10 @@ INSERT INTO dlc_db.public.st VALUES (1, 10), (2, 20);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT dlc_db;
 
 

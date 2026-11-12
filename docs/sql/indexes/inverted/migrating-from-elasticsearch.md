@@ -184,7 +184,7 @@ Aggregates run **over the inverted index itself** — `GROUP BY` and aggregate f
 |---|:---:|---|
 | [Create / delete index](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html) | ✅ | [`CREATE INDEX … USING inverted`](../../statements/create_index/inverted.md) / [`DROP INDEX`](../../statements/drop/index.md) |
 | [Reindex](https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-reindex.html) | ✅ | [`REINDEX INDEX`](./views.md#refreshing-the-index) for indexes over views, files and lakes; an index on a table follows its writes |
-| [Refresh](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-refresh.html) | ✅ | Not needed: an index on a table finds a row as soon as its transaction commits ([Maintenance](./maintenance.md#visibility)) |
+| [Refresh](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-refresh.html) | ✅ | Not needed: a search through an index on a table finds every row committed before its snapshot was taken ([Maintenance](./maintenance.md#visibility)) |
 | [Force merge](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-forcemerge.html) | ✅ | [`VACUUM (COMPACT_TABLE)`](../../statements/vacuum/index.md) |
 | [Aliases](https://www.elastic.co/guide/en/elasticsearch/reference/current/aliases.html) | ✅ | Use a [view](../../statements/create_view/index.md) |
 | [Pagination](https://www.elastic.co/guide/en/elasticsearch/reference/current/paginate-search-results.html) (`from`/`size`, `search_after`) | ✅ | [`LIMIT` / `OFFSET`](../../query_syntax/limit/index.md), keyset pagination |

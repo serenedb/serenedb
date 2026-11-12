@@ -111,7 +111,7 @@ This view describes all columns in the current database that are used by some co
 | Column | Description | Type | Example |
 |--------|-------------|------|---------|
 | `constraint_catalog` | Name of the database containing the constraint (always the current database). | `VARCHAR` | `'my_db'` |
-| `constraint_schema` | Name of the schema containing the constraint. | `VARCHAR` | `main` |
+| `constraint_schema` | Name of the schema containing the constraint. | `VARCHAR` | `'public'` |
 | `constraint_name` | Name of the constraint. | `VARCHAR` | `exam_id_students_id_fkey` |
 | `unique_constraint_catalog` | Name of the database that contains the unique or primary key constraint that the foreign key constraint references. | `VARCHAR` | `'my_db'` |
 | `unique_constraint_schema` | Name of the schema that contains the unique or primary key constraint that the foreign key constraint references. | `VARCHAR` | `'public'` |
@@ -128,7 +128,7 @@ The top level catalog view is `information_schema.schemata`. It lists the catalo
 |:--|:---|:-|:-|
 | `catalog_name` | Name of the database that the schema is contained in. | `VARCHAR` | `'my_db'` |
 | `schema_name` | Name of the schema. | `VARCHAR` | `'public'` |
-| `schema_owner` | Name of the owner of the schema. Not yet implemented. | `VARCHAR` | `'serenedb'` |
+| `schema_owner` | Name of the role that owns the schema. | `VARCHAR` | `'postgres'` |
 | `default_character_set_catalog` | Applies to a feature not available in SereneDB. | `VARCHAR` | `NULL` |
 | `default_character_set_schema` | Applies to a feature not available in SereneDB. | `VARCHAR` | `NULL` |
 | `default_character_set_name` | Applies to a feature not available in SereneDB. | `VARCHAR` | `NULL` |

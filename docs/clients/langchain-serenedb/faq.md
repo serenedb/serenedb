@@ -28,7 +28,7 @@ Questions that come up when working with the integration, each with the cause an
 | `from_texts()` raises `NotImplementedError` | [Create the table, then `create_sync()`](#from-texts) |
 | `await store.aadd_texts(...)` is slower than expected | [Use `AsyncSereneDBVectorStore`](#async) |
 | An `IVFIndex` changed after being passed to the store | [It is mutated in place](#mutation) |
-| `concurrently=True` still locks | [The flag is ignored](#concurrently) |
+| `concurrently=True` has no effect | [The flag is ignored](#concurrently) |
 
 ## Writes {#writes}
 
@@ -92,9 +92,9 @@ store.apply_vector_index(IVFIndex())
 
 Relevance statistics never need a refresh: SereneDB keeps them current, see [Index statistics](./indexes.md#statistics).
 
-### Why does `concurrently=True` still lock the table? {#concurrently}
+### Does `concurrently=True` change how the index is built? {#concurrently}
 
-`concurrently` is accepted by [`apply_vector_index()`](./indexes.md#apply_vector_index) and [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) for API parity with other LangChain vector stores, and is never emitted in the DDL. The index build takes the same locks a plain `CREATE INDEX` takes. Plan the build accordingly rather than relying on the flag.
+No. `concurrently` is accepted by [`apply_vector_index()`](./indexes.md#apply_vector_index) and [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) for API parity with other LangChain vector stores, and is never emitted in the DDL. A plain `CREATE INDEX` already leaves reads and writes of the table running while it builds; see [Concurrent changes](../../sql/statements/create_index/inverted.md#concurrent-changes).
 
 ### Why isn't my metadata filter using the index? {#metadata-index-config}
 

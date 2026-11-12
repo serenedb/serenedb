@@ -10,6 +10,10 @@ INSERT INTO srf SELECT i, 'fox ' || i FROM range(0, 100) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -19,6 +23,10 @@ CREATE TABLE srf_keep (id INT PRIMARY KEY, body TEXT);
 
 statement ok
 INSERT INTO srf_keep VALUES (1, 'kept');
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -46,6 +54,10 @@ SET sdb_faults = 'storage_removal_fails';
 
 statement ok
 DROP TABLE srf;
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok

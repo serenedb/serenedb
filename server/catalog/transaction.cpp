@@ -646,7 +646,7 @@ void Transactions::MaintainLog(Lsn end) {
   SDB_IF_FAILURE("compact_inside_ddl") { rewrite = true; }
   SDB_IF_FAILURE("compact_inside_drop") { rewrite = true; }
   if (rewrite && !search::IsBackupActive()) {
-    if (const auto status = TruncateLog(LogCycle::Checkpoint); !status.ok()) {
+    if (const auto status = TruncateLog(); !status.ok()) {
       SDB_WARN(GENERAL, "rewriting the log failed: ", status.message());
     }
     return;
@@ -676,7 +676,7 @@ void Transactions::MaintainLog(Lsn end) {
       _log->NewestChunk() <= _log->Oldest()) {
     return;
   }
-  TruncateInBackground(LogCycle::Budget);
+  TruncateInBackground();
 }
 
 void Transactions::SettleLog() {
@@ -686,29 +686,28 @@ void Transactions::SettleLog() {
   const auto covered = _log->Covered();
   const auto end = _log->End();
   if (end > covered && end - covered >= _log->SnapshotBytes()) {
-    TruncateInBackground(LogCycle::Settle);
+    TruncateInBackground();
   }
 }
 
-void Transactions::TruncateInBackground(LogCycle cycle) {
+void Transactions::TruncateInBackground() {
   if (search::IsBackupActive() || !BackgroundScheduler::gInstance ||
       _truncating.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
   BackgroundScheduler::instance()
-    .Run([this, cycle] {
+    .Run([this] {
       absl::Cleanup done = [this] {
         _truncating.store(false, std::memory_order_release);
       };
-      if (const auto status = TruncateLog(cycle); !status.ok()) {
+      if (const auto status = TruncateLog(); !status.ok()) {
         SDB_WARN(GENERAL, "log truncation failed: ", status.message());
       }
     })
     .Detach();
 }
 
-absl::Status Transactions::TruncateLog(LogCycle cycle,
-                                       duckdb::CheckpointAbort abort) {
+absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort) {
   if (!_log || _replaying) {
     return absl::OkStatus();
   }
@@ -726,9 +725,6 @@ absl::Status Transactions::TruncateLog(LogCycle cycle,
       "debug_checkpoint_abort");
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_log_truncate_before_cover");
-  if (cycle == LogCycle::Checkpoint) {
-    search::WriteOutTables();
-  }
   Lsn covered = 0;
   std::vector<search::TableSnapshot> tables;
   {
@@ -981,7 +977,6 @@ void TransactionManager::Checkpoint(duckdb::ClientContext& context, bool) {
                     ERR_HINT("Retry after pg_backup_stop()."));
   }
   if (const auto status = Transactions::Get().TruncateLog(
-        Transactions::LogCycle::Checkpoint,
         duckdb::Settings::Get<duckdb::DebugCheckpointAbortSetting>(context));
       !status.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),

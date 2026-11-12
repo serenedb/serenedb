@@ -25,10 +25,10 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Not-Null Constraints    | Yes           |   |
 | Unique Constraints      | Yes           |   |
 | Primary Keys            | Yes           |   |
-| Foreign Keys            | Yes           | Enforced; over-eager on some `UPDATE`s |
+| Foreign Keys            | Yes           | Enforced; referential actions such as `ON DELETE CASCADE` are not supported |
 | Named Constraints       | Yes           |  |
 | Exclusion Constraints   | No            | See [issue](https://github.com/serenedb/serenedb/issues/205) |
-| System Columns          | Partial       | Every table has `tableoid`, `ctid`, `xmin`, `xmax`, `cmin` and `cmax`. `ctid` identifies a row and orders rows by their position, but its block and offset don't name storage pages, and the row a `ctid` names can move after `VACUUM` or a checkpoint. `xmin`, `xmax`, `cmin` and `cmax` are always `0`. |
+| System Columns          | Partial       | Every table has `tableoid`, `ctid`, `xmin`, `xmax`, `cmin` and `cmax`. `ctid` identifies a row and orders rows by their position, but its block and offset don't name storage pages, and the row a `ctid` names can move after an `UPDATE`, a commit, a compaction or an index build (see [Row IDs](../sql/statements/select/index.md#row-ids)). `xmin`, `xmax`, `cmin` and `cmax` are always `0`. |
 
 ### Table Modification (ALTER TABLE)
 | Feature            | Support State | Details                                                      |
@@ -71,7 +71,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Unique Indexes          | Yes           |                                                    |
 | Indexes on Expressions  | Yes           |                                                    |
 | Partial Indexes         | Partial       | [Indexes](../sql/statements/create_index/inverted.md#partial-indexes) honor `WHERE`; a partial `UNIQUE` index is not supported |
-| INCLUDE                 | Partial       | [Inverted indexes](../sql/statements/create_index/inverted.md) store `INCLUDE` columns. A plain index accepts `INCLUDE` but keeps only its key columns, so a `UNIQUE` index is unique on the keys alone, as in PostgreSQL |
+| INCLUDE                 | Yes           | [Indexes](../sql/statements/create_index/inverted.md#include-columns) store `INCLUDE` columns, with or without `USING inverted`; a `UNIQUE` index is unique on its key columns alone, as in PostgreSQL |
 
 ### Misc
 | Feature                    | Support State | Details                                         |
@@ -933,9 +933,7 @@ Note that the use of `==` is not encouraged due to its limited portability.
 
 ### Vacuuming Tables
 
-In PostgreSQL, the `VACUUM` statement garbage collects tables and analyzes tables.
-In SereneDB, the [`VACUUM` statement](../sql/statements/vacuum/index.md) is only used to rebuild statistics.
-To reclaim space, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../sql/statements/copy/index.md#copy-from-database--to).
+In PostgreSQL, the `VACUUM` statement garbage collects tables and analyzes tables. In SereneDB, `VACUUM` and `ANALYZE` without options do no work on SereneDB tables: their statistics follow their rows, and background compaction drops deleted rows as it merges segments. To reclaim space at once, use [`VACUUM (COMPACT_TABLE)`](../sql/statements/vacuum/index.md), which rewrites a table's segments without its deleted rows.
 
 ### Strings
 

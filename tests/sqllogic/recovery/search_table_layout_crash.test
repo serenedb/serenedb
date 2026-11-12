@@ -38,16 +38,25 @@ statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1, 1000) s(i);
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+statement ok
 CHECKPOINT;
 
 statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(1001, 2000) s(i);
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+statement ok
 CHECKPOINT;
 
 statement ok
 INSERT INTO lxs SELECT i, 'fox ' || i FROM generate_series(2001, 3000) s(i);
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 statement ok
 CHECKPOINT;

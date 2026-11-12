@@ -18,11 +18,11 @@ Let's take the following query that returns the rows where `x` is an odd number:
 
 <SqlLogicTest id="sql/dialect/order_preservation/odd_rows/example_002" />
 
-Because the row `(1, 'a')` occurs before `(3, 'c')` in the original table, it is guaranteed to come before that row in this table too.
+Here the row `(1, 'a')` comes before `(3, 'c')`, the order the table stores them in. A table does not guarantee that order, whatever the option says; see [Insertion Order](#insertion-order).
 
 ## Clauses
 
-The following clauses guarantee that the original row order is preserved:
+With `preserve_insertion_order` set to `true`, the following clauses keep the order of the rows they read:
 
 -   `COPY` (see [Insertion Order](#insertion-order))
 -   `FROM` with a single table
@@ -60,7 +60,7 @@ With `preserve_insertion_order` set to `true`, the following components preserve
 -   [JSON reader](../data_import_and_export/json/overview.md) (`read_json` function)
 -   [Parquet reader](../data_import_and_export/parquet/overview.md) (`read_parquet` function)
 
-A table returns its rows in the order it stores them, which is not the order they were inserted in once a write such as `INSERT ... SELECT` or `COPY` runs on several threads. Use `ORDER BY` when the order of a table's rows matters.
+Tables do not honor `preserve_insertion_order`, also when it is `true`: a table returns its rows in the order it stores them, which is not the order they were inserted in once a write such as `INSERT ... SELECT` or `COPY` runs on several threads. Use `ORDER BY` when the order of a table's rows matters.
 
 Preservation of insertion order is controlled by the `preserve_insertion_order` [configuration option](../configuration/overview.md).
 This setting is `false` by default.

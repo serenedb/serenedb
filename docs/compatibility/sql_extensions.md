@@ -4,16 +4,8 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
-import DocCallout from "@site/src/components/DocCallout";
 
 On top of standard PostgreSQL syntax, SereneDB offers several SQL extensions and syntactic sugar that make queries more concise and readable.
-
-<DocCallout type="tip">
-
-Several of these features were first introduced by SereneDB, while some are inspired by other systems.
-Many of the features originally introduced by SereneDB (e.g., [`GROUP BY ALL`](../sql/query_syntax/groupby/index.md#group-by-all)) have been since adapted by other systems.
-
-</DocCallout>
 
 ## Clauses
 

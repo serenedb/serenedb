@@ -66,7 +66,7 @@ To get storage information:
 
 <SqlLogicTest id="configuration/pragmas/example_010" />
 
-This call returns the following information for the given table:
+This call returns the following information for the given table, one row per stored block of a column. In a table of the server's databases, `row_group_id` and `segment_id` both number the table's segment, `block_offset` is the block's position in the segment's file, and `block_id` is `-1`.
 
 | Name           | Type      | Description                                                                                                                                        |
 | -------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -81,7 +81,7 @@ This call returns the following information for the given table:
 | `compression`  | `VARCHAR` | Compression type used for this column; `Uncompressed` for the rows a table still holds in memory                                                  |
 | `stats`        | `VARIANT` |                                                                                                                                                    |
 | `has_updates`  | `BOOLEAN` |                                                                                                                                                    |
-| `persistent`   | `BOOLEAN` | `false` if temporary table                                                                                                                         |
+| `persistent`   | `BOOLEAN` | `true` for a table of the server's databases; in an attached DuckDB database, `false` if temporary table                                          |
 | `block_id`     | `BIGINT`  | Empty unless persistent                                                                                                                            |
 | `block_offset` | `BIGINT`  | Empty unless persistent                                                                                                                            |
 | `segment_info` | `VARCHAR` | Only from `pragma_storage_info('<table>', include_segment_info := true)` |
@@ -299,7 +299,7 @@ Disable query logging:
 
 #### Compression
 
-During checkpointing, the existing column data + any new changes get compressed. There exist a couple of pragmas to influence which compression functions are considered.
+Column data gets compressed when a table writes its segments, and in an attached DuckDB database file during checkpointing. There exist a couple of pragmas to influence which compression functions are considered.
 
 ##### Force Compression
 
@@ -315,13 +315,13 @@ Avoid using any of the listed compression methods from the comma separated list:
 
 #### Force Checkpoint
 
-When `CHECKPOINT` is called when no changes are made, force a checkpoint regardless:
+When `CHECKPOINT` is called on an attached DuckDB database file that has no changes, force a checkpoint regardless:
 
 <SqlLogicTest id="configuration/pragmas/example_058" />
 
 #### Checkpoint on Shutdown
 
-Run a `CHECKPOINT` on successful shutdown and delete the WAL, to leave only a single database file behind:
+Run a `CHECKPOINT` of the attached DuckDB database files on successful shutdown and delete their WAL, to leave only a single database file behind:
 
 <SqlLogicTest id="configuration/pragmas/example_059" />
 
@@ -377,7 +377,7 @@ Disable force parallel query processing:
 
 ## Block Sizes
 
-When persisting a database to disk, SereneDB writes to a dedicated file containing a list of blocks holding the data. In the case of a file that only holds very little data, e.g., a small table, the default block size of 256 kB might not be ideal. Therefore, SereneDB's storage format supports different block sizes.
+A table compresses its columns in blocks, and a DuckDB database file holds its data in a list of blocks. For a table or a file that only holds very little data, the default block size of 256 kB might not be ideal. Therefore, SereneDB supports different block sizes.
 
 There are a few constraints on possible block size values.
 
@@ -385,8 +385,8 @@ There are a few constraints on possible block size values.
 -   Must be greater or equal to 16384 (16 kB).
 -   Must be lesser or equal to 262144 (256 kB).
 
-You can set the default block size for all new SereneDB files created by an instance like so:
+You can set the default block size of new DuckDB database files, and of new tables in databases created without `BLOCK_SIZE`, like so:
 
 <SqlLogicTest id="configuration/pragmas/example_069" />
 
-A database can also be created with its own block size, see [`CREATE DATABASE`](../sql/statements/create_database/index.md).
+A database can also be created with its own block size, see [`CREATE DATABASE`](../sql/statements/create_database/index.md), and so can a table, see [`CREATE TABLE`](../sql/statements/create_table/index.md#table-options).

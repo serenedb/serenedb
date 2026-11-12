@@ -14,6 +14,10 @@ INSERT INTO order_docs SELECT i, 'm' || (i % 7) FROM range(100) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -27,7 +31,7 @@ SET sdb_faults = 'pause_search_write_out';
 
 connection cooler
 statement async ok
-CHECKPOINT;
+VACUUM (FLUSH_ALL);
 
 
 connection default
@@ -78,6 +82,11 @@ wait
 
 connection default
 statement ok
+CHECKPOINT;
+
+
+connection default
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -97,6 +106,11 @@ n	ids	lo	hi
 connection after_crash
 statement ok
 INSERT INTO order_docs VALUES (-4, 'm3');
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 connection after_crash

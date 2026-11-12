@@ -190,7 +190,7 @@ The job is persisted with the index, so the refresh survives server restarts. A 
 
 ## Snapshot and isolation
 
-Between refreshes a view-backed index is a **static snapshot**: its postings are captured at `CREATE INDEX` (or the last refresh) and do not track source changes live — there is no background DML tracking as there is for base tables. A reader transaction keeps a consistent view of the index even if the underlying view is dropped concurrently.
+Between refreshes a view-backed index is a **static snapshot**: its postings are captured at `CREATE INDEX` (or the last refresh) and do not track source changes live, unlike an index on a table, which changes in the same transactions as its table. A reader transaction keeps a consistent view of the index even if the underlying view is dropped concurrently.
 
 ## See also
 

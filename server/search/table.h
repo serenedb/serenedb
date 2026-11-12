@@ -74,6 +74,7 @@ struct TableUnit {
   std::shared_ptr<const irs::SegmentReaderImpl> reader;
   irs::doc_id_t docs = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
+  uint64_t deleted_bytes = 0;
   std::vector<irs::FieldPatch> patches;
   uint64_t first = 0;
   bool piece = false;
@@ -292,8 +293,8 @@ class Table final {
   uint64_t PieceBytes() const noexcept {
     return _piece_bytes.load(std::memory_order_relaxed);
   }
-  uint64_t PatchBytes() const noexcept {
-    return _patch_bytes.load(std::memory_order_relaxed);
+  uint64_t DirtyBytes() const noexcept {
+    return _dirty_bytes.load(std::memory_order_relaxed);
   }
   bool HasMergeRun() const noexcept {
     return _merge_run.load(std::memory_order_relaxed);
@@ -378,7 +379,7 @@ class Table final {
   std::atomic<Tick> _last_rewrite{0};
   mutable absl::Mutex _commit_mutex;
   std::atomic<uint64_t> _piece_bytes{0};
-  std::atomic<uint64_t> _patch_bytes{0};
+  std::atomic<uint64_t> _dirty_bytes{0};
   std::atomic<bool> _merge_run{false};
 };
 

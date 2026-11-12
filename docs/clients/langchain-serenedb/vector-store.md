@@ -269,7 +269,7 @@ These methods live on the store but are documented with the classes they take, o
 | [`apply_vector_index()`](./indexes.md#apply_vector_index) | Build the vector (or combined) inverted index. |
 | [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) | Build the combined index for hybrid search. |
 | [`drop_vector_index()`](./indexes.md#drop_vector_index) | Drop it. |
-| [`reindex()`](./indexes.md#reindex) | Rebuild in place — raises `NotImplementedError` for now. |
+| [`reindex()`](./indexes.md#reindex) | Rebuild in place — raises `NotImplementedError`. |
 | [`is_valid_index()`](./indexes.md#is_valid_index) | Whether the index currently exists. |
 
 ## Not implemented {#not-implemented}
@@ -280,7 +280,7 @@ These methods live on the store but are documented with the classes they take, o
 Initialize the table with SereneDBEngine.init_vectorstore_table, then use create_sync().
 ```
 
-[`reindex()`](./indexes.md#reindex) also raises for now, because SereneDB's `REINDEX` applies to view-backed indexes rather than to the base table a store lives in. Drop and re-apply the index to rebuild it.
+[`reindex()`](./indexes.md#reindex) also raises, because SereneDB's `REINDEX` applies to view-backed indexes rather than to the base table a store lives in. Drop and re-apply the index to rebuild it.
 
 The synchronous class also does not implement `add_embeddings()`, `similarity_search_with_score_by_vector()`, `max_marginal_relevance_search_by_vector()` or `max_marginal_relevance_search_with_score_by_vector()`. They exist on the async store — see [Async-only methods](./async.md#async-only).
 

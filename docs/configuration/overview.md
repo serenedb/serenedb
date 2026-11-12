@@ -88,7 +88,7 @@ WHERE kind = 'setting' AND name LIKE 'compaction%';
 
 ### Search and indexing
 
-Background maintenance of inverted indexes, and the knobs the search and vector operators read.
+Background maintenance of tables and of inverted indexes on views, and the knobs the search and vector operators read.
 
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
@@ -117,7 +117,7 @@ Background maintenance of inverted indexes, and the knobs the search and vector 
 | `sdb_scan_split` | How an inverted-index scan shares a segment between workers: `tail` gives each worker a segment of its own and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; `always` puts every worker on the same segment until all its row groups are claimed; `never` scans each segment whole on one worker; `auto` is `always` when the query has an `ORDER BY ... LIMIT` scan order and `tail` otherwise. See [Session settings](../sql/indexes/inverted/maintenance.md#session-settings). | `VARCHAR` | `SESSION` | `auto` |
 | `search_backfill_group_bytes` | How many bytes of a table's existing segments `CREATE INDEX` and the `ALTER TABLE` forms that rewrite rows rewrite before they swap them in and move on to the next group. A group holds at least one whole segment, and the rewrite needs extra disk of about twice one group, also inside a transaction that stays open after it; a value above the table's size, or 0, rewrites the whole table in one swap. | `UBIGINT` | `SESSION` | `1073741824` |
 | `segment_docs_max` | Document count at which the segment writer of an inverted index over a view rolls over to a new on-disk segment. The index's WITH (segment_docs_max = ...) overrides it. 0 = unlimited (memory limit governs). | `UINTEGER` | `SESSION` | `0` |
-| `segment_memory_max` | In-memory bytes of committed rows a table holds before writing them to disk as one segment, and the bytes a parallel write to a table or the segment writer of an inverted index over a view fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Their WITH (segment_memory_max = ...) overrides it. Below 4294967296 (4 GiB). Default 268435456 (256MB). A write to a table holds up to `compaction_floor_segment_bytes` of its own rows in memory; more go to disk as segments of their own, and so do all of them when the table already holds `segment_memory_max`; see [Write memory](../sql/indexes/inverted/maintenance.md#write-memory). | `UBIGINT` | `SESSION` | `268435456` |
+| `segment_memory_max` | In-memory bytes of committed rows, deletes and in-place updates a table holds before writing them to disk, and the bytes a parallel write to a table or the segment writer of an inverted index over a view fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Their WITH (segment_memory_max = ...) overrides it. Below 4294967296 (4 GiB). Default 268435456 (256MB). A write to a table holds up to `compaction_floor_segment_bytes` of its own rows in memory; more go to disk as segments of their own, and so do all of them when the table already holds `segment_memory_max`; see [Write memory](../sql/indexes/inverted/maintenance.md#write-memory). | `UBIGINT` | `SESSION` | `268435456` |
 
 ### AI functions
 
@@ -209,7 +209,7 @@ Planning, rewriting and the shape of query output.
 | `partitioned_write_flush_threshold` | The threshold in number of rows after which we flush a thread state when writing using `PARTITION_BY` | `UBIGINT` | `SESSION` | `524288` |
 | `partitioned_write_max_open_files` | The maximum amount of files the system can keep open before flushing to disk when writing using `PARTITION_BY` | `UBIGINT` | `SESSION` | `100` |
 | `prefer_range_joins` | Force use of range joins with mixed predicates | `BOOLEAN` | `SESSION` | `false` |
-| `preserve_insertion_order` | Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses. | `BOOLEAN` | `GLOBAL` | `false` |
+| `preserve_insertion_order` | Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses. Tables do not honor it: a table returns its rows in the order it stores them (see [Order Preservation](../compatibility/order_preservation.md#insertion-order)). | `BOOLEAN` | `GLOBAL` | `false` |
 | `read_ahead_depth` | The number of scan jobs prefetched ahead of decoding (-1 = automatic, bounded by a memory budget; 0 = disabled). | `BIGINT` | `GLOBAL` | `-1` |
 | `scalar_subquery_error_on_multiple_rows` | Deprecated. When true, a scalar subquery that returns more than one row raises an error; when false, it returns an arbitrary one of those rows. | `BOOLEAN` | `SESSION` | `true` |
 | `sdb_job_max_depth` | Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global. | `UINTEGER` | `GLOBAL` | `16` |
@@ -537,7 +537,7 @@ Everything that does not fall into the groups above.
 | `rtree_index_scan_ratio` | Has no effect: SereneDB has no R-tree index. | `DOUBLE` | `SESSION` | `0.075` |
 | `schema` | Sets the default search schema. Equivalent to setting search_path to a single value. | `VARCHAR` | `SESSION` | `public` |
 | `streaming_buffer_size` | Alias of `max_streaming_buffer_size`. | `VARCHAR` | `SESSION` | `10.0 MiB` |
-| `vacuum_rebuild_indexes` | Deprecated. Maximum row count of a table whose bound ART indexes are rebuilt when a checkpoint vacuum cannot remap their row IDs; 0 disables the rebuild. | `UBIGINT` | `GLOBAL` | `0` |
+| `vacuum_rebuild_indexes` | Deprecated. Maximum row count of a table in an attached DuckDB database file whose indexes are rebuilt when a checkpoint vacuum cannot remap their row IDs; 0 disables the rebuild. Fixed at startup. | `UBIGINT` | `GLOBAL` | `0` |
 | `validate_external_file_cache` | Cache validation mode: `VALIDATE_ALL` (validate all cache entries), `VALIDATE_REMOTE` (validate only remote cache entries) or `NO_VALIDATION` (disable cache validation). | `VARCHAR` | `GLOBAL` | `VALIDATE_ALL` |
 | `variant_minimum_shredding_size` | Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup | `BIGINT` | `GLOBAL` | `30000` |
 | `warnings_as_errors` | Escalate all warnings to errors. | `BOOLEAN` | `GLOBAL` | `false` |

@@ -7,17 +7,17 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-A row written to a table is visible to every query as soon as its transaction commits, full-text matches with `@@`, scores and vector search included, and a transaction sees its own writes. An inverted index over a view makes its rows searchable when `CREATE INDEX` or a [`REINDEX`](./views.md#refreshing-the-index) pass finishes. Segments are *compacted* in the background to keep queries fast, and per-term statistics used by scorers can be *recomputed*. This page covers that lifecycle and how to inspect an index.
+A search reads the snapshot of its transaction like any other read, full-text matches with `@@`, scores and vector search included: it finds the rows committed before that snapshot was taken and the transaction's own writes. An inverted index over a view makes its rows searchable when `CREATE INDEX` or a [`REINDEX`](./views.md#refreshing-the-index) pass finishes. Segments are *compacted* in the background to keep queries fast. This page covers that lifecycle and how to inspect an index.
 
 ```mermaid
 flowchart LR
-    w["INSERT / UPDATE / DELETE"] -->|commit| idx["visible to every query, @@ included"]
+    w["INSERT / UPDATE / DELETE"] -->|commit| idx["visible to later snapshots, @@ included"]
     idx -->|compaction| merged["fewer, larger segments"]
 ```
 
 ## Visibility
 
-A committed row is found at once by every query, through the table and through each inverted index on it. A transaction indexes its rows when it commits, so a search right after writes costs the same as any other search.
+A committed row is found by every snapshot taken after its commit, through the table and through each inverted index on it; a `REPEATABLE READ` transaction that took its snapshot earlier does not see it (see [Isolation Level](../../statements/transactions.md#isolation-level)). A transaction indexes its rows when it commits, so a search right after writes costs the same as any other search.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_001" />
 
@@ -27,7 +27,7 @@ A committed row is found at once by every query, through the table and through e
 
 View-backed indexes have a second interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data -- see [Refreshing the index](./views.md#refreshing-the-index).
 
-An inverted index on a table has no storage or background tasks of its own: the table's options run compaction for every index on it. Set them on the table, in `CREATE TABLE ... WITH` or with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-table-options), whether or not it has indexes. `CREATE INDEX ... WITH` and `ALTER INDEX ... SET` reject them for an index on a table. They also reject the options that only `CREATE TABLE ... WITH` sets on a table: `row_group_size`, [`segment_memory_max`](#write-memory) and `optimize_top_k`. `segment_docs_max` doesn't apply to such an index and is rejected too.
+An inverted index on a table has no storage or background tasks of its own: the table's options run compaction for every index on it. Set them on the table, in `CREATE TABLE ... WITH` or with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-table-options), whether or not it has indexes. `CREATE INDEX ... WITH` and `ALTER INDEX ... SET` reject them for an index on a table. They also reject the options that only `CREATE TABLE ... WITH` sets on a table: `row_group_size`, `block_size`, [`segment_memory_max`](#write-memory) and `optimize_top_k`. `segment_docs_max` doesn't apply to such an index and is rejected too.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
 
@@ -63,11 +63,8 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 |---|---|---|
 | Flush | `FLUSH_INDEX` · `FLUSH_TABLE` · `FLUSH_SCHEMA` · `FLUSH_DATABASE` · `FLUSH_ALL` | Write the rows a table holds in memory to its on-disk segments |
 | Compact | `COMPACT_INDEX` · `COMPACT_TABLE` · `COMPACT_SCHEMA` · `COMPACT_DATABASE` · `COMPACT_ALL` | Merge segments to reclaim space and speed queries |
-| Recompute statistics | `RECOMPUTE_STATS_COLUMN` · `RECOMPUTE_STATS_TABLE` · `RECOMPUTE_STATS_SCHEMA` · `RECOMPUTE_STATS_DATABASE` · `RECOMPUTE_STATS_ALL` | Recompute the planner statistics of attached DuckDB tables; skips SereneDB tables and indexes |
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_002" />
-
-<SqlLogicTest id="sql/indexes/inverted/maintenance/example_003" />
 
 The [relevance scores](./ranking.md) and planner statistics of a table and its indexes follow the rows as they are written and compacted, so they never need recomputing.
 
@@ -81,8 +78,8 @@ An inverted index pins every column it reads, including columns reached only thr
 
 - **`RENAME` column, table or index** -- allowed; the index follows the rename.
 - **`ADD COLUMN`** -- allowed; the index is unaffected.
-- **`ALTER COLUMN ... TYPE`** on a pinned column -- rejected with `Cannot change the type of this column: an index depends on it!`; the index stores values of the old type. Drop the index first, change the type, then recreate it.
-- **`ADD` / `DROP` / `RENAME` of a struct field** on a pinned column -- rejected for the same reason, even when the indexed expression targets a *different* sub-field (the whole column is pinned). Drop the index first.
+- **`ALTER COLUMN ... TYPE`** on a pinned column -- rejected with `Cannot change the type of column "⟨column⟩": index "⟨index⟩" depends on it`; the index stores values of the old type. Drop the index first, change the type, then recreate it.
+- **`ADD` / `DROP` / `RENAME` of a struct field** on a pinned column -- rejected the same way, even when the indexed expression targets a *different* sub-field (the whole column is pinned). Drop the index first.
 - **`DROP COLUMN`** on a pinned column -- allowed; it drops every index that covers the column.
 - **`DROP COLUMN`** on any other column -- allowed, including one that comes before a pinned column.
 
@@ -93,7 +90,7 @@ See [Rewrites and concurrent changes](../../statements/alter_table/index.md#rewr
 Tuning is mostly about the background cadence and segment layout; use only the options that exist:
 
 - **Compaction cadence** -- `compaction_interval` governs how aggressively segments merge; the files of the segments a merge replaces are deleted once nothing reads them.
-- **Row-group size** -- `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
+- **Row-group size** -- `row_group_size` sets how many rows the columnstore of a table, or of an index on a view, groups together, for norm columns too; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: a table whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the table is small. It is fixed when the table, or the index on a view, is created.
 - **Block size** -- `block_size` sets the size in bytes of the blocks a table's columns are compressed in: a power of two from 16384 to 262144 (the default). It is fixed at `CREATE TABLE`, and its default comes from the database's `BLOCK_SIZE` and then the `default_block_size` setting.
 - **Build then index** -- for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Whole-relation aggregates** -- `count(*)` over a table or an index relation (`FROM my_index`) without a `WHERE` clause is answered from the document counts, without reading any document. `min` and `max` of numeric and temporal `INCLUDE`d columns and of keyword columns are answered the same way while the relation holds no deleted documents; deleted documents are dropped by compaction, and until then `min` and `max` read the documents. `EXPLAIN` shows no index scan for an aggregate answered this way.
@@ -102,7 +99,7 @@ Tuning is mostly about the background cadence and segment layout; use only the o
 
 ## Write memory {#write-memory}
 
-A table holds its committed rows in memory, indexed and searchable, until they reach `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB; it then writes them to disk as one segment in the background. A write also holds up to `compaction_floor_segment_bytes` of its own rows, 2 MB by default, before it indexes them: below that size a segment of their own would be one compaction merges right away; a write with more rows writes them to disk as segments of its own. A write that commits while its table already holds `segment_memory_max` in memory, because the background write is still running, writes its rows to disk as a segment of its own too, so the memory a table holds stays near its limit. `segment_memory_max` is below 4 GiB. Estimate the peak for one writing transaction as:
+A table holds its committed rows in memory, indexed and searchable, together with the deletes and in-place updates of the rows on its segments, until they reach `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB. It then frees memory in the background: it writes its rows to disk as one segment when they take most of it, and otherwise rewrites the segment holding the most deletes and updates, without its deleted rows. A write also holds up to `compaction_floor_segment_bytes` of its own rows, 2 MB by default, before it indexes them: below that size a segment of their own would be one compaction merges right away; a write with more rows writes them to disk as segments of its own. A write that commits while its table already holds `segment_memory_max` in memory, because the background write is still running, writes its rows to disk as a segment of its own too, so the memory a table holds stays near its limit. `segment_memory_max` is below 4 GiB. Estimate the peak for one writing transaction as:
 
 | Write | Peak memory |
 | :--- | :--- |
@@ -124,11 +121,11 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 
 ## Durability {#durability}
 
-A commit is durable once the server's write-ahead log holds it; one log serves every database. Once the log written since the last snapshot reaches [`max_wal_size`](../../../configuration/overview.md) (1 GB by default), or the size of the last snapshot if that is larger, the server writes a new snapshot of the catalog and of every table and removes the log files the snapshot covers, while writes go on. `CHECKPOINT` writes the rows tables hold in memory to disk and takes a snapshot at once. After a crash, the server reads the snapshot and replays the log written after it. It also lists every table's directory and removes the files that no committed transaction refers to, such as those of writes the crash cut short; after a clean shutdown it starts without listing them.
+A commit is durable once the server's write-ahead log holds it; one log serves every database. Once the log written since the last snapshot reaches [`max_wal_size`](../../../configuration/overview.md) (1 GB by default), or the size of the last snapshot if that is larger, the server writes a new snapshot of the catalog and of every table, with the rows, deletes and updates they hold in memory, and removes the log files the snapshot covers, while writes go on. `CHECKPOINT` takes a snapshot at once. After a crash, the server reads the snapshot and replays the log written after it. It also lists every table's directory and removes the files that no committed transaction refers to, such as those of writes the crash cut short; after a clean shutdown it starts without listing them.
 
 A server left idle settles on its own: once every table has written the rows it held in memory to segments (see [Background compaction](#background-compaction)) and nothing commits, the server removes the log files it no longer needs, so the log stays small and a restart replays little.
 
-A query sees every row committed before it, including the rows a table still holds in memory, and reads them there, searches included: a query never writes. After a crash, the server replays those rows from the log.
+A query sees every row its snapshot sees, including the rows a table still holds in memory, and reads them there, searches included: a query never writes. After a crash, the server replays those rows from the log.
 
 ## Session settings {#session-settings}
 

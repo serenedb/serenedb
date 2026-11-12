@@ -14,6 +14,10 @@ INSERT INTO rrs_own SELECT i, 'fox ' || i FROM range(0, 1000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -78,6 +82,10 @@ INSERT INTO rrs_re SELECT i, 'fox ' || i FROM range(0, 1000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -86,11 +94,19 @@ INSERT INTO rrs_re SELECT i, 'fox ' || i FROM range(1000, 2000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO rrs_re SELECT i, 'fox ' || i FROM range(2000, 3000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -184,6 +200,10 @@ CREATE INDEX rrs_bk_idx ON rrs_bk USING inverted (body);
 
 statement ok
 INSERT INTO rrs_bk SELECT i, 'fox ' || i FROM range(0, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok

@@ -13,6 +13,10 @@ INSERT INTO pr SELECT i, 0, 'a' || i FROM generate_series(0, 999) g(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
@@ -170,6 +174,11 @@ id	v	s
 7	8	a7
 1002	2	c1002
 2002	0	d2002
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 connection after_crash

@@ -7,6 +7,10 @@ INSERT INTO dbsize_t SELECT i, i FROM generate_series(1, 1000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 FORCE CHECKPOINT;
 
 

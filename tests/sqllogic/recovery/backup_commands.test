@@ -27,11 +27,19 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(0, 100) r(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(100, 200) r(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -43,11 +51,19 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(200, 300) r(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(300, 400) r(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -79,6 +95,10 @@ CREATE TABLE bcmd_db.public.t (x BIGINT);
 
 statement ok
 INSERT INTO bcmd_db.public.t VALUES (1);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -204,6 +224,11 @@ t
 
 
 wait
+
+
+connection default
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 connection default

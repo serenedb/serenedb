@@ -227,7 +227,7 @@ For a large bulk load, SereneDB trains better IVF clusters if the index is creat
 
 ## Write visibility {#visibility}
 
-A write is visible to every search, full-text and vector alike, as soon as its call returns: each write commits, and SereneDB shows a committed row through the table and through its index at once. See [Visibility](../../sql/indexes/inverted/maintenance.md#visibility).
+A write is visible to every search that starts after its call returns, full-text and vector alike: each write commits, and SereneDB shows a committed row through the table and through its index at once. See [Visibility](../../sql/indexes/inverted/maintenance.md#visibility).
 
 ## Dropping and closing {#lifecycle}
 

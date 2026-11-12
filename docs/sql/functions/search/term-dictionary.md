@@ -116,7 +116,7 @@ Facets over a nullable column include the `NULL` group, synthesized from the col
 
 ## Consistency under writes {#consistency}
 
-The index relation reads the same snapshot as the rest of the transaction: inserts and deletes are visible once they commit, and a transaction sees its own. A deleted document stays in its segment until compaction rewrites it, but no query that sees the delete returns it: terms whose documents are all deleted are never returned, and `ts_dict_count`, `ts_dict_min` and `ts_dict_max` count and compare live documents only.
+The index relation reads the same snapshot as the rest of the transaction: it sees the inserts and deletes committed before that snapshot was taken, and the transaction's own. A deleted document stays in its segment until compaction rewrites it, but no query that sees the delete returns it: terms whose documents are all deleted are never returned, and `ts_dict_count`, `ts_dict_min` and `ts_dict_max` count and compare live documents only.
 
 <SqlLogicTest id="sql/functions/term_dictionary/deletes" />
 

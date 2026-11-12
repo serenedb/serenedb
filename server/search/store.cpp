@@ -398,7 +398,7 @@ Store::Piece Store::StartPiece() {
 }
 
 void Store::PiecesAdded() noexcept {
-  if (_table->PieceBytes() + _table->PatchBytes() < _segment_memory_max &&
+  if (_table->PieceBytes() + _table->DirtyBytes() < _segment_memory_max &&
       !_table->HasMergeRun()) {
     return;
   }
@@ -450,27 +450,27 @@ void Store::MaintainPieces() {
     {
       absl::MutexLock lock{&_write_out_mutex};
       const auto pieces = _table->PieceBytes();
-      const auto patches = _table->PatchBytes();
-      if (pieces + patches < _segment_memory_max) {
+      const auto dirty = _table->DirtyBytes();
+      if (pieces + dirty < _segment_memory_max) {
         const auto run = _table->MergeRun();
         if (run.empty() || !MergePiecesLocked(run)) {
           return;
         }
         continue;
       }
-      if (pieces >= patches) {
+      if (pieces >= dirty) {
         WriteOutLocked();
         continue;
       }
     }
-    const auto patches = _table->PatchBytes();
-    if (!FoldPatches() || _table->PatchBytes() >= patches) {
+    const auto dirty = _table->DirtyBytes();
+    if (!RewriteDirtiest() || _table->DirtyBytes() >= dirty) {
       return;
     }
   }
 }
 
-bool Store::FoldPatches() {
+bool Store::RewriteDirtiest() {
   if (!_table || OwnerDropped()) {
     return false;
   }
@@ -480,7 +480,7 @@ bool Store::FoldPatches() {
     if (unit->piece) {
       continue;
     }
-    uint64_t bytes = 0;
+    uint64_t bytes = unit->deleted_bytes;
     for (const auto& patch : unit->patches) {
       bytes += patch.patch->Bytes();
     }

@@ -45,8 +45,8 @@ Create an index on an expression — e.g., the sum of columns `j` and `k` from t
 | `table`      | The name of the table to be indexed.                                                                                                                                                                                                             |
 | `column`     | The name of the column to be indexed.                                                                                                                                                                                                            |
 | `expression` | An expression over one or more columns of the table (see the example above). [Inverted indexes](./inverted.md) also support indexed expressions. It cannot call a temporary function. |
-| `predicate` | A `WHERE` condition that keeps only the matching rows in the index, see [Partial indexes](./inverted.md#partial-indexes). A constant predicate is evaluated when the index is created: one that holds leaves the index without a predicate, any other is stored as `false` or `NULL`. Optional. |
-| `index type` | Specified index type, see [Indexes](../../indexes/index.md). Optional.                                                                                                                                                                           |
+| `predicate` | A `WHERE` condition that keeps only the matching rows in the index, see [Partial indexes](./inverted.md#partial-indexes). A constant predicate is evaluated when the index is created: one that holds leaves the index without a predicate, any other is stored as `false` or `NULL`. A `UNIQUE` index on a table can't have one: it fails with `partial unique indexes are not supported on a table`. Optional. |
+| `index type` | `inverted` or `btree`, which both build an inverted index, see [Indexes](../../indexes/index.md). Optional.                                                                                                                                      |
 | `option`     | Index option in the form of a Boolean true value (e.g., `is_cool`) or a key-value pair (e.g., `my_option = 2`). Optional.                                                                                                                        |
 
 ### Syntax
@@ -86,4 +86,4 @@ Replace an index with one on more columns:
 
 <SqlLogicTest id="sql/statements/create_index/index/example_007" />
 
-The replacement can be of another index type, and can be on another table than the index it replaces; it requires ownership of both tables. The name must belong to an index: if it belongs to a table, view or sequence, the statement fails with `Existing object "name" is of type Table, trying to replace with type Index`. `OR REPLACE` and `IF NOT EXISTS` cannot be combined.
+The replacement can be on another table than the index it replaces; it requires ownership of both tables. The name must belong to an index: if it belongs to a table, view or sequence, the statement fails with `Existing object "name" is of type Table, trying to replace with type Index`. `OR REPLACE` and `IF NOT EXISTS` cannot be combined.

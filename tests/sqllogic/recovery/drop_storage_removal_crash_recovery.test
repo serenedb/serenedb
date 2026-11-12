@@ -52,6 +52,10 @@ INSERT INTO dsr_s VALUES (1, 'alpha'), (2, 'beta');
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 

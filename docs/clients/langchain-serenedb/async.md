@@ -105,7 +105,7 @@ Calling `AsyncSereneDBVectorStore(...)` directly raises — always go through `c
 | [`apply_vector_index()`](./indexes.md#apply_vector_index) | `aapply_vector_index()` | |
 | [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) | `aapply_hybrid_search_index()` | `index_config` and `concurrently` are keyword-only on the sync form, positional-or-keyword on the async one. |
 | [`drop_vector_index()`](./indexes.md#drop_vector_index) | `adrop_vector_index()` | |
-| [`reindex()`](./indexes.md#reindex) | `areindex()` | Both raise `NotImplementedError` for now. |
+| [`reindex()`](./indexes.md#reindex) | `areindex()` | Both raise `NotImplementedError`. |
 | [`is_valid_index()`](./indexes.md#is_valid_index) | `is_valid_index()` | Same name; on this class it is a coroutine. |
 | — | [`afrom_texts()`](#afrom_texts) / [`afrom_documents()`](#afrom_texts) | Async only. The sync `from_texts()` raises. |
 

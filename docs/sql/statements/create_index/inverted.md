@@ -8,7 +8,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import RailroadDiagram from '@site/src/components/RailroadDiagram';
 import RailroadSource from './inverted_diagram.js';
 
-Adding `USING inverted` to [`CREATE INDEX`](./index.md) builds an [inverted index](../../indexes/inverted/index.md), which powers [full-text](../../indexes/inverted/full-text-search.md), [vector](../../indexes/inverted/vector-search.md) and [geospatial](../../indexes/inverted/geospatial-search.md) search. This page is the syntax reference; for a conceptual guide with query examples, see [Inverted Index](../../indexes/inverted/index.md).
+[`CREATE INDEX`](./index.md) builds an [inverted index](../../indexes/inverted/index.md), with or without `USING inverted`, which powers [full-text](../../indexes/inverted/full-text-search.md), [vector](../../indexes/inverted/vector-search.md) and [geospatial](../../indexes/inverted/geospatial-search.md) search. This page is the syntax reference; for a conceptual guide with query examples, see [Inverted Index](../../indexes/inverted/index.md).
 
 ## Column specification
 
@@ -22,7 +22,7 @@ Each entry in the `USING inverted (...)` list is an **indexed column**.
 - **Array columns** — a `TEXT[]` / `VARCHAR[]` column is indexed element-by-element; a row matches if any element matches.
 - **`INET` and `CIDR` columns** take no dictionary. The index answers `=`, `IN`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `<<=`, `>>=`, `<<`, `>>` and `&&`; see [Inet](../../data_types/inet.md#indexing).
 
-Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be indexed, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays; such a column fails with `Column '<name>' has unsupported type <type> and can not be indexed`. A `GEOMETRY` column is indexed only with a [geo dictionary](../../indexes/inverted/geospatial-search.md). `INCLUDE` stores values of every type. A column or expression is listed once as an indexed key, with one dictionary or none; besides that, only `included()` can list it again. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
+Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be indexed, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays; such a column fails with `Column '<name>' has unsupported type <type> and can not be indexed`. Without `USING inverted`, a `CREATE INDEX` on a table stores such a column in the index instead of failing, and `CREATE UNIQUE INDEX` enforces its uniqueness. A `GEOMETRY` column is indexed only with a [geo dictionary](../../indexes/inverted/geospatial-search.md). `INCLUDE` stores values of every type. A column or expression is listed once as an indexed key, with one dictionary or none; besides that, only `included()` can list it again. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
 
 ### Feature flags
 
@@ -49,11 +49,18 @@ The trailing `WITH (...)` clause sets index-level options.
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
+| `reindex_interval` | `0` | Interval in milliseconds of the background [refresh](../../indexes/inverted/views.md#automatic-refresh); `0` disables it |
 | `compaction_interval` | `1000` | Background compaction interval in milliseconds; `0` disables it |
+| `compaction_max_segments` | `10` | Segments merged by one background compaction |
+| `compaction_max_segments_bytes` | `5368709120` (5 GB) | Size budget of one background compaction |
+| `compaction_floor_segment_bytes` | `2097152` (2 MB) | Segments smaller than this count as equal-sized when choosing what to merge |
+| `segment_memory_max` | `268435456` (256 MB) | Bytes a build or refresh fills before it starts a new segment |
+| `segment_docs_max` | `0` | Rows a build or refresh writes to one segment before it starts a new one; `0` leaves it to `segment_memory_max` |
+| `key_columns` | — | Row key of an attached PostgreSQL or ClickHouse table; see [Row identity](../../indexes/inverted/views.md#row-identity) |
 | `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns and for norm columns; there is no separate norm setting. Must be a multiple of the vector size (2048). A scan claims one row group per worker, so a smaller value spreads one segment over more threads at the cost of more per-unit setup |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
 
-These options apply to an index over a view. An index on a table takes none of them. It has no storage or background tasks of its own: the table's options run compaction for every index on it, and the table keeps the score bounds that `optimize_top_k` prunes with. So `CREATE INDEX` rejects them on a table, with an error that names the option, such as `row_group_size is a table option`. Set them on the table instead; see [Background intervals](../../indexes/inverted/maintenance.md#background-intervals).
+These options apply to an index over a view. Where a setting of the same name exists, it holds the default. `row_group_size`, `optimize_top_k` and `key_columns` are fixed at `CREATE INDEX`; `ALTER INDEX ... SET` and `RESET` change the others. An index on a table takes none of them but `key_columns`, which has no effect there. It has no storage or background tasks of its own: the table's options run compaction for every index on it, and the table keeps the score bounds that `optimize_top_k` prunes with. So `CREATE INDEX` rejects them on a table, with an error that names the option, such as `row_group_size is a table option`. Set them on the table instead; see [Background intervals](../../indexes/inverted/maintenance.md#background-intervals).
 
 ## Partial indexes
 
@@ -90,7 +97,9 @@ The indexes of a table share its storage. A transaction that creates, replaces o
 
 Writes to a table never wait for an index change. `CREATE INDEX` and `CREATE OR REPLACE INDEX` on a table wait for the transactions that wrote to the table before the statement started to commit or roll back, so that their rows are indexed too; cancelling the statement ends the wait.
 
-They also wait for the compactions already merging the table's segments to finish, and no other compaction of the table starts meanwhile. Until the statement returns, compaction, background or `VACUUM (COMPACT_TABLE)`, leaves the segments it rebuilds alone and merges only the segments written during it.
+`CREATE INDEX` and `CREATE OR REPLACE INDEX` on a table also wait for the compactions already merging the table's segments to finish, and no other compaction of the table starts meanwhile. Until the statement returns, compaction, background or `VACUUM (COMPACT_TABLE)`, leaves the segments it rebuilds alone and merges only the segments written during it.
+
+The build writes every existing segment of the table again with the new index, a group of [`search_backfill_group_bytes`](../../../configuration/overview.md#search-and-indexing) (1 GB by default) at a time, and needs extra disk of about twice one group while it runs.
 
 The transaction that creates an index of a table can query with it as soon as `CREATE INDEX` returns; other transactions can once it commits. A `REPEATABLE READ` transaction whose snapshot predates writes of other transactions to the table keeps reading the table as of its snapshot, without the new index, until it commits: a query that needs the index, such as `@@` on the table's column, fails as it does on a table without the index, and a query of the index itself (`FROM <index_name>`) fails with `could not serialize access due to concurrent update`.
 

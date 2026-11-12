@@ -36,6 +36,10 @@ DELETE FROM susc WHERE id = 7;
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 

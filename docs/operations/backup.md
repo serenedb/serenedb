@@ -12,11 +12,10 @@ Differences from PostgreSQL:
 
 - One backup at a time, owned by the session that started it.
 - `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` does not start a checkpoint, and there is no WAL archiving.
-- As a consequence of missing WAL archiving - backup tool you use should support taking a backup without
-WAL archiving (most of the tools have a dedicated flag for this)
+- Without WAL archiving, the backup tool must be able to take a backup without it; most tools have a flag for this.
 - `pg_backup_start` waits for the transactions that are committing at that moment to finish, and holds new commits back while it records the backup position.
 - Both functions require a superuser.
-- The positions they return, and the ones in the backup label, are not positions in SereneDB's write-ahead logs. They only increase, and exist so that PostgreSQL backup tools can work with SereneDB. Do not compare them with other positions, such as the ones subscriptions report.
+- The positions they return, and the ones in the backup label, are not positions in SereneDB's write-ahead log. They only increase, and exist so that PostgreSQL backup tools can work with SereneDB. Do not compare them with other positions, such as the ones subscriptions report.
 
 
 ## Taking a backup
@@ -72,11 +71,11 @@ Queries and writes run as usual. These commands behave differently until `pg_bac
 | `CHECKPOINT`, `FORCE CHECKPOINT` | Fail with `cannot checkpoint while a backup is in progress`. Run them again after `pg_backup_stop`. A `pg_backup_start` issued while a checkpoint runs waits for it. |
 | Automatic checkpoints | Skipped. |
 | `VACUUM (COMPACT_*)` | Waits until the backup ends, then compacts. It can be canceled while it waits. |
-| `VACUUM (REFRESH_*)` | Runs. The index files it would normally clean up are kept until after the backup. |
-| `DROP TABLE`, `DROP INDEX`, `DROP DATABASE`, `DETACH` | Commit at once. The files of the dropped objects are removed after `pg_backup_stop`. |
+| `VACUUM (FLUSH_*)` | Runs. |
+| `DROP TABLE`, `DROP INDEX`, `DROP DATABASE` | Commit at once. The files of the dropped objects are removed after `pg_backup_stop`. |
 | Background compaction of tables and indexes | Paused. |
 
-Because nothing is checkpointed, the write-ahead logs keep growing, and dropped objects and the segment files tables stop using keep their disk space until `pg_backup_stop`. Plan disk space for the length of the backup.
+Because nothing is checkpointed, the write-ahead log keeps growing, and dropped objects and the segment files tables stop using keep their disk space until `pg_backup_stop`. Plan disk space for the length of the backup.
 
 ## Monitoring
 
@@ -90,7 +89,7 @@ Because nothing is checkpointed, the write-ahead logs keep growing, and dropped 
 |---|---|
 | `initializing` | Starting. |
 | `waiting for checkpoint to finish` | A checkpoint is running; the backup starts when it finishes. |
-| `waiting for search maintenance to stop` | Index and search-table compactions are being paused. |
+| `waiting for search maintenance to stop` | Compactions of tables and indexes are being paused. |
 | `waiting for in-flight commits` | Transactions that are committing are finishing; the backup position is recorded next. |
 
 `backup_total`, `backup_streamed`, `tablespaces_total` and `tablespaces_streamed` are always 0. Once `pg_backup_start` has returned, the view no longer shows the backup.

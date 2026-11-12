@@ -290,6 +290,10 @@ UNION ALL SELECT 'sdl_db', index_oid FROM duckdb_indexes() WHERE database_name =
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT sdl_db;
 
 

@@ -32,6 +32,9 @@ num_live_docs	0
 num_segments	0
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+statement ok
 CHECKPOINT;
 
 query
@@ -53,6 +56,9 @@ num_segments	1
 
 statement ok
 INSERT INTO st VALUES (4, 'd'), (5, 'e');
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 statement ok
 CHECKPOINT;

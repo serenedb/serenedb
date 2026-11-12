@@ -82,7 +82,7 @@ SereneDB allows explicitly specifying the storage version. Using this, you can o
 
 <SqlLogicTest id="sql/statements/attach/index/example_017" />
 
-This setting specifies the minimum SereneDB version that should be able to read the database file. When database files are written with this option, the resulting files cannot be opened by older SereneDB versions than the specified version. They can be read by the specified version and all newer versions of SereneDB.
+This setting specifies the minimum DuckDB version that should be able to read the database file. When database files are written with this option, the resulting files cannot be opened by DuckDB versions older than the specified version. They can be read by the specified version, all newer versions of DuckDB, and SereneDB.
 
 A DuckDB database takes only DuckDB storage versions: `ATTACH` refuses every SereneDB storage version, `STORAGE_VERSION 'serenedb_latest'` included. SereneDB's own databases are created with [`CREATE DATABASE`](../create_database/index.md), and a database in the data directory of another SereneDB server is attached read-only with `TYPE serenedb`; see [Read-only SereneDB databases](../create_server/index.md#read-only-serenedb-databases).
 

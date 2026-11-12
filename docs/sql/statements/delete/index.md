@@ -62,4 +62,4 @@ PostgreSQL makes `TRUNCATE` wait for the transactions that are writing to the ta
 
 ## Limitations on Reclaiming Memory and Disk Space
 
-Running `DELETE` does not mean space is reclaimed. In general, rows are only marked as deleted. SereneDB reclaims space when performing a `CHECKPOINT`. [`VACUUM`](../../statements/vacuum/index.md) currently does not reclaim space.
+Running `DELETE` does not reclaim space at once: a deleted row stays in its segment until compaction rewrites that segment. [Background compaction](../../indexes/inverted/maintenance.md#background-compaction) drops deleted rows as it merges segments, and [`VACUUM (COMPACT_TABLE)`](../../statements/vacuum/index.md) rewrites a table's segments without them at once. In an attached DuckDB database file, space is reclaimed by a `CHECKPOINT`.

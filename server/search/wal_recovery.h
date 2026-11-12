@@ -44,7 +44,6 @@ bool RecoverSearchStorages(
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached,
   bool orphans);
 void StartSearchStorageTasks();
-void WriteOutTables();
 std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view);
 std::vector<std::vector<uint8_t>> SnapshotRecords(
   std::span<const TableSnapshot> tables);

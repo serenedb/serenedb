@@ -141,12 +141,6 @@ bool RecoverSearchStorages(
   return cleaned.load(std::memory_order_relaxed);
 }
 
-void WriteOutTables() {
-  for (const auto& store : DurableStores()) {
-    store->WriteOut();
-  }
-}
-
 std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view) {
   auto& instance = irs::DuckDBEngine::Instance().instance();
   const auto at = view.Transaction(instance);

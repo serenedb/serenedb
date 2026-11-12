@@ -218,20 +218,14 @@ class Transactions final {
                      absl::FunctionRef<void(duckdb::transaction_t)> apply);
   void AwaitPublished(duckdb::transaction_t commit) const;
 
-  enum class LogCycle : uint8_t {
-    Budget,
-    Settle,
-    Checkpoint,
-  };
-
   static constexpr uint64_t kDefaultMaxLogBytes = 1'000'000'000;
 
   void SetMaxLogBytes(uint64_t bytes) noexcept {
     _max_log_bytes.store(bytes, std::memory_order_relaxed);
   }
 
-  absl::Status TruncateLog(LogCycle cycle, duckdb::CheckpointAbort abort =
-                                             duckdb::CheckpointAbort::NO_ABORT);
+  absl::Status TruncateLog(
+    duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT);
   void SettleLog();
   [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
     duckdb::ClientContext& context) {
@@ -294,7 +288,7 @@ class Transactions final {
   Lsn ReservedEnd() const;
   void Publish(duckdb::transaction_t commit, bool catalog, bool wait);
   void MaintainLog(Lsn end);
-  void TruncateInBackground(LogCycle cycle);
+  void TruncateInBackground();
 
   static constexpr int64_t kMinDeadSlots = 64;
 

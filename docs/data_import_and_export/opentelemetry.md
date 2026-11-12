@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB stores OpenTelemetry logs, traces and metrics in a fixed set of tables with inverted indexes, so a log body is full-text searchable and rankable with BM25 as soon as it is stored.
+SereneDB stores OpenTelemetry logs, traces and metrics in a fixed set of tables with inverted indexes, so a log body is full-text searchable and rankable with BM25 as soon as its export commits.
 
 The schema ships in the repository as [`resources/otel/otel_schema.sql`](https://github.com/serenedb/serenedb/blob/main/resources/otel/otel_schema.sql). Apply it with `psql`, or let the `otel` listener create it at startup.
 
@@ -387,7 +387,7 @@ On a column indexed without a dictionary, such as `service_name` or `severity_te
 
 ## Visibility
 
-A row is visible to queries, full-text matches with `@@` included, once its transaction commits.
+The rows of an export are visible, full-text matches with `@@` included, to every query whose snapshot is taken after the export commits. A `REPEATABLE READ` transaction that took its snapshot earlier does not see them; see [Isolation Level](../sql/statements/transactions.md#isolation-level).
 
 ## Retention
 

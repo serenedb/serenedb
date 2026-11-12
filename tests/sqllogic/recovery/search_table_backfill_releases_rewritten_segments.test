@@ -10,11 +10,19 @@ INSERT INTO brs_t SELECT i, 'row ' || i FROM range(0, 1000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO brs_t SELECT i, 'row ' || i FROM range(1000, 2000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -26,11 +34,19 @@ INSERT INTO brs_t SELECT i, 'row ' || i FROM range(2000, 3000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO brs_t SELECT i, 'row ' || i FROM range(3000, 4000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -42,11 +58,19 @@ INSERT INTO brs_t SELECT i, 'row ' || i FROM range(4000, 5000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO brs_t SELECT i, 'row ' || i FROM range(5000, 6000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok

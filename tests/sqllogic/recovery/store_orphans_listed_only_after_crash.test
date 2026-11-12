@@ -10,11 +10,19 @@ INSERT INTO slc SELECT i, 'fox ' || i FROM range(0, 1000) t(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO slc SELECT i, 'fox ' || i FROM range(1000, 2000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -127,6 +135,11 @@ planted	unowned	segments
 connection after_crash
 statement ok
 INSERT INTO slc SELECT i, 'fox ' || i FROM range(2000, 3000) t(i);
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 connection after_crash

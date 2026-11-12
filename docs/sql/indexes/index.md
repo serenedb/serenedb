@@ -27,7 +27,7 @@ Indexes are persisted on disk.
 
 ## `CREATE INDEX` and `DROP INDEX`
 
-Indexes are created with `CREATE INDEX` and removed with `DROP INDEX`. `CREATE INDEX` creates an inverted index, with or without `USING inverted`. See [CREATE INDEX](../statements/create_index/index.md) for the full statement reference and [the inverted index pages](./inverted/index.md) for the column dictionaries, `INCLUDE` columns and index options.
+Indexes are created with `CREATE INDEX` and removed with `DROP INDEX`. `CREATE INDEX` creates an inverted index, with or without `USING inverted`; `USING btree` creates one too, and any other access method fails, for example with `access method "gin" does not exist`. See [CREATE INDEX](../statements/create_index/index.md) for the full statement reference and [the inverted index pages](./inverted/index.md) for the column dictionaries, `INCLUDE` columns and index options.
 
 ### `CREATE INDEX`
 

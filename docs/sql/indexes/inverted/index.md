@@ -39,7 +39,7 @@ One inverted index can serve several kinds of search, each documented on its own
 
 ## Creating an inverted index
 
-An inverted index is created by adding `USING inverted` to [`CREATE INDEX`](../../statements/create_index/inverted.md). The example below indexes two text columns with a dictionary, then queries the index by name:
+An inverted index is created with [`CREATE INDEX`](../../statements/create_index/inverted.md); `USING inverted` names it explicitly and is optional. The example below indexes two text columns with a dictionary, then queries the index by name:
 
 <SqlLogicTest id="sql/indexes/inverted/index/example_001" />
 
@@ -49,7 +49,7 @@ A trailing `WHERE <predicate>` builds a [partial index](../../statements/create_
 
 <DocCallout type="tip">
 
-The index is part of its table: rows are searchable as soon as the transaction that wrote them commits, and that transaction finds its own rows through the index before it commits. See [Maintenance](./maintenance.md) for compaction and statistics.
+The index is part of its table: a search sees the rows its transaction's snapshot sees, like a scan of the table, so it finds the rows committed before the snapshot was taken, and the transaction finds its own rows through the index before it commits. See [Maintenance](./maintenance.md) for visibility and compaction.
 
 </DocCallout>
 
@@ -134,7 +134,7 @@ An inverted index on a table is **transactional**: it changes in the same transa
 ## Limitations
 
 - Indexed expressions cannot contain aggregates, window functions, subqueries, volatile functions (e.g. `random()`) or functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`).
-- Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be searchable keys, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays. A `GEOMETRY` column is a key only with a [geo dictionary](./geospatial-search.md). `INCLUDE` stores values of every one of these types.
+- Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be searchable keys, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays. A `GEOMETRY` column is a key only with a [geo dictionary](./geospatial-search.md). `INCLUDE` stores values of every one of these types. With `USING inverted` such a column fails the statement; a `CREATE INDEX` on a table without `USING inverted` stores it in the index instead, and `CREATE UNIQUE INDEX` still enforces its uniqueness.
 - A column or expression is listed once as a searchable key, with one dictionary or none; besides that, only `included()` can list it again.
 
 ## See also

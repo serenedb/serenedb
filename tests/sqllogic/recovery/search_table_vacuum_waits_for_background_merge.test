@@ -15,11 +15,19 @@ INSERT INTO vbm SELECT i, i FROM range(0, 10) r(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO vbm SELECT i, i FROM range(10, 20) r(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok
@@ -31,11 +39,19 @@ INSERT INTO vbm SELECT i, i FROM range(20, 30) r(i);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT;
 
 
 statement ok
 INSERT INTO vbm SELECT i, i FROM range(30, 40) r(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
 
 
 statement ok

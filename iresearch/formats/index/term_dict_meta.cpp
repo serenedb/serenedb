@@ -98,8 +98,7 @@ constexpr duckdb::field_id_t kDictFsst = 18;
 constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
 constexpr duckdb::field_id_t kTextNorm = 2;
-constexpr duckdb::field_id_t kTextPrefixes = 3;
-constexpr duckdb::field_id_t kTextPrefixTrie = 4;
+constexpr duckdb::field_id_t kTextPrefixTrie = 3;
 
 constexpr duckdb::field_id_t kRangesOffset = 0;
 constexpr duckdb::field_id_t kRangesSize = 1;
@@ -251,7 +250,6 @@ void ReadText(duckdb::BinaryDeserializer& in, TextHead& text) {
     kTextScoreBounds, "has_score_bounds", false);
   text.norm = in.ReadPropertyWithExplicitDefault<uint64_t>(
     kTextNorm, "norm", field_limits::invalid());
-  in.ReadDeletedProperty<std::string>(kTextPrefixes, "prefixes");
   text.prefix_trie =
     in.ReadPropertyWithDefault<std::string>(kTextPrefixTrie, "prefix_trie");
 }

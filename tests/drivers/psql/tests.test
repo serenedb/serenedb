@@ -862,10 +862,12 @@ skipif postgres
 > |      Name      |  Owner   | Handler | Validator |
 > +----------------+----------+---------+-----------+
 > | clickhouse_fdw | postgres | -       | -         |
+> | duckdb_fdw     | postgres | -       | -         |
 > | iceberg_fdw    | postgres | -       | -         |
 > | postgres_fdw   | postgres | -       | -         |
+> | serenedb_fdw   | postgres | -       | -         |
 > +----------------+----------+---------+-----------+
-> (3 rows)
+> (5 rows)
 
 \dy
 ----

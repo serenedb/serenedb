@@ -286,49 +286,31 @@ std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
   return built;
 }
 
-struct CountTerm {
-  irs::field_id field = irs::field_limits::invalid();
-  irs::DictRef dict;
-  irs::bytes_view term;
-};
-
-CountTerm TermOf(const irs::ByTerm& filter) {
-  return {.field = filter.field_id(),
-          .dict = filter.dict(),
-          .term = filter.options().term};
-}
-
-std::optional<CountTerm> SingleCountTerm(const irs::Filter& filter) {
+bool ConstantCount(const irs::Filter& filter) {
   if (filter.type() == irs::Type<irs::ByTerm>::id()) {
-    return TermOf(irs::utils::downCast<irs::ByTerm>(filter));
+    return true;
   }
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
-    return std::nullopt;
+    return false;
   }
   const auto& boolean = irs::utils::downCast<irs::BooleanFilter>(filter);
-  std::optional<CountTerm> found;
   size_t terms = 0;
+  size_t others = 0;
   for (const auto occur :
        {irs::Occur::Must, irs::Occur::Should, irs::Occur::MustNot}) {
-    for (const auto& clause : boolean.Terms(occur)) {
-      ++terms;
-      found = CountTerm{
-        .field = clause.field, .dict = clause.dict, .term = clause.term};
-    }
+    terms += boolean.Terms(occur).size();
     for (const auto& child : boolean.Filters(occur)) {
-      if (!child || child->type() != irs::Type<irs::ByTerm>::id()) {
-        return std::nullopt;
+      if (child && child->type() == irs::Type<irs::ByTerm>::id()) {
+        ++terms;
+      } else {
+        ++others;
       }
-      ++terms;
-      found = TermOf(irs::utils::downCast<irs::ByTerm>(*child));
+      if (terms > 1 || others > 0) {
+        return false;
+      }
     }
   }
-  return terms == 1 ? found : std::nullopt;
-}
-
-uint64_t TermDocs(const irs::SubReader& segment, const CountTerm& term) {
-  const auto* field = segment.field(term.field, term.dict);
-  return field ? field->Lookup(term.term).docs_count : 0;
+  return terms == 1 && others == 0;
 }
 
 std::optional<uint64_t> UniqueBound(const ScanGlobalState& g,
@@ -648,6 +630,59 @@ void MarkLiveRowGroups(std::span<LivePass> passes,
   executor.WorkOnTasks();
 }
 
+struct PostingsEstimate {
+  ScanGlobalState& g;
+  std::vector<uint32_t> segments;
+  uint64_t enough = 0;
+  std::atomic_uint32_t next = 0;
+  std::atomic_uint64_t postings = 0;
+};
+
+void EstimatePostings(PostingsEstimate& estimate) {
+  const auto size = static_cast<uint32_t>(estimate.segments.size());
+  for (auto i = estimate.next.fetch_add(1, std::memory_order_relaxed);
+       i < size &&
+       estimate.postings.load(std::memory_order_relaxed) < estimate.enough;
+       i = estimate.next.fetch_add(1, std::memory_order_relaxed)) {
+    estimate.postings.fetch_add(
+      EnsureSegmentQuery(estimate.g, nullptr, estimate.segments[i]).Postings(),
+      std::memory_order_relaxed);
+  }
+}
+
+struct EstimateSlice final : duckdb::BaseExecutorTask {
+  EstimateSlice(duckdb::TaskExecutor& executor, PostingsEstimate& estimate)
+    : BaseExecutorTask{executor}, estimate{estimate} {}
+
+  void ExecuteTask() final { EstimatePostings(estimate); }
+
+  PostingsEstimate& estimate;
+};
+
+uint64_t CountPostings(PostingsEstimate& estimate,
+                       duckdb::ClientContext& context, uint64_t threads) {
+  const auto& reader = *estimate.g.reader;
+  const auto rg_size = estimate.g.rg_size;
+  const auto big = static_cast<uint64_t>(std::distance(
+    estimate.segments.begin(),
+    absl::c_stable_partition(estimate.segments, [&](uint32_t seg) {
+      return reader[seg].docs_count() > rg_size;
+    })));
+  const auto helpers = std::min(threads, big);
+  if (helpers <= 1) {
+    EstimatePostings(estimate);
+  } else {
+    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                  context.GetSchedulerAccount()};
+    for (uint64_t i = 0; i != helpers; ++i) {
+      executor.ScheduleTask(
+        duckdb::make_uniq<EstimateSlice>(executor, estimate));
+    }
+    executor.WorkOnTasks();
+  }
+  return estimate.postings.load(std::memory_order_relaxed);
+}
+
 }  // namespace
 
 std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t threads) {
@@ -715,11 +750,12 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
 
   const auto where = g.ClaimedWhere();
-  const auto count_term =
-    g.shape == ScanShape::Count && g.col_filters.empty() && where
-      ? SingleCountTerm(*where)
-      : std::nullopt;
-  const bool constant_count = static_cast<bool>(count_term);
+  const bool constant_count = g.shape == ScanShape::Count &&
+                              g.col_filters.empty() && where &&
+                              ConstantCount(*where);
+  const bool sized_by_postings =
+    (g.shape == ScanShape::Count || g.shape == ScanShape::Stream) && where &&
+    !g.vector_scorer && !g.scorer_obj;
   const auto unique = UniqueBound(g, where.get());
   const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
   irs::ColFilterStateCache states;
@@ -770,11 +806,10 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     pass.work->claims = CutClaims(pass.live, static_cast<uint32_t>(threads));
   }
   uint32_t skipped = 0;
-  uint64_t postings = 0;
+  PostingsEstimate estimate{.g = g, .enough = threads * g.rg_size};
   for (uint32_t i = 0; i != g.live_segments; ++i) {
     const auto seg = g.segment_order[i];
     const auto& work = g.Segment(seg);
-    const auto& sub = (*g.reader)[seg];
     const bool split =
       work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit;
     const auto live = split ? work.LiveCount() : 1;
@@ -783,23 +818,23 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       continue;
     }
     rgs += work.rg_count;
+    const auto& sub = (*g.reader)[seg];
     if (split) {
       parallel += live;
-      if (count_term) {
-        postings += TermDocs(sub, *count_term);
-      }
     } else {
       ++whole;
       whole_docs += sub.Meta().docs_count;
-      if (count_term && sub.live_docs_count() != sub.docs_count()) {
-        postings += sub.docs_count();
-      }
+    }
+    if (sized_by_postings &&
+        !(constant_count && sub.live_docs_count() == sub.docs_count())) {
+      estimate.segments.push_back(seg);
     }
   }
   g.done_segments.store(skipped, std::memory_order_relaxed);
   parallel += std::min(whole, (whole_docs + g.rg_size - 1) / g.rg_size);
-  if (count_term) {
-    parallel = (postings + g.rg_size - 1) / g.rg_size;
+  if (sized_by_postings) {
+    parallel =
+      (CountPostings(estimate, context, threads) + g.rg_size - 1) / g.rg_size;
   }
   if (g.stats_stage) {
     parallel = std::max<uint64_t>(parallel, g.total_segments);

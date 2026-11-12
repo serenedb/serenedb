@@ -28,7 +28,7 @@
 namespace sdb::connector {
 
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
-                                            ScanLocalState& l,
+                                            ScanLocalState* l,
                                             uint32_t seg_idx) {
   auto& work = g.Segment(seg_idx);
   auto state = work.prepare.load(std::memory_order_acquire);
@@ -40,16 +40,17 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                            std::memory_order_acq_rel)) {
     irs::PrepareCollector* collector = nullptr;
     if (g.collector) {
-      if (l.thread_slot == std::numeric_limits<uint32_t>::max()) {
-        l.thread_slot = g.thread_slots.fetch_add(1, std::memory_order_relaxed);
-        SDB_ASSERT(l.thread_slot < g.collect_threads);
+      SDB_ASSERT(l);
+      if (l->thread_slot == std::numeric_limits<uint32_t>::max()) {
+        l->thread_slot = g.thread_slots.fetch_add(1, std::memory_order_relaxed);
+        SDB_ASSERT(l->thread_slot < g.collect_threads);
       }
       collector = g.collector->Get();
     }
     const auto& segment = (*g.reader)[seg_idx];
     const irs::PrepareContext ctx{
       .collector = collector,
-      .thread = collector != nullptr ? l.thread_slot : 0,
+      .thread = collector != nullptr ? l->thread_slot : 0,
       .needs_terms = g.needs_terms};
     const auto index_only = g.ClaimedIndexOnly();
     const auto& filter = !UsesColumnForms(g, segment) ? *g.filter
@@ -86,7 +87,7 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
     if (seg >= g.total_segments) {
       break;
     }
-    EnsureSegmentQuery(g, l, seg);
+    EnsureSegmentQuery(g, &l, seg);
     if (g.stats_barrier.Arrive()) {
       if (g.collector) {
         g.collector->Finish();

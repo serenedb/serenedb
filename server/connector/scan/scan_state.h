@@ -458,7 +458,7 @@ struct AnnLocalState final : public RankedLocalState {
 struct TsDictLocalState;
 
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
-                                            ScanLocalState& l,
+                                            ScanLocalState* l,
                                             uint32_t seg_idx);
 bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                      ScanLocalState& l);

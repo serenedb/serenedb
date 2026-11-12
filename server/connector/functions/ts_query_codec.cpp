@@ -193,7 +193,8 @@ bool WhitelistWalk(const duckdb::ParsedExpression& expr, size_t depth,
 
 duckdb::unique_ptr<duckdb::ParsedExpression> ParseWhitelisted(
   std::string_view text) {
-  if (text.size() > kMaxTSQueryStructuredTextSize) {
+  if (text.size() > kMaxTSQueryStructuredTextSize ||
+      text.find_first_of("(:'[+-") == std::string_view::npos) {
     return nullptr;
   }
   try {

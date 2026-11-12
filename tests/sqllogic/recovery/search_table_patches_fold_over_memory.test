@@ -50,6 +50,22 @@ folded
 t
 
 
+query ok retry 40 backoff 250ms
+EXPLAIN SELECT count(*), min(v), max(v) FROM pfm;
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+
+query
+SELECT count(*), min(v), max(v) FROM pfm;
+----
+count	min	max
+200000	0	1
+
+
 query
 SELECT v, count(*) AS n, min(s) AS s FROM pfm GROUP BY v ORDER BY v;
 ----

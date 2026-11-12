@@ -1120,7 +1120,7 @@ Table::Replacement Table::PrepareReplace(
   absl::flat_hash_map<uint64_t, std::vector<irs::FieldPatch>> carried_patches;
   irs::containers::FlatHashMap<uint64_t, std::vector<irs::FieldPatch>>
     logged_patches;
-  const auto oldest = catalog::Transactions::Get().Oldest();
+  const auto oldest = catalog::Transactions::Get().RefreshOldest();
   for (size_t r = 0; r < replaced.size(); ++r) {
     const auto* source = FindUnit(state, replaced[r]);
     if (!source) {

@@ -72,23 +72,6 @@ void AddChanged(StoreWrites& w, Tick snapshot,
   w.changed.back().rows.push_back(std::move(rows));
 }
 
-void CheckChanged(const StoreWrites& w,
-                  std::span<const StoreWrites::ChangedRows> changed) {
-  for (const auto& [snapshot, rows] : changed) {
-    for (const auto& removal : rows) {
-      w.store->GetTable().CheckConflicts(*removal, snapshot);
-    }
-  }
-}
-
-[[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
-                                           const StoreWrites& w,
-                                           const KeySpec& spec,
-                                           std::string_view key) {
-  CheckChanged(w, w.changed);
-  ThrowDuplicate(context, spec, key);
-}
-
 [[noreturn]] void ThrowMissingReference(duckdb::ClientContext& context,
                                         const catalog::SearchTableEntry& table,
                                         const KeySpec& spec,
@@ -834,7 +817,26 @@ void Writes::AddPatches(const std::shared_ptr<Store>& store,
   }
 }
 
-void Writes::CheckConflicts(const Store& store) const {
+void Writes::CheckChanged(const StoreWrites& w,
+                          std::span<const StoreWrites::ChangedRows> changed) {
+  for (const auto& [snapshot, rows] : changed) {
+    for (const auto& removal : rows) {
+      if (const auto tick = w.store->GetTable().Conflict(*removal, snapshot)) {
+        _conflict = std::max(_conflict, tick);
+        ThrowConcurrentUpdate();
+      }
+    }
+  }
+}
+
+void Writes::ThrowDuplicateOrConflict(duckdb::ClientContext& context,
+                                      const StoreWrites& w, const KeySpec& spec,
+                                      std::string_view key) {
+  CheckChanged(w, w.changed);
+  ThrowDuplicate(context, spec, key);
+}
+
+void Writes::CheckConflicts(const Store& store) {
   if (const auto* w = FindStoreWrites(store.GetId())) {
     absl::MutexLock lock{&w->mutex};
     if (!w->changed.empty() && w->changed.back().snapshot == Snapshot()) {
@@ -1630,6 +1632,9 @@ void Writes::Abort() noexcept {
   _listed.store(nullptr, std::memory_order_relaxed);
   _writes.clear();
   _reference_checks.clear();
+  if (const auto conflict = std::exchange(_conflict, 0)) {
+    catalog::Transactions::Get().AwaitPublished(conflict);
+  }
 }
 
 }  // namespace sdb::search

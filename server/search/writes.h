@@ -169,7 +169,7 @@ class Writes {
 
   void AddPatches(const std::shared_ptr<Store>& store,
                   std::vector<UnitPatch>&& patches);
-  void CheckConflicts(const Store& store) const;
+  void CheckConflicts(const Store& store);
 
   void AddSearchTruncate(duckdb::ClientContext& context,
                          const std::shared_ptr<Store>& store);
@@ -234,6 +234,12 @@ class Writes {
     return duckdb::CatalogTransaction{table.catalog.GetDatabase(), _session,
                                       duckdb::VisibilityBound::AllCommitted()};
   }
+  void CheckChanged(const StoreWrites& w,
+                    std::span<const StoreWrites::ChangedRows> changed);
+  [[noreturn]] void ThrowDuplicateOrConflict(duckdb::ClientContext& context,
+                                             const StoreWrites& w,
+                                             const KeySpec& spec,
+                                             std::string_view key);
   void CheckReferences(duckdb::ClientContext& context, StoreWrites& w,
                        const KeySpec& spec, std::span<const std::string> keys);
   void CheckRemovedKeys(duckdb::ClientContext& context, StoreWrites& w,
@@ -255,6 +261,7 @@ class Writes {
   mutable absl::Mutex _mutex;
   std::atomic<StoreWrites*> _listed{nullptr};
   std::vector<ReferenceCheck> _reference_checks;
+  Tick _conflict = 0;
   // Node-based: the entry is well past FlatHashMap's size cut-off, and the
   // buffer is held by reference across a statement, so the nodes must not
   // move.

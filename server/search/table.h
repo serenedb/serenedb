@@ -302,7 +302,7 @@ class Table final {
   std::shared_ptr<const irs::DocRemoval> Resolve(
     const std::shared_ptr<const irs::DocRemoval>& removal) const;
   std::vector<UnitPatch> Resolve(std::vector<UnitPatch>&& patches) const;
-  void CheckConflicts(const irs::DocRemoval& removal, Tick snapshot) const;
+  Tick Conflict(const irs::DocRemoval& removal, Tick snapshot) const;
   Tick LastWrite() const noexcept {
     return _last_write.load(std::memory_order_acquire);
   }

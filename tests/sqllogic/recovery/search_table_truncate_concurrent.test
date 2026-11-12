@@ -24,15 +24,15 @@ connection default
 statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
-connection other
-statement error
+connection deleter
+statement async error
 DELETE FROM tcl WHERE id = 1;
 ----
 db error: ERROR: could not serialize access due to concurrent update
 
 
 connection other
-statement error
+statement async error
 TRUNCATE tcl;
 ----
 db error: ERROR: could not serialize access due to concurrent update

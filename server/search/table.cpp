@@ -935,14 +935,15 @@ void ThrowConcurrentUpdate() {
     ERR_MSG("could not serialize access due to concurrent update"));
 }
 
-void Table::CheckConflicts(const irs::DocRemoval& removal,
-                           Tick snapshot) const {
+Tick Table::Conflict(const irs::DocRemoval& removal, Tick snapshot) const {
   const auto state = State();
-  if (absl::c_any_of(removal.groups, [&](const auto& group) {
-        return Conflicting(*state, group.segment, group.docs, snapshot);
-      })) {
-    ThrowConcurrentUpdate();
-  }
+  return absl::c_any_of(removal.groups,
+                        [&](const auto& group) {
+                          return Conflicting(*state, group.segment, group.docs,
+                                             snapshot);
+                        })
+           ? state->tick
+           : 0;
 }
 
 std::vector<UnitPatch> Table::Resolve(std::vector<UnitPatch>&& patches) const {

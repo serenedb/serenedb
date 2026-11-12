@@ -374,6 +374,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   irs::ColFilterClassification column_form_cls;
   uint32_t current_seg = std::numeric_limits<uint32_t>::max();
   uint32_t owned_seg = std::numeric_limits<uint32_t>::max();
+  uint32_t claimed_end = 0;
   std::atomic_uint64_t private_range{0};
   uint32_t batch_next = 0;
   uint32_t batch_end = 0;

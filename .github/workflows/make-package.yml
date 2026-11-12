@@ -90,7 +90,7 @@ jobs:
       image_digest: ${{ steps.docker_push.outputs.image_digest }}
     runs-on:
       - ${{ inputs.LOCATION }}
-      - build
+      - lan
     permissions:
       contents: read
 

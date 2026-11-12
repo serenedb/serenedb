@@ -20,7 +20,7 @@ jobs:
         location: [linux-amd64, linux-arm64]
     runs-on:
       - ${{ matrix.location }}
-      - build
+      - lan
     steps:
       - name: Reap containers left on this runner
         run: |

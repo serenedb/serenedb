@@ -539,15 +539,17 @@ struct DictionaryScan final : SegmentScanState {
               const duckdb::TableFilter& filter,
               duckdb::TableFilterState& filter_state) {
     const auto dict_count = entries.header.entry_count;
+    const bool dense = sel_count * 4 >= vector_count;
     if (verdicts.Empty()) {
       if (EntryRanges ranges; ResolveFilter(filter, ranges)) {
         verdicts.Accept(ranges, dict_count);
-      } else if (dict_count < kLazyFilterEntries ||
-                 sel_count * 4 >= vector_count) {
+      } else if (dict_count < kLazyFilterEntries || dense) {
         JudgeAll(filter_state);
       } else {
         verdicts.Defer(dict_count);
       }
+    } else if (verdicts.Lazy() && dense) {
+      JudgeAll(filter_state);
     }
     if (!verdicts.Lazy() && verdicts.Matches() == 0) {
       sel_count = 0;

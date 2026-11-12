@@ -433,6 +433,7 @@ bool ClaimOwned(ScanGlobalState& g, ScanLocalState& l) {
     if (own.compare_exchange_weak(range, PackRange(next + take, end),
                                   std::memory_order_relaxed,
                                   std::memory_order_relaxed)) {
+      l.claimed_end = next + take;
       TakeUnit(l, UnitOf(work, l.owned_seg, next - work.base,
                          next + take - work.base));
       return true;
@@ -452,17 +453,36 @@ uint32_t SegmentAt(const ScanGlobalState& g, uint32_t pos) noexcept {
   return g.split_segments[std::distance(g.split_bases.begin(), it) - 1];
 }
 
-uint32_t LargestRange(const ScanGlobalState& g) noexcept {
+uint32_t LargestRange(const ScanGlobalState& g,
+                      const ScanLocalState& l) noexcept {
+  uint32_t ahead_begin = 0;
+  uint32_t ahead_end = 0;
+  if (l.owned_seg != std::numeric_limits<uint32_t>::max()) {
+    const auto& own = g.segments[l.owned_seg];
+    ahead_begin = l.claimed_end;
+    ahead_end = own.base + own.Units();
+  }
   auto victim = g.workers;
+  auto ahead = g.workers;
   uint32_t most = 0;
+  uint32_t most_ahead = 0;
   for (uint32_t w = 0; w != g.workers; ++w) {
     const auto r = g.ranges[w].range.load(std::memory_order_relaxed);
-    if (RangeEnd(r) > RangeNext(r) && RangeEnd(r) - RangeNext(r) > most) {
-      most = RangeEnd(r) - RangeNext(r);
+    const auto next = RangeNext(r);
+    const auto end = RangeEnd(r);
+    if (end <= next) {
+      continue;
+    }
+    if (end - next > most) {
+      most = end - next;
       victim = w;
     }
+    if (next >= ahead_begin && next < ahead_end && end - next > most_ahead) {
+      most_ahead = end - next;
+      ahead = w;
+    }
   }
-  return victim;
+  return ahead != g.workers ? ahead : victim;
 }
 
 bool StealFrom(ScanGlobalState& g, ScanLocalState& l, uint32_t victim) {
@@ -485,8 +505,8 @@ bool StealFrom(ScanGlobalState& g, ScanLocalState& l, uint32_t victim) {
 }
 
 bool Steal(ScanGlobalState& g, ScanLocalState& l) {
-  for (auto victim = LargestRange(g); victim != g.workers;
-       victim = LargestRange(g)) {
+  for (auto victim = LargestRange(g, l); victim != g.workers;
+       victim = LargestRange(g, l)) {
     if (StealFrom(g, l, victim)) {
       return true;
     }

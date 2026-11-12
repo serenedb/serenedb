@@ -1,11 +1,8 @@
 statement ok
-CREATE TABLE rejected_s(id INTEGER PRIMARY KEY, a INTEGER) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE rejected_s(id INTEGER PRIMARY KEY, a INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO rejected_s SELECT i, i % 7 FROM range(1, 2001) r(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) rejected_s;
 
 statement ok
 CREATE TABLE rejected_su(id INTEGER PRIMARY KEY, w INTEGER);
@@ -81,9 +78,6 @@ UPDATE rejected_s s SET a = u.w FROM rejected_su u WHERE s.id = u.id AND u.id BE
 
 statement count 5
 DELETE FROM rejected_s s WHERE s.tableoid = 'rejected_s'::regclass AND s.id IN (SELECT id FROM rejected_su WHERE id BETWEEN 21 AND 25);
-
-statement ok
-VACUUM (REFRESH_TABLE) rejected_s;
 
 query
 SELECT count(*), sum(a) FROM rejected_s;

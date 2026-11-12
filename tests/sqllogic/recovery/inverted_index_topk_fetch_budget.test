@@ -24,43 +24,40 @@ CREATE TEXT SEARCH DICTIONARY fb_en AS split_text_csv(' ')
 
 
 statement ok
-CREATE TABLE fb (id INT PRIMARY KEY, body TEXT, heavy TEXT)
+CREATE TABLE fb (id INT PRIMARY KEY, body TEXT, heavy TEXT) WITH (compaction_interval = 0)
 
 
 statement ok
 CREATE INDEX fb_idx ON fb USING inverted (id, body fb_en) INCLUDE (heavy)
-  WITH (refresh_interval = 0, compaction_interval = 0)
 
 
-# Four refreshes seal four segments. `body` repeats 'fox' a varying number of
-# times so scores differ and the winners are spread across all four.
 statement ok
 INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
 FROM range(30000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) fb
+VACUUM (FLUSH_TABLE) fb
 
 statement ok
 INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
 FROM range(30000, 45000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) fb
+VACUUM (FLUSH_TABLE) fb
 
 statement ok
 INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
 FROM range(45000, 52000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) fb
+VACUUM (FLUSH_TABLE) fb
 
 statement ok
 INSERT INTO fb SELECT i, repeat('fox ', 1 + (i % 7)), repeat('h', 200) || i
 FROM range(52000, 54000) t(i)
 
 statement ok
-VACUUM (REFRESH_TABLE) fb
+VACUUM (FLUSH_TABLE) fb
 
 
 statement ok

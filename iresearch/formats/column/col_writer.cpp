@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/col_writer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
@@ -99,7 +100,9 @@ void ColWriter::EnsureOut() {
     return;
   }
   _out = _dir->create(_filename);
-  _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
+  _write_ctx = std::make_unique<WriteContext>(
+    *_db, *_out,
+    _field_options ? _field_options->block_size : DEFAULT_BLOCK_ALLOC_SIZE);
 }
 
 bool ColWriter::Empty() const noexcept {
@@ -114,24 +117,28 @@ void ColWriter::SetFieldOptions(
   _field_options = field_options;
 }
 
-ColumnWriter& ColWriter::OpenColumnInternal(
-  field_id id, duckdb::LogicalType type, bool skip_validity,
-  uint32_t row_group_size, duckdb::CompressionType forced, bool hyperloglog) {
+ColumnWriter& ColWriter::OpenColumnInternal(field_id id,
+                                            duckdb::LogicalType type,
+                                            bool skip_validity,
+                                            uint32_t row_group_size,
+                                            duckdb::CompressionType forced,
+                                            DistinctStats distinct) {
   SDB_ASSERT(row_group_size != 0);
   if (auto it = _by_id.find(id); it != _by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(
       existing._type == type && existing._row_group_size == row_group_size &&
         existing._skip_validity == skip_validity &&
-        existing._forced == forced &&
-        (existing._meta.hyperloglog != nullptr) == hyperloglog,
+        existing._forced == forced && existing._distinct == distinct,
       "ColWriter::OpenColumn: re-opened id ", id, " with mismatched settings");
     return existing;
   }
-  EnsureOut();
+  if (!_deferred) {
+    EnsureOut();
+  }
   auto col =
     std::make_unique<ColumnWriter>(*this, id, std::move(type), skip_validity,
-                                   row_group_size, forced, hyperloglog);
+                                   row_group_size, forced, distinct, _deferred);
   auto* ptr = col.get();
   _by_id.emplace(id, ptr);
   _columns.push_back(std::move(col));
@@ -147,7 +154,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   }
   auto& cw =
     OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
-                       opts.compression, opts.hyperloglog);
+                       opts.compression, opts.distinct);
   if (_field_options) {
     for (const auto ann : _field_options->AnnFields(id)) {
       AttachAnn(id, *_field_options->GetColumnOptions(ann).ann_info);
@@ -159,9 +166,9 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     bool skip_validity, uint32_t row_group_size,
                                     duckdb::CompressionType compression,
-                                    bool hyperloglog) {
+                                    DistinctStats distinct) {
   return OpenColumnInternal(id, std::move(type), skip_validity, row_group_size,
-                            compression, hyperloglog);
+                            compression, distinct);
 }
 
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
@@ -221,6 +228,12 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   return *back.writer;
 }
 
+bool ColWriter::HasAnn(field_id column_id) const noexcept {
+  return absl::c_any_of(_ann_writers, [&](const auto& entry) {
+    return entry->column_id == column_id;
+  });
+}
+
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
   for (auto& entry : _ann_writers) {
     if (entry->writer) {
@@ -241,6 +254,47 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
 }
 
 void ColWriter::Rollback() noexcept { _out.reset(); }
+
+std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
+  std::vector<StagedColumn> columns;
+  columns.reserve(_columns.size());
+  for (const auto& cw : _columns) {
+    columns.push_back(StagedColumn{.id = cw->Id(),
+                                   .type = cw->Type(),
+                                   .chunks = cw->Snapshot(rows),
+                                   .distinct = cw->_distinct});
+  }
+  return columns;
+}
+
+std::vector<NormColumnSpec> ColWriter::SealNorms(uint64_t rows) {
+  std::vector<NormColumnSpec> norms;
+  norms.reserve(_norms.size());
+  for (auto& writer : _norms) {
+    if (writer->RowCount() < rows) {
+      writer->PadTo(rows);
+    }
+    writer->Finalize();
+    if (!writer->Meta().regions.empty()) {
+      norms.push_back({.id = writer->Id(), .meta = writer->Meta()});
+    }
+  }
+  if (!norms.empty()) {
+    EnsureOut();
+  }
+  if (_out) {
+    _out->Flush();
+  }
+  return norms;
+}
+
+size_t ColWriter::StagedBytes() const noexcept {
+  size_t bytes = 0;
+  for (const auto& cw : _columns) {
+    bytes += cw->StagedBytes();
+  }
+  return bytes;
+}
 
 constexpr auto kNoCancel = [] { return true; };
 
@@ -300,6 +354,9 @@ bool ColWriter::Commit(uint64_t target_row,
           });
         });
     }
+    footer.WritePropertyWithDefault<uint64_t>(kColFieldBlockSize, "block_size",
+                                              _write_ctx->GetBlockAllocSize(),
+                                              DEFAULT_BLOCK_ALLOC_SIZE);
   });
   _out.reset();
   _committed = true;

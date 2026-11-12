@@ -62,6 +62,10 @@ void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
                     std::string_view name, duckdb::FunctionStability stability,
                     duckdb::init_local_state_t init,
                     std::span<const duckdb::ScalarFunction> functions);
+void ExtendScalar(duckdb::ExtensionLoader& loader, std::string_view name,
+                  duckdb::FunctionStability stability,
+                  duckdb::init_local_state_t init,
+                  std::span<const duckdb::ScalarFunction> functions);
 void RegisterTable(duckdb::ExtensionLoader& loader, std::string_view schema,
                    duckdb::TableFunction function);
 

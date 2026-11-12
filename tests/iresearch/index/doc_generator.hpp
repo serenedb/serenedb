@@ -37,6 +37,7 @@
 #include <iresearch/utils/type_limits.hpp>
 
 #include "insert_field.hpp"
+#include "test_index_writer.hpp"
 #include "test_resources.hpp"
 #include "text_chain.hpp"
 
@@ -925,7 +926,7 @@ void NormStringJsonFieldFactory(tests::Document& doc, const std::string& name,
                                 const JsonDocGenerator::JsonValue& data);
 
 template<typename Indexed>
-bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend) {
+bool Insert(tests::IndexWriter& writer, Indexed ibegin, Indexed iend) {
   auto ctx = writer.GetBatch();
   if (!tests::InsertFields(ctx.Insert(), ibegin, iend)) {
     return false;
@@ -935,7 +936,7 @@ bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend) {
 }
 
 template<typename Doc>
-bool Insert(irs::IndexWriter& writer, const Doc& doc, size_t count = 1) {
+bool Insert(tests::IndexWriter& writer, const Doc& doc, size_t count = 1) {
   for (; count; --count) {
     if (!Insert(writer, std::begin(doc.indexed), std::end(doc.indexed))) {
       return false;
@@ -945,14 +946,14 @@ bool Insert(irs::IndexWriter& writer, const Doc& doc, size_t count = 1) {
 }
 
 template<typename DocGenerator, typename ExpectedSegment>
-bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
+bool InsertBatch(tests::IndexWriter& writer, DocGenerator& gen,
                  ExpectedSegment& segment, size_t batch_size) {
   auto ctx = writer.GetBatch();
 
   const tests::Document* src = nullptr;
   do {
     auto doc = ctx.Insert(false, batch_size);
-    const auto current_last_doc_id = writer.BufferedDocs();
+    const auto current_last_doc_id = doc.Writer().buffered_docs();
 
     size_t inserted_docs = 0;
 
@@ -974,7 +975,7 @@ bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
 }
 
 template<typename Indexed>
-bool Update(irs::IndexWriter& writer,
+bool Update(tests::IndexWriter& writer,
             std::shared_ptr<const irs::DocRemoval> removal, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
@@ -988,14 +989,8 @@ bool Update(irs::IndexWriter& writer,
 
 // One-shot removal: opens a batch, queues the removal and commits it.
 // Equivalent to `auto b = writer.GetBatch(); b.Remove(removal); b.Commit();`.
-inline void Remove(irs::IndexWriter& writer,
+inline void Remove(tests::IndexWriter& writer,
                    std::shared_ptr<const irs::DocRemoval> removal) {
-  auto trx = writer.GetBatch();
-  trx.Remove(std::move(removal));
-  trx.Commit();
-}
-
-inline void Remove(irs::IndexWriter& writer, irs::KeyRemoval removal) {
   auto trx = writer.GetBatch();
   trx.Remove(std::move(removal));
   trx.Commit();
@@ -1010,18 +1005,32 @@ std::shared_ptr<const irs::DocRemoval> RemovalOf(
   const irs::DirectoryReader& reader, const Terms& terms);
 
 inline std::shared_ptr<const irs::DocRemoval> RemovalOf(
-  const irs::IndexWriter& writer, const Terms& terms) {
+  const tests::IndexWriter& writer, const Terms& terms) {
   return RemovalOf(writer.GetSnapshot(), terms);
 }
 
-inline void Remove(irs::IndexWriter& writer, const Terms& terms) {
-  Remove(writer, RemovalOf(writer, terms));
+inline LazyRemoval RemovalOfTerms(Terms terms) {
+  return [terms = std::move(terms)](const irs::DirectoryReader& reader) {
+    return RemovalOf(reader, terms);
+  };
+}
+
+inline void Remove(tests::IndexWriter& writer, const Terms& terms) {
+  auto trx = writer.GetBatch();
+  trx.Remove(RemovalOfTerms(terms));
+  trx.Commit();
 }
 
 template<typename Indexed>
-bool Update(irs::IndexWriter& writer, const Terms& terms, Indexed ibegin,
+bool Update(tests::IndexWriter& writer, const Terms& terms, Indexed ibegin,
             Indexed iend) {
-  return Update(writer, RemovalOf(writer, terms), ibegin, iend);
+  auto ctx = writer.GetBatch();
+  ctx.Remove(RemovalOfTerms(terms));
+  if (!tests::InsertFields(ctx.Insert(), ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
 }
 
 }  // namespace tests

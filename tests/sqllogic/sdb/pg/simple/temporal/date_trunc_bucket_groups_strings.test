@@ -36,9 +36,8 @@ QUERY PLAN
 │ __internal_date_trunc_month_bucket(ts, 1, 0)                       │
 │ ~1,501 rows                                                        │
 ╰──────────────────────────────────┬─────────────────────────────────╯
-╭─ SEQ_SCAN ───────────────────────┴─────────────────────────────────╮
+╭─ IRESEARCH_SCAN ─────────────────┴─────────────────────────────────╮
 │ Table: tb                                                          │
-│ Type: Sequential Scan                                              │
 │ Projections: ts                                                    │
 │ ~1,501 rows                                                        │
 ╰────────────────────────────────────────────────────────────────────╯
@@ -56,9 +55,8 @@ QUERY PLAN
 │ Projections: h           │
 │ ~1,501 rows              │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: tb                │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~1,501 rows              │
 ╰──────────────────────────╯
@@ -76,9 +74,8 @@ QUERY PLAN
 │ Projections: m           │
 │ ~1,502 rows              │
 ╰─────────────┬────────────╯
-╭─ SEQ_SCAN ──┴────────────╮
+╭─ IRESEARCH_SCAN ─────────╮
 │ Table: tb_inf            │
-│ Type: Sequential Scan    │
 │ Projections: ts          │
 │ ~1,502 rows              │
 ╰──────────────────────────╯
@@ -102,9 +99,8 @@ QUERY PLAN
 │ __internal_month_of_year(ts)            │
 │ ~1,501 rows                             │
 ╰────────────────────┬────────────────────╯
-╭─ SEQ_SCAN ─────────┴────────────────────╮
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
 │ Table: tb                               │
-│ Type: Sequential Scan                   │
 │ Projections: ts                         │
 │ ~1,501 rows                             │
 ╰─────────────────────────────────────────╯
@@ -129,9 +125,8 @@ QUERY PLAN
 │ __internal_icu_date_trunc_bucket('hour', tstz)                           │
 │ ~1,501 rows                                                              │
 ╰─────────────────────────────────────┬────────────────────────────────────╯
-╭─ SEQ_SCAN ──────────────────────────┴────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ────────────────────┴────────────────────────────────────╮
 │ Table: tb                                                                │
-│ Type: Sequential Scan                                                    │
 │ Projections: tstz                                                        │
 │ ~1,501 rows                                                              │
 ╰──────────────────────────────────────────────────────────────────────────╯

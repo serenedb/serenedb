@@ -46,7 +46,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -80,7 +80,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -114,7 +114,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -149,7 +149,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -167,7 +167,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -185,7 +185,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -220,7 +220,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -255,7 +255,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -273,7 +273,7 @@ onlyif serenedb
 statement error
 DROP ROLE dadb_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dadb_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dadb_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms

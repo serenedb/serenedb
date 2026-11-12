@@ -1,13 +1,9 @@
 statement ok
-CREATE TABLE beast_search (id int PRIMARY KEY, name text) WITH (storage = 'search');
+CREATE TABLE beast_search (id int PRIMARY KEY, name text);
 
 
 statement ok
 INSERT INTO beast_search VALUES (6, 'karl'), (7, 'chandler'), (67, 'nolan');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) beast_search;
 
 
 query
@@ -35,10 +31,6 @@ id
 
 statement ok
 DELETE FROM beast_search WHERE ctid = (SELECT ctid FROM beast_search WHERE name = 'nolan');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) beast_search;
 
 
 query

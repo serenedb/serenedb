@@ -27,8 +27,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/logging/log_manager.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -37,17 +42,21 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/remap_executable.hpp>
+#include <iresearch/utils/static_strings.hpp>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "backup/backup_session.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "docs/docs_bootstrap.h"
 #include "docs/docs_shell_backend.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
+#include "pg/catalog/oids.h"
 #include "query/config.h"
 #include "query/server_engine.h"
 #include "replication/subscription_engine.h"
@@ -136,9 +145,6 @@ int RunServer(int argc, char** argv) {
         search.RequestStop();
       }
       if (up_background) {
-        // The stop flag above is only observed once a sleeper wakes: cancel the
-        // armed delay timers so the loops see it now instead of when a
-        // stretched refresh timer (up to 5x the interval) expires.
         background.CancelDelays();
       }
       if (up_subscriptions) {
@@ -169,7 +175,10 @@ int RunServer(int argc, char** argv) {
       // The shutdown checkpoint of every attached database, taken here rather
       // than left to the DuckDB destructor in main(): an inverted index vetoes
       // it unless it can read its definition.
-      stop("storage", [&] { irs::DuckDBEngine::Instance().CloseDatabases(); });
+      stop("storage", [&] {
+        irs::DuckDBEngine::Instance().CloseDatabases();
+        catalog::LogCleanShutdown();
+      });
       SDB_INFO(GENERAL, "SereneDB is shut down");
     };
 
@@ -177,7 +186,7 @@ int RunServer(int argc, char** argv) {
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
-    catalog::InitCatalog(db_path.directory());
+    catalog::InitCatalog(true, db_path.initialized());
     network.StartIoPool();
     up_network = true;
     // Timers can be armed now. InitCatalog above already scheduled a drop per
@@ -217,15 +226,71 @@ int RunServer(int argc, char** argv) {
   return EXIT_FAILURE;
 }
 
-void ConfigureShellEngine(duckdb::DBConfig& config) {
-  irs::DuckDBEngine::Configure(config);
-  connector::RegisterEngineConfigVariables(config);
+struct ShellServices {
+  BackgroundScheduler background;
+  search::SearchEngine search;
+  Server network;
+  JobScheduler jobs;
+};
+
+std::optional<ShellServices> gShellServices;
+duckdb_shell::ShellSubcommand gShellSubcommand =
+  duckdb_shell::ShellSubcommand::SHELL;
+
+duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
+  const std::string& path) {
+  auto& engine = irs::DuckDBEngine::Instance();
+  const bool client = gShellSubcommand == duckdb_shell::ShellSubcommand::PSQL;
+  if (!gShellServices) {
+    engine.Initialize(&server::query::ConfigureShellDBConfig);
+    server::query::RegisterServerExtensions(engine.instance());
+    auto& services = gShellServices.emplace();
+    services.background.start();
+    catalog::InitCatalog(!client, false);
+    services.network.StartIoPool();
+    services.background.OpenDelays();
+    services.search.start();
+    services.jobs.Start();
+  }
+  auto& db = engine.instance();
+  auto& manager = duckdb::DatabaseManager::Get(db);
+  if (path.empty() || path == IN_MEMORY_PATH) {
+    if (!client) {
+      manager.SetDefaultDatabase(
+        duckdb::Identifier{irs::StaticStrings::kDefaultDatabase});
+    }
+    return db.shared_from_this();
+  }
+  auto conn = engine.CreateConnection();
+  auto& context = *conn->context;
+  duckdb::AttachInfo info;
+  info.path = path;
+  info.name = duckdb::AttachedDatabase::ExtractDatabaseName(
+    path, duckdb::FileSystem::GetFileSystem(db));
+  context.RunFunctionInTransaction([&] {
+    catalog::Attach(context, info, "duckdb", duckdb::AccessMode::READ_WRITE,
+                    duckdb::AttachVisibility::SHOWN);
+  });
+  manager.SetDefaultDatabase(info.name);
+  return db.shared_from_this();
 }
 
-void LoadShellEngine(duckdb::DatabaseInstance& db) {
-  irs::log::SetLogger(&db.GetLogManager().GlobalLogger());
-  irs::DuckDBEngine::ConfigureExtensions(db);
-  server::query::RegisterEngineModules(db);
+void CloseShellEngine() {
+  if (!gShellServices) {
+    return;
+  }
+  auto& services = *gShellServices;
+  services.search.RequestStop();
+  services.background.CancelDelays();
+  services.network.RequestStop();
+  services.network.stop();
+  services.jobs.Stop();
+  services.search.stop();
+  services.background.stop();
+  irs::DuckDBEngine::Instance().CloseDatabases();
+  catalog::LogCleanShutdown();
+  gShellServices.reset();
+  irs::DuckDBEngine::Instance().Shutdown();
 }
 
 // Trim argv in place: overwrite argv[1] with argv[0] and hand the shell
@@ -233,10 +298,11 @@ void LoadShellEngine(duckdb::DatabaseInstance& db) {
 int RunSubcommand(int argc, char* argv[],
                   duckdb_shell::ShellSubcommand subcommand) {
   argv[1] = argv[0];
+  gShellSubcommand = subcommand;
   docs::RegisterShellDocsBackend();
   return duckdb_shell::Run(
     argc - 1, argv + 1, subcommand,
-    {.configure = &ConfigureShellEngine, .load = &LoadShellEngine});
+    {.open = &OpenShellEngine, .close = &CloseShellEngine});
 }
 
 }  // namespace
@@ -276,6 +342,8 @@ int main(int argc, char* argv[]) {
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);
   server::query::RegisterServerExtensions(engine.instance());
+  duckdb::FileSystem::GetFileSystem(engine.instance())
+    .RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
   sdb::app::InitProcess(argv[0]);
   SDB_DEBUG(STARTUP, "executable memory: ", remap.remapped >> 20,

@@ -1,0 +1,125 @@
+statement ok
+CREATE ROLE ddpd_owner;
+
+
+statement ok
+CREATE ROLE ddpd_grantee;
+
+
+statement ok
+CREATE SCHEMA ddpd_s;
+
+
+statement ok
+CREATE DATABASE ddpd_far;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner GRANT SELECT ON TABLES TO ddpd_grantee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner GRANT USAGE ON SEQUENCES TO ddpd_grantee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner GRANT EXECUTE ON FUNCTIONS TO ddpd_grantee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner GRANT USAGE ON TYPES TO ddpd_grantee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner GRANT USAGE ON SCHEMAS TO ddpd_grantee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner IN SCHEMA ddpd_s GRANT SELECT ON TABLES TO ddpd_grantee;
+
+
+connection ddpd_far_admin database=ddpd_far
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner GRANT SELECT ON TABLES TO ddpd_grantee;
+
+
+connection default
+statement error
+DROP ROLE ddpd_grantee;
+----
+db error: ERROR: role "ddpd_grantee" cannot be dropped because some objects depend on it
+DETAIL: privileges for default privileges on new relations belonging to role ddpd_owner
+privileges for default privileges on new sequences belonging to role ddpd_owner
+privileges for default privileges on new functions belonging to role ddpd_owner
+privileges for default privileges on new types belonging to role ddpd_owner
+privileges for default privileges on new schemas belonging to role ddpd_owner
+privileges for default privileges on new relations belonging to role ddpd_owner in schema ddpd_s
+1 object in database ddpd_far
+
+
+connection default
+statement error
+DROP ROLE ddpd_owner;
+----
+db error: ERROR: role "ddpd_owner" cannot be dropped because some objects depend on it
+DETAIL: owner of default privileges on new relations belonging to role ddpd_owner
+owner of default privileges on new sequences belonging to role ddpd_owner
+owner of default privileges on new functions belonging to role ddpd_owner
+owner of default privileges on new types belonging to role ddpd_owner
+owner of default privileges on new schemas belonging to role ddpd_owner
+owner of default privileges on new relations belonging to role ddpd_owner in schema ddpd_s
+1 object in database ddpd_far
+
+
+connection default
+query
+SELECT bool_and(pg_terminate_backend(pid)) AS terminated FROM pg_stat_activity
+WHERE datname = 'ddpd_far';
+----
+terminated
+t
+
+
+connection default
+statement ok retry 40 backoff 250ms
+DROP DATABASE ddpd_far;
+
+
+connection default
+statement ok
+DROP SCHEMA ddpd_s CASCADE;
+
+
+connection default
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner REVOKE SELECT ON TABLES FROM ddpd_grantee;
+
+
+connection default
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner REVOKE USAGE ON SEQUENCES FROM ddpd_grantee;
+
+
+connection default
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner REVOKE EXECUTE ON FUNCTIONS FROM ddpd_grantee;
+
+
+connection default
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner REVOKE USAGE ON TYPES FROM ddpd_grantee;
+
+
+connection default
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ddpd_owner REVOKE USAGE ON SCHEMAS FROM ddpd_grantee;
+
+
+connection default
+statement ok
+DROP ROLE ddpd_grantee;
+
+
+connection default
+statement ok
+DROP ROLE ddpd_owner;

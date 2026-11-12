@@ -17,11 +17,11 @@ statement count 1
 INSERT INTO dcr_altered.entries (note, extra) VALUES ('pre_crash', 'x');
 
 
-statement error (?i)table "entries" depends on schema "dcr_altered"
+statement error table dcr_altered.entries depends on schema dcr_altered
 DROP SCHEMA dcr_altered;
 
 
-statement error (?i)table "entries" depends on schema "dcr_altered"
+statement error table dcr_altered.entries depends on schema dcr_altered
 DROP SCHEMA dcr_altered RESTRICT;
 
 
@@ -56,7 +56,7 @@ statement ok
 DROP SCHEMA dcr_seq_src CASCADE;
 
 
-statement error (?i)table "entries" depends on schema "dcr_seq_user"
+statement error table dcr_seq_user.entries depends on schema dcr_seq_user
 DROP SCHEMA dcr_seq_user;
 
 

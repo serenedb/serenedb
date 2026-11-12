@@ -39,37 +39,22 @@
 #include "auth/enforce.h"
 #include "backup/backup_label.h"
 #include "backup/backup_session.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
 
 namespace sdb::connector {
 namespace {
 
-constexpr std::string kOwnershipKey = "sdb_backup_ownership";
 constexpr std::string_view kPgBackupStart = "pg_backup_start";
 constexpr std::string_view kPgBackupStop = "pg_backup_stop";
 constexpr std::string_view kPgWalfileName = "pg_walfile_name";
-
-struct BackupOwnership final : duckdb::ClientContextState {
-  ~BackupOwnership() final {
-    backup::BackupSession::Instance().AbortIfOwnedBy(this);
-  }
-};
-
-const void* OwnershipOf(duckdb::ClientContext& context) {
-  return context.registered_state->Get<BackupOwnership>(kOwnershipKey).get();
-}
 
 void PgBackupStartFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
   auto& context = state.GetContext();
   auth::RequireSuperuser(context, kPgBackupStart);
-  auto client_state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  SDB_ASSERT(client_state);
-  auto& conn = client_state->GetConnectionContext();
+  auto& conn = ConnectionContext::Get(context);
   if (!conn.GetSendBuffer()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG(kPgBackupStart, " requires a PG wire connection"));
@@ -81,25 +66,9 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
       continue;
     }
     const auto& text = label.GetValue();
-    const auto ownership =
-      context.registered_state->GetOrCreate<BackupOwnership>(kOwnershipKey);
-    const auto start = backup::BackupSession::Instance().Begin(
-      context, {ownership.get(), conn.GetBackendPid()},
-      std::string_view{text.GetData(), text.GetSize()},
-      client_state->Progress());
-    for (const auto& name : start.with_failed_checkpoint) {
-      auto message =
-        absl::StrCat("checkpoints of database \"", name,
-                     "\" have failed; the backup holds its WAL as the failed "
-                     "checkpoint left it");
-      SDB_WARN(GENERAL, message,
-               "; check the database before relying on the backup");
-      conn.AddNotice(
-        SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(std::move(message)),
-                       ERR_HINT("Check the database before relying on the "
-                                "backup.")));
-    }
-    out.WriteValue(start.lsn);
+    out.WriteValue(backup::BackupSession::Instance().Begin(
+      context, {&conn, conn.GetBackendPid()},
+      std::string_view{text.GetData(), text.GetSize()}, conn.Progress()));
   }
 }
 
@@ -136,7 +105,7 @@ void PgBackupStopFunction(duckdb::DataChunk& args,
   auth::RequireSuperuser(context, kPgBackupStop);
   auto& entries = duckdb::StructVector::GetEntries(result);
   WriteFinishedBackups(entries[0], entries[1], entries[2], args.size(),
-                       OwnershipOf(context));
+                       &ConnectionContext::Get(context));
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> PgBackupStopBind(
@@ -171,7 +140,7 @@ void PgBackupStopExecute(duckdb::ClientContext& context,
     return;
   }
   WriteFinishedBackups(output.data[0], output.data[1], output.data[2], 1,
-                       OwnershipOf(context));
+                       &ConnectionContext::Get(context));
   output.SetCardinalityUnsafe(1);
 }
 

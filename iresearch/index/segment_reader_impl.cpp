@@ -39,7 +39,6 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/lead/impl.hpp"
-#include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -70,10 +69,8 @@ class SegmentAllDocs : public lead::Node {
 
 FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
   FileRefs file_refs;
-  file_refs.reserve(meta.files.size());
-
   auto& refs = dir.attributes().refs();
-  for (auto& file : meta.files) {
+  for (const auto& file : SegmentFiles(meta.name, meta.kinds)) {
     file_refs.emplace_back(refs.add(file));
   }
   return file_refs;
@@ -87,7 +84,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
   ParseSegmentId(meta.name, reader->_id);
-  reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options, options.index);
   reader->_field_reader =
@@ -102,28 +98,78 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   return reader;
 }
 
-std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
-  const Directory& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options) const {
-  SDB_ASSERT(meta == _info);
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
+  const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = _refs;
-  reader->_id = _id;
-  reader->_doc_maps = _doc_maps;
-  reader->_field_reader = _field_reader;
+  reader->_id = id;
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options, false);
+  reader->_data->col_reader = std::move(columns);
   return reader;
 }
 
-std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
-  const Directory& dir, const SegmentMeta& meta) const {
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenPiece(
+  const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns,
+  std::shared_ptr<const PieceFields> fields) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = GetRefs(dir, meta);
+  reader->_id = id;
+  reader->_data = std::make_shared<ColumnData>();
+  reader->_data->col_reader = std::move(columns);
+  reader->_pieces = std::move(fields);
+  return reader;
+}
+
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
+  std::shared_ptr<const DocumentMask> mask) const {
+  SegmentMeta meta;
+  static_cast<SegmentInfo&>(meta) = _info;
+  meta.docs_mask = std::move(mask);
+  meta.live_docs_count = meta.docs_count - RemovalCount(meta);
+  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
+  reader->_refs = _refs;
   reader->_id = _id;
-  reader->_doc_maps = _doc_maps;
+  reader->_patch_tick = _patch_tick;
+  reader->_patched_docs = _patched_docs;
   reader->_field_reader = _field_reader;
+  reader->_pieces = _pieces;
   reader->_data = _data;
+  return reader;
+}
+
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
+  std::span<const FieldPatch> patches) const {
+  SegmentMeta meta;
+  static_cast<SegmentInfo&>(meta) = _info;
+  meta.docs_mask = _docs_mask;
+  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
+  reader->_refs = _refs;
+  reader->_id = _id;
+  reader->_field_reader = _field_reader;
+  reader->_pieces = _pieces;
+  const auto& root = _data->base ? _data->base : _data;
+  if (patches.empty()) {
+    reader->_data = root;
+    return reader;
+  }
+  std::vector<std::shared_ptr<const ColumnReader>> replaced;
+  replaced.reserve(patches.size());
+  for (const auto& [field, patch] : patches) {
+    reader->_patch_tick = std::max(reader->_patch_tick, patch->MaxTick());
+    reader->_patched_docs = std::max(reader->_patched_docs, patch->Count());
+    if (const auto* column = root->col_reader->Column(field)) {
+      SDB_ASSERT(column->Type() == patch->Type());
+      replaced.push_back(std::make_shared<PatchedColumnReader>(*column, patch));
+      continue;
+    }
+    replaced.push_back(std::make_shared<PatchedColumnReader>(
+      std::make_unique<NullColumnReader>(root->col_reader->Database(), field,
+                                         patch->Type(), _info.docs_count),
+      patch));
+  }
+  auto data = std::make_shared<ColumnData>();
+  data->col_reader =
+    std::make_unique<ColReader>(*root->col_reader, std::move(replaced));
+  data->base = root;
+  reader->_data = std::move(data);
   return reader;
 }
 
@@ -151,17 +197,19 @@ const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
 }
 
 const AnnIndex* SegmentReaderImpl::Ann(field_id field) const {
-  if (!_data || !_data->idx_reader) {
+  const auto* idx = _data ? _data->Idx() : nullptr;
+  if (!idx) {
     return nullptr;
   }
-  return _data->idx_reader->Ann(field);
+  return idx->Ann(field);
 }
 
 IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
-  if (!_data || !_data->idx_reader) {
+  const auto* idx = _data ? _data->Idx() : nullptr;
+  if (!idx) {
     return nullptr;
   }
-  return _data->idx_reader->ReopenIn();
+  return idx->ReopenIn();
 }
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {

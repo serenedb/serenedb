@@ -38,10 +38,6 @@ statement count 1
 INSERT INTO jp_wild VALUES (3, '{"host":"router-15"}'::json);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) jp_wild;
-
-
 query
 SELECT id FROM jp_wild_idx WHERE doc->>'host' @@ ts_like('server-0_') ORDER BY id;
 ----
@@ -73,10 +69,6 @@ INSERT INTO jp_geo VALUES (1, '{"where":"{\"type\":\"Point\",\"coordinates\":[37
 
 statement count 1
 INSERT INTO jp_geo VALUES (2, '{"where":"{\"type\":\"Point\",\"coordinates\":[37.616297,55.704831]}"}'::json);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) jp_geo;
 
 
 # Just confirm the rows are reachable -- the geo predicate language
@@ -156,10 +148,6 @@ INSERT INTO jp_norm VALUES (2, '{"body":"alpha beta gamma"}'::json);
 
 statement count 1
 INSERT INTO jp_norm VALUES (3, '{"body":"alpha"}'::json);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) jp_norm;
 
 
 # Norm-bearing dictionary should not crash the norm-callback path -- the

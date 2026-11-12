@@ -8,9 +8,6 @@ statement ok
 INSERT INTO rejected_t SELECT i, i % 7 FROM range(1, 2001) r(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) rejected_t;
-
-statement ok
 CREATE TABLE rejected_u(id INTEGER PRIMARY KEY, w INTEGER);
 
 statement ok

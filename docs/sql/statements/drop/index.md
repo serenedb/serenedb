@@ -101,13 +101,10 @@ A view or macro may read objects of another database, and a table may take a col
 
 The same holds between concurrent transactions: when one transaction drops an object and another adds a reference to it from another database, whichever commits second fails at `COMMIT` and changes nothing.
 
-## Limitations on Reclaiming Disk Space
+## Reclaiming Disk Space
 
-Running `DROP TABLE` should free the memory used by the table, but not always disk space.
-Even if disk space does not decrease, the free blocks will be marked as `free`.
-For example, if we have a 2 GB file and we drop a 1 GB table, the file might still be 2 GB, but it should have 1 GB of free blocks in it.
-To check this, use the following `PRAGMA` and check the number of `free_blocks` in the output:
+`DROP TABLE`, `DROP INDEX` and `DROP DATABASE` remove the files of the dropped objects once the dropping transaction commits and no running query reads them; while a [backup](../../../operations/backup.md) runs, the files stay until `pg_backup_stop`. `PRAGMA database_size` reports, for each database, the size of its tables and indexes in `database_size`:
 
 <SqlLogicTest id="sql/statements/drop/index/example_013" />
 
-To reclaim space after dropping a table, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database--to).
+In an attached DuckDB database file, `DROP TABLE` marks the table's blocks as free without shrinking the file, and `PRAGMA database_size` counts them in `free_blocks`. To reclaim that space, use the `CHECKPOINT` statement or create a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database--to).

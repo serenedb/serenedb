@@ -15,7 +15,7 @@ CREATE TEXT SEARCH DICTIONARY lkf_en AS
 
 
 statement ok
-CREATE TABLE lkf (id INT PRIMARY KEY, body VARCHAR, val INT, g INT);
+CREATE TABLE lkf (id INT PRIMARY KEY, body VARCHAR, val INT, g INT) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 # tf tiers for BM25 (1 + i % 5 repeats); val = i is a LOOKUP column (not
@@ -29,12 +29,7 @@ FROM generate_series(1, 50000) t(i);
 statement ok
 CREATE INDEX lkf_idx ON lkf
     USING inverted(id, body lkf_en)
-    INCLUDE (g)
-    WITH (optimize_top_k = 'bm25(1.2, 0.75)');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) lkf;
+    INCLUDE (g);
 
 
 # --- streaming lookup filter -------------------------------------------------

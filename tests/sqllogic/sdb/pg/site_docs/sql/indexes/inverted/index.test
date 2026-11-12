@@ -24,9 +24,6 @@ statement ok
 CREATE INDEX articles_idx ON articles
     USING inverted (id, title english_dict, body english_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) articles;
-
 query
 SELECT id, title FROM articles_idx WHERE body @@ 'search' ORDER BY id;
 ----
@@ -55,9 +52,6 @@ CREATE INDEX pages_idx ON pages
     USING inverted (id, body english_dict)
     INCLUDE (url);
 
-statement ok
-VACUUM (REFRESH_TABLE) pages;
-
 query
 SELECT id, url FROM pages_idx WHERE body @@ 'tuning' ORDER BY id;
 ----
@@ -84,9 +78,6 @@ INSERT INTO products VALUES
 statement ok
 CREATE INDEX products_idx ON products
     USING inverted (id, name english_dict, category);
-
-statement ok
-VACUUM (REFRESH_TABLE) products;
 
 query
 SELECT id, name FROM products_idx WHERE category @@ 'footwear' ORDER BY id;
@@ -127,9 +118,6 @@ statement ok
 CREATE INDEX catalog_idx ON catalog
     USING inverted (id, name english_dict, category, price);
 
-statement ok
-VACUUM (REFRESH_TABLE) catalog;
-
 query
 SELECT id, name, price
 FROM catalog_idx
@@ -151,7 +139,7 @@ CREATE VIEW recent_articles AS
 
 statement ok
 CREATE INDEX recent_articles_idx ON recent_articles
-    USING inverted (id, body english_dict);
+    USING inverted (id, body english_dict) INCLUDE (id, title);
 
 query
 SELECT id, title FROM recent_articles_idx WHERE body @@ 'search' ORDER BY id;

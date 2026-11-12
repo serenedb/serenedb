@@ -14,7 +14,7 @@ CREATE TEXT SEARCH DICTIONARY sio_plain AS
 
 statement ok
 CREATE TABLE sio (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 
 statement ok
@@ -30,7 +30,7 @@ INSERT INTO sio VALUES (1, 'running fast'), (2, 'run home');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) sio;
+VACUUM (FLUSH_TABLE) sio;
 
 
 query

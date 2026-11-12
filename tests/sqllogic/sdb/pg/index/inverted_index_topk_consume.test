@@ -14,7 +14,7 @@ CREATE TEXT SEARCH DICTIONARY tk_d AS split_text_csv(' ')
   WITH (frequency, position);
 
 statement ok
-CREATE TABLE tk(id INTEGER PRIMARY KEY, body TEXT, tag TEXT, n INTEGER);
+CREATE TABLE tk(id INTEGER PRIMARY KEY, body TEXT, tag TEXT, n INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO tk VALUES
@@ -25,11 +25,7 @@ INSERT INTO tk VALUES
   (5, 'dog', 'e', 50);
 
 statement ok
-CREATE INDEX tk_idx ON tk USING inverted(id, body tk_d) INCLUDE (tag, n)
-    WITH (refresh_interval = 0, compaction_interval = 0);
-
-statement ok
-VACUUM (REFRESH_TABLE) tk;
+CREATE INDEX tk_idx ON tk USING inverted(id, body tk_d) INCLUDE (tag, n);
 
 
 # The ordering key is not selected, so the scan projects the one column asked
@@ -42,7 +38,7 @@ EXPLAIN SELECT id FROM tk_idx WHERE body @@ 'fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tk_idx               │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -74,7 +70,7 @@ EXPLAIN SELECT id, bm25(tk_idx.tableoid) AS s FROM tk_idx WHERE body @@ 'fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: tk_idx                          │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -97,7 +93,7 @@ EXPLAIN SELECT id FROM tk_idx WHERE body @@ 'fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tk_idx               │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -129,7 +125,7 @@ EXPLAIN SELECT tag, id FROM tk_idx WHERE body @@ 'fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tk_idx               │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -137,8 +133,7 @@ QUERY PLAN
 │ ╰─────────────────────╯     │
 │ Score: bm25(k1=1.2, b=0.75) │
 │ Top: 2                      │
-│ Projections: tag (i),       │
-│              id (l)         │
+│ Projections: tag, id        │
 │ ~1 row                      │
 ╰─────────────────────────────╯
 
@@ -167,8 +162,8 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: tk_idx                    │
-│ Lookup: table                    │
-│ Projections: id (l), n (i)       │
+│ Lookup: search                   │
+│ Projections: id, n               │
 │ Column Filter:                   │
 │ optional: Dynamic Filter (n > ?) │
 │ ~5 rows                          │
@@ -212,7 +207,7 @@ EXPLAIN SELECT id FROM tk_idx WHERE body @@ 'fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: tk_idx               │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │

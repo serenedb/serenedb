@@ -17,9 +17,6 @@ INSERT INTO hnsw_bq SELECT i,
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_bq;
-
 query
 SELECT pk FROM hnsw_bq_idx
   ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -71,9 +68,6 @@ CREATE INDEX hnsw_bq2_idx ON hnsw_bq2
 statement ok
 INSERT INTO hnsw_bq2 SELECT pk, emb FROM hnsw_bq;
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_bq2;
-
 query
 SELECT pk FROM hnsw_bq2_idx
   ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -94,9 +88,6 @@ CREATE INDEX hnsw_bq_ip_idx ON hnsw_bq_ip
 
 statement ok
 INSERT INTO hnsw_bq_ip SELECT pk, emb FROM hnsw_bq;
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_bq_ip;
 
 query
 SELECT pk FROM hnsw_bq_ip_idx
@@ -123,9 +114,6 @@ INSERT INTO hnsw_bq_cos VALUES
   (3, [0, 0, 1, 0]::FLOAT[4]),
   (4, [0, 0, 0, 1]::FLOAT[4]);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_bq_cos;
-
 query
 SELECT pk FROM hnsw_bq_cos_idx
   ORDER BY emb <=> [0, 0, 3, 0]::FLOAT[4] LIMIT 1;
@@ -148,9 +136,6 @@ INSERT INTO hnsw_bq_cos1 VALUES
   (3, [0, 0, 1, 0]::FLOAT[4]),
   (4, [0, 0, 0, 1]::FLOAT[4]),
   (5, [0.9, 0.1, 0, 0]::FLOAT[4]);
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_bq_cos1;
 
 query
 SELECT pk FROM hnsw_bq_cos1_idx
@@ -181,9 +166,6 @@ INSERT INTO ivf_bq VALUES
   (5, [0, 0, 100]::FLOAT[3]),
   (6, [0, 0, 101]::FLOAT[3])
 
-statement ok
-VACUUM (REFRESH_TABLE) ivf_bq;
-
 query
 SELECT pk FROM ivf_bq_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
 ----
@@ -209,9 +191,6 @@ CREATE INDEX ivf_bq1_idx ON ivf_bq1
 statement ok
 INSERT INTO ivf_bq1 SELECT pk, emb FROM ivf_bq;
 
-statement ok
-VACUUM (REFRESH_TABLE) ivf_bq1;
-
 query
 SELECT pk FROM ivf_bq1_idx
   WHERE emb <-> [100, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
@@ -230,9 +209,6 @@ count
 
 statement ok
 DELETE FROM hnsw_bq WHERE pk = 43;
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_bq;
 
 query
 SELECT pk FROM hnsw_bq_idx

@@ -1105,9 +1105,6 @@ CREATE INDEX cm_ff_idx ON cm_ff USING inverted (id, s cm_lower);
 statement ok
 INSERT INTO cm_ff VALUES (1, 'AB' || chr(65535) || 'C'), (2, 'AB' || chr(65534) || 'C');
 
-statement ok
-VACUUM (REFRESH_TABLE) cm_ff;
-
 query
 SELECT id FROM cm_ff_idx WHERE s @@ ts_like('ab%c') ORDER BY id;
 ----

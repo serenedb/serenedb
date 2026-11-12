@@ -5,10 +5,13 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE act (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 SET GLOBAL checkpoint_threshold = '64KB';
+
+statement ok
+SET GLOBAL max_wal_size = '64KB';
 
 statement ok
 INSERT INTO act SELECT 1000 + j, repeat('p', 1000) FROM range(50) r(j);
@@ -20,7 +23,7 @@ statement ok
 INSERT INTO act SELECT 3000 + j, repeat('p', 1000) FROM range(50) r(j);
 
 statement ok
-VACUUM (REFRESH_TABLE) act;
+VACUUM (FLUSH_TABLE) act;
 
 statement ok
 DELETE FROM act WHERE id % 2 = 0;
@@ -38,7 +41,7 @@ statement ok
 INSERT INTO act SELECT 6000 + j, repeat('p', 1000) FROM range(50) r(j);
 
 statement ok
-VACUUM (REFRESH_TABLE) act;
+VACUUM (FLUSH_TABLE) act;
 
 statement ok
 DELETE FROM act WHERE id % 2 = 0;
@@ -53,7 +56,7 @@ statement ok
 INSERT INTO act SELECT 9000 + j, repeat('p', 1000) FROM range(50) r(j);
 
 statement ok
-VACUUM (REFRESH_TABLE) act;
+VACUUM (FLUSH_TABLE) act;
 
 statement ok
 DELETE FROM act WHERE id % 2 = 0;
@@ -71,13 +74,13 @@ statement ok
 INSERT INTO act SELECT 12000 + j, repeat('p', 1000) FROM range(50) r(j);
 
 statement ok
-VACUUM (REFRESH_TABLE) act;
+VACUUM (FLUSH_TABLE) act;
 
 statement ok
 DELETE FROM act WHERE id % 2 = 0;
 
 statement ok
-VACUUM (REFRESH_TABLE) act;
+VACUUM (FLUSH_TABLE) act;
 
 query
 SELECT count(*) AS n, sum(id) AS s, min(id) AS lo, max(id) AS hi FROM act;
@@ -104,3 +107,7 @@ n	s	lo	hi
 connection after_crash
 statement ok
 SET GLOBAL checkpoint_threshold = '16MB';
+
+connection after_crash
+statement ok
+RESET GLOBAL max_wal_size;

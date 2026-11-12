@@ -38,10 +38,6 @@ INSERT INTO cwi_con VALUES (3, 'bad check', -1);
 db error: ERROR: CHECK constraint failed on table "cwi_con" with expression CHECK((n > 0))
 
 
-statement ok
-VACUUM (REFRESH_TABLE) cwi_con;
-
-
 # Only the valid row is indexed; the two rejected rows never reached it.
 query
 SELECT a FROM cwi_con_inv WHERE body @@ ts_phrase('valid row');
@@ -109,7 +105,8 @@ INSERT INTO cwi_uniq VALUES (1, 'A', 'first body');
 statement error
 INSERT INTO cwi_uniq VALUES (2, 'A', 'dup body');
 ----
-db error: ERROR: Duplicate key "code: A" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "cwi_uniq_code"
+DETAIL: Key (code)=(A) already exists.
 
 
 statement ok
@@ -133,10 +130,6 @@ INSERT INTO cwi_gen(a, b) VALUES (1, 'hello world');
 
 statement count 1
 UPDATE cwi_gen SET b = 'goodbye world' WHERE a = 1;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cwi_gen;
 
 
 # The generated column recomputed on UPDATE and the index followed: the new
@@ -179,10 +172,6 @@ INSERT INTO cwi_oc VALUES (1, 'replaced text') ON CONFLICT (a) DO UPDATE SET bod
 
 statement count 0
 INSERT INTO cwi_oc VALUES (1, 'ignored text') ON CONFLICT DO NOTHING;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cwi_oc;
 
 
 query

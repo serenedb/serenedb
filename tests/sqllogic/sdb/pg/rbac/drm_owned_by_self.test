@@ -83,12 +83,11 @@ statement ok
 ALTER TABLE obs_clickclack OWNER TO obs_vedernikoff;
 
 
-# DROP ROLE is refused while the role owns the table (PG: 2BP01). The DETAIL
-# names the owned object in PG but only counts dependents in serenedb -> ignore.
 statement error
 DROP ROLE obs_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "obs_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it
+DETAIL: owner of table obs_clickclack
 
 
 # Re-own the table to remove the dependency -> the drop now succeeds.
@@ -113,7 +112,7 @@ ALTER TABLE obs_clickclack OWNER TO obs_vedernikoff;
 statement error
 DROP ROLE obs_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "obs_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -150,7 +149,7 @@ ALTER TABLE obs_t2 OWNER TO obs_vedernikoff;
 statement error
 DROP ROLE obs_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "obs_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Re-own only the first: still refused, the second remains.
@@ -161,7 +160,7 @@ ALTER TABLE obs_t1 OWNER TO postgres;
 statement error
 DROP ROLE obs_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "obs_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Re-own the second too: no dependency left -> drop succeeds.
@@ -203,14 +202,14 @@ ALTER TABLE obs_clickclack OWNER TO obs_vedernikoff;
 statement error
 DROP ROLE obs_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "obs_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # A plain DROP TABLE (RESTRICT) is itself blocked: the view depends on it.
 statement error
 DROP TABLE obs_clickclack;
 ----
-db error: ERROR: Cannot drop entry "obs_clickclack" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: cannot drop table obs_clickclack because other objects depend on it<slt:ignore>
 
 
 # CASCADE drops the view along with the table, clearing the ownership dependency.
@@ -290,7 +289,7 @@ connection c_bab2 user=obs_babsky password=obs_babsky_pw
 statement error
 DROP ROLE obs_clickclack;
 ----
-db error: ERROR: Cannot drop entry "obs_clickclack" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "obs_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Clear the dependency and let babsky drop the role it created.

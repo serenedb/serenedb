@@ -36,7 +36,7 @@ Seeded, so `prepare` always writes the same files.
 ## Engines
 
 - **Lucene**, in-process in the benchmark JVM: `InetAddressPoint` for hosts, `InetAddressRange` for networks, `IntPoint`, `StringField`; `IndexSearcher.count` with the query cache off. Ingestion is parse + `addDocument` on N threads + `commit` + opening the reader.
-- **SereneDB**: `CREATE INDEX ... USING inverted (col)` on an empty table, then `COPY` and `VACUUM (REFRESH_TABLE)`; queries read the index (`FROM <index>`).
+- **SereneDB**: `CREATE INDEX ... USING inverted (col)` on an empty table, then `COPY` and `VACUUM (FLUSH_TABLE)`; queries read the index (`FROM <index>`).
 - **PostgreSQL**: `COPY`, `VACUUM (ANALYZE)` (reported, not counted), then `CREATE INDEX`. Hosts and networks get a B-tree plus GiST `inet_ops`, then the GiST index is replaced with SP-GiST `inet_ops` and every query runs again. `INTEGER` gets a B-tree, `VARCHAR` a B-tree on a `COLLATE "C"` column, so `LIKE 'abc%'` and ranges can use it. The plan column says which index PostgreSQL chose; it may prefer a seq scan.
 
 SereneDB and PostgreSQL run over pg-wire with the same client: pgjdbc, one connection, one server-side prepared `SELECT count(*)`, the same number of runs per query for all three engines. The report states the `SELECT 1` round trip of both servers, the floor every SQL latency includes and Lucene does not.

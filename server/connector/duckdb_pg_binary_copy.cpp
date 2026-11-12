@@ -39,7 +39,6 @@
 #include <vector>
 
 #include "connector/copy_from_batches.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "pg/connection_context.h"
 #include "pg/serialize.h"
@@ -105,7 +104,8 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   // CopyData framing), so it never reaches this CopyFunction. If it somehow
   // does, the session failed to route it -- fail clearly rather than emit an
   // unframed PGCOPY stream into a send buffer that expects CopyData.
-  if (file_path == "/dev/stdout") {
+  if (file_path == "/dev/stdout" &&
+      ConnectionContext::Get(context).GetSendBuffer()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("COPY ... TO STDOUT (FORMAT binary) must be routed through the "
@@ -122,9 +122,7 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
                  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
   result->file_buffer =
     duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
-  if (auto* connection = GetSereneDBContextPtr(context)) {
-    sdb::pg::FillContext(*connection, result->ctx);
-  }
+  sdb::pg::FillContext(ConnectionContext::Get(context), result->ctx);
   result->serializers.reserve(bdata.sql_types.size());
   for (const auto& type : bdata.sql_types) {
     result->serializers.push_back(
@@ -215,7 +213,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   duckdb::vector<duckdb::LogicalType>& expected_types) {
   auto result = duckdb::make_uniq<PgBinaryCopyFromBindData>(
     expected_types, input.info.file_path);
-  result->ordered = BindCopyFrom(context, input, true);
+  result->ordered = BindCopyFrom(context, input);
   return result;
 }
 

@@ -1,28 +1,28 @@
 control substitution on
 
 statement ok
-CREATE TABLE ebl (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+CREATE TABLE ebl (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ebl_idx ON ebl
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq8'))
-  INCLUDE (tag) WITH (compaction_interval = 0);
+  INCLUDE (tag);
 
 statement ok
-CREATE TABLE ebi (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+CREATE TABLE ebi (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ebi_idx ON ebi
   USING inverted(pk, emb hnsw (metric = 'ip', quant = 'usq8'))
-  INCLUDE (tag) WITH (compaction_interval = 0);
+  INCLUDE (tag);
 
 statement ok
-CREATE TABLE ebc (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+CREATE TABLE ebc (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER) WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ebc_idx ON ebc
   USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'sq8'))
-  INCLUDE (tag) WITH (compaction_interval = 0);
+  INCLUDE (tag);
 
 statement ok
 CREATE TABLE eb_src AS SELECT i AS pk,
@@ -44,13 +44,13 @@ statement ok
 INSERT INTO ebc SELECT * FROM eb_src WHERE pk < 2000;
 
 statement ok
-VACUUM (REFRESH_TABLE) ebl;
+VACUUM (FLUSH_TABLE) ebl;
 
 statement ok
-VACUUM (REFRESH_TABLE) ebi;
+VACUUM (FLUSH_TABLE) ebi;
 
 statement ok
-VACUUM (REFRESH_TABLE) ebc;
+VACUUM (FLUSH_TABLE) ebc;
 
 statement ok
 INSERT INTO ebl SELECT * FROM eb_src WHERE pk >= 2000;
@@ -69,15 +69,6 @@ INSERT INTO ebi VALUES (5000, NULL, 3);
 
 statement ok
 INSERT INTO ebc VALUES (5000, NULL, 3);
-
-statement ok
-VACUUM (REFRESH_TABLE) ebl;
-
-statement ok
-VACUUM (REFRESH_TABLE) ebi;
-
-statement ok
-VACUUM (REFRESH_TABLE) ebc;
 
 statement ok
 SET sdb_ann_force_exact = true;
@@ -188,9 +179,6 @@ count
 
 statement ok
 DELETE FROM ebl WHERE pk % 20 = 0;
-
-statement ok
-VACUUM (REFRESH_TABLE) ebl;
 
 query
 WITH w AS (SELECT pk FROM ebl_idx

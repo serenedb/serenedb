@@ -11,7 +11,7 @@ CREATE INDEX ppa_idx ON ppa
 
 statement ok
 CREATE TABLE ppas (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX ppas_idx ON ppas
@@ -26,12 +26,6 @@ statement ok
 INSERT INTO ppas SELECT i, i % 10,
   CASE WHEN i < 5 THEN repeat('zeta ', i + 1) || 'alpha' ELSE 'alpha' END,
   [i, 0]::FLOAT[2] FROM range(100) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) ppa;
-
-statement ok
-VACUUM (REFRESH_TABLE) ppas;
 
 statement ok
 PREPARE ppa_knn AS SELECT pk FROM ppa_idx WHERE v = $1
@@ -259,12 +253,6 @@ INSERT INTO ppas SELECT i, i,
 statement ok
 INSERT INTO ppas VALUES (200, 5000, 'beta', [500, 0]);
 
-statement ok
-VACUUM (REFRESH_TABLE) ppa;
-
-statement ok
-VACUUM (REFRESH_TABLE) ppas;
-
 query
 EXECUTE ppa_knn(3, [150, 0], 2);
 ----
@@ -436,9 +424,6 @@ statement ok
 INSERT INTO ppr SELECT i, i % 10, (i % 7)::VARCHAR, i % 4 = 0 FROM range(100) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ppr;
-
-statement ok
 PREPARE ppr_range(text) AS SELECT count(*) AS n FROM ppr_idx
   WHERE v >= ltrim($1, 'x')::int;
 
@@ -475,7 +460,71 @@ n
 25
 
 statement ok
+CREATE TABLE ppu (id UUID PRIMARY KEY, v INTEGER);
+
+statement ok
+INSERT INTO ppu VALUES ('00000000-0000-0000-0000-000000000001', 1), ('00000000-0000-0000-0000-000000000002', 2), ('00000000-0000-0000-0000-000000000003', 3);
+
+statement ok
+PREPARE ppu_eq(uuid) AS SELECT v FROM ppu WHERE id = $1;
+
+query
+EXECUTE ppu_eq('00000000-0000-0000-0000-000000000002');
+----
+v
+2
+
+statement ok
+PREPARE ppu_in(uuid, uuid) AS SELECT v FROM ppu WHERE id IN ($1, $2) ORDER BY v;
+
+query
+EXECUTE ppu_in('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000009');
+----
+v
+3
+
+statement ok
+PREPARE ppu_delete(uuid) AS DELETE FROM ppu WHERE id = $1;
+
+statement ok
+EXECUTE ppu_delete('00000000-0000-0000-0000-000000000001');
+
+query
+SELECT v FROM ppu ORDER BY v;
+----
+v
+2
+3
+
+statement ok
+CREATE TYPE ppm_mood AS ENUM ('happy', 'sad');
+
+statement ok
+CREATE TABLE ppm (m ppm_mood PRIMARY KEY, v INTEGER);
+
+statement ok
+INSERT INTO ppm VALUES ('happy', 1), ('sad', 2);
+
+statement ok
+PREPARE ppm_eq(ppm_mood) AS SELECT v FROM ppm WHERE m = $1;
+
+query
+EXECUTE ppm_eq('sad');
+----
+v
+2
+
+statement ok
 DEALLOCATE ALL;
+
+statement ok
+DROP TABLE ppm;
+
+statement ok
+DROP TYPE ppm_mood;
+
+statement ok
+DROP TABLE ppu;
 
 statement ok
 DROP TABLE ppr;

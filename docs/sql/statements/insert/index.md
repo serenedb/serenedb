@@ -96,6 +96,8 @@ This raises a constraint error. The table will contain the row that was first in
 These error messages can be avoided by explicitly handling conflicts.
 SereneDB supports two such clauses: [`ON CONFLICT DO NOTHING`](#do-nothing-clause) and [`ON CONFLICT DO UPDATE SET ...`](#do-update-clause-upsert).
 
+A conflict is found against the rows of the statement's snapshot. When another transaction commits the same key after that snapshot was taken, the statement fails with `could not serialize access due to concurrent update`, at the statement or at its `COMMIT`, and a retry takes the conflict path; see [Isolation Level](../transactions.md#isolation-level).
+
 ### `DO NOTHING` Clause
 
 The `DO NOTHING` clause causes the error(s) to be ignored, and the values are not inserted or updated.

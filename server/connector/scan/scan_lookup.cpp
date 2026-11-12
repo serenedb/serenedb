@@ -26,6 +26,7 @@
 
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
+#include "connector/row_position.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/scan/scan_plan.h"
@@ -42,8 +43,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> LookupInitGlobal(
   auto state = duckdb::make_uniq<ScanGlobalState>();
   InitScanState(*state, &context, bind, input);
   state->scan = &bind;
-  state->snapshot = bind.Snapshot(context);
-  state->reader = &state->snapshot->reader;
+  state->view = bind.Read(context);
+  state->reader = state->view.reader;
   state->total_segments = state->reader->size();
   state->workers =
     duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
@@ -86,8 +87,9 @@ duckdb::OperatorResultType LookupFunction(duckdb::ExecutionContext& context,
   l.hits.resize(count);
   for (duckdb::idx_t r = 0; r < count; ++r) {
     const auto address = addresses[l.order[r]].GetValue();
-    l.hits[r] = {.doc = static_cast<irs::doc_id_t>(address),
-                 .segment_idx = static_cast<uint32_t>(address >> 32)};
+    l.hits[r] = {
+      .doc = RowPositionDoc(static_cast<uint64_t>(address)),
+      .segment_idx = RowPositionIndex(static_cast<uint64_t>(address))};
   }
   l.fetched.Reset();
   duckdb::idx_t appended = 0;
@@ -134,7 +136,6 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> LookupToStringValue(
 }
 
 struct SourceLookupLocalState final : duckdb::LocalTableFunctionState {
-  search::StoreSnapshotPtr snapshot;
   std::unique_ptr<irs::IndexSource> source;
 };
 
@@ -158,9 +159,10 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SourceLookupInitLocal(
     types.push_back(column_index.HasType() ? column_index.GetScanType()
                                            : bind.columns.types[bind_col]);
   }
-  state->snapshot = bind.Snapshot(context.client);
-  state->source = MakeIndexSource(context.client, bind, *state->snapshot,
-                                  columns, types, bind.columns.ids);
+  state->source = MakeIndexSource(
+    context.client, bind,
+    bind.IsViewBacked() ? bind.Read(context.client).manifest : nullptr, columns,
+    types, bind.columns.ids);
   return state;
 }
 

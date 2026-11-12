@@ -67,6 +67,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
+#include "pg/connection_context.h"
 #include "pg/types/char.h"
 #include "pg/types/float.h"
 #include "pg/types/geometric.h"
@@ -2829,7 +2830,8 @@ void ByteaOutEscape(char* buf, std::string_view value) {
   }
 }
 
-void FillContext(const Config& config, SerializationContext& context) {
+void FillContext(duckdb::ClientContext& client, SerializationContext& context) {
+  auto& config = ConnectionContext::Get(client);
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
   std::string tz_name{config.GetTimeZone()};
@@ -2841,7 +2843,7 @@ void FillContext(const Config& config, SerializationContext& context) {
   } else {
     context.zone_lut.reset();
   }
-  context.client = &config.GetClientContext();
+  context.client = &client;
   context.caches.reset();
 }
 

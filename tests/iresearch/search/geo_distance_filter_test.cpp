@@ -414,8 +414,8 @@ TEST(GeoDistanceFilterTest, query) {
 
   // index data
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -448,10 +448,9 @@ TEST(GeoDistanceFilterTest, query) {
     reader = writer->GetSnapshot();
   }
 
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(2U, reader->size());
-  ASSERT_EQ(docs.size(), reader->docs_count());
-  ASSERT_EQ(docs.size(), reader->live_docs_count());
+  ASSERT_EQ(2U, reader.size());
+  ASSERT_EQ(docs.size(), reader.docs_count());
+  ASSERT_EQ(docs.size(), reader.live_docs_count());
 
   auto execute_query = [&reader](GeoDistanceFilter q,
                                  const std::vector<uint64_t>& costs,
@@ -479,9 +478,9 @@ TEST(GeoDistanceFilterTest, query) {
 
     MaxMemoryCounter counter;
     std::optional<::tests::PreparedFilter> prepared{std::in_place, *optimized,
-                                                    *reader, nullptr, counter};
+                                                    reader, nullptr, counter};
     auto expected_cost = costs.begin();
-    for (size_t i = 0; auto& segment : *reader) {
+    for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
@@ -924,8 +923,8 @@ TEST(GeoDistanceFilterTest, checkScorer) {
 
   // index data
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -958,16 +957,15 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     reader = writer->GetSnapshot();
   }
 
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(2, reader->size());
-  ASSERT_EQ(docs.size(), reader->docs_count());
-  ASSERT_EQ(docs.size(), reader->live_docs_count());
+  ASSERT_EQ(2, reader.size());
+  ASSERT_EQ(docs.size(), reader.docs_count());
+  ASSERT_EQ(docs.size(), reader.live_docs_count());
 
   auto execute_query = [&](const irs::Filter& q, const irs::Scorer& ord) {
     std::map<std::string, irs::score_t> actual_results;
 
-    ::tests::PreparedFilter prepared{q, *reader, &ord};
-    for (size_t i = 0; [[maybe_unused]] auto& segment : *reader) {
+    ::tests::PreparedFilter prepared{q, reader, &ord};
+    for (size_t i = 0; [[maybe_unused]] auto& segment : reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};

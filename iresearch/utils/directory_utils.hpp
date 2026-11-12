@@ -39,6 +39,8 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name);
 // return success
 bool RemoveAllUnreferenced(Directory& dir);
 
+uint64_t MaxSegmentId(const Directory& dir);
+
 }  // namespace directory_utils
 
 // Track files created/opened via file names
@@ -59,10 +61,6 @@ struct TrackingDirectory final : public Directory {
 
   bool length(uint64_t& result, std::string_view name) const noexcept final {
     return _impl.length(result, name);
-  }
-
-  IndexLock::ptr make_lock(std::string_view name) noexcept final {
-    return _impl.make_lock(name);
   }
 
   bool mtime(std::time_t& result, std::string_view name) const noexcept final {
@@ -87,7 +85,7 @@ struct TrackingDirectory final : public Directory {
 
   std::vector<std::string> FlushTracked(uint64_t& files_size);
 
-  void ClearTracked() noexcept;
+  void RemoveTracked() noexcept;
 
  private:
   using FileSet = absl::flat_hash_set<std::string>;
@@ -122,10 +120,6 @@ struct RefTrackingDirectory : public Directory {
 
   bool length(uint64_t& result, std::string_view name) const noexcept final {
     return _impl.length(result, name);
-  }
-
-  IndexLock::ptr make_lock(std::string_view name) noexcept final {
-    return _impl.make_lock(name);
   }
 
   bool mtime(std::time_t& result, std::string_view name) const noexcept final {

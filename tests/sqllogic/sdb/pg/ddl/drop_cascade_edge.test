@@ -9,18 +9,18 @@ CREATE TABLE clickclack_dashboard (id BIGINT DEFAULT nextval('public.clickclack_
 statement error
 DROP TABLE clickclack_query_log;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
-table "clickclack_dashboard" depends on sequence "clickclack_query_log_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table clickclack_query_log because other objects depend on it
+DETAIL: default value for column id of table clickclack_dashboard depends on sequence clickclack_query_log_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP TABLE clickclack_query_log RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_query_log_id_seq" because there are entries that depend on it.
-table "clickclack_dashboard" depends on sequence "clickclack_query_log_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table clickclack_query_log because other objects depend on it
+DETAIL: default value for column id of table clickclack_dashboard depends on sequence clickclack_query_log_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -172,9 +172,9 @@ INSERT INTO clickclack_ingest_log (v) VALUES ('r');
 statement error
 DROP TABLE clickclack_ingest_job RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ingest_job_b_seq" because there are entries that depend on it.
-table "clickclack_ingest_log" depends on sequence "clickclack_ingest_job_b_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table clickclack_ingest_job because other objects depend on it
+DETAIL: default value for column id of table clickclack_ingest_log depends on sequence clickclack_ingest_job_b_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -248,9 +248,9 @@ INSERT INTO public.clickclack_audit_ref (v) VALUES ('cross');
 statement error
 DROP TABLE iceberg_audits.snapshots;
 ----
-db error: ERROR: Cannot drop entry "snapshots_id_seq" because there are entries that depend on it.
-table "clickclack_audit_ref" depends on sequence "snapshots_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table iceberg_audits.snapshots because other objects depend on it
+DETAIL: default value for column id of table clickclack_audit_ref depends on sequence iceberg_audits.snapshots_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

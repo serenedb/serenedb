@@ -1,0 +1,126 @@
+statement ok
+CREATE SCHEMA css_a;
+
+statement ok
+CREATE SCHEMA css_b;
+
+statement ok
+CREATE TABLE css_a.t (id INT, d DOUBLE);
+
+statement ok
+CREATE TABLE css_b.t (id INT, d DOUBLE);
+
+statement ok
+INSERT INTO css_a.t VALUES (1, 1.0000001);
+
+statement ok
+INSERT INTO css_b.t VALUES (2, 1.0000002), (3, 1.0000002);
+
+query
+SELECT (SELECT sum(id) FROM css_a.t) AS a, (SELECT sum(id) FROM css_b.t) AS b;
+----
+a	b
+1	5
+
+query
+SELECT x.s AS a, y.s AS b
+FROM (SELECT sum(id) AS s FROM css_a.t) x, (SELECT sum(id) AS s FROM css_b.t) y;
+----
+a	b
+1	5
+
+query
+EXPLAIN SELECT x.s AS a, y.s AS b
+FROM (SELECT sum(id) AS s FROM css_a.t) x, (SELECT sum(id) AS s FROM css_b.t) y;
+----
+QUERY PLAN
+╭─ CROSS_PRODUCT ─────────────────╮
+╰────────────────┬────────────────╯
+                 ├────────────────────────────────────╮
+╭─ UNGROUPED_AGGREGATE ───────────╮  ╭─ UNGROUPED_AGGREGATE ───────────╮
+│ Aggregates: sum_no_overflow(#0) │  │ Aggregates: sum_no_overflow(#0) │
+│ ~1 row                          │  │ ~1 row                          │
+╰────────────────┬────────────────╯  ╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮  ╭─ IRESEARCH_SCAN ────────────────╮
+│ Table: t                        │  │ Table: t                        │
+│ Projections: id                 │  │ Projections: id                 │
+│ ~1 row                          │  │ ~2 rows                         │
+╰─────────────────────────────────╯  ╰─────────────────────────────────╯
+
+query
+SELECT x.s AS a, y.s AS b
+FROM (SELECT sum(id) AS s FROM css_a.t) x, (SELECT sum(id) AS s FROM css_a.t) y;
+----
+a	b
+1	1
+
+query
+EXPLAIN SELECT x.s AS a, y.s AS b
+FROM (SELECT sum(id) AS s FROM css_a.t) x, (SELECT sum(id) AS s FROM css_a.t) y;
+----
+QUERY PLAN
+╭─ CTE ──────────────────────────────╮
+│ CTE Name: __common_subplan_1       │
+│ Table Index: 20                    │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+                   ├─────────────────────────────╮
+╭─ UNGROUPED_AGGREGATE ──────────────╮  ╭─ CROSS_PRODUCT ─╮
+│ Aggregates: sum_no_overflow(#0)    │  ╰────────┬────────╯
+│ ~1 row                             │           ├───────────────────╮
+╰──────────────────┬─────────────────╯  ╭─ CTE_SCAN ──────╮  ╭─ CTE_SCAN ────╮
+╭─ IRESEARCH_SCAN ─┴─────────────────╮  │ CTE Index: 20   │  │ CTE Index: 20 │
+│ Table: t                           │  │ ~1 row          │  │ ~1 row        │
+│ Projections: id                    │  ╰─────────────────╯  ╰───────────────╯
+│ ~1 row                             │
+╰────────────────────────────────────╯
+
+statement ok
+INSERT INTO css_a.t VALUES (2, 1.0000002), (3, 1.0000002);
+
+statement ok
+CREATE INDEX css_a_t_d ON css_a.t (d);
+
+query
+SELECT (SELECT sum(id) FROM css_a.t WHERE d = 1.0000001) AS a, (SELECT sum(id) FROM css_a.t WHERE d = 1.0000002) AS b;
+----
+a	b
+1	5
+
+query
+SELECT x.s AS a, y.s AS b
+FROM (SELECT sum(id) AS s FROM css_a.t WHERE d = 1.0000001) x, (SELECT sum(id) AS s FROM css_a.t WHERE d = 1.0000002) y;
+----
+a	b
+1	5
+
+query
+EXPLAIN SELECT x.s AS a, y.s AS b
+FROM (SELECT sum(id) AS s FROM css_a.t WHERE d = 1.0000001) x, (SELECT sum(id) AS s FROM css_a.t WHERE d = 1.0000002) y;
+----
+QUERY PLAN
+╭─ CROSS_PRODUCT ─────────────────╮
+╰────────────────┬────────────────╯
+                 ├────────────────────────────────────╮
+╭─ UNGROUPED_AGGREGATE ───────────╮  ╭─ UNGROUPED_AGGREGATE ───────────╮
+│ Aggregates: sum_no_overflow(#0) │  │ Aggregates: sum_no_overflow(#0) │
+│ ~1 row                          │  │ ~1 row                          │
+╰────────────────┬────────────────╯  ╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮  ╭─ IRESEARCH_SCAN ────────────────╮
+│ Table: t                        │  │ Table: t                        │
+│ Index Filter:                   │  │ Index Filter:                   │
+│ ╭─ Term ────────────╮           │  │ ╭─ Term ────────────╮           │
+│ │ Field: d(numeric) │           │  │ │ Field: d(numeric) │           │
+│ │ Value: 1          │           │  │ │ Value: 1          │           │
+│ ╰───────────────────╯           │  │ ╰───────────────────╯           │
+│ Projections: id                 │  │ Projections: id                 │
+│ ~1 row                          │  │ ~1 row                          │
+╰─────────────────────────────────╯  ╰─────────────────────────────────╯
+
+query
+SELECT json_serialize_plan('SELECT sum(id) FROM css_a.t WHERE d = 1.0000001', optimize := true)::VARCHAR LIKE '%"error":true%' AS pushed_search_refused,
+       json_serialize_plan('SELECT sum(id) FROM css_b.t', optimize := true)::VARCHAR LIKE '%"error":true%' AS plain_scan_refused;
+----
+pushed_search_refused	plain_scan_refused
+t	f

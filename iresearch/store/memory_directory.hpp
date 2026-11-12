@@ -101,6 +101,8 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
 class MemoryIndexInput final : public IndexInput {
  public:
   explicit MemoryIndexInput(const MemoryFile& file) noexcept : _file{&file} {}
+  explicit MemoryIndexInput(std::shared_ptr<const MemoryFile> file) noexcept
+    : _owner{std::move(file)}, _file{_owner.get()} {}
 
   const byte_type* ReadStable(uint64_t count) noexcept final;
   const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final;
@@ -190,6 +192,7 @@ class MemoryIndexInput final : public IndexInput {
     return std::distance(_begin, _end);
   }
 
+  std::shared_ptr<const MemoryFile> _owner;
   const MemoryFile* _file;        // underline file
   const byte_type* _buf{};        // current buffer
   const byte_type* _begin{_buf};  // current position
@@ -246,8 +249,6 @@ class MemoryDirectory final : public Directory {
 
   bool length(uint64_t& result, std::string_view name) const noexcept final;
 
-  IndexLock::ptr make_lock(std::string_view name) noexcept final;
-
   bool mtime(std::time_t& result, std::string_view name) const noexcept final;
 
   IndexInput::ptr open(std::string_view name, IOAdvice advice) const final;
@@ -261,22 +262,16 @@ class MemoryDirectory final : public Directory {
   bool visit(const visitor_f& visitor) const final;
 
  private:
-  friend class SingleInstanceLock;
-
   using FilesAllocator = ManagedTypedAllocator<
-    std::pair<const std::string, std::unique_ptr<MemoryFile>>>;
+    std::pair<const std::string, std::shared_ptr<MemoryFile>>>;
   using FileMap = absl::flat_hash_map<
-    std::string, std::unique_ptr<MemoryFile>,
+    std::string, std::shared_ptr<MemoryFile>,
     absl::container_internal::hash_default_hash<std::string>,
-    absl::container_internal::hash_default_eq<std::string>,
-    FilesAllocator>;  // unique_ptr because of rename
-  using LockMap = absl::flat_hash_set<std::string>;
+    absl::container_internal::hash_default_eq<std::string>, FilesAllocator>;
 
   DirectoryAttributes _attrs;
   mutable absl::Mutex _flock;
-  absl::Mutex _llock;
   FileMap _files;
-  LockMap _locks;
 };
 
 struct MemoryOutput {

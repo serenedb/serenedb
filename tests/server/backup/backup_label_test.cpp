@@ -40,20 +40,10 @@ constexpr uint64_t kStartLsn = (uint64_t{0x65DD1} << 32) | 0xB480E1C3;
 
 Cut MakeCut() {
   Cut cut;
-  cut.catalog_link = "engine_v1/backup/catalog.wal";
-  cut.catalog_log_size = 2876;
-  cut.databases.push_back({.oid = 5,
-                           .checkpoint_iteration = 3,
-                           .wal_size = 361,
-                           .retained_from = 1,
-                           .with_failed_checkpoint = false});
-  cut.databases.push_back({.oid = 69252,
-                           .checkpoint_iteration = 2,
-                           .wal_size = 7560,
-                           .retained_from = 2,
-                           .with_failed_checkpoint = true});
-  cut.stores.push_back({.database_oid = 5, .oid = 69276, .generation = 1});
-  cut.stores.push_back({.database_oid = 69252, .oid = 69261, .generation = 7});
+  cut.log_link = "engine_v1/backup/log";
+  cut.log_size = 2876;
+  cut.stores.push_back({.oid = 69276});
+  cut.stores.push_back({.oid = 69261});
   return cut;
 }
 
@@ -79,24 +69,11 @@ TEST(BackupLabelTest, RoundTripKeepsEveryField) {
   EXPECT_EQ(parsed->system_identifier, kSystemIdentifier);
   EXPECT_EQ(parsed->start_lsn, kStartLsn);
   const auto expected = MakeCut();
-  EXPECT_EQ(parsed->cut.catalog_link, expected.catalog_link);
-  EXPECT_EQ(parsed->cut.catalog_log_size, expected.catalog_log_size);
-  ASSERT_EQ(parsed->cut.databases.size(), expected.databases.size());
-  for (size_t i = 0; i < expected.databases.size(); ++i) {
-    const auto& got = parsed->cut.databases[i];
-    const auto& want = expected.databases[i];
-    EXPECT_EQ(got.oid, want.oid);
-    EXPECT_EQ(got.checkpoint_iteration, want.checkpoint_iteration);
-    EXPECT_EQ(got.wal_size, want.wal_size);
-    EXPECT_EQ(got.retained_from, want.retained_from);
-    EXPECT_EQ(got.with_failed_checkpoint, want.with_failed_checkpoint);
-  }
+  EXPECT_EQ(parsed->cut.log_link, expected.log_link);
+  EXPECT_EQ(parsed->cut.log_size, expected.log_size);
   ASSERT_EQ(parsed->cut.stores.size(), expected.stores.size());
   for (size_t i = 0; i < expected.stores.size(); ++i) {
-    EXPECT_EQ(parsed->cut.stores[i].database_oid,
-              expected.stores[i].database_oid);
     EXPECT_EQ(parsed->cut.stores[i].oid, expected.stores[i].oid);
-    EXPECT_EQ(parsed->cut.stores[i].generation, expected.stores[i].generation);
   }
 }
 
@@ -112,9 +89,9 @@ TEST(BackupLabelTest, StartsWithThePostgresHeader) {
     "LABEL: nightly\n"
     "START TIMELINE: 1\n"))
     << text;
-  EXPECT_TRUE(absl::StrContains(
-    text, "SERENEDB DATABASE: 69252 2 7560 2 failed_checkpoint\n"));
-  EXPECT_TRUE(absl::StrContains(text, "SERENEDB DATABASE: 5 3 361 1 cut\n"));
+  EXPECT_TRUE(
+    absl::StrContains(text, "SERENEDB LOG: engine_v1/backup/log 2876\n"));
+  EXPECT_TRUE(absl::StrContains(text, "SERENEDB STORE: 69276\n"));
 }
 
 TEST(BackupLabelTest, LabelLineBreaksBecomeSpaces) {
@@ -157,29 +134,10 @@ TEST(BackupLabelTest, RejectsAnUnknownSereneDBKey) {
             "unknown backup_label line: \"SERENEDB SEARCH WAL: 5 42\"");
 }
 
-TEST(BackupLabelTest, RejectsAnUnknownDatabaseMode) {
-  const auto body =
-    absl::StrReplaceAll(Body(Build()), {{"5 3 361 1 cut", "5 3 361 1 frozen"}});
-  EXPECT_FALSE(ParseBackupLabel(WithChecksum(body)).ok());
-}
-
-TEST(BackupLabelTest, RejectsARetainedRunPastTheCheckpoint) {
-  const auto body =
-    absl::StrReplaceAll(Body(Build()), {{"5 3 361 1 cut", "5 3 361 4 cut"}});
-  EXPECT_FALSE(ParseBackupLabel(WithChecksum(body)).ok());
-}
-
-TEST(BackupLabelTest, RejectsADuplicateDatabase) {
-  EXPECT_FALSE(
-    ParseBackupLabel(
-      WithChecksum(Body(Build()) + "SERENEDB DATABASE: 5 3 0 3 cut\n"))
-      .ok());
-}
-
 TEST(BackupLabelTest, RejectsAMissingRequiredLine) {
   for (std::string_view prefix :
        {"START WAL LOCATION: ", "SERENEDB BACKUP FORMAT: ",
-        "SERENEDB SYSTEM IDENTIFIER: ", "SERENEDB CATALOG LOG: "}) {
+        "SERENEDB SYSTEM IDENTIFIER: ", "SERENEDB LOG: "}) {
     auto body = Body(Build());
     const auto at = body.find(prefix);
     ASSERT_NE(at, std::string::npos) << prefix;
@@ -219,23 +177,14 @@ TEST(BackupLabelTest, RejectsMalformedLines) {
     {"SERENEDB BACKUP FORMAT: 1\n", "SERENEDB BACKUP FORMAT: x\n"},
     {"SERENEDB SYSTEM IDENTIFIER: 7696604830604944365\n",
      "SERENEDB SYSTEM IDENTIFIER: x7696604830604944365\n"},
-    {"SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 2876\n",
-     "SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal\n"},
-    {"SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 2876\n",
-     "SERENEDB CATALOG LOG:  2876\n"},
-    {"SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 2876\n",
-     "SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 28x6\n"},
-    {"SERENEDB DATABASE: 5 3 361 1 cut\n", "SERENEDB DATABASE: cut\n"},
-    {"SERENEDB DATABASE: 5 3 361 1 cut\n", "SERENEDB DATABASE: 5 3 361 cut\n"},
-    {"SERENEDB DATABASE: 5 3 361 1 cut\n",
-     "SERENEDB DATABASE: x 3 361 1 cut\n"},
-    {"SERENEDB DATABASE: 5 3 361 1 cut\n",
-     "SERENEDB DATABASE: 5 x 361 1 cut\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5 69276 1\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: x/69276 1\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/69276\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/x 1\n"},
-    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/69276 x\n"},
+    {"SERENEDB LOG: engine_v1/backup/log 2876\n",
+     "SERENEDB LOG: engine_v1/backup/log\n"},
+    {"SERENEDB LOG: engine_v1/backup/log 2876\n", "SERENEDB LOG:  2876\n"},
+    {"SERENEDB LOG: engine_v1/backup/log 2876\n",
+     "SERENEDB LOG: engine_v1/backup/log 28x6\n"},
+    {"SERENEDB STORE: 69276\n", "SERENEDB STORE: 5/69276\n"},
+    {"SERENEDB STORE: 69276\n", "SERENEDB STORE: x\n"},
+    {"SERENEDB STORE: 69276\n", "SERENEDB STORE: 69276 1\n"},
   };
   for (const auto& c : kCases) {
     const auto body = absl::StrReplaceAll(Body(Build()), {{c.from, c.to}});

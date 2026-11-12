@@ -25,9 +25,6 @@ INSERT INTO catalog VALUES
     (4, 'green hat', 'apparel', [0.0, 0.0, 1.0]::FLOAT[3]),
     (5, 'red dress shoes', 'footwear', [0.8, 0.0, 0.2]::FLOAT[3]);
 
-statement ok
-VACUUM (REFRESH_TABLE) catalog;
-
 # DOCS_TEST_BODY
 
 query

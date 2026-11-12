@@ -3,7 +3,6 @@ target_sources(
     PRIVATE
         column_extract.cpp
         directory_reader.cpp
-        directory_reader_impl.cpp
         doc_removal.cpp
         docs_mask/chunks.cpp
         document_mask.cpp
@@ -18,6 +17,7 @@ target_sources(
         merge_writer.cpp
         norm.cpp
         segment_reader.cpp
+        segment_list.cpp
         segment_reader_impl.cpp
         segment_writer.cpp
         table_filter_iterator.cpp

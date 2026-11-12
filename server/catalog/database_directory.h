@@ -20,43 +20,42 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <atomic>
 #include <duckdb/common/typedefs.hpp>
-#include <duckdb/storage/storage_extension.hpp>
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <string>
-#include <string_view>
 
 namespace sdb::catalog {
 
-inline constexpr std::string_view kDataFile = "data.db";
-inline constexpr std::string_view kCatalogLog = "catalog.wal";
-
 void CreateDirectory(const std::filesystem::path& path);
-void RemoveDirectory(const std::filesystem::path& path);
-void RemoveTree(const std::filesystem::path& path) noexcept;
+bool RemoveDirectory(const std::filesystem::path& path);
 void DeferRemovals() noexcept;
 void ResumeRemovals();
+void BeginStorageWork() noexcept;
+void EndStorageWork(bool tidy) noexcept;
+bool StorageTidy() noexcept;
 
-class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
+class DatabaseDirectory final {
  public:
   explicit DatabaseDirectory(std::filesystem::path path);
-  ~DatabaseDirectory() final;
 
   const std::filesystem::path& Path() const noexcept { return _path; }
-  std::string DataFile() const;
   std::filesystem::path StoragePath(duckdb::idx_t oid) const;
 
-  void Create() const;
   std::filesystem::path CreateStorage(duckdb::idx_t oid) const;
   std::optional<std::filesystem::path> OpenStorage(duckdb::idx_t oid) const;
   static void RemoveStorage(std::shared_ptr<DatabaseDirectory> directory,
-                            duckdb::idx_t oid);
+                            duckdb::idx_t oid,
+                            absl::AnyInvocable<bool()> remove_files);
 
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
+  }
+  bool Dropped() const noexcept {
+    return _dropped.load(std::memory_order_acquire);
   }
 
  private:

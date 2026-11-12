@@ -24,7 +24,7 @@ skipif postgres
 statement error
 CREATE SCHEMA pg_catalog;
 ----
-db error: ERROR: Schema with name "pg_catalog" already exists!
+db error: ERROR: schema "pg_catalog" already exists
 
 
 statement error
@@ -45,7 +45,7 @@ skipif postgres
 statement error
 CREATE SCHEMA information_schema;
 ----
-db error: ERROR: Schema with name "information_schema" already exists!
+db error: ERROR: schema "information_schema" already exists
 
 
 # IF NOT EXISTS silently succeeds for system-catalog schemas

@@ -59,8 +59,6 @@ class SearchEngine final {
   void start();
   void stop();
 
-  // Launch the per-target refresh + compaction loops, registering their Futures
-  // so stop() can join them.
   void StartTasks(const std::shared_ptr<Store>& store);
 
   // Loops poll this so they bail out of long-running cycles promptly.

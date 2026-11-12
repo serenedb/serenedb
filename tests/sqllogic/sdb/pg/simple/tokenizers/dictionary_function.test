@@ -22,6 +22,12 @@ tokens
 {the,runner,were,run}
 
 
+statement error
+CREATE TEXT SEARCH DICTIONARY fnd_english AS split_text();
+----
+db error: ERROR: text search dictionary "fnd_english" already exists
+
+
 # --- A macro takes the name a dictionary already has ---
 
 statement ok

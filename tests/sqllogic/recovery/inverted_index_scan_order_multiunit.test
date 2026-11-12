@@ -37,10 +37,9 @@ onlyif serenedb
 statement ok
 INSERT INTO big SELECT i, i % 100, 'x' FROM generate_series(1, 200000) s(i)
 
-
 onlyif serenedb
 statement ok
-VACUUM (REFRESH_TABLE) big
+VACUUM (FLUSH_TABLE) big
 
 
 # Covered `.col` filter + scan order: the best-first reorder scans the second

@@ -12,14 +12,6 @@ INSERT INTO morphling VALUES (5, 5);
 
 
 # Existing row a=5 violates a<3, so ADD CHECK is rejected and nothing is added.
-onlyif serenedb
-statement error
-ALTER TABLE morphling ADD CHECK (a < 3);
-----
-db error: ERROR: CHECK constraint failed on table "morphling" with expression CHECK((a < 3))
-
-
-skipif serenedb
 statement error
 ALTER TABLE morphling ADD CHECK (a < 3);
 ----

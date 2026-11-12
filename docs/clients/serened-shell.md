@@ -73,7 +73,7 @@ echo "SELECT 'piped' AS src;" | serened shell
 
 ## SQL dialect
 
-The shell speaks the same SQL as a SereneDB server: `/` between two integers truncates, unquoted identifiers fold to lower case, `COPY ... TO` writes a CSV header only with `HEADER`, `SHOW <name>` prints a setting, `EXPLAIN` prints plans in the server's format, and a table that a view reads cannot be dropped without `CASCADE`. The PostgreSQL data types, their casts and the SQL functions that need no server, such as `to_char` and the AI functions, work the same way in both, and so do the settings they read: `extra_float_digits`, `bytea_output`, `xmloption` and the `sdb_ai_*` settings.
+The shell speaks the same SQL as a SereneDB server: `/` between two integers truncates, unquoted identifiers fold to lower case, `COPY ... TO` writes a CSV header only with `HEADER`, `COPY ... FROM STDIN` and `COPY ... TO STDOUT` use the `text` format unless `FORMAT` names another, `SHOW <name>` prints a setting, `EXPLAIN` prints plans in the server's format, and a table that a view reads cannot be dropped without `CASCADE`. The PostgreSQL data types, their casts and the SQL functions that need no server, such as `to_char` and the AI functions, work the same way in both, and so do the settings they read: `extra_float_digits`, `bytea_output`, `xmloption` and the `sdb_ai_*` settings.
 
 What lives in a server's catalog or session needs a server: the `pg_catalog` and `information_schema` objects, roles and privileges, search, jobs, replication, and the parameters of the server and its sessions, such as `statement_timeout`, `DateStyle` and `hba`. Extensions are built in, and the shell never installs or loads one on demand.
 

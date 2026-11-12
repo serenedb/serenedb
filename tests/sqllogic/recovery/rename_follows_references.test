@@ -1,0 +1,325 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA moved;
+
+
+statement ok
+CREATE TABLE parent (id INT PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO parent VALUES (1, 'a');
+
+
+statement ok
+CREATE VIEW parent_ids AS SELECT id FROM parent;
+
+
+statement ok
+CREATE FUNCTION parent_count() RETURNS BIGINT AS $$ SELECT count(*) FROM parent $$ LANGUAGE sql;
+
+
+statement ok
+CREATE TABLE child (id INT PRIMARY KEY, pid INT REFERENCES parent (id));
+
+
+statement ok
+ALTER TABLE parent RENAME TO parent2;
+
+
+statement ok
+INSERT INTO child VALUES (1, 1);
+
+
+statement error
+INSERT INTO child VALUES (2, 5);
+----
+db error: ERROR: insert or update on table "child" violates foreign key constraint "child_pid_fkey"
+DETAIL: Key (pid)=(5) is not present in table "parent2".
+
+
+statement ok
+ALTER TABLE parent2 SET SCHEMA moved;
+
+
+statement ok
+INSERT INTO child VALUES (3, 1);
+
+
+statement error
+INSERT INTO child VALUES (4, 5);
+----
+db error: ERROR: insert or update on table "child" violates foreign key constraint "child_pid_fkey"
+DETAIL: Key (pid)=(5) is not present in table "parent2".
+
+
+statement error
+DELETE FROM moved.parent2;
+----
+db error: ERROR: update or delete on table "parent2" violates foreign key constraint "child_pid_fkey" on table "child"
+DETAIL: Key (id)=(1) is still referenced from table "child".
+
+
+query
+SELECT id, parent_count() AS n FROM parent_ids;
+----
+id	n
+1	1
+
+
+query
+SELECT pg_get_viewdef('parent_ids') AS view;
+----
+view
+SELECT id FROM moved.parent2 AS parent;
+
+
+query
+SELECT pg_get_constraintdef(oid) AS fk FROM pg_constraint WHERE conname = 'child_pid_fkey';
+----
+fk
+FOREIGN KEY (pid) REFERENCES moved.parent2(id)
+
+
+statement ok
+CREATE SEQUENCE ids;
+
+
+statement ok
+CREATE TABLE numbered (id BIGINT DEFAULT nextval('ids'), v INT);
+
+
+statement ok
+ALTER SEQUENCE ids RENAME TO ids2;
+
+
+statement ok
+INSERT INTO numbered (v) VALUES (1);
+
+
+statement ok
+ALTER SEQUENCE ids2 SET SCHEMA moved;
+
+
+statement ok
+INSERT INTO numbered (v) VALUES (2);
+
+
+query
+SELECT id, v FROM numbered ORDER BY v;
+----
+id	v
+1	1
+2	2
+
+
+statement ok
+CREATE TABLE tree (id INT PRIMARY KEY, up INT REFERENCES tree (id));
+
+
+statement ok
+ALTER TABLE tree RENAME TO tree2;
+
+
+statement ok
+INSERT INTO tree2 VALUES (1, NULL);
+
+
+statement ok
+INSERT INTO tree2 VALUES (2, 1);
+
+
+statement error
+INSERT INTO tree2 VALUES (3, 9);
+----
+db error: ERROR: insert or update on table "tree2" violates foreign key constraint "tree_up_fkey"
+DETAIL: Key (up)=(9) is not present in table "tree2".
+
+
+statement ok
+ALTER TABLE tree2 SET SCHEMA moved;
+
+
+statement ok
+ALTER TABLE moved.tree2 ADD COLUMN extra INT;
+
+
+statement ok
+INSERT INTO moved.tree2 VALUES (4, 2, 0);
+
+
+statement error
+INSERT INTO moved.tree2 VALUES (5, 9, 0);
+----
+db error: ERROR: insert or update on table "tree2" violates foreign key constraint "tree_up_fkey"
+DETAIL: Key (up)=(9) is not present in table "tree2".
+
+
+statement ok
+CREATE SCHEMA before_rename;
+
+
+statement ok
+CREATE TABLE before_rename.p (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE before_rename.c (id INT PRIMARY KEY, pid INT REFERENCES before_rename.p (id));
+
+
+statement ok
+CREATE SEQUENCE before_rename.q;
+
+
+statement ok
+CREATE TABLE before_rename.d (id BIGINT DEFAULT nextval('before_rename.q'), v INT);
+
+
+statement ok
+ALTER SCHEMA before_rename RENAME TO after_rename;
+
+
+statement ok
+INSERT INTO after_rename.p VALUES (1);
+
+
+statement ok
+INSERT INTO after_rename.c VALUES (1, 1);
+
+
+statement error
+INSERT INTO after_rename.c VALUES (2, 7);
+----
+db error: ERROR: insert or update on table "c" violates foreign key constraint "c_pid_fkey"
+DETAIL: Key (pid)=(7) is not present in table "p".
+
+
+statement ok
+INSERT INTO after_rename.d (v) VALUES (1);
+
+
+query
+SELECT table_name, column_default
+FROM information_schema.columns
+WHERE column_name = 'id' AND table_name IN ('numbered', 'd')
+ORDER BY table_name;
+----
+table_name	column_default
+d	nextval('after_rename.q')
+numbered	nextval('moved.ids2')
+
+
+query
+SELECT conname, pg_get_constraintdef(oid) AS fk
+FROM pg_constraint
+WHERE contype = 'f'
+ORDER BY conname;
+----
+conname	fk
+c_pid_fkey	FOREIGN KEY (pid) REFERENCES after_rename.p(id)
+child_pid_fkey	FOREIGN KEY (pid) REFERENCES moved.parent2(id)
+tree_up_fkey	FOREIGN KEY (up) REFERENCES moved.tree2(id)
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT id, parent_count() AS n FROM parent_ids;
+----
+id	n
+1	1
+
+
+connection after_crash
+query
+SELECT pg_get_viewdef('parent_ids') AS view;
+----
+view
+SELECT id FROM moved.parent2 AS parent;
+
+
+connection after_crash
+statement ok
+INSERT INTO child VALUES (5, 1);
+
+
+connection after_crash
+statement error
+INSERT INTO child VALUES (6, 5);
+----
+db error: ERROR: insert or update on table "child" violates foreign key constraint "child_pid_fkey"
+DETAIL: Key (pid)=(5) is not present in table "parent2".
+
+
+connection after_crash
+statement ok
+INSERT INTO numbered (v) VALUES (3);
+
+
+connection after_crash
+statement ok
+INSERT INTO moved.tree2 VALUES (6, 4, 0);
+
+
+connection after_crash
+statement error
+INSERT INTO moved.tree2 VALUES (7, 9, 0);
+----
+db error: ERROR: insert or update on table "tree2" violates foreign key constraint "tree_up_fkey"
+DETAIL: Key (up)=(9) is not present in table "tree2".
+
+
+connection after_crash
+statement ok
+INSERT INTO after_rename.c VALUES (3, 1);
+
+
+connection after_crash
+statement error
+INSERT INTO after_rename.c VALUES (4, 7);
+----
+db error: ERROR: insert or update on table "c" violates foreign key constraint "c_pid_fkey"
+DETAIL: Key (pid)=(7) is not present in table "p".
+
+
+connection after_crash
+statement ok
+INSERT INTO after_rename.d (v) VALUES (2);
+
+
+connection after_crash
+query
+SELECT table_name, column_default
+FROM information_schema.columns
+WHERE column_name = 'id' AND table_name IN ('numbered', 'd')
+ORDER BY table_name;
+----
+table_name	column_default
+d	nextval('after_rename.q')
+numbered	nextval('moved.ids2')
+
+
+connection after_crash
+query
+SELECT conname, pg_get_constraintdef(oid) AS fk
+FROM pg_constraint
+WHERE contype = 'f'
+ORDER BY conname;
+----
+conname	fk
+c_pid_fkey	FOREIGN KEY (pid) REFERENCES after_rename.p(id)
+child_pid_fkey	FOREIGN KEY (pid) REFERENCES moved.parent2(id)
+tree_up_fkey	FOREIGN KEY (up) REFERENCES moved.tree2(id)

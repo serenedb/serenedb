@@ -1,0 +1,163 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE slc (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO slc SELECT i, 'fox ' || i FROM range(0, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO slc SELECT i, 'fox ' || i FROM range(1000, 2000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET VARIABLE slc_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'slc');
+
+
+connection pin
+statement ok
+BEGIN;
+
+
+connection pin
+query
+SELECT count(*) AS n FROM slc;
+----
+n
+2000
+
+
+statement ok
+VACUUM (COMPACT_TABLE) slc;
+
+
+query ok retry 40 backoff 250ms
+SELECT (SELECT value FROM sdb_metrics WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'slc') AND metric = 'num_segments') AS segments,
+       (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1)) FROM glob(getvariable('slc_dir') || '/*') WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '') AS on_disk;
+----
+segments	on_disk
+1	3
+
+
+statement ok
+COPY (SELECT 1 AS x) TO (getvariable('slc_dir') || '/00000000ffffffff.col') (FORMAT csv);
+
+
+statement ok
+COPY (SELECT 1 AS x) TO '${SDB_DATADIR}/engine_v1/store/999999999' (FORMAT csv, PER_THREAD_OUTPUT true);
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_clean
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_clean
+statement ok
+SET VARIABLE slc_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'slc');
+
+
+connection after_clean
+query
+SELECT (SELECT count(*) FROM glob(getvariable('slc_dir') || '/00000000ffffffff.col')) AS planted,
+       (SELECT count(*) > 0 FROM glob('${SDB_DATADIR}/engine_v1/store/999999999/*')) AS unowned,
+       (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1)) FROM glob(getvariable('slc_dir') || '/*') WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) NOT IN ('', '00000000ffffffff')) AS segments;
+----
+planted	unowned	segments
+1	t	1
+
+
+connection after_clean
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE body = 'fox 1500') AS hit FROM slc;
+----
+n	hit
+2000	1
+
+
+connection after_clean
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_clean
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+statement ok
+SET VARIABLE slc_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'slc');
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM glob(getvariable('slc_dir') || '/00000000ffffffff.col')) AS planted,
+       (SELECT count(*) FROM glob('${SDB_DATADIR}/engine_v1/store/999999999/*')) AS unowned,
+       (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1)) FROM glob(getvariable('slc_dir') || '/*') WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '') AS segments;
+----
+planted	unowned	segments
+0	0	1
+
+
+connection after_crash
+statement ok
+INSERT INTO slc SELECT i, 'fox ' || i FROM range(2000, 3000) t(i);
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_ALL);
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE body = 'fox 2500') AS hit, (SELECT value FROM sdb_metrics WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'slc') AND metric = 'num_segments') AS segments FROM slc;
+----
+n	hit	segments
+3000	1	2
+
+
+connection after_crash
+query
+SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1)) AS above_orphan FROM glob(getvariable('slc_dir') || '/*') WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) > '00000000ffffffff';
+----
+above_orphan
+1

@@ -3,9 +3,6 @@ hash-threshold 100
 statement ok
 SET compaction_interval = 0
 
-statement ok
-SET refresh_interval = 0
-
 # ----------------------------------------------------------------------------
 # array_agg(DISTINCT col) over a keyword-analyzed inverted-index column is
 # served from the term dictionary: a keyword analyzer emits the whole value as
@@ -39,16 +36,13 @@ INSERT INTO aa VALUES
   (4, 'blue',  'hello again', NULL, 'p3')
 
 statement ok
-VACUUM (REFRESH_TABLE) aa;
+VACUUM (FLUSH_TABLE) aa;
 
 statement ok
 INSERT INTO aa VALUES
   (5, 'green', 'red green',   NULL, 'p2'),
   (6, 'amber', 'foo world',   'z',  'p4'),
   (7, 'red',   'qux baz',     'x',  'p1')
-
-statement ok
-VACUUM (REFRESH_TABLE) aa;
 
 # --- keyword column with an explicit keyword dictionary: rewritten.
 query
@@ -72,6 +66,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~6 rows                                  │
@@ -112,6 +107,7 @@ QUERY PLAN
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: aa_idx                              │
+│ Lookup: search                             │
 │ TsDict: plain                              │
 │ Projections:                               │
 │ sdb_inverted_index_term$plain              │
@@ -145,7 +141,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: aa_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: body         │
 │ ~7 rows                   │
 ╰───────────────────────────╯
@@ -165,7 +161,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: aa_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: opt          │
 │ ~7 rows                   │
 ╰───────────────────────────╯
@@ -193,7 +189,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: aa_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: cat          │
 │ ~7 rows                   │
 ╰───────────────────────────╯
@@ -212,7 +208,7 @@ QUERY PLAN
                    ├──────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╭─ CROSS_PRODUCT ───────────╮
 │ Index: aa_idx                      │  ╰─────────────┬─────────────╯
-│ Lookup: table                      │                ├──────────────────────────────╮
+│ Lookup: search                     │                ├──────────────────────────────╮
 │ Projections: cat                   │  ╭─ UNGROUPED_AGGREGATE ─────╮  ╭─ UNGROUPED_AGGREGATE ────╮
 │ ~7 rows                            │  │ Aggregates: array_agg(#0) │  │ Aggregates: count_star() │
 ╰────────────────────────────────────╯  │ ~1 row                    │  │ ~1 row                   │
@@ -246,7 +242,7 @@ QUERY PLAN
 ╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: aa_idx             │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Projections: id, cat      │
 │ ~7 rows                   │
 ╰───────────────────────────╯
@@ -273,6 +269,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Starts With ──────╮                   │
 │ │ Field: cat(string) │                   │
@@ -321,6 +318,7 @@ QUERY PLAN
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: aa_idx                              │
+│ Lookup: search                             │
 │ TsDict: cat, plain                         │
 │ Projections:                               │
 │ sdb_inverted_index_term$cat,               │
@@ -365,6 +363,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~6 rows                                  │
@@ -393,6 +392,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: aa_idx                            │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~6 rows                                  │

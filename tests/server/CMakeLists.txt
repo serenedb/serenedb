@@ -47,10 +47,10 @@ add_executable(
     scorer_bounds_test.cpp
     search_engine_test.cpp
     search_table_changes_test.cpp
-    search_wal_tail_keys_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp
+    catalog/log_test.cpp
     catalog/entry/tokenizer_test.cpp
     catalog/entry/inverted_index_config_test.cpp
     connector/ai_functions_test.cpp
@@ -65,11 +65,9 @@ add_executable(
     connector/pgoutput_test.cpp
     connector/reindex_removes_test.cpp
     connector/row_position_deduplicator_test.cpp
+    connector/row_position_test.cpp
     connector/scan_segment_work_test.cpp
     connector/scram_client_test.cpp
-    connector/search_key_unique_test.cpp
-    connector/search_row_removal_test.cpp
-    connector/search_unique_probe_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp
@@ -77,7 +75,7 @@ add_executable(
 
 target_link_libraries(
     serenedb-tests
-    PRIVATE sereneserver gtest serene_docs_corpus
+    PRIVATE sereneserver gtest serene_docs_corpus iresearch-test-writer
 )
 sdb_link_duckdb_extensions(serenedb-tests)
 

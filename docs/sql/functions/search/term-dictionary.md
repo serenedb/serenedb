@@ -24,7 +24,7 @@ The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they 
 
 <SqlLogicTest id="sql/functions/term_dictionary/setup" />
 
-`cat` and `promo` are keyword columns (the whole value is one term, the default when a column is listed with no dictionary), `body` uses a text dictionary (terms are lowercased tokens). The index options disable background maintenance so the examples control visibility explicitly with `VACUUM (REFRESH_TABLE)`.
+`cat` and `promo` are keyword columns (the whole value is one term, the default when a column is listed with no dictionary), `body` uses a text dictionary (terms are lowercased tokens). The table option disables background compaction so the segments stay as the examples write them.
 
 </details>
 
@@ -116,7 +116,7 @@ Facets over a nullable column include the `NULL` group, synthesized from the col
 
 ## Consistency under writes {#consistency}
 
-The index relation is the snapshot taken at the last [refresh](../../indexes/inverted/maintenance.md): inserts and deletes become visible at the next refresh. A deleted document stays in its segment until compaction rewrites it, but from that refresh on no query sees it: terms whose documents are all deleted are never returned, and `ts_dict_count`, `ts_dict_min` and `ts_dict_max` count and compare live documents only.
+The index relation reads the same snapshot as the rest of the transaction: it sees the inserts and deletes committed before that snapshot was taken, and the transaction's own. A deleted document stays in its segment until compaction rewrites it, but no query that sees the delete returns it: terms whose documents are all deleted are never returned, and `ts_dict_count`, `ts_dict_min` and `ts_dict_max` count and compare live documents only.
 
 <SqlLogicTest id="sql/functions/term_dictionary/deletes" />
 

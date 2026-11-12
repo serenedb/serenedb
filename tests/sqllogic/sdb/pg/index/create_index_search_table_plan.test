@@ -1,0 +1,38 @@
+statement ok
+CREATE TABLE cisp_t (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO cisp_t VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+
+query
+EXPLAIN CREATE INDEX cisp_idx ON cisp_t USING inverted (body);
+----
+QUERY PLAN
+╭─ EXTENSION ────╮
+╰────────┬───────╯
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
+
+
+statement ok
+CREATE INDEX cisp_idx ON cisp_t USING inverted (body);
+
+
+query
+SELECT id FROM cisp_idx WHERE body = 'beta';
+----
+id
+2
+
+
+query
+SELECT count(*) AS n FROM cisp_idx;
+----
+n
+3
+
+
+statement ok
+DROP TABLE cisp_t;

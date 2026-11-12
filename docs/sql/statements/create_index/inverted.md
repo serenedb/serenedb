@@ -8,7 +8,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import RailroadDiagram from '@site/src/components/RailroadDiagram';
 import RailroadSource from './inverted_diagram.js';
 
-Adding `USING inverted` to [`CREATE INDEX`](./index.md) builds an [inverted index](../../indexes/inverted/index.md), which powers [full-text](../../indexes/inverted/full-text-search.md), [vector](../../indexes/inverted/vector-search.md) and [geospatial](../../indexes/inverted/geospatial-search.md) search. This page is the syntax reference; for a conceptual guide with query examples, see [Inverted Index](../../indexes/inverted/index.md).
+[`CREATE INDEX`](./index.md) builds an [inverted index](../../indexes/inverted/index.md), with or without `USING inverted`, which powers [full-text](../../indexes/inverted/full-text-search.md), [vector](../../indexes/inverted/vector-search.md) and [geospatial](../../indexes/inverted/geospatial-search.md) search. This page is the syntax reference; for a conceptual guide with query examples, see [Inverted Index](../../indexes/inverted/index.md).
 
 ## Column specification
 
@@ -22,7 +22,7 @@ Each entry in the `USING inverted (...)` list is an **indexed column**.
 - **Array columns** — a `TEXT[]` / `VARCHAR[]` column is indexed element-by-element; a row matches if any element matches.
 - **`INET` and `CIDR` columns** take no dictionary. The index answers `=`, `IN`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `<<=`, `>>=`, `<<`, `>>` and `&&`; see [Inet](../../data_types/inet.md#indexing).
 
-Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be indexed, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays; such a column fails with `Column '<name>' has unsupported type <type> and can not be indexed`. A `GEOMETRY` column is indexed only with a [geo dictionary](../../indexes/inverted/geospatial-search.md). `INCLUDE` stores values of every type. A column or expression is listed once as an indexed key, with one dictionary or none; besides that, only `included()` can list it again. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
+Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be indexed, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays; such a column fails with `Column '<name>' has unsupported type <type> and can not be indexed`. Without `USING inverted`, a `CREATE INDEX` on a table stores such a column in the index instead of failing, and `CREATE UNIQUE INDEX` enforces its uniqueness. A `GEOMETRY` column is indexed only with a [geo dictionary](../../indexes/inverted/geospatial-search.md). `INCLUDE` stores values of every type. A column or expression is listed once as an indexed key, with one dictionary or none; besides that, only `included()` can list it again. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
 
 ### Feature flags
 
@@ -41,19 +41,26 @@ They are set in the dictionary's `WITH` clause; see the [feature flags](../creat
 
 Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. A column listed both in `USING inverted (...)` and in `INCLUDE (...)` is searchable and stored, which lets [phrase queries](../../indexes/inverted/full-text-search.md#phrases-without-positions) on it work without `position`; an indexed expression gets the same when it is listed a second time with `included()` to store its value, as in `USING inverted (id, (lower(body)) words, (lower(body)) included())`. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`, for example `INCLUDE (payload included (compression = 'alp'))`.
 
+Each may also set `distinct` to keep a count of the column's distinct values, which the query planner uses to estimate joins and equality filters on it: `'exact'` counts every value, `'sampled'` counts a sample of the values and extrapolates, at a fraction of the cost, and `'none'`, the default, keeps no count. A count on a `BOOLEAN` or `BIT` column does not improve plans, so setting one there raises a warning. A table's own columns get a distinct count without the option where their keys and indexes give one: a single-column primary key or unique constraint has as many values as rows, and a foreign key or an index without a tokenizing dictionary counts the distinct values it holds.
+
 ## Index options
 
 The trailing `WITH (...)` clause sets index-level options.
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
-| `refresh_interval` | `1000` | Background refresh interval in milliseconds; `0` disables it |
+| `reindex_interval` | `0` | Interval in milliseconds of the background [refresh](../../indexes/inverted/views.md#automatic-refresh); `0` disables it |
 | `compaction_interval` | `1000` | Background compaction interval in milliseconds; `0` disables it |
-| `cleanup_interval_step` | `1` | Automatic refreshes between cleanup passes, which delete the files no segment uses anymore; `0` disables the periodic passes, leaving cleanup to background compaction |
+| `compaction_max_segments` | `10` | Segments merged by one background compaction |
+| `compaction_max_segments_bytes` | `5368709120` (5 GB) | Size budget of one background compaction |
+| `compaction_floor_segment_bytes` | `2097152` (2 MB) | Segments smaller than this count as equal-sized when choosing what to merge |
+| `segment_memory_max` | `268435456` (256 MB) | Bytes a build or refresh fills before it starts a new segment |
+| `segment_docs_max` | `0` | Rows a build or refresh writes to one segment before it starts a new one; `0` leaves it to `segment_memory_max` |
+| `key_columns` | — | Row key of an attached PostgreSQL or ClickHouse table; see [Row identity](../../indexes/inverted/views.md#row-identity) |
 | `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns and for norm columns; there is no separate norm setting. Must be a multiple of the vector size (2048). A scan claims one row group per worker, so a smaller value spreads one segment over more threads at the cost of more per-unit setup |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
 
-An index on a search table (`CREATE TABLE … WITH (storage = 'search')`) takes none of these options. It has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it, and the table keeps the score bounds that `optimize_top_k` prunes with. So `CREATE INDEX` rejects all five on a search table, with an error that names the option, such as `row_group_size is a table option on a search-backed table`. Set them on the table instead; see [Background intervals](../../indexes/inverted/maintenance.md#background-intervals).
+These options apply to an index over a view. Where a setting of the same name exists, it holds the default. `row_group_size`, `optimize_top_k` and `key_columns` are fixed at `CREATE INDEX`; `ALTER INDEX ... SET` and `RESET` change the others. An index on a table takes none of them but `key_columns`, which has no effect there. It has no storage or background tasks of its own: the table's options run compaction for every index on it, and the table keeps the score bounds that `optimize_top_k` prunes with. So `CREATE INDEX` rejects them on a table, with an error that names the option, such as `row_group_size is a table option`. Set them on the table instead; see [Background intervals](../../indexes/inverted/maintenance.md#background-intervals).
 
 ## Partial indexes
 
@@ -64,21 +71,17 @@ CREATE INDEX recent_errors ON logs USING inverted(message log_dict)
   WHERE level = 'error';
 ```
 
-The predicate is a boolean expression over the table's columns; a row whose predicate evaluates to `NULL` is treated as non-matching, following PostgreSQL semantics. DML keeps membership current — rows enter and leave the index as updates move them across the predicate boundary — and queries against the index only ever see matching rows.
+The predicate is a boolean expression over the table's columns; a row whose predicate evaluates to `NULL` is treated as non-matching, following PostgreSQL semantics. Queries against the index only ever see matching rows: rows enter and leave it as DML moves them across the predicate boundary. On a table, the index's fields are kept for every row, so queries on the table itself use them whatever the predicate, and a query through the index checks the predicate as one of its filters.
 
 A constant predicate, one that reads no column and calls no function whose result can change (such as `now()`), is evaluated once by `CREATE INDEX`, the way a query's `WHERE` evaluates it. `WHERE 'true'` or `WHERE 1 + 1 = 2` builds an ordinary index, which `pg_indexes` shows without a `WHERE`; `WHERE 'f'` is stored as `WHERE false` and the index stays empty. A string that is not a boolean fails as in a query: `WHERE 'abc'` raises `Could not convert string 'abc' to BOOL`. This holds for plain indexes too.
-
-Partial indexes are an inverted-index feature. A plain (ART) `CREATE INDEX … WHERE …` is accepted, but the predicate filters only the rows present when the index is built; see [PostgreSQL compatibility](../../../compatibility/core-sql-compatibility.md#indexes).
-
-An index on a search table can't be partial: there, `CREATE INDEX … WHERE …` fails with `partial indexes are not supported on a search-backed table`.
 
 ## Indexing tables and views
 
 An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
 
-## Several indexes on a search table column
+## Several indexes on a table column
 
-A search table can have several indexes on the same column or expression, each with its own text search dictionary. A query on the table itself (`FROM <table>`) answers a predicate on that column through the index created first, also after a restart. To search through another of them, query that index (`FROM <index>`).
+A table can have several indexes on the same column or expression, each with its own text search dictionary. A query on the table itself (`FROM <table>`) answers a predicate on that column through the index created first, also after a restart. To search through another of them, query that index (`FROM <index>`).
 
 ## Replacing an index
 
@@ -90,11 +93,17 @@ Switch a column from verbatim matching to a lowercasing dictionary:
 
 ## Concurrent changes
 
-The indexes of a search table share its storage. A transaction that creates, replaces or drops an index of a search table, or alters or drops the table, holds the table until it commits or rolls back. Meanwhile any such change from another transaction fails with `search table "<name>" is being changed by another transaction`; retry it once the first transaction ends. Reads and writes of the table are not affected, except by the `ALTER TABLE` forms that rewrite or check its rows (see [Search tables](../alter_table/index.md#search-tables)), and one transaction can make any number of these changes.
+The indexes of a table share its storage. A transaction that creates, replaces or drops an index of a table, or alters or drops the table, holds the table until it commits or rolls back. Meanwhile any such change from another transaction fails with `table "<name>" is being changed by another transaction`; retry it once the first transaction ends. Reads and writes of the table are not affected, except by the `ALTER TABLE` forms that rewrite or check its rows (see [Rewrites and concurrent changes](../alter_table/index.md#rewrites-and-concurrent-changes)), and one transaction can make any number of these changes.
 
-Writes to a search table never wait for an index change. `CREATE INDEX` and `CREATE OR REPLACE INDEX` on a search table wait for the transactions that wrote to the table before the statement started to commit or roll back, so that their rows are indexed too; cancelling the statement ends the wait.
+Writes to a table never wait for an index change. `CREATE INDEX` and `CREATE OR REPLACE INDEX` on a table wait for the transactions that wrote to the table before the statement started to commit or roll back, so that their rows are indexed too; cancelling the statement ends the wait.
 
-An inverted index on a regular table or a view has storage of its own, so transactions can create, replace or drop different indexes of the same table or view at the same time.
+`CREATE INDEX` and `CREATE OR REPLACE INDEX` on a table also wait for the compactions already merging the table's segments to finish, and no other compaction of the table starts meanwhile. Until the statement returns, compaction, background or `VACUUM (COMPACT_TABLE)`, leaves the segments it rebuilds alone and merges only the segments written during it.
+
+The build writes every existing segment of the table again with the new index, a group of [`search_backfill_group_bytes`](../../../configuration/overview.md#search-and-indexing) (1 GB by default) at a time, and needs extra disk of about twice one group while it runs.
+
+The transaction that creates an index of a table can query with it as soon as `CREATE INDEX` returns; other transactions can once it commits. A `REPEATABLE READ` transaction whose snapshot predates writes of other transactions to the table keeps reading the table as of its snapshot, without the new index, until it commits: a query that needs the index, such as `@@` on the table's column, fails as it does on a table without the index, and a query of the index itself (`FROM <index_name>`) fails with `could not serialize access due to concurrent update`.
+
+An inverted index on a view has storage of its own, so transactions can create, replace or drop different indexes of the same view at the same time.
 
 ## Examples
 
@@ -109,7 +118,7 @@ Store an extra column alongside the index with `INCLUDE` so it can be returned w
 ## See also
 
 - [Inverted Index](../../indexes/inverted/index.md) — conceptual guide
-- [CREATE INDEX](./index.md) — the general statement (ART)
+- [CREATE INDEX](./index.md) — the general statement
 - [CREATE TEXT SEARCH DICTIONARY](../create_text_search_dictionary/index.md) — analyzer reference
 - [Full-Text Search Functions](../../functions/search/full-text.md)
 

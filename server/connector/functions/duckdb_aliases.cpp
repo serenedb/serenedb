@@ -35,6 +35,7 @@
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/parser_options.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -116,7 +117,7 @@ duckdb::Identifier AliasFor(std::string_view source) {
 }
 
 std::string QualifiedSource(std::string_view source) {
-  return absl::StrCat(SYSTEM_CATALOG, ".", DEFAULT_SCHEMA, ".", source);
+  return absl::StrCat(irs::StaticStrings::kPgCatalogSchema, ".", source);
 }
 
 void AliasTableFunctions(duckdb::ExtensionLoader& loader) {
@@ -169,7 +170,7 @@ void AliasViews(duckdb::DatabaseInstance& db) {
   auto transaction = duckdb::CatalogTransaction::GetSystemTransaction(db);
   for (const auto name : kViews) {
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
-    info->SetSchema(duckdb::Identifier::DefaultSchema());
+    info->SetSchema(*system_catalog.GetDefaultSchema());
     info->SetViewName(AliasFor(name));
     info->sql = absl::StrCat("SELECT * FROM ", QualifiedSource(name));
     info->temporary = true;

@@ -55,7 +55,6 @@
 #include <stdexcept>
 #include <utility>
 
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/deserialize.h"
 #include "replication/repl_stream.h"
@@ -350,9 +349,6 @@ bool DecodeRow(ReplBatch& batch, const PgOutputMessage& msg,
   return true;
 }
 
-using connector::kSereneDBClientStateKey;
-using connector::SereneDBClientState;
-
 struct ReplSourceBindData final : public duckdb::FunctionData {
   duckdb::vector<duckdb::LogicalType> return_types;
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
@@ -376,15 +372,8 @@ duckdb::unique_ptr<duckdb::FunctionData> BindReplSource(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auto* state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
-      .get();
-  if (state == nullptr) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("repl_src requires a serenedb connection"));
-  }
   const ReplBatch* batch =
-    state->GetConnectionContext().GetSideChannel<ReplBatch>();
+    ConnectionContext::Get(context).GetSideChannel<ReplBatch>();
   if (batch == nullptr || batch->rel == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("repl_src: no active replication batch"));
@@ -410,14 +399,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindReplSource(
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalReplSource(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput&) {
   auto result = duckdb::make_uniq<ReplSourceGlobalState>();
-  auto* state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
-      .get();
-  if (state == nullptr) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("repl_src requires a serenedb connection"));
-  }
-  result->batch = state->GetConnectionContext().GetSideChannel<ReplBatch>();
+  result->batch = ConnectionContext::Get(context).GetSideChannel<ReplBatch>();
   sdb::pg::FillDeserializeContext(context, result->dctx);
   return result;
 }

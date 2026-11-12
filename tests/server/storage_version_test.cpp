@@ -155,7 +155,9 @@ duckdb::unique_ptr<duckdb::Catalog> AttachOwned(
   duckdb::optional_ptr<duckdb::StorageExtensionInfo>, duckdb::ClientContext&,
   duckdb::AttachedDatabase& db, const std::string&, duckdb::AttachInfo&,
   duckdb::AttachOptions& options) {
-  sdb::catalog::RequestSereneDBStorageVersion(options);
+  options.options["storage_version"] =
+    duckdb::Value{duckdb::StorageVersionInfo::GetStorageVersionString(
+      duckdb::StorageVersion::SERENEDB_LATEST)};
   return duckdb::make_uniq<duckdb::DuckCatalog>(db);
 }
 

@@ -1,0 +1,244 @@
+statement ok
+CREATE SCHEMA rfd_s;
+
+
+statement ok
+CREATE TABLE rfd_t (a INTEGER);
+
+
+statement ok
+INSERT INTO rfd_t VALUES (7);
+
+
+statement ok
+CREATE VIEW rfd_cte AS WITH c AS (SELECT a FROM rfd_t) SELECT a FROM c;
+
+
+statement ok
+CREATE TABLE rfd_s.rfd_t (z INTEGER);
+
+
+statement ok
+INSERT INTO rfd_s.rfd_t VALUES (9);
+
+
+statement ok
+CREATE VIEW rfd_both AS SELECT p.a, q.z FROM public.rfd_t p, rfd_s.rfd_t q;
+
+
+statement ok
+ALTER TABLE rfd_t RENAME TO rfd_t2;
+
+
+query
+SELECT viewname, definition FROM pg_views WHERE viewname IN ('rfd_cte', 'rfd_both') ORDER BY viewname;
+----
+viewname	definition
+rfd_both	SELECT p.a, q.z FROM public.rfd_t2 AS p , rfd_s.rfd_t AS q;
+rfd_cte	WITH c AS (SELECT a FROM rfd_t2 AS rfd_t) SELECT a FROM c;
+
+
+query
+SELECT a FROM rfd_cte;
+----
+a
+7
+
+
+query
+SELECT a, z FROM rfd_both;
+----
+a	z
+7	9
+
+
+statement ok
+CREATE TABLE rfd_p (a INTEGER);
+
+
+statement ok
+INSERT INTO rfd_p VALUES (5);
+
+
+statement ok
+CREATE VIEW rfd_s.reads_public AS SELECT a FROM rfd_p;
+
+
+statement ok
+ALTER TABLE rfd_p RENAME TO rfd_p2;
+
+
+query
+SELECT definition FROM pg_views WHERE schemaname = 'rfd_s' AND viewname = 'reads_public';
+----
+definition
+SELECT a FROM rfd_p2 AS rfd_p;
+
+
+query
+SELECT a FROM rfd_s.reads_public;
+----
+a
+5
+
+
+statement ok
+CREATE SEQUENCE rfd_seq;
+
+
+statement ok
+CREATE VIEW rfd_next AS SELECT nextval('rfd_seq') AS a, nextval(NULL) AS b;
+
+
+statement ok
+CREATE MACRO rfd_bump(x := 10) AS TABLE SELECT x + nextval('rfd_seq') AS bumped;
+
+
+statement ok
+ALTER SEQUENCE rfd_seq RENAME TO rfd_seq2;
+
+
+query
+SELECT definition FROM pg_views WHERE viewname = 'rfd_next';
+----
+definition
+SELECT nextval('rfd_seq2') AS a, nextval(NULL) AS b;
+
+
+query
+SELECT a, b FROM rfd_next;
+----
+a	b
+1	NULL
+
+
+query
+SELECT bumped FROM rfd_bump();
+----
+bumped
+12
+
+
+query
+SELECT bumped FROM rfd_bump(x := 100);
+----
+bumped
+103
+
+
+statement ok
+CREATE SCHEMA rfd_two;
+
+
+statement ok
+CREATE SEQUENCE rfd_two.s1;
+
+
+statement ok
+CREATE SEQUENCE rfd_two.s2 START 100;
+
+
+statement ok
+CREATE TABLE rfd_twice (c BIGINT DEFAULT nextval('rfd_two.s1') + nextval('rfd_two.s2'), k INTEGER);
+
+
+statement ok
+ALTER SCHEMA rfd_two RENAME TO rfd_two2;
+
+
+query
+SELECT column_default FROM information_schema.columns WHERE table_name = 'rfd_twice' AND column_name = 'c';
+----
+column_default
+(nextval('rfd_two2.s1') + nextval('rfd_two2.s2'))
+
+
+statement ok
+INSERT INTO rfd_twice (k) VALUES (1);
+
+
+query
+SELECT c, k FROM rfd_twice;
+----
+c	k
+101	1
+
+
+statement ok
+CREATE TYPE rfd_enum AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE TYPE rfd_struct AS STRUCT(e rfd_enum);
+
+
+statement error
+ALTER TYPE rfd_enum SET SCHEMA rfd_s;
+----
+db error: ERROR: Cannot alter entry "rfd_enum" because there are entries that depend on it.
+type "rfd_struct" depends on type "rfd_enum".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+DROP TYPE rfd_struct;
+
+
+statement ok
+ALTER TYPE rfd_enum SET SCHEMA rfd_s;
+
+
+query
+SELECT 'y'::rfd_s.rfd_enum AS e;
+----
+e
+y
+
+
+statement ok
+CREATE SCHEMA rfd_cast;
+
+
+statement ok
+CREATE TYPE rfd_cast.t AS ENUM ('x');
+
+
+statement ok
+CREATE VIEW rfd_cast_v AS SELECT 'x'::rfd_cast.t AS e;
+
+
+statement ok
+ALTER SCHEMA rfd_cast RENAME TO rfd_cast2;
+
+
+query
+SELECT e::VARCHAR AS e FROM rfd_cast_v;
+----
+e
+x
+
+
+statement ok
+CREATE SEQUENCE rfd_regclass;
+
+
+statement ok
+CREATE VIEW rfd_regclass_v AS SELECT nextval('rfd_regclass'::regclass) AS a;
+
+
+statement ok
+ALTER SEQUENCE rfd_regclass RENAME TO rfd_regclass2;
+
+
+query
+SELECT a FROM rfd_regclass_v;
+----
+a
+1
+
+
+query
+SELECT currval('rfd_regclass2') AS a;
+----
+a
+1

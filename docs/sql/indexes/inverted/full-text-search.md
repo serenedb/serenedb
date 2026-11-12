@@ -72,7 +72,7 @@ In short: build the phrase with `##` and the allowed parts, then combine the fin
 
 ### Phrases without positions {#phrases-without-positions}
 
-Leaving `position` out of a column's dictionary keeps the index smaller, and phrase queries on the column still work when the index also keeps the column's text. A table created `WITH (storage = 'search')` keeps every column. In an inverted index, list the column in `INCLUDE` as well as in `USING inverted`:
+Leaving `position` out of a column's dictionary keeps the index smaller, and phrase queries on the column still work when the index also keeps the column's text. A table keeps every column. An index over a view keeps the column's text when it is listed in `INCLUDE` as well as in `USING inverted`, which an index on a table accepts too:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/phrase_without_positions" />
 

@@ -36,7 +36,8 @@ class WriteContext final : public BlockManager,
                            public duckdb::OverflowStringWriter,
                            public duckdb::ColumnStreamWriter {
  public:
-  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out);
+  WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out,
+               duckdb::idx_t block_alloc_size);
   ~WriteContext() final;
 
   WriteContext(const WriteContext&) = delete;

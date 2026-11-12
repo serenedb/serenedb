@@ -20,7 +20,7 @@ statement ok
 CREATE INDEX wal_mc_idx ON wal_mc_t USING inverted(pk, name mc_dict, score, ts);
 
 statement ok
-VACUUM (REFRESH_TABLE) wal_mc_t;
+VACUUM (FLUSH_TABLE) wal_mc_t;
 
 # All 3 columns searchable pre-crash
 query
@@ -42,9 +42,6 @@ pk
 1
 
 statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
-
-statement ok
 INSERT INTO wal_mc_t VALUES
   (2, 'recovered bravo', 200, 2000000),
   (3, 'recovered charlie', 300, 3000000),
@@ -60,7 +57,7 @@ SELECT 1;
 
 connection mc_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) wal_mc_t;
+SELECT 1;
 
 # TEXT column recovered
 connection mc_after

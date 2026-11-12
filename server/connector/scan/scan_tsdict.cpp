@@ -287,7 +287,7 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
   where_query = nullptr;
   _next_field = fields.empty() ? nullptr : fields.data();
   if (g.filter) {
-    where_query = &EnsureSegmentQuery(g, *this, seg_idx);
+    where_query = &EnsureSegmentQuery(g, this, seg_idx);
     if (irs::QueryBuilder::IsEmpty(*where_query)) {
       _next_field = nullptr;
       return;

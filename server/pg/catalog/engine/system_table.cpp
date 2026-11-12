@@ -30,7 +30,6 @@
 #include <iresearch/utils/assert.hpp>
 
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"

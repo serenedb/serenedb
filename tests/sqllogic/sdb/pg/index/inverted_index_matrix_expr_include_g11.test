@@ -51,9 +51,6 @@ CREATE INDEX g11_b_expr_st ON g11_b USING inverted(pk, (t8 * 2::TINYINT)) INCLUD
 statement ok
 INSERT INTO g11_b VALUES (1, -10::TINYINT, 'a'), (2, 10::TINYINT, 'b');
 
-statement ok
-VACUUM (REFRESH_TABLE) g11_b;
-
 query
 SELECT pk FROM g11_b_expr_st WHERE t8 * 2::TINYINT @@ ts_between(15::TINYINT, 50::TINYINT, true, true) ORDER BY pk;
 ----
@@ -70,9 +67,6 @@ CREATE INDEX g11_c_expr_st ON g11_c USING inverted(pk, (t16 * 2::SMALLINT)) INCL
 
 statement ok
 INSERT INTO g11_c VALUES (1, -100::SMALLINT, 'a'), (2, 100::SMALLINT, 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) g11_c;
 
 query
 SELECT pk FROM g11_c_expr_st WHERE t16 * 2::SMALLINT @@ ts_between(150::SMALLINT, 250::SMALLINT, true, true) ORDER BY pk;
@@ -178,9 +172,6 @@ CREATE INDEX g11_f_expr_st ON g11_f USING inverted(pk, (NOT x)) INCLUDE (tag);
 statement ok
 INSERT INTO g11_f VALUES (1, true, 'a'), (2, false, 'b');
 
-statement ok
-VACUUM (REFRESH_TABLE) g11_f;
-
 query
 SELECT pk FROM g11_f_expr_st WHERE NOT x = true ORDER BY pk;
 ----
@@ -199,9 +190,6 @@ statement ok
 INSERT INTO g11_g VALUES
     (1, [true,  false, true],  'a'),
     (2, [false, false, false], 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) g11_g;
 
 query
 SELECT pk FROM g11_g_expr_st WHERE true = ANY((bl)) ORDER BY pk;
@@ -222,9 +210,6 @@ INSERT INTO g11_h VALUES
     (1, [DATE '2024-01-01', DATE '2024-06-15'], 'a'),
     (2, [DATE '2025-01-01'],                    'b');
 
-statement ok
-VACUUM (REFRESH_TABLE) g11_h;
-
 query
 SELECT pk FROM g11_h_expr_st WHERE (dl) @@ ts_between(DATE '2024-01-01', DATE '2024-12-31', true, true) ORDER BY pk;
 ----
@@ -243,9 +228,6 @@ statement ok
 INSERT INTO g11_i VALUES
     (1, [10, 20, 30], 'a'),
     (2, [40, 50],     'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) g11_i;
 
 query
 SELECT pk FROM g11_i_expr_st WHERE (il) @@ ts_between(15, 25, true, true) ORDER BY pk;
@@ -266,9 +248,6 @@ INSERT INTO g11_j VALUES
     (1, [100::BIGINT, 200::BIGINT], 'a'),
     (2, [400::BIGINT],              'b');
 
-statement ok
-VACUUM (REFRESH_TABLE) g11_j;
-
 query
 SELECT pk FROM g11_j_expr_st WHERE (ll) @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
 ----
@@ -287,9 +266,6 @@ statement ok
 INSERT INTO g11_k VALUES
     (1, [1.5, 2.5], 'a'),
     (2, [4.5],      'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) g11_k;
 
 query
 SELECT pk FROM g11_k_expr_st WHERE (dbl) @@ ts_between(2.0::DOUBLE, 3.0::DOUBLE, true, true) ORDER BY pk;
@@ -310,9 +286,6 @@ INSERT INTO g11_l VALUES
     (1, '{"type":"Point","coordinates":[0.0, 0.0]}',           'a'),
     (2, '{"type":"LineString","coordinates":[[0,0],[1,1]]}',   'b');
 
-statement ok
-VACUUM (REFRESH_TABLE) g11_l;
-
 query
 SELECT pk FROM g11_l_expr_st WHERE j->>'type' @@ ts_like('Point') ORDER BY pk;
 ----
@@ -331,9 +304,6 @@ statement ok
 INSERT INTO g11_m VALUES
     (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   'a'),
     (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 'b');
-
-statement ok
-VACUUM (REFRESH_TABLE) g11_m;
 
 query
 SELECT count(*) FROM g11_m_expr_st;

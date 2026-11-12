@@ -10,10 +10,6 @@ statement ok
 INSERT INTO iccx VALUES (1, '2024-01-02', '2024-01-02 10:00:00', true), (2, '2024-01-03', '2024-01-03 10:00:00', false)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) iccx
-
-
 statement error
 SELECT id FROM iccx WHERE d = '19724'::date
 ----

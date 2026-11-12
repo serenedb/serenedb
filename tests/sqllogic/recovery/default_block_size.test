@@ -1,0 +1,100 @@
+control substitution on
+
+
+statement ok
+SET default_block_size = 16384;
+
+
+statement ok
+CREATE DATABASE dbs_sized WITH (BLOCK_SIZE = 32768);
+
+
+statement ok
+CREATE DATABASE dbs_plain;
+
+
+statement ok
+CREATE TABLE dbs_plain.public.t (i BIGINT);
+
+
+statement ok
+CREATE TABLE dbs_plain.public.own (i BIGINT) WITH (block_size = 65536);
+
+
+statement ok
+CREATE TABLE dbs_sized.public.t (i BIGINT);
+
+
+query
+SELECT database_name, block_size FROM pragma_database_size()
+  WHERE database_name IN ('dbs_sized', 'dbs_plain') ORDER BY 1;
+----
+database_name	block_size
+dbs_plain	16384
+dbs_sized	32768
+
+
+statement ok
+RESET default_block_size;
+
+
+statement ok
+CREATE TABLE dbs_plain.public.after_reset (i BIGINT);
+
+
+query
+SELECT database_name, block_size FROM pragma_database_size()
+  WHERE database_name IN ('dbs_sized', 'dbs_plain') ORDER BY 1;
+----
+database_name	block_size
+dbs_plain	262144
+dbs_sized	32768
+
+
+query
+SELECT relname, reloptions FROM dbs_plain.pg_catalog.pg_class
+  WHERE relname IN ('t', 'own', 'after_reset') ORDER BY relname;
+----
+relname	reloptions
+after_reset	NULL
+own	{block_size=65536}
+t	{block_size=16384}
+
+
+query
+SELECT reloptions FROM dbs_sized.pg_catalog.pg_class WHERE relname = 't';
+----
+reloptions
+{block_size=32768}
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_restart
+query
+SELECT relname, reloptions FROM dbs_plain.pg_catalog.pg_class
+  WHERE relname IN ('t', 'own', 'after_reset') ORDER BY relname;
+----
+relname	reloptions
+after_reset	NULL
+own	{block_size=65536}
+t	{block_size=16384}
+
+
+connection after_restart
+query
+SELECT reloptions FROM dbs_sized.pg_catalog.pg_class WHERE relname = 't';
+----
+reloptions
+{block_size=32768}

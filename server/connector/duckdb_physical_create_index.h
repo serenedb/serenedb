@@ -33,11 +33,6 @@
 #include "catalog/catalog.h"
 #include "connector/file_manifest.h"
 
-namespace sdb::catalog {
-
-class SereneDBSchemaEntry;
-
-}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
@@ -59,6 +54,10 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
   // New-file ids are `delta_file_base + listing ordinal` -- the pass scans
   // `WHERE file_index IN (ordinals)` and projects `file_index + base`.
   uint64_t delta_file_base = 0;
+
+  std::vector<uint64_t> removed_files;
+  std::vector<IcebergObserve::DeleteMask> removed_masks;
+  std::vector<std::pair<uint64_t, int64_t>> removed_rows;
 
   std::shared_ptr<const search::FileManifest> manifest;
 
@@ -85,6 +84,9 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     result->source_index = source_index;
     result->delta_files = delta_files;
     result->delta_file_base = delta_file_base;
+    result->removed_files = removed_files;
+    result->removed_masks = removed_masks;
+    result->removed_rows = removed_rows;
     result->manifest = manifest;
     result->generated_pk_type = generated_pk_type;
     return result;
@@ -124,7 +126,8 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::PhysicalPlan& plan, duckdb::CatalogEntry& relation,
     duckdb::idx_t database_id, duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
-    duckdb::DuckSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
+    duckdb::SchemaCatalogEntry& schema_entry,
+    duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final { return true; }
@@ -149,11 +152,6 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   bool IsSource() const final { return true; }
 
  private:
-  duckdb::DuckTableEntry* DuckTableOrNull() const noexcept {
-    return dynamic_cast<duckdb::DuckTableEntry*>(&_relation);
-  }
-  bool IsDuckDBTable() const noexcept { return DuckTableOrNull(); }
-
   // Not const: the build reads and publishes into the relation's own storage.
   duckdb::CatalogEntry& _relation;
   duckdb::idx_t _database_id;
@@ -174,7 +172,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // Unset when the planner spliced no expression projection, which is not the
   // same fact as a base of 0.
   duckdb::optional_idx _expression_slot_base;
-  duckdb::DuckSchemaEntry& _schema_entry;
+  duckdb::SchemaCatalogEntry& _schema_entry;
 };
 
 // create_plan callback registered with DuckDB's index type system.

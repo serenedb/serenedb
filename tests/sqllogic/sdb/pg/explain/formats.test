@@ -21,7 +21,7 @@ query
 EXPLAIN (SQL) SELECT x + x AS y FROM (SELECT 1 AS x) t
 ----
 QUERY PLAN
-SELECT "system".main."+"(r1.c0, r1.c0) AS y FROM (SELECT CAST(1 AS INTEGER) AS c0) AS r1(c0)
+SELECT "+"(r1.c0, r1.c0) AS y FROM (SELECT CAST(1 AS INTEGER) AS c0) AS r1(c0)
 
 statement ok
 SET explain_output = 'all'

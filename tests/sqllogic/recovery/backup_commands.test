@@ -6,7 +6,7 @@ RESET sdb_faults;
 
 statement ok
 CREATE TABLE bcmd_docs (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -14,12 +14,12 @@ INSERT INTO bcmd_docs SELECT i, 'first' FROM range(0, 100) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_docs;
+VACUUM (FLUSH_TABLE) bcmd_docs;
 
 
 statement ok
 CREATE TABLE bcmd_merge (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -27,7 +27,11 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(0, 100) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_merge;
+VACUUM (FLUSH_ALL);
+
+
+statement ok
+CHECKPOINT;
 
 
 statement ok
@@ -35,7 +39,11 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(100, 200) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_merge;
+VACUUM (FLUSH_ALL);
+
+
+statement ok
+CHECKPOINT;
 
 
 statement ok
@@ -43,7 +51,11 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(200, 300) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_merge;
+VACUUM (FLUSH_ALL);
+
+
+statement ok
+CHECKPOINT;
 
 
 statement ok
@@ -51,7 +63,11 @@ INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(300, 400) r(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_merge;
+VACUUM (FLUSH_ALL);
+
+
+statement ok
+CHECKPOINT;
 
 
 query
@@ -62,7 +78,7 @@ segments
 
 
 statement ok
-CREATE TABLE bcmd_gone (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+CREATE TABLE bcmd_gone (id BIGINT PRIMARY KEY, body TEXT);
 
 
 statement ok
@@ -82,24 +98,19 @@ INSERT INTO bcmd_db.public.t VALUES (1);
 
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+statement ok
 CHECKPOINT bcmd_db;
 
 
 statement ok
 CREATE TEMP TABLE bcmd_oids AS
 SELECT
-  (SELECT database_oid FROM duckdb_databases() WHERE database_name = current_database()) AS db,
-  (SELECT database_oid FROM duckdb_databases() WHERE database_name = 'bcmd_db') AS other,
+  (SELECT table_oid FROM duckdb_tables() WHERE database_name = 'bcmd_db' AND table_name = 't') AS other,
   'bcmd_gone'::regclass::oid AS gone,
   'bcmd_docs'::regclass::oid AS docs;
-
-
-query
-SELECT count(*) = 1 AS one_meta FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/segments_*'), bcmd_oids
-WHERE file LIKE '%/engine_v1/' || db || '/' || docs || '/segments_%';
-----
-one_meta
-t
 
 
 connection holder
@@ -133,20 +144,6 @@ INSERT INTO bcmd_docs SELECT i, 'during' FROM range(100, 200) r(i);
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) bcmd_docs;
-
-
-connection default
-query
-SELECT count(*) AS metas FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/segments_*'), bcmd_oids
-WHERE file LIKE '%/engine_v1/' || db || '/' || docs || '/segments_%';
-----
-metas
-2
-
-
-connection default
-statement ok
 DROP TABLE bcmd_gone;
 
 
@@ -163,9 +160,9 @@ SELECT pg_sleep(1);
 connection default
 query
 SELECT
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || db || '/' || gone || '/%') > 0 AS table_kept,
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || other || '/%') > 0 AS database_kept
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), bcmd_oids;
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/store/' || gone || '/%') > 0 AS table_kept,
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/store/' || other || '/%') > 0 AS database_kept
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*'), bcmd_oids;
 ----
 table_kept	database_kept
 t	t
@@ -206,13 +203,13 @@ segments
 connection default
 statement ok
 CREATE TEMP TABLE bcmd_wal AS
-SELECT max(size) AS size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal'), bcmd_oids
-WHERE filename LIKE '%/engine_v1/' || db || '/data.db.wal';
+SELECT min(regexp_extract(file, '[^/]+$')) AS oldest
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/wal/*.log');
 
 
 connection default
 query
-SELECT size > 0 AS has_wal FROM bcmd_wal;
+SELECT oldest IS NOT NULL AS has_wal FROM bcmd_wal;
 ----
 has_wal
 t
@@ -231,14 +228,17 @@ wait
 
 connection default
 statement ok
+VACUUM (FLUSH_ALL);
+
+
+connection default
+statement ok
 FORCE CHECKPOINT;
 
 
 connection default
 query
-SELECT coalesce(max(size), 0) < (SELECT size FROM bcmd_wal) AS checkpointed
-FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal'), bcmd_oids
-WHERE filename LIKE '%/engine_v1/' || db || '/data.db.wal';
+SELECT value < 4096 AS checkpointed FROM sdb_metrics WHERE metric = 'catalog_wal_since_snapshot_bytes';
 ----
 checkpointed
 t
@@ -255,9 +255,9 @@ t
 connection default
 query ok retry 40 backoff 250ms
 SELECT
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || db || '/' || gone || '/%') AS table_files,
-  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || other || '/%') AS database_files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), bcmd_oids;
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/store/' || gone || '/%') AS table_files,
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/store/' || other || '/%') AS database_files
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*'), bcmd_oids;
 ----
 table_files	database_files
 0	0

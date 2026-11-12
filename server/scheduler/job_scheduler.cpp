@@ -50,7 +50,6 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/job.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "scheduler/background_scheduler.h"
@@ -58,15 +57,7 @@
 namespace sdb {
 namespace {
 
-constexpr const char* kJobRunKey = "sdb_job_run";
 constexpr int64_t kShortestMonthDays = 28;
-
-class JobRun final : public duckdb::ClientContextState {
- public:
-  explicit JobRun(uint32_t depth) : depth{depth} {}
-
-  const uint32_t depth;
-};
 
 bool IsNegative(const duckdb::interval_t& value) {
   return value.months < 0 || value.days < 0 || value.micros < 0;
@@ -156,7 +147,7 @@ void ForAllJobs(
   auto& db = irs::DuckDBEngine::Instance().instance();
   for (const auto& database :
        catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(db))) {
-    catalog::ForEachJob(database->GetCatalog().Cast<duckdb::DuckCatalog>(),
+    catalog::ForEachJob(database->GetCatalog().Cast<catalog::BaseCatalog>(),
                         callback);
   }
 }
@@ -169,9 +160,8 @@ bool Dropped(JobState& state) {
 duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
                            duckdb::optional_ptr<duckdb::ClientContext> caller,
                            duckdb::shared_ptr<duckdb::ClientContext>& context) {
-  auto parent =
-    caller ? caller->registered_state->Get<JobRun>(kJobRunKey) : nullptr;
-  const uint32_t depth = parent ? parent->depth + 1 : 1;
+  const uint32_t depth =
+    (caller ? ConnectionContext::Get(*caller).job_depth : 0) + 1;
   const uint32_t max_depth =
     caller ? GetIntSetting(*caller, "sdb_job_max_depth") : depth;
   if (depth > max_depth) {
@@ -188,17 +178,14 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       duckdb::ExceptionType::CATALOG,
       absl::StrCat("role with OID ", job.owner, " does not exist")};
   }
-  connector::SystemConnection connection{
+  SystemConnection connection{
     {.user = user,
      .role = job.owner,
      .database = job.catalog.GetIdentifierName(),
      .database_id = job.database_oid},
     {.what = "job", .name = job.name.GetIdentifierName()}};
-  connector::SetDefaultSearchPath(*connection.conn->context,
-                                  job.catalog.GetIdentifierName());
+  ConnectionContext::Get(*connection.conn->context).job_depth = depth;
   context = connection.conn->context;
-  context->registered_state->Insert(kJobRunKey,
-                                    duckdb::make_shared_ptr<JobRun>(depth));
   if (!job.schema->parent) {
     context->client_data->catalog_search_path->Set(
       {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},

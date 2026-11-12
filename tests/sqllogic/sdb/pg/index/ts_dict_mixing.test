@@ -4,18 +4,14 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY mix_kw AS keyword() WITH (frequency)
 
 statement ok
 CREATE TABLE mixt(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR,
-                  num INTEGER)
+                  num INTEGER) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX mixt_idx ON mixt USING inverted(cat mix_kw, opt mix_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO mixt VALUES
@@ -24,9 +20,6 @@ INSERT INTO mixt VALUES
   (3, 'red',   'y',  30),
   (4, 'blue',  'x',  40),
   (5, 'amber', NULL, 50)
-
-statement ok
-VACUUM (REFRESH_TABLE) mixt;
 
 query ITTT
 SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx,
@@ -64,6 +57,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mixt_idx                          │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~4 rows                                  │
@@ -110,6 +104,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: mixt_idx                           │
+│ Lookup: search                            │
 │ TsDict: cat, opt                          │
 │ Projections: sdb_inverted_index_term$cat, │
 │              sdb_inverted_index_term$opt  │
@@ -183,7 +178,7 @@ QUERY PLAN
                    ├──────────────────────────────────╮
 ╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╭─ CROSS_PRODUCT ───────────╮
 │ Index: mixt_idx                    │  ╰─────────────┬─────────────╯
-│ Lookup: table                      │                ├────────────────────────────╮
+│ Lookup: search                     │                ├────────────────────────────╮
 │ Projections: opt, cat              │  ╭─ UNGROUPED_AGGREGATE ─────╮  ╭─ UNGROUPED_AGGREGATE ─╮
 │ ~5 rows                            │  │ Aggregates: array_agg(#0) │  │ Aggregates: min(#0)   │
 ╰────────────────────────────────────╯  │ ~1 row                    │  │ ~1 row                │
@@ -279,7 +274,6 @@ db error: ERROR: ts_dict_min() cannot be used as a window function
 HINT: use it as a plain aggregate over an inverted index scan
 
 
-
 query TI
 SELECT opt, count(DISTINCT cat) AS cnt FROM mixt_idx GROUP BY opt ORDER BY opt
 ----
@@ -311,7 +305,7 @@ QUERY PLAN
 ╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: mixt_idx       │
-│ Lookup: table         │
+│ Lookup: search        │
 │ Projections: opt, cat │
 │ ~5 rows               │
 ╰───────────────────────╯
@@ -356,6 +350,7 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mixt_idx                          │
+│ Lookup: search                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
 │ ~1 row                                   │

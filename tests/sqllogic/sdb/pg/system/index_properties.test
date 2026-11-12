@@ -17,9 +17,8 @@ FROM pg_am am ORDER BY am.amname
 ----
 amname	can_order	can_unique	can_multi_col	can_exclude	can_include
 heap	NULL	NULL	NULL	NULL	NULL
-inverted	f	f	t	f	t
+inverted	f	t	t	f	t
 iresearch	NULL	NULL	NULL	NULL	NULL
-secondary	f	t	t	f	f
 
 
 query

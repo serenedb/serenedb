@@ -42,14 +42,10 @@ statement ok
 CREATE INDEX ds_drop_idx ON ds_drop.t USING inverted(id, body ds_dict);
 
 statement ok
-VACUUM (REFRESH_TABLE) ds_keep.t;
+VACUUM (FLUSH_TABLE) ds_keep.t;
 
 statement ok
-VACUUM (REFRESH_TABLE) ds_drop.t;
-
-# Block search commits.
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+VACUUM (FLUSH_TABLE) ds_drop.t;
 
 # Writes to both schemas that never reach iresearch.
 statement ok
@@ -85,7 +81,7 @@ SELECT 1;
 
 connection ds_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) ds_keep.t;
+SELECT 1;
 
 # Dropped schema is gone.
 connection ds_after

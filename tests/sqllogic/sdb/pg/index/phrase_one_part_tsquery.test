@@ -26,10 +26,6 @@ statement ok
 CREATE INDEX opt_cars_bare_idx ON opt_cars USING inverted (id, body opt_syn)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) opt_cars
-
-
 query
 SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car"') ORDER BY id
 ----
@@ -213,7 +209,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: opt_cars_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ──────────────────╮              │
 │ │ Merge: max            │              │

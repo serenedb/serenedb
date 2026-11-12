@@ -61,7 +61,7 @@ ALTER INDEX rni_inv RENAME TO rni_inv2;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) rni_t;
+VACUUM (FLUSH_TABLE) rni_t;
 
 
 # Renaming a table takes the same catalog-only path.

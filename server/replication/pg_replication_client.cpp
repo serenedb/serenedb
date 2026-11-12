@@ -33,10 +33,8 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -53,7 +51,6 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -68,7 +65,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/subscription.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/transaction.h"
 #include "network/asio_awaitable.h"
 #include "network/pg/wire_frames.h"
 #include "network/server.h"
@@ -217,6 +214,7 @@ yaclib::Task<> PgReplicationClient::RunClient() {
       streaming = false;
     }
     streaming = streaming && co_await Guarded(StartReplication());
+    _streaming.store(streaming, std::memory_order_release);
     co_await RunJob(Job::Stream);
     if (streaming) {
       auto feedback = FeedbackLoop();
@@ -1076,7 +1074,7 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       .Scan(*this->_conn->context, duckdb::CatalogType::INDEX_ENTRY,
             [&](duckdb::CatalogEntry& entry) {
               const auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-              if (!index.IsUnique() || index.GetTableName() != table->name) {
+              if (!index.IsUnique() || index.table_oid != table->oid) {
                 return;
               }
               std::vector<std::string_view> names;
@@ -1204,7 +1202,7 @@ void PgReplicationClient::PushRemoteLsn(uint64_t end_lsn) {
     return;
   }
   if (auto* subscription = VisibleSubscription()) {
-    duckdb::DuckTransaction::Get(context, *_database)
+    catalog::SessionOf(context, _database->GetCatalog())
       .PushReplicationLsn(*subscription, end_lsn);
   }
 }
@@ -1391,8 +1389,7 @@ yaclib::Task<> PgReplicationClient::ApplyTruncate(
       }
     }
     for (size_t i = 0; message.cascade && i < tables.size(); ++i) {
-      for (auto& referencing :
-           duckdb::Binder::TruncateReferencingTables(context, tables[i])) {
+      for (auto& referencing : tables[i].get().ReferencingTables(context)) {
         add(referencing, referencing.get().permissions.owner);
       }
     }

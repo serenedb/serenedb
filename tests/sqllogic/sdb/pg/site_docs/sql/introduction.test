@@ -386,15 +386,15 @@ WHERE date > '1994-11-28';
 
 # DOCS_TEST_BODY
 
-query
+query ????? rowsort
 SELECT *
 FROM weather;
 ----
 city	temp_lo	temp_hi	prcp	date
-San Francisco	46	50	0.25	1994-11-27
-San Francisco	41	55	0	1994-11-29
 Hayward	35	52	NULL	1994-11-29
 Oakland	43	56	0.1	1994-11-30
+San Francisco	41	55	0	1994-11-29
+San Francisco	46	50	0.25	1994-11-27
 
 # DOCS_TEST: example_030
 
@@ -408,14 +408,14 @@ WHERE city = 'Hayward';
 
 # DOCS_TEST_BODY
 
-query
+query ????? rowsort
 SELECT *
 FROM weather;
 ----
 city	temp_lo	temp_hi	prcp	date
-San Francisco	46	50	0.25	1994-11-27
-San Francisco	41	55	0	1994-11-29
 Oakland	43	56	0.1	1994-11-30
+San Francisco	41	55	0	1994-11-29
+San Francisco	46	50	0.25	1994-11-27
 
 # DOCS_TEST: example_032
 

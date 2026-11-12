@@ -33,11 +33,7 @@ TABLE_ROWS="${PERF_REC_TABLE_ROWS:-2000000}"
 DELTA_ROWS="${PERF_REC_DELTA_ROWS:-300000}"
 REPS="${PERF_REC_REPS:-3}"
 INDEXES="${PERF_REC_INDEXES:-1}"
-# 1 (default): refresh the index after the delta, so recovery replays the
-# delta into the TABLE only (the iresearch side is already durable). 0: leave
-# the delta un-refreshed, so recovery must tokenize + invert it -- the heavy
-# index-replay path.
-REFRESH_DELTA="${PERF_REC_REFRESH:-1}"
+FLUSH_DELTA="${PERF_REC_FLUSH_DELTA:-1}"
 IO_THREADS="${PERF_REC_IO_THREADS:-4}"
 CPU_THREADS="${PERF_REC_CPU_THREADS:-8}"
 SERVER_CORES="${PERF_REC_SERVER_CORES:-8-15}"
@@ -142,9 +138,7 @@ bench_one() {
 	for ((i = 1; i <= INDEXES; i++)); do
 		"${PSQL[@]}" -c "CREATE INDEX $(index_name "${i}") ON rec_txt USING inverted(body rec_dict);" >/dev/null
 	done
-	"${PSQL[@]}" \
-		-c "VACUUM (REFRESH_TABLE) rec_txt;" \
-		-c "CHECKPOINT;" >/dev/null
+	"${PSQL[@]}" -c "CHECKPOINT;" >/dev/null
 
 	# Disable auto-checkpoint, then append the delta so it lands in the WAL and
 	# stays there (tolerate the old binary lacking these settings).
@@ -153,14 +147,12 @@ bench_one() {
 		-c "SET GLOBAL checkpoint_threshold='1TB';" 2>/dev/null || true
 	"${PSQL[@]}" \
 		-c "INSERT INTO rec_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(${TABLE_ROWS} + 1, ${TABLE_ROWS} + ${DELTA_ROWS}) t(x);" >/dev/null
-	if [[ "${REFRESH_DELTA}" == "1" ]]; then
-		"${PSQL[@]}" -c "VACUUM (REFRESH_TABLE) rec_txt;" >/dev/null
+	if [[ "${FLUSH_DELTA}" == "1" ]]; then
+		"${PSQL[@]}" -c "VACUUM (FLUSH_TABLE) rec_txt;" >/dev/null
 	fi
 
 	local total=$((TABLE_ROWS + DELTA_ROWS))
-	# token7 matches every 50th row by construction. The pre-crash count can
-	# lag behind (NRT visibility, especially with REFRESH_DELTA=0), so the
-	# recovery target is computed, not measured.
+	# token7 matches every 50th row by construction.
 	local hits=$((total / 50))
 	local visible
 	visible="$("${PSQL[@]}" -c "SELECT count(*) FROM rec_txt_idx WHERE body @@ ts_phrase('token7');")"

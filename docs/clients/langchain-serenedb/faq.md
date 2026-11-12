@@ -13,8 +13,7 @@ Questions that come up when working with the integration, each with the cause an
 
 | Symptom | Fix |
 | :--- | :--- |
-| Rows written a moment ago are missing from results | [Refresh the index](#refresh) |
-| A bulk load is slow | [Turn off the per-write refresh](#bulk-load) |
+| A bulk load is slow | [Build the index after the load](#bulk-load) |
 | Adding a document replaced an existing one | [Writes are upserts on the id column](#upsert) |
 | `add_texts(ids=...)` fails on the id column | [Declare the id column as `VARCHAR`](#ids) |
 | Search is slow even though the index exists | [Build the index through the store](#index-routing) |
@@ -25,39 +24,24 @@ Questions that come up when working with the integration, each with the cause an
 | `similarity_search_with_score()` ignores the hybrid config | [Scored search is dense by design](#hybrid-scores) |
 | `fts_query` on a scored search raises | [Use `similarity_search()` for hybrid](#scored-hybrid) |
 | MMR results ignore the keyword half | [MMR is always dense](#mmr) |
-| Creating the engine raises `UnsupportedServerVersionError` | [Upgrade the server to 26.11.2 or later](#server-version) |
+| Creating the engine raises `UnsupportedServerVersionError` | [Upgrade the server to 26.11.3 or later](#server-version) |
 | `from_texts()` raises `NotImplementedError` | [Create the table, then `create_sync()`](#from-texts) |
 | `await store.aadd_texts(...)` is slower than expected | [Use `AsyncSereneDBVectorStore`](#async) |
 | An `IVFIndex` changed after being passed to the store | [It is mutated in place](#mutation) |
-| `concurrently=True` still locks | [The flag is ignored](#concurrently) |
+| `concurrently=True` has no effect | [The flag is ignored](#concurrently) |
 
-## Writes and visibility {#writes}
-
-### Why don't rows I just added show up in search results? {#refresh}
-
-SereneDB's inverted index is eventually consistent. A row written to the base table is invisible to full-text queries, and to vector queries routed through the index, until a refresh publishes it — either the index's own background `refresh_interval` (1000 ms by default) or an explicit `VACUUM (REFRESH_TABLE)`.
-
-The store refreshes after every `add_*` and `delete` call, so normally you never see this. If you created the store with `sync_load=False`, publishing became your responsibility:
-
-```python
-engine.refresh_table("my_docs")
-```
-
-Note that the background refresh may publish the rows on its own before you get there, so a missing call shows up as an intermittent failure rather than a reproducible one.
-
-See [Publishing writes](./engine.md#eventual-consistency) and [Visibility and the refresh model](../../sql/indexes/inverted/maintenance.md#visibility-and-the-refresh-model).
+## Writes {#writes}
 
 ### How do I make a large bulk load faster? {#bulk-load}
 
-The default refresh-after-every-write is right for incremental writes and wasteful for a bulk load, where it means one refresh per batch. Turn it off, refresh once at the end, and build the index last — SereneDB trains better IVF clusters when the data is already in place:
+Build the index last: every write to an indexed table also updates the index, and SereneDB trains better IVF clusters when the data is already in place:
 
 ```python
-store = SereneDBVectorStore.create_sync(engine, embeddings, "my_docs", sync_load=False)
+store = SereneDBVectorStore.create_sync(engine, embeddings, "my_docs")
 
 for batch in batches:
     store.add_texts(batch)
 
-engine.refresh_table("my_docs")
 store.apply_vector_index(IVFIndex())
 ```
 
@@ -97,7 +81,7 @@ Either build the index through the store's own method, or construct a new store 
 
 ### Why does `reindex()` raise `NotImplementedError`? {#reindex}
 
-SereneDB's `REINDEX` applies to view-backed indexes, where it runs a refresh pass against the view's source. A vector store lives in a base table, so there is nothing for it to act on. Rather than quietly doing something adjacent, [`reindex()`](./indexes.md#reindex) raises until `REINDEX` on tables is supported.
+SereneDB's `REINDEX` applies to view-backed indexes, where it runs a refresh pass against the view's source. A vector store lives in a base table, so there is nothing for it to act on. Rather than quietly doing something adjacent, [`reindex()`](./indexes.md#reindex) raises.
 
 To rebuild the index, drop it and apply it again:
 
@@ -106,11 +90,11 @@ store.drop_vector_index()
 store.apply_vector_index(IVFIndex())
 ```
 
-If what you actually wanted was fresher relevance statistics, that is a separate operation you can run yourself — see [Recomputing index statistics](./indexes.md#statistics).
+Relevance statistics never need a refresh: SereneDB keeps them current, see [Index statistics](./indexes.md#statistics).
 
-### Why does `concurrently=True` still lock the table? {#concurrently}
+### Does `concurrently=True` change how the index is built? {#concurrently}
 
-`concurrently` is accepted by [`apply_vector_index()`](./indexes.md#apply_vector_index) and [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) for API parity with other LangChain vector stores, and is never emitted in the DDL. The index build takes the same locks a plain `CREATE INDEX` takes. Plan the build accordingly rather than relying on the flag.
+No. `concurrently` is accepted by [`apply_vector_index()`](./indexes.md#apply_vector_index) and [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) for API parity with other LangChain vector stores, and is never emitted in the DDL. A plain `CREATE INDEX` already leaves reads and writes of the table running while it builds; see [Concurrent changes](../../sql/statements/create_index/inverted.md#concurrent-changes).
 
 ### Why isn't my metadata filter using the index? {#metadata-index-config}
 
@@ -193,10 +177,10 @@ If you need hybrid retrieval, use [`similarity_search()`](./vector-store.md#simi
 
 ### Why does creating the engine raise `UnsupportedServerVersionError`? {#server-version}
 
-The integration supports SereneDB 26.11.2 and later, and every engine checks the server's release before it is used. The message names the release the server reported:
+The integration supports SereneDB 26.11.3 and later, and every engine checks the server's release before it is used. The message names the release the server reported:
 
 ```text
-version 26.10.0 is not supported. Minimum supported version is 26.11.2. To disable version check use ignore_db_version=True
+version 26.10.0 is not supported. Minimum supported version is 26.11.3. To disable version check use ignore_db_version=True
 ```
 
 Upgrade the server. If you cannot — or you are running a development build, which always reports patch level `0` — pass `ignore_db_version=True` to [`from_connection_string()`](./engine.md#from_connection_string) or [`from_pool()`](./engine.md#from_pool), accepting that some queries may be rejected or misbehave. See [Server version check](./engine.md#version-check).
@@ -243,7 +227,7 @@ Build a fresh `IVFIndex` per store rather than sharing one instance.
 
 | Question | Answer |
 | :--- | :--- |
-| Can I create a partial index? | No. `partial_indexes` on `IVFIndex` raises — SereneDB inverted indexes have no `CREATE INDEX ... WHERE` form. |
+| Can I create a partial index? | No. `partial_indexes` on `IVFIndex` raises. |
 | Why does `IVFQueryOptions.to_string()` warn? | It is deprecated. Use [`to_parameter()`](./indexes.md#ivfqueryoptions). |
 | Can I have a metadata column named `distance`? | Yes. The computed score column is renamed to `distance_1` (or the next free name) so it does not shadow yours. |
 | Why does a text search dictionary survive `drop_table()`? | [`drop_table()`](./engine.md#drop_table) drops the table and its index, not the dictionary. It is created `IF NOT EXISTS`, so a recreated table reuses the existing dictionary — drop it by hand if you change `dictionary_expression`. |

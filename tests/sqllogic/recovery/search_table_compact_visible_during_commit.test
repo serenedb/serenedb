@@ -1,0 +1,114 @@
+control substitution on
+
+statement ok
+CREATE TABLE cvd (id INT, body TEXT)
+WITH (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO cvd SELECT i, 'a' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+CHECKPOINT
+
+
+statement ok
+INSERT INTO cvd SELECT i, 'b' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+CHECKPOINT
+
+
+statement ok
+INSERT INTO cvd SELECT i, 'c' FROM generate_series(201, 300) s(i)
+
+
+statement ok
+CHECKPOINT
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('cvd') WHERE column_name = 'id';
+----
+segments
+3
+
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs'
+
+
+connection deleter
+statement async ok
+DELETE FROM cvd WHERE id <= 50 OR id > 250
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked'
+
+
+connection compactor
+statement async ok
+VACUUM (COMPACT_TABLE) cvd
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('cvd') WHERE column_name = 'id';
+----
+segments
+1
+
+
+connection default
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM cvd;
+----
+n	lo	hi
+300	1	300
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release'
+
+
+wait
+
+
+connection compactor
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM cvd;
+----
+n	lo	hi
+200	51	250
+
+
+connection compactor
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('cvd') WHERE column_name = 'id';
+----
+segments
+1
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet'
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM cvd;
+----
+n	lo	hi
+200	51	250

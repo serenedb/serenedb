@@ -23,9 +23,6 @@ INSERT INTO searches VALUES
 statement ok
 CREATE INDEX searches_idx ON searches USING inverted (query);
 
-statement ok
-VACUUM (REFRESH_TABLE) searches;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

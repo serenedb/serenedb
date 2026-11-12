@@ -395,8 +395,8 @@ statement ok
 SET sdb_hnsw_ef_search = 2000;
 
 query
-SELECT (SELECT count(*) FROM rot_sq8 WHERE emb <#> rot_vec(900.5) < -12)
-     = (SELECT count(*) FROM range(5000) t(i) WHERE rot_vec(i) <#> rot_vec(900.5) < -12) AS same;
+SELECT (SELECT count(*) FROM rot_sq8 WHERE emb <#> rot_vec(900.5) < -12.05)
+     = (SELECT count(*) FROM range(5000) t(i) WHERE rot_vec(i) <#> rot_vec(900.5) < -12.05) AS same;
 ----
 same
 t

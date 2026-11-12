@@ -41,6 +41,15 @@ start_server "$SIDE" "$DATA" "$OUT/serened.log"
 echo "side $SIDE mode $MODE port $PORT pid $SERVER_PID"
 
 SRC=$(parquet_src "$FILES")
+DUP_IDS=$(qa "SELECT string_agg(\"WatchID\"::VARCHAR, ', ') FROM (SELECT \"WatchID\" FROM $SRC$LIMIT GROUP BY 1 HAVING count(*) > 1)")
+if [ -n "$DUP_IDS" ]; then
+	UNIQUE_IDS="\"WatchID\" NOT IN ($DUP_IDS)"
+	LIMIT=${LIMIT:+$LIMIT AND $UNIQUE_IDS}
+	LIMIT=${LIMIT:- WHERE $UNIQUE_IDS}
+	APPEND_LIMIT=${APPEND_LIMIT:+$APPEND_LIMIT AND $UNIQUE_IDS}
+	APPEND_LIMIT=${APPEND_LIMIT:- WHERE $UNIQUE_IDS}
+	echo "source has duplicate WatchIDs, every load leaves them out: $DUP_IDS"
+fi
 SEL=$(hits_select)
 DDL=$(hits_ddl_cols)
 COLS=$(hits_cols)

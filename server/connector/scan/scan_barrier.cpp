@@ -22,17 +22,17 @@
 
 namespace sdb::connector {
 
-void ScanBarrier::Finish(bool failed) noexcept {
-  if (_finished.exchange(true, std::memory_order_acq_rel)) {
-    return;
+void ScanBarrier::Finish(State state) noexcept {
+  auto open = State::Open;
+  if (_state.compare_exchange_strong(open, state, std::memory_order_acq_rel)) {
+    _state.notify_all();
   }
-  _failed.store(failed, std::memory_order_release);
-  _notification.Notify();
 }
 
-void ScanBarrier::Wait() {
-  if (!Released()) {
-    _notification.WaitForNotification();
+void ScanBarrier::Wait() const noexcept {
+  for (auto state = _state.load(std::memory_order_acquire);
+       state == State::Open; state = _state.load(std::memory_order_acquire)) {
+    _state.wait(State::Open, std::memory_order_acquire);
   }
 }
 

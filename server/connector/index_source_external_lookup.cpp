@@ -124,15 +124,12 @@ void ExternalLookupIndexSource::PrepareLookup(
   const std::string& inner, duckdb::named_argument_map_t named) {
   const std::string_view func_name =
     _dialect == Dialect::Postgres ? "postgres_lookup" : "clickhouse_lookup";
-  auto& sys = duckdb::Catalog::GetSystemCatalog(context);
-  auto tx = duckdb::CatalogTransaction::GetSystemTransaction(*context.db);
-  auto& schema = sys.GetSchema(tx, *sys.GetDefaultSchema());
-  auto entry = schema.GetEntry(tx, duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
-                               duckdb::Identifier{func_name});
+  auto entry =
+    duckdb::Catalog::GetBuiltinEntry<duckdb::TableFunctionCatalogEntry>(
+      *context.db, duckdb::Identifier{func_name});
   SDB_ASSERT(entry);
-  auto& tf_entry = entry->Cast<duckdb::TableFunctionCatalogEntry>();
   _lookup_func =
-    duckdb::BoundTableFunction{tf_entry.functions.GetFunctionByArguments(
+    duckdb::BoundTableFunction{entry->functions.GetFunctionByArguments(
       context, {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR})};
 
   duckdb::vector<duckdb::Value> inputs;

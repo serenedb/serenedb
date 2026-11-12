@@ -19,6 +19,10 @@ Questions that come up when working with the integration, each with the cause an
 | `add_texts(ids=...)` fails on the id column | [Declare the id column as `VARCHAR`](#ids) |
 | Search is slow even though the index exists | [Build the index through the store](#index-routing) |
 | `reindex()` raises `NotImplementedError` | [Drop and re-apply the index instead](#reindex) |
+| Search raises `ValueError: IVFQueryOptions tunes IVF indexes, but ...` (or the HNSW form) | [Pass options for the collection's index type](#query-options-type) |
+| Moving a collection from IVF to HNSW | [Drop, re-apply, recreate the stores](#switch-index-type) |
+| Search fails with `Table with name ...langchainvectorindex does not exist!` | [The index was dropped elsewhere](#dropped-index) |
+| `apply_hybrid_search_index(HNSWIndex())` kept the old index | [The combined index is created only if absent](#switch-index-type) |
 | A metadata filter is not using the index | [Pass `metadata_index` in both places](#metadata-index-config) |
 | A metadata column was left out of the index | [Its type is not inverted-indexable](#unindexable-types) |
 | Hybrid search raises instead of scanning | [Build the combined index first](#hybrid-index) |
@@ -27,8 +31,9 @@ Questions that come up when working with the integration, each with the cause an
 | MMR results ignore the keyword half | [MMR is always dense](#mmr) |
 | Creating the engine raises `UnsupportedServerVersionError` | [Upgrade the server to 26.11.2 or later](#server-version) |
 | `from_texts()` raises `NotImplementedError` | [Create the table, then `create_sync()`](#from-texts) |
+| A synchronous method raises `RuntimeError` about the event loop | [Await the `a`-prefixed method](#sync-on-loop) |
 | `await store.aadd_texts(...)` is slower than expected | [Use `AsyncSereneDBVectorStore`](#async) |
-| An `IVFIndex` changed after being passed to the store | [It is mutated in place](#mutation) |
+| An `IVFIndex` or `HNSWIndex` changed after being passed to the store | [It is mutated in place](#mutation) |
 | `concurrently=True` still locks | [The flag is ignored](#concurrently) |
 
 ## Writes and visibility {#writes}
@@ -91,9 +96,19 @@ See [Choosing the id column type](./engine.md#id-column).
 
 A [dense search](./vector-store.md#dense) reads from the inverted index only when it selects from the index *by name*; reading the base table always scans exactly. The store therefore has to know whether the index exists, and it finds out once — on the first search — then caches the answer for the lifetime of that store object.
 
-That cache is updated by [`apply_vector_index()`](./indexes.md#apply_vector_index) and [`drop_vector_index()`](./indexes.md#drop_vector_index) and by nothing else. An index created with raw SQL, by a migration, or by another process *after* that first search will not be used by this store instance — searches keep scanning the table, correctly but slowly.
+That cache is updated by [`apply_vector_index()`](./indexes.md#apply_vector_index), [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) and [`drop_vector_index()`](./indexes.md#drop_vector_index) and by nothing else. An index created with raw SQL, by a migration, or by another process *after* that first search will not be used by this store instance — searches keep scanning the table, correctly but slowly.
 
 Either build the index through the store's own method, or construct a new store once the index exists.
+
+### Why does search fail with `... does not exist!` after the index was dropped? {#dropped-index}
+
+The store caches whether the index exists on its first search, and only its own [`drop_vector_index()`](./indexes.md#drop_vector_index) updates that cache. When the index is dropped by another store, another process or raw SQL, this store keeps selecting from it, and every dense and hybrid search fails:
+
+```text
+Table with name my_docslangchainvectorindex does not exist!
+```
+
+Recreate the store, so dense searches fall back to an exact scan, or recreate the index under the same name, after which searches work again. See the caution under [`drop_vector_index()`](./indexes.md#drop_vector_index).
 
 ### Why does `reindex()` raise `NotImplementedError`? {#reindex}
 
@@ -138,6 +153,31 @@ When the index column set is auto-derived — `metadata_index` unset, or its `co
 Filters on such a column still return correct results; they run as a post-filter rather than in the index scan. A column you list explicitly in `columns` is never skipped — there the database decides, and an unindexable entry surfaces its DDL error.
 
 See [Metadata index configuration](./indexes.md#metadata-index).
+
+### Why does my search raise `ValueError` about query options? {#query-options-type}
+
+The store's `index_query_options` are for one index type and the collection's index is the other -- for example `IVFQueryOptions(nprobe=32)` on a collection whose index is HNSW. SereneDB would accept the setting and ignore it, so the store raises instead of searching untuned:
+
+```text
+IVFQueryOptions tunes IVF indexes, but the index of collection 'my_docs'
+(my_docslangchainvectorindex) is HNSW. Pass query options for HNSW indexes as
+index_query_options.
+```
+
+Create the store with options for the index it has -- [`IVFQueryOptions`](./indexes.md#ivfqueryoptions) or [`HNSWQueryOptions`](./indexes.md#hnswqueryoptions). See [Matching options to the index type](./indexes.md#query-options-type).
+
+### How do I move a collection from IVF to HNSW? {#switch-index-type}
+
+Drop the index and apply the new one on one store, then recreate every store over the collection with [`HNSWQueryOptions`](./indexes.md#hnswqueryoptions):
+
+```python
+store.drop_vector_index()
+store.apply_vector_index(HNSWIndex())          # or apply_hybrid_search_index(HNSWIndex())
+```
+
+Dropping first matters. `apply_vector_index()` fails while an index exists, and `apply_hybrid_search_index()` is `CREATE INDEX IF NOT EXISTS`, so over an existing index it does nothing and the old type stays.
+
+Until the build finishes there is no index: dense searches on the switching store scan exactly, and stores elsewhere that already searched fail with `... does not exist` and then keep their old query options. See [Switching the index type](./indexes.md#switch-index-type) for each pitfall.
 
 ### Can I choose the index name? {#index-naming}
 
@@ -213,6 +253,16 @@ store.add_texts(texts)
 
 `from_documents()` raises through the same path. On the async class, [`afrom_texts()`](./async.md#afrom_texts) and `afrom_documents()` do work, but they also require an existing table. See [Not implemented](./vector-store.md#not-implemented).
 
+### Why does a synchronous method raise `RuntimeError` inside my async code? {#sync-on-loop}
+
+The method was called from the thread running the engine's event loop — typically from a coroutine, on an engine built with `from_pool(pool, loop=asyncio.get_running_loop())`. A synchronous method blocks its caller until that loop has run the work, which can never happen while the loop's own thread is the one blocked, so it raises instead of hanging:
+
+```text
+RuntimeError: A synchronous SereneDBEngine/SereneDBVectorStore method was called from the event loop the engine runs on; waiting for it there would block forever. ...
+```
+
+Await the `a`-prefixed form (`await engine.ainit_vectorstore_table(...)`, or [`AsyncSereneDBVectorStore`](./async.md) for the store). If you need the synchronous form, run it off the loop with `await asyncio.to_thread(...)`. See [`from_pool()`](./engine.md#from_pool).
+
 ### Why is awaiting a method on `SereneDBVectorStore` slower than expected? {#async}
 
 `SereneDBVectorStore` overrides none of the `a`-prefixed methods, so `await sync_store.aadd_texts(...)` falls through to LangChain's default implementation, which runs the *synchronous* method in a thread executor — which in turn hands the work back to the engine's background loop. It gives correct results through two hops and a thread that is not needed.
@@ -235,7 +285,7 @@ store_cosine.apply_vector_index(index)
 index.distance_strategy  # now DistanceStrategy.COSINE_DISTANCE
 ```
 
-Build a fresh `IVFIndex` per store rather than sharing one instance.
+Build a fresh index object per store rather than sharing one instance. `HNSWIndex` behaves the same way.
 
 [`init_vectorstore_table()`](./engine.md#init_vectorstore_table) likewise replaces the `name` of each `Column` (or `ColumnDict`) you pass with its SQL-escaped form. Escaping changes only names containing a double quote, so this is invisible in practice — but reusing the same `Column` object across two calls does double-escape such a name.
 
@@ -243,8 +293,9 @@ Build a fresh `IVFIndex` per store rather than sharing one instance.
 
 | Question | Answer |
 | :--- | :--- |
-| Can I create a partial index? | No. `partial_indexes` on `IVFIndex` raises — SereneDB inverted indexes have no `CREATE INDEX ... WHERE` form. |
-| Why does `IVFQueryOptions.to_string()` warn? | It is deprecated. Use [`to_parameter()`](./indexes.md#ivfqueryoptions). |
+| Can I create a partial index? | No. `partial_indexes` on `IVFIndex` or `HNSWIndex` raises — SereneDB inverted indexes have no `CREATE INDEX ... WHERE` form. |
+| Why does `IVFQueryOptions.to_string()` warn? | It is deprecated, on `HNSWQueryOptions` too. Use [`to_parameter()`](./indexes.md#ivfqueryoptions). |
+| Why does `IVFIndex(rabitq_bits=...)` warn? | It is deprecated. Use [`nb_bits`](./indexes.md#ivfindex), which is the same setting. |
 | Can I have a metadata column named `distance`? | Yes. The computed score column is renamed to `distance_1` (or the next free name) so it does not shadow yours. |
 | Why does a text search dictionary survive `drop_table()`? | [`drop_table()`](./engine.md#drop_table) drops the table and its index, not the dictionary. It is created `IF NOT EXISTS`, so a recreated table reuses the existing dictionary — drop it by hand if you change `dictionary_expression`. |
 

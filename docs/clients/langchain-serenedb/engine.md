@@ -114,7 +114,7 @@ Creates the table a vector store binds to, and optionally its inverted index.
 | `overwrite_existing` | `bool` | `False` | `DROP TABLE IF EXISTS` first, then recreate. Destroys existing data. |
 | `if_not_exists` | `bool` | `False` | Emit `CREATE TABLE IF NOT EXISTS` (and `CREATE INDEX IF NOT EXISTS`), making the call idempotent. |
 | `store_metadata` | `bool` | `True` | When `False`, no JSON metadata column is created. |
-| `vector_index` | `Optional[BaseIndex]` | `None` | Build the ANN index in the same call, e.g. `IVFIndex()`. |
+| `vector_index` | `Optional[BaseIndex]` | `None` | Build the ANN index in the same call: `IVFIndex()` or `HNSWIndex()`. |
 | `hybrid_index_config` | `Optional[HybridIndexConfig]` | `None` | Build the combined full-text + vector index (and its dictionary) in the same call. Build-time only — how queries fuse is set on the store, see [Hybrid Search](./hybrid-search.md). |
 | `metadata_index` | `Optional[MetadataIndexConfig]` | `None` | Which metadata columns and JSON sub-fields join the index. |
 
@@ -208,7 +208,7 @@ An index is built in the same call when either `vector_index` or `hybrid_index_c
 | Arguments | Result |
 | :--- | :--- |
 | Neither | Table only. Vector search falls back to an exact scan. |
-| `vector_index=IVFIndex(...)` | Table plus a vector-only inverted index on the embedding column. |
+| `vector_index=IVFIndex(...)` or `HNSWIndex(...)` | Table plus a vector-only inverted index on the embedding column. |
 | `hybrid_index_config=HybridIndexConfig()` | `CREATE TEXT SEARCH DICTIONARY`, then one combined inverted index over the content **and** embedding columns. The vector operator class defaults to `IVFIndex()`. |
 | Both | The combined index, using the `vector_index` you passed for the vector operator class. |
 

@@ -107,7 +107,9 @@ jobs:
     build-docker:
         name: Build Docker Image
         if: inputs.RUN_TESTS || inputs.BUILD_IMAGE
-        runs-on: linux-amd64
+        runs-on:
+            - linux-amd64
+            - build
         permissions:
             contents: read
         timeout-minutes: 60

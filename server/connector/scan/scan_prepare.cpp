@@ -18,9 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -77,31 +81,34 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
   return *g.queries[seg_idx];
 }
 
-bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
-                     ScanLocalState& l) {
-  if (!g.stats_stage || g.stats_barrier.Released()) {
+bool RunPrepareStage(ScanGlobalState& g, ScanLocalState& l) {
+  if (!g.stats_stage) {
     return true;
   }
-  for (;;) {
-    const auto seg = g.prepare_next.fetch_add(1, std::memory_order_relaxed);
-    if (seg >= g.total_segments) {
-      break;
-    }
-    EnsureSegmentQuery(g, &l, seg);
-    if (g.stats_barrier.Arrive()) {
-      if (g.collector) {
-        g.collector->Finish();
+  if (!g.stats_barrier.Released()) {
+    absl::Cleanup abandon = [&g] { g.stats_barrier.Abandon(); };
+    for (;;) {
+      const auto seg = g.prepare_next.fetch_add(1, std::memory_order_relaxed);
+      if (seg >= g.total_segments) {
+        break;
       }
-      g.stats_barrier.Release(input);
-      return true;
+      EnsureSegmentQuery(g, &l, seg);
+      SDB_IF_FAILURE("scan_prepare_fails_last_segment") {
+        if (seg + 1 == g.total_segments) {
+          THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+        }
+      }
+      if (g.stats_barrier.Arrive()) {
+        if (g.collector) {
+          g.collector->Finish();
+        }
+        g.stats_barrier.Release();
+      }
     }
+    std::move(abandon).Cancel();
+    g.stats_barrier.Wait();
   }
-  if (g.stats_barrier.Park(input, *g.client_context)) {
-    l.parked_on = &g.stats_barrier;
-    return false;
-  }
-  g.stats_barrier.Wait();
-  return true;
+  return !g.stats_barrier.Failed();
 }
 
 }  // namespace sdb::connector

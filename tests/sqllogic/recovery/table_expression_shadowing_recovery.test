@@ -206,7 +206,8 @@ connection plain
 statement error
 INSERT INTO tesr_u VALUES ('def');
 ----
-db error: ERROR: Duplicate key "lower(s): def" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "tesr_u_lower"
+DETAIL: Key (lower(s))=(def) already exists.
 
 
 connection with_path
@@ -223,7 +224,8 @@ connection plain
 statement error
 INSERT INTO tesr_p VALUES ('def');
 ----
-db error: ERROR: Duplicate key "lower(s): def" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "tesr_p_lower"
+DETAIL: Key (lower(s))=(def) already exists.
 
 
 connection plain
@@ -248,14 +250,16 @@ connection plain
 statement error
 INSERT INTO tesr_n1.tesr_n2.tesr_u VALUES ('abc');
 ----
-db error: ERROR: Duplicate key "lower(s): abc" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "tesr_nu_lower"
+DETAIL: Key (lower(s))=(abc) already exists.
 
 
 connection plain
 statement error
 INSERT INTO tesr_ix.tesr_u VALUES ('abc');
 ----
-db error: ERROR: Duplicate key "lower(s): abc" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "tesr_iu_lower"
+DETAIL: Key (lower(s))=(abc) already exists.
 
 
 connection plain

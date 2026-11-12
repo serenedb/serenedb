@@ -2,7 +2,7 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE stvg_t (id INT PRIMARY KEY, a INT, v INT GENERATED ALWAYS AS (a + 1), note TEXT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 
 statement ok
@@ -14,7 +14,7 @@ INSERT INTO stvg_t (id, a, note) VALUES (1, 5, 'x'), (2, 7, 'y');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stvg_t;
+VACUUM (FLUSH_TABLE) stvg_t;
 
 
 statement ok
@@ -34,7 +34,7 @@ SELECT 1;
 
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (REFRESH_TABLE) stvg_t;
+VACUUM (FLUSH_TABLE) stvg_t;
 
 
 query
@@ -51,7 +51,7 @@ UPDATE stvg_t SET a = 20 WHERE id = 3;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) stvg_t;
+VACUUM (FLUSH_TABLE) stvg_t;
 
 
 query

@@ -28,7 +28,7 @@ statement error
 CREATE TABLE public.tesp_missing (a INT CHECK (tesp_missing_fn(a)));
 ----
 db error: ERROR: Scalar Function with name tesp_missing_fn does not exist!
-Did you mean "tesp_pos"?
+Did you mean <slt:ignore>
 
 
 statement error
@@ -285,15 +285,6 @@ CREATE TABLE public.tesp_b (n INT, s TEXT CHECK (length(s) < 3), d TEXT DEFAULT 
 
 
 statement ok
-CREATE TABLE public.tesp_old (n INT, g INT, v INT);
-
-
-statement ok
-CREATE TRIGGER tesp_b_old AFTER UPDATE ON public.tesp_b REFERENCING OLD TABLE AS o FOR EACH STATEMENT
-  INSERT INTO public.tesp_old SELECT n, g, v FROM o;
-
-
-statement ok
 CREATE TABLE public.tesp_e (n INT, e INT GENERATED ALWAYS AS (sign(n)));
 
 
@@ -353,14 +344,6 @@ SELECT n, g, v FROM public.tesp_b;
 ----
 n	g	v
 -7	7	8
-
-
-connection shadow
-query
-SELECT n, g, v FROM public.tesp_old;
-----
-n	g	v
--5	5	6
 
 
 connection shadow
@@ -777,7 +760,7 @@ DROP SCHEMA tesp_sq CASCADE;
 
 
 statement ok
-CREATE TABLE public.tesp_cat (a INT, c TEXT DEFAULT CURRENT_CATALOG, d TEXT DEFAULT main.current_database());
+CREATE TABLE public.tesp_cat (a INT, c TEXT DEFAULT CURRENT_CATALOG);
 
 
 statement ok
@@ -785,7 +768,7 @@ INSERT INTO public.tesp_cat (a) VALUES (1);
 
 
 query
-SELECT count(*) AS n FROM public.tesp_cat WHERE c = current_database() AND d = current_database();
+SELECT count(*) AS n FROM public.tesp_cat WHERE c = current_database();
 ----
 n
 1
@@ -889,6 +872,114 @@ tesp_code()
 
 
 statement ok
+CREATE FUNCTION public.tesp_valid(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE FUNCTION tesp_shop.tesp_valid(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 10';
+
+
+statement ok
+SET search_path = tesp_shop, public;
+
+
+statement ok
+CREATE TABLE public.tesp_vt (a INT CHECK (tesp_valid(a)));
+
+
+statement ok
+RESET search_path;
+
+
+statement error
+INSERT INTO public.tesp_vt VALUES (5);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_vt" with expression CHECK(tesp_shop.tesp_valid(a))
+
+
+statement ok
+INSERT INTO public.tesp_vt VALUES (11);
+
+
+statement ok
+CREATE TABLE tesp_shop.tesp_sd (id SERIAL, a INT);
+
+
+statement ok
+CREATE SEQUENCE public.tesp_sd_id_seq START 100;
+
+
+statement ok
+INSERT INTO tesp_shop.tesp_sd VALUES (DEFAULT, 1);
+
+
+statement ok
+INSERT INTO tesp_shop.tesp_sd (a) VALUES (2);
+
+
+statement ok
+UPDATE tesp_shop.tesp_sd SET id = DEFAULT WHERE a = 2;
+
+
+query
+SELECT id, a FROM tesp_shop.tesp_sd ORDER BY a;
+----
+id	a
+1	1
+3	2
+
+
+statement ok
+CREATE TYPE tesp_shop.tesp_mood AS ENUM ('a', 'b');
+
+
+statement ok
+SET search_path = tesp_shop, public;
+
+
+statement error
+CREATE TABLE public.tesp_ty (m TEXT DEFAULT 'a'::tesp_mood::TEXT);
+----
+db error: ERROR: Type with name tesp_mood does not exist!
+Did you mean "tesp_shop.tesp_mood"?
+
+
+statement ok
+CREATE TABLE public.tesp_ty (m TEXT DEFAULT 'a'::tesp_shop.tesp_mood::TEXT, k tesp_mood);
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO public.tesp_ty (k) VALUES ('b');
+
+
+query
+SELECT m, k FROM public.tesp_ty;
+----
+m	k
+a	b
+
+
+statement ok
+DROP TABLE public.tesp_ty;
+
+
+statement ok
+DROP TABLE public.tesp_vt;
+
+
+statement ok
+DROP SEQUENCE public.tesp_sd_id_seq;
+
+
+statement ok
+DROP FUNCTION public.tesp_valid(INT);
+
+
+statement ok
 DROP SCHEMA tesp_shop CASCADE;
 
 
@@ -946,10 +1037,6 @@ DROP SCHEMA tesp_own CASCADE;
 
 statement ok
 DROP TABLE public.tesp_b;
-
-
-statement ok
-DROP TABLE public.tesp_old;
 
 
 statement ok

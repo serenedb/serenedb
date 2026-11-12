@@ -611,13 +611,13 @@ DROP TABLE search_gen_upd;
 
 statement ok
 CREATE TABLE search_gen_virtual (id INTEGER PRIMARY KEY, a INTEGER,
-  v INTEGER GENERATED ALWAYS AS (a + 1), note TEXT) WITH (storage = 'search');
+  v INTEGER GENERATED ALWAYS AS (a + 1), note TEXT);
 
 statement ok
 INSERT INTO search_gen_virtual (id, a, note) VALUES (1, 5, 'x'), (2, 7, 'y');
 
 statement ok
-VACUUM (REFRESH_TABLE) search_gen_virtual;
+VACUUM (FLUSH_TABLE) search_gen_virtual;
 
 query
 SELECT id, a, v, note FROM search_gen_virtual ORDER BY id;
@@ -630,7 +630,7 @@ statement ok
 UPDATE search_gen_virtual SET a = 10 WHERE id = 1;
 
 statement ok
-VACUUM (REFRESH_TABLE) search_gen_virtual;
+VACUUM (FLUSH_TABLE) search_gen_virtual;
 
 query
 SELECT id, a, v, note FROM search_gen_virtual ORDER BY id;

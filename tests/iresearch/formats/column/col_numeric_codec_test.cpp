@@ -996,6 +996,9 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
     {"periodic steps",
      [](uint64_t g) { return static_cast<int64_t>(g * 1000 + g % 7); },
      irs::WriteTier::Flush, "delta/lz4"},
+    {"periodic steps over two frames",
+     [](uint64_t g) { return static_cast<int64_t>(g * 1000 + g % 7 * 301); },
+     irs::WriteTier::Flush, "delta/lz4"},
   };
   for (const auto& c : cases) {
     SCOPED_TRACE(c.name);

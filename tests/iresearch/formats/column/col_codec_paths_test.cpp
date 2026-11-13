@@ -37,6 +37,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
+#include <iresearch/formats/column/codecs/alp_primitives.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -208,6 +209,17 @@ class ColCodecPathsTest : public TestBase {
           pos += 900;
         }
       }
+    }
+    auto state = col.InitScan(r.Ctx());
+    col.Skip(state, 5);
+    for (uint64_t pos = 5; pos < c.rows;) {
+      const auto take = std::min<duckdb::idx_t>(c.rows - pos, 64);
+      duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+      col.ScanCount(state, out, take, 0);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        ASSERT_NO_FATAL_FAILURE(ExpectRow(c, rows, out, k, pos + k));
+      }
+      pos += take;
     }
   }
 
@@ -742,6 +754,85 @@ TEST_F(ColCodecPathsTest, AlpCodecsReadFloatsAndDoubles) {
                return g % 97 == 0 ? item(-1e30 * static_cast<double>(g + 1))
                                   : item(std::sin(static_cast<double>(g)));
              }});
+    }
+    constexpr uint32_t kSampledRows =
+      (irs::codecs::alp::kRowGroupSamplesJump + 1) * STANDARD_VECTOR_SIZE;
+    constexpr uint64_t kShortLastVector =
+      2 * uint64_t{kSampledRows} - STANDARD_VECTOR_SIZE +
+      irs::codecs::alp::kSamplesPerVector - 1;
+    Check(
+      {name("alp short last vector"), type, CodecType::Alp, All,
+       [&](uint64_t g) { return item(static_cast<double>(g % 10000) / 100.0); },
+       /*stored=*/true, irs::WriteTier::Flush, kShortLastVector, kSampledRows});
+    Check({name("alprd short last vector"), type, CodecType::AlpRd, All,
+           [&](uint64_t g) {
+             return item(std::sin(static_cast<double>(g)) * 12345.678901234);
+           },
+           /*stored=*/true, irs::WriteTier::Flush, kShortLastVector,
+           kSampledRows});
+  }
+}
+
+TEST_F(ColCodecPathsTest, RoaringReadsEveryContainerKind) {
+  struct Bits {
+    std::string_view name;
+    std::function<bool(uint64_t)> at;
+  };
+  const auto irregular = [](uint64_t g) { return Mix(g) % 2 == 0; };
+  const std::vector<Bits> valid{
+    {"all", All},
+    {"irregular", irregular},
+    {"irregular after whole words",
+     [&](uint64_t g) {
+       const auto at = g % STANDARD_VECTOR_SIZE;
+       return at < 64 || (at >= 640 && at < 704) || irregular(g);
+     }},
+    {"runs", NullRuns},
+    {"rare", Rare},
+    {"frequent", Periodic},
+    {"a kind per vector",
+     [&](uint64_t g) {
+       switch (g / STANDARD_VECTOR_SIZE % 4) {
+         case 0:
+           return irregular(g);
+         case 1:
+           return NullRuns(g);
+         case 2:
+           return Rare(g);
+         default:
+           return Periodic(g);
+       }
+     }},
+  };
+  const std::vector<Bits> values{
+    {"irregular", [&](uint64_t g) { return irregular(g + 1); }},
+    {"irregular after whole words",
+     [&](uint64_t g) {
+       const auto at = g % STANDARD_VECTOR_SIZE;
+       return at < 64 || (at >= 640 && at < 704) || irregular(g + 1);
+     }},
+    {"runs", [](uint64_t g) { return g / 211 % 2 == 0; }},
+    {"rare", [](uint64_t g) { return g % 61 == 7; }},
+    {"frequent", [](uint64_t g) { return g % 13 != 5; }},
+    {"a kind per vector",
+     [&](uint64_t g) {
+       switch (g / STANDARD_VECTOR_SIZE % 4) {
+         case 0:
+           return g % 13 != 5;
+         case 1:
+           return g % 61 == 7;
+         case 2:
+           return g / 211 % 2 == 0;
+         default:
+           return irregular(g + 1);
+       }
+     }},
+  };
+  for (const auto& rows : valid) {
+    for (const auto& bits : values) {
+      Check({absl::StrCat("valid ", rows.name, ", true ", bits.name),
+             LogicalType::BOOLEAN, CodecType::Roaring, rows.at,
+             [&](uint64_t g) { return Value::BOOLEAN(bits.at(g)); }});
     }
   }
 }

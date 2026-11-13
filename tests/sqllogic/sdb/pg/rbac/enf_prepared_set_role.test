@@ -5,7 +5,7 @@ CREATE ROLE epsr_reader_${__DATABASE__};
 
 
 statement ok
-CREATE TABLE epsr_s (pk INTEGER PRIMARY KEY, v INTEGER);
+CREATE TABLE epsr_s (pk INTEGER PRIMARY KEY, v INTEGER) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -64,6 +64,12 @@ pk
 
 statement ok
 SET ROLE epsr_reader_${__DATABASE__};
+
+
+statement error
+SELECT count(*) AS n FROM epsr_s;
+----
+db error: ERROR: permission denied for table epsr_s
 
 
 statement error

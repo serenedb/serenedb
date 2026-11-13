@@ -21,10 +21,14 @@
 #pragma once
 
 #include <core_functions/array_kernels.hpp>
+#include <limits>
 
 #include "iresearch/index/column_info.hpp"
 
 namespace irs {
+
+inline constexpr uint32_t kMaxVectorDimension =
+  std::numeric_limits<uint16_t>::max();
 
 template<VectorMetric Metric>
 float ComputeDistance(const float* l, const float* r, uint16_t d) {

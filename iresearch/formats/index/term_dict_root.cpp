@@ -665,8 +665,8 @@ size_t Root::FindFrom(size_t from, Probe probe) const noexcept {
 }
 
 size_t Root::FindFrom(size_t from, Probe probe, SeparatorBuffer& buffer) const {
-  if (from == 0 || from > _count ||
-      (!Resumes(buffer, from) && (from - 1) % kGroup != 0)) {
+  SDB_ASSERT(from != 0);
+  if (from > _count || (!Resumes(buffer, from) && (from - 1) % kGroup != 0)) {
     return FindFrom(from, probe);
   }
   const size_t group = (from - 1) / kGroup;
@@ -744,7 +744,9 @@ size_t Root::SharedWithNext(size_t block, const SeparatorBuffer& buffer,
     return CommonPrefixLength(separator, Restart(block / kGroup));
   }
   const auto* p = buffer.next;
-  return std::min<size_t>(vread<uint32_t>(p), separator.size());
+  const size_t shared = vread<uint32_t>(p);
+  SDB_ASSERT(shared <= separator.size());
+  return shared;
 }
 
 }  // namespace irs::term_dict

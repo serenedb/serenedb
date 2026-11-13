@@ -127,11 +127,9 @@ Result<Family> MakeExclusion(const BooleanQuery& query, const Ctx& ctx,
     if (min_match == 0) {
       if (no_must) {
         if constexpr (requires {
-                        Family::MakeNegation(excludes, exclude_filters, segment,
-                                             candidates, ctx);
+                        Family::MakeNegation(query, segment, candidates, ctx);
                       }) {
-          return Family::MakeNegation(excludes, exclude_filters, segment,
-                                      candidates, ctx);
+          return Family::MakeNegation(query, segment, candidates, ctx);
         } else {
           return MakeNegation<Family>(excludes, exclude_filters, segment,
                                       candidates, ctx);

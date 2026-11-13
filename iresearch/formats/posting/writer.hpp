@@ -398,10 +398,14 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
     _features.HasPosition() && _last_state.docs_count != 0 &&
     meta.pos_offset == next % PosGroup::kPositions &&
     (next >= PosGroup::kPositions || meta.pos_start == _last_state.pos_start);
-  const uint64_t flags = uint64_t{follows} << 2 | uint64_t{same_freq} << 1;
-  out.WriteV64(single ? uint64_t{meta.doc_delta} << 3 | flags | 1
-                      : uint64_t{meta.docs_count} << 4 |
-                          uint64_t{inlined} << 3 | flags);
+  const auto layout =
+    RecordLayoutOf(_features.HasFrequency(), _features.HasPosition());
+  const uint64_t flags =
+    uint64_t{follows} << layout.follows | uint64_t{same_freq} << 1;
+  out.WriteV64(single ? uint64_t{meta.doc_delta} << layout.payload | flags | 1
+                      : (uint64_t{meta.docs_count} << 1 | uint64_t{inlined})
+                            << layout.payload |
+                          flags);
   if (_features.HasFrequency() && !same_freq) {
     SDB_ASSERT(meta.freq > meta.docs_count);
     out.WriteV32(meta.freq - meta.docs_count - 1);

@@ -51,6 +51,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     ManagedVector<detail::AllDocsClause> all_docs;
     Filters filters;
     detail::Terms uniformity = detail::Terms::Mixed;
+    bool disjoint = false;
 
     explicit PreparedBucket(IResourceManager& memory)
       : postings{{memory}}, all_docs{{memory}}, filters{{memory}} {}

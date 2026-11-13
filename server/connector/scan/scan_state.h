@@ -457,6 +457,7 @@ struct TopKLocalState final : public RankedLocalState {
 
 struct ValueTopKLocalState final : public RankedLocalState {
   std::vector<ValueHit> hits;
+  std::vector<ValueHit> best;
   std::vector<ValueHit> merged;
   ValueHit bound;
   uint32_t bound_version = 0;

@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <vector>
+
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/constant.hpp"
 #include "iresearch/search/count/family.hpp"
@@ -203,6 +205,31 @@ class TermCount : public Root {
   doc_id_t _pending_end = doc_limits::invalid();
 };
 
+class SumOfMany : public Root {
+ public:
+  explicit SumOfMany(std::vector<Root::ptr> parts) noexcept
+    : _parts{std::move(parts)} {}
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    uint64_t count = 0;
+    for (auto& part : _parts) {
+      count += part->Run(min, max);
+    }
+    return count;
+  }
+
+  uint64_t Finish() final {
+    uint64_t count = 0;
+    for (auto& part : _parts) {
+      count += part->Finish();
+    }
+    return count;
+  }
+
+ private:
+  std::vector<Root::ptr> _parts;
+};
+
 class AllCount : public Root {
  public:
   explicit AllCount(doc_id_t count) noexcept
@@ -246,6 +273,10 @@ Root::ptr MakeTermCount(const detail::PostingClause& posting,
 
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
   return memory::make_managed<Sum>(std::move(lhs), std::move(rhs));
+}
+
+Root::ptr MakeSum(std::vector<Root::ptr> parts) {
+  return memory::make_managed<SumOfMany>(std::move(parts));
 }
 
 Root::ptr Family::MakePosting(const detail::PostingClause& posting,

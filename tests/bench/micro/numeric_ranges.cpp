@@ -366,9 +366,11 @@ void VisitAdaptive(const irs::TermReader& field, uint64_t lo, uint64_t hi,
   const auto from = Key(from_buf, lo, 0);
   const auto to = Key(to_buf, hi, 0);
   to_buf[to.size()] = 0;
-  field.VisitRange(
-    from, {to_buf, to.size() + 1},
-    [&](bytes_view, const irs::PostingMeta& meta, bool) { visit(meta); });
+  field.CoverRange(from, {to_buf, to.size() + 1},
+                   [&](bytes_view, const irs::PostingMeta& meta) {
+                     visit(meta);
+                     return true;
+                   });
 }
 
 struct Query {

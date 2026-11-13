@@ -63,6 +63,92 @@ bool AnalyzeRangeBound(irs::analysis::Tokenizer& analyzer,
   return true;
 }
 
+bool IsText(duckdb::LogicalTypeId id) noexcept {
+  return id == duckdb::LogicalTypeId::VARCHAR ||
+         id == duckdb::LogicalTypeId::BLOB;
+}
+
+void AddRange(BoolTarget parent, const FilterContext& ctx,
+              const SearchColumnInfo& column_info, const RangeArgs& args,
+              std::string_view label) {
+  SDB_ASSERT(args.min || args.max);
+  const auto col_type = column_info.logical_type.id();
+  const auto& bound = args.min ? *args.min : *args.max;
+  const auto val_type = bound.type().id();
+  bool compatible = false;
+  if (IsText(col_type)) {
+    compatible = IsText(val_type);
+  } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
+    compatible = val_type == duckdb::LogicalTypeId::BOOLEAN;
+  } else if (term_dict::IsNumeric(col_type)) {
+    compatible = term_dict::IsNumeric(val_type);
+  } else {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(label, ": unsupported column type ",
+                            column_info.logical_type.ToString()),
+                    ERR_HINT("Range comparisons are supported on VARCHAR, "
+                             "BLOB, BOOLEAN and numeric columns."));
+  }
+  if (!compatible) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(label, " bound type ", bound.type().ToString(),
+                            " is incompatible with column type ",
+                            column_info.logical_type.ToString()),
+                    ERR_HINT("Bounds must match the column's type family "
+                             "(VARCHAR / BLOB / BOOLEAN / numeric)."));
+  }
+
+  if (IsText(col_type)) {
+    irs::ByRangeOptions options;
+    const auto analyze = [&](const duckdb::Value* value, bool inclusive,
+                             irs::bstring& term, irs::BoundType& type) {
+      if (!value) {
+        return true;
+      }
+      type = inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+      return AnalyzeRangeBound(ctx.tokenizer, *value, label, term);
+    };
+    const bool has_min = analyze(args.min, args.min_incl, options.range.min,
+                                 options.range.min_type);
+    const bool has_max = analyze(args.max, args.max_incl, options.range.max,
+                                 options.range.max_type);
+    if (!has_min || !has_max) {
+      AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
+      return;
+    }
+    auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
+    SetField(range, column_info);
+    range.SetBoost(ctx.boost);
+    SetLeafScorer(range, column_info);
+    *range.mutable_options() = std::move(options);
+    return;
+  }
+
+  if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
+    const auto accepts = [&](bool value) {
+      if (args.min) {
+        const bool min = args.min->GetValue<bool>();
+        if (args.min_incl ? value < min : value <= min) {
+          return false;
+        }
+      }
+      if (args.max) {
+        const bool max = args.max->GetValue<bool>();
+        if (args.max_incl ? value > max : value >= max) {
+          return false;
+        }
+      }
+      return true;
+    };
+    AddBools(MaybeNegated(parent, ctx, column_info), column_info,
+             accepts(false), accepts(true), ctx.boost);
+    return;
+  }
+
+  AddNumericRange(MaybeNegated(parent, ctx, column_info), ctx, column_info,
+                  args.min, !args.min_incl, args.max, !args.max_incl);
+}
+
 }  // namespace
 
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
@@ -133,88 +219,16 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
                "for unbounded semantics."));
   }
 
-  const auto col_type = column_info.logical_type.id();
-  const auto val_type = bound_val->type().id();
-  auto type_mismatch = [&] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(label, " bound type ", bound_val->type().ToString(),
-              " is incompatible with column type ",
-              column_info.logical_type.ToString()),
-      ERR_HINT("The bound's type must match the column's type family "
-               "(VARCHAR / BOOLEAN / numeric)."));
-  };
-  if (col_type == duckdb::LogicalTypeId::VARCHAR ||
-      col_type == duckdb::LogicalTypeId::BLOB) {
-    if (val_type != duckdb::LogicalTypeId::VARCHAR &&
-        val_type != duckdb::LogicalTypeId::BLOB) {
-      type_mismatch();
-    }
-  } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
-      type_mismatch();
-    }
-  } else if (term_dict::IsNumeric(col_type)) {
-    if (!term_dict::IsNumeric(val_type)) {
-      type_mismatch();
-    }
-  } else {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(label, ": unsupported column type ",
-                            column_info.logical_type.ToString()),
-                    ERR_HINT("Range comparisons are supported on VARCHAR, "
-                             "BOOLEAN and numeric columns."));
-  }
-
-  ValidateFilterType(col_type);
-  const auto bound_type =
-    inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-
-  if (col_type == duckdb::LogicalTypeId::VARCHAR ||
-      col_type == duckdb::LogicalTypeId::BLOB) {
-    irs::bstring term;
-    if (!AnalyzeRangeBound(ctx.tokenizer, *bound_val, label, term)) {
-      AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
-      return;
-    }
-    auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    SetField(range, column_info);
-    range.SetBoost(ctx.boost);
-    SetLeafScorer(range, column_info);
-    auto* options = range.mutable_options();
-    auto& rng = options->range;
-    if (is_lower) {
-      rng.min = std::move(term);
-      rng.min_type = bound_type;
-    } else {
-      rng.max = std::move(term);
-      rng.max_type = bound_type;
-    }
-    return;
-  }
-
-  if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    const bool bound = bound_val->GetValue<bool>();
-    const auto accepts = [&](bool value) {
-      if (is_lower) {
-        return inclusive ? value >= bound : value > bound;
-      }
-      return inclusive ? value <= bound : value < bound;
-    };
-    AddBools(MaybeNegated(parent, ctx, column_info), column_info,
-             accepts(false), accepts(true), ctx.boost);
-    return;
-  }
-
-  AddNumericRange(MaybeNegated(parent, ctx, column_info), ctx, column_info,
-                  is_lower ? bound_val : nullptr, !inclusive,
-                  is_lower ? nullptr : bound_val, !inclusive);
+  RangeArgs args;
+  (is_lower ? args.min : args.max) = bound_val;
+  (is_lower ? args.min_incl : args.max_incl) = inclusive;
+  AddRange(parent, ctx, column_info, args, label);
 }
 
 void FromBetween(BoolTarget parent, const FilterContext& ctx,
                  const SearchColumnInfo& column_info,
                  const duckdb::BoundFunctionExpression& func) {
-  auto args = ParseRangeArgs(func);
+  const auto args = ParseRangeArgs(func);
   if (!args.min && !args.max) {
     if (ctx.negated) {
       AddFilter<irs::Empty>(parent);
@@ -223,92 +237,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     }
     return;
   }
-
-  const auto col_type = column_info.logical_type.id();
-  const auto* val_sample = args.min ? args.min : args.max;
-  const auto val_type = val_sample->type().id();
-
-  auto type_mismatch = [&] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_between bound type ", val_sample->type().ToString(),
-              " is incompatible with column type ",
-              column_info.logical_type.ToString()),
-      ERR_HINT("Both bounds must match the column's type "
-               "family (VARCHAR / BOOLEAN / numeric)."));
-  };
-  if (col_type == duckdb::LogicalTypeId::VARCHAR ||
-      col_type == duckdb::LogicalTypeId::BLOB) {
-    if (val_type != duckdb::LogicalTypeId::VARCHAR &&
-        val_type != duckdb::LogicalTypeId::BLOB) {
-      type_mismatch();
-    }
-  } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
-      type_mismatch();
-    }
-  } else if (term_dict::IsNumeric(col_type)) {
-    if (!term_dict::IsNumeric(val_type)) {
-      type_mismatch();
-    }
-  } else {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_between: unsupported column type ",
-                            column_info.logical_type.ToString()),
-                    ERR_HINT("ts_between is supported on VARCHAR, BLOB, "
-                             "BOOLEAN and numeric columns."));
-  }
-
-  ValidateFilterType(col_type);
-
-  if (col_type == duckdb::LogicalTypeId::VARCHAR ||
-      col_type == duckdb::LogicalTypeId::BLOB) {
-    irs::ByRangeOptions options;
-    bool has_min = true;
-    bool has_max = true;
-    if (args.min) {
-      has_min = AnalyzeRangeBound(ctx.tokenizer, *args.min, "ts_between",
-                                  options.range.min);
-      options.range.min_type =
-        args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-    }
-    if (args.max) {
-      has_max = AnalyzeRangeBound(ctx.tokenizer, *args.max, "ts_between",
-                                  options.range.max);
-      options.range.max_type =
-        args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-    }
-    if (!has_min || !has_max) {
-      AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
-      return;
-    }
-    auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    SetField(range, column_info);
-    range.SetBoost(ctx.boost);
-    SetLeafScorer(range, column_info);
-    *range.mutable_options() = std::move(options);
-  } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    const auto accepts = [&](bool value) {
-      if (args.min) {
-        const bool min = args.min->GetValue<bool>();
-        if (args.min_incl ? value < min : value <= min) {
-          return false;
-        }
-      }
-      if (args.max) {
-        const bool max = args.max->GetValue<bool>();
-        if (args.max_incl ? value > max : value >= max) {
-          return false;
-        }
-      }
-      return true;
-    };
-    AddBools(MaybeNegated(parent, ctx, column_info), column_info,
-             accepts(false), accepts(true), ctx.boost);
-  } else {
-    AddNumericRange(MaybeNegated(parent, ctx, column_info), ctx, column_info,
-                    args.min, !args.min_incl, args.max, !args.max_incl);
-  }
+  AddRange(parent, ctx, column_info, args, "ts_between");
 }
 
 }  // namespace sdb::connector

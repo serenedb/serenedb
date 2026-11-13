@@ -125,12 +125,9 @@ struct VectorPrefilter {
 inline VectorPrefilter PrefilterOf(
   QueryBuilder::ptr&& inner, const std::shared_ptr<const Filter>& index_only,
   bool dual, const SubReader& segment, const PrepareContext& ctx) {
-  VectorPrefilter prefilter{.inner = std::move(inner), .dual = dual};
-  if (dual) {
-    [[maybe_unused]] const bool prepared =
-      PrepareInnerFilter(index_only, segment, ctx, prefilter.index_only);
-    SDB_ASSERT(prepared);
-  }
+  VectorPrefilter prefilter{.inner = std::move(inner)};
+  prefilter.dual =
+    dual && PrepareInnerFilter(index_only, segment, ctx, prefilter.index_only);
   return prefilter;
 }
 

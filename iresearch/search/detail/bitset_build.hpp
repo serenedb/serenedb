@@ -518,6 +518,8 @@ struct BitsetBuckets {
   std::vector<FillNode::ptr> exclude_fills;
   const SubReader* masked = nullptr;
   std::vector<doc_id_t> next;
+  LiveWords live;
+  BitsetStorage scratch;
 
   size_t Seed(doc_id_t docs_count) const noexcept {
     if (must.empty() || must.front().size() > 1) {
@@ -591,16 +593,16 @@ inline void FillBitset(BitsetBuckets& buckets, const IndexInput& doc,
       ReadFill(*node, min, max, nullptr, words);
     }
 
-    std::optional<BitsetStorage> scratch;
+    auto& scratch = buckets.scratch;
     const auto open_scratch = [&]() -> uint64_t* {
-      if (!scratch) {
-        scratch.emplace(max - min);
+      if (scratch.WordCount() < count) {
+        scratch = BitsetStorage{max - min};
       } else {
-        std::fill_n(scratch->Words(), count, uint64_t{0});
+        std::fill_n(scratch.Words(), count, uint64_t{0});
       }
-      return scratch->Words();
+      return scratch.Words();
     };
-    LiveWords live;
+    auto& live = buckets.live;
     const auto gate = [&] {
       live.Reset(words, count, min);
       return &live;

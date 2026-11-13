@@ -182,8 +182,6 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
 // For ts_* callers, where an unfilterable column type is a user error:
 // throws THROW_SQL_ERROR("Unsupported type id ... for filter").
-void ValidateFilterType(duckdb::LogicalTypeId type_id);
-
 struct ArgError {
   std::string_view label;
   std::string_view hint;

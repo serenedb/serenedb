@@ -53,6 +53,7 @@ class SuffixFilter {
     _words.reserve(required.size());
     for (const auto& suffix : required) {
       SDB_ASSERT(!suffix.empty());
+      _longest = std::max(_longest, suffix.size());
       ++_starts[suffix.back() + 1];
       uint64_t word = 0;
       std::memcpy(&word, suffix.data(),
@@ -67,10 +68,15 @@ class SuffixFilter {
   IRS_NO_INLINE bool Rejects(Cursor& cursor, size_t prefix) {
     if (const auto* pending = cursor.Pending();
         pending && pending->lcp >= prefix) {
-      const auto match =
-        Classify(pending->data, pending->size,
-                 pending->restart ? nullptr : SuffixCodes(cursor),
-                 pending->lcp <= prefix);
+      const auto* fsst = SuffixCodes(cursor);
+      const auto* codes = pending->restart ? nullptr : fsst;
+      auto match =
+        Classify(pending->data, pending->size, codes, pending->lcp <= prefix);
+      if (match == Match::Unknown) {
+        match =
+          Resolve(cursor.View(), fsst, codes, cursor.Entry(), pending->data,
+                  Header{.lcp = pending->lcp, .len = pending->size}, prefix);
+      }
       if (match == Match::Some) {
         return false;
       }
@@ -88,27 +94,19 @@ class SuffixFilter {
       return kNoSkip;
     }
     const auto* fsst = SuffixCodes(cursor);
-    uint32_t lcp = kNoSkip;
-    for (;;) {
-      auto last = Match::None;
-      lcp =
-        std::min(lcp, cursor.SkipWhile([&](const byte_type* data, Header header,
-                                           bool restart) IRS_FORCE_INLINE {
-          if (header.lcp < prefix) {
-            return false;
-          }
-          last = Classify(data, header.len, restart ? nullptr : fsst,
-                          header.lcp <= prefix);
-          return last == Match::None;
-        }));
-      if (last != Match::Unknown) {
-        return lcp;
+    return cursor.SkipWhile([&](const byte_type* data, Header header,
+                                bool restart, uint32_t entry) IRS_FORCE_INLINE {
+      if (header.lcp < prefix) {
+        return false;
       }
-      if (EndsWithRequired(cursor.PeekNext().substr(prefix))) {
-        return lcp;
+      const auto* codes = restart ? nullptr : fsst;
+      auto match = Classify(data, header.len, codes, header.lcp <= prefix);
+      if (match == Match::Unknown) [[unlikely]] {
+        match =
+          Resolve(cursor.View(), fsst, codes, entry, data, header, prefix);
       }
-      lcp = std::min(lcp, cursor.TakePeeked());
-    }
+      return match == Match::None;
+    });
   }
 
  private:
@@ -199,6 +197,27 @@ class SuffixFilter {
     return TailMatch(TailOf(data, size, fsst), whole);
   }
 
+  IRS_NO_INLINE Match Resolve(const BlockView& view,
+                              const duckdb_fsst_decoder_t* block,
+                              const duckdb_fsst_decoder_t* codes,
+                              uint32_t entry, const byte_type* data,
+                              Header header, size_t prefix) {
+    SDB_ASSERT(header.lcp >= prefix);
+    bytes_view suffix{data, header.len};
+    if (codes) {
+      auto* out = Grow(_decoded, size_t{header.len} * sizeof(uint64_t));
+      suffix = {out, DecodeInto(*codes, suffix, out,
+                                std::numeric_limits<size_t>::max())};
+    }
+    const size_t need = std::min(_longest, header.lcp - prefix + suffix.size());
+    const size_t tail = std::min(need, suffix.size());
+    const auto before = static_cast<uint32_t>(need - tail);
+    auto* out = Grow(_tail, need);
+    BytesBefore(view, block, entry, data, header.lcp, before, out);
+    std::memcpy(out + before, suffix.data() + suffix.size() - tail, tail);
+    return EndsWithRequired({out, need}) ? Match::Some : Match::None;
+  }
+
   const duckdb_fsst_decoder_t* SuffixCodes(const Cursor& cursor) {
     if (!cursor.View().coded) {
       return nullptr;
@@ -263,6 +282,9 @@ class SuffixFilter {
   std::vector<uint64_t> _words;
   std::array<uint8_t, kLabels + 1> _starts{};
   std::array<Match, kLabels> _last{};
+  KeyBuffer _decoded;
+  KeyBuffer _tail;
+  size_t _longest = 0;
   bool _coded = false;
 };
 
@@ -315,39 +337,43 @@ class InfixFilter {
     }
     const size_t m = _infix.size();
     const auto* base = view.suffixes;
+    const auto* decoder = cursor.Field().Fsst();
     const auto* hits = _hits.data();
     const size_t count = _hits.size();
     size_t hit =
       SeekHit(_hit, static_cast<uint32_t>(cursor.NextSuffix() - base));
     uint32_t lcp;
-    const auto raw = [&](const byte_type* data,
-                         Header header) IRS_FORCE_INLINE {
-      const auto from = static_cast<uint32_t>(data - base);
-      while (hit != count && hits[hit] < from) {
-        ++hit;
-      }
-      return !Spans(data, header.len, Boundary(header.lcp)) &&
-             (header.len < m || hit == count ||
-              hits[hit] >= from + header.len - m + 1);
-    };
+    const auto raw = [&](const byte_type* data, Header header, uint32_t entry)
+                       IRS_FORCE_INLINE {
+                         const auto from = static_cast<uint32_t>(data - base);
+                         while (hit != count && hits[hit] < from) {
+                           ++hit;
+                         }
+                         return !Spans(view, decoder, entry, data, header) &&
+                                (header.len < m || hit == count ||
+                                 hits[hit] >= from + header.len - m + 1);
+                       };
     if (view.coded) {
-      lcp = cursor.SkipWhile(
-        [&](const byte_type* data, Header header, bool restart) {
-          if (restart) [[unlikely]] {
-            return raw(data, header);
-          }
-          const auto from = static_cast<uint32_t>(data - base);
-          while (hit != count && hits[hit] <= from) {
-            ++hit;
-          }
-          const auto* p = data;
-          return (NextCode(p) & (Boundary(header.lcp) | 1)) == 0 &&
-                 (hit == count || hits[hit] >= from + header.len);
-        });
-    } else {
-      lcp = cursor.SkipWhile([&](const byte_type* data, Header header, bool) {
-        return raw(data, header);
+      lcp = cursor.SkipWhile([&](const byte_type* data, Header header,
+                                 bool restart, uint32_t entry) {
+        if (restart) [[unlikely]] {
+          return raw(data, header, entry);
+        }
+        const auto from = static_cast<uint32_t>(data - base);
+        while (hit != count && hits[hit] <= from) {
+          ++hit;
+        }
+        const auto* p = data;
+        const auto pieces = NextCode(p) & (Boundary(header.lcp) | 1);
+        return (pieces & 1) == 0 &&
+               !SpansCoded(view, *decoder, entry, data, header, pieces) &&
+               (hit == count || hits[hit] >= from + header.len);
       });
+    } else {
+      lcp = cursor.SkipWhile(
+        [&](const byte_type* data, Header header, bool, uint32_t entry) {
+          return raw(data, header, entry);
+        });
     }
     _hit = hit;
     if (cursor.AtGroupEnd()) {
@@ -557,7 +583,8 @@ class InfixFilter {
       if (HitIn(from, to)) {
         return group;
       }
-      if (Straddles(view, first, std::min(first + kRestartInterval, stop),
+      if (Straddles(view, cursor.Field().Fsst(), first,
+                    std::min(first + kRestartInterval, stop),
                     view.suffixes + from)) {
         return group;
       }
@@ -565,12 +592,13 @@ class InfixFilter {
     return group;
   }
 
-  bool Straddles(const BlockView& view, uint32_t first, uint32_t end,
+  bool Straddles(const BlockView& view, const duckdb_fsst_decoder_t* decoder,
+                 uint32_t first, uint32_t end,
                  const byte_type* sp) const noexcept {
     sp += HeaderAt(view, first).len;
     for (uint32_t entry = first + 1; entry < end; ++entry) {
       const auto header = HeaderAt(view, entry);
-      if (Crosses(view, sp, header)) {
+      if (Crosses(view, decoder, entry, sp, header)) {
         return true;
       }
       sp += header.len;
@@ -578,31 +606,73 @@ class InfixFilter {
     return false;
   }
 
-  IRS_FORCE_INLINE bool Crosses(const BlockView& view, const byte_type* sp,
+  IRS_FORCE_INLINE bool Crosses(const BlockView& view,
+                                const duckdb_fsst_decoder_t* decoder,
+                                uint32_t entry, const byte_type* sp,
                                 Header header) const noexcept {
-    const uint64_t across = Boundary(header.lcp);
     if (view.coded) {
       const auto* p = sp;
-      return (NextCode(p) & across) != 0;
+      return SpansCoded(view, *decoder, entry, sp, header,
+                        NextCode(p) & Boundary(header.lcp));
     }
-    return Spans(sp, header.len, across);
+    return Spans(view, decoder, entry, sp, header);
   }
 
-  IRS_FORCE_INLINE bool Spans(const byte_type* suffix, uint32_t size,
-                              uint64_t across) const noexcept {
-    const auto pieces = _literals[suffix[0]] & across;
+  IRS_FORCE_INLINE bool Spans(const BlockView& view,
+                              const duckdb_fsst_decoder_t* decoder,
+                              uint32_t entry, const byte_type* suffix,
+                              Header header) const noexcept {
+    const auto pieces = _literals[suffix[0]] & Boundary(header.lcp);
     if (pieces == 0) [[likely]] {
       return false;
     }
-    return SpansRest(suffix, size, pieces);
+    return Joins(view, decoder, entry, suffix, header.lcp, {suffix, header.len},
+                 pieces);
   }
 
-  IRS_NO_INLINE bool SpansRest(const byte_type* suffix, uint32_t size,
-                               uint64_t pieces) const noexcept {
+  IRS_FORCE_INLINE bool SpansCoded(const BlockView& view,
+                                   const duckdb_fsst_decoder_t& decoder,
+                                   uint32_t entry, const byte_type* codes,
+                                   Header header,
+                                   uint64_t pieces) const noexcept {
+    pieces &= ~uint64_t{1};
+    if (pieces == 0) [[likely]] {
+      return false;
+    }
+    return JoinsCoded(view, decoder, entry, codes, header, pieces);
+  }
+
+  IRS_NO_INLINE bool JoinsCoded(const BlockView& view,
+                                const duckdb_fsst_decoder_t& decoder,
+                                uint32_t entry, const byte_type* codes,
+                                Header header, uint64_t pieces) const noexcept {
+    std::array<byte_type, kMaxInfix + sizeof(uint64_t)> head;
+    const size_t size =
+      DecodeInto(decoder, {codes, header.len}, head.data(), _infix.size());
+    return Joins(view, &decoder, entry, codes, header.lcp, {head.data(), size},
+                 pieces);
+  }
+
+  IRS_NO_INLINE bool Joins(const BlockView& view,
+                           const duckdb_fsst_decoder_t* decoder, uint32_t entry,
+                           const byte_type* data, uint32_t lcp, bytes_view head,
+                           uint64_t pieces) const noexcept {
+    SDB_ASSERT((pieces & 1) == 0);
+    const auto widest = static_cast<uint32_t>(std::bit_width(pieces) - 1);
+    std::array<byte_type, kMaxInfix> before;
+    bool loaded = false;
     for (; pieces != 0; pieces &= pieces - 1) {
-      const auto rest = _infix.substr(std::countr_zero(pieces));
-      if (size >= rest.size() &&
-          std::memcmp(suffix, rest.data(), rest.size()) == 0) {
+      const auto k = static_cast<uint32_t>(std::countr_zero(pieces));
+      const auto rest = _infix.substr(k);
+      if (head.size() < rest.size() ||
+          std::memcmp(head.data(), rest.data(), rest.size()) != 0) {
+        continue;
+      }
+      if (!loaded) {
+        BytesBefore(view, decoder, entry, data, lcp, widest, before.data());
+        loaded = true;
+      }
+      if (std::memcmp(before.data() + widest - k, _infix.data(), k) == 0) {
         return true;
       }
     }
@@ -681,18 +751,22 @@ class InfixFilter {
       LoadHits(cursor);
     }
     const size_t m = _infix.size();
-    const uint64_t across = Boundary(suffix->lcp);
+    const auto* decoder = cursor.Field().Fsst();
+    const Header header{.lcp = suffix->lcp, .len = suffix->size};
     const auto from = static_cast<uint32_t>(suffix->data - view.suffixes);
     if (view.coded && !suffix->restart) {
       const auto* p = suffix->data;
-      if ((NextCode(p) & (across | 1)) != 0 ||
+      const auto pieces = NextCode(p) & (Boundary(suffix->lcp) | 1);
+      if ((pieces & 1) != 0 ||
+          SpansCoded(view, *decoder, cursor.Entry(), suffix->data, header,
+                     pieces) ||
           HitIn(from + 1, from + suffix->size)) {
         return Confirm(cursor);
       }
       _end = kNone;
       return false;
     }
-    if (Spans(suffix->data, suffix->size, across)) {
+    if (Spans(view, decoder, cursor.Entry(), suffix->data, header)) {
       return Confirm(cursor);
     }
     if (suffix->size < m || !HitIn(from, from + suffix->size - m + 1)) {
@@ -804,7 +878,6 @@ LabelRange LiveRangeOf(const A& a, const typename A::State& state) {
 
 constexpr size_t kMaxTail = 32;
 constexpr size_t kMaxGuess = 4;
-constexpr TrieCursor kUngated{.node = kTrieBelow, .labels = 0, .matched = 0};
 
 template<typename A>
 struct Live {
@@ -814,11 +887,11 @@ struct Live {
 };
 
 template<typename A>
-Live<A> FirstLive(const TermReaderImpl& field, TrieCursor head, const A& a,
+Live<A> FirstLive(const PrefixTrie& trie, TrieCursor head, const A& a,
                   const typename A::State& state, uint32_t from,
                   LabelRange range) {
   const auto lo = std::max(from, range.lo);
-  if (!TermReaderImpl::Gates(head)) {
+  if (!PrefixTrie::Gates(head)) {
     for (auto label = lo; label <= range.hi; ++label) {
       const auto next = a.Step(state, static_cast<byte_type>(label));
       if (A::Alive(next)) {
@@ -827,7 +900,7 @@ Live<A> FirstLive(const TermReaderImpl& field, TrieCursor head, const A& a,
     }
     return {.label = kNoLabel, .next = {}, .child = head};
   }
-  const auto labels = field.Labels(head);
+  const auto labels = trie.Labels(head);
   for (auto it = absl::c_lower_bound(labels, lo);
        it != labels.end() && *it <= range.hi; ++it) {
     const auto next = a.Step(state, *it);
@@ -835,8 +908,7 @@ Live<A> FirstLive(const TermReaderImpl& field, TrieCursor head, const A& a,
       return {
         .label = *it,
         .next = next,
-        .child =
-          field.ChildAt(head, static_cast<uint32_t>(it - labels.begin())),
+        .child = trie.ChildAt(head, static_cast<uint32_t>(it - labels.begin())),
       };
     }
   }
@@ -879,19 +951,19 @@ constexpr size_t kDeadEnd = std::numeric_limits<size_t>::max();
 using Tail = std::array<byte_type, kMaxTail>;
 
 template<typename A>
-size_t Continuation(const TermReaderImpl& field, TrieCursor head, const A& a,
+size_t Continuation(const PrefixTrie& trie, TrieCursor head, const A& a,
                     typename A::State state, std::span<byte_type> tail) {
   if constexpr (A::kMayBeUnknown) {
     if (A::Unknown(state)) {
       return 0;
     }
   }
-  const bool gated = TermReaderImpl::Gates(head);
+  const bool gated = PrefixTrie::Gates(head);
   if (!gated) {
     tail = tail.first(std::min(tail.size(), kMaxGuess));
   }
   size_t extra = 0;
-  if (const auto edge = field.Edge(head); !edge.empty()) {
+  if (const auto edge = trie.Edge(head); !edge.empty()) {
     extra = std::min(edge.size(), tail.size());
     absl::c_copy(edge.substr(0, extra), tail.begin());
     switch (StepEdge(a, state, edge)) {
@@ -906,22 +978,22 @@ size_t Continuation(const TermReaderImpl& field, TrieCursor head, const A& a,
     tail = extra == edge.size() ? tail.subspan(extra) : std::span<byte_type>{};
   }
   typename A::PayloadType payload{};
-  if (field.MayEnd(head) && a.Accept(state, payload)) {
+  if (trie.MayEnd(head) && a.Accept(state, payload)) {
     return extra;
   }
   const auto range = LiveRangeOf(a, state);
   if (tail.empty()) {
-    return gated && FirstLive(field, head, a, state, 0, range).label == kNoLabel
+    return gated && FirstLive(trie, head, a, state, 0, range).label == kNoLabel
              ? kDeadEnd
              : extra;
   }
   for (uint32_t from = 0;;) {
-    const auto live = FirstLive(field, head, a, state, from, range);
+    const auto live = FirstLive(trie, head, a, state, from, range);
     if (live.label == kNoLabel) {
       return gated ? kDeadEnd : extra;
     }
     const size_t rest =
-      Continuation(field, live.child, a, live.next, tail.subspan(1));
+      Continuation(trie, live.child, a, live.next, tail.subspan(1));
     if (rest != kDeadEnd) {
       tail[0] = static_cast<byte_type>(live.label);
       return extra + 1 + rest;
@@ -937,17 +1009,17 @@ struct Branch {
 };
 
 template<typename A>
-Branch NextBranch(const TermReaderImpl& field, TrieCursor head, const A& a,
+Branch NextBranch(const PrefixTrie& trie, TrieCursor head, const A& a,
                   const typename A::State& state, uint32_t from,
                   LabelRange range) {
   Branch branch{.label = kNoLabel, .extra = 0, .tail = {}};
   for (;; from = branch.label + 1) {
-    const auto live = FirstLive(field, head, a, state, from, range);
+    const auto live = FirstLive(trie, head, a, state, from, range);
     branch.label = live.label;
     if (live.label == kNoLabel) {
       return branch;
     }
-    branch.extra = Continuation(field, live.child, a, live.next, branch.tail);
+    branch.extra = Continuation(trie, live.child, a, live.next, branch.tail);
     if (branch.extra != kDeadEnd) {
       return branch;
     }
@@ -956,36 +1028,34 @@ Branch NextBranch(const TermReaderImpl& field, TrieCursor head, const A& a,
 
 class TrieHeads {
  public:
-  TrieHeads(const TermReaderImpl& field, size_t k) : _field{&field}, _k{k} {
-    _heads.push_back(field.TrieRoot());
+  TrieHeads(const PrefixTrie& trie, size_t k) : _trie{&trie}, _k{k} {
+    _heads.push_back(trie.Root());
   }
 
   TrieCursor operator[](size_t depth) const noexcept {
     SDB_ASSERT(depth >= _k);
     const size_t at = depth - _k;
-    SDB_ASSERT(at < _heads.size() || !TermReaderImpl::Gates(_heads.back()));
+    SDB_ASSERT(at < _heads.size() || !PrefixTrie::Gates(_heads.back()));
     return at < _heads.size() ? _heads[at] : _heads.back();
   }
 
   size_t Extend(bytes_view path, size_t depth) {
     SDB_ASSERT(_k <= depth && depth <= path.size());
-    if (!TermReaderImpl::Gates(_heads.front())) {
+    if (!PrefixTrie::Gates(_heads.front())) {
       return depth;
     }
     size_t at = CommonPrefixLength(bytes_view{_path}, path.substr(_k));
     _path.resize(at);
     _heads.resize(at + 1);
     const auto want = path.substr(_k, depth - _k);
-    while (at < want.size() && TermReaderImpl::Gates(_heads.back())) {
+    while (at < want.size() && PrefixTrie::Gates(_heads.back())) {
       const auto head = _heads.back();
-      if (const auto edge = _field->Edge(head); !edge.empty()) {
+      if (const auto edge = _trie->Edge(head); !edge.empty()) {
         const auto matched = CommonPrefixLength(edge, want.substr(at));
         for (size_t i = 1; i <= matched; ++i) {
-          _heads.push_back({
-            .node = head.node,
-            .labels = head.labels,
-            .matched = head.matched + static_cast<uint32_t>(i),
-          });
+          auto next = head;
+          next.matched += static_cast<uint32_t>(i);
+          _heads.push_back(next);
         }
         _path.append(want.substr(at, matched));
         at += matched;
@@ -994,7 +1064,7 @@ class TrieHeads {
         }
         continue;
       }
-      const auto child = _field->Child(head, want[at]);
+      const auto child = _trie->Child(head, want[at]);
       if (child.node == kTrieMissing) {
         return _k + at;
       }
@@ -1006,12 +1076,12 @@ class TrieHeads {
   }
 
   bool Branchable(bytes_view path, size_t& depth) const noexcept {
-    if (!TermReaderImpl::Gates(_heads.front())) {
+    if (!PrefixTrie::Gates(_heads.front())) {
       return true;
     }
     for (;;) {
       const auto head = (*this)[depth];
-      const auto edge = _field->Edge(head);
+      const auto edge = _trie->Edge(head);
       if (edge.empty() || edge.front() > path[depth]) {
         return true;
       }
@@ -1023,7 +1093,7 @@ class TrieHeads {
   }
 
  private:
-  const TermReaderImpl* _field;
+  const PrefixTrie* _trie;
   containers::SmallVector<TrieCursor, 16> _heads;
   bstring _path;
   size_t _k;
@@ -1054,30 +1124,172 @@ bstring UpperBound(const A& a) {
 }
 
 template<typename A>
-class BlockPlan {
+class Targeter {
  public:
   using State = typename A::State;
 
-  BlockPlan(const TermReaderImpl& field, const A& a)
-    : _field{&field},
+  Targeter(const TermReaderImpl& field, const A& a)
+    : _trie{&field.Trie()},
       _a{&a},
       _k{field.KeyPrefix().size()},
-      _valid{_k},
-      _heads{field, _k} {
-    _states.assign(_k + 1, a.Start());
+      _heads{field.Trie(), _k} {}
+
+  void Start() {
+    if (_states.empty()) {
+      _states.assign(_k + 1, _a->Start());
+      _ranges.resize(_k + 1);
+      _ranged = 0;
+    }
+  }
+
+  const State& StateAt(size_t depth) const noexcept { return _states[depth]; }
+  Probe Assign(bytes_view prefix, bytes_view key) {
+    return _target.Assign(prefix, key);
+  }
+  bytes_view Key() const noexcept { return _target.Key(); }
+  Probe View() const noexcept { return _target.View(); }
+
+  LabelRange LiveRange(size_t depth) {
+    if (depth >= _ranged) {
+      for (size_t i = _ranged; i <= depth; ++i) {
+        _ranges[i].hi = kUnranged;
+      }
+      _ranged = depth + 1;
+    }
+    auto& range = _ranges[depth];
+    if (range.hi == kUnranged) {
+      range = LiveRangeOf(*_a, _states[depth]);
+    }
+    return range;
+  }
+
+  size_t StepAlong(bytes_view path, size_t depth) {
+    if (_states.size() <= path.size()) {
+      _states.resize(path.size() + 1);
+      _ranges.resize(path.size() + 1);
+    }
+    _ranged = std::min(_ranged, depth + 1);
+    if constexpr (A::kCheapRuns) {
+      while (depth != path.size()) {
+        const auto from = _states[depth];
+        State next{};
+        const size_t run =
+          _a->StepRun(from, path.data() + depth, path.size() - depth, next);
+        std::fill_n(_states.begin() + depth + 1, run, from);
+        depth += run;
+        if (depth == path.size()) {
+          break;
+        }
+        if (!A::Alive(next)) {
+          return depth;
+        }
+        _states[++depth] = next;
+      }
+      return depth;
+    }
+    for (; depth != path.size(); ++depth) {
+      const auto next = _a->Step(_states[depth], path[depth]);
+      if (!A::Alive(next)) {
+        return depth;
+      }
+      _states[depth + 1] = next;
+    }
+    return depth;
+  }
+
+  bool NextTarget(bytes_view path, size_t& depth) {
+    SDB_ASSERT(depth >= _k);
+    depth = _heads.Extend(path, depth);
+    for (;;) {
+      if (!_heads.Branchable(path, depth)) {
+        return false;
+      }
+      const auto branch = NextBranch(*_trie, _heads[depth], *_a, _states[depth],
+                                     path[depth] + 1u, LiveRange(depth));
+      if (branch.label != kNoLabel) {
+        auto* target = Retarget(path, depth, 1 + branch.extra);
+        target[0] = static_cast<byte_type>(branch.label);
+        std::memcpy(target + 1, branch.tail.data(), branch.extra);
+        return true;
+      }
+      if (depth == _k) {
+        return false;
+      }
+      --depth;
+    }
+  }
+
+  bool TargetFrom(bytes_view key, size_t& valid, bool boundary) {
+    size_t depth = StepAlong(key, valid);
+    if (!boundary) {
+      depth = _heads.Extend(key, depth);
+    }
+    if (depth == key.size()) {
+      Tail tail;
+      const size_t extra =
+        Continuation(*_trie, boundary ? kTrieUngated : _heads[depth], *_a,
+                     _states[depth], tail);
+      if (extra != kDeadEnd) {
+        std::memcpy(Retarget(key, key.size(), extra), tail.data(), extra);
+        valid = depth;
+        return true;
+      }
+      if (depth == _k) {
+        return false;
+      }
+      --depth;
+    }
+    if (!NextTarget(key, depth)) {
+      return false;
+    }
+    valid = depth;
+    return true;
+  }
+
+ private:
+  static constexpr uint32_t kUnranged = std::numeric_limits<uint32_t>::max();
+
+  byte_type* Retarget(bytes_view path, size_t keep, size_t extra) {
+    const bool own = path.data() == _target.Data();
+    auto* target = _target.Resize(keep + extra);
+    if (!own) {
+      std::memcpy(target, path.data(), keep);
+    }
+    return target + keep;
+  }
+
+  const PrefixTrie* _trie;
+  const A* _a;
+  size_t _k;
+  size_t _ranged = 0;
+  containers::SmallVector<State, 64> _states;
+  containers::SmallVector<LabelRange, 64> _ranges;
+  PaddedKey _target;
+  TrieHeads _heads;
+};
+
+template<typename A>
+class BlockPlan {
+ public:
+  BlockPlan(const TermReaderImpl& field, const A& a)
+    : _field{&field}, _targets{field, a} {
+    _targets.Start();
+    _targets.Assign(field.KeyPrefix(), {});
   }
 
   void Run(uint32_t block, uint32_t end, uint64_t budget) {
     const auto& root = _field->GetRoot();
     const uint64_t base = _field->BlockOffset(block);
     const uint32_t blocks = _field->Blocks();
+    size_t valid = _field->KeyPrefix().size();
     while (block < end && _field->BlockOffset(block) - base < budget) {
       const auto lower =
         block == 0 ? _field->MinKey() : root.Separator(block, _lower_key);
-      if (!Target(lower)) {
+      valid = std::min(valid, CommonPrefixLength(_targets.Key(), lower));
+      if (!_targets.TargetFrom(lower, valid, true)) {
         break;
       }
-      const auto target = _target.Key();
+      const auto target = _targets.Key();
       if (block + 1 == blocks
             ? target <= _field->MaxKey()
             : target < root.Separator(block + 1, _upper_key)) {
@@ -1085,71 +1297,12 @@ class BlockPlan {
         continue;
       }
       block = std::max(block + 1, static_cast<uint32_t>(root.FindFrom(
-                                    block + 1, _target.View(), _upper_key)));
+                                    block + 1, _targets.View(), _upper_key)));
     }
     Flush();
   }
 
  private:
-  bool Target(bytes_view lower) {
-    if (!Alive(lower)) {
-      return NextTarget(lower);
-    }
-    Tail tail;
-    const size_t extra =
-      Continuation(*_field, kUngated, *_a, _states[lower.size()], tail);
-    if (extra == kDeadEnd) {
-      if (lower.size() == _k) {
-        return false;
-      }
-      _valid = lower.size() - 1;
-      return NextTarget(lower);
-    }
-    _target.Assign(lower, bytes_view{tail.data(), extra});
-    return true;
-  }
-
-  bool Alive(bytes_view prefix) {
-    size_t depth = std::max(
-      _k, std::min(_valid, CommonPrefixLength(bytes_view{_path}, prefix)));
-    _path.assign(prefix);
-    if (_states.size() <= prefix.size()) {
-      _states.resize(prefix.size() + 1);
-    }
-    for (; depth != prefix.size(); ++depth) {
-      const auto next = _a->Step(_states[depth], prefix[depth]);
-      if (!A::Alive(next)) {
-        _valid = depth;
-        return false;
-      }
-      _states[depth + 1] = next;
-    }
-    _valid = depth;
-    return true;
-  }
-
-  bool NextTarget(bytes_view prefix) {
-    for (size_t depth = _heads.Extend(prefix, _valid);; --depth) {
-      if (!_heads.Branchable(prefix, depth)) {
-        return false;
-      }
-      const auto& state = _states[depth];
-      const auto branch =
-        NextBranch(*_field, _heads[depth], *_a, state, prefix[depth] + 1u,
-                   LiveRangeOf(*_a, state));
-      if (branch.label != kNoLabel) {
-        auto* target = _target.Resize(depth + 1 + branch.extra);
-        std::memcpy(target, prefix.data(), depth);
-        target[depth] = static_cast<byte_type>(branch.label);
-        std::memcpy(target + depth + 1, branch.tail.data(), branch.extra);
-        return true;
-      }
-      if (depth == _k) {
-        return false;
-      }
-    }
-  }
-
   void Add(uint32_t block) {
     if (block != _run_end) {
       Flush();
@@ -1169,15 +1322,9 @@ class BlockPlan {
   }
 
   const TermReaderImpl* _field;
-  const A* _a;
-  size_t _k;
-  containers::SmallVector<State, 64> _states;
-  bstring _path;
+  Targeter<A> _targets;
   SeparatorBuffer _lower_key;
   SeparatorBuffer _upper_key;
-  PaddedKey _target;
-  size_t _valid;
-  TrieHeads _heads;
   uint32_t _run_begin = 0;
   uint32_t _run_end = 0;
 };
@@ -1253,7 +1400,7 @@ class AcceptorIterator : public SeekTermIterator {
       _cursor{field},
       _plan{field, a},
       _filter{MakeFilter(a)},
-      _heads{field, _k} {
+      _targets{field, a} {
     if constexpr (A::kHasPayload) {
       _pay.value = {&_payload, sizeof(_payload)};
     }
@@ -1335,131 +1482,18 @@ class AcceptorIterator : public SeekTermIterator {
     return _prefix;
   }
 
-  static constexpr uint32_t kUnranged = std::numeric_limits<uint32_t>::max();
-
-  LabelRange LiveRange(size_t depth) {
-    if (depth >= _ranged) {
-      for (size_t i = _ranged; i <= depth; ++i) {
-        _ranges[i].hi = kUnranged;
-      }
-      _ranged = depth + 1;
-    }
-    auto& range = _ranges[depth];
-    if (range.hi == kUnranged) {
-      range = LiveRangeOf(*_a, _states[depth]);
-    }
-    return range;
-  }
-
-  size_t StepAlong(bytes_view path, size_t depth) {
-    if (_states.size() <= path.size()) {
-      _states.resize(path.size() + 1);
-      _ranges.resize(path.size() + 1);
-    }
-    _ranged = std::min(_ranged, depth + 1);
-    if constexpr (A::kCheapRuns) {
-      while (depth != path.size()) {
-        const auto from = _states[depth];
-        State next{};
-        const size_t run =
-          _a->StepRun(from, path.data() + depth, path.size() - depth, next);
-        std::fill_n(_states.begin() + depth + 1, run, from);
-        depth += run;
-        if (depth == path.size()) {
-          break;
-        }
-        if (!A::Alive(next)) {
-          return depth;
-        }
-        _states[++depth] = next;
-      }
-      return depth;
-    }
-    for (; depth != path.size(); ++depth) {
-      const auto next = _a->Step(_states[depth], path[depth]);
-      if (!A::Alive(next)) {
-        return depth;
-      }
-      _states[depth + 1] = next;
-    }
-    return depth;
-  }
-
-  byte_type* Retarget(bytes_view path, size_t keep, size_t extra) {
-    const bool own = path.data() == _target.Data();
-    auto* target = _target.Resize(keep + extra);
-    if (!own) {
-      std::memcpy(target, path.data(), keep);
-    }
-    return target + keep;
-  }
-
-  bool NextTarget(bytes_view path, size_t& depth) {
-    SDB_ASSERT(depth >= _k);
-    const auto& field = _cursor.Field();
-    depth = _heads.Extend(path, depth);
-    for (;;) {
-      if (!_heads.Branchable(path, depth)) {
-        return false;
-      }
-      const auto branch = NextBranch(field, _heads[depth], *_a, _states[depth],
-                                     path[depth] + 1u, LiveRange(depth));
-      if (branch.label != kNoLabel) {
-        auto* target = Retarget(path, depth, 1 + branch.extra);
-        target[0] = static_cast<byte_type>(branch.label);
-        std::memcpy(target + 1, branch.tail.data(), branch.extra);
-        return true;
-      }
-      if (depth == _k) {
-        return false;
-      }
-      --depth;
-    }
-  }
-
-  bool TargetFrom(bytes_view key, size_t& valid, bool boundary) {
-    const auto& field = _cursor.Field();
-    size_t depth = StepAlong(key, valid);
-    if (!boundary) {
-      depth = _heads.Extend(key, depth);
-    }
-    if (depth == key.size()) {
-      Tail tail;
-      const size_t extra = Continuation(
-        field, boundary ? kUngated : _heads[depth], *_a, _states[depth], tail);
-      if (extra != kDeadEnd) {
-        std::memcpy(Retarget(key, key.size(), extra), tail.data(), extra);
-        valid = depth;
-        return true;
-      }
-      if (depth == _k) {
-        return false;
-      }
-      --depth;
-    }
-    if (!NextTarget(key, depth)) {
-      return false;
-    }
-    valid = depth;
-    return true;
-  }
-
   bool Seek(bytes_view target, size_t valid) {
-    if (_states.empty()) {
-      _states.assign(_k + 1, _a->Start());
-      _ranges.resize(_k + 1);
-      _ranged = 0;
-    }
+    _targets.Start();
     const auto& field = _cursor.Field();
     if (field.size() == 0 || target > field.max()) {
       return false;
     }
-    _target.Assign(field.KeyPrefix(), target);
-    if (!TargetFrom(_target.Key(), valid, false) ||
-        _target.Key() > field.MaxKey()) {
+    _targets.Assign(field.KeyPrefix(), target);
+    if (!_targets.TargetFrom(_targets.Key(), valid, false) ||
+        _targets.Key() > field.MaxKey()) {
       return false;
     }
-    return Land(field.BlockOf(_target.View()), valid);
+    return Land(field.BlockOf(_targets.View()), valid);
   }
 
   void Bound(uint32_t block) {
@@ -1478,7 +1512,7 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   bool Hop(size_t depth) {
-    if (InBlock(_target.Key()) && _cursor.SeekAhead(_target.View(), depth)) {
+    if (InBlock(_targets.Key()) && _cursor.SeekAhead(_targets.View(), depth)) {
       _filter.Restart();
       _check = true;
       _valid = std::min(depth, _cursor.Shared());
@@ -1489,16 +1523,16 @@ class AcceptorIterator : public SeekTermIterator {
 
   bool Jump(size_t valid) {
     const auto& field = _cursor.Field();
-    if (_target.Key() > field.MaxKey()) {
+    if (_targets.Key() > field.MaxKey()) {
       return false;
     }
     const auto block = _cursor.BlockIndex();
     Bound(block);
-    if (_last_block || _target.Key() < _bound) {
+    if (_last_block || _targets.Key() < _bound) {
       return Land(block, valid);
     }
     return Land(static_cast<uint32_t>(field.GetRoot().FindFrom(
-                  block + 1, _target.View(), _bound_key)),
+                  block + 1, _targets.View(), _bound_key)),
                 valid);
   }
 
@@ -1508,14 +1542,14 @@ class AcceptorIterator : public SeekTermIterator {
     _check = true;
     for (;;) {
       const auto prefix = BlockPrefix(block);
-      const size_t shared = CommonPrefixLength(_target.Key(), prefix);
+      const size_t shared = CommonPrefixLength(_targets.Key(), prefix);
       const size_t base = std::min(valid, shared);
-      size_t depth = StepAlong(prefix, base);
+      size_t depth = _targets.StepAlong(prefix, base);
       if (depth == prefix.size()) {
         if (_cursor.BlockIndex() != block) {
           _cursor.Load(block);
         }
-        if (_cursor.LowerBound(_target.View())) {
+        if (_cursor.LowerBound(_targets.View())) {
           _valid = prefix.size();
           if (shared == prefix.size()) {
             _valid = std::min(std::max(valid, prefix.size()), _cursor.Shared());
@@ -1526,22 +1560,22 @@ class AcceptorIterator : public SeekTermIterator {
           return false;
         }
         const auto separator = field.GetRoot().Separator(block, _separator_key);
-        valid = std::min(base, CommonPrefixLength(_target.Key(), separator));
-        if (!TargetFrom(separator, valid, true) ||
-            _target.Key() > field.MaxKey()) {
+        valid = std::min(base, CommonPrefixLength(_targets.Key(), separator));
+        if (!_targets.TargetFrom(separator, valid, true) ||
+            _targets.Key() > field.MaxKey()) {
           return false;
         }
         block = static_cast<uint32_t>(
-          field.GetRoot().FindFrom(block, _target.View(), _separator_key));
+          field.GetRoot().FindFrom(block, _targets.View(), _separator_key));
         continue;
       }
-      if (block + 1 == field.Blocks() || !NextTarget(prefix, depth) ||
-          _target.Key() > field.MaxKey()) {
+      if (block + 1 == field.Blocks() || !_targets.NextTarget(prefix, depth) ||
+          _targets.Key() > field.MaxKey()) {
         return false;
       }
       valid = depth;
       block = static_cast<uint32_t>(
-        field.GetRoot().FindFrom(block + 1, _target.View(), _separator_key));
+        field.GetRoot().FindFrom(block + 1, _targets.View(), _separator_key));
     }
   }
 
@@ -1576,11 +1610,12 @@ class AcceptorIterator : public SeekTermIterator {
     const auto separator = field.GetRoot().Separator(next, _separator_key);
     size_t valid =
       std::min(_valid, CommonPrefixLength(_cursor.Key(), separator));
-    if (!TargetFrom(separator, valid, true) || _target.Key() > field.MaxKey()) {
+    if (!_targets.TargetFrom(separator, valid, true) ||
+        _targets.Key() > field.MaxKey()) {
       return false;
     }
     return Land(static_cast<uint32_t>(field.GetRoot().FindFrom(
-                  next, _target.View(), _separator_key)),
+                  next, _targets.View(), _separator_key)),
                 valid);
   }
 
@@ -1600,12 +1635,12 @@ class AcceptorIterator : public SeekTermIterator {
       if (_check) {
         _check = false;
         if (const int label = _cursor.ByteAt(_valid); label >= 0) {
-          const auto range = LiveRange(_valid);
+          const auto range = _targets.LiveRange(_valid);
           if (static_cast<uint32_t>(label) < range.lo ||
               static_cast<uint32_t>(label) > range.hi) {
             _cursor.Materialize();
             size_t depth = _valid;
-            if (!NextTarget(_cursor.Key(), depth) || !Hop(depth)) {
+            if (!_targets.NextTarget(_cursor.Key(), depth) || !Hop(depth)) {
               return End();
             }
             continue;
@@ -1625,15 +1660,15 @@ class AcceptorIterator : public SeekTermIterator {
       const auto quick = QuickMatch(*_a, term);
       bool accepted = quick == RegexpAcceptor::Quick::Accept;
       if (quick == RegexpAcceptor::Quick::Unknown) {
-        size_t depth = StepAlong(key, _valid);
+        size_t depth = _targets.StepAlong(key, _valid);
         _valid = depth;
         if (depth != key.size()) {
-          if (!NextTarget(key, depth) || !Hop(depth)) {
+          if (!_targets.NextTarget(key, depth) || !Hop(depth)) {
             return End();
           }
           continue;
         }
-        accepted = Accepts(term, _states[depth]);
+        accepted = Accepts(term, _targets.StateAt(depth));
       }
       if (accepted) {
         _position = Position::At;
@@ -1663,7 +1698,6 @@ class AcceptorIterator : public SeekTermIterator {
   size_t _k;
   size_t _valid;
   bool _by_literal;
-  size_t _ranged = 0;
   bool _check = true;
   bool _last_block = false;
   Position _position = Position::Before;
@@ -1679,12 +1713,9 @@ class AcceptorIterator : public SeekTermIterator {
   typename A::PayloadType _payload{};
   mutable Cursor _cursor;
   ColdPlan<A> _plan;
-  containers::SmallVector<State, 64> _states;
-  containers::SmallVector<LabelRange, 64> _ranges;
-  PaddedKey _target;
   PayAttr _pay;
   KeyFilter _filter;
-  TrieHeads _heads;
+  Targeter<A> _targets;
 };
 
 template<typename A>

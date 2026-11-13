@@ -50,7 +50,8 @@ using irs::bstring;
 using irs::bytes_view;
 
 constexpr size_t kBatchSizes[] = {16, 256, 4096};
-constexpr std::string_view kBatchKinds[] = {"sorted", "unsorted", "miss"};
+constexpr std::string_view kBatchKinds[] = {"sorted", "unsorted", "miss",
+                                            "dense"};
 constexpr size_t kColdBytes = size_t{512} << 20;
 
 std::vector<bstring> ReadRecords(const std::filesystem::path& path) {
@@ -454,6 +455,28 @@ void Lookup(benchmark::State& state, const std::string& base, bool hit) {
     benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 }
 
+void LookupBatch(benchmark::State& state, const std::string& base, size_t kind,
+                 size_t size) {
+  const auto& data = Load(base);
+  if (!data.error.empty()) {
+    state.SkipWithError(data.error);
+    return;
+  }
+  const auto views = Views(data.batches[kind][size]);
+  for (auto _ : state) {
+    uint64_t sum = 0;
+    data.field->LookupBatch(
+      views.size(), [&](size_t i) { return views[i]; },
+      [&](size_t, const irs::PostingMeta& meta) { sum += meta.docs_count; });
+    benchmark::DoNotOptimize(sum);
+  }
+  state.SetItemsProcessed(
+    static_cast<int64_t>(state.iterations() * views.size()));
+  state.counters["ns_per_probe"] = benchmark::Counter(
+    static_cast<double>(state.iterations() * views.size()),
+    benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+}
+
 void Seek(benchmark::State& state, const std::string& base) {
   const auto& data = Load(base);
   if (!data.error.empty()) {
@@ -580,6 +603,19 @@ int Main(int argc, char** argv) {
     benchmark::RegisterBenchmark(
       absl::StrCat("seek/", base),
       [base](benchmark::State& state) { Seek(state, base); });
+    for (size_t kind = 0; kind != std::size(kBatchKinds); ++kind) {
+      if (kBatchKinds[kind] == "unsorted") {
+        continue;
+      }
+      for (size_t size = 0; size != std::size(kBatchSizes); ++size) {
+        benchmark::RegisterBenchmark(
+          absl::StrCat("lookup_batch/", kBatchKinds[kind], "_",
+                       kBatchSizes[size], "/", base),
+          [base, kind, size](benchmark::State& state) {
+            LookupBatch(state, base, kind, size);
+          });
+      }
+    }
     for (const uint8_t distance : {1, 2}) {
       benchmark::RegisterBenchmark(absl::StrCat("fuzzy", distance, "/", base),
                                    [base, distance](benchmark::State& state) {

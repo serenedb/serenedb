@@ -32,6 +32,7 @@
 
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
@@ -45,11 +46,15 @@ struct TrieCursor {
   uint32_t node;
   uint32_t labels;
   uint32_t matched;
+  uint32_t edge = 0;
+  uint32_t edge_size = 0;
 };
 
 inline constexpr uint32_t kTrieBelow = std::numeric_limits<uint32_t>::max();
 inline constexpr uint32_t kTrieMissing = kTrieBelow - 1;
 inline constexpr uint32_t kTrieEnd = kTrieMissing - 1;
+inline constexpr TrieCursor kTrieUngated{
+  .node = kTrieBelow, .labels = 0, .matched = 0};
 
 class PrefixTrie {
  public:
@@ -59,6 +64,11 @@ class PrefixTrie {
            (edge_size == 0 ? 0 : edge_size + sizeof(uint32_t));
   }
 
+  static bool Gates(TrieCursor cursor) noexcept {
+    return cursor.node < kTrieMissing;
+  }
+
+  PrefixTrie() = default;
   PrefixTrie(bytes_view encoded, field_id id);
 
   size_t MemoryBytes() const noexcept {
@@ -72,42 +82,36 @@ class PrefixTrie {
              sizeof(uint32_t);
   }
 
-  static TrieCursor Root() noexcept {
-    return {.node = 0, .labels = 0, .matched = 0};
+  TrieCursor Root() const noexcept {
+    return _fanouts.empty() ? kTrieUngated : At(0, 0);
   }
 
   bytes_view Edge(TrieCursor cursor) const noexcept {
-    return EdgeOf(cursor.node).substr(cursor.matched);
+    return {_edges.data() + cursor.edge + cursor.matched,
+            cursor.edge_size - cursor.matched};
   }
 
-  bool Terminal(TrieCursor cursor) const noexcept {
-    return cursor.node == kTrieEnd ||
-           (Bit(_terminal, cursor.node) &&
-            cursor.matched == EdgeOf(cursor.node).size());
+  bool MayEnd(TrieCursor cursor) const noexcept {
+    return cursor.node >= kTrieEnd ||
+           (Bit(_terminal, cursor.node) && cursor.matched == cursor.edge_size);
   }
 
   bytes_view Labels(TrieCursor cursor) const noexcept {
+    SDB_ASSERT(Gates(cursor));
     if (cursor.node == kTrieEnd) {
       return {};
     }
-    const auto edge = EdgeOf(cursor.node);
-    if (cursor.matched != edge.size()) {
-      return edge.substr(cursor.matched, 1);
+    if (cursor.matched != cursor.edge_size) {
+      return {_edges.data() + cursor.edge + cursor.matched, 1};
     }
     return {_labels.data() + cursor.labels, _fanouts[cursor.node] + size_t{1}};
   }
 
-  uint32_t NextLabel(TrieCursor cursor, uint32_t from) const noexcept {
-    const auto labels = Labels(cursor);
-    const auto it = absl::c_lower_bound(labels, from);
-    return it == labels.end() ? kNoLabel : *it;
-  }
-
   TrieCursor ChildAt(TrieCursor cursor, uint32_t slot) const noexcept {
-    if (cursor.matched != EdgeOf(cursor.node).size()) {
-      return {.node = cursor.node,
-              .labels = cursor.labels,
-              .matched = cursor.matched + 1};
+    SDB_ASSERT(Gates(cursor));
+    if (cursor.matched != cursor.edge_size) {
+      ++cursor.matched;
+      return cursor;
     }
     const auto at = cursor.labels + slot;
     if (!Bit(_inner, at)) {
@@ -116,7 +120,7 @@ class PrefixTrie {
               .matched = 0};
     }
     const auto child = Rank(_inner, _inner_ranks, at) + 1;
-    return {.node = child, .labels = Start(child), .matched = 0};
+    return At(child, Start(child));
   }
 
   TrieCursor Child(TrieCursor cursor, byte_type label) const noexcept {
@@ -140,13 +144,14 @@ class PrefixTrie {
            static_cast<uint32_t>(std::popcount(bits[at / 64] & below));
   }
 
-  bytes_view EdgeOf(uint32_t node) const noexcept {
-    if (node == kTrieEnd || !Bit(_edged, node)) {
-      return {};
+  TrieCursor At(uint32_t node, uint32_t labels) const noexcept {
+    TrieCursor cursor{.node = node, .labels = labels, .matched = 0};
+    if (Bit(_edged, node)) {
+      const auto i = Rank(_edged, _edged_ranks, node);
+      cursor.edge = _edge_starts[i];
+      cursor.edge_size = _edge_starts[i + 1] - _edge_starts[i];
     }
-    const auto i = Rank(_edged, _edged_ranks, node);
-    return bytes_view{_edges}.substr(_edge_starts[i],
-                                     _edge_starts[i + 1] - _edge_starts[i]);
+    return cursor;
   }
 
   static constexpr uint32_t kStartStride = 8;

@@ -213,3 +213,67 @@ id
 999
 998
 997
+
+# A UHUGEINT bound past the column's range takes its side from its own sign.
+query
+SELECT id FROM wide_ubigint_idx
+  WHERE n @@ ts_gt(1267650600228229401496703205376::UHUGEINT);
+----
+id
+
+query
+SELECT id FROM wide_ubigint_idx
+  WHERE n @@ ts_lt(1267650600228229401496703205376::UHUGEINT) ORDER BY id;
+----
+id
+1
+2
+
+# A DOUBLE bound past FLOAT's range compares with the infinities a REAL column
+# holds, as the table compares them.
+statement ok
+CREATE TABLE real_bounds (id INTEGER PRIMARY KEY, f REAL);
+
+statement ok
+CREATE INDEX real_bounds_idx ON real_bounds USING inverted(id, f);
+
+statement ok
+INSERT INTO real_bounds VALUES (1, 'inf'), (2, 'nan'), (3, '-inf'), (4, 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) real_bounds;
+
+query
+SELECT id FROM real_bounds WHERE f > 1e39 ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM real_bounds_idx WHERE f @@ ts_gt(1e39::DOUBLE) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM real_bounds_idx WHERE f @@ ts_ge(-1e39::DOUBLE) ORDER BY id;
+----
+id
+1
+2
+4
+
+query
+SELECT id FROM real_bounds_idx WHERE f @@ ts_le(1e39::DOUBLE) ORDER BY id;
+----
+id
+3
+4
+
+query
+SELECT id FROM real_bounds_idx WHERE f @@ ts_lt(-1e39::DOUBLE) ORDER BY id;
+----
+id
+3

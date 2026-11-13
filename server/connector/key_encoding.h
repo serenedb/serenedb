@@ -31,9 +31,9 @@ namespace sdb::connector::key_encoding {
 // scalar key format (encoded row keys and encoded-key index expressions
 // share it).
 //
-// Scalars: big-endian with sign-bit flip for ints/dates/timestamps,
-// Ftoi32/Dtoi64 with zero/NaN normalization for floats (NaN greatest),
-// `\0`-escaped + `\0\0`-terminated for VARCHAR/BLOB.
+// Scalars: numbers, dates and timestamps as the inverted index's numeric
+// terms (big-endian with sign-bit flip; floats with zero/NaN normalization,
+// NaN greatest), `\0`-escaped + `\0\0`-terminated for VARCHAR/BLOB.
 void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
                        duckdb::idx_t row_idx, const duckdb::LogicalType& type);
 

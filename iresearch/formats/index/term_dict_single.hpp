@@ -48,14 +48,12 @@ class SingleTermReader final : public TermReader {
   void ReadDocs(bytes_view term, Acceptor acceptor) const final {
     ReadPostingDocs(*this, Lookup(term), acceptor);
   }
-  void VisitRange(bytes_view from, bytes_view to,
-                  RangeVisitor visit) const final;
-  void VisitDocsInOrder(bytes_view from, bytes_view to, bool,
-                        TermDoc visit) const final {
-    if ((from.empty() || from <= _term) && (to.empty() || _term < to)) {
-      ReadPostingDocs(*this, _single,
-                      [&](doc_id_t doc) { return visit(_term, doc); });
-    }
+  bool VisitRange(bytes_view from, bytes_view to, bool,
+                  TermVisitor visit) const final;
+  bool CoverRange(bytes_view from, bytes_view to,
+                  TermVisitor visit) const final {
+    VisitRange(from, to, false, visit);
+    return false;
   }
 
   std::unique_ptr<IndexInput> ReopenPayload() const final;
@@ -76,7 +74,7 @@ class SingleTermReader final : public TermReader {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
-                               TermPostings::ptr reuse) const;
+                               TermPostings::ptr reuse) const final;
   const PostingMeta& SingleMeta() const noexcept { return _single; }
 
  private:

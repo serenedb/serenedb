@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <fsst.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <iterator>
@@ -70,7 +71,7 @@ class FieldReader final {
     }
   }
   uint32_t BlockCount() const noexcept { return _block_count; }
-  uint64_t PageOffset(size_t block) const noexcept {
+  uint64_t BlockOffset(size_t block) const noexcept {
     uint64_t page = _first_page + block;
     if (!_spans.empty()) [[unlikely]] {
       const auto it = absl::c_lower_bound(
@@ -81,7 +82,7 @@ class FieldReader final {
         page += std::prev(it)->extra;
       }
     }
-    return page * kPage;
+    return std::min(page * kPage, _inline_offset);
   }
   uint64_t InlineBegin() const noexcept { return _inline_offset; }
   uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
@@ -142,7 +143,7 @@ inline TermPostings::ptr TermReaderImpl::PostingsOf(
 }
 
 inline uint64_t TermReaderImpl::BlockOffset(size_t block) const noexcept {
-  return _owner->PageOffset(_first_block + block);
+  return _owner->BlockOffset(_first_block + block);
 }
 
 inline InlinePages::Span TermReaderImpl::InlineSpan(

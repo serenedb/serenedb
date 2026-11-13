@@ -69,8 +69,8 @@ bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
 }
 
 const byte_type* FieldReader::CopyBlock(uint32_t block, uint64_t length) {
-  const uint64_t offset = PageOffset(block);
-  return Copy(offset, std::min(PageOffset(block + 1), length) - offset).data();
+  const uint64_t offset = BlockOffset(block);
+  return Copy(offset, std::min(BlockOffset(block + 1), length) - offset).data();
 }
 
 void FieldReader::FillCopies() {
@@ -115,7 +115,7 @@ Separators FieldReader::Bind(const TermsMeta& terms) {
       {.block = span.block, .extra = static_cast<uint32_t>(extra)});
   }
   if (blocks != 0 && (_first_page > _inline_offset / kPage ||
-                      PageOffset(blocks - 1) >= _inline_offset)) {
+                      BlockOffset(blocks - 1) >= _inline_offset)) {
     Corrupted("block directory");
   }
 

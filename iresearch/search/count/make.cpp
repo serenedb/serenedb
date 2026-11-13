@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::count {
 namespace {
@@ -62,11 +63,13 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
   const auto* const field = query.State().Reader();
+  SDB_ASSERT(field);
   const auto& segment = query.Segment();
-  if (ctx.table == nullptr && field != nullptr && field->single_valued &&
+  if (ctx.table == nullptr && field->single_valued &&
       segment.live_docs_count() == segment.docs_count()) {
-    return MakeWholeCount(query.Postings(), ctx,
-                          [&query, ctx] { return PlanTerms(query, ctx); });
+    return MakeWholeCount(query.Postings(), ctx, [&query, field, ctx] {
+      return MakeTermsSum(std::span{query.State().Terms()}, field, ctx);
+    });
   }
   return PlanTerms(query, ctx);
 }

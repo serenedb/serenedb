@@ -18,7 +18,6 @@ target_sources(
         index/idx_writer.cpp
         index/term_dict_inline.cpp
         index/term_dict_meta.cpp
-        index/term_dict_order.cpp
         index/term_dict_prefixes.cpp
         index/term_dict_ranges.cpp
         index/term_dict_reader.cpp

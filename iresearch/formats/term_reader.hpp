@@ -26,15 +26,18 @@
 
 #include <memory>
 #include <span>
+#include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/conjunction_acceptor.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
@@ -52,11 +55,9 @@ struct PostingsHandles {
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
-  using RangeVisitor =
-    absl::FunctionRef<void(bytes_view, const PostingMeta&, bool)>;
+  using TermVisitor = absl::FunctionRef<bool(bytes_view, const PostingMeta&)>;
   using TermAt = absl::FunctionRef<bytes_view(size_t)>;
   using FoundTerm = absl::FunctionRef<void(size_t, const PostingMeta&)>;
-  using TermDoc = absl::FunctionRef<bool(bytes_view, doc_id_t)>;
 
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator() const = 0;
@@ -83,11 +84,15 @@ struct TermReader : public AttributeProvider {
   virtual void LookupBatch(size_t count, TermAt term,
                            FoundTerm found) const = 0;
 
-  virtual void VisitRange(bytes_view from, bytes_view to,
-                          RangeVisitor visit) const = 0;
+  virtual bool VisitRange(bytes_view from, bytes_view to, bool descending,
+                          TermVisitor visit) const = 0;
 
-  virtual void VisitDocsInOrder(bytes_view from, bytes_view to, bool descending,
-                                TermDoc visit) const = 0;
+  virtual bool CoverRange(bytes_view from, bytes_view to,
+                          TermVisitor visit) const = 0;
+
+  virtual TermPostings::ptr PostingsOf(IndexFeatures features,
+                                       const PostingMeta& meta,
+                                       TermPostings::ptr reuse) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;
@@ -130,5 +135,35 @@ struct TermReader : public AttributeProvider {
   uint32_t key_width = 0;
   bool single_valued = false;
 };
+
+template<typename Field>
+void ReadPostingDocs(const Field& field, const PostingMeta& meta,
+                     TermReader::Acceptor acceptor,
+                     TermPostings::ptr& docs_it) {
+  if (meta.docs_count == 0) {
+    return;
+  }
+  if (meta.docs_count == 1) {
+    acceptor(doc_limits::min() + meta.doc_delta);
+    return;
+  }
+  docs_it = field.PostingsOf(IndexFeatures::None, meta, std::move(docs_it));
+  doc_id_t docs[doc_limits::kBlockSize];
+  while (const auto n = docs_it->NextDocs(docs, nullptr)) {
+    for (uint32_t i = 0; i != n; ++i) {
+      SDB_ASSERT(doc_limits::valid(docs[i]));
+      if (!acceptor(docs[i])) {
+        return;
+      }
+    }
+  }
+}
+
+template<typename Field>
+void ReadPostingDocs(const Field& field, const PostingMeta& meta,
+                     TermReader::Acceptor acceptor) {
+  TermPostings::ptr docs_it;
+  ReadPostingDocs(field, meta, acceptor, docs_it);
+}
 
 }  // namespace irs

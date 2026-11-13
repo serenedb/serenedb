@@ -14,7 +14,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -23,7 +22,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.SplittableRandom;
-import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -36,7 +34,6 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.document.InetAddressPoint;
 import org.apache.lucene.document.InetAddressRange;
 import org.apache.lucene.document.IntPoint;
-import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
@@ -44,13 +41,9 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.CollectorManager;
-import org.apache.lucene.search.DocIdStream;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.ScoreMode;
-import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
@@ -69,7 +62,6 @@ public final class Bench {
   static final int SERENEDB = 1;
   static final int POSTGRES = 2;
   static final long[] WALL = new long[3];
-  static final int MERGE = rows("BENCH_MERGE", 0);
   static long sink;
   static int mismatches;
 
@@ -88,13 +80,11 @@ public final class Bench {
   static final class Result {
     long truth;
     long luceneCount;
-    long luceneVisitCount;
     long sdbCount;
     long[] pgCount;
     String sdbPlan;
     String[] pgPlan;
     double lucene;
-    double luceneVisit;
     double sdb;
     double[] pg;
     int reps;
@@ -102,42 +92,6 @@ public final class Bench {
 
   interface Runner {
     long run() throws Exception;
-  }
-
-  static final class Visit extends SimpleCollector {
-    final int[] window = new int[2048];
-    long hits;
-
-    @Override
-    public void collect(int doc) {
-      window[(int) (hits++ & 2047)] = doc;
-    }
-
-    @Override
-    public void collect(DocIdStream stream) throws IOException {
-      stream.forEach(doc -> window[(int) (hits++ & 2047)] = doc);
-    }
-
-    @Override
-    public ScoreMode scoreMode() {
-      return ScoreMode.COMPLETE_NO_SCORES;
-    }
-  }
-
-  static final CollectorManager<Visit, Long> VISIT = new CollectorManager<>() {
-    @Override
-    public Visit newCollector() {
-      return new Visit();
-    }
-
-    @Override
-    public Long reduce(Collection<Visit> collectors) {
-      return collectors.stream().mapToLong(c -> c.hits).sum();
-    }
-  };
-
-  static long visit(IndexSearcher searcher, Query q) throws IOException {
-    return searcher.search(q, VISIT);
   }
 
   public static void main(String[] args) throws Exception {
@@ -169,10 +123,6 @@ public final class Bench {
       new Dataset("networks", "networks.csv", "net", "CIDR", "cidr", rows("BENCH_NETWORKS", 1_000_000));
   static final Dataset INTS =
       new Dataset("ints", "ints.csv", "v", "INTEGER", "integer", rows("BENCH_INTS", 2_000_000));
-  static final Dataset STAMPS =
-      new Dataset("stamps", "stamps.csv", "ts", "BIGINT", "bigint", rows("BENCH_STAMPS", 2_000_000));
-  static final Dataset LOWCARD =
-      new Dataset("lowcard", "lowcard.csv", "v", "INTEGER", "integer", rows("BENCH_LOWCARD", 2_000_000));
   static final Dataset STRINGS = new Dataset(
       "strings", "strings.csv", "s", "VARCHAR", "varchar COLLATE \"C\"", rows("BENCH_STRINGS", 2_000_000));
 
@@ -181,36 +131,7 @@ public final class Bench {
     write(data, HOSTS, Bench::host);
     write(data, NETWORKS, Bench::network);
     write(data, INTS, r -> Integer.toString(r.nextInt(1_000_000)));
-    write(data, STAMPS, stamps());
-    write(data, LOWCARD, lowcard());
     write(data, STRINGS, Bench::word);
-  }
-
-  static Function<SplittableRandom, String> stamps() {
-    final long[] clock = {1_767_225_600_000L};
-    return r -> Long.toString((clock[0] += r.nextInt(20)) + r.nextInt(2_000));
-  }
-
-  static Function<SplittableRandom, String> lowcard() {
-    final int n = 1000;
-    final double[] cdf = new double[n];
-    double sum = 0;
-    for (int i = 0; i < n; ++i) {
-      sum += 1.0 / (i + 1);
-      cdf[i] = sum;
-    }
-    final int[] values = new int[n];
-    final SplittableRandom shuffle = new SplittableRandom(SEED);
-    for (int i = 0; i < n; ++i) {
-      final int j = shuffle.nextInt(i + 1);
-      values[i] = values[j];
-      values[j] = i;
-    }
-    final double total = sum;
-    return r -> {
-      final int i = Arrays.binarySearch(cdf, r.nextDouble() * total);
-      return Integer.toString(values[Math.min(n - 1, i < 0 ? -i - 1 : i)]);
-    };
   }
 
   static void write(Path data, Dataset ds, Function<SplittableRandom, String> gen) throws IOException {
@@ -351,9 +272,9 @@ public final class Bench {
     return new BooleanQuery.Builder().add(must, Occur.MUST).add(mustNot, Occur.MUST_NOT).build();
   }
 
-  static List<String> sample(List<String> lines, int k) {
+  static List<String> sample(List<String> lines) {
     final List<String> in = new ArrayList<>();
-    for (int i = 1; i <= k; ++i) {
+    for (int i = 1; i <= 10; ++i) {
       in.add(lines.get((i * 7919) % lines.size()));
     }
     return in;
@@ -365,7 +286,7 @@ public final class Bench {
 
   static List<QueryPair> hostQueries(List<String> lines) {
     final String exact = lines.get(123_457 % lines.size());
-    final List<String> in = sample(lines, 10);
+    final List<String> in = sample(lines);
     final List<QueryPair> q = new ArrayList<>();
     q.add(new QueryPair("exact", "ip = '" + exact + "'", InetAddressPoint.newExactQuery("ip", addr(exact))));
     q.add(new QueryPair("IN (10)", "ip IN (" + quoted(in) + ")",
@@ -411,47 +332,22 @@ public final class Bench {
     return q;
   }
 
-  static final String[] RANGE_PERCENTS = {"0.001", "0.01", "0.1", "1", "10", "30", "50", "90"};
-
-  static boolean isLong(Dataset ds) {
-    return ds.sdbType().equals("BIGINT");
-  }
-
-  static Query pointRange(Dataset ds, long lo, long hi) {
-    return isLong(ds) ? LongPoint.newRangeQuery(ds.column(), lo, hi)
-                      : IntPoint.newRangeQuery(ds.column(), (int) lo, (int) Math.min(hi, Integer.MAX_VALUE));
-  }
-
-  static Query pointSet(Dataset ds, long[] values) {
-    return isLong(ds) ? LongPoint.newSetQuery(ds.column(), values)
-                      : IntPoint.newSetQuery(ds.column(), Arrays.stream(values).mapToInt(v -> (int) v).toArray());
-  }
-
-  static List<QueryPair> numericQueries(Dataset ds, List<String> lines) {
-    final String c = ds.column();
-    final long[] sorted = lines.stream().mapToLong(Long::parseLong).sorted().toArray();
-    final int last = sorted.length - 1;
-    final long exact = Long.parseLong(lines.get(123_457 % lines.size()));
+  static List<QueryPair> intQueries(List<String> lines) {
+    final int exact = Integer.parseInt(lines.get(123_457 % lines.size()));
+    final int[] in = sample(lines).stream().mapToInt(Integer::parseInt).toArray();
+    final String inSql = String.join(", ", Arrays.stream(in).mapToObj(Integer::toString).toList());
     final List<QueryPair> q = new ArrayList<>();
-    q.add(new QueryPair("exact", c + " = " + exact, pointRange(ds, exact, exact)));
-    for (int k : new int[] {10, 1000}) {
-      final long[] in = sample(lines, k).stream().mapToLong(Long::parseLong).toArray();
-      final String inSql = String.join(", ", Arrays.stream(in).mapToObj(Long::toString).toList());
-      q.add(new QueryPair("IN (" + k + ")", c + " IN (" + inSql + ")", pointSet(ds, in)));
-    }
-    for (String percent : RANGE_PERCENTS) {
-      final double f = Double.parseDouble(percent) / 100;
-      final long lo = sorted[(int) Math.floor(last * (0.5 - f / 2))];
-      final long hi = sorted[(int) Math.ceil(last * (0.5 + f / 2))];
-      q.add(new QueryPair("range " + percent + "%", c + " BETWEEN " + lo + " AND " + hi, pointRange(ds, lo, hi)));
-    }
-    q.add(new QueryPair("all", c + " >= " + sorted[0], pointRange(ds, sorted[0], Long.MAX_VALUE)));
+    q.add(new QueryPair("exact", "v = " + exact, IntPoint.newExactQuery("v", exact)));
+    q.add(new QueryPair("IN (10)", "v IN (" + inSql + ")", IntPoint.newSetQuery("v", in)));
+    q.add(new QueryPair("range 0.1%", "v BETWEEN 500000 AND 500999", IntPoint.newRangeQuery("v", 500_000, 500_999)));
+    q.add(new QueryPair("range 1%", "v BETWEEN 500000 AND 509999", IntPoint.newRangeQuery("v", 500_000, 509_999)));
+    q.add(new QueryPair("range 30%", "v BETWEEN 0 AND 299999", IntPoint.newRangeQuery("v", 0, 299_999)));
     return q;
   }
 
   static List<QueryPair> stringQueries(List<String> lines) {
     final String exact = lines.get(123_457 % lines.size());
-    final List<String> in = sample(lines, 10);
+    final List<String> in = sample(lines);
     final String p2 = exact.substring(0, 2);
     final String p3 = exact.substring(0, 3);
     final String p2next = p2.substring(0, 1) + (char) (p2.charAt(1) + 1);
@@ -470,7 +366,7 @@ public final class Bench {
     return switch (ds.name()) {
       case "hosts" -> hostQueries(lines);
       case "networks" -> networkQueries(lines);
-      case "ints", "stamps", "lowcard" -> numericQueries(ds, lines);
+      case "ints" -> intQueries(lines);
       default -> stringQueries(lines);
     };
   }
@@ -494,8 +390,7 @@ public final class Bench {
         final InetAddress[] r = cidrRange(line);
         doc.add(new InetAddressRange("net", r[0], r[1]));
       }
-      case "ints", "lowcard" -> doc.add(new IntPoint(ds.column(), Integer.parseInt(line)));
-      case "stamps" -> doc.add(new LongPoint(ds.column(), Long.parseLong(line)));
+      case "ints" -> doc.add(new IntPoint("v", Integer.parseInt(line)));
       default -> doc.add(new StringField("s", line, Field.Store.NO));
     }
   }
@@ -503,7 +398,7 @@ public final class Bench {
   static void bench(Path data, String type) throws Exception {
     final List<Dataset> sets = switch (type) {
       case "inet" -> List.of(HOSTS, NETWORKS);
-      case "int" -> List.of(INTS, STAMPS, LOWCARD);
+      case "int" -> List.of(INTS);
       case "string" -> List.of(STRINGS);
       default -> throw new IllegalArgumentException("type must be inet, int or string: " + type);
     };
@@ -574,12 +469,7 @@ public final class Bench {
     luceneIndex(dir, lines, ds, threads);
     final DirectoryReader reader = DirectoryReader.open(dir);
     final double luceneIngest = (System.nanoTime() - l0) / 1e9;
-    final Map<String, Long> luceneFiles = new TreeMap<>();
-    try (Stream<Path> files = Files.list(luceneDir)) {
-      for (Path p : files.toList()) {
-        addFile(luceneFiles, p);
-      }
-    }
+    final long luceneBytes = dirSize(luceneDir);
     WALL[LUCENE] += System.nanoTime() - l0;
 
     try (dir; reader; Statement sst = sdb.createStatement(); Statement pst = pg.createStatement()) {
@@ -593,16 +483,8 @@ public final class Bench {
       final long s1 = System.nanoTime();
       sst.execute("COPY " + table + " FROM '" + csv + "' (FORMAT CSV, HEADER false)");
       sst.execute("VACUUM (REFRESH_TABLE) " + table);
-      if (MERGE > 0) {
-        sst.execute("SET sdb_compact_target_segments = " + MERGE);
-        sst.execute("VACUUM (COMPACT_TABLE) " + table);
-      }
       final double sdbIngest = (System.nanoTime() - s1) / 1e9;
-      final Map<String, Long> sdbFiles = new TreeMap<>();
-      int sdbSegments = 0;
-      for (Path d : sdbIndexDirs(sst, Paths.get(env("SDB_DATA")), index)) {
-        sdbSegments += liveSegmentFiles(d, sdbFiles);
-      }
+      final long sdbBytes = sdbIndexSize(sst, Paths.get(env("SDB_DATA")), index);
       WALL[SERENEDB] += System.nanoTime() - s0;
 
       final long p0 = System.nanoTime();
@@ -650,8 +532,8 @@ public final class Bench {
       sst.execute("DROP TABLE " + table);
       pst.execute("DROP TABLE " + table);
 
-      report(out, ds, lines.size(), threads, reader.leaves().size(), luceneIngest, luceneFiles, sdbIngest, sdbFiles,
-          sdbSegments, pgCopy, pgVacuum, variants, buildSec, sizeBytes, queries, results);
+      report(out, ds, lines.size(), threads, reader.leaves().size(), luceneIngest, luceneBytes, sdbIngest, sdbBytes,
+          pgCopy, pgVacuum, variants, buildSec, sizeBytes, queries, results);
     }
     deleteRecursively(luceneDir);
   }
@@ -683,9 +565,6 @@ public final class Bench {
       } finally {
         pool.shutdown();
       }
-      if (MERGE > 0) {
-        writer.forceMerge(MERGE);
-      }
       writer.commit();
     }
   }
@@ -699,10 +578,8 @@ public final class Bench {
     try (Prepared s = new Prepared(sdb, sdbSql); Prepared p = new Prepared(pg, pgSql)) {
       long a = System.nanoTime();
       r.luceneCount = searcher.count(q.lucene());
-      r.luceneVisitCount = visit(searcher, q.lucene());
       for (int i = 0; i < LUCENE_WARMUP; ++i) {
         sink += searcher.count(q.lucene());
-        sink += visit(searcher, q.lucene());
       }
       WALL[LUCENE] += System.nanoTime() - a;
 
@@ -723,7 +600,6 @@ public final class Bench {
 
       a = System.nanoTime();
       r.lucene = median(() -> searcher.count(q.lucene()), r.reps);
-      r.luceneVisit = median(() -> visit(searcher, q.lucene()), r.reps);
       WALL[LUCENE] += System.nanoTime() - a;
       a = System.nanoTime();
       r.sdb = median(s::count, r.reps);
@@ -748,11 +624,8 @@ public final class Bench {
   }
 
   static void report(StringBuilder out, Dataset ds, int rows, int threads, int segments, double luceneIngest,
-      Map<String, Long> luceneFiles, double sdbIngest, Map<String, Long> sdbFiles, int sdbSegments, double pgCopy,
-      double pgVacuum, List<PgVariant> variants, Map<String, Double> buildSec, Map<String, Long> sizeBytes,
-      List<QueryPair> queries, Result[] results) {
-    final long luceneBytes = luceneFiles.values().stream().mapToLong(Long::longValue).sum();
-    final long sdbBytes = sdbFiles.values().stream().mapToLong(Long::longValue).sum();
+      long luceneBytes, double sdbIngest, long sdbBytes, double pgCopy, double pgVacuum, List<PgVariant> variants,
+      Map<String, Double> buildSec, Map<String, Long> sizeBytes, List<QueryPair> queries, Result[] results) {
     out.append(String.format(Locale.ROOT, "### %s: %,d rows, SereneDB `%s`, PostgreSQL `%s`%n%n", ds.name(), rows,
         ds.sdbType(), ds.pgType()));
     out.append("| | Lucene ").append(Version.LATEST).append(" | SereneDB |");
@@ -783,22 +656,19 @@ public final class Bench {
           mb(sizeBytes.get(e.getKey()))));
     }
     out.append(String.format(Locale.ROOT,
-        "Lucene: %d indexing threads, %d segments (%s). SereneDB: %d segments (%s). PostgreSQL: %s; "
-            + "`VACUUM (ANALYZE)` after COPY, not in ingest: %.2f s.%n%n",
-        threads, segments, byExtension(luceneFiles), sdbSegments, byExtension(sdbFiles), pgParts, pgVacuum));
+        "Lucene: %d indexing threads, %d segments. PostgreSQL: %s; `VACUUM (ANALYZE)` after COPY, not in ingest: %.2f s.%n%n",
+        threads, segments, pgParts, pgVacuum));
 
-    out.append("Median query latency, µs. Lucene `count` may answer from index statistics; "
-        + "Lucene `visit` writes every matching document id into a 2048-entry window:\n\n");
-    out.append("| query | rows (reference) | Lucene count, µs | Lucene visit, µs | SereneDB, µs |");
+    out.append("Median query latency, µs:\n\n");
+    out.append("| query | rows (reference) | Lucene, µs | SereneDB, µs |");
     for (PgVariant v : variants) {
       out.append(" PG ").append(v.label()).append(", µs |");
     }
-    out.append(" runs |\n|---|---:|---:|---:|---:|").append("---:|".repeat(variants.size())).append("---:|\n");
+    out.append(" runs |\n|---|---:|---:|---:|").append("---:|".repeat(variants.size())).append("---:|\n");
     for (int i = 0; i < queries.size(); ++i) {
       final Result r = results[i];
       out.append("| ").append(queries.get(i).name()).append(" | ").append(rowsCell(r, variants)).append(" | ")
-          .append(fmt(r.lucene)).append(" | ").append(fmt(r.luceneVisit)).append(" | ").append(fmt(r.sdb))
-          .append(" |");
+          .append(fmt(r.lucene)).append(" | ").append(fmt(r.sdb)).append(" |");
       for (double pg : r.pg) {
         out.append(' ').append(fmt(pg)).append(" |");
       }
@@ -828,9 +698,6 @@ public final class Bench {
     final StringBuilder wrong = new StringBuilder();
     if (r.luceneCount != r.truth) {
       wrong.append(String.format(Locale.ROOT, ", Lucene %,d", r.luceneCount));
-    }
-    if (r.luceneVisitCount != r.truth) {
-      wrong.append(String.format(Locale.ROOT, ", Lucene visit %,d", r.luceneVisitCount));
     }
     if (r.sdbCount != r.truth) {
       wrong.append(String.format(Locale.ROOT, ", SereneDB %,d", r.sdbCount));
@@ -969,54 +836,34 @@ public final class Bench {
     }
   }
 
-  static List<Path> sdbIndexDirs(Statement st, Path sdbData, String index) throws SQLException, IOException {
+  static long sdbIndexSize(Statement st, Path sdbData, String index) throws SQLException, IOException {
     final long oid;
     try (ResultSet rs = st.executeQuery("SELECT oid FROM pg_class WHERE relname = '" + index + "'")) {
       rs.next();
       oid = rs.getLong(1);
     }
+    long bytes = 0;
     try (Stream<Path> dbs = Files.list(sdbData.resolve("engine_v1"))) {
-      return dbs.map(db -> db.resolve(Long.toString(oid))).filter(Files::isDirectory).toList();
-    }
-  }
-
-  static final Pattern SEGMENT_META = Pattern.compile("(_\\d+)\\.\\d+\\.sm");
-
-  static int liveSegmentFiles(Path dir, Map<String, Long> bytes) throws IOException {
-    final List<Path> files;
-    try (Stream<Path> list = Files.list(dir)) {
-      files = list.toList();
-    }
-    final Path meta = files.stream().filter(p -> p.getFileName().toString().startsWith("segments_"))
-        .max(Comparator.comparingLong(p -> Long.parseLong(p.getFileName().toString().substring(9))))
-        .orElseThrow();
-    final Set<String> segments = new LinkedHashSet<>();
-    final Matcher m =
-        SEGMENT_META.matcher(new String(Files.readAllBytes(meta), StandardCharsets.ISO_8859_1));
-    while (m.find()) {
-      segments.add(m.group(1) + ".");
-    }
-    addFile(bytes, meta);
-    for (Path p : files) {
-      final String name = p.getFileName().toString();
-      if (segments.stream().anyMatch(name::startsWith)) {
-        addFile(bytes, p);
+      for (Path db : dbs.toList()) {
+        final Path dir = db.resolve(Long.toString(oid));
+        if (Files.isDirectory(dir)) {
+          bytes += dirSize(dir);
+        }
       }
     }
-    return segments.size();
+    return bytes;
   }
 
-  static void addFile(Map<String, Long> bytes, Path p) throws IOException {
-    final String name = p.getFileName().toString();
-    final int dot = name.lastIndexOf('.');
-    final String ext = name.startsWith("segments_") ? "segments" : dot < 0 ? name : name.substring(dot + 1);
-    bytes.merge(ext, Files.size(p), Long::sum);
-  }
-
-  static String byExtension(Map<String, Long> bytes) {
-    return String.join(", ", bytes.entrySet().stream()
-        .filter(e -> e.getValue() >= 100_000)
-        .map(e -> e.getKey() + " " + mb(e.getValue()) + " MB").toList());
+  static long dirSize(Path dir) throws IOException {
+    try (Stream<Path> files = Files.walk(dir)) {
+      return files.filter(Files::isRegularFile).mapToLong(p -> {
+        try {
+          return Files.size(p);
+        } catch (IOException e) {
+          return 0;
+        }
+      }).sum();
+    }
   }
 
   static void deleteRecursively(Path dir) throws IOException {

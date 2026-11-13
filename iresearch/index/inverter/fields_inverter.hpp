@@ -598,11 +598,9 @@ class FieldInverter : util::Noncopyable {
 
   template<typename P, typename ValueAt, typename DocAt>
   bool InvertNumericImpl(size_t n, ValueAt&& value_at, DocAt doc_at) {
-    constexpr size_t kBufferBytes = 4096;
+    constexpr size_t kMaxValues = TokenBatch::kCapacity;
     constexpr size_t kKeyBytes =
       kInlineNumericTerm<P> ? 0 : numeric_utils::kNumericTermSize<P>;
-    constexpr size_t kMaxValues =
-      kBufferBytes / (sizeof(duckdb::string_t) + kKeyBytes);
     SDB_ASSERT(!_state.value_open);
     SDB_ASSERT(Layout() == TokenLayout::Terms);
     auto& log = *std::get_if<PostingLog<TokenLayout::Terms>>(&_log);

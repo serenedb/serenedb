@@ -48,12 +48,26 @@ struct FsstEncoderDelete {
 
 using FsstEncoder = std::unique_ptr<duckdb_fsst_encoder_t, FsstEncoderDelete>;
 
+inline constexpr uint32_t kNoBase = std::numeric_limits<uint32_t>::max();
+
+using Misfits = std::array<uint32_t, kLenSplits>;
+
 struct VarColumns {
   std::vector<uint32_t> lcps;
   std::vector<uint32_t> lens;
   bstring suffixes;
   std::vector<uint16_t> restarts;
-  uint32_t max = 0;
+  Misfits misfits{};
+  uint32_t base = kNoBase;
+  uint32_t max_lcp = 0;
+  uint32_t max_len = 0;
+};
+
+struct VarEntry {
+  bytes_view suffix;
+  size_t lcp;
+  uint32_t head_skip;
+  bool restart;
 };
 
 struct BlockBuilder {
@@ -64,7 +78,8 @@ struct BlockBuilder {
   VarColumns columns;
   uint64_t size = 0;
   uint64_t deferred = 0;
-  uint32_t deferred_max = 0;
+  uint32_t deferred_lcp = 0;
+  uint32_t deferred_len = 0;
   uint32_t coded = 0;
   uint32_t width = 0;
   uint32_t prefix = 0;
@@ -94,7 +109,7 @@ class FieldWriter final {
   void TrainFsst();
   bytes_view EncodeSuffix(bytes_view suffix);
   void EncodeEntries(VarColumns& columns, uint32_t from, uint32_t to,
-                     bytes_view last);
+                     const VarEntry* last);
   void EncodeDeferred();
   bool OwnsBlock() const noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
@@ -102,8 +117,8 @@ class FieldWriter final {
   bool Append(bytes_view term, const PostingMeta& meta);
   bool AppendFixedKey(bytes_view key, uint64_t records);
   bool AppendVarKey(bytes_view key, uint64_t records);
-  bool EncodeBlock(bytes_view key, uint64_t records);
-  bool AppendCodedKey(bytes_view key, uint64_t records);
+  bool EncodeBlock(const VarEntry& entry, uint64_t records);
+  bool AppendCodedKey(const VarEntry& entry, uint64_t records);
   void Seal();
   void Cut();
   void WriteBlock();
@@ -124,6 +139,7 @@ class FieldWriter final {
   std::vector<size_t> _sample_lengths;
   bstring _coded;
   VarColumns _encoded;
+  std::vector<VarEntry> _batch_entries;
   std::vector<size_t> _batch_lengths;
   std::vector<unsigned char*> _batch_starts;
   std::vector<size_t> _coded_lengths;

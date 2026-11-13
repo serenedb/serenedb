@@ -42,7 +42,7 @@ class RangeWriter final {
   void Clear() noexcept;
 
  private:
-  struct Piece {
+  struct RangePosting {
     bstring key;
     std::vector<doc_id_t> docs;
     PostingMeta meta;
@@ -57,8 +57,8 @@ class RangeWriter final {
     std::vector<uint32_t> firsts;
     std::vector<uint32_t> ends;
     bstring records;
-    Piece group;
-    Piece held;
+    RangePosting group;
+    RangePosting held;
     uint32_t count = 0;
     uint32_t children = 0;
     bool holding = false;
@@ -72,7 +72,7 @@ class RangeWriter final {
     uint32_t index;
   };
 
-  static void Keep(Piece& piece, const PostingMeta& meta) noexcept;
+  static void Keep(RangePosting& posting, const PostingMeta& meta) noexcept;
   void Push(size_t level, const Child& child);
   void Close(size_t level);
   void Release(size_t level);

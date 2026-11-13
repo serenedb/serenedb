@@ -14,6 +14,6 @@ INSERT INTO sweep_t
 SELECT id,
        list_transform(
          range(128),
-         lambda x: ((((id * 99991 + x * 7919)::BIGINT) % 1000 + 1000) % 1000 / 1000.0)::FLOAT
+         x -> ((((id * 99991 + x * 7919)::BIGINT) % 1000 + 1000) % 1000 / 1000.0)::FLOAT
        )::FLOAT[128]
 FROM range(@N@) AS r(id);

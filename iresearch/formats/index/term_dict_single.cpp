@@ -184,11 +184,12 @@ void SingleTermReader::LookupBatch(size_t count, TermAt term,
   }
 }
 
-void SingleTermReader::VisitRange(bytes_view from, bytes_view to,
-                                  RangeVisitor visit) const {
+bool SingleTermReader::VisitRange(bytes_view from, bytes_view to, bool,
+                                  TermVisitor visit) const {
   if ((from.empty() || from <= min()) && (to.empty() || min() < to)) {
-    visit(min(), _single, false);
+    return visit(min(), _single);
   }
+  return true;
 }
 
 std::unique_ptr<IndexInput> SingleTermReader::ReopenPayload() const {

@@ -10,26 +10,14 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
 data=${SERENEDB_LUCENE_BENCH_DATA:-$HOME/.cache/serenedb-lucene-bench}
-serened=${SERENED:-$repo/build_bench/bin/serened}
+serened=${SERENED:-$repo/build_bench_no_lto/bin/serened}
 pg_image=${PG_IMAGE:-postgres:18.6}
 java_image=${JAVA_IMAGE:-eclipse-temurin:21.0.12.1_1-jdk}
 lucene_version=10.5.2
 pgjdbc_version=42.7.14
 maven=https://repo1.maven.org/maven2
 pg_settings=(-c shared_buffers=2GB -c maintenance_work_mem=1GB -c max_wal_size=8GB)
-datasets=(hosts networks ints stamps lowcard strings)
-java_opts=(-Xms4g "-Xmx${BENCH_JAVA_HEAP:-8g}" --enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector)
-bench_env=()
-for name in BENCH_HOSTS BENCH_NETWORKS BENCH_INTS BENCH_STAMPS BENCH_LOWCARD BENCH_STRINGS BENCH_LUCENE_THREADS \
-	BENCH_MERGE; do
-	bench_env+=(-e "$name")
-done
-pin=()
-docker_pin=()
-if [[ -n ${BENCH_CPUS:-} ]]; then
-	pin=(taskset -c "$BENCH_CPUS")
-	docker_pin=(--cpuset-cpus "$BENCH_CPUS")
-fi
+java_opts=(-Xms4g -Xmx8g --enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector)
 
 fetch_jar() {
 	local jar=$data/jars/$2
@@ -50,8 +38,8 @@ java_name=
 
 in_java() {
 	java_name=serenedb-lucene-bench-java-$$
-	docker run --rm --name "$java_name" --network host --user "$(id -u):$(id -g)" "${docker_pin[@]}" \
-		"${bench_env[@]}" -v "$data:$data" -v "$here:$here:ro" -w "$data" "$@"
+	docker run --rm --name "$java_name" --network host --user "$(id -u):$(id -g)" \
+		-v "$data:$data" -v "$here:$here:ro" -w "$data" "$@"
 	java_name=
 }
 
@@ -128,12 +116,12 @@ start_servers() {
 	local type=$1
 	sdb_port=$(free_port)
 	sdb_dir=$(mktemp -d "$data/serened.XXXXXX")
-	"${pin[@]}" "$serened" "$sdb_dir" --listen="postgres://127.0.0.1:$sdb_port" >"$logs/serened-$type.log" 2>&1 &
+	"$serened" "$sdb_dir" --listen="postgres://127.0.0.1:$sdb_port" >"$logs/serened-$type.log" 2>&1 &
 	sdb_pid=$!
 	pg_port=$(free_port "$sdb_port")
 	pg_name=serenedb-lucene-bench-$$-$type
 	pg_dir=$(mktemp -d "$data/pgdata.XXXXXX")
-	docker run -d --rm --name "$pg_name" --network host --user "$(id -u):$(id -g)" "${docker_pin[@]}" \
+	docker run -d --rm --name "$pg_name" --network host --user "$(id -u):$(id -g)" \
 		-v /etc/passwd:/etc/passwd:ro -e POSTGRES_HOST_AUTH_METHOD=trust -e PGDATA=/pgdata \
 		-v "$pg_dir:/pgdata" -v "$data:/data:ro" --shm-size=2g "$pg_image" \
 		-c listen_addresses=127.0.0.1 -c port="$pg_port" "${pg_settings[@]}" >/dev/null
@@ -161,7 +149,7 @@ run_type() {
 	start=$(date +%s)
 	say
 	in_java -e SDB_PORT="$sdb_port" -e SDB_DATA="$sdb_dir" -e PG_PORT="$pg_port" -e PG_DATA_MOUNT=/data \
-		-e REPORT="$report" -e PLANS="$plans" "$java_image" timeout "${BENCH_TIMEOUT:-900}" java "${java_opts[@]}" -cp "$classpath" \
+		-e REPORT="$report" -e PLANS="$plans" "$java_image" timeout 900 java "${java_opts[@]}" -cp "$classpath" \
 		Bench bench "$data" "$type"
 	say "- total wall time for \`$type\` incl. server start: $(($(date +%s) - start)) s"
 	load "after"
@@ -179,11 +167,9 @@ header() {
 	say "- Lucene $lucene_version (lucene-core, in-process in the benchmark JVM): docker \`$java_image\` ($(docker run --rm "$java_image" java -version 2>&1 | head -1)), \`--network host\`, index on the host disk in \`$data\`, MMapDirectory, \`IndexSearcher.count\` with the query cache off"
 	say "- PostgreSQL: docker \`$pg_image\` ($(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$pg_image" | grep '^PG_VERSION=' | cut -d= -f2)), \`--network host\`, PGDATA on the host disk in \`$data\`, \`${pg_settings[*]}\`, other settings default"
 	say "- SereneDB: native process on the host, data on the host disk in \`$data\`"
-	say "- segments: $([[ -n ${BENCH_MERGE:-} ]] && echo "both engines merged to $BENCH_MERGE (Lucene \`forceMerge\`, SereneDB \`VACUUM (COMPACT_TABLE)\`), merge counted in ingest" || echo "as indexing leaves them")"
-	say "- CPUs: $([[ -n ${BENCH_CPUS:-} ]] && echo "serened, the JVM and PostgreSQL pinned to $BENCH_CPUS" || echo "not pinned")"
 	say "- SereneDB and PostgreSQL over pg-wire: pgjdbc $pgjdbc_version, one connection, one server-side prepared \`SELECT count(*)\`, the same run count per query for all engines"
 	local sizes=
-	for f in "${datasets[@]}"; do
+	for f in hosts networks ints strings; do
 		sizes+="$f $(wc -l <"$data/$f.csv") rows, "
 	done
 	say "- datasets in \`$data\` (seeded, from \`run.sh prepare\`): ${sizes%, }"
@@ -207,10 +193,10 @@ bench)
 		;;
 	esac
 	[[ -x $serened ]] || {
-		echo "no serened at $serened: ninja -C build_bench serened" >&2
+		echo "no serened at $serened: ninja -C build_bench_no_lto serened" >&2
 		exit 1
 	}
-	for f in "${datasets[@]}"; do
+	for f in hosts networks ints strings; do
 		[[ -f $data/$f.csv ]] || {
 			echo "$data/$f.csv is missing: $0 prepare" >&2
 			exit 1

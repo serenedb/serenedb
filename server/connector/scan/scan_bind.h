@@ -83,7 +83,6 @@ struct SearchSpec {
   std::function<search::StoreSnapshotPtr(duckdb::ClientContext&)>
     acquire_snapshot;
   std::weak_ptr<const irs::DirectoryReaderImpl> planned_reader;
-  bool table_filtered = false;
 
   bool MatchAll() const noexcept { return !filter; }
 };

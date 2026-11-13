@@ -24,11 +24,14 @@
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <vector>
 
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::term_dict {
@@ -37,40 +40,138 @@ namespace {
 constexpr uint32_t kLeafFanout = 64;
 constexpr uint32_t kFanout = 16;
 constexpr uint64_t kHeavyDocs = uint64_t{1} << 14;
-constexpr uint64_t kTopPieces = 16;
+constexpr uint64_t kTopRangePostings = 16;
 constexpr byte_type kZeros[kSlack]{};
 
 uint32_t Load32(const byte_type* p, uint32_t i) noexcept {
   return absl::little_endian::Load32(p + uint64_t{i} * sizeof(uint32_t));
 }
 
-class RangeWalk {
+bool Point(bytes_view from, bytes_view to) noexcept {
+  return to.size() == from.size() + 1 && to.back() == 0 && to.starts_with(from);
+}
+
+bool Narrow(const TermReaderImpl& field, bytes_view& from,
+            bytes_view& to) noexcept {
+  if ((!from.empty() && from > field.max()) ||
+      (!to.empty() && (to <= field.min() || to <= from))) {
+    return false;
+  }
+  if (from <= field.min()) {
+    from = {};
+  }
+  if (!to.empty() && to > field.max()) {
+    to = {};
+  }
+  return true;
+}
+
+bool Ascending(Cursor& cursor, bytes_view from, bytes_view to,
+               TermReader::TermVisitor visit) {
+  if (from.empty()) {
+    cursor.First();
+  } else if (cursor.SeekGe(from, true) == SeekResult::End) {
+    return true;
+  }
+  do {
+    const bytes_view term = cursor.Term();
+    if (!to.empty() && term >= to) {
+      return true;
+    }
+    if (!visit(term, cursor.Meta())) {
+      return false;
+    }
+  } while (cursor.Advance());
+  return true;
+}
+
+struct BufferedTerm {
+  uint32_t key;
+  uint32_t size;
+  PostingMeta meta;
+};
+
+bool Descending(const TermReaderImpl& field, bytes_view from, bytes_view to,
+                TermReader::TermVisitor visit) {
+  Cursor cursor{field};
+  PaddedKey probe;
+  const uint32_t last = to.empty()
+                          ? field.Blocks() - 1
+                          : field.BlockOf(probe.Assign(field.KeyPrefix(), to));
+  containers::SmallVector<byte_type, kRestartInterval * kMaxStride> keys;
+  std::array<BufferedTerm, kRestartInterval> terms;
+  for (uint32_t block = last + 1; block-- != 0;) {
+    cursor.Load(block);
+    const uint32_t first = block == 0 ? field.FirstEntry() : 0;
+    const uint32_t stop = cursor.Stop();
+    for (uint32_t group = (stop - 1) / kRestartInterval + 1;
+         group-- != first / kRestartInterval;) {
+      const uint32_t end = std::min((group + 1) * kRestartInterval, stop);
+      cursor.Group(group);
+      while (cursor.Entry() < first) {
+        cursor.Next();
+      }
+      keys.clear();
+      uint32_t count = 0;
+      bool below = false;
+      for (;;) {
+        const bytes_view term = cursor.Term();
+        if (!to.empty() && term >= to) {
+          break;
+        }
+        if (!from.empty() && term < from) {
+          below = true;
+        } else {
+          terms[count++] = {.key = static_cast<uint32_t>(keys.size()),
+                            .size = static_cast<uint32_t>(term.size()),
+                            .meta = cursor.Meta()};
+          keys.insert(keys.end(), term.begin(), term.end());
+        }
+        if (cursor.Entry() + 1 == end) {
+          break;
+        }
+        cursor.Next();
+      }
+      while (count != 0) {
+        const auto& buffered = terms[--count];
+        if (!visit({keys.data() + buffered.key, buffered.size},
+                   buffered.meta)) {
+          return false;
+        }
+      }
+      if (below) {
+        return true;
+      }
+    }
+  }
+  return true;
+}
+
+using RangePostingVisitor =
+  absl::FunctionRef<bool(bytes_view, bytes_view, const PostingMeta&)>;
+
+class RangePostingWalk {
  public:
-  RangeWalk(const TermReaderImpl& field, bytes_view from, bytes_view to,
-            TermReader::RangeVisitor visit) noexcept
+  RangePostingWalk(const TermReaderImpl& field, bytes_view from, bytes_view to,
+                   RangePostingVisitor visit) noexcept
     : _field{field},
       _levels{field.RangeLevels()},
-      _cursor{field},
       _visit{visit},
       _from{from},
       _to{to},
       _prefix{field.RangePrefix()},
       _stride{field.key_width - field.RangePrefix()} {
-    if (!_levels.empty()) {
-      std::memcpy(_lower, field.min().data(), _prefix);
-      std::memcpy(_upper, field.min().data(), _prefix);
-      _from_rest = _from.empty() ? _from : _from.substr(_prefix);
-      _to_rest = _to.empty() ? _to : _to.substr(_prefix);
-    }
+    SDB_ASSERT(!_levels.empty());
+    std::memcpy(_lower, field.min().data(), _prefix);
+    std::memcpy(_upper, field.min().data(), _prefix);
+    _from_rest = _from.empty() ? _from : _from.substr(_prefix);
+    _to_rest = _to.empty() ? _to : _to.substr(_prefix);
   }
 
-  void Run() {
-    if (_levels.empty()) {
-      Terms(_from, _to);
-      return;
-    }
+  bool Run() {
     const size_t top = _levels.size() - 1;
-    Pieces(top, Find(top), _levels[top].count);
+    Walk(top, Find(top), _levels[top].count);
+    return !_stopped;
   }
 
  private:
@@ -94,7 +195,7 @@ class RangeWalk {
     return lo == 0 ? 0 : lo - 1;
   }
 
-  bool Pieces(size_t level, uint32_t begin, uint32_t end) {
+  bool Walk(size_t level, uint32_t begin, uint32_t end) {
     const auto& range = _levels[level];
     for (uint32_t i = begin; i != end; ++i) {
       const auto start = Start(level, i);
@@ -114,46 +215,30 @@ class RangeWalk {
         meta.inline_data =
           record +
           PostingsReader::decode(record, _field.meta().index_features, meta);
-        _visit(Key(_lower, start), meta, true);
-      } else if (level == 0) {
-        const auto lower = from_side ? Key(_lower, start) : _from;
-        const auto upper = last || !to_side ? _to : Key(_upper, next);
-        if (!Terms(lower, upper)) {
+        if (!_visit(Key(_lower, start), last ? bytes_view{} : Key(_upper, next),
+                    meta)) {
+          _stopped = true;
           return false;
         }
-      } else if (!Pieces(level - 1, Load32(range.firsts, i),
-                         last ? _levels[level - 1].count
-                              : Load32(range.firsts, i + 1))) {
+      } else if (level != 0 && !Walk(level - 1, Load32(range.firsts, i),
+                                     last ? _levels[level - 1].count
+                                          : Load32(range.firsts, i + 1))) {
         return false;
       }
     }
     return true;
   }
 
-  bool Terms(bytes_view lower, bytes_view upper) {
-    if (_cursor.SeekGe(lower, true) == SeekResult::End) {
-      return false;
-    }
-    do {
-      const bytes_view key = _cursor.Term();
-      if (!upper.empty() && key >= upper) {
-        return true;
-      }
-      _visit(key, _cursor.Meta(), false);
-    } while (_cursor.Advance());
-    return false;
-  }
-
   const TermReaderImpl& _field;
   std::span<const RangeLevel> _levels;
-  Cursor _cursor;
-  TermReader::RangeVisitor _visit;
+  RangePostingVisitor _visit;
   bytes_view _from;
   bytes_view _to;
   bytes_view _from_rest;
   bytes_view _to_rest;
   uint32_t _prefix;
   uint32_t _stride;
+  bool _stopped = false;
   byte_type _lower[kMaxStride];
   byte_type _upper[kMaxStride];
 };
@@ -162,7 +247,7 @@ class RangeWalk {
 
 void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs) noexcept {
   _pw = &pw;
-  _heavy = std::max(kHeavyDocs, docs / kTopPieces);
+  _heavy = std::max(kHeavyDocs, docs / kTopRangePostings);
 }
 
 DocTee RangeWriter::Tee() noexcept {
@@ -189,11 +274,13 @@ void RangeWriter::Add(bytes_view term, const PostingMeta& meta) {
           });
 }
 
-void RangeWriter::Keep(Piece& piece, const PostingMeta& meta) noexcept {
-  piece.meta = meta;
+void RangeWriter::Keep(RangePosting& posting,
+                       const PostingMeta& meta) noexcept {
+  posting.meta = meta;
   if (meta.inline_size != 0) {
-    std::memcpy(piece.inline_bytes.data(), meta.inline_data, meta.inline_size);
-    piece.meta.inline_data = piece.inline_bytes.data();
+    std::memcpy(posting.inline_bytes.data(), meta.inline_data,
+                meta.inline_size);
+    posting.meta.inline_data = posting.inline_bytes.data();
   }
 }
 
@@ -249,36 +336,37 @@ void RangeWriter::Release(size_t level) {
     return;
   }
   range.holding = false;
-  auto& piece = range.held;
-  if (piece.join) {
-    absl::c_sort(piece.docs);
-    piece.docs.erase(std::ranges::unique(piece.docs).begin(), piece.docs.end());
-    piece.meta = {};
+  auto& posting = range.held;
+  if (posting.join) {
+    absl::c_sort(posting.docs);
+    posting.docs.erase(std::ranges::unique(posting.docs).begin(),
+                       posting.docs.end());
+    posting.meta = {};
     _pw->WritePostings(
       PostingRows{
-        .span = {.docs = piece.docs.data(), .count = piece.docs.size()},
+        .span = {.docs = posting.docs.data(), .count = posting.docs.size()},
       },
-      piece.meta);
-    piece.docs_count = piece.meta.docs_count;
-  } else if (piece.meta.inline_size != 0) {
-    piece.meta.inline_data = piece.inline_bytes.data();
+      posting.meta);
+    posting.docs_count = posting.meta.docs_count;
+  } else if (posting.meta.inline_size != 0) {
+    posting.meta.inline_data = posting.inline_bytes.data();
   }
   _record.Clear();
-  _pw->EncodeAbsolute(_record, piece.meta);
+  _pw->EncodeAbsolute(_record, posting.meta);
   range.records.append(_record.View());
-  range.records.append(piece.meta.Inline());
+  range.records.append(posting.meta.Inline());
   range.ends.push_back(static_cast<uint32_t>(range.records.size()));
-  range.starts.append(piece.key);
+  range.starts.append(posting.key);
   if (level != 0) {
-    range.firsts.push_back(piece.first);
+    range.firsts.push_back(posting.first);
   }
   const uint32_t index = range.count++;
   if (level + 1 != kMaxRangeLevels) {
     Push(level + 1, {
-                      .key = piece.key,
-                      .meta = piece.meta,
-                      .docs = piece.docs,
-                      .docs_count = piece.docs_count,
+                      .key = posting.key,
+                      .meta = posting.meta,
+                      .docs = posting.docs,
+                      .docs_count = posting.docs_count,
                       .index = index,
                     });
   }
@@ -344,24 +432,73 @@ void RangeWriter::Clear() noexcept {
   _height = 0;
 }
 
-void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,
-                                RangeVisitor visit) const {
-  if ((!from.empty() && from > max()) || (!to.empty() && to <= min())) {
-    return;
+bool TermReaderImpl::VisitRange(bytes_view from, bytes_view to, bool descending,
+                                TermVisitor visit) const {
+  if (Point(from, to)) {
+    const auto meta = Lookup(from);
+    return meta.docs_count == 0 || visit(from, meta);
   }
-  if (to.size() == from.size() + 1 && to.back() == 0 && to.starts_with(from)) {
+  if (!Narrow(*this, from, to)) {
+    return true;
+  }
+  if (descending) {
+    return Descending(*this, from, to, visit);
+  }
+  Cursor cursor{*this};
+  return Ascending(cursor, from, to, visit);
+}
+
+bool TermReaderImpl::CoverRange(bytes_view from, bytes_view to,
+                                TermVisitor visit) const {
+  if (Point(from, to)) {
     if (const auto meta = Lookup(from); meta.docs_count != 0) {
-      visit(from, meta, false);
+      visit(from, meta);
     }
-    return;
+    return false;
   }
-  if (from <= min()) {
-    from = {};
+  if (!Narrow(*this, from, to)) {
+    return false;
   }
-  if (!to.empty() && to > max()) {
-    to = {};
+  Cursor cursor{*this};
+  byte_type lower[kMaxStride];
+  byte_type upper[kMaxStride];
+  size_t lower_size = 0;
+  size_t upper_size = 0;
+  bool covered = false;
+  if (!_levels.empty() &&
+      !RangePostingWalk{
+        *this, from, to,
+        [&](bytes_view start, bytes_view end, const PostingMeta& meta) {
+          if (!covered) {
+            covered = true;
+            lower_size = start.size();
+            std::memcpy(lower, start.data(), lower_size);
+          }
+          upper_size = end.size();
+          if (upper_size != 0) {
+            std::memcpy(upper, end.data(), upper_size);
+          }
+          return visit(start, meta);
+        }}
+         .Run()) {
+    return true;
   }
-  RangeWalk{*this, from, to, visit}.Run();
+  if (!covered) {
+    Ascending(cursor, from, to, visit);
+    return false;
+  }
+  bytes_view head_from = from;
+  bytes_view head_to{lower, lower_size};
+  if (Narrow(*this, head_from, head_to) &&
+      !Ascending(cursor, head_from, head_to, visit)) {
+    return true;
+  }
+  bytes_view tail_from{upper, upper_size};
+  bytes_view tail_to = to;
+  if (upper_size != 0 && Narrow(*this, tail_from, tail_to)) {
+    Ascending(cursor, tail_from, tail_to, visit);
+  }
+  return true;
 }
 
 }  // namespace irs::term_dict

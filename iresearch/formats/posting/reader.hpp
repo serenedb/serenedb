@@ -72,6 +72,14 @@ class PostingsReader final {
   static size_t decode(const byte_type* in, IndexFeatures field_features,
                        PostingMeta& state);
 
+  template<bool Freq, bool Pos, bool Padded = false>
+  static size_t DecodeAs(const byte_type* in, IndexFeatures field_features,
+                         PostingMeta& state);
+
+  template<typename Visitor>
+  static decltype(auto) WithRecordLayout(IndexFeatures field_features,
+                                         Visitor&& visitor);
+
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
                              const PostingMeta& meta, bool has_score_bounds,
@@ -116,30 +124,57 @@ inline void PostingsReader::prepare(const ReaderState& state,
   }
 }
 
-inline IRS_FORCE_INLINE size_t PostingsReader::decode(
+template<typename Visitor>
+inline decltype(auto) PostingsReader::WithRecordLayout(IndexFeatures features,
+                                                       Visitor&& visitor) {
+  const bool freq = IndexFeatures::None != (features & IndexFeatures::Freq);
+  if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
+    return freq ? visitor.template operator()<true, true>()
+                : visitor.template operator()<false, true>();
+  }
+  return freq ? visitor.template operator()<true, false>()
+              : visitor.template operator()<false, false>();
+}
+
+inline size_t PostingsReader::decode(const byte_type* in,
+                                     IndexFeatures features,
+                                     PostingMeta& posting_meta) {
+  return WithRecordLayout(features, [&]<bool Freq, bool Pos> {
+    return DecodeAs<Freq, Pos>(in, features, posting_meta);
+  });
+}
+
+template<bool Freq, bool Pos, bool Padded>
+inline IRS_FORCE_INLINE size_t PostingsReader::DecodeAs(
   const byte_type* in, IndexFeatures features, PostingMeta& posting_meta) {
   const auto* p = in;
 
   SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Vec) ||
              IndexFeatures::None ==
                (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
+  SDB_ASSERT(Freq == (IndexFeatures::None != (features & IndexFeatures::Freq)));
+  SDB_ASSERT(Pos == (IndexFeatures::None != (features & IndexFeatures::Pos)));
 
   const uint64_t next = uint64_t{posting_meta.pos_offset} + posting_meta.freq;
-  const auto head = vread<uint64_t>(p);
+  constexpr bool has_freq = Freq;
+  constexpr bool has_pos = Pos;
+  constexpr auto layout = RecordLayoutOf(has_freq, has_pos);
+  const auto head = Padded ? ReadPaddedVarint(p) : vread<uint64_t>(p);
   const bool single = (head & 1) != 0;
-  const bool follows = (head & 4) != 0;
+  const bool follows = has_pos && (head >> layout.follows & 1) != 0;
+  const auto payload = head >> layout.payload;
   if (single) {
     posting_meta.docs_count = 1;
-    posting_meta.doc_delta = static_cast<uint32_t>(head >> 3);
+    posting_meta.doc_delta = static_cast<uint32_t>(payload);
   } else {
-    posting_meta.docs_count = static_cast<uint32_t>(head >> 4);
+    posting_meta.docs_count = static_cast<uint32_t>(payload >> 1);
   }
-  if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
+  if constexpr (has_freq) {
     posting_meta.freq =
       posting_meta.docs_count + ((head & 2) != 0 ? 0 : 1 + vread<uint32_t>(p));
   }
 
-  if (!single && (head & 8) != 0) {
+  if (!single && (payload & 1) != 0) {
     const auto size = *p++;
     SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
     posting_meta.inline_size = size;
@@ -149,7 +184,7 @@ inline IRS_FORCE_INLINE size_t PostingsReader::decode(
       posting_meta.doc_start += vread<uint64_t>(p);
     }
   }
-  if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
+  if constexpr (has_pos) {
     if (!follows || next >= PosGroup::kPositions) {
       posting_meta.pos_start += vread<uint64_t>(p);
       if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
@@ -167,8 +202,7 @@ inline IRS_FORCE_INLINE size_t PostingsReader::decode(
     posting_meta.doc_delta = vread<uint32_t>(p);
   }
 
-  if (IndexFeatures::None != (features & IndexFeatures::Pos) &&
-      pos_limits::kBlockSize < posting_meta.freq) {
+  if (has_pos && pos_limits::kBlockSize < posting_meta.freq) {
     posting_meta.pos_extent = vread<uint32_t>(p);
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       posting_meta.pay_extent = vread<uint32_t>(p);

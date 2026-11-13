@@ -123,9 +123,17 @@ class MockPostingsField final : public irs::TermReader {
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
   void LookupBatch(size_t, TermAt, FoundTerm) const final {}
-  void VisitRange(irs::bytes_view, irs::bytes_view, RangeVisitor) const final {}
-  void VisitDocsInOrder(irs::bytes_view, irs::bytes_view, bool,
-                        TermDoc) const final {}
+  bool VisitRange(irs::bytes_view, irs::bytes_view, bool,
+                  TermVisitor) const final {
+    return true;
+  }
+  bool CoverRange(irs::bytes_view, irs::bytes_view, TermVisitor) const final {
+    return false;
+  }
+  irs::TermPostings::ptr PostingsOf(irs::IndexFeatures, const irs::PostingMeta&,
+                                    irs::TermPostings::ptr) const final {
+    return irs::TermPostings::empty();
+  }
   const irs::FieldMeta& meta() const final { return _meta; }
   size_t size() const final { return 1; }
   uint64_t docs_count() const final { return _docs_count; }

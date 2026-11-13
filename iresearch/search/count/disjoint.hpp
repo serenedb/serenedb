@@ -39,8 +39,6 @@ uint64_t SumOf(std::span<const detail::PostingClause> clauses) noexcept;
 
 bool ShouldSums(const BooleanQuery& query, const Context& ctx);
 
-bool MustMisses(const BooleanQuery& query);
-
 template<typename Make>
 class WholeCount : public Root {
  public:

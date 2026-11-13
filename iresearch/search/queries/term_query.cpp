@@ -33,11 +33,11 @@ namespace irs {
 
 TermQuery::TermQuery(const SubReader& segment, const TermReader* reader,
                      const PostingMeta& cookie, score_t boost,
-                     detail::StatsRecord stats, bool piece)
+                     detail::StatsRecord stats, bool range_posting)
   : QueryBuilderImpl{segment, cookie.docs_count, QueryKind::Term},
     _state{reader, cookie},
     _boost{boost},
-    _piece{piece} {
+    _range_posting{range_posting} {
   SDB_ASSERT(reader != nullptr);
   SDB_ASSERT(cookie.docs_count != 0);
   _estimate_min = cookie.docs_count;
@@ -52,12 +52,12 @@ QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
                                 const SubReader& segment,
                                 const TermReader* reader,
                                 const PostingMeta& meta, score_t boost,
-                                detail::StatsRecord stats, bool piece) {
+                                detail::StatsRecord stats, bool range_posting) {
   if (meta.docs_count == 0) {
     return QueryBuilder::Empty();
   }
   return memory::make_tracked<TermQuery>(memory, segment, reader, meta, boost,
-                                         stats, piece);
+                                         stats, range_posting);
 }
 
 }  // namespace irs

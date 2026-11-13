@@ -42,6 +42,15 @@ inline constexpr uint32_t kPage = 4096;
 inline constexpr uint32_t kRestartInterval = 16;
 inline constexpr uint32_t kRecordInterval = 8;
 inline constexpr uint32_t kHeadBytes = sizeof(uint32_t);
+constexpr uint32_t FixedHeadBytes(uint64_t stride) noexcept {
+  return stride > sizeof(uint64_t) ? sizeof(uint32_t) : sizeof(uint16_t);
+}
+constexpr bool PacksKeys(uint64_t stride) noexcept {
+  return stride != 0 && stride <= sizeof(uint64_t);
+}
+constexpr uint64_t PackedKeyBytes(uint64_t count, uint32_t bits) noexcept {
+  return (count * bits + 7) / 8;
+}
 inline constexpr uint32_t kRecordOffset = sizeof(uint16_t);
 inline constexpr uint32_t kMaxStride = 32;
 inline constexpr uint32_t kSlack = block_codec::kInSlack;
@@ -56,6 +65,22 @@ enum class BlockKind : uint8_t {
 
 constexpr uint32_t ColumnWidth(uint32_t max) noexcept {
   return max <= 0xFF ? 1 : max <= 0xFFFF ? 2 : 4;
+}
+
+inline constexpr uint32_t kHeaderBits = 8;
+inline constexpr uint32_t kLenSplits = kHeaderBits + 1;
+inline constexpr byte_type kColumnHeaders = kLenSplits;
+inline constexpr byte_type kEscapedHeader = 0xFF;
+inline constexpr uint32_t kEscapedEntry = sizeof(uint16_t);
+
+constexpr bool Packs(uint32_t lcp, uint32_t len, uint32_t len_bits) noexcept {
+  return (lcp >> (kHeaderBits - len_bits)) == 0 && (len >> len_bits) == 0 &&
+         ((lcp << len_bits) | len) != kEscapedHeader;
+}
+
+constexpr byte_type Pack(uint32_t lcp, uint32_t len,
+                         uint32_t len_bits) noexcept {
+  return static_cast<byte_type>((lcp << len_bits) | len);
 }
 
 inline constexpr size_t kMaxRecordBytes = 128;

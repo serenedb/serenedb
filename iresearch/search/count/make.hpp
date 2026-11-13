@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <span>
+#include <vector>
 
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/plan.hpp"
@@ -42,6 +43,19 @@ Root::ptr MakeTermCount(const detail::PostingClause& posting,
                         const Context& ctx);
 
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs);
+
+Root::ptr MakeSum(std::vector<Root::ptr> parts);
+
+template<typename Term>
+Root::ptr MakeTermsSum(std::span<const Term> terms, const TermReader* field,
+                       const Context& ctx) {
+  std::vector<Root::ptr> counts;
+  counts.reserve(terms.size());
+  for (const auto& term : terms) {
+    counts.push_back(MakeTermCount(detail::ClauseOf(term, field), ctx));
+  }
+  return MakeSum(std::move(counts));
+}
 
 Root::ptr MakeLiveTerm(const detail::PostingClause& term,
                        const SubReader& segment);

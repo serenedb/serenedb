@@ -22,12 +22,15 @@
 #include <absl/synchronization/mutex.h>
 
 #include <cstring>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/detail/term_iterator.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <utility>
 
@@ -126,22 +129,48 @@ ValueHit NullOf(const ValueOrderSpec& spec, uint32_t seg, irs::doc_id_t doc) {
   return hit;
 }
 
+void MergeHits(std::vector<ValueHit>& best, const std::vector<ValueHit>& hits,
+               std::vector<ValueHit>& merged, size_t limit) {
+  merged.clear();
+  auto a = best.begin();
+  auto b = hits.begin();
+  while (merged.size() < limit && (a != best.end() || b != hits.end())) {
+    if (b == hits.end() || (a != best.end() && ValueLess{}(*a, *b))) {
+      merged.push_back(*a++);
+    } else {
+      merged.push_back(*b++);
+    }
+  }
+  best.swap(merged);
+}
+
+void RefreshBound(ScanGlobalState& g, ValueTopKLocalState& l) {
+  auto& shared = g.value;
+  if (shared.bound_version.load(std::memory_order_acquire) != l.bound_version) {
+    absl::ReaderMutexLock lock{&shared.mutex};
+    l.bound = shared.bound;
+    l.bound_version = shared.bound_version.load(std::memory_order_relaxed);
+  }
+}
+
+void Tighten(ScanGlobalState::ValueTopKState& shared, const ValueHit& bound)
+  ABSL_EXCLUSIVE_LOCKS_REQUIRED(shared.mutex) {
+  if (shared.bound_version.load(std::memory_order_relaxed) == 0 ||
+      ValueLess{}(bound, shared.bound)) {
+    shared.bound = bound;
+    shared.bound_version.fetch_add(1, std::memory_order_release);
+  }
+}
+
 void CollectSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
   const auto& spec = *g.Bind().value_order;
   const auto seg_idx = l.unit.seg;
   const auto& seg = (*g.reader)[seg_idx];
   const auto mask = seg.MaskedDocs();
   const auto limit = spec.limit;
-  auto& shared = g.value;
   l.hits.clear();
   bool going = true;
   const auto take = [&](const ValueHit& hit) {
-    if (shared.bound_version.load(std::memory_order_acquire) !=
-        l.bound_version) {
-      absl::ReaderMutexLock lock{&shared.mutex};
-      l.bound = shared.bound;
-      l.bound_version = shared.bound_version.load(std::memory_order_relaxed);
-    }
     if (l.bound_version != 0 && !ValueLess{}(hit, l.bound)) {
       going = false;
       return false;
@@ -156,6 +185,7 @@ void CollectSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
     spec.nulls ? seg.field(spec.field, irs::NumericLayout::kNulls) : nullptr;
   const auto read_nulls = [&] {
     if (nulls && going) {
+      RefreshBound(g, l);
       nulls->ReadDocs(irs::kSlotTerm, [&](irs::doc_id_t doc) {
         return take(NullOf(spec, seg_idx, doc));
       });
@@ -166,38 +196,57 @@ void CollectSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
   }
   const auto* values = seg.field(spec.field, irs::NumericLayout::kNumbers);
   if (values && going) {
-    values->VisitDocsInOrder(spec.from, spec.to, spec.descending,
-                             [&](irs::bytes_view term, irs::doc_id_t doc) {
-                               return take(ValueOf(spec, term, seg_idx, doc));
-                             });
+    irs::TermPostings::ptr docs;
+    values->VisitRange(
+      spec.from, spec.to, spec.descending,
+      [&](irs::bytes_view term, const irs::PostingMeta& meta) {
+        if (term.size() >= ValueHit{}.key.size()) [[unlikely]] {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+            ERR_MSG("inverted index: numeric term of ", term.size(), " bytes"));
+        }
+        RefreshBound(g, l);
+        irs::ReadPostingDocs(
+          *values, meta,
+          [&](irs::doc_id_t doc) {
+            return take(ValueOf(spec, term, seg_idx, doc));
+          },
+          docs);
+        return going;
+      });
   }
   if (!spec.nulls_first) {
     read_nulls();
   }
 }
 
-void PublishSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
+void KeepSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
+  const auto limit = g.Bind().value_order->limit;
   if (l.hits.empty()) {
+    return;
+  }
+  MergeHits(l.best, l.hits, l.merged, limit);
+  if (l.best.size() != limit ||
+      (l.bound_version != 0 && !ValueLess{}(l.best.back(), l.bound))) {
+    return;
+  }
+  auto& shared = g.value;
+  absl::MutexLock lock{&shared.mutex};
+  Tighten(shared, l.best.back());
+  l.bound = shared.bound;
+  l.bound_version = shared.bound_version.load(std::memory_order_relaxed);
+}
+
+void PublishBest(ScanGlobalState& g, ValueTopKLocalState& l) {
+  if (l.best.empty()) {
     return;
   }
   const auto limit = g.Bind().value_order->limit;
   auto& shared = g.value;
   absl::MutexLock lock{&shared.mutex};
-  auto& best = shared.best;
-  l.merged.clear();
-  auto a = best.begin();
-  auto b = l.hits.begin();
-  while (l.merged.size() < limit && (a != best.end() || b != l.hits.end())) {
-    if (b == l.hits.end() || (a != best.end() && ValueLess{}(*a, *b))) {
-      l.merged.push_back(*a++);
-    } else {
-      l.merged.push_back(*b++);
-    }
-  }
-  best.swap(l.merged);
-  if (best.size() == limit) {
-    shared.bound = best.back();
-    shared.bound_version.fetch_add(1, std::memory_order_release);
+  MergeHits(shared.best, l.best, l.merged, limit);
+  if (shared.best.size() == limit) {
+    Tighten(shared, shared.best.back());
   }
 }
 
@@ -237,7 +286,7 @@ std::optional<ValueOrderSpec> ValueOrderOf(
   const auto& search = bind.search;
   if (bind.score.text || bind.score.vector || bind.score.order ||
       bind.score.HasTopK() || bind.offsets.Active() || bind.ts_dict.Active() ||
-      bind.plan_cache.deferred || search.table_filtered || search.index_only ||
+      bind.plan_cache.deferred || search.index_only ||
       !search.deferred.empty() || !search.duals.empty() ||
       !search.row_filters.empty()) {
     return std::nullopt;
@@ -272,9 +321,10 @@ void RunValueTopKScan(duckdb::ClientContext& ctx,
   if (!l.published) {
     while (NextLiveUnit(g, l)) {
       CollectSegment(g, l);
-      PublishSegment(g, l);
+      KeepSegment(g, l);
       FinishUnit(g, l);
     }
+    PublishBest(g, l);
     l.published = true;
     g.topk.published.fetch_add(1, std::memory_order_acq_rel);
   }

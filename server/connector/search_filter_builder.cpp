@@ -70,6 +70,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <vector>
@@ -2495,15 +2496,6 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
   return &ctx.expr_cache.try_emplace(key, std::move(*info)).first->second;
 }
 
-void ValidateFilterType(duckdb::LogicalTypeId type_id) {
-  if (!term_dict::IsIndexable(type_id)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Unsupported type id ", static_cast<int>(type_id), " for filter"),
-      ERR_HINT("The value's type must match the column's indexed type."));
-  }
-}
-
 namespace {
 
 bool IsTextConstant(const duckdb::Value& value) {
@@ -2578,13 +2570,13 @@ ColumnCast CastToColumn(const duckdb::Value& value,
   }
   if (!IsTextConstant(value)) {
     if (value.type().IsNumeric() && type.IsNumeric()) {
-      return {
-        .value = duckdb::Value{},
-        .outside =
-          duckdb::ValueOperations::GreaterThan(value, duckdb::Value::INTEGER(0))
-            ? 1
-            : -1,
-      };
+      const bool above = duckdb::ValueOperations::GreaterThan(
+        value, duckdb::Value::Numeric(value.type(), 0));
+      if (type.id() == duckdb::LogicalTypeId::FLOAT) {
+        constexpr auto kInf = std::numeric_limits<float>::infinity();
+        return {.value = duckdb::Value::FLOAT(above ? kInf : -kInf)};
+      }
+      return {.value = duckdb::Value{}, .outside = above ? 1 : -1};
     }
     if (duckdb::ValueOperations::GreaterThan(
           value, duckdb::Value::MaximumValue(type))) {

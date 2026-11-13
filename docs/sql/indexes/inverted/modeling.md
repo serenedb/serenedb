@@ -16,7 +16,7 @@ A column can play one of two roles:
 - **Indexed** (`USING inverted (col ...)`) -- searchable with `@@`. The column's tokens go into the inverted structure.
 - **`INCLUDE`d** (`INCLUDE (col)`) -- *stored but not searchable*. The raw value is kept in the index's columnstore so a query against the index can return it without a second lookup against the base table.
 
-Use `INCLUDE` for columns you frequently *return or filter on* but never *full-text search* -- ids, URLs, prices, timestamps, JSON payloads. An indexed numeric or temporal column serves range filters from the index; to return it or sort by it from the index as well, `INCLUDE` it too.
+Use `INCLUDE` for columns you frequently *return or filter on* but never *full-text search* -- ids, URLs, prices, timestamps, JSON payloads. An indexed numeric or temporal column serves range filters and [`ORDER BY` with a `LIMIT`](./full-text-search.md#numeric-top-k) from the index; to return it from the index as well, `INCLUDE` it too.
 
 <DocCallout type="tip">
 

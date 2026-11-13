@@ -65,10 +65,11 @@ Root::ptr MakeLiveTerm(const detail::PostingClause& term,
     });
 }
 
-Root::ptr Family::MakeNegation(
-  std::span<const detail::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx) {
+Root::ptr Family::MakeNegation(const BooleanQuery& query,
+                               const SubReader& segment, uint64_t candidates,
+                               const Context& ctx) {
+  const auto exclude_terms = query.Terms(Occur::MustNot);
+  const auto exclude_filters = query.Queries(Occur::MustNot);
   if (ctx.table != nullptr) {
     return detail::builder::MakeSparseNegation<Family>(
       exclude_terms, exclude_filters, segment, candidates, ctx);
@@ -104,9 +105,13 @@ Root::ptr Family::MakeNegation(
       exclude_terms, exclude_filters, nullptr, segment, detail::NoScoring{},
       ctx, 0);
   };
-  auto excluded = exclude_filters.empty() && Disjoint(exclude_terms)
-                    ? MakeWholeCount(SumOf(exclude_terms), ctx, plan_excluded)
-                    : plan_excluded();
+  auto excluded =
+    exclude_filters.empty() && query.Bucket(Occur::MustNot).disjoint
+      ? MakeWholeCount(SumOf(exclude_terms), ctx,
+                       [exclude_terms, ctx] {
+                         return MakeTermsSum(exclude_terms, nullptr, ctx);
+                       })
+      : plan_excluded();
   if (!excluded) {
     return {};
   }

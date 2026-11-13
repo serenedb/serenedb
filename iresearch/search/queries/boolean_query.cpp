@@ -238,7 +238,7 @@ void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
     const auto& term = irs::utils::downCast<TermQuery>(*query);
     const auto& state = term.State();
     Push(bucket, state.reader, state.cookie, query->Boost(), term.Stats(),
-         term.Piece() ? ++_groups : 0);
+         term.RangePosting() ? ++_groups : 0);
     return;
   }
   if (kind == QueryKind::Terms && SplicesTerms(occur)) {
@@ -249,7 +249,7 @@ void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
     }
     const auto& state = multi.State();
     const auto boost = multi.Boost();
-    const uint32_t group = state.HasPieces() ? ++_groups : 0;
+    const uint32_t group = state.HasRangePostings() ? ++_groups : 0;
     if (occur == Occur::MustNot) {
       for (const auto& entry : state.Terms()) {
         Push(bucket, state.Reader(), entry.cookie, kNoBoost, {}, group);
@@ -465,6 +465,12 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
   if (Dedup(msm) && _empty) {
     return QueryBuilder::Empty();
   }
+  for (auto& bucket : _clauses) {
+    bucket.disjoint = count::Disjoint(bucket.postings);
+  }
+  if (must.postings.size() >= 2 && must.disjoint) {
+    return QueryBuilder::Empty();
+  }
 
   if (must_not.empty() && must.all_docs.empty() && should.all_docs.empty()) {
     const auto lone =
@@ -540,10 +546,9 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
     if (must.all_docs.empty() && should.all_docs.empty()) {
       return QueryBuilder::Empty();
     }
-    const uint64_t excluded =
-      must_not.filters.empty() && count::Disjoint(must_not.postings)
-        ? SumEstimate(must_not)
-        : MaxEstimate(must_not);
+    const uint64_t excluded = must_not.filters.empty() && must_not.disjoint
+                                ? SumEstimate(must_not)
+                                : MaxEstimate(must_not);
     estimate = docs - static_cast<uint32_t>(std::min<uint64_t>(docs, excluded));
   }
   if (!must_not.empty()) {

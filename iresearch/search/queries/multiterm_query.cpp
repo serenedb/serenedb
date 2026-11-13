@@ -93,7 +93,7 @@ QueryBuilder::ptr MultiTermQuery::Finish(
     return MakeTermQuery(ctx.memory, query->_segment, query->_state.Reader(),
                          entry.cookie, entry.boost * query->_boost,
                          detail::StatsRecord{entry.stats, ctx.Record().scorer},
-                         query->_state.HasPieces());
+                         query->_state.HasRangePostings());
   }
   query->SetStats(ctx.Record());
   return query;

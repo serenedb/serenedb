@@ -20,15 +20,11 @@
 
 #include "connector/key_encoding.h"
 
-#include <absl/base/internal/endian.h>
-
-#include <cmath>
-#include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/string_utils.hpp>
+#include <iresearch/utils/string.hpp>
 
 namespace sdb::connector::key_encoding {
 namespace {
@@ -36,6 +32,14 @@ namespace {
 constexpr char kElemNotNull = '\x01';
 constexpr char kElemNull = '\x02';
 constexpr char kListEnd = '\x00';
+
+template<typename T>
+void AppendNumeric(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
+                   duckdb::idx_t idx) {
+  irs::byte_type buf[irs::numeric_utils::kNumericTermSize<T>];
+  key.append(irs::ViewCast<char>(irs::numeric_utils::EncodeNumericTerm(
+    buf, duckdb::UnifiedVectorFormat::GetData<T>(fmt)[idx])));
+}
 
 }  // namespace
 
@@ -47,60 +51,26 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       auto val = duckdb::UnifiedVectorFormat::GetData<bool>(fmt)[idx];
       key.push_back(val ? '\x01' : '\x00');
     } break;
-    case duckdb::LogicalTypeId::TINYINT: {
-      auto val = duckdb::UnifiedVectorFormat::GetData<int8_t>(fmt)[idx];
-      auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(int8_t));
-      key[base] = static_cast<char>(val);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-    } break;
-    case duckdb::LogicalTypeId::SMALLINT: {
-      auto val = duckdb::UnifiedVectorFormat::GetData<int16_t>(fmt)[idx];
-      auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(int16_t));
-      absl::big_endian::Store16(key.data() + base, val);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-    } break;
-    case duckdb::LogicalTypeId::INTEGER: {
-      auto val = duckdb::UnifiedVectorFormat::GetData<int32_t>(fmt)[idx];
-      auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(int32_t));
-      absl::big_endian::Store32(key.data() + base, val);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-    } break;
-    case duckdb::LogicalTypeId::BIGINT: {
-      auto val = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx];
-      auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(int64_t));
-      absl::big_endian::Store64(key.data() + base, val);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-    } break;
-    case duckdb::LogicalTypeId::UBIGINT: {
-      auto val = duckdb::UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx];
-      auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(uint64_t));
-      absl::big_endian::Store64(key.data() + base, val);
-    } break;
+    case duckdb::LogicalTypeId::TINYINT:
+      AppendNumeric<int8_t>(key, fmt, idx);
+      break;
+    case duckdb::LogicalTypeId::SMALLINT:
+      AppendNumeric<int16_t>(key, fmt, idx);
+      break;
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::DATE:
+      AppendNumeric<int32_t>(key, fmt, idx);
+      break;
+    case duckdb::LogicalTypeId::BIGINT:
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
     case duckdb::LogicalTypeId::TIMESTAMP_NS:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS: {
-      auto val =
-        duckdb::UnifiedVectorFormat::GetData<duckdb::timestamp_t>(fmt)[idx]
-          .value;
-      auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(int64_t));
-      absl::big_endian::Store64(key.data() + base, val);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-    } break;
-    case duckdb::LogicalTypeId::DATE: {
-      auto val =
-        duckdb::UnifiedVectorFormat::GetData<duckdb::date_t>(fmt)[idx].days;
-      auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(int32_t));
-      absl::big_endian::Store32(key.data() + base, val);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-    } break;
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ_NS:
+      AppendNumeric<int64_t>(key, fmt, idx);
+      break;
+    case duckdb::LogicalTypeId::UBIGINT:
+      AppendNumeric<uint64_t>(key, fmt, idx);
+      break;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB: {
       // Escape null bytes (\0 -> \0\1) and terminate with \0\0 so a string
@@ -120,25 +90,12 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
       }
       key.append(kStringEnd);
     } break;
-    case duckdb::LogicalTypeId::FLOAT: {
-      const auto val = irs::numeric_utils::CanonicalFloat(
-        duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx]);
-      const auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(float));
-      absl::big_endian::Store32(key.data() + base,
-                                irs::numeric_utils::Ftoi32(val));
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-    } break;
-    case duckdb::LogicalTypeId::DOUBLE: {
-      const auto val = irs::numeric_utils::CanonicalFloat(
-        duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx]);
-      const auto base = key.size();
-      irs::utils::StrAppend(key, sizeof(double));
-      absl::big_endian::Store64(key.data() + base,
-                                irs::numeric_utils::Dtoi64(val));
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+    case duckdb::LogicalTypeId::FLOAT:
+      AppendNumeric<float>(key, fmt, idx);
       break;
-    }
+    case duckdb::LogicalTypeId::DOUBLE:
+      AppendNumeric<double>(key, fmt, idx);
+      break;
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("Unsupported key type: ", type.ToString()));

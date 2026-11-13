@@ -55,36 +55,6 @@ struct RangeLevel {
   uint32_t count;
 };
 
-template<typename Field>
-void ReadPostingDocs(const Field& field, const PostingMeta& meta,
-                     TermReader::Acceptor acceptor,
-                     TermPostings::ptr& docs_it) {
-  if (meta.docs_count == 0) {
-    return;
-  }
-  if (meta.docs_count == 1) {
-    acceptor(doc_limits::min() + meta.doc_delta);
-    return;
-  }
-  docs_it = field.PostingsOf(IndexFeatures::None, meta, std::move(docs_it));
-  doc_id_t docs[doc_limits::kBlockSize];
-  while (const auto n = docs_it->NextDocs(docs, nullptr)) {
-    for (uint32_t i = 0; i != n; ++i) {
-      SDB_ASSERT(doc_limits::valid(docs[i]));
-      if (!acceptor(docs[i])) {
-        return;
-      }
-    }
-  }
-}
-
-template<typename Field>
-void ReadPostingDocs(const Field& field, const PostingMeta& meta,
-                     TermReader::Acceptor acceptor) {
-  TermPostings::ptr docs_it;
-  ReadPostingDocs(field, meta, acceptor, docs_it);
-}
-
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
@@ -102,10 +72,10 @@ class TermReaderImpl final : public TermReader {
   void ReadDocs(bytes_view term, Acceptor acceptor) const final {
     ReadPostingDocs(*this, Lookup(term), acceptor);
   }
-  void VisitRange(bytes_view from, bytes_view to,
-                  RangeVisitor visit) const final;
-  void VisitDocsInOrder(bytes_view from, bytes_view to, bool descending,
-                        TermDoc visit) const final;
+  bool VisitRange(bytes_view from, bytes_view to, bool descending,
+                  TermVisitor visit) const final;
+  bool CoverRange(bytes_view from, bytes_view to,
+                  TermVisitor visit) const final;
 
   std::unique_ptr<IndexInput> ReopenPayload() const final;
   PostingsHandles Handles() const noexcept final;
@@ -127,7 +97,7 @@ class TermReaderImpl final : public TermReader {
 
   const FieldReader& Owner() const noexcept { return *_owner; }
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
-                               TermPostings::ptr reuse) const;
+                               TermPostings::ptr reuse) const final;
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _blocks == 1; }
   const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
@@ -161,30 +131,7 @@ class TermReaderImpl final : public TermReader {
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
   InlinePages::Span InlineSpan(uint32_t block) const noexcept;
   void PrefetchLookup(uint32_t block) const;
-  TrieCursor TrieRoot() const noexcept {
-    return _trie ? PrefixTrie::Root()
-                 : TrieCursor{.node = kTrieBelow, .labels = 0, .matched = 0};
-  }
-  static bool Gates(TrieCursor head) noexcept {
-    return head.node < kTrieMissing;
-  }
-  bytes_view Labels(TrieCursor head) const noexcept {
-    SDB_ASSERT(Gates(head));
-    return _trie->Labels(head);
-  }
-  TrieCursor ChildAt(TrieCursor head, uint32_t slot) const noexcept {
-    SDB_ASSERT(Gates(head));
-    return _trie->ChildAt(head, slot);
-  }
-  TrieCursor Child(TrieCursor head, byte_type label) const noexcept {
-    return Gates(head) ? _trie->Child(head, label) : head;
-  }
-  bytes_view Edge(TrieCursor head) const noexcept {
-    return Gates(head) ? _trie->Edge(head) : bytes_view{};
-  }
-  bool MayEnd(TrieCursor head) const noexcept {
-    return !Gates(head) || _trie->Terminal(head);
-  }
+  const PrefixTrie& Trie() const noexcept { return _trie; }
   std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
   uint32_t RangePrefix() const noexcept { return _range_prefix; }
   uint64_t InlineBegin() const noexcept;
@@ -215,7 +162,7 @@ class TermReaderImpl final : public TermReader {
   FreqAttr _freq;
   Root _root;
   std::vector<RangeLevel> _levels;
-  std::unique_ptr<PrefixTrie> _trie;
+  PrefixTrie _trie;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   uint32_t _range_prefix = 0;
 };

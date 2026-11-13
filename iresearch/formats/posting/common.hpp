@@ -47,6 +47,18 @@
 
 namespace irs {
 
+struct RecordLayout {
+  uint32_t follows;
+  uint32_t payload;
+};
+
+constexpr RecordLayout RecordLayoutOf(bool freq, bool pos) noexcept {
+  return {
+    .follows = 1 + uint32_t{freq},
+    .payload = 1 + uint32_t{freq} + uint32_t{pos},
+  };
+}
+
 struct BlockLanding {
   // pointer to the beginning of document block
   uint64_t doc_ptr = 0;

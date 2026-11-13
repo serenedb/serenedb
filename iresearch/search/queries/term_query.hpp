@@ -31,7 +31,7 @@ class TermQuery : public QueryBuilderImpl<TermQuery> {
  public:
   TermQuery(const SubReader& segment, const TermReader* reader,
             const PostingMeta& cookie, score_t boost, detail::StatsRecord stats,
-            bool piece);
+            bool range_posting);
 
   void Visit(PreparedStateVisitor&, score_t boost) const final;
 
@@ -41,12 +41,12 @@ class TermQuery : public QueryBuilderImpl<TermQuery> {
 
   const TermState& State() const noexcept { return _state; }
 
-  bool Piece() const noexcept { return _piece; }
+  bool RangePosting() const noexcept { return _range_posting; }
 
  private:
   TermState _state;
   score_t _boost;
-  bool _piece;
+  bool _range_posting;
 };
 
 extern template class QueryBuilderImpl<TermQuery>;
@@ -56,6 +56,6 @@ QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
                                 const TermReader* reader,
                                 const PostingMeta& meta, score_t boost,
                                 detail::StatsRecord stats = {},
-                                bool piece = false);
+                                bool range_posting = false);
 
 }  // namespace irs

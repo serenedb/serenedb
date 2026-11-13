@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/explain_value.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/planner/table_filter_set.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 
 #include "connector/scan/scan_plan.h"
@@ -59,6 +60,7 @@ void IResearchSetScanOrder(
 
 bool IResearchConsumeTopN(duckdb::ClientContext& context,
                           duckdb::FunctionData& bind_data,
+                          const duckdb::TableFilterSet& filters,
                           const duckdb::BoundLimitNode& limit,
                           const duckdb::BoundLimitNode& offset);
 

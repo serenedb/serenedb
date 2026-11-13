@@ -23,6 +23,7 @@
 
 #include "granular_range_filter.hpp"
 
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
@@ -37,15 +38,14 @@ uint64_t VisitInto(MultiTermQuery& query, const PrepareContext& ctx,
                    const TermReader& reader, bytes_view from, bytes_view to) {
   MultiTermVisitor mtv{ctx, query.State(), reader};
   uint64_t docs = 0;
-  bool pieces = false;
-  reader.VisitRange(from, to,
-                    [&](bytes_view term, const PostingMeta& meta, bool piece) {
-                      pieces |= piece;
-                      docs += meta.docs_count;
-                      mtv.Visit(term, meta, kNoBoost);
-                    });
-  if (pieces) {
-    query.State().MarkPieces();
+  const bool covered =
+    reader.CoverRange(from, to, [&](bytes_view term, const PostingMeta& meta) {
+      docs += meta.docs_count;
+      mtv.Visit(term, meta, kNoBoost);
+      return true;
+    });
+  if (covered) {
+    query.State().MarkRangePostings();
   }
   return docs;
 }
@@ -87,8 +87,9 @@ QueryBuilder::ptr Complement(const SubReader& segment,
               Occur::Must);
   builder.Add(MultiTermQuery::Finish(std::move(tails), ctx), Occur::MustNot);
   if (null_docs != 0) {
-    builder.AddTerm(nulls, nulls->Lookup(kSlotTerm), kNoBoost, Occur::MustNot,
-                    {});
+    const auto null_meta = nulls->Lookup(kSlotTerm);
+    SDB_ASSERT(null_meta.docs_count == null_docs);
+    builder.AddTerm(nulls, null_meta, kNoBoost, Occur::MustNot, {});
   }
   return builder.Finish();
 }

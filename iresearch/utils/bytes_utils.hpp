@@ -22,10 +22,13 @@
 
 #pragma once
 
+#include <bit>
+#include <cstring>
 #include <optional>
 #include <type_traits>
 
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -380,6 +383,25 @@ inline T ReadBE(Iterator& in) {
 template<typename T, typename Iterator>
 inline T vread(Iterator& in) {
   return bytes_io<T, sizeof(T)>::vread(in);
+}
+
+IRS_FORCE_INLINE inline uint64_t ReadPaddedVarint(
+  const byte_type*& in) noexcept {
+  static_assert(std::endian::native == std::endian::little);
+  uint64_t word;
+  std::memcpy(&word, in, sizeof(word));
+  const uint64_t stops = ~word & 0x8080808080808080;
+  SDB_ASSERT(stops != 0);
+  const auto bits = static_cast<uint32_t>(std::countr_zero(stops)) + 1;
+  in += bits / 8;
+  if (bits != 64) {
+    word &= (uint64_t{1} << bits) - 1;
+  }
+  word &= 0x7F7F7F7F7F7F7F7F;
+  word = (word & 0x7F007F007F007F00) >> 1 | (word & 0x007F007F007F007F);
+  word = (word & 0x3FFF00003FFF0000) >> 2 | (word & 0x00003FFF00003FFF);
+  word = (word & 0x0FFFFFFF00000000) >> 4 | (word & 0x000000000FFFFFFF);
+  return word;
 }
 
 template<typename T>

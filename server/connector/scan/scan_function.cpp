@@ -36,6 +36,7 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
@@ -140,6 +141,15 @@ bool SameLimit(const duckdb::BoundLimitNode& node,
     default:
       return false;
   }
+}
+
+bool HasRequiredFilter(const duckdb::TableFilterSet& filters) {
+  for (const auto& entry : filters) {
+    if (!duckdb::ExpressionFilter::IsOptionalFilter(entry.Filter())) {
+      return true;
+    }
+  }
+  return false;
 }
 
 std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
@@ -617,9 +627,13 @@ void IResearchSetScanOrder(
 
 bool IResearchConsumeTopN(duckdb::ClientContext&,
                           duckdb::FunctionData& bind_data,
+                          const duckdb::TableFilterSet& filters,
                           const duckdb::BoundLimitNode& limit,
                           const duckdb::BoundLimitNode& offset) {
   auto& bd = bind_data.Cast<ScanBindData>();
+  if (bd.value_order && HasRequiredFilter(filters)) {
+    return false;
+  }
   if (bd.score.top_k_expr) {
     if (!SameLimit(limit, bd.score.top_k_expr.get()) ||
         !SameLimit(offset, bd.score.top_offset_expr.get())) {

@@ -24,13 +24,13 @@
 #include <compare>
 #include <cstdint>
 #include <span>
-#include <vector>
 
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/count/disjoint.hpp"
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 
 namespace irs::count {
 namespace {
@@ -71,7 +71,10 @@ TermKey KeyOf(const detail::PostingClause& clause) noexcept {
 }
 
 bool DistinctTerms(std::span<const detail::PostingClause> clauses) {
-  std::vector<TermKey> keys;
+  if (clauses.size() < 2) {
+    return true;
+  }
+  containers::SmallVector<TermKey, 16> keys;
   for (const auto& clause : clauses) {
     if (clause.group == 0) {
       keys.push_back(KeyOf(clause));
@@ -87,7 +90,7 @@ bool NegationSums(const BooleanQuery& query) {
          query.Bucket(Occur::Should).empty() &&
          query.Queries(Occur::MustNot).empty() &&
          !query.Terms(Occur::MustNot).empty() &&
-         Disjoint(query.Terms(Occur::MustNot));
+         query.Bucket(Occur::MustNot).disjoint;
 }
 
 }  // namespace
@@ -97,16 +100,14 @@ bool Disjoint(std::span<const detail::PostingClause> clauses) {
     return true;
   }
   const auto* first = clauses.front().state.reader;
-  if (first == nullptr) {
-    return false;
-  }
+  SDB_ASSERT(first);
   const auto& meta = first->meta();
   std::array<MemberClauses, kDictMembers> members{};
   bool several = false;
   for (const auto& clause : clauses) {
     const auto* reader = clause.state.reader;
-    if (reader == nullptr || !reader->single_valued ||
-        clause.stats.scorer != nullptr || reader->meta().id != meta.id ||
+    SDB_ASSERT(reader);
+    if (!reader->single_valued || reader->meta().id != meta.id ||
         reader->meta().dict.layout != meta.dict.layout) {
       return false;
     }
@@ -145,12 +146,7 @@ bool ShouldSums(const BooleanQuery& query, const Context& ctx) {
          query.Queries(Occur::Should).empty() &&
          query.Bucket(Occur::Should).all_docs.empty() &&
          !query.Terms(Occur::Should).empty() &&
-         Disjoint(query.Terms(Occur::Should));
-}
-
-bool MustMisses(const BooleanQuery& query) {
-  const auto terms = query.Terms(Occur::Must);
-  return terms.size() >= 2 && Disjoint(terms);
+         query.Bucket(Occur::Should).disjoint;
 }
 
 bool IsConstant(const QueryBuilder& query) {
@@ -162,12 +158,12 @@ bool IsConstant(const QueryBuilder& query) {
     case QueryKind::Terms: {
       const auto* reader =
         irs::utils::downCast<MultiTermQuery>(query).State().Reader();
-      return reader != nullptr && reader->single_valued;
+      SDB_ASSERT(reader);
+      return reader->single_valued;
     }
     case QueryKind::Boolean: {
       const auto& boolean = irs::utils::downCast<BooleanQuery>(query);
-      return ShouldSums(boolean, {}) || MustMisses(boolean) ||
-             NegationSums(boolean);
+      return ShouldSums(boolean, {}) || NegationSums(boolean);
     }
     default:
       return false;

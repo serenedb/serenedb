@@ -68,3 +68,91 @@ SHOW search_path;
 ----
 search_path
 root2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW search_path;
+----
+search_path
+root2
+
+
+statement ok
+SET async_threads = 1000;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+RESET async_threads;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW async_threads;
+----
+async_threads
+1000
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL async_threads TO DEFAULT;
+
+
+statement ok
+COMMIT;
+
+
+query
+SHOW async_threads;
+----
+async_threads
+1000
+
+
+statement ok
+SET threads = 7;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+RESET ALL;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW threads;
+----
+threads
+7
+
+
+statement ok
+RESET ALL;

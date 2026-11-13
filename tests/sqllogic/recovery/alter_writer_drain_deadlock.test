@@ -1,0 +1,82 @@
+control substitution on
+
+statement ok
+CREATE TABLE awdd_t1 (a INT);
+
+
+statement ok
+CREATE TABLE awdd_t2 (a INT);
+
+
+connection a
+statement ok
+BEGIN;
+
+
+connection a
+statement ok
+INSERT INTO awdd_t1 VALUES (1);
+
+
+connection b
+statement ok
+BEGIN;
+
+
+connection b
+statement ok
+INSERT INTO awdd_t2 VALUES (2);
+
+
+statement ok
+SET sdb_faults = 'writer_drain_waits';
+
+
+connection a
+statement async ok
+ALTER TABLE awdd_t2 ADD COLUMN c INT;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-writer_drain_waits:parked';
+
+
+connection b
+statement error
+ALTER TABLE awdd_t1 ADD COLUMN c INT;
+----
+db error: ERROR: deadlock detected
+DETAIL: The table this statement changes was written by a transaction that waits for this transaction to end.
+
+
+statement ok
+SET sdb_faults = 'writer_drain_waits:release';
+
+
+connection b
+statement ok
+ROLLBACK;
+
+
+wait
+
+
+connection a
+statement ok
+COMMIT;
+
+
+query
+SELECT table_name, column_name FROM information_schema.columns WHERE table_name IN ('awdd_t1', 'awdd_t2') ORDER BY table_name, column_name;
+----
+table_name	column_name
+awdd_t1	a
+awdd_t2	a
+awdd_t2	c
+
+
+query
+SELECT (SELECT count(*) FROM awdd_t1) AS t1, (SELECT count(*) FROM awdd_t2) AS t2;
+----
+t1	t2
+1	0

@@ -139,6 +139,8 @@ class Writes {
 
   const WriterGenerations::Writer* Registration(duckdb::idx_t store_id) const;
 
+  std::vector<const WriterGenerations*> Registrations() const;
+
   void AdoptTable(const std::shared_ptr<Store>& store,
                   const catalog::SearchTableEntry& table);
 

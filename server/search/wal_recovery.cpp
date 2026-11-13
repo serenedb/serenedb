@@ -145,13 +145,15 @@ std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view) {
   auto& instance = irs::DuckDBEngine::Instance().instance();
   const auto at = view.Transaction(instance);
   auto& cluster = catalog::ClusterOf(instance);
+  const auto databases =
+    catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(instance));
   irs::containers::FlatHashMap<duckdb::idx_t, catalog::SereneDBCatalog*>
     attached;
-  for (const auto& db :
-       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(instance))) {
+  for (const auto& db : databases) {
     attached.emplace(db->oid,
                      &db->GetCatalog().Cast<catalog::SereneDBCatalog>());
   }
+  SDB_PARK_ONCE_ON_FAILURE("capture_snapshot_listed");
   std::vector<TableSnapshot> tables;
   for (auto& store : DurableStores()) {
     if (!cluster.Oids().Find(at, store->GetDatabaseId())) {

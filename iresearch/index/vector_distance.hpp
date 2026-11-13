@@ -21,17 +21,13 @@
 #pragma once
 
 #include <core_functions/array_kernels.hpp>
-#include <limits>
 
 #include "iresearch/index/column_info.hpp"
 
 namespace irs {
 
-inline constexpr uint32_t kMaxVectorDimension =
-  std::numeric_limits<uint16_t>::max();
-
 template<VectorMetric Metric>
-float ComputeDistance(const float* l, const float* r, uint16_t d) {
+float ComputeDistance(const float* l, const float* r, size_t d) {
   if constexpr (Metric == VectorMetric::L2Sqr) {
     return -duckdb::DistanceSquaredOp::Operation(l, r, d);
   } else if constexpr (Metric == VectorMetric::L1) {
@@ -45,7 +41,7 @@ float ComputeDistance(const float* l, const float* r, uint16_t d) {
 }
 
 template<VectorMetric Metric>
-float ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
+float ComputeDistance(const byte_type* l, const byte_type* r, size_t d) {
   return ComputeDistance<Metric>(reinterpret_cast<const float*>(l),
                                  reinterpret_cast<const float*>(r), d);
 }

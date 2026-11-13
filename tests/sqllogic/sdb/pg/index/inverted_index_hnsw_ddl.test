@@ -81,20 +81,6 @@ db error: ERROR: Column 'pk' must be FLOAT[N] to use the 'hnsw' opclass, not INT
 
 
 statement ok
-CREATE TABLE hnsw_ddl_wide (pk INTEGER, emb FLOAT[65536]);
-
-
-statement error
-CREATE INDEX hnsw_ddl_wide_idx ON hnsw_ddl_wide USING inverted(pk, emb hnsw (metric = 'l2'));
-----
-db error: ERROR: Column 'emb' cannot have more than 65535 dimensions for the 'hnsw' opclass
-
-
-statement ok
-DROP TABLE hnsw_ddl_wide;
-
-
-statement ok
 CREATE INDEX hnsw_ddl_l1 ON hnsw_ddl USING inverted(pk, emb hnsw (metric = 'l1'));
 
 

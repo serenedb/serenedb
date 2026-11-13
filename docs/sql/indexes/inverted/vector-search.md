@@ -13,7 +13,7 @@ IVF groups the vectors of each index segment into clusters, sized by the `sdb_iv
 
 ## Creating a vector index
 
-A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class, once per index: listing the column a second time with either fails. The column must be a fixed-size `FLOAT` array (`FLOAT[N]`) -- every row shares the same dimension `N`, at most 65535:
+A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class, once per index: listing the column a second time with either fails. The column must be a fixed-size `FLOAT` array (`FLOAT[N]`) -- every row shares the same dimension `N`:
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_001" />
 

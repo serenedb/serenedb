@@ -133,7 +133,6 @@ class RawVectorReader {
       i += run;
     }
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
-    const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
       size_t run = ConsecutiveRunLength(docs, i);
       if (run == 1 && i + 2 < docs.size()) {
@@ -152,7 +151,7 @@ class RawVectorReader {
               __builtin_prefetch(ahead + off, 0, 3);
             }
           }
-          out[i + k] = _dist(q, base + k * stride, d);
+          out[i + k] = _dist(q, base + k * stride, _d);
         }
         i += got;
         run -= got;
@@ -166,8 +165,7 @@ class RawVectorReader {
       size_t got = 0;
       row = ReadSome(doc, 1, got);
     }
-    return _dist(reinterpret_cast<const byte_type*>(_query.data()), row,
-                 static_cast<uint16_t>(_d));
+    return _dist(reinterpret_cast<const byte_type*>(_query.data()), row, _d);
   }
 
   template<int Locality = 3>

@@ -1,0 +1,33 @@
+{
+  "description": "SereneDB test-config for the vendored duckdb_quack test suite and DuckDB's tests that attach QUACK_SERVER. tests/duckdb/quack/run.sh runs each file against a serened of its own that serves quack, instead of the quack_serve server of the test's DuckDB process.",
+  "skip_tests": [
+    {
+      "reason": "serened serves quack from an HTTP listener (`?api=quack`), so the quack extension has no server to run from SQL: quack_serve, quack_stop, quack_server_list, quack_generate_keys, the quack_server_* settings and the quack_authentication_function / quack_authorization_function hooks do not exist. Every file below tests starting, stopping or configuring a server from SQL.",
+      "paths": [
+        "test/sql/authn_swap.test",
+        "test/sql/reconnects_ack_best_effort.test",
+        "test/sql/self_stop.test",
+        "test/sql/serve_canonical.test",
+        "test/sql/serve_create_secret.test",
+        "test/sql/serve_secret.test",
+        "test/sql/serve_ssl.test",
+        "test/sql/serve_token_from_secret.test",
+        "test/sql/server_connection_limits.test",
+        "test/sql/server_list.test",
+        "test/sql/token_validation.test"
+      ]
+    },
+    {
+      "reason": "The quack build in SereneDB has no whoami(), quack_identify or whoami_* settings: nothing in SereneDB reads a server's description of itself.",
+      "paths": [
+        "test/sql/whoami.test"
+      ]
+    },
+    {
+      "reason": "self_connect.test checks that a statement is refused when it comes back to the server through the session that runs it, which only a server in the client's own process can do. A SereneDB server attaches its own quack listener through a session of its own.",
+      "paths": [
+        "test/sql/self_connect.test"
+      ]
+    }
+  ]
+}
